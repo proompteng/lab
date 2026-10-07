@@ -129,7 +129,7 @@ async fn loads_all_pages_and_preserves_each_items_snapshot_cursor() {
         requests[0],
         json!({"method":"thread/resume", "params": {
             "threadId":"thread-one", "cwd":"/workspace", "runtimeWorkspaceRoots":["/workspace"],
-            "approvalPolicy":"on-request", "sandbox":"danger-full-access", "excludeTurns":true,
+            "approvalPolicy":"never", "sandbox":"danger-full-access", "excludeTurns":true,
             "model":"gpt-6.1-sol", "config":{"model_reasoning_effort":"high"}
         }})
     );

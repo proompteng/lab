@@ -120,6 +120,7 @@ const appToWorkflowPaths = new Map<string, string[]>([
   ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
   ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
   ['tengri', ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo']],
+  ['relay', ['.github/workflows/relay-images.yml', 'argocd/applications/kargo']],
   ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
   ['symphony-torghut', ['.github/workflows/symphony-build-push.yaml']],
   ['torghut-hyperliquid-feed', ['.github/workflows/torghut-hyperliquid-feed-build-push.yaml']],
@@ -158,6 +159,16 @@ type KargoImageContract = {
 } & ({ kind: 'pinned' } | { kind: 'promotion-template'; bootstrapReferences: string[] })
 
 const kargoImageApps = new Map<string, KargoImageContract>([
+  [
+    'relay',
+    {
+      kind: 'promotion-template',
+      bootstrapReferences: ['registry.ide-newton.ts.net/lab/relay:bootstrap'],
+      reason: 'Relay is built and signed in CI, then promoted automatically by Kargo',
+      repositories: ['registry.ide-newton.ts.net/lab/relay'],
+      workflowPaths: ['.github/workflows/relay-images.yml', 'argocd/applications/kargo'],
+    },
+  ],
   [
     'rune',
     {

@@ -38,8 +38,10 @@ The database, its inherited resources, the backup ObjectStore, and the bucket cl
 or Application deletion. Ceph provides both database storage and the backup bucket. These backups do not protect
 against loss of the entire Ceph cluster.
 
-No application permission schema or service integration is installed. Define and review those contracts with the
-first consuming application.
+Relay consumes the shared API for Zanzibar permission checks. Its reviewed schema and guarded initial installer
+live in `services/relay/schema.zed` and `services/relay/install-schema.py`. The `relay-authorization` Role grants
+only Relay's backend service account permission to read the named API-key Secret. Guest agents have no access.
+Schema installation creates no relationships; connector permission grants remain explicit trusted control-plane writes.
 
 ## Validate before deployment
 

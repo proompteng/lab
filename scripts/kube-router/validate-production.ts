@@ -40,6 +40,7 @@ export const productionPaths = {
   elasticRehearsalPolicies: 'argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml',
   hermesPolicies: 'argocd/applications/hermes/network-policy.yaml',
   tengriPolicies: 'argocd/applications/tengri/network-policies.yaml',
+  relayPolicies: 'argocd/applications/relay/network-policy.yaml',
   service: 'argocd/applications/kube-router/service.yaml',
   daemonSet: 'argocd/applications/kube-router/daemonset.yaml',
   readme: 'argocd/applications/kube-router/README.md',
@@ -283,6 +284,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const hookContainer = hook?.spec?.template?.spec?.containers?.[0]
   const expectedHermesPolicyHash = networkPolicyHash(files.hermesPolicies)
   const expectedTengriPolicyHash = networkPolicyHash(files.tengriPolicies)
+  const expectedRelayPolicyHash = networkPolicyHash(files.relayPolicies)
   if (
     hook?.metadata?.annotations?.['argocd.argoproj.io/hook'] !== 'Sync' ||
     hook?.metadata?.annotations?.['argocd.argoproj.io/sync-wave'] !== '-2' ||
@@ -306,6 +308,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'network-policy.proompteng.ai/retired-rollout-policy',
     `expected_hermes_policy_hash=${expectedHermesPolicyHash}`,
     `expected_tengri_policy_hash=${expectedTengriPolicyHash}`,
+    'kubectl -n kube-system get namespace relay',
+    "printf '%s\\n' relay",
+    `expected_relay_policy_hash=${expectedRelayPolicyHash}`,
+    'Relay NetworkPolicies differ from the exact reviewed policy set.',
     'kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json',
     "jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)'",
     'Hermes NetworkPolicies differ from the exact reviewed policy set.',
@@ -325,6 +331,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     `printf '%s\\n' hermes ${reviewedNamespaces.join(' ')}`,
   ])
   const rootScriptPaths = yamlDocuments(files.impactMap)[0]?.targets?.['root-scripts']?.paths ?? []
+  if (!rootScriptPaths.includes(productionPaths.relayPolicies)) {
+    failures.push(`${productionPaths.impactMap}: root-scripts must cover ${productionPaths.relayPolicies}`)
+  }
+  requireTerms(failures, productionPaths.coverageProbe, files.coverageProbe, [
+    'kubectl -n kube-system get namespace relay',
+    "printf '%s\\n' relay",
+  ])
   for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
     const policyContent = sources.map((key) => files[key]).join('\n---\n')
     const hash = networkPolicyHash(policyContent)

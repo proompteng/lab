@@ -108,6 +108,17 @@ test('rejects an unscoped optional Tengri namespace check in the preflight hook'
     `${productionPaths.preflightHook}: missing production invariant "kubectl -n kube-system get namespace tengri"`,
   )
 })
+test('rejects missing Relay namespace coverage and unreviewed Relay policy changes', async () => {
+  const files = copy(await loadProductionFiles())
+  files.preflightHook = files.preflightHook.replace(
+    'kubectl -n kube-system get namespace relay',
+    'kubectl get namespace relay',
+  )
+  expect(validateProductionContent(files)).toContainEqual(expect.stringContaining('get namespace relay'))
+  const changed = copy(await loadProductionFiles())
+  changed.relayPolicies = changed.relayPolicies.replace('port: 8443', 'port: 8444')
+  expect(validateProductionContent(changed)).toContainEqual(expect.stringContaining('expected_relay_policy_hash='))
+})
 
 test('rejects an unscoped optional Tengri namespace check in the coverage probe', async () => {
   const files = copy(await loadProductionFiles())

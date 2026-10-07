@@ -584,6 +584,14 @@ const expected = {
       'argocd/applications/tengri',
     ],
   },
+  relay: {
+    creationCriteria: 'single',
+    freightGitRepo: publicGitRepo,
+    pushGitRepo: gitRepo,
+    images: [imageRepo('relay')],
+    apps: ['relay'],
+    includePaths: ['services/relay', '.github/workflows/relay-images.yml', 'argocd/applications/relay'],
+  },
   buzz: {
     creationCriteria: 'single',
     images: [imageRepo('buzz')],

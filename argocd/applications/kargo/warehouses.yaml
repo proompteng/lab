@@ -1186,3 +1186,39 @@ spec:
           - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
         cacheByTag: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: relay
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  interval: 1m0s
+  freightCreationPolicy: Automatic
+  freightCreationCriteria:
+    expression: >-
+      imageFrom('registry.ide-newton.ts.net/lab/relay').Tag == 'kargo-sha-' +
+      commitFrom('https://github.com/proompteng/lab.git').ID
+  subscriptions:
+    - git:
+        # Public HTTPS discovery gets Kargo's HTTP stall detection; the Stage keeps SSH only for pushes.
+        repoURL: https://github.com/proompteng/lab.git
+        branch: main
+        commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
+        includePaths:
+          - services/relay
+          - .github/workflows/relay-images.yml
+          - argocd/applications/relay
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/relay
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - '^kargo-sha-[0-9a-f]{40}$'
+        platform: linux/amd64
+        cacheByTag: true

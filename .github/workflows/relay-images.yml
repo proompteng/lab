@@ -1,0 +1,228 @@
+name: Relay images
+on:
+  pull_request:
+    paths:
+      - 'services/relay/**'
+      - 'argocd/applications/relay/**'
+      - '.github/workflows/relay-images.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'services/relay/**'
+      - 'argocd/applications/relay/**'
+      - '.github/workflows/relay-images.yml'
+  workflow_dispatch:
+concurrency:
+  group: relay-images-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+env:
+  RELAY_IMAGE: registry.ide-newton.ts.net/lab/relay
+jobs:
+  validate:
+    runs-on: arc-amd64
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.90.0'
+          components: clippy, rustfmt
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential cmake
+      - name: Validate Relay
+        run: |
+          python3 -m unittest discover -s services/relay -p 'test_*.py'
+          cargo fmt --manifest-path services/relay/Cargo.toml --check
+          cargo clippy --manifest-path services/relay/Cargo.toml --locked --all-targets -- -D warnings
+          cargo test --manifest-path services/relay/Cargo.toml --locked --all-targets
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/relay
+          platforms: linux/${{ matrix.architecture }}
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          tags: ${{ env.RELAY_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          cache-from: type=registry,ref=${{ env.RELAY_IMAGE }}:cache-${{ matrix.architecture }}
+          provenance: mode=max
+          sbom: true
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs:
+      - build
+      - validate
+    runs-on: arc-arm64
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve source commit metadata
+        id: source
+        env:
+          EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          expected_source_sha="$(git rev-parse "${EXPECTED_SOURCE_REVISION}^{commit}")"
+          [[ "${source_sha}" == "${expected_source_sha}" ]]
+          printf 'source_sha=%s\n' "${source_sha}" >> "${GITHUB_OUTPUT}"
+          printf 'source_timestamp=%s\n' "$(git show -s --format=%cI HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Publish, verify, and sign multi-architecture images
+        id: images
+        shell: bash
+        env:
+          SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/relay-images.yml@refs/heads/main
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          SOURCE_TIMESTAMP: ${{ steps.source.outputs.source_timestamp }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/relay
+          [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
+          tag="sha-${SOURCE_SHA}"
+
+          publish_image() {
+            set -euo pipefail
+            local image="$1"
+            local service="${image##*/}"
+            local index_path=".artifacts/relay/${service}-index.json"
+
+            for architecture in amd64 arm64; do
+              local reference="${image}:${tag}-${architecture}"
+              crane mutate --platform "linux/${architecture}" "${reference}" \
+                --label "org.opencontainers.image.created=${SOURCE_TIMESTAMP}" \
+                --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+                --tag "${reference}" >/dev/null
+              crane config --platform "linux/${architecture}" "${reference}" | jq -e \
+                --arg source_timestamp "${SOURCE_TIMESTAMP}" \
+                --arg source_sha "${SOURCE_SHA}" \
+                '.config.Labels["org.opencontainers.image.created"] == $source_timestamp and
+                 .config.Labels["org.opencontainers.image.revision"] == $source_sha' >/dev/null
+            done
+
+            docker buildx imagetools create \
+              --annotation "index:org.opencontainers.image.source=${SOURCE_URL}" \
+              --annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}" \
+              --tag "${image}:${tag}" \
+              "${image}:${tag}-amd64" \
+              "${image}:${tag}-arm64" >&2
+            docker buildx imagetools inspect --raw "${image}:${tag}" > "${index_path}"
+            jq -e \
+              --arg source_url "${SOURCE_URL}" \
+              --arg source_sha "${SOURCE_SHA}" '
+              .annotations["org.opencontainers.image.source"] == $source_url and
+              .annotations["org.opencontainers.image.revision"] == $source_sha and
+              any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+              any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+            ' "${index_path}" >&2
+
+            local digest
+            digest="$(
+              docker buildx imagetools inspect \
+                --format '{{json .Manifest}}' \
+                "${image}:${tag}" |
+                jq -er '.digest'
+            )"
+            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            local reference="${image}@${digest}"
+            cosign sign --yes "${reference}" >&2
+            cosign verify \
+              --certificate-identity "${SIGNING_IDENTITY}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "${reference}" >/dev/null
+
+            printf '%s' "${digest}"
+          }
+
+          relay_digest="$(publish_image "${RELAY_IMAGE}")"
+          printf 'relay_digest=%s\n' \
+            "${relay_digest}" >> "${GITHUB_OUTPUT}"
+          {
+            echo '### Tengri images'
+            echo
+            echo "- ${RELAY_IMAGE}@${relay_digest}"
+            echo "- Source: ${SOURCE_SHA}"
+            echo '- Platforms: linux/amd64, linux/arm64'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Retain verified image indexes
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-image-indexes-${{ github.sha }}
+          path: .artifacts/relay/*-index.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Expose verified image to Kargo
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          RELAY_DIGEST: ${{ steps.images.outputs.relay_digest }}
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
+          [[ "${RELAY_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          tag="sha-${SOURCE_SHA}"
+          publish_kargo_alias() {
+            local image="$1"
+            local digest="$2"
+            local kargo_tag="kargo-sha-${SOURCE_SHA}"
+            local kargo_reference="${image}:${kargo_tag}"
+            local kargo_digest=''
+            local probe_error
+            probe_error="$(mktemp)"
+            if kargo_digest="$(
+              crane digest "${kargo_reference}" 2>"${probe_error}"
+            )"; then
+              [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+              [[ "${kargo_digest}" == "${digest}" ]]
+            else
+              probe_output="$(cat "${probe_error}")"
+              if ! grep -Eiq 'manifest[[:space:]_-]+(unknown|not[[:space:]]+found)|manifest[^[:cntrl:]]*404|404[^[:cntrl:]]*(manifest|not[[:space:]]+found)' <<<"${probe_output}"; then
+                rm -f "${probe_error}"
+                echo "Unable to inspect immutable Kargo tag ${kargo_reference}: ${probe_output}" >&2
+                exit 1
+              fi
+              docker buildx imagetools create --tag "${kargo_reference}" "${image}:${tag}" >&2
+              kargo_digest="$(
+                crane digest "${kargo_reference}"
+              )"
+              [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+              [[ "${kargo_digest}" == "${digest}" ]]
+            fi
+            rm -f "${probe_error}"
+          }
+          publish_kargo_alias "${RELAY_IMAGE}" "${RELAY_DIGEST}"

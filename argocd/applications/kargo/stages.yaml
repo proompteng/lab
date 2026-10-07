@@ -2371,3 +2371,91 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: relay
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    # Freight identity follows the Warehouse's HTTPS source; promotion writes still use the sealed SSH key.
+    - name: freightGitRepo
+      value: https://github.com/proompteng/lab.git
+    - name: pushGitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/relay
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/relay
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: relay
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.pushGitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.freightGitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/relay
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/relay/deployment.yaml
+            updates:
+              - key: spec.template.metadata.annotations.delivery\.proompteng\.ai/source-revision
+                value: '${{ commitFrom(vars.freightGitRepo).ID }}'
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(relay): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: relay
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}

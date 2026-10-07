@@ -707,6 +707,21 @@ sleep 30
 			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.1-sol\n") {
 				t.Fatalf("Codex default model arguments = %q, error = %v", args, err)
 			}
+			if !strings.Contains(string(args), "--ask-for-approval\nnever\n") {
+				t.Fatalf("Codex process did not disable routine approvals: %q", args)
+			}
+			if !strings.Contains(string(args), "mcp_servers.relay.required=false\n") {
+				t.Fatalf("Codex process could block conversations on Relay startup: %q", args)
+			}
+			for _, setting := range []string{
+				`approval_policy="never"`,
+				`apps._default.default_tools_approval_mode="approve"`,
+				`mcp_servers.relay.default_tools_approval_mode="approve"`,
+			} {
+				if !strings.Contains(string(args), setting+"\n") {
+					t.Fatalf("Codex process did not configure tool approvals: missing %q", setting)
+				}
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

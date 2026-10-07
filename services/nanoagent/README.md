@@ -82,7 +82,13 @@ ready, and restarts failed processes with bounded backoff. Every Codex call resp
 captured atomically when its app-server response is received, so thread snapshots can be reconciled with independently
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
-a shared `OPENAI_API_KEY`.
+a shared `OPENAI_API_KEY`. Routine command and file-change approvals use `never` in the process configuration;
+Tengri also selects `never` for conversation start, resume, and turns. App tools default to `approve`, and Relay MCP
+tools use `approve`, so routine tool calls do not require a permission popup. Explicit per-app and per-tool policies
+still take precedence over the app default. Guest isolation and Relay's SpiceDB tool
+authorization remain enforced. The UI does not silently approve or discard outstanding server requests.
+Relay MCP startup is optional: initial backend provisioning or an outage does not block ordinary conversations.
+Connector tools remain unavailable until Relay initializes; there is no direct-provider fallback.
 
 ## Firecracker rootfs and persistent tools
 

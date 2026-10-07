@@ -87,6 +87,7 @@ targets:
       - argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml
       - argocd/applications/temporal/upgrade/**
       - argocd/applications/tengri/network-policies.yaml
+      - argocd/applications/relay/network-policy.yaml
       - argocd/applications/observability/cluster-metrics-alloy-config.river
       - argocd/applications/observability/cluster-metrics-alloy-deployment.yaml
       - argocd/applications/observability/graf-mimir-rules.yaml

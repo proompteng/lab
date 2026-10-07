@@ -8,6 +8,7 @@ resources:
   - spicedb-cluster.yaml
   - playground.yaml
   - ingress.yaml
+  - relay-access.yaml
 configMapGenerator:
   - name: ofz-playground-nginx
     files:
