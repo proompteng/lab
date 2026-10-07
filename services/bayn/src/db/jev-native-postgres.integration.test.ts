@@ -8,9 +8,11 @@ import {
   Exit,
   Fiber,
   Layer,
+  Logger,
   ManagedRuntime,
   Option,
   Redacted,
+  References,
   Result,
   Schema,
 } from 'effect'
@@ -24,8 +26,8 @@ import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority, KillState, OrderSide } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
-import { JevBatchPlanVersion, JevEntryExclusion } from '../jev/batch'
-import { decideJevEntry, decideJevManagement, JevManagementAction } from '../jev/decision'
+import { JevBatchPlanVersion, JevEntryExclusion, makeJevBatchPlan } from '../jev/batch'
+import { decideJevEntry, decideJevManagement, JevManagementAction, makeJevDefinition } from '../jev/decision'
 import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
 import { JevClient, JevError } from '../jev/client'
 import { JevFailure } from '../jev/contract'
@@ -42,6 +44,13 @@ import { ExecutionCycleClosureStoreLive } from './execution-cycle-closure-postgr
 import { nativeJevFixture as fixtureForAccount, nativeJevInference } from '../jev/native.test-support'
 import { evaluateJevObservation, evaluateJevPositionManagement } from '../jev/runtime'
 import { JevExitReason } from '../jev/exit'
+import {
+  decodeJevProtocol,
+  jevBehaviorHash,
+  momentumFirstJevProtocolDocument,
+  momentumFirstJevBehaviorHash,
+} from '../jev/protocol'
+import { makeRuntimeProvenance, makeStrategyProtocolHashResult } from '../contracts'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import {
@@ -68,6 +77,19 @@ const replayAccountId = `replay-${'e'.repeat(64)}`
 const nativeJevFixture = (purpose: JevPurpose = JevPurpose.Entry, observedAt?: string) =>
   fixtureForAccount(purpose, observedAt, replayAccountId)
 const fixture = nativeJevFixture()
+// Persist and recover retained v1 cycles with their original identity even after active composition changes.
+const retainedRuntime = {
+  definition: makeJevDefinition(fixture.protocol),
+  provenance: makeRuntimeProvenance({
+    ...fixtureRuntime.provenance,
+    strategy: {
+      name: 'jev',
+      behaviorHash: jevBehaviorHash,
+      parameterHash: canonicalHashV1(fixture.protocol),
+      parameterSchemaVersion: fixture.protocol.schemaVersion,
+    },
+  }),
+}
 const observed = Date.parse(fixture.observation.payload.observedAt)
 const atObservation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   TestClock.setTime(observed).pipe(Effect.andThen(effect), Effect.provide(TestClock.layer()))
@@ -253,6 +275,122 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     await runtime?.dispose()
   })
 
+  test('inactive momentum-first v2 persists native v4 evidence without evaluating non-signals', async () => {
+    const candidate = fixtureForAccount(
+      JevPurpose.Entry,
+      undefined,
+      replayAccountId,
+      momentumFirstJevProtocolDocument,
+      '4'.repeat(64),
+    )
+    const { protocol } = candidate
+    const calls: string[] = []
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        // The legacy cycle cannot inherit a changed policy. A separately bound cycle is required.
+        expect(Result.isFailure(yield* evaluateJevObservation({ ...nativeInput, protocol }).pipe(Effect.result))).toBe(
+          true,
+        )
+        expect(calls).toEqual([])
+        yield* (yield* CycleStore).acquire(candidate.draft, candidate.draft.window.executionOpenAt)
+        const result = yield* evaluateJevObservation({
+          cycleId: candidate.draft.identity.cycleId,
+          authorityGenerationHash: candidate.observation.payload.authorityGenerationHash,
+          protocol,
+          portfolio: candidate.portfolio,
+          snapshot: candidate.snapshot,
+        })
+        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V4)
+        expect(calls.toSorted()).toEqual(['AAPL', 'AMZN'])
+        expect(result.batchPlan.candidates.filter((candidate) => candidate.status === 'EXCLUDED')).toHaveLength(
+          protocol.candidateSymbols.length - 2,
+        )
+        expect(Result.getOrThrow(decideJevEntry(result)).selectedSymbols).toEqual(['AAPL'])
+        const store = yield* JevBatchStore
+        expect((yield* store.read(result.batchPlan.batchId))?.plan).toEqual(result.batchPlan)
+        const sql = yield* PgClient.PgClient
+        const [row] =
+          yield* sql`SELECT payload FROM intraday_candidate_observations WHERE content_hash = ${result.batchPlan.observationHash}`
+        expect(row?.['payload']).toEqual(result.observation)
+        const { batchId: _, ...rebound } = Result.getOrThrow(
+          makeJevTradingSignalBatch({
+            observation: { ...result.observation, authorityGenerationHash: '0'.repeat(64) },
+            expiresAt: result.batchPlan.expiresAt,
+            planVersion: JevBatchPlanVersion.V4,
+          }),
+        )
+        const wrongIdentity = Result.getOrThrow(
+          makeJevBatchPlan({ ...rebound, observationHash: result.batchPlan.observationHash }),
+        )
+        expect(Result.isFailure(yield* store.begin(wrongIdentity).pipe(Effect.result))).toBe(true)
+        expect(yield* sql`SELECT count(*)::int AS count FROM jev_batch_plans`).toEqual([{ count: 1 }])
+      }).pipe(
+        Effect.provideService(JevClient, {
+          evaluate: (request) =>
+            Clock.currentTimeMillis.pipe(
+              Effect.map((now) => {
+                const symbol = Schema.decodeUnknownSync(
+                  Schema.Struct({ state: Schema.Struct({ candidate: Schema.Struct({ symbol: Schema.String }) }) }),
+                )(request).state.candidate.symbol
+                calls.push(symbol)
+                return nativeJevInference(request, utcInstantFromEpochMillis(now), 'enter')
+              }),
+            ),
+        }),
+        atObservation,
+      ),
+    )
+  })
+
+  test('v2 authority history preserves strategy pairing and append-only constraints', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const protocol = Result.getOrThrow(decodeJevProtocol(momentumFirstJevProtocolDocument))
+        const parameterHash = canonicalHashV1(protocol)
+        const strategyProtocolHash = Result.getOrThrow(
+          makeStrategyProtocolHashResult({
+            name: 'jev',
+            behaviorHash: momentumFirstJevBehaviorHash,
+            parameterHash,
+            parameterSchemaVersion: protocol.schemaVersion,
+          }),
+        )
+        const r = fixture.portfolio.brokerState.reconciliation
+        const insert = (strategy: string, generationHash: string, version: number) => sql`
+        INSERT INTO authority_generations (
+          generation_hash, schema_version, activation_schema_version, previous_generation_hash,
+          maximum, authority_version, activation_source_revision, activation_image_repository,
+          activation_image_digest, strategy_name, strategy_behavior_hash, strategy_parameter_hash,
+          strategy_parameter_schema_version, strategy_protocol_hash, account_id,
+          broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+          risk_policy_hash, proof_plan_hash, reconciliation_id, reconciliation_content_hash,
+          research_plan_hash, activated_at
+        ) VALUES (
+          ${generationHash}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
+          ${nativeInput.authorityGenerationHash}, ${Authority.Execution}, ${version}, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
+          ${`sha256:${'4'.repeat(64)}`}, ${strategy}, ${momentumFirstJevBehaviorHash}, ${parameterHash},
+          ${protocol.schemaVersion}, ${strategyProtocolHash}, ${replayAccountId},
+          'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${'9'.repeat(64)},
+          ${'9'.repeat(64)}, ${r.reconciliationId}, ${r.contentHash}, ${'b'.repeat(64)}, ${fixture.observation.payload.observedAt}
+        )`
+        expect(Result.isFailure(yield* insert('intraday-momentum', '8'.repeat(64), 2).pipe(Effect.result))).toBe(true)
+        yield* insert('jev', '9'.repeat(64), 2)
+        expect(
+          yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v2' }])
+        expect(
+          Result.isFailure(
+            yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
+              Effect.result,
+            ),
+          ),
+        ).toBe(true)
+        expect(yield* sql`SELECT count(*)::int AS count FROM authority_state`).toEqual([{ count: 0 }])
+      }),
+    )
+  })
+
   test.each([JevPurpose.Entry, JevPurpose.Manage])(
     'stale benchmark trades wait without consuming the %s window or preventing fresh inference',
     async (purpose) => {
@@ -422,6 +560,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
   test.each([JevExitReason.MaximumHold, JevExitReason.ProtectiveStop])(
     'deterministic %s exits do not call Jev',
     async (reason) => {
+      const diagnostics: Readonly<Record<string, unknown>>[] = []
+      const logger = Logger.make(({ fiber }) => {
+        const annotations = fiber.getRef(References.CurrentLogAnnotations)
+        if (annotations['schemaVersion'] === 'bayn.jev-protective-quote-diagnostics.v1') diagnostics.push(annotations)
+      })
       await runtime.runPromise(
         Effect.gen(function* () {
           const { portfolio, managed } = yield* seedManagedPosition(
@@ -459,8 +602,21 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             evaluate: () => Effect.die('Deterministic exit unexpectedly called Jev'),
           }),
           atObservation,
+          Effect.provide(Logger.layer([logger])),
         ),
       )
+      if (reason === JevExitReason.ProtectiveStop) {
+        expect(diagnostics).toHaveLength(1)
+        expect(diagnostics[0]).toMatchObject({
+          referenceScope: 'IEX_EXCHANGE_ONLY_NOT_NBBO',
+          feed: 'iex',
+          pairedFeedComparisonAvailable: false,
+          entrySpreadLimitBps: fixture.protocol.maximumSpreadBps,
+        })
+        expect(diagnostics[0]).not.toHaveProperty('bidPrice')
+        expect(diagnostics[0]).not.toHaveProperty('askPrice')
+        expect(diagnostics[0]).not.toHaveProperty('accountId')
+      } else expect(diagnostics).toHaveLength(0)
     },
   )
 
@@ -958,7 +1114,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             fixture.protocol.universe,
             fixture.protocol.executionModel,
           ),
-          strategy: fixtureRuntime,
+          strategy: retainedRuntime,
           reconcile: Effect.sync(() => {
             reconciliations += 1
             return reconciliation
@@ -1074,7 +1230,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             pollIntervalMs: 1000,
             reconciliationIntervalMs: 1000,
             reconciliationPassTimeoutMs: 1000,
-            strategy: fixtureRuntime,
+            strategy: retainedRuntime,
             intradayMarketData: marketData,
           },
           preparation: {

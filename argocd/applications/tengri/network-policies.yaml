@@ -54,6 +54,17 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              authzed.com/cluster: ofz
+              authzed.com/cluster-component: spicedb
+      ports:
+        - protocol: TCP
+          port: 8443
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: istio-system
           podSelector:
             matchLabels:
@@ -89,6 +100,13 @@ spec:
       ports:
         - protocol: TCP
           port: 6443
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri-slot
+      ports:
+        - protocol: TCP
+          port: 8443
     - to:
         - podSelector:
             matchLabels:
@@ -131,6 +149,59 @@ spec:
       ports:
         - protocol: TCP
           port: 8081
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.0.2.0/24
+              - 192.88.99.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 198.51.100.0/24
+              - 203.0.113.0/24
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tengri-slots
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: tengri-slot
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri
+              app.kubernetes.io/component: control-plane
+      ports:
+        - protocol: TCP
+          port: 8443
+  egress:
     - to:
         - namespaceSelector:
             matchLabels:

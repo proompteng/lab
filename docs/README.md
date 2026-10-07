@@ -26,6 +26,7 @@ Start here when deciding which documentation to trust.
 ## Active Architecture Proposals
 
 - Bayn raw Kafka streams and Dorvud/Flink features: [streaming market data design](bayn/streaming-market-data-design.md)
+- Tengri RAM-releasing creation and resume: [KVM and TAP lifecycle design](tengri/kvm-tap-design.md)
 - TypeScript Kubernetes manifest authoring: `cdk8s-manifest-authoring-design.md`
 
 ## Supporting And Historical Corpora

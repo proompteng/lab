@@ -31,7 +31,7 @@ service MicroVMControlPlane {
   rpc GetCodexLogin(GetCodexLoginRequest) returns (CodexLogin);
   rpc StartCodexLogin(StartCodexLoginRequest) returns (CodexLogin);
   rpc CreateCodexThread(CreateCodexThreadRequest) returns (CodexThread);
-  rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (CodexThread);
+  rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (stream CodexHistoryPage);
   rpc SendCodexInput(SendCodexInputRequest) returns (CodexTurn);
   rpc SteerCodexInput(SteerCodexInputRequest) returns (CodexTurn);
   rpc InterruptCodexTurn(InterruptCodexTurnRequest) returns (Empty);
@@ -45,6 +45,17 @@ service MicroVMControlPlane {
 }
 
 message Empty {}
+enum CodexHistoryPart {
+  CODEX_HISTORY_PART_UNSPECIFIED = 0;
+  CODEX_HISTORY_PART_THREAD = 1;
+  CODEX_HISTORY_PART_ITEMS = 2;
+  CODEX_HISTORY_PART_TURNS = 3;
+}
+message CodexHistoryPage {
+  CodexHistoryPart part = 1;
+  string raw_json = 2;
+  uint64 event_sequence = 3;
+}
 message IssueEditorSessionRequest { string agent_id = 1; string window_id = 2; }
 
 enum Architecture {
@@ -72,6 +83,8 @@ message AgentCondition {
 }
 
 message Agent {
+  reserved 14, 16;
+  reserved "expires_at", "pending_image";
   string id = 1;
   string display_name = 2;
   AgentPhase phase = 3;
@@ -85,12 +98,7 @@ message Agent {
   string ready_at = 11;
   string last_activity_at = 12;
   string idle_deadline = 13;
-  // Empty for retained workspaces; legacy CR expiry values are not lifecycle deadlines.
-  string expires_at = 14;
   repeated AgentCondition conditions = 15;
-  // Set while a newer configured Nanoagent digest is waiting for a safe
-  // sleep/resume boundary. The running guest remains on its current image.
-  string pending_image = 16;
   optional uint32 idle_timeout_minutes = 17;
 }
 

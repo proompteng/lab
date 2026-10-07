@@ -17,6 +17,7 @@ import {
 } from '../cycle/runner'
 import { validateCycleLoopInterval } from '../cycle/runner/decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
@@ -104,7 +105,12 @@ export const reconciliationForPreparation = <R>(
   Effect.gen(function* () {
     const previous = yield* Ref.make(initial)
     const preflightAvailable = yield* Ref.make(initial !== undefined)
+    const refreshAndRemember = refresh.pipe(
+      Effect.tap((facts) => Ref.set(previous, facts)),
+      Effect.tap(() => Ref.set(preflightAvailable, false)),
+    )
     return {
+      refresh: refreshAndRemember,
       read: Effect.gen(function* () {
         const cached = yield* Ref.get(previous)
         const firstUse = yield* Ref.getAndSet(preflightAvailable, false)
@@ -120,9 +126,7 @@ export const reconciliationForPreparation = <R>(
           return cached
         if (cached !== undefined && now < (reconciliationReusableUntil(cached, authority, now, maximumAgeMs) ?? now))
           return cached
-        const current = yield* refresh
-        yield* Ref.set(previous, current)
-        return current
+        return yield* refreshAndRemember
       }),
       readForPricing: (minimumRemainingMs: number) =>
         Effect.gen(function* () {
@@ -142,8 +146,7 @@ export const reconciliationForPreparation = <R>(
             now + minimumRemainingMs < Math.min(reusableUntil, freshUntil)
           )
             return { reconciliation: cached, freshUntil: Math.min(reusableUntil, freshUntil) }
-          const reconciliation = yield* refresh
-          yield* Ref.set(previous, reconciliation)
+          const reconciliation = yield* refreshAndRemember
           const refreshedAuthority = yield* readAuthority
           const refreshedAt = yield* Clock.currentTimeMillis
           // Cadence controls reuse, not broker validity: short cadences may still refresh again after pricing.
@@ -257,7 +260,7 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
     const activeStages = (yield* ActiveExecutionStages) ?? new Map<symbol, ActiveExecutionStage>()
     let interruptionRequestedAt = startedAt
     return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
-      withObservedStage('bayn.execution.advance'),
+      withObservedStage('bayn.execution.bounded-pass'),
       Effect.provideService(ActiveExecutionStages, activeStages),
       operationTimeoutOrElse({
         duration: Duration.millis(timeoutMs),
@@ -391,6 +394,31 @@ export const closeQuoteContinuationDelayMs = (
   return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
 }
 
+/** A known future signal boundary may shorten one durable wait, without accelerating missing-data retries. */
+export const decisionReadinessContinuationDelayMs = (
+  result: CycleRunResult,
+  normalDelayMs: number,
+  observedAt: string,
+): number | undefined => {
+  if (
+    result.outcome !== 'RECOVERED' ||
+    result.action !== 'WAITING' ||
+    result.readiness === undefined ||
+    (result.readiness.reason !== DecisionReadinessReason.LookbackWarmup &&
+      result.readiness.reason !== DecisionReadinessReason.SignalWindowObserved) ||
+    result.readiness.availableAt === undefined
+  )
+    return undefined
+  const availableAt = Date.parse(result.readiness.availableAt)
+  const remainingMs = availableAt - Date.parse(observedAt)
+  return Number.isSafeInteger(remainingMs) &&
+    remainingMs > 0 &&
+    remainingMs < normalDelayMs &&
+    availableAt < Date.parse(result.cycle.window.submissionCutoffAt)
+    ? remainingMs
+    : undefined
+}
+
 /** Projection health is checked after the pass; a later failure owns its continuation timing. */
 export const checkAdvancedMarketProjection = <R>(
   advanced: RecoveryFirstCycleAdvance,
@@ -481,7 +509,11 @@ const makeRecoveryFirstCycleDriverEffect = (
     const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
       Effect.gen(function* () {
         const authorityStore = yield* AuthorityGenerationStore
-        const { read: reconcileForAdvance, readForPricing } = yield* reconciliationForPreparation(
+        const {
+          read: reconcileForAdvance,
+          refresh: refreshForAdvance,
+          readForPricing,
+        } = yield* reconciliationForPreparation(
           preflight,
           reconcile,
           authorityStore.readAuthorityState ?? Effect.as(Effect.void, undefined),
@@ -503,7 +535,7 @@ const makeRecoveryFirstCycleDriverEffect = (
             input,
             policy,
             context,
-            { read: reconcileForAdvance, refresh: reconcile },
+            { read: reconcileForAdvance, refresh: refreshForAdvance },
             capability,
           ),
           cyclePassTimeoutMs,
@@ -553,7 +585,10 @@ const makeRecoveryFirstCycleDriverEffect = (
           return Effect.succeed(advanced)
         return currentUtcInstant.pipe(
           Effect.map((observedAt) => {
-            const continuation = closeQuoteContinuationDelayMs(advanced.result, nextDelayMs, observedAt)
+            const cadence = advanced.nextDelayMs ?? nextDelayMs
+            const continuation =
+              closeQuoteContinuationDelayMs(advanced.result, cadence, observedAt) ??
+              decisionReadinessContinuationDelayMs(advanced.result, cadence, observedAt)
             return continuation === undefined ? advanced : { ...advanced, nextDelayMs: continuation }
           }),
         )

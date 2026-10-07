@@ -221,7 +221,7 @@ jobs:
       image_name: proompteng
       package_attr: proompteng-image
       tag: sha-${{ github.sha }}
-      publish_kargo_tag: true
+      publish_kargo_tag: ${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY == 'true' }}
       pr_number: ${{ github.event.pull_request.number && format('{0}-proompteng', github.event.pull_request.number) || '' }}
       latest: true
     secrets: inherit

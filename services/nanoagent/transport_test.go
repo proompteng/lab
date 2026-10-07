@@ -1,22 +1,20 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
-	"encoding/json"
-	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -38,43 +36,39 @@ import (
 const fixtureDomain = "proompteng.ai"
 const controllerID = "spiffe://" + fixtureDomain + "/ns/tengri/sa/tengri"
 const bffID = "spiffe://" + fixtureDomain + "/ns/proompteng/sa/proompteng"
-const guestID = "spiffe://" + fixtureDomain + "/ns/tengri/nanoagent/pod/interop-agent"
+const guestID = "spiffe://" + fixtureDomain + "/ns/tengri/slot/pod/interop-agent"
 
-func TestSPIREAgentServiceEndpoint(t *testing.T) {
-	config, err := guestAgentConfig(fixtureDomain, "/tmp/nanoagent-spire/agent.sock")
-	if err != nil {
-		t.Fatal(err)
+func TestKVMWorkloadAPI(t *testing.T) {
+	if os.Getenv("NANOAGENT_KVM_INTEROP") != "1" {
+		t.Skip("explicit KVM fixture")
 	}
-	var decoded struct {
-		Agent struct {
-			ServerAddress string `json:"server_address"`
-			ServerPort    int    `json:"server_port"`
-		} `json:"agent"`
+	fixture := newWorkloadFixture(t)
+	refresh := func() {
+		expires := time.Now().Add(2 * time.Minute)
+		fixture.publish(t, fixture.certificate(t, controllerID, expires),
+			fixture.certificate(t, guestID, expires), fixture.certificate(t, bffID, expires))
 	}
-	if err := json.Unmarshal(config, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	// The Kubernetes Service maps port 443 to the SPIRE Pod's port 8081.
-	if decoded.Agent.ServerAddress != "spire-server.spire-server.svc.cluster.local" || decoded.Agent.ServerPort != 443 {
-		t.Fatalf("guest must use SPIRE's Kubernetes Service endpoint on port 443, got %s:%d", decoded.Agent.ServerAddress, decoded.Agent.ServerPort)
-	}
-}
-
-func TestSPIREAgentConfiguration(t *testing.T) {
-	binary := os.Getenv("SPIRE_AGENT_VALIDATE_BINARY")
-	if binary == "" {
-		t.Skip("native SPIRE validation runs in the image's spire-agent-smoke stage")
-	}
-	config, err := guestAgentConfig(fixtureDomain, "/tmp/nanoagent-spire/agent.sock")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "agent.conf")
-	if err := os.WriteFile(path, config, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if output, err := exec.Command(binary, "validate", "-config", path).CombinedOutput(); err != nil {
-		t.Fatalf("SPIRE rejected the guest configuration: %v\n%s", err, output)
+	refresh()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				refresh()
+			case <-done:
+				return
+			}
+		}
+	}()
+	fmt.Println("WORKLOAD_ENDPOINT=" + fixture.endpoint)
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		if scanner.Text() == "rotate" {
+			refresh()
+		}
 	}
 }
 
@@ -126,7 +120,7 @@ func newWorkloadFixture(t *testing.T) *workloadFixture {
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
 		SerialNumber: big.NewInt(1), IsCA: true, BasicConstraintsValid: true,
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(3 * time.Hour),
 		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 	}, &x509.Certificate{SerialNumber: big.NewInt(1), IsCA: true}, &key.PublicKey, key)
 	if err != nil {
@@ -225,12 +219,9 @@ func (fixture *workloadFixture) source(t *testing.T, id string) *workloadapi.X50
 func secureRPCTestServer(t *testing.T, api *apiServer, fixture *workloadFixture) *httptest.Server {
 	t.Helper()
 	api.evidence.MicroVMID = "interop-agent"
-	identity := &guestIdentity{source: fixture.source(t, guestID), podUID: "interop-agent"}
-	api.identity = identity
-	config, err := identity.tlsConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := fixture.source(t, guestID)
+	config := tlsconfig.MTLSServerConfig(source, source, tlsconfig.AuthorizeID(spiffeid.RequireFromString(controllerID)))
+	config.NextProtos = []string{"h2", "http/1.1"}
 	server := httptest.NewUnstartedServer(newHandler(api))
 	server.EnableHTTP2 = true
 	server.Config.Protocols = guestHTTPProtocols()
@@ -242,12 +233,12 @@ func secureRPCTestServer(t *testing.T, api *apiServer, fixture *workloadFixture)
 	return server
 }
 
-func TestGuestMutualTLSRequiresTheExactControllerAndGuest(t *testing.T) {
+func TestSupervisorMutualTLSRequiresTheExactControllerAndSlot(t *testing.T) {
 	fixture := newWorkloadFixture(t)
 	api := testAPIServer(t)
 	server := secureRPCTestServer(t, api, fixture)
 	source := fixture.source(t, controllerID)
-	for _, peer := range []string{guestID, "spiffe://" + fixtureDomain + "/ns/tengri/nanoagent/pod/previous-pod"} {
+	for _, peer := range []string{guestID, "spiffe://" + fixtureDomain + "/ns/tengri/slot/pod/previous-pod"} {
 		config := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeID(spiffeid.RequireFromString(peer)))
 		connection, err := grpc.NewClient(server.Listener.Addr().String(), grpc.WithTransportCredentials(credentials.NewTLS(config)))
 		if err != nil {
@@ -290,7 +281,7 @@ func TestPlainHealthListenerCannotDispatchGuestRPCs(t *testing.T) {
 	}
 }
 
-func TestGuestRejectsExpiredUntrustedAndPlaintextClients(t *testing.T) {
+func TestSupervisorRejectsExpiredUntrustedAndPlaintextClients(t *testing.T) {
 	fixture := newWorkloadFixture(t)
 	server := secureRPCTestServer(t, testAPIServer(t), fixture)
 	source := fixture.source(t, controllerID)
@@ -325,7 +316,7 @@ func TestGuestRejectsExpiredUntrustedAndPlaintextClients(t *testing.T) {
 	}
 }
 
-func TestGuestIdentityRotatesWithoutRestartingTheTLSListener(t *testing.T) {
+func TestSupervisorIdentityRotatesWithoutRestartingTheTLSListener(t *testing.T) {
 	fixture := newWorkloadFixture(t)
 	api := testAPIServer(t)
 	server := secureRPCTestServer(t, api, fixture)
@@ -355,69 +346,5 @@ func TestGuestIdentityRotatesWithoutRestartingTheTLSListener(t *testing.T) {
 			t.Fatal("server did not use the renewed SVID")
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-	if !api.identity.ready() {
-		t.Fatal("renewed identity is not ready")
-	}
-}
-
-func TestSpireBootstrapRejectsAnotherPodAndPrivateMaterial(t *testing.T) {
-	fixture := newWorkloadFixture(t)
-	identity := &guestIdentity{podUID: "current-pod"}
-	bundle := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: fixture.ca.Raw})
-	if err := identity.refreshBootstrap("previous-pod", []byte("header.payload.signature"), bundle); err == nil {
-		t.Fatal("another Pod was accepted")
-	}
-	if err := identity.refreshBootstrap("current-pod", fixtureAttestationToken(t, "current-pod", time.Now().Add(time.Minute)), []byte("-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----")); err == nil {
-		t.Fatal("private material was accepted as a bundle")
-	}
-}
-
-func fixtureAttestationToken(t *testing.T, podUID string, expires time.Time) []byte {
-	t.Helper()
-	claims, err := json.Marshal(map[string]any{"exp": expires.Unix(), "aud": []string{"spire-server"}, "kubernetes.io": map[string]any{
-		"namespace": "tengri", "pod": map[string]any{"uid": podUID}, "serviceaccount": map[string]any{"name": "nanoagent"},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return []byte("fixture." + base64.RawURLEncoding.EncodeToString(claims) + ".fixture-signature")
-}
-
-func TestGuestRestartKeepsTheFreshPodBoundAttestationToken(t *testing.T) {
-	now := time.Now()
-	expired := fixtureAttestationToken(t, "current-pod", now.Add(-time.Minute))
-	fresh := fixtureAttestationToken(t, "current-pod", now.Add(10*time.Minute))
-	wrong := fixtureAttestationToken(t, "previous-pod", now.Add(time.Hour))
-	selected, err := freshestAttestationToken("current-pod", expired, fresh, now)
-	if err != nil || string(selected) != string(fresh) {
-		t.Fatalf("restart lost the refreshed token: %v", err)
-	}
-	selected, err = freshestAttestationToken("current-pod", fresh, wrong, now)
-	if err != nil || string(selected) != string(fresh) {
-		t.Fatalf("another Pod's cached token was selected: %v", err)
-	}
-	if _, err := freshestAttestationToken("current-pod", expired, expired, now); err == nil {
-		t.Fatal("expired bootstrap credentials were accepted")
-	}
-	fixture := newWorkloadFixture(t)
-	identity := &guestIdentity{podUID: "current-pod", directory: t.TempDir()}
-	bundle := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: fixture.ca.Raw})
-	if err := identity.refreshBootstrap("current-pod", fresh, bundle); err != nil {
-		t.Fatal(err)
-	}
-	for name, expected := range map[string][]byte{"token": fresh, "bundle.pem": bundle} {
-		path := filepath.Join(identity.directory, name)
-		actual, err := os.ReadFile(path)
-		if err != nil || string(actual) != string(expected) {
-			t.Fatalf("%s was not refreshed: %v", name, err)
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != 0600 {
-			t.Fatalf("%s permissions are %o", name, info.Mode().Perm())
-		}
 	}
 }

@@ -12,6 +12,7 @@ import { loadStrategyExecutionRiskPolicy, makeMutationAutonomousCycleStartup } f
 
 export interface TradingEngineInput {
   readonly authority: ExecutionAuthority
+  readonly riskPolicyHash: string
   readonly cycle: ObserveAutonomousCycleInput & {
     readonly intradayMarketData: IntradayMarketDataService
     readonly executionCycleClosureStore: ExecutionCycleClosureStoreShape
@@ -29,7 +30,13 @@ export const makeTradingEngine = (input: TradingEngineInput) =>
         operation: 'trading-engine',
         message: 'Trading engine cycle and broker authority must use the same account',
       })
-    const riskPolicy = yield* loadStrategyExecutionRiskPolicy(input.cycle.accountId, input.cycle.strategy)
+    const brokerEnvironment = input.authority.brokerIdentity.environment
+    const riskPolicy = yield* loadStrategyExecutionRiskPolicy(
+      input.cycle.accountId,
+      input.cycle.strategy,
+      brokerEnvironment,
+      input.riskPolicyHash,
+    )
     const executionProgram = yield* Effect.fromResult(
       makeExecutionProgram(input.authority, {
         ...input.execution,
@@ -49,6 +56,9 @@ export const makeTradingEngine = (input: TradingEngineInput) =>
     )
     return {
       executionProgram,
-      startCycle: makeMutationAutonomousCycleStartup({ ...input.cycle, executionProgram }, input.executionMode),
+      startCycle: makeMutationAutonomousCycleStartup(
+        { ...input.cycle, brokerEnvironment, riskPolicyHash: input.riskPolicyHash, executionProgram },
+        input.executionMode,
+      ),
     }
   })

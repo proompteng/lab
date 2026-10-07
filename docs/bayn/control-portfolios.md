@@ -1,9 +1,15 @@
 # Full-session development control portfolios
 
-`services/bayn/tools/control-study.ts` evaluates deterministic controls over complete retained sessions. Each
+`bayn-control-study` evaluates deterministic controls over complete retained sessions. Each
 portfolio owns cash, inventory, execution fees, daily turnover, exit triggers, and completed position episodes.
 It evaluates opportunities from its own position state, including periods when the original Jev replay held a
 position. It never synthesizes Jev responses or supplies production trading authority.
+
+The Bayn image installs this command and its compiled Node entry point. For local work, build the component and run
+`node services/bayn/dist/control-study-command.js` with the same flags. The former source-tree tool is removed.
+`--help` requires no credentials. `--mode preflight` verifies the supplied source and writes coverage diagnostics
+without requesting model evaluations. An incomplete preflight writes its diagnostic and exits unsuccessfully.
+Installing the command does not schedule a capture, run a study, or qualify the input.
 
 This command produces development evidence. It does not satisfy the frozen
 [Jev acceptance protocol](jev-migration-acceptance-v2.json). Management must be selected explicitly: `MECHANICAL`
@@ -258,7 +264,7 @@ The empty object above is a placeholder for the validated native document. Freez
 scenarios before viewing their outcomes. Preserve negative and incomplete results.
 
 ```sh
-bun services/bayn/tools/control-study.ts \
+bayn-control-study \
   --input /absolute/path/control-input.json \
   --input-sha256 <sha256-of-input-bytes> \
   --arrivals /absolute/path/arrivals.ndjson.gz \

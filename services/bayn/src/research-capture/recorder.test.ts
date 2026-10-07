@@ -49,6 +49,35 @@ const requireSeal = (seal: ResearchCaptureSeal | undefined): ResearchCaptureSeal
   return seal
 }
 
+test('a failed idle timer invalidates capture without waiting for a notification or failing its owner', () =>
+  run(
+    Effect.gen(function* () {
+      const saved = memory()
+      const clock = yield* Clock.Clock
+      const entered = yield* Deferred.make<void>()
+      const result = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const recorder = yield* makeResearchCaptureRecorder(saved.store, options)
+          yield* Deferred.await(entered)
+          yield* Effect.yieldNow
+          expect((yield* recorder.status).invalidations).toContain(CaptureInvalidation.Interrupted)
+          return 'owner succeeded'
+        }),
+      ).pipe(
+        Effect.provideService(Clock.Clock, {
+          currentTimeMillisUnsafe: clock.currentTimeMillisUnsafe.bind(clock),
+          currentTimeMillis: clock.currentTimeMillis,
+          currentTimeNanosUnsafe: clock.currentTimeNanosUnsafe.bind(clock),
+          currentTimeNanos: clock.currentTimeNanos,
+          monotonicTimeNanosUnsafe: clock.monotonicTimeNanosUnsafe.bind(clock),
+          monotonicTimeNanos: clock.monotonicTimeNanos,
+          sleep: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.die('idle timer defect'))),
+        }),
+      )
+      expect(result).toBe('owner succeeded')
+    }),
+  ))
+
 test.each(['automatic', 'explicit', 'cancelled'] as const)(
   'a clock defect during %s finalization creates no invented seal and cannot change owner outcome',
   async (mode) => {
@@ -141,6 +170,50 @@ test.each(['empty', 'idle', 'flushed'] as const)('finalization never waits for a
       expect(seal.invalidations).toEqual([])
     }),
   ),
+)
+
+test.each([false, true])(
+  'the write deadline invalidates admission before uninterruptible commit cleanup (raw=%s)',
+  (raw) =>
+    run(
+      Effect.gen(function* () {
+        const saved = memory()
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const recorder = yield* makeResearchCaptureRecorder(
+          {
+            ...saved.store,
+            append: (bytes) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, undefined)
+                yield* Deferred.await(release)
+                yield* saved.store.append(bytes)
+              }).pipe(Effect.uninterruptible),
+          },
+          { ...options, maximumQueuedBytes: 131_072 },
+          raw ? { putVerified: () => Effect.void } : undefined,
+        )
+        recorder.record(captureEvent('STARTED'))
+        yield* TestClock.adjust(options.flushIntervalMs)
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(options.writeTimeoutMs)
+        const deadline = yield* recorder.status
+        recorder.record(captureEvent('STOPPED'))
+        const afterRecord = yield* recorder.status
+        const commitsBeforeRelease = saved.chunks.length
+        yield* Deferred.succeed(release, undefined)
+        yield* TestClock.adjust(1)
+        const cleaned = yield* recorder.status
+        expect(commitsBeforeRelease).toBe(0)
+        expect(saved.chunks).toHaveLength(1)
+        expect(cleaned.persistedReceipts).toBe(0)
+        expect(cleaned.invalidations).toContain(CaptureInvalidation.Persistence)
+        expect(deadline.invalidations).toContain(CaptureInvalidation.Persistence)
+        expect(afterRecord.retainedPayloadBytes).toBe(deadline.retainedPayloadBytes)
+        expect(afterRecord.retainedReceipts).toBe(deadline.retainedReceipts)
+        expect(afterRecord.observedReceipts).toBe(deadline.observedReceipts + 1)
+      }),
+    ),
 )
 
 test('capture admission is synchronous, immutable, and finalized exactly once', () =>

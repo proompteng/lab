@@ -48,7 +48,10 @@ export const accountBrokerFees = (
         : yield* sql<Record<string, unknown>>`
       SELECT to_char(event.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at
       FROM account_snapshots AS snapshot JOIN broker_events AS event ON event.event_id = snapshot.event_id
-      WHERE snapshot.account_id = ${accountId} ORDER BY event.source_sequence LIMIT 1
+      WHERE snapshot.account_id = ${accountId}
+        AND event.account_id = snapshot.account_id
+        AND event.event_kind = 'ACCOUNT'
+      ORDER BY event.source_sequence LIMIT 1
     `
     const openings = yield* fromResult(
       Schema.decodeUnknownResult(

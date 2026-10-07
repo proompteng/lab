@@ -6064,9 +6064,15 @@ test('a pending broker cut waits without cycle or order I/O and rechecks expiry 
   )
 })
 
-test.each([false, true])(
-  'reuses the current pass preflight and retains waiting evidence for bound=%s',
-  async (bound) => {
+test.each([
+  [false, DecisionReadinessReason.SnapshotCoverage, undefined, undefined],
+  [true, DecisionReadinessReason.SnapshotCoverage, undefined, undefined],
+  [false, DecisionReadinessReason.SignalWindowObserved, 7_000, 7_000],
+  [false, DecisionReadinessReason.LookbackWarmup, 7_000, 7_000],
+  [false, DecisionReadinessReason.SignalWindowObserved, -1_000, undefined],
+] as const)(
+  'reuses preflight and retains waiting evidence for bound=%s reason=%s boundary=%s delay=%s',
+  async (bound, reason, boundaryDelayMs, expectedNextDelayMs) => {
     const fixture = await executionLifecycleFixture()
     const services = makeExactReconciliationServices(Authority.Execution)
     let reconciliationWrites = 0
@@ -6091,9 +6097,12 @@ test.each([false, true])(
       block: forbidden,
     }
     const readiness = {
-      reason: DecisionReadinessReason.SnapshotCoverage,
+      reason,
       message: 'intraday symbol lacks the complete rolling lookback baseline',
       symbol: 'IWM',
+      ...(boundaryDelayMs === undefined
+        ? {}
+        : { availableAt: utcInstantFromEpochMillis(Date.parse(evaluatedAt) + boundaryDelayMs) }),
     }
     const counts = await Effect.runPromise(
       Effect.gen(function* () {
@@ -6125,11 +6134,14 @@ test.each([false, true])(
           recoveryAction: 'WAITING',
           ...(bound ? { waitReason: 'reconciliation-not-later' } : { readiness }),
         })
+        expect(first.nextDelayMs).toBe(expectedNextDelayMs)
         const firstCount = reconciliationWrites
-        yield* driver.advance
+        const second = yield* driver.advance
+        expect(second.nextDelayMs).toBe(expectedNextDelayMs)
         const secondCount = reconciliationWrites
         yield* TestClock.adjust(30_000)
-        yield* driver.advance
+        const elapsed = yield* driver.advance
+        expect(elapsed.nextDelayMs).toBeUndefined()
         return [firstCount, secondCount, reconciliationWrites]
       }).pipe(
         Effect.provideService(BrokerRead, services.brokerRead),
