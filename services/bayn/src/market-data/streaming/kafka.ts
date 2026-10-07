@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { canonicalHashV1, sha256 } from '../../hash'
+import { canonicalHashV1Result, sha256 } from '../../hash'
 import {
   CaptureDisposition,
   CaptureIntervalRequestSchema,
@@ -483,10 +483,13 @@ export const makeKafkaMarketProjection = (
             const inventory = (rows: readonly { readonly topic: string; readonly partition: number }[]) =>
               rows.map(({ topic, partition }) => `${topic}:${partition}`).join('|')
             const expected = inventory(decoded.expectedPartitions)
+            const universeHash = yield* Effect.fromResult(canonicalHashV1Result(universe)).pipe(
+              Effect.mapError((cause) => failure('read', 'Cannot hash the assigned capture universe', cause)),
+            )
             if (
               decoded.coverageStartMs < assignedAtMs ||
               decoded.coverageStartMs > decoded.coverageEndMs ||
-              decoded.universeHash !== canonicalHashV1(universe) ||
+              decoded.universeHash !== universeHash ||
               expected !== inventory(partitions) ||
               new Set(decoded.expectedPartitions.map(({ topic, partition }) => `${topic}:${partition}`)).size !==
                 partitions.length
