@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -26,6 +27,9 @@ type apiConfig struct {
 	codexBinary         string
 	codeServerBinary    string
 	codeServerBootstrap string
+	browserBinary       string
+	browserBootstrap    string
+	browserAssets       string
 	evidence            evidence
 	homeRoot            string
 	shell               string
@@ -37,6 +41,7 @@ type apiServer struct {
 	bootstrapToken   string
 	codex            *codexSupervisor
 	editor           *editorSupervisor
+	browser          *browserSupervisor
 	evidence         evidence
 	fileMutationMu   sync.RWMutex
 	fileWatcher      *fileWatcher
@@ -81,12 +86,20 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 		terminals:        newTerminalManager(workspace, config.shell, config.homeRoot),
 		workspace:        workspace,
 	}
-	if config.startCodex {
-		server.codex = newCodexSupervisor(config.codexBinary, workspace.realRoot)
-		server.codex.start()
-	}
 	if config.codeServerBinary != "" {
 		server.editor = newEditorSupervisor(config.codeServerBinary, config.codeServerBootstrap, config.homeRoot, workspace)
+	}
+	if config.browserBinary != "" {
+		server.browser = newBrowserSupervisor(config.browserBinary, config.browserBootstrap, config.homeRoot, filepath.Join(workspace.realRoot, "Downloads"), config.browserAssets)
+		if err := server.browser.listenCUA(); err != nil {
+			server.close()
+			return nil, fmt.Errorf("configure browser control: %w", err)
+		}
+	}
+	if config.startCodex {
+		server.codex = newCodexSupervisor(config.codexBinary, workspace.realRoot)
+		server.codex.browserMCP = server.browser != nil
+		server.codex.start()
 	}
 	server.evidence.GuestProtocolVersion = guestProtocolVersion
 	server.rpc = server.newRPCServer()
@@ -112,6 +125,9 @@ func (server *apiServer) beginShutdown() {
 	}
 	if server.editor != nil {
 		server.editor.close()
+	}
+	if server.browser != nil {
+		server.browser.close()
 	}
 }
 
@@ -148,7 +164,7 @@ func writeAPIError(writer http.ResponseWriter, status int, message string) {
 }
 
 func validatePreviewPort(port int) error {
-	if port < 1024 || port > 65535 || port == 8080 || port == 8443 || port == editorBridgePort {
+	if port < 1024 || port > 65535 || port == 8080 || port == 8443 || port == editorBridgePort || port == browserPort {
 		return fmt.Errorf("preview port must be between 1024 and 65535 and cannot use a reserved guest port")
 	}
 	return nil

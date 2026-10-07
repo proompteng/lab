@@ -27,7 +27,8 @@ import {
   windowIdForOpen,
   windowReducer,
 } from '@/lib/tengri/window-manager'
-import { ChromeApp, useExternalPreviewLifecycle } from './chrome-app'
+import { ChromeApp } from './chrome-app'
+import { AgentChat } from './agent-chat'
 import {
   beginTengriLifecycleTransition,
   getTengriGuestOperationSnapshot,
@@ -68,6 +69,7 @@ type DesktopIdentityLease = {
 
 const MemoizedFinderApp = memo(FinderApp)
 const MemoizedChromeApp = memo(ChromeApp)
+const MemoizedAgentChat = memo(AgentChat)
 const MemoizedTerminalApp = memo(TerminalApp)
 const MemoizedSettingsApp = memo(SettingsApp)
 
@@ -250,7 +252,7 @@ export function ReadyDesktop({
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
   const [windowState, dispatch] = useReducer(windowReducer, { x: 0, y: 0, width: 1_280, height: 760 }, (viewport) =>
-    initialWindowState(viewport, ['finder', 'chrome']),
+    initialWindowState(viewport, ['finder', 'tengri']),
   )
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
   const [error, setError] = useState('')
@@ -276,7 +278,6 @@ export function ReadyDesktop({
   }, [])
   const windowStateRef = useRef(windowState)
   const dirtyCodeWindowsRef = useRef(dirtyCodeWindows)
-  const openExternalPreview = useExternalPreviewLifecycle(agent.id, previewGatewayOrigin)
 
   useLayoutEffect(() => {
     windowStateRef.current = windowState
@@ -365,13 +366,13 @@ export function ReadyDesktop({
       setHydratedDesktopId(null)
       dispatch({
         type: 'hydrate',
-        state: initialWindowState(measuredViewport, ['finder', 'chrome']),
+        state: initialWindowState(measuredViewport, ['finder', 'tengri']),
         viewport: measuredViewport,
       })
       return
     }
 
-    let state: WindowManagerState = initialWindowState(measuredViewport, ['finder', 'chrome'])
+    let state: WindowManagerState = initialWindowState(measuredViewport, ['finder', 'tengri'])
     try {
       const persisted = sessionStorage.getItem(desktopLayoutStorageKey(agent.id, desktopId))
       if (persisted) state = JSON.parse(persisted) as WindowManagerState
@@ -424,8 +425,6 @@ export function ReadyDesktop({
   const handleCodeDirtyChange = useCallback((windowId: string, dirty: boolean) => {
     setDirtyCodeWindows((current) => updateDirtyCodeWindows(current, windowId, dirty))
   }, [])
-
-  const closeChromeWindow = useCallback((id: string) => closeWindow({ app: 'chrome', id }), [closeWindow])
 
   useEffect(() => {
     if (dirtyCodeWindows.size === 0) {
@@ -580,6 +579,7 @@ export function ReadyDesktop({
   const openApp = useCallback(
     (app: TengriApp) => {
       if (app === 'chrome') openChrome()
+      else if (app === 'tengri') void openDesktopApp('tengri')
       else if (app === 'finder') openFinder()
       else if (app === 'code') openCode()
       else if (app === 'terminal') openTerminal()
@@ -587,7 +587,7 @@ export function ReadyDesktop({
       setMenuOpen(null)
       setSpotlightOpen(false)
     },
-    [openChrome, openCode, openFinder, openSettings, openTerminal],
+    [openChrome, openCode, openFinder, openSettings, openTerminal, openDesktopApp],
   )
 
   const newActiveWindow = useCallback(() => {
@@ -815,13 +815,12 @@ export function ReadyDesktop({
                 />
               ) : desktopWindow.app === 'chrome' ? (
                 <MemoizedChromeApp
-                  active={desktopWindow.id === windowState.activeWindowId}
                   agentId={agent.id}
-                  onCloseWindow={closeChromeWindow}
-                  onOpenExternalPreview={openExternalPreview}
+                  onFocus={() => dispatch({ type: 'focus', id: desktopWindow.id })}
                   previewGatewayOrigin={previewGatewayOrigin}
-                  windowId={desktopWindow.id}
                 />
+              ) : desktopWindow.app === 'tengri' ? (
+                <MemoizedAgentChat active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
               ) : desktopWindow.app === 'code' ? (
                 <MemoizedCodeEditor
                   key={JSON.stringify([user.id, agent.id, agent.createdAt])}

@@ -1,4 +1,4 @@
-export type TengriApp = 'chrome' | 'code' | 'finder' | 'settings' | 'terminal'
+export type TengriApp = 'chrome' | 'code' | 'finder' | 'settings' | 'terminal' | 'tengri'
 export type WindowMode = 'maximized' | 'minimized' | 'normal'
 export type ResizeEdge = 'e' | 'n' | 'ne' | 'nw' | 's' | 'se' | 'sw' | 'w'
 
@@ -43,6 +43,7 @@ const WINDOW_INSET = 8
 export const APP_TITLES: Record<TengriApp, string> = {
   finder: 'Finder',
   chrome: 'Chrome',
+  tengri: 'Tengri',
   code: 'Code',
   terminal: 'Terminal',
   settings: 'Settings',
@@ -50,7 +51,7 @@ export const APP_TITLES: Record<TengriApp, string> = {
 
 export function initialWindowState(
   viewport: Bounds,
-  initialApps: readonly TengriApp[] = ['finder', 'chrome'],
+  initialApps: readonly TengriApp[] = ['finder', 'tengri'],
 ): WindowManagerState {
   const apps = initialApps.slice(0, MAX_DESKTOP_WINDOWS)
   const windows = apps.map((app, index) => {

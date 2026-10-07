@@ -28,3 +28,14 @@ The menu bar, startup header, and lifecycle transition header use Pictogrammers'
 [`Templarian/MaterialDesign-SVG` at `9e04201d4557e729822fb57f62a316c3dea1d4a8`](https://github.com/Templarian/MaterialDesign-SVG/blob/9e04201d4557e729822fb57f62a316c3dea1d4a8/svg/fruit-pear.svg),
 retrieved on 2026-09-08. CSS displays it in white without changing its geometry. The upstream notice is retained in
 [`pictogrammers-LICENSE.txt`](pictogrammers-LICENSE.txt), with the full icon license in [`Apache-2.0.txt`](Apache-2.0.txt).
+
+`tengri.png` is original generated artwork created with OpenAI Image Gen on 2026-10-07, with transparent outer
+corners. The cobalt and sky blue tile has a white T shaped like a sky bird. Generation prompt:
+
+> Generate a single polished macOS Dock application icon for Tengri, an AI developer agent. A softly rounded square
+> app tile, luminous cobalt blue and pale sky blue glass/enamel, subtle restrained dimensional rim, centered clean
+> bold white stylized capital T shaped like a sky bird with a broad symmetrical wing top and vertical stem. Minimal
+> geometric silhouette, immediately legible at 32px, confident native macOS app icon craftsmanship, restrained soft
+> shading, no busy detail, no text other than the T monogram, no badge, no mockup, no surrounding background. Centered
+> tile fills 86% of canvas. True transparent background outside the rounded tile and its tiny soft shadow. Output only
+> the isolated finished icon.

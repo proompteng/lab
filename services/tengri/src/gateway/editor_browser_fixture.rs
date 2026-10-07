@@ -89,6 +89,34 @@ async fn editor_browser_acceptance_fixture() {
             )
         }
     });
+    let browser_state = state.clone();
+    let browser = get(move || {
+        let state = browser_state.clone();
+        async move {
+            let guest = GuestClient::for_agent(
+                state.client.clone(),
+                "tengri",
+                "editor-fixture",
+                &crate::identity::WorkloadIdentity::Fixture,
+            )
+            .await
+            .unwrap();
+            guest.open_browser().await.unwrap();
+            let ticket = state
+                .tickets
+                .issue_preview(
+                    &"a".repeat(64),
+                    "editor-fixture",
+                    crate::guest::BROWSER_PORT,
+                    "/",
+                    "",
+                )
+                .unwrap();
+            axum::Json(
+                json!({"id":ticket.id,"launchUrl":ticket.url,"expiresAt":ticket.expires_at,"previewOrigin":state.preview_origin.origin(&ticket.id)}),
+            )
+        }
+    });
     let files_state = state.clone();
     let files = get(move |Query(query): Query<HashMap<String, String>>| {
         let state = files_state.clone();
@@ -132,6 +160,7 @@ async fn editor_browser_acceptance_fixture() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let control = control_router(state.clone())
         .route("/_test/editor", issue)
+        .route("/_test/browser", browser)
         .route("/_test/files", files)
         .route("/_test/revoke", revoke)
         .route("/_test/revoke-editors", revoke_editors)

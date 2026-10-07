@@ -143,6 +143,7 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
           bunx playwright install --with-deps chromium
+          sudo apt-get install --yes --no-install-recommends tigervnc-standalone-server openbox scrot x11-utils xauth xdotool
           bun run --cwd apps/landing test
           bun run --cwd apps/landing test:e2e
           bun run --cwd apps/landing format:check
@@ -164,6 +165,8 @@ jobs:
             /tmp/tengri-vscode.*/desktop.log
             /tmp/tengri-vscode.*/proxy.log
             /tmp/tengri-vscode.*/home/.tengri/vscode/server.log
+            /tmp/tengri-vscode.*/home/.tengri/browser/server.log
+            /tmp/tengri-vscode.*/browser-results
           if-no-files-found: ignore
           retention-days: 7
 

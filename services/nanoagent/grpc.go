@@ -103,6 +103,15 @@ func protoTerminal(session terminalSessionView) *pb.TerminalSession {
 func (server *guestRPCServer) GetInfo(context.Context, *pb.Empty) (*pb.GuestInfo, error) {
 	return &pb.GuestInfo{MicrovmId: server.api.evidence.MicroVMID, ProtocolVersion: guestProtocolVersion}, nil
 }
+func (server *guestRPCServer) OpenBrowser(ctx context.Context, _ *pb.Empty) (*pb.Browser, error) {
+	if server.api.browser == nil {
+		return nil, status.Error(codes.Unavailable, "Chromium is not installed in this guest. Sleep and resume the agent to use the current guest image.")
+	}
+	if err := server.api.browser.ensure(ctx); err != nil {
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
+	return &pb.Browser{Port: browserPort}, nil
+}
 func (server *guestRPCServer) OpenEditor(ctx context.Context, _ *pb.Empty) (*pb.Editor, error) {
 	if server.api.editor == nil {
 		return nil, status.Error(codes.Unavailable, "VS Code is not installed in this guest. Sleep and resume the agent to install the current guest image.")
