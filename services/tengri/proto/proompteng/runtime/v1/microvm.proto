@@ -31,7 +31,7 @@ service MicroVMControlPlane {
   rpc GetCodexLogin(GetCodexLoginRequest) returns (CodexLogin);
   rpc StartCodexLogin(StartCodexLoginRequest) returns (CodexLogin);
   rpc CreateCodexThread(CreateCodexThreadRequest) returns (CodexThread);
-  rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (CodexThread);
+  rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (stream CodexHistoryPage);
   rpc SendCodexInput(SendCodexInputRequest) returns (CodexTurn);
   rpc SteerCodexInput(SteerCodexInputRequest) returns (CodexTurn);
   rpc InterruptCodexTurn(InterruptCodexTurnRequest) returns (Empty);
@@ -45,6 +45,17 @@ service MicroVMControlPlane {
 }
 
 message Empty {}
+enum CodexHistoryPart {
+  CODEX_HISTORY_PART_UNSPECIFIED = 0;
+  CODEX_HISTORY_PART_THREAD = 1;
+  CODEX_HISTORY_PART_ITEMS = 2;
+  CODEX_HISTORY_PART_TURNS = 3;
+}
+message CodexHistoryPage {
+  CodexHistoryPart part = 1;
+  string raw_json = 2;
+  uint64 event_sequence = 3;
+}
 message IssueEditorSessionRequest { string agent_id = 1; string window_id = 2; }
 
 enum Architecture {

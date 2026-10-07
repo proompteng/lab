@@ -1,4 +1,5 @@
 import type { TengriAction, TengriDesktopSnapshot, TengriErrorCode } from '@/lib/tengri/types'
+import { readCodexHistory } from '@/lib/tengri/codex-history'
 
 export class TengriRequestError extends Error {
   readonly status: number
@@ -100,6 +101,14 @@ async function postTengriAction<Result>(action: TengriAction, options?: TengriAc
     keepalive: options?.keepalive,
     signal: options?.signal,
   })
+  if (action.action === 'resume-thread' && response.ok) {
+    return (await readCodexHistory(response, action.threadId, options?.signal, (record) =>
+      requestFailure(
+        record,
+        typeof record.status === 'number' && record.status >= 400 && record.status <= 599 ? record.status : 503,
+      ),
+    )) as Result
+  }
   const payload = await decodeResponse<{ result: Result }>(response)
   return payload.result
 }
@@ -140,20 +149,24 @@ function deleteUnusedGuestOperationScope(agentId: string, scope: GuestOperationS
 async function decodeResponse<Result>(response: Response): Promise<Result> {
   const payload: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    const record = typeof payload === 'object' && payload !== null ? payload : {}
-    const message = 'error' in record && typeof record.error === 'string' ? record.error : ''
-    const code =
-      'code' in record &&
-      ((response.status === 404 && record.code === 'conversation_not_found') ||
-        (response.status === 409 && record.code === 'file_conflict') ||
-        (response.status === 412 && record.code === 'model_selection_unavailable') ||
-        (response.status === 429 && record.code === 'capacity_full'))
-        ? record.code
-        : undefined
-    throw new TengriRequestError(message || `Tengri request failed with ${response.status}`, response.status, code)
+    throw requestFailure(payload, response.status)
   }
   if (!payload) throw new Error('Tengri returned an empty response')
   return payload as Result
+}
+
+function requestFailure(payload: unknown, status: number) {
+  const record = typeof payload === 'object' && payload !== null ? payload : {}
+  const message = 'error' in record && typeof record.error === 'string' ? record.error : ''
+  const code =
+    'code' in record &&
+    ((status === 404 && record.code === 'conversation_not_found') ||
+      (status === 409 && record.code === 'file_conflict') ||
+      (status === 412 && record.code === 'model_selection_unavailable') ||
+      (status === 429 && record.code === 'capacity_full'))
+      ? record.code
+      : undefined
+  return new TengriRequestError(message || `Tengri request failed with ${status}`, status, code)
 }
 
 function isAbortSignal(value: AbortSignal | TengriActionOptions | undefined): value is AbortSignal {

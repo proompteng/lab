@@ -107,8 +107,10 @@ the new path, size, and revision.
 Paginated Codex conversations resume with `excludeTurns: true`, then load `thread/items/list` and metadata-only
 `thread/turns/list` in ascending pages. Each item carries the event cursor captured with its page; the desktop uses
 that cursor to discard covered replay while retaining updates that arrive after an earlier page. The initial resume
-cursor remains the baseline for new items. Retrieval is bounded to 90 seconds, 256 pages, and 10 MiB, and any failed
-page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
+cursor remains the baseline for new items. The controller streams metadata, item pages, and turn pages through `ResumeCodexThread`; the BFF forwards bounded
+NDJSON records and the desktop assembles the complete snapshot. Retrieval is bounded to 90 seconds, 256 pages, and
+10 MiB per native page. Aggregate history may exceed one message. An explicit completion record is required, and any
+failed or interrupted page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 
 The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
