@@ -93,6 +93,15 @@ test('the platform enrolls the KVM/TUN prerequisite without changing namespace p
 })
 
 test('source delivery preserves guest attestation and published trust until cutover', () => {
+  const accounts = documents<{ kind?: string; metadata?: { name?: string }; automountServiceAccountToken?: boolean }>(
+    'argocd/applications/tengri/service-account.yaml',
+  )
+  for (const name of ['nanoagent', 'tengri-slot']) {
+    expect(accounts.find((account) => account.metadata?.name === name)).toMatchObject({
+      kind: 'ServiceAccount',
+      automountServiceAccountToken: false,
+    })
+  }
   const values = manifest('argocd/applications/spire-server/values.yaml')
   const plugins = ['spire-server', 'unsupportedBuiltInPlugins']
   const guest = values.getIn([...plugins, 'nodeAttestor', 'k8s_psat', 'plugin_data', 'clusters', 0, 'galactic-guests'])

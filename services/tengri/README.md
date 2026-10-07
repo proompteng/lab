@@ -57,7 +57,7 @@ The separately reviewed [device allocation](../../argocd/applications/tengri-dev
 through the official generic device plugin. The platform ApplicationSet enrolls it in `kube-system` at wave 1, before
 the controller's wave 2. Verify actual device allocations before an authorized cutover. The existing namespace admission
 already permits this narrowly constrained profile; no namespace policy change is required. Existing guest SPIRE
-attestation and bundle publication remain until the final old guest has stopped.
+attestation, the `nanoagent` ServiceAccount and bundle publication remain until the final old guest has stopped.
 
 Nanoagent runs as UID 1000 in the guest, with passwordless sudo inside that guest. Guest root edits and processes
 survive snapshot sleep. Root and memory are local to the slot Pod and reset after an explicitly fenced cold replacement;
