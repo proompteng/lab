@@ -51,13 +51,36 @@
     "2025 2026 variance risk premium option selling working paper tail risk transaction costs",
     "2026 market neutral equity momentum reversal recent out of sample transaction costs paper",
     "\"Short-term reversal persists globally\" sample cost",
-    "\"A Cointegration Gate Is Useful but Not Sufficient\" \"Sharpe\""
+    "\"A Cointegration Gate Is Useful but Not Sufficient\" \"Sharpe\"",
+    "\"Financial Language Models\" \"MFAST\" \"replication\" \"github\" 2026 Kirtac",
+    "\"2609.23703\" code data repository public replication",
+    "\"HERALD\" \"fukasawat78\" \"2026\" stock news data",
+    "\"Event-driven hypergraph\" \"2026\" \"transaction costs\"",
+    "\"2609.07065\" \"costs\" \"code\"",
+    "\"2609.35359\" \"2026\" \"2023\" out of sample",
+    "\"Implicit Switching-Cost Regularization\" \"2026\" code data",
+    "\"2609.27113\" trading costs sample",
+    "\"Quantifying the Contributions of Clustering to Statistical Arbitrage\" \"2026\" code",
+    "\"w35431\" \"2026\" replication data",
+    "\"w35273\" \"2026\" data",
+    "\"7405518\" transaction costs",
+    "\"S2590005626003140\" data trading costs",
+    "\"AI-Stock-Nowcasting\" \"2026\" \"data.json\" results"
   ],
   "primarySourcesOnlyForConclusions": true,
-  "scope": "Recent strategy research with separate publication, data, execution-cost and prospective-evidence checks, plus recent negative replications and evaluation methods",
+  "scope": "Recent strategy research with publication, tested-data endpoint, execution-cost, prospective-evidence and public-replication checks; independent aggregate-return audit and frozen retrospective intraday adaptation",
   "limitations": [
     "Search discovery is not exhaustive coverage of every paper or private dataset.",
-    "Several SSRN full-text requests failed; those sources remain abstract-only.",
-    "Selected primary methods were reviewed; none of these papers was independently replicated in this research pass."
+    "Selected sections were reviewed for 27 catalog entries; access labels distinguish abstracts and summaries.",
+    "Several SSRN and NBER full-text requests failed; unavailable methods remain unaudited.",
+    "Supplementary calculations neither replicate native Jev nor complete the original-input four-strategy comparison.",
+    "Original publication/arrival times, broker fills, actual turnover for the author news file and operating invoices remain unverified."
+  ],
+  "primarySourceCatalogEntries": 48,
+  "selectedMethodsEntries": 27,
+  "independentCalculations": [
+    "Published news aggregate risk matching, declared turnover/cost sensitivity and conditional block/max-statistic selection diagnostic",
+    "Frozen 15-minute trend adaptation over 187 January-September 2026 sessions and 374 SPY/QQQ symbol-sessions",
+    "Independent Decimal trade accounting and standard-library compounding checks"
   ]
 }
