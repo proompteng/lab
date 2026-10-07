@@ -15,6 +15,40 @@ import {
 } from './telemetry'
 
 describe('Bayn telemetry', () => {
+  test('retains a backend PID on slow and failed stage logs without copying other span data or logging fast calls', async () => {
+    const annotations: Readonly<Record<string, unknown>>[] = []
+    const logger = Logger.make(({ fiber }) => {
+      annotations.push(fiber.getRef(References.CurrentLogAnnotations))
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan('postgresql.pid', 573682).pipe(
+          Effect.andThen(Effect.annotateCurrentSpan('private.fixture', 'do-not-copy-span-data')),
+          Effect.andThen(TestClock.adjust(1_200)),
+          withObservedStage('bayn.postgres.commit', { dependency: 'postgresql' }),
+        )
+        yield* Effect.annotateCurrentSpan('postgresql.pid', 573683).pipe(
+          Effect.andThen(Effect.fail('fixture rollback')),
+          withObservedStage('bayn.postgres.rollback', { dependency: 'postgresql' }),
+          Effect.exit,
+        )
+        yield* Effect.annotateCurrentSpan('postgresql.pid', 573684).pipe(
+          withObservedStage('bayn.postgres.commit', { dependency: 'postgresql' }),
+        )
+        yield* Effect.annotateCurrentSpan('postgresql.pid', 'invalid-pid-canary').pipe(
+          Effect.andThen(TestClock.adjust(1_200)),
+          withObservedStage('bayn.postgres.commit', { dependency: 'postgresql' }),
+        )
+      }).pipe(Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([logger]))),
+    )
+    expect(annotations).toHaveLength(3)
+    expect(annotations[0]).toMatchObject({ 'postgresql.pid': 573682, elapsedMs: 1_200, outcome: 'succeeded' })
+    expect(annotations[1]).toMatchObject({ 'postgresql.pid': 573683, outcome: 'failed' })
+    expect(annotations[2]).not.toHaveProperty('postgresql.pid')
+    expect(JSON.stringify(annotations)).not.toContain('do-not-copy-span-data')
+    expect(JSON.stringify(annotations)).not.toContain('invalid-pid-canary')
+  })
+
   test('aggregates repeated operations without conflating different operations or inclusive time', async () => {
     const timings = new Map<string, ExecutionStageTiming>()
     await Effect.runPromise(
