@@ -335,45 +335,49 @@ beforeAll(async () => {
       receivedRequest = call.request
       callback(null, {})
     },
-    resumeCodexThread(
-      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
-      callback: grpc.sendUnaryData<Record<string, unknown>>,
-    ) {
+    resumeCodexThread(call: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>>) {
       receivedRequest = call.request
-      if (call.request.threadId === 'missing-conversation') {
-        callback(serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'), null)
+      const threadId = String(call.request.threadId)
+      if (threadId === 'missing-conversation') {
+        call.emit('error', serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'))
         return
       }
-      if (call.request.threadId === 'missing-resource') {
-        callback(serviceError(grpc.status.NOT_FOUND, '{"error":"internal resource at 10.244.1.42 is missing"}'), null)
+      if (threadId === 'missing-resource') {
+        call.emit(
+          'error',
+          serviceError(grpc.status.NOT_FOUND, '{"error":"internal resource at 10.244.1.42 is missing"}'),
+        )
         return
       }
-      if (call.request.threadId === 'unavailable-conversation') {
-        callback(serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'), null)
+      if (threadId === 'unavailable-conversation') {
+        call.emit('error', serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'))
         return
       }
-      if (call.request.threadId === 'invalid-sequence') {
-        callback(null, {
-          id: String(call.request.threadId),
-          rawJson: '{"thread":{"id":"invalid-sequence"}}',
-          eventSequence: '-1',
-        })
-        return
-      }
-      if (call.request.threadId === 'paged-thread' || call.request.threadId === 'outdated-item-cursor') {
-        callback(null, {
-          id: String(call.request.threadId),
-          rawJson: '{"thread":{"id":"paged-thread"}}',
-          eventSequence: '42',
-          itemEventSequences: { 'message-1': call.request.threadId === 'paged-thread' ? '52' : '41' },
-        })
-        return
-      }
-      callback(null, {
-        id: String(call.request.threadId),
-        rawJson: '{"thread":{"id":"thread-test"}}',
-        eventSequence: '42',
+      call.write({
+        part: 'CODEX_HISTORY_PART_THREAD',
+        rawJson: JSON.stringify({
+          thread: { id: threadId, historyMode: 'paginated', turns: [] },
+        }),
+        eventSequence: threadId === 'invalid-sequence' ? '18446744073709551615' : '42',
       })
+      const paged = threadId === 'paged-thread' || threadId === 'outdated-item-cursor'
+      call.write({
+        part: 'CODEX_HISTORY_PART_ITEMS',
+        rawJson: JSON.stringify({
+          data: paged ? [{ turnId: 'turn-1', item: { id: 'message-1', type: 'agentMessage', text: 'Recovered' } }] : [],
+          nextCursor: null,
+        }),
+        eventSequence: threadId === 'outdated-item-cursor' ? '41' : '52',
+      })
+      call.write({
+        part: 'CODEX_HISTORY_PART_TURNS',
+        rawJson: JSON.stringify({
+          data: paged ? [{ id: 'turn-1', status: 'completed', items: [], itemsView: 'notLoaded' }] : [],
+          nextCursor: null,
+        }),
+        eventSequence: '53',
+      })
+      call.end()
     },
   })
   const port = await new Promise<number>((resolve, reject) => {
@@ -960,13 +964,11 @@ describe('Tengri gRPC BFF transport', () => {
   })
 
   test('preserves the atomic event cursor returned with a resumed thread snapshot', async () => {
-    const { resumeCodexThread } = await import('./grpc')
-
-    const thread = await resumeCodexThread('github:42', 'agent-test', 'thread-test')
+    const thread = await restoredThread('thread-test')
     expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test', model: '', reasoningEffort: '' })
     expect(thread).toEqual({
       id: 'thread-test',
-      rawJson: '{"thread":{"id":"thread-test"}}',
+      rawJson: '{"thread":{"id":"thread-test","historyMode":"paginated","turns":[]}}',
       eventSequence: 42,
       itemEventSequences: {},
     })
@@ -982,14 +984,12 @@ describe('Tengri gRPC BFF transport', () => {
   })
 
   test('preserves item page cursors and rejects pages older than the recovery baseline', async () => {
-    const { resumeCodexThread } = await import('./grpc')
-    expect(await resumeCodexThread('github:42', 'agent-test', 'paged-thread')).toMatchObject({
+    expect(await restoredThread('paged-thread')).toMatchObject({
       eventSequence: 42,
       itemEventSequences: { 'message-1': 52 },
     })
-    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'outdated-item-cursor'))).toMatchObject({
-      message: 'Tengri control plane returned an outdated Codex item cursor',
-      status: 503,
+    expect(await rejection(restoredThread('outdated-item-cursor'))).toMatchObject({
+      message: 'Codex conversation recovery returned invalid history: invalid event cursor',
     })
   })
 
@@ -1050,4 +1050,15 @@ async function rejection(promise: Promise<unknown>) {
     return error
   }
   throw new Error('expected request to fail')
+}
+
+async function restoredThread(threadId: string) {
+  const { resumeCodexThread } = await import('./grpc')
+  const { readCodexHistory } = await import('./codex-history')
+  return readCodexHistory(
+    await resumeCodexThread('github:42', 'agent-test', threadId),
+    threadId,
+    undefined,
+    (record) => new Error(String(record.error)),
+  )
 }

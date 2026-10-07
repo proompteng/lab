@@ -55,6 +55,39 @@ Find the pass in Loki and inspect its profile and child stage logs:
 Use the trace waterfall for ordering, parallel work and gaps. Stage profiles are scoped to each advance and do
 not include the separate inference-expense background worker.
 
+Construction and verification have their own bounded stages. `bayn.market-data.snapshot` covers the source read
+and snapshot construction, with `bayn.operation` set to `signal`, `ENTRY_PRICING` or `LIQUIDATION`.
+`bayn.jev.observation` covers observation construction and durable recording; `bayn.jev.batch-plan` covers batch
+preparation. `bayn.jev.observation-integrity` covers each fresh persisted observation read and content-hash check;
+its count exposes repeated candidate verification. `bayn.jev.observation-reproduction` measures reconstruction
+when the existing verified-observation cut changes. `bayn.execution.decision-build` covers schema validation,
+risk reduction, immutable evidence reproduction and document hashing for entry and close, with operation
+`OBSERVE` or `PAPER`. Construction begins inside its Effect so synchronous work stays inside the span and pass
+profile. These stages reuse the existing aggregate profile and slow/failure diagnostics; they add no source,
+database or model requests and no healthy completion log.
+
+A rejected decision emits `Bayn decision evidence rejected` with schema
+`bayn.decision-evidence-rejection.v1`, a `mismatch` code and the cycle, snapshot and reconciliation hashes.
+`RECONCILIATION` means its exact durable identity, account, state hash, status or time cutoff did not match;
+`DECISION_MARKET_DATA` and `EXECUTION_MARKET_DATA` identify the respective immutable snapshot binding;
+`JEV` identifies the recorded observation, batch plan or result; `RISK_CONTEXT` identifies the retained
+authority, reconciliation time or accounting risk facts. The first failed check wins. Inspect the matching
+private evidence before changing the responsible path. The existing SQL request computes the reason and
+retains every admission check; it never logs the decision payload, account identity or raw query.
+
+The same warning records `plannedIntentCount`, `riskEvaluationCount`, `riskContextBound` and
+`firstRiskStatePresent`. A decision with zero intent targets and zero risk evaluations validates its bound
+risk context against the exact reconciliation row. It needs no first per-intent risk state. A nonempty plan
+still requires that state and its matching reconciliation cutoff. Empty plans retain the authority, policy,
+turnover, day-start equity, peak equity and unresolved-mutation checks. Both entry and close constructors bind the risk context
+from their already-read reconciliation and authority observation, independently of order count. Native execution
+documents without that binding fail execution admission, including no-trade and blocked plans. Retained immutable
+no-trade records remain readable for investigation; reading one grants no permission to admit it again.
+
+```logql
+{namespace="bayn", pod=~"bayn-execution-controller-.*"} |= "bayn.decision-evidence-rejection.v1"
+```
+
 1. Separate `bayn.execution.bounded-pass` and `bayn.execution.cycle-pass` from the root advance. They retain the
    deadline and cycle scopes without repeating the root span name.
 2. Inspect `bayn.execution.submit` with `bayn.operation=entry` or `close`. Slow and failed submission logs include
@@ -82,6 +115,13 @@ Check Loki/Tempo retention and query completeness before calling the session rec
 missing CPU throttle metrics or an idle database sample remain UNKNOWN. Database waits and synchronous replication
 require the measurements below; a readiness endpoint or a fast idle pass does not prove session performance.
 
+The collector samples the `bayn-db` catalog diagnostics every five seconds and retains
+`scrape_duration_seconds{job="cnpg-postgres",namespace="bayn"}`. Verify `up`, exporter collection errors and sample
+timestamps for both database instances. A thirty-second or stale sample can miss an entire multi-second commit
+stall; even the five-second cadence cannot attribute a shorter wait. Correlate `cnpg_bayn_waits_*`, WAL I/O counters
+and replication gauges with the `COMMIT` span and the server's slow-statement timestamp. Active query age is the
+age of the statement, rather than time spent in its current wait event. A missing wait sample remains UNKNOWN.
+
 When original capture is enabled, inspect `bayn.capture.object.put_verified` for the complete conditional PUT and
 exact GET/readback verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
 `VALIDATING`, `CONDITIONAL_PUT`, `READBACK`, `VERIFY_BYTES` or `VERIFIED`. A failed PUT or GET and a stalled body
@@ -91,6 +131,13 @@ that its chunk committed to PostgreSQL, and an invalidated capture or unknown wr
 These background capture spans are outside the execution-stage profile and retain the one-second object deadline.
 
 ## Alert actions
+
+For `SNAPSHOT_STALE`, correlate `Streaming market snapshot rejected` with the pass's trace ID in Loki. Inspect its
+exact `eventAt` and `ingestedAt`, `ingestionDelayDirection`, `publicationDelayMs`, and minimum or maximum publication
+bound. Fresh quotes and a complete bar/feature join do not establish timely original publication. A late required
+benchmark bar blocks every window that contains it; retain its source timestamps and never backdate a recovery.
+Kafka bootstrap, supervision and 30-second projection measurements use the native worker's structured JSON logger.
+Confirm the current Restate registration's label selector before comparing workers; retained revisions can coexist.
 
 - `BaynMetricsUnavailable`: verify the Bayn pod, the observability Alloy pod-discovery target, and the NetworkPolicy.
   If Bayn failed before HTTP startup, inspect startup logs and compare configured provenance with the embedded

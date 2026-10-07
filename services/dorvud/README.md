@@ -105,4 +105,21 @@ Run the producer checks from this directory:
 Normal deployment uses the repository's reviewed main, image publication, Kargo promotion, and Argo reconciliation.
 Checkpoint compatibility and actual source-to-consumer behavior are separate acceptance checks.
 
+## Producer stall diagnostics
+
+The websocket process binds Micrometer JVM memory, buffer, GC, and thread meters once at startup. Its GC observer
+closes on shutdown, normal completion, and startup failure. Heap and thread gauges are sampled by the existing
+`/metrics` scrape; GC pause counters and maxima come from JVM notifications. No new per-record timing or observer
+loop runs in Kafka publication. Torghut Alloy retains these meters with the existing `job="torghut"`,
+`namespace="torghut"`, `service="torghut-ws"`, and pod labels every thirty seconds.
+
+During a stall, align `torghut_ws_kafka_send_latency_seconds_{count,sum,max}`, send errors, readiness, pod restarts,
+`jvm_memory_used_bytes{area="heap"}`, `jvm_memory_max_bytes{area="heap"}`, `jvm_gc_pause_seconds_{count,sum,max}`,
+and `jvm_threads_states_threads` for the same pod and time window. The central collector also retains the producer's
+three `container_cpu_cfs_*` counters. Divide the throttled-period rate by the total-period rate only when the
+denominator is positive, then compare with CPU use and the configured limit. Do not treat an absent series as zero.
+GC pause timers appear after a GC event; their window maximum is not a whole-session percentile. Container working
+set includes memory outside the JVM heap. Exit 137 alone does not prove OOM; retain Kubernetes termination reasons,
+probe-failure events, and previous-container logs alongside the metrics.
+
 Local WS dev: copy `websockets/.env.local.example` to `.env.local`, fill Alpaca sandbox creds, and run `./gradlew :websockets:run` to stream into a local Kafka; `.env`/`.env.local` are auto-loaded (system env still wins). To get local infra only, run `docker compose -f websockets/docker-compose.local.yml up --build` for Kafka + UI, then start the forwarder separately with your env loaded; use symbol `FAKEPACA` for quick smoke.
