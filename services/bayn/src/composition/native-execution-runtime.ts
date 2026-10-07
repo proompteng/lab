@@ -682,11 +682,10 @@ export const acquireNativeExecutionRuntime = (
         : undefined
     if (Result.isFailure(requestedCapture) || (decodedCapture !== undefined && Result.isFailure(decodedCapture)))
       yield* Effect.logWarning('Bayn research capture configuration is invalid; capture is disabled')
-    const sharedResources = Layer.mergeAll(
+    const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, capture),
       ExecutionControllerStatusResourceLive(plan.config),
-      makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller'),
-    )
+    ).pipe(Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')))
     const executionResources = Layer.merge(
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),

@@ -82,6 +82,13 @@ Check Loki/Tempo retention and query completeness before calling the session rec
 missing CPU throttle metrics or an idle database sample remain UNKNOWN. Database waits and synchronous replication
 require the measurements below; a readiness endpoint or a fast idle pass does not prove session performance.
 
+The collector samples the `bayn-db` catalog diagnostics every five seconds and retains
+`scrape_duration_seconds{job="cnpg-postgres",namespace="bayn"}`. Verify `up`, exporter collection errors and sample
+timestamps for both database instances. A thirty-second or stale sample can miss an entire multi-second commit
+stall; even the five-second cadence cannot attribute a shorter wait. Correlate `cnpg_bayn_waits_*`, WAL I/O counters
+and replication gauges with the `COMMIT` span and the server's slow-statement timestamp. Active query age is the
+age of the statement, rather than time spent in its current wait event. A missing wait sample remains UNKNOWN.
+
 When original capture is enabled, inspect `bayn.capture.object.put_verified` for the complete conditional PUT and
 exact GET/readback verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
 `VALIDATING`, `CONDITIONAL_PUT`, `READBACK`, `VERIFY_BYTES` or `VERIFIED`. A failed PUT or GET and a stalled body
@@ -91,6 +98,13 @@ that its chunk committed to PostgreSQL, and an invalidated capture or unknown wr
 These background capture spans are outside the execution-stage profile and retain the one-second object deadline.
 
 ## Alert actions
+
+For `SNAPSHOT_STALE`, correlate `Streaming market snapshot rejected` with the pass's trace ID in Loki. Inspect its
+exact `eventAt` and `ingestedAt`, `ingestionDelayDirection`, `publicationDelayMs`, and minimum or maximum publication
+bound. Fresh quotes and a complete bar/feature join do not establish timely original publication. A late required
+benchmark bar blocks every window that contains it; retain its source timestamps and never backdate a recovery.
+Kafka bootstrap, supervision and 30-second projection measurements use the native worker's structured JSON logger.
+Confirm the current Restate registration's label selector before comparing workers; retained revisions can coexist.
 
 - `BaynMetricsUnavailable`: verify the Bayn pod, the observability Alloy pod-discovery target, and the NetworkPolicy.
   If Bayn failed before HTTP startup, inspect startup logs and compare configured provenance with the embedded

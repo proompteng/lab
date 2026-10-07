@@ -339,7 +339,7 @@ describe('enabled app inventory', () => {
     expect(metallbEntry).toContain('argocd.argoproj.io/sync-options: Prune=false')
   })
 
-  it('preserves Tengri state and keeps Kata runtime proof bounded', () => {
+  it('preserves Tengri state and keeps runtime validation isolated', () => {
     const tengriEntry = platformApplicationSet.match(
       /              - name: tengri\n[\s\S]*?(?=\n              - name:)/,
     )?.[0]
@@ -362,11 +362,13 @@ describe('enabled app inventory', () => {
     expect(talosUpgradeRunbook).not.toContain('The canaries are DaemonSets')
     expect(talosUpgradeRunbook).toContain('It deletes that Pod and its')
     expect(talosUpgradeRunbook).toContain('unique bootstrap Secret on success or failure')
-    expect(tengriOperations).toContain('`Tengri images` validates both services and CRDs')
-    expect(tengriOperations).toContain('emits the `kargo-sha-<40>` aliases')
-    expect(tengriOperations).toContain('argocd app sync kata --prune')
-    expect(tengriOperations).toContain('kubectl --context galactic-lan -n kata get daemonset -o name')
-    expect(tengriOperations).toContain('verify-runtimes.sh "$PROOF_DIR" talos-192-168-1-194 fc')
+    expect(tengriOperations).toContain('The paired publisher must withhold discoverable aliases')
+    expect(tengriOperations).toContain('and KVM acceptance pass')
+    expect(tengriOperations).toContain(
+      'Never drain, cordon, reboot, relabel, change scheduling on, or reconfigure shared nodes',
+    )
+    expect(tengriOperations).toContain('private container and volumes')
+    expect(tengriOperations).toContain('Measure at least 50 fresh prepared creations and 50 cold-cache resumes')
     expect(tengriOperations).not.toContain('`Manual OCI Mirror`')
     expect(tengriImagesWorkflow).toContain('TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri')
     expect(tengriImagesWorkflow).toContain('runner: arc-amd64')

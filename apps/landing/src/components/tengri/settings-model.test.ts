@@ -26,7 +26,6 @@ const agent: TengriAgent = {
   readyAt: '2026-08-26T09:00:00.000Z',
   lastActivityAt: '2026-08-26T10:00:00.000Z',
   idleDeadline: '2026-08-26T11:00:00.000Z',
-  expiresAt: '2026-08-26T12:00:00.000Z',
   conditions: [],
 }
 
