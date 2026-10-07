@@ -876,7 +876,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               ? 'Connecting'
               : 'Ready'
   return (
-    <div ref={rootRef} className="@container/agent relative flex h-full min-h-0 bg-zinc-950 text-zinc-100">
+    <div ref={rootRef} className="@container/agent relative isolate flex h-full min-h-0 bg-zinc-950 text-zinc-100">
       {compactDrawerOpen ? (
         <div
           aria-hidden="true"
@@ -1041,7 +1041,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               ]}
               {activeTurnId && !approvalPending ? (
                 <div className="text-sm leading-6 text-zinc-400" role="status" aria-label="Agent activity">
-                  Thinking…
+                  <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                 </div>
               ) : null}
             </div>
@@ -1150,7 +1150,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                         ? 'Steer the current turn…'
                         : 'Message your agent…'
                   }
-                  className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-600 disabled:opacity-60"
+                  className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
                 />
                 {images.length ? (
                   <ul aria-label="Image attachments" className="flex flex-wrap gap-2 pt-2 pb-1">
