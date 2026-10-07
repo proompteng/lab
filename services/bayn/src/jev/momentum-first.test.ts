@@ -75,7 +75,7 @@ const evidence = (
   decidedAt: f.at,
 })
 
-describe('inactive momentum-first Jev admission', () => {
+describe('momentum-first Jev admission', () => {
   test.each([
     ['zero own return', 0, -0.01, false],
     ['zero excess return', 0.01, 0.01, false],
@@ -270,7 +270,7 @@ describe('inactive momentum-first Jev admission', () => {
   test('new policy identity cannot reuse old protocol versions, batch versions or grants', () => {
     const f = fixture()
     const { batchId: _, ...material } = f.plan
-    expect(Result.getOrThrow(loadActiveStrategyProtocol())).toEqual(defaultJevProtocolDocument)
+    expect(Result.getOrThrow(loadActiveStrategyProtocol())).toEqual(momentumFirstJevProtocolDocument)
     expect(
       Result.isFailure(
         decodeJevProtocol({ ...defaultJevProtocolDocument, entrySignalPolicy: momentumFirstEntryPolicy }),
