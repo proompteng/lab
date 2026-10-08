@@ -152,6 +152,7 @@ func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
 	t.Parallel()
 	allowed := []string{
 		"model/list",
+		"mcpServerStatus/list",
 		"account/read",
 		"account/login/start",
 		"thread/start",
