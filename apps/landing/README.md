@@ -53,9 +53,12 @@ reconnect with their event cursor. HMAC metadata still binds every request to it
 Missing, denied, malformed, or expired identity fails the request; there is no plaintext option. Local development
 requires an attested SPIRE identity too. Native tests use a private fixture Workload API and real TLS certificates.
 
-The desktop uses one system font stack for interface text, including portal menus and diagrams. Code and the terminal
-share the bundled JetBrains Mono Desktop face. Chat prompts, responses, and the composer use 14 px text with 24 px line
-height; code and activity details use 12 px text with 20 px line height.
+The desktop follows [Vercel's Geist typography](https://vercel.com/geist/typography): bundled Geist Sans for interface
+text, portal menus, and diagrams, and Geist Mono for code and the terminal. Chat copy and primary labels use 14/20 px;
+metadata uses 12/16 px, and code uses 13/18 px. Named copy, label, button, and heading utilities set size, line height,
+weight, and spacing together. Fonts are self-hosted with `next/font/local`; source and license are in
+[the font directory](public/tengri/fonts/README.md).
+An explicit symbol fallback preserves monospace columns for glyphs Geist Mono does not contain, such as checkmarks.
 The Codex view uses a near-black canvas, quiet zinc typography, and blue for primary actions. User messages sit on the
 right with a soft background; agent responses stay on the left without speaker headings. A left conversation sidebar (~240–260px) lists
 browser-local conversations for the agent (newest first) with an active highlight and **New** control; the active
@@ -71,7 +74,8 @@ starters. Commands, output, diffs, and reasoning summaries expand from compact r
 use a soft surface with a muted label and Approve / Deny actions. Accepted prompts stay in the transcript while waiting
 for the server's message item; the canonical item replaces the local prompt without duplicating it. Streamed text
 updates once per animation frame, unchanged message cards are memoized, and a stable content observer follows changes
-without rebuilding on every chunk.
+without rebuilding on every chunk. Following stops when the reader scrolls upward, so a delayed scroll event after
+content growth does not leave the viewport behind the response.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
 Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under

@@ -567,7 +567,7 @@ export function TerminalApp({
         fontFamily,
         fontSize: 13,
         letterSpacing: 0,
-        lineHeight: 1.2,
+        lineHeight: 18 / 13,
         rightClickSelectsWord: true,
         scrollback: 10_000,
         theme: {

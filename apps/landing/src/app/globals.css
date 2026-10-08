@@ -6,16 +6,13 @@
 @source not "../../../../.pnpm-store";
 @source not "../../../../.bun";
 
-:root {
-  --font-system: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
-}
-
 @font-face {
-  font-family: 'JetBrains Mono Desktop';
+  font-family: 'Tengri Mono Symbols';
   src: url('/tengri/fonts/JetBrainsMono-Regular.woff2') format('woff2');
   font-style: normal;
   font-weight: 400;
   font-display: swap;
+  unicode-range: U+2000-2BFF;
 }
 
 @keyframes hero-glow {
@@ -72,10 +69,12 @@
     font-family: var(--font-inter, 'Inter'), Inter, ui-sans-serif, sans-serif;
   }
 
-  .font-system {
-    --font-sans: var(--font-system);
-    --font-mono: 'JetBrains Mono Desktop', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-    font-family: var(--font-system);
+  .font-geist {
+    --font-sans: var(--font-geist-sans);
+    --font-mono: var(--font-geist-mono);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 20px;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -112,6 +111,82 @@
       animation: tengri-thinking-activity 1.4s ease-in-out infinite;
     }
   }
+}
+
+@utility text-copy-14 {
+  font-family: var(--font-geist-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+  & strong {
+    font-weight: 550;
+  }
+}
+
+@utility text-label-14 {
+  font-family: var(--font-geist-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+}
+
+@utility text-label-12 {
+  font-family: var(--font-geist-sans);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+}
+
+@utility text-button-14 {
+  font-family: var(--font-geist-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+@utility text-button-12 {
+  font-family: var(--font-geist-sans);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+}
+
+@utility text-copy-13-mono {
+  font-family: var(--font-geist-mono);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+}
+
+@utility text-label-13-mono {
+  font-family: var(--font-geist-mono);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+
+@utility text-heading-14 {
+  font-family: var(--font-geist-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: -0.28px;
+}
+
+@utility text-heading-16 {
+  font-family: var(--font-geist-sans);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  letter-spacing: -0.32px;
+}
+
+@utility text-heading-20 {
+  font-family: var(--font-geist-sans);
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
 }
 
 @layer base {

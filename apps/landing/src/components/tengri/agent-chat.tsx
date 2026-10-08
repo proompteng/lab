@@ -114,6 +114,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [sidebarWide, setSidebarWide] = useState(true)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const conversationRef = useRef<HTMLDivElement | null>(null)
+  const lastScrollTop = useRef(0)
   const conversationContentRef = useRef<HTMLDivElement | null>(null)
   const promptRef = useRef<HTMLTextAreaElement | null>(null)
   const focusComposerRequested = useRef(false)
@@ -260,6 +261,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setEvents([])
     setSubmittedPrompts([])
     draftsRef.current.clear()
+    lastScrollTop.current = 0
     setPrompt('')
     setFollowingConversation(true)
     setReplayRecovering(false)
@@ -557,6 +559,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
         conversation.scrollTop = conversation.scrollHeight
+        lastScrollTop.current = conversation.scrollTop
       })
     }
     follow()
@@ -866,6 +869,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     restoredHistoryRef.current = new Map()
     restoredItemSequencesRef.current = new Map()
     restoredHistorySequenceRef.current = 0
+    lastScrollTop.current = 0
     threadResumeGeneration.current += 1
     setThreadId(nextThreadId)
     setThreadReady(false)
@@ -929,19 +933,19 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       <div className="grid h-full place-items-center bg-zinc-950 p-8">
         {error ? (
           <div className="max-w-sm text-center">
-            <p className="text-sm leading-6 text-red-200" role="alert">
+            <p className="text-copy-14 text-red-200" role="alert">
               {errorMessage}
             </p>
             <button
               type="button"
-              className="mt-4 rounded-xl bg-white/9 px-4 py-2 text-xs text-white/76 outline-none transition-colors hover:bg-white/13 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
+              className="mt-4 rounded-xl bg-white/9 px-4 py-2 text-label-12 text-white/76 outline-none transition-colors hover:bg-white/13 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
               onClick={() => void refreshAccountAndRecoverLogin()}
             >
               Retry
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2 text-sm text-zinc-400" role="status">
+          <div className="flex items-center gap-2 text-label-14 text-zinc-400" role="status">
             <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Checking
             Codex login…
           </div>
@@ -1010,9 +1014,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         )}
       >
         <div className="flex h-11 shrink-0 items-center gap-2 px-3">
-          <span className="min-w-0 flex-1 truncate text-[11px] font-medium tracking-wide text-zinc-400 uppercase">
-            Conversations
-          </span>
+          <span className="min-w-0 flex-1 truncate text-label-12 text-zinc-400 uppercase">Conversations</span>
           <button
             type="button"
             disabled={!canChangeConversation}
@@ -1025,7 +1027,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         </div>
         <nav aria-label="Conversations" className="min-h-0 flex-1 overflow-auto py-1 [scrollbar-gutter:stable]">
           {sortedConversations.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-zinc-400">No conversations yet</p>
+            <p className="px-3 py-2 text-label-12 text-zinc-400">No conversations yet</p>
           ) : (
             <ul className="px-1.5">
               {sortedConversations.map((conversation) => {
@@ -1045,9 +1047,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                           : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200',
                       )}
                     >
-                      <span className="truncate text-xs font-medium">{conversation.title}</span>
+                      <span className="truncate text-label-14">{conversation.title}</span>
                       {conversation.unavailable ? (
-                        <span className="mt-0.5 text-[10px] text-zinc-400">Unavailable</span>
+                        <span className="mt-0.5 text-label-12 text-zinc-400">Unavailable</span>
                       ) : null}
                     </button>
                   </li>
@@ -1069,8 +1071,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           >
             <PanelLeft className="size-3.5" aria-hidden="true" />
           </button>
-          <span className="text-sm font-medium tracking-tight text-zinc-200">Codex</span>
-          <span className="min-w-0 truncate text-[11px] text-zinc-400" aria-label="Agent status">
+          <span className="text-heading-14 text-zinc-200">Codex</span>
+          <span className="min-w-0 truncate text-label-12 text-zinc-400" aria-label="Agent status">
             {agentStatus}
           </span>
           {!sidebarOpen ? (
@@ -1079,7 +1081,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               disabled={!canChangeConversation}
               onClick={newConversation}
               aria-label="New conversation"
-              className="ml-auto inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-zinc-500 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
+              className="ml-auto inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md px-2 text-label-12 text-zinc-500 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
             >
               <Plus className="size-3.5" aria-hidden="true" />
               <span className="hidden @[420px]/agent:inline" aria-hidden="true">
@@ -1098,9 +1100,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             className="h-full overflow-auto px-4 pt-5 pb-10 [scrollbar-gutter:stable] scroll-pb-8 @[540px]/agent:px-6"
             onScroll={(event) => {
               const conversation = event.currentTarget
-              setFollowingConversation(
-                conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 64,
-              )
+              const atBottom = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 64
+              if (atBottom) setFollowingConversation(true)
+              else if (conversation.scrollTop < lastScrollTop.current) setFollowingConversation(false)
+              lastScrollTop.current = conversation.scrollTop
             }}
           >
             {transcriptCards.length === 0 && !activeTurnId && !submitting ? (
@@ -1125,7 +1128,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             >
               {transcriptCards.map((item) => item.card)}
               {activeTurnId && !approvalPending ? (
-                <div className="text-sm leading-6 text-zinc-400" role="status" aria-label="Agent activity">
+                <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                   <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                 </div>
               ) : null}
@@ -1135,7 +1138,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
               <button
                 type="button"
-                className="pointer-events-auto inline-flex min-h-7 items-center gap-1.5 rounded-full border border-white/[0.08] bg-zinc-950/95 px-2.5 text-[11px] text-zinc-300 outline-none transition-colors hover:bg-zinc-900 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+                className="pointer-events-auto inline-flex min-h-7 items-center gap-1.5 rounded-full border border-white/[0.08] bg-zinc-950/95 px-2.5 text-label-12 text-zinc-300 outline-none transition-colors hover:bg-zinc-900 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
                 onClick={() => setFollowingConversation(true)}
               >
                 <ArrowDown className="size-3" aria-hidden="true" />
@@ -1148,17 +1151,17 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         <div className="shrink-0 px-3 pt-2 pb-3 @[540px]/agent:px-6">
           <div className="mx-auto w-full max-w-3xl">
             {selectionWarning ? (
-              <p role="status" className="mb-2 text-xs text-amber-200/80">
+              <p role="status" className="mb-2 text-label-12 text-amber-200/80">
                 {selectionWarning}
               </p>
             ) : null}
             <StreamStatus error={errorMessage} state={eventStreamState} />
             {replayRecovering ? (
-              <p className="mx-auto mb-2 w-full text-xs text-zinc-400" role="status">
+              <p className="mx-auto mb-2 w-full text-label-12 text-zinc-400" role="status">
                 Recovering the active conversation…
               </p>
             ) : threadId && !threadReady ? (
-              <div className="mx-auto mb-3 w-full text-xs">
+              <div className="mx-auto mb-3 w-full text-label-12">
                 {conversationMissing ? (
                   <p className="mb-2 text-zinc-400">
                     This saved conversation is no longer available. Start a new conversation to continue in this
@@ -1234,7 +1237,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                         ? 'Steer the current turn…'
                         : 'Message your agent…'
                   }
-                  className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
+                  className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-copy-14 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
                 />
                 {images.length ? (
                   <ul aria-label="Image attachments" className="flex flex-wrap gap-2 pt-2 pb-1">
@@ -1337,23 +1340,21 @@ export function CodexLogin({
         <div className="mb-5 inline-flex size-9 items-center justify-center rounded-lg border border-white/[0.08] bg-zinc-900/60">
           <Command className="size-4 text-zinc-300" aria-hidden="true" />
         </div>
-        <h2 className="text-lg font-medium tracking-tight text-zinc-100">Connect Codex</h2>
-        <p className="mt-2 text-sm leading-6 text-zinc-400">
+        <h2 className="text-heading-20 text-zinc-100">Connect Codex</h2>
+        <p className="mt-2 text-copy-14 text-zinc-400">
           Sign in with your ChatGPT account. Your login stays in this workspace.
         </p>
         {login ? (
           <div className="mt-6 space-y-4">
-            <p className="text-[11px] font-medium tracking-wide text-zinc-400 uppercase">1. Copy your device code</p>
+            <p className="text-label-12 text-zinc-400 uppercase">1. Copy your device code</p>
             <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.08] bg-zinc-950 px-3.5 py-2.5">
               <code className="font-mono text-lg tracking-widest text-zinc-100">{login.userCode}</code>
               <CodexCopyButton key={login.loginId} label="Copy code" value={login.userCode} />
             </div>
-            <p className="pt-1 text-[11px] font-medium tracking-wide text-zinc-400 uppercase">
-              2. Authorize Codex in your browser
-            </p>
+            <p className="pt-1 text-label-12 text-zinc-400 uppercase">2. Authorize Codex in your browser</p>
             {verificationUrl ? (
               <a
-                className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-blue-600 px-3.5 text-sm font-medium text-white outline-none transition-colors hover:bg-blue-500 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+                className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-blue-600 px-3.5 text-button-14 text-white outline-none transition-colors hover:bg-blue-500 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
                 href={verificationUrl}
                 target="_blank"
                 rel="noreferrer noopener"
@@ -1361,11 +1362,11 @@ export function CodexLogin({
                 Open verification <ExternalLink className="size-3.5" aria-hidden="true" />
               </a>
             ) : (
-              <p role="alert" className="text-xs text-amber-200">
+              <p role="alert" className="text-label-12 text-amber-200">
                 The verification link is unavailable. Restart device login to try again.
               </p>
             )}
-            <p className="flex items-center gap-2 text-xs text-zinc-400" role="status">
+            <p className="flex items-center gap-2 text-label-12 text-zinc-400" role="status">
               <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
               Waiting for device authorization…
             </p>
@@ -1373,7 +1374,7 @@ export function CodexLogin({
               type="button"
               disabled={busy}
               onClick={onStart}
-              className="inline-flex min-h-7 items-center gap-1.5 rounded-md text-xs text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40"
+              className="inline-flex min-h-7 items-center gap-1.5 rounded-md text-label-12 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40"
             >
               {busy ? (
                 <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
@@ -1386,7 +1387,7 @@ export function CodexLogin({
             type="button"
             disabled={busy}
             onClick={onStart}
-            className="mt-6 inline-flex min-h-9 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white outline-none transition-colors hover:bg-blue-500 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-45 motion-reduce:transition-none"
+            className="mt-6 inline-flex min-h-9 items-center gap-2 rounded-lg bg-blue-600 px-4 text-button-14 text-white outline-none transition-colors hover:bg-blue-500 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-45 motion-reduce:transition-none"
           >
             {busy ? (
               <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
@@ -1398,14 +1399,14 @@ export function CodexLogin({
           type="button"
           onClick={onRefresh}
           disabled={busy}
-          className="mt-3 block min-h-7 rounded-md text-xs text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40"
+          className="mt-3 block min-h-7 rounded-md text-label-12 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40"
         >
           I’ve completed login
         </button>
         {error ? (
           <p
             role="alert"
-            className="mt-3 rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-200"
+            className="mt-3 rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-label-12 text-red-200"
           >
             {error}
           </p>
@@ -1430,14 +1431,14 @@ function EmptyConversation({ onSelectPrompt }: { onSelectPrompt: (text: string) 
   ]
   return (
     <div className="mx-auto flex min-h-full w-full max-w-xl flex-col justify-center py-10">
-      <p className="text-sm text-zinc-400">Ask Codex to explore, change, or run something in this workspace.</p>
+      <p className="text-label-14 text-zinc-400">Ask Codex to explore, change, or run something in this workspace.</p>
       <ul className="mt-4 space-y-1.5">
         {suggestions.map((suggestion) => (
           <li key={suggestion.label}>
             <button
               type="button"
               onClick={() => onSelectPrompt(suggestion.text)}
-              className="rounded text-left text-sm text-zinc-400 outline-none transition-colors hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+              className="rounded text-left text-label-14 text-zinc-400 outline-none transition-colors hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
             >
               {suggestion.label}
             </button>
@@ -1466,11 +1467,11 @@ function CodexModelPicker({
   const model = models?.find((model) => model.model === selection.model)
   const validSelection = models && codexOptionsForSelection(selection, models)
   const triggerClass =
-    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-xs text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
   const menuClass =
-    'font-system w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
+    'font-geist w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
   const itemClass =
-    'min-h-10 rounded-lg px-3 py-2 pr-8 text-sm focus:bg-white/8 focus:text-zinc-100 data-highlighted:bg-white/8 data-highlighted:text-zinc-100'
+    'min-h-10 rounded-lg px-3 py-2 pr-8 text-label-14 focus:bg-white/8 focus:text-zinc-100 data-highlighted:bg-white/8 data-highlighted:text-zinc-100'
   const reasoningLabel =
     selection.reasoningEffort === 'default'
       ? model
@@ -1510,7 +1511,7 @@ function CodexModelPicker({
           </SelectTrigger>
           <SelectContent side="top" align="end" sideOffset={8} alignItemWithTrigger={false} className={menuClass}>
             <SelectGroup>
-              <SelectLabel className="px-3 pt-2 pb-1.5 text-[11px] font-medium text-zinc-400">Model</SelectLabel>
+              <SelectLabel className="px-3 pt-2 pb-1.5 text-label-12 text-zinc-400">Model</SelectLabel>
               {models?.map((model) => (
                 <SelectItem key={model.model} value={model.model} className={itemClass} title={model.description}>
                   {model.displayName}
@@ -1545,9 +1546,7 @@ function CodexModelPicker({
             className={`${menuClass} w-60`}
           >
             <SelectGroup>
-              <SelectLabel className="px-3 pt-2 pb-1.5 text-[11px] font-medium text-zinc-400">
-                Reasoning effort
-              </SelectLabel>
+              <SelectLabel className="px-3 pt-2 pb-1.5 text-label-12 text-zinc-400">Reasoning effort</SelectLabel>
               <SelectItem value="default" className={itemClass}>
                 {model ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})` : 'Default'}
               </SelectItem>
@@ -1566,7 +1565,7 @@ function CodexModelPicker({
         </Select>
       </div>
       {error ? (
-        <p className="text-xs text-amber-200/80" role="alert">
+        <p className="text-label-12 text-amber-200/80" role="alert">
           {error}{' '}
           <button
             type="button"
@@ -1577,7 +1576,7 @@ function CodexModelPicker({
           </button>
         </p>
       ) : models && !validSelection ? (
-        <p className="text-xs text-amber-200/80" role="alert">
+        <p className="text-label-12 text-amber-200/80" role="alert">
           {model
             ? 'Choose a supported reasoning effort.'
             : 'This model is unavailable for your Codex account. Choose another model or refresh.'}{' '}
@@ -1644,12 +1643,12 @@ function StreamStatus({ error, state }: { error: string; state: EventStreamState
             : 'Agent event stream reconnecting'}
       </span>
       {state === 'reconnecting' ? (
-        <p role="status" className="mx-auto mb-2 w-full text-xs text-amber-200/80">
+        <p role="status" className="mx-auto mb-2 w-full text-label-12 text-amber-200/80">
           Agent event stream is reconnecting
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="mx-auto mb-2 w-full text-xs text-amber-200/80">
+        <p role="alert" className="mx-auto mb-2 w-full text-label-12 text-amber-200/80">
           {error}
         </p>
       ) : null}

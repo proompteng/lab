@@ -18,7 +18,7 @@ async function loadMermaid() {
     securityLevel: 'strict',
     suppressErrorRendering: true,
     theme: 'dark',
-    fontFamily: 'var(--font-system)',
+    fontFamily: 'var(--font-geist-sans)',
     htmlLabels: false,
     // Diagram directives must not relax the application's rendering policy.
     secure: [

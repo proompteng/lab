@@ -3504,20 +3504,20 @@ test.describe('native traffic-light rendering', () => {
     await chrome.focus()
     await page.mouse.move(0, 0)
     const controls = chrome.getByRole('group', { name: 'Window controls' })
-    await expect(controls).toHaveScreenshot('tengri-window-controls-idle.png', {
+    await expect.soft(controls).toHaveScreenshot('tengri-window-controls-idle.png', {
       maxDiffPixels: 0,
       threshold: 0.05,
       scale: 'device',
     })
     await controls.getByRole('button', { name: 'Minimize Chrome' }).hover()
-    await expect(controls).toHaveScreenshot('tengri-window-controls-hover.png', {
+    await expect.soft(controls).toHaveScreenshot('tengri-window-controls-hover.png', {
       maxDiffPixels: 0,
       threshold: 0.05,
       scale: 'device',
     })
     await controls.getByRole('button', { name: 'Maximize Chrome' }).click()
     await controls.getByRole('button', { name: 'Restore Chrome' }).hover()
-    await expect(controls).toHaveScreenshot('tengri-window-controls-restore.png', {
+    await expect.soft(controls).toHaveScreenshot('tengri-window-controls-restore.png', {
       maxDiffPixels: 0,
       threshold: 0.05,
       scale: 'device',
@@ -3933,7 +3933,7 @@ test('navigates Finder with sortable columns, breadcrumbs, Go to Folder, and fil
     )
     .toBe(true)
   await page.mouse.move(0, 0)
-  await expect(finder).toHaveScreenshot('tengri-finder-icons.png')
+  await expect.soft(finder).toHaveScreenshot('tengri-finder-icons.png')
   await finder.getByRole('button', { name: 'Finder actions' }).click()
   await page.getByRole('menuitem', { name: 'New Folder', exact: true }).click()
   await finder.getByRole('textbox', { name: 'New folder name' }).fill('empty')
@@ -3967,13 +3967,13 @@ test('renders native Finder and Settings layouts with accessible navigation', as
     )
     .toBe(true)
   await page.mouse.move(0, 0)
-  await expect(finder).toHaveScreenshot('tengri-finder.png')
+  await expect.soft(finder).toHaveScreenshot('tengri-finder.png')
 
   await dock.getByRole('button', { name: 'Open Settings' }).click()
   const settings = page.getByRole('region', { name: 'Settings window' })
   await expect(settings.getByRole('heading', { name: 'General', exact: true })).toBeVisible()
   await page.mouse.move(0, 0)
-  await expect(settings).toHaveScreenshot('tengri-settings.png')
+  await expect.soft(settings).toHaveScreenshot('tengri-settings.png')
   await page.screenshot({ path: test.info().outputPath('tengri-desktop-polish.png') })
   await settings.getByRole('button', { name: 'Runtime', exact: true }).click()
   await expect(settings.getByRole('heading', { name: 'Runtime', exact: true })).toBeInViewport()
@@ -4605,7 +4605,7 @@ test('lists local conversations in the sidebar and switches or starts a new one'
   // Linux CI is the validated path for redesigned agent UI screenshots; skip on Darwin
   // until macOS baselines are regenerated with --update-snapshots.
   if (process.platform !== 'darwin') {
-    await expect(chrome).toHaveScreenshot('tengri-agent-conversations.png')
+    await expect.soft(chrome).toHaveScreenshot('tengri-agent-conversations.png')
   }
 })
 
@@ -4751,19 +4751,28 @@ test('uses consistent fonts and body typography in chat, portal menus, diagrams,
   const response = chrome.getByRole('article', { name: 'Codex response' })
   const prompt = chrome.getByRole('textbox', { name: 'Message your agent' })
   const systemFont = await prompt.evaluate((element) => getComputedStyle(element).fontFamily)
+  expect(systemFont).toMatch(/geist.*sans/i)
   for (const text of [user, response, prompt]) {
     await expect(text).toHaveCSS('font-family', systemFont)
     await expect(text).toHaveCSS('font-size', '14px')
-    await expect(text).toHaveCSS('line-height', '24px')
+    await expect(text).toHaveCSS('line-height', '20px')
+    await expect(text).toHaveCSS('font-weight', '400')
   }
+  await expect(chrome.getByLabel('Agent status')).toHaveCSS('font-size', '12px')
+  await expect(chrome.getByLabel('Agent status')).toHaveCSS('line-height', '16px')
+  await expect(
+    chrome.getByTestId('agent-conversation-sidebar').locator('[data-conversation-id] span').first(),
+  ).toHaveCSS('font-size', '14px')
   await expect(
     response.getByRole('img', { name: 'Mermaid diagram', exact: true }).locator('svg text').first(),
   ).toHaveCSS('font-family', systemFont)
   await chrome.getByRole('article', { name: 'Codex output' }).locator('summary').click()
   const output = chrome.getByRole('article', { name: 'Codex output' }).locator('pre')
   const monoFont = await output.evaluate((element) => getComputedStyle(element).fontFamily)
+  expect(monoFont).toMatch(/geist.*mono/i)
   await expect(response.locator('pre')).toHaveCSS('font-family', monoFont)
-  await expect(response.locator('pre')).toHaveCSS('line-height', '20px')
+  await expect(response.locator('pre')).toHaveCSS('font-size', '13px')
+  await expect(response.locator('pre')).toHaveCSS('line-height', '18px')
   await chrome.getByRole('combobox', { name: 'Model', exact: true }).click()
   await expect(page.getByRole('listbox')).toHaveCSS('font-family', systemFont)
   await page.keyboard.press('Escape')
@@ -4779,6 +4788,16 @@ test('uses consistent fonts and body typography in chat, portal menus, diagrams,
   ])
   const normalize = (font: string) => font.replace(/["'\s]/g, '').toLowerCase()
   expect(measuredFonts.map((font) => normalize(font.slice(font.indexOf('13px') + 4)))).toContain(normalize(monoFont))
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          [...document.fonts].filter(
+            (font) => font.status === 'loaded' && /geist/i.test(font.family) && !/fallback/i.test(font.family),
+          ).length,
+      ),
+    )
+    .toBeGreaterThanOrEqual(2)
 })
 
 test('keeps opened tool output stable during streaming and renders copyable structured responses', async ({ page }) => {
@@ -4870,9 +4889,16 @@ test('keeps opened tool output stable during streaming and renders copyable stru
     rawJson: JSON.stringify({ params: { availableDecisions: ['accept', 'decline'] } }),
   })
   await expect(chrome.getByLabel('Agent status')).toHaveText('Approval needed')
+  await expect
+    .poll(() =>
+      chrome
+        .getByTestId('agent-conversation-scroll')
+        .evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight),
+    )
+    .toBeLessThan(2)
   await chrome.getByRole('button', { name: 'Close Chrome' }).hover()
   if (process.platform !== 'darwin') {
-    await expect(chrome).toHaveScreenshot('tengri-agent-response.png')
+    await expect.soft(chrome).toHaveScreenshot('tengri-agent-response.png')
   }
   await chrome.getByRole('button', { name: 'Copy code block' }).click()
   await expect(chrome.getByRole('button', { name: 'Copy code block' })).toHaveText('Copied')
@@ -5077,6 +5103,54 @@ test('batches streamed updates without rebuilding scroll observers', async ({ pa
   expect(await observations()).toBe(before)
 })
 
+test('keeps following when a delayed scroll event arrives after streamed content grows', async ({ page }) => {
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'inProgress',
+            items: [{ id: 'answer-1', type: 'agentMessage', text: 'Workspace finding.\n\n'.repeat(40) }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  const conversation = page.getByTestId('agent-conversation-scroll')
+  await expect(page.getByRole('article', { name: 'Codex response' })).toHaveCount(1)
+  await expect
+    .poll(() => conversation.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight))
+    .toBeLessThan(2)
+  await conversation.evaluate((element) => {
+    const content = element.querySelector('[role="log"]')
+    if (!content) throw new Error('Conversation content is unavailable')
+    const observer = new MutationObserver(() => {
+      observer.disconnect()
+      element.dispatchEvent(new Event('scroll'))
+    })
+    observer.observe(content, { childList: true, subtree: true, characterData: true })
+  })
+  await emitCodexEvent(page, {
+    sequence: 1,
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'answer-new',
+    approvalId: '',
+    rawJson: '{}',
+    kind: 'assistant-text',
+    method: 'item/agentMessage/delta',
+    text: 'More streamed detail.\n\n'.repeat(12),
+  })
+  await expect(page.getByRole('article', { name: 'Codex response' })).toHaveCount(2)
+  await expect
+    .poll(() => conversation.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight))
+    .toBeLessThan(2)
+  await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0)
+})
+
 test('preserves the reading position while new events arrive and returns to the latest message on request', async ({
   page,
 }) => {
@@ -5174,7 +5248,7 @@ test('makes device login readable and copyable at desktop and narrow widths', as
   )
   await chrome.getByRole('button', { name: 'Close Chrome' }).hover()
   if (process.platform !== 'darwin') {
-    await expect(chrome).toHaveScreenshot('tengri-agent-login.png')
+    await expect.soft(chrome).toHaveScreenshot('tengri-agent-login.png')
   }
   await chrome.getByRole('button', { name: 'Copy code', exact: true }).click()
   await expect(chrome.getByRole('button', { name: 'Copy code', exact: true })).toHaveText('Copied')
