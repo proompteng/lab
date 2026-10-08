@@ -49,6 +49,34 @@ type CodexTextSegment = {
 }
 export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment }
 
+export type SubmittedPrompt = { id: string; text: string; previousItemIds: ReadonlySet<string> }
+
+export function reconcileSubmittedPrompts(
+  items: readonly { id: string; kind: TengriCodexEventKind; text: string }[],
+  submitted: readonly SubmittedPrompt[],
+) {
+  const acknowledged = new Set<string>()
+  const matchedItems = new Set<string>()
+  const pending: { prompt: SubmittedPrompt; beforeItemId: string | undefined }[] = []
+  const normalize = (text: string) => text.replace(/\[Local image: [^\]]*\]/g, '[Image]').trim()
+  for (const prompt of submitted) {
+    const match = items.find(
+      (item) =>
+        item.kind === 'user-message' &&
+        !prompt.previousItemIds.has(item.id) &&
+        !matchedItems.has(item.id) &&
+        normalize(item.text) === normalize(prompt.text),
+    )
+    if (match) {
+      acknowledged.add(prompt.id)
+      matchedItems.add(match.id)
+    } else {
+      pending.push({ prompt, beforeItemId: items.find((item) => !prompt.previousItemIds.has(item.id))?.id })
+    }
+  }
+  return { acknowledged, matchedItemIds: matchedItems, pending }
+}
+
 export function appendCodexEvent(
   current: CodexBufferedEvent[],
   event: CodexBufferedEvent,

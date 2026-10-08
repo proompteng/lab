@@ -1,7 +1,7 @@
 'use client'
 
 import { ChevronRight, FileDiff, ListChecks, LoaderCircle, TerminalSquare, Wrench } from 'lucide-react'
-import { useRef, type ReactNode } from 'react'
+import { memo, useRef, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -21,7 +21,7 @@ type CodexEventCardProps = {
   text: string
 }
 
-export function CodexEventCard({
+export const CodexEventCard = memo(function CodexEventCard({
   approvalDecisions = ['approve-once', 'approve-session', 'deny'],
   approvalId,
   kind,
@@ -33,7 +33,7 @@ export function CodexEventCard({
     return (
       <article
         aria-label="Your message"
-        className="ml-auto w-fit min-w-0 max-w-[min(85%,456px)] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2 text-left text-sm leading-6 text-zinc-100"
+        className="ml-auto w-fit min-w-0 max-w-[min(85%,456px)] rounded-2xl bg-white/[0.04] px-3.5 py-2 text-left text-sm leading-6 text-zinc-100"
       >
         <Markdown text={text} />
       </article>
@@ -42,10 +42,7 @@ export function CodexEventCard({
 
   if (kind === 'approval' && approvalId && onResolveApproval) {
     return (
-      <article
-        aria-label="Codex approval request"
-        className="rounded-xl border border-white/[0.08] bg-zinc-950/50 px-3 py-2"
-      >
+      <article aria-label="Codex approval request" className="rounded-xl bg-zinc-900/40 px-3 py-2">
         <div className="flex items-start gap-2">
           <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-amber-400/65" aria-hidden="true" />
           <div className="min-w-0 flex-1">
@@ -124,7 +121,7 @@ export function CodexEventCard({
           />
           Reasoning summary
         </summary>
-        <div className="mt-2 border-l border-zinc-700/80 pl-5 leading-relaxed text-zinc-400">
+        <div className="mt-2 pl-6 leading-relaxed text-zinc-400">
           <Markdown text={text} />
         </div>
       </details>
@@ -141,17 +138,17 @@ export function CodexEventCard({
     const preview = text.trim().split('\n')[0] || presentation.label
     return (
       <article aria-label={`Codex ${presentation.label.toLowerCase()}`} className="min-w-0 text-sm">
-        <details className="group overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-900/35">
-          <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 px-3 py-2 text-zinc-400 outline-none marker:content-none transition-colors hover:bg-white/[0.03] hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 motion-reduce:transition-none">
+        <details className="group overflow-hidden rounded-lg">
+          <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-lg px-1 py-1.5 text-zinc-400 outline-none marker:content-none transition-colors hover:bg-white/[0.03] hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 motion-reduce:transition-none">
             <Icon className="size-3.5 shrink-0 opacity-80" aria-hidden="true" />
-            <span className="shrink-0 text-xs font-medium text-zinc-300">{presentation.label}</span>
+            <span className="shrink-0 text-xs font-medium">{presentation.label}</span>
             <ChevronRight
               className="size-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
               aria-hidden="true"
             />
             <span className="min-w-0 truncate font-mono text-xs text-zinc-400">{preview}</span>
           </summary>
-          <pre className="max-h-80 overflow-auto border-t border-zinc-800/80 bg-zinc-950/50 px-3 py-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-zinc-300">
+          <pre className="mt-1 max-h-80 overflow-auto rounded-lg bg-zinc-900/40 px-3 py-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-zinc-300">
             {kind === 'file-diff'
               ? text.split('\n').map((line, index) => (
                   <span
@@ -175,10 +172,7 @@ export function CodexEventCard({
 
   if (kind === 'plan') {
     return (
-      <article
-        aria-label="Codex plan"
-        className="rounded-xl border border-zinc-800/80 bg-zinc-900/30 px-4 py-3 text-sm leading-relaxed text-zinc-300"
-      >
+      <article aria-label="Codex plan" className="px-1 py-2 text-sm leading-relaxed text-zinc-300">
         <div className="mb-2 flex items-center gap-2 text-xs font-medium tracking-wide text-zinc-400 uppercase">
           <ListChecks className="size-3.5" aria-hidden="true" />
           Plan
@@ -214,7 +208,7 @@ export function CodexEventCard({
       <Markdown text={text} />
     </article>
   )
-}
+})
 
 function ApprovalButton({
   disabled,

@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from '@proompteng/design/ui'
 import { ArrowDown, ArrowUp, Command, ExternalLink, LoaderCircle, PanelLeft, Plus, Square, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   codexOptionsForSelection,
   codexReasoningLabels,
@@ -67,9 +67,11 @@ import {
   codexTranscriptFromThread,
   parseCodexEvent,
   reconcileCodexEventsWithRestoredHistory,
+  reconcileSubmittedPrompts,
   type CodexApprovalDecision,
   type CodexBufferedEvent,
   type CodexTranscriptItem,
+  type SubmittedPrompt,
 } from './codex-events'
 import { runTengriAction, TengriRequestError } from './client'
 import { useModalFocus } from './modal-focus'
@@ -79,7 +81,6 @@ type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 type DraftImage = { id: string; name: string; size: number; input: TengriCodexImage | null }
 
 export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
-  const composerHelpId = useId()
   const [account, setAccount] = useState<TengriCodexAccount | null>(null)
   const [login, setLogin] = useState<TengriCodexLogin | null>(null)
   const [models, setModels] = useState<TengriCodexModel[] | null>(null)
@@ -94,6 +95,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
+  const [submittedPrompts, setSubmittedPrompts] = useState<SubmittedPrompt[]>([])
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
@@ -112,6 +114,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [sidebarWide, setSidebarWide] = useState(true)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const conversationRef = useRef<HTMLDivElement | null>(null)
+  const conversationContentRef = useRef<HTMLDivElement | null>(null)
   const promptRef = useRef<HTMLTextAreaElement | null>(null)
   const focusComposerAfterDrawerClose = useRef(false)
   const compactDrawerOpen = Boolean(account?.authenticated) && !sidebarWide && sidebarOpen
@@ -260,6 +263,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setHistoryItems([])
     setRestoredHistorySequence(0)
     setEvents([])
+    setSubmittedPrompts([])
     setPrompt('')
     setFollowingConversation(true)
     setReplayRecovering(false)
@@ -475,6 +479,30 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const source = new EventSource(
       `/api/tengri/events?agentId=${encodeURIComponent(agentId)}&after=${lastEventSequence.current}`,
     )
+    let pending: TengriCodexEvent[] = []
+    let frame = 0
+    const flush = () => {
+      cancelAnimationFrame(frame)
+      frame = 0
+      if (!pending.length) return
+      const batch = pending
+      pending = []
+      setEvents((current) =>
+        batch.reduce(
+          (next, event) =>
+            codexEventMatchesThread(event, threadIdRef.current)
+              ? appendCodexEventAfterRestore(
+                  next,
+                  event,
+                  restoredHistoryRef.current,
+                  restoredHistorySequenceRef.current,
+                  restoredItemSequencesRef.current,
+                )
+              : next,
+          current,
+        ),
+      )
+    }
     source.onmessage = (message) => {
       const event = parseCodexEvent(message.data)
       if (!event) {
@@ -493,15 +521,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         }
         if (!codexLoginCompletionMatches(event, activeLoginId)) return
       }
-      setEvents((current) =>
-        appendCodexEventAfterRestore(
-          current,
-          event,
-          restoredHistoryRef.current,
-          restoredHistorySequenceRef.current,
-          restoredItemSequencesRef.current,
-        ),
-      )
+      pending.push(event)
+      if (pending.length >= 100) flush()
+      else if (!frame) frame = requestAnimationFrame(flush)
       if (eventMethod === 'account/login/completed') {
         const completionError = codexLoginCompletionError(event)
         loginIdRef.current = ''
@@ -523,21 +545,33 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     }
     source.onopen = () => setEventStreamState('connected')
     source.onerror = () => setEventStreamState('reconnecting')
-    return () => source.close()
+    return () => {
+      source.close()
+      flush()
+    }
   }, [accountChecked, active, agentId, recoverThreadState, refreshAccount, setCurrentActiveTurnId])
 
   useEffect(() => {
     if (!active || !followingConversation) return
     const conversation = conversationRef.current
-    if (!conversation) return
+    const content = conversationContentRef.current
+    if (!conversation || !content) return
+    let frame = 0
     const follow = () => {
-      conversation.scrollTop = conversation.scrollHeight
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        conversation.scrollTop = conversation.scrollHeight
+      })
     }
     follow()
     const observer = new ResizeObserver(follow)
     observer.observe(conversation)
-    return () => observer.disconnect()
-  }, [active, events, followingConversation, historyItems])
+    observer.observe(content)
+    return () => {
+      observer.disconnect()
+      cancelAnimationFrame(frame)
+    }
+  }, [account?.authenticated, active, followingConversation])
 
   const resizePrompt = useCallback(() => {
     const textarea = promptRef.current
@@ -592,14 +626,64 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     [historyById, renderedEvents, restoredHistorySequence],
   )
 
+  const transcriptCards = [
+    ...historyItems.map((item) => {
+      const update = restoredItemUpdates.get(item.id)
+      return {
+        id: item.id,
+        kind: item.kind,
+        text: update?.text ?? item.text,
+        card: update ? (
+          renderEvent(update)
+        ) : (
+          <CodexEventCard key={`wrap-${threadId}-${item.id}-${item.kind}`} kind={item.kind} text={item.text} />
+        ),
+      }
+    }),
+    ...renderedEvents
+      .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
+      .map((update) => ({
+        id: update.event.itemId || codexEventWrapperKey(update.event),
+        kind: update.event.kind,
+        text: update.text,
+        card: renderEvent(update),
+      })),
+  ]
+  const {
+    acknowledged,
+    matchedItemIds,
+    pending: pendingPrompts,
+  } = reconcileSubmittedPrompts(transcriptCards, submittedPrompts)
+  useEffect(() => {
+    if (acknowledged.size) {
+      setSubmittedPrompts((current) =>
+        current
+          .filter((prompt) => !acknowledged.has(prompt.id))
+          .map((prompt) => ({
+            ...prompt,
+            previousItemIds: new Set([...prompt.previousItemIds, ...matchedItemIds]),
+          })),
+      )
+    }
+  }, [acknowledged, matchedItemIds])
+  for (const { prompt, beforeItemId } of pendingPrompts) {
+    const index = transcriptCards.findIndex((item) => item.id === beforeItemId)
+    transcriptCards.splice(index < 0 ? transcriptCards.length : index, 0, {
+      id: prompt.id,
+      kind: 'user-message',
+      text: prompt.text,
+      card: <CodexEventCard key={prompt.id} kind="user-message" text={prompt.text} />,
+    })
+  }
+
   function renderEvent({ event, text }: (typeof renderedEvents)[number]) {
     return (
       <CodexEventCard
         key={codexEventWrapperKey(event)}
-        approvalDecisions={codexApprovalDecisions(event)}
+        approvalDecisions={event.kind === 'approval' ? codexApprovalDecisions(event) : undefined}
         approvalId={event.approvalId}
         kind={event.kind}
-        onResolveApproval={(decision) => void resolveApproval(event, decision)}
+        onResolveApproval={event.kind === 'approval' ? (decision) => void resolveApproval(event, decision) : undefined}
         resolvingApproval={resolvingApprovals.has(event.approvalId)}
         text={text}
       />
@@ -662,8 +746,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setSubmitting(true)
     setFollowingConversation(true)
     setError('')
-    setPrompt('')
-    commitImages([])
+    const previousItemIds = new Set(transcriptCards.map((item) => item.id))
     try {
       const currentThread = await ensureThread()
       if (currentThread.activeTurnId) {
@@ -686,6 +769,16 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         })
         if (!completedTurns.current.has(turn.id)) setCurrentActiveTurnId(turn.id)
       }
+      setSubmittedPrompts((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          text: [text, ...inputImages.map(() => '[Image]')].filter(Boolean).join('\n'),
+          previousItemIds,
+        },
+      ])
+      setPrompt('')
+      commitImages([])
       // The turn was accepted, so its prompt can now title a still-untitled conversation.
       if (text) {
         setConversations((current) => promoteAcceptedConversationTitle(agentId, currentThread.id, text, current))
@@ -770,6 +863,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setHistoryItems([])
     setRestoredHistorySequence(0)
     setEvents([])
+    setSubmittedPrompts([])
     setFollowingConversation(true)
     setReplayRecovering(false)
     setError('')
@@ -916,7 +1010,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           sidebarWide ? 'relative shrink-0' : 'absolute inset-y-0 left-0',
         )}
       >
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/[0.08] px-3">
+        <div className="flex h-11 shrink-0 items-center gap-2 px-3">
           <span className="min-w-0 flex-1 truncate text-[11px] font-medium tracking-wide text-zinc-400 uppercase">
             Conversations
           </span>
@@ -966,7 +1060,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       </aside>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" inert={compactDrawerOpen || undefined}>
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/[0.08] px-3">
+        <div className="flex h-11 shrink-0 items-center gap-2 px-3">
           <button
             type="button"
             aria-pressed={sidebarOpen}
@@ -1023,29 +1117,14 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               />
             ) : null}
             <div
+              ref={conversationContentRef}
               className="mx-auto w-full max-w-3xl space-y-4"
               role="log"
               aria-label="Conversation"
               aria-live="polite"
               aria-relevant="additions text"
             >
-              {[
-                ...historyItems.map((item) => {
-                  const update = restoredItemUpdates.get(item.id)
-                  return update ? (
-                    renderEvent(update)
-                  ) : (
-                    <CodexEventCard
-                      key={`wrap-${threadId}-${item.id}-${item.kind}`}
-                      kind={item.kind}
-                      text={item.text}
-                    />
-                  )
-                }),
-                ...renderedEvents
-                  .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
-                  .map(renderEvent),
-              ]}
+              {transcriptCards.map((item) => item.card)}
               {activeTurnId && !approvalPending ? (
                 <div className="text-sm leading-6 text-zinc-400" role="status" aria-label="Agent activity">
                   <span className="tengri-thinking-shimmer inline-block">Thinking</span>
@@ -1067,7 +1146,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           ) : null}
         </div>
 
-        <div className="shrink-0 border-t border-white/[0.08] px-3 pt-3 pb-3 @[540px]/agent:px-6">
+        <div className="shrink-0 px-3 pt-2 pb-3 @[540px]/agent:px-6">
           <div className="mx-auto w-full max-w-3xl">
             {selectionWarning ? (
               <p role="status" className="mb-2 text-xs text-amber-200/80">
@@ -1111,7 +1190,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             <form
               aria-label="Message composer"
               aria-busy={replayRecovering}
-              className="w-full rounded-xl border border-white/[0.08] bg-zinc-950 transition-[border-color] focus-within:border-white/[0.16] motion-reduce:transition-none"
+              className="w-full rounded-2xl bg-zinc-900/60 transition-colors focus-within:bg-zinc-900/80 motion-reduce:transition-none"
               onSubmit={(event) => {
                 event.preventDefault()
                 void send()
@@ -1122,7 +1201,6 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                   ref={promptRef}
                   data-window-default-focus
                   aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
-                  aria-describedby={composerHelpId}
                   disabled={submitting || replayRecovering || Boolean(threadId && !threadReady)}
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
@@ -1233,11 +1311,6 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 </button>
               </div>
             </form>
-            <p id={composerHelpId} className="mt-2 text-center text-[11px] leading-4 text-zinc-400">
-              {activeTurnId
-                ? 'Enter to steer · Stop ends the response'
-                : 'Enter to send · Shift + Enter for a new line · Paste images to attach'}
-            </p>
           </div>
         </div>
       </div>

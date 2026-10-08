@@ -20,6 +20,7 @@ import {
   codexTranscriptFromThread,
   parseCodexEvent,
   reconcileCodexEventsWithRestoredHistory,
+  reconcileSubmittedPrompts,
 } from './codex-events'
 
 const event: TengriCodexEvent = {
@@ -33,6 +34,46 @@ const event: TengriCodexEvent = {
   approvalId: '',
   rawJson: '{}',
 }
+
+describe('Accepted prompt retention', () => {
+  const prompt = {
+    id: 'sent-1',
+    text: 'Inspect the workspace.',
+    previousItemIds: new Set(['previous-user', 'previous-answer']),
+  }
+  const previous = { id: 'previous-user', kind: 'user-message' as const, text: prompt.text }
+
+  test('keeps an accepted prompt before the new response when its echo is absent', () => {
+    const answer = { id: 'new-answer', kind: 'assistant-text' as const, text: 'Reading files.' }
+    const result = reconcileSubmittedPrompts([previous, answer], [prompt])
+    expect(result.acknowledged.size).toBe(0)
+    expect(result.pending).toEqual([{ prompt, beforeItemId: answer.id }])
+  })
+
+  test('acknowledges a new canonical item without matching an identical earlier prompt', () => {
+    const next = { ...previous, id: 'new-user' }
+    const result = reconcileSubmittedPrompts([previous, next], [prompt])
+    expect([...result.acknowledged]).toEqual(['sent-1'])
+    expect(result.pending).toEqual([])
+  })
+
+  test('one server echo cannot consume two identical accepted prompts', () => {
+    const second = { ...prompt, id: 'sent-2' }
+    const result = reconcileSubmittedPrompts([{ ...previous, id: 'new-user' }], [prompt, second])
+    expect([...result.acknowledged]).toEqual(['sent-1'])
+    expect(result.pending.map(({ prompt }) => prompt.id)).toEqual(['sent-2'])
+  })
+
+  test('matches restored image inputs to the accepted image-only prompt', () => {
+    const imagePrompt = { ...prompt, text: '[Image]' }
+    const result = reconcileSubmittedPrompts(
+      [{ ...previous, id: 'new-image', text: '[Local image: /workspace/.tengri-attachments/image.png]' }],
+      [imagePrompt],
+    )
+    expect([...result.acknowledged]).toEqual(['sent-1'])
+    expect(result.pending).toEqual([])
+  })
+})
 
 describe('Codex event replay', () => {
   test('deduplicates an event replayed after an SSE reconnect', () => {

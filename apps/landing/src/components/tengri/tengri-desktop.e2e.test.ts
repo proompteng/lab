@@ -1927,6 +1927,7 @@ test('renders one chat bubble per item lifecycle and preserves repeated prompts'
     await prompt.press('Enter')
     await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(index + 1)
     await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
+    await expect(log.getByText(text, { exact: true })).toHaveCount(index + 1)
     const item = {
       kind: 'user-message',
       threadId: 'thread-1',
@@ -1950,6 +1951,41 @@ test('renders one chat bubble per item lifecycle and preserves repeated prompts'
     await expect(page.getByLabel('Message your agent')).toBeVisible()
     await expect(log.getByText(text, { exact: true })).toHaveCount(index + 1)
   }
+})
+
+test('keeps identical pending prompts separate when their echoes arrive one at a time', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const text = 'Inspect the workspace again.'
+  const log = page.getByRole('log')
+  await page.getByLabel('Message your agent').fill(text)
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await page.getByLabel('Steer the current turn').fill(text)
+  await page.getByRole('button', { name: 'Steer turn', exact: true }).click()
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'steer-turn').length).toBe(1)
+  await expect(log.getByText(text, { exact: true })).toHaveCount(2)
+  const item = {
+    kind: 'user-message',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'first-user',
+    text,
+    approvalId: '',
+    rawJson: '{}',
+    method: 'item/completed',
+  }
+  await emitCodexEvent(page, { ...item, sequence: 1 })
+  await emitCodexEvent(page, {
+    ...item,
+    sequence: 2,
+    itemId: 'response',
+    kind: 'assistant-text',
+    text: 'Reading the workspace.',
+  })
+  await expect(log.getByRole('article', { name: 'Codex response' })).toHaveText('Reading the workspace.')
+  await expect(log.getByText(text, { exact: true })).toHaveCount(2)
+  await emitCodexEvent(page, { ...item, sequence: 3, itemId: 'second-user' })
+  await expect(log.getByText(text, { exact: true })).toHaveCount(2)
 })
 
 test('keeps the Dock clear of new and maximized window controls', async ({ page }) => {
@@ -2308,6 +2344,33 @@ test('uses one composer control for sending, steering, and stopping a response',
   const screenshotPath = testInfo.outputPath('composer-stop.png')
   await composer.screenshot({ path: screenshotPath })
   await testInfo.attach('composer-stop', { path: screenshotPath, contentType: 'image/png' })
+  await emitCodexEvent(page, {
+    sequence: 1,
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'activity-1',
+    approvalId: '',
+    rawJson: '{}',
+    kind: 'tool-call',
+    method: 'item/started',
+    text: 'rg --files -g AGENTS.md',
+  })
+  await emitCodexEvent(page, {
+    sequence: 2,
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'output-1',
+    approvalId: '',
+    rawJson: '{}',
+    kind: 'tool-output',
+    method: 'item/started',
+    text: '/home/nanoagent/workspace',
+  })
+  await expect(page.getByRole('article', { name: 'Codex activity' })).toBeVisible()
+  await expect(page.getByRole('article', { name: 'Codex output' })).toBeVisible()
+  const surfacePath = testInfo.outputPath('conversation-polish.png')
+  await page.getByRole('region', { name: 'Chrome window' }).screenshot({ path: surfacePath })
+  await testInfo.attach('conversation-polish', { path: surfacePath, contentType: 'image/png' })
 
   await prompt.fill('Only inspect the current directory.')
   await expect(action).toHaveAccessibleName('Steer turn')
@@ -2321,7 +2384,7 @@ test('uses one composer control for sending, steering, and stopping a response',
     .poll(() => mock.actions.some((item) => item.action === 'interrupt-turn' && item.turnId === 'turn-1'))
     .toBe(true)
   await emitCodexEvent(page, {
-    sequence: 1,
+    sequence: 3,
     threadId: 'thread-1',
     turnId: 'turn-1',
     itemId: '',
@@ -4723,6 +4786,96 @@ test('keeps the composer stable while typing and resizing multiline drafts', asy
   await prompt.pressSequentially(' more', { delay: 20 })
   await expect(prompt).toBeFocused()
   expect(await observationCount()).toBe(observations)
+})
+
+test('batches streamed updates without rebuilding scroll observers', async ({ page }, testInfo) => {
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'inProgress',
+            items: Array.from({ length: 60 }, (_, index) => ({
+              id: `answer-${index}`,
+              type: 'agentMessage',
+              text: `## Finding ${index + 1}\n${'Review the **workspace** and its files. '.repeat(10)}`,
+            })),
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-1')
+    const state = { observations: 0 }
+    Object.defineProperty(window, '__streamResizeState', { value: state })
+    const NativeResizeObserver = window.ResizeObserver
+    window.ResizeObserver = class extends NativeResizeObserver {
+      observe(target: Element, options?: ResizeObserverOptions) {
+        if (target.getAttribute('data-testid') === 'agent-conversation-scroll') state.observations += 1
+        super.observe(target, options)
+      }
+    }
+  })
+  await page.goto('/')
+  await expect(page.getByRole('article', { name: 'Codex response' })).toHaveCount(60)
+  await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
+  const observations = () =>
+    page.evaluate(
+      () =>
+        (window as typeof window & { __streamResizeState: { observations: number } }).__streamResizeState.observations,
+    )
+  const before = await observations()
+  const session = await page.context().newCDPSession(page)
+  await session.send('Performance.enable')
+  const metricsBefore = await session.send('Performance.getMetrics')
+  await page.evaluate(async () => {
+    const source = (
+      window as typeof window & {
+        __tengriEventSources?: Array<{
+          closed: boolean
+          onmessage: ((event: MessageEvent) => void) | null
+          url: string
+        }>
+      }
+    ).__tengriEventSources?.find((candidate) => !candidate.closed && candidate.url.includes('/api/tengri/events?'))
+    if (!source?.onmessage) throw new Error('Codex event stream is unavailable')
+    for (let index = 0; index < 100; index += 1) {
+      source.onmessage(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            sequence: index + 1,
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'streamed-answer',
+            approvalId: '',
+            rawJson: '{}',
+            kind: 'assistant-text',
+            method: 'item/agentMessage/delta',
+            text: `${index} `,
+          }),
+        }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 4))
+    }
+  })
+  await expect(page.getByRole('article', { name: 'Codex response' }).last()).toHaveText(
+    Array.from({ length: 100 }, (_, index) => `${index}`).join(' '),
+  )
+  const metricsAfter = await session.send('Performance.getMetrics')
+  const durations = ['ScriptDuration', 'LayoutDuration'].map((name) => ({
+    name,
+    milliseconds:
+      1_000 *
+      ((metricsAfter.metrics.find((metric) => metric.name === name)?.value ?? 0) -
+        (metricsBefore.metrics.find((metric) => metric.name === name)?.value ?? 0)),
+  }))
+  await testInfo.attach('streaming-metrics', {
+    body: JSON.stringify({ durations, observationsBefore: before, observationsAfter: await observations() }),
+    contentType: 'application/json',
+  })
+  expect(await observations()).toBe(before)
 })
 
 test('preserves the reading position while new events arrive and returns to the latest message on request', async ({

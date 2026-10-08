@@ -53,17 +53,19 @@ reconnect with their event cursor. HMAC metadata still binds every request to it
 Missing, denied, malformed, or expired identity fails the request; there is no plaintext option. Local development
 requires an attested SPIRE identity too. Native tests use a private fixture Workload API and real TLS certificates.
 
-The Codex view follows a Vercel/Geist-inspired minimal chrome: near-black canvas, hairline `white/[0.08]` borders,
-quiet zinc typography, and blue reserved for primary actions. User messages sit on the right with a subtle bordered
-background; agent responses stay on the left without speaker headings. A left conversation sidebar (~240–260px) lists
+The Codex view uses a near-black canvas, quiet zinc typography, and blue for primary actions. User messages sit on the
+right with a soft background; agent responses stay on the left without speaker headings. A left conversation sidebar (~240–260px) lists
 browser-local conversations for the agent (newest first) with an active highlight and **New** control; the active
 thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. The header is
-thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The composer is a flat
-hairline rounded-xl control with model/reasoning as secondary chrome beside a restrained circular send/stop button and
-a quiet Enter / Shift+Enter hint. Composer height updates before paint, preserves scrolling within long drafts, and
+thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
+no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
+send/stop button. Composer height updates before paint, preserves scrolling within long drafts, and
 observes width changes without restarting the observer on each keystroke. The empty state is a short line plus text-link
-starters. Commands, output, diffs, and reasoning summaries expand from compact activity cards. Approvals are a small
-hairline card with a muted label and quiet Approve / Deny actions rather than thick alarm frames.
+starters. Commands, output, diffs, and reasoning summaries expand from compact rows without outlined cards. Approvals
+use a soft surface with a muted label and Approve / Deny actions. Accepted prompts stay in the transcript while waiting
+for the server's message item; the canonical item replaces the local prompt without duplicating it. Streamed text
+updates once per animation frame, unchanged message cards are memoized, and a stable content observer follows changes
+without rebuilding on every chunk.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
 Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under
