@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Cause, Effect, Exit, Fiber, Redacted, Result, Stream } from 'effect'
+import { Cause, Effect, Exit, Fiber, Redacted, Result, Stream, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 
@@ -20,6 +20,50 @@ const responseClient = (body: unknown, status = 200) =>
   )
 
 describe('Jev inference transport', () => {
+  test.each([200, 429])(
+    'redacts sensitive HTTP headers while retaining trace diagnostics for status %i',
+    async (status) => {
+      const spans: Tracer.NativeSpan[] = []
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options)
+          spans.push(span)
+          return span
+        },
+      })
+      const http = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(status === 200 ? responseFixture() : { error: 'unavailable' }), {
+              status,
+              headers: {
+                'set-cookie': 'private-session-cookie',
+                'x-api-key': 'private-provider-key',
+                'x-ratelimit-remaining': '199',
+              },
+            }),
+          ),
+        ),
+      )
+      const result = await Effect.runPromise(
+        run(Effect.result(evaluate), http).pipe(Effect.provideService(Tracer.Tracer, tracer)),
+      )
+      expect(Result.isSuccess(result)).toBe(status === 200)
+      const requests = spans.filter((span) => span.name === 'http.client POST')
+      expect(requests).toHaveLength(1)
+      const span = requests[0]
+      expect(span).toBeDefined()
+      if (span === undefined) throw new Error('Jev HTTP trace is missing')
+      expect(span.attributes.get('http.request.header.authorization')).toBe('<redacted>')
+      expect(span.attributes.get('http.response.header.set-cookie')).toBe('<redacted>')
+      expect(span.attributes.get('http.response.header.x-api-key')).toBe('<redacted>')
+      expect(span.attributes.get('http.response.header.x-ratelimit-remaining')).toBe('199')
+      expect(span.attributes.get('http.response.status_code')).toBe(status)
+      expect(JSON.stringify([...span.attributes])).not.toContain(Redacted.value(key))
+    },
+  )
+
   test('uses the fixed endpoint and returns replayable hashes with recorded response', async () => {
     let calls = 0
     const http = HttpClient.make((request, url) => {
