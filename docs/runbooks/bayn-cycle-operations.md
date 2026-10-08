@@ -246,6 +246,20 @@ application tables. Neither credentials, SQL text, process identifiers nor accou
    scrubbing, device errors and competing writers. A different PVC on the same bottleneck is not storage isolation.
    Changes to another application's workload require that application's explicit authorization.
 
+Bayn enables SQL span propagation. Its `sql.transaction` span retains the actual `postgresql.pid` as a trace
+attribute. Join that PID to a contemporaneous backend observation, including the database instance and interval;
+PIDs can be reused. The existing `db.transaction.commit` and `db.transaction.rollback` events mark control start.
+Their `.completed` events mark driver completion, with `db.transaction.outcome` equal to `succeeded` or `failed`.
+Subtract these event timestamps to measure each control. PostgreSQL returning `ROLLBACK` for an aborted `COMMIT`
+remains a failed commit. A missing completion event means the control outcome and elapsed interval remain unknown.
+
+`db.transaction.connection.release.started` and `.completed` delimit closure of the acquired connection scope.
+Commit recovery, when configured, runs after failed commit completion and before connection release. Nested
+savepoints do not release the outer connection. These events add no SQL, child spans, payloads or metric labels;
+clients without SQL propagation, or with tracing disabled, retain their existing behavior. A long interval after
+the last statement is not enough to distinguish commit waiting from connection cleanup. Use the phase events and
+backend observations together before assigning a cause.
+
 Preserve synchronous replication, `fsync`, checksums, statement cancellation and freshness bounds. Do not diagnose a
 storage repair from an idle-only sample. Any changed timing overhead or database load must be measured, and the
 existing durability requirements must remain true through rollout and naturally observed session traffic.
