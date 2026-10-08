@@ -1,5 +1,9 @@
 # Bayn GitOps rollout notes
 
+Kargo writes activation Job and pod version labels as `sha-<12-character revision>`. The prefix keeps numeric and
+exponent-looking commit prefixes as YAML strings, as Kubernetes requires for label values. The activation Job name,
+full source revision, immutable image digest and authored research lineage retain their existing contracts.
+
 ## Research storage foundation
 
 Research storage uses the standard Rook `ObjectBucketClaim` named `bayn-research-captures` in `rook-ceph`.
