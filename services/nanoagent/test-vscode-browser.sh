@@ -33,6 +33,9 @@ cleanup() {
   elif [[ -f "$fixture_root/home/.tengri/vscode/server.log" ]]; then
     cp "$fixture_root/home/.tengri/vscode/server.log" "$fixture_root/vscode.log" || true
   fi
+  if [[ -n "${fixture_network:-}" ]]; then
+    docker network rm "$fixture_network" >/dev/null 2>&1 || true
+  fi
   printf 'VS Code acceptance logs: %s\n' "$fixture_root"
   if [[ "$result" != 0 ]]; then tail -n 60 "$fixture_root"/*.log 2>/dev/null || true; fi
   exit "$result"
@@ -75,6 +78,17 @@ if [[ -n "${TENGRI_BROWSER_TEST_IMAGE:-}" ]]; then
   fixture_volume="${TENGRI_BROWSER_TEST_VOLUME:-tengri-browser-acceptance-$fixture_arch}"
   fixture_container="tengri-browser-${fixture_root##*.}"
   (cd "$repository/services/nanoagent" && GOWORK=off GOOS=linux GOARCH="$fixture_arch" go test -c -o "$fixture_root/nanoagent.test")
+  if [[ "$(uname -s)" == Linux ]]; then
+    fixture_interface="$(ip -4 route get 1.1.1.1 | awk '{for (i=1; i<NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+    [[ "$fixture_interface" =~ ^[a-zA-Z0-9_.:-]+$ ]]
+    fixture_network_mtu="$(cat "/sys/class/net/${fixture_interface}/mtu")"
+    [[ "$fixture_network_mtu" =~ ^[0-9]+$ ]]
+    if [[ "$fixture_network_mtu" -lt 576 || "$fixture_network_mtu" -gt 65535 ]]; then exit 1; fi
+    # A nested Docker bridge must fit the runner's CNI path for cold browser downloads.
+    fixture_network="${fixture_container}-network"
+    docker network create --driver bridge --opt "com.docker.network.driver.mtu=$fixture_network_mtu" "$fixture_network" >/dev/null
+    fixture_container_options+=(--network "$fixture_network")
+  fi
   docker create --name "$fixture_container" --hostname tengri-browser-acceptance --user 1000:1000 --security-opt seccomp=unconfined --shm-size=256m \
     "${fixture_container_options[@]}" \
     --publish 127.0.0.1:8080:8080 \
