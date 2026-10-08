@@ -7,7 +7,7 @@ import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
 import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
 import { Sha256Schema } from './schemas'
 import {
-  makeForwardPerformanceReceiptEnvelope,
+  makePersistableForwardPerformanceReceiptEnvelope,
   persistForwardPerformanceReceipt,
 } from './db/forward-performance-receipt'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
@@ -62,28 +62,9 @@ const runProof = (options: { readonly authorityGenerationHash?: string; readonly
       const config = yield* loadForwardPerformanceConfig()
       const report = yield* Effect.gen(function* () {
         const report = yield* runForwardPerformanceReport(config, undefined, options)
-        if (
-          options.persistReceipt === true &&
-          options.authorityGenerationHash !== undefined &&
-          report.receipt.window.lastCycleId !== null &&
-          report.receipt.window.closedAt !== null
-        ) {
+        if (options.persistReceipt === true && options.authorityGenerationHash !== undefined) {
           const envelope = yield* Effect.fromResult(
-            makeForwardPerformanceReceiptEnvelope({
-              schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
-              authorityGenerationHash: options.authorityGenerationHash,
-              cycleId: report.receipt.window.lastCycleId,
-              receiptHash: report.receipt.receiptHash,
-              receipt: report.receipt,
-              createdAt: report.receipt.window.closedAt,
-            }),
-          ).pipe(
-            Effect.mapError(
-              () =>
-                new ForwardPerformanceCommandArgumentError({
-                  message: 'forward-performance receipt envelope construction failed',
-                }),
-            ),
+            makePersistableForwardPerformanceReceiptEnvelope(options.authorityGenerationHash, report.receipt),
           )
           yield* persistForwardPerformanceReceipt(envelope)
         }

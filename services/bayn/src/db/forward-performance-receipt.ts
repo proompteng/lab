@@ -276,11 +276,125 @@ export class ForwardPerformanceReceiptPersistenceError extends Data.TaggedError(
   'ForwardPerformanceReceiptPersistenceError',
 )<{ readonly message: string; readonly cause?: unknown }> {}
 
+export const makePersistableForwardPerformanceReceiptEnvelope = (
+  authorityGenerationHash: string,
+  receipt: ForwardPerformanceReceipt,
+): Result.Result<ForwardPerformanceReceiptEnvelope, ForwardPerformanceReceiptPersistenceError> => {
+  const { window, evidence, reconciliationProof: proof } = receipt
+  if (
+    evidence.status !== 'SUFFICIENT' ||
+    evidence.reasonCodes.length !== 0 ||
+    receipt.profitability === 'UNDETERMINED' ||
+    receipt.bindings.source === null ||
+    receipt.bindings.strategy === null ||
+    window.firstCycleId === null ||
+    window.lastCycleId === null ||
+    window.openedAt === null ||
+    window.closedAt === null ||
+    window.closedAt < window.openedAt ||
+    window.reconciliationId === null ||
+    window.reconciliationContentHash === null ||
+    (window.reconciliationStatus !== 'EXACT' && window.cashYieldAdjustedExact !== true) ||
+    !proof.accountingReceiptsExact ||
+    !proof.ledgerExact ||
+    proof.missingLedgerAccountCount !== 0 ||
+    proof.unresolvedMutationCount !== 0 ||
+    proof.unclosedCycleCount !== 0 ||
+    proof.openPositionCount !== 0
+  )
+    return Result.fail(
+      new ForwardPerformanceReceiptPersistenceError({
+        message: 'Cannot persist a forward-performance receipt without sufficient, closed, exactly reconciled evidence',
+      }),
+    )
+
+  return makeForwardPerformanceReceiptEnvelope({
+    schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
+    authorityGenerationHash,
+    cycleId: window.lastCycleId,
+    receiptHash: receipt.receiptHash,
+    receipt,
+    createdAt: window.closedAt,
+  }).pipe(
+    Result.flatMap(decodeForwardPerformanceReceiptEnvelopeResult),
+    Result.mapError(
+      (cause) =>
+        new ForwardPerformanceReceiptPersistenceError({ message: 'Invalid forward-performance receipt', cause }),
+    ),
+  )
+}
+
+const decodePersistenceMatches = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ matches: Schema.Boolean })))
+
 export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceReceiptEnvelope) =>
   Effect.gen(function* () {
+    const expected = yield* Effect.fromResult(
+      makePersistableForwardPerformanceReceiptEnvelope(envelope.authorityGenerationHash, envelope.receipt),
+    )
+    if (expected.contentHash !== envelope.contentHash)
+      return yield* new ForwardPerformanceReceiptPersistenceError({
+        message: 'Forward-performance envelope must bind the report cycle and stable evidence timestamp',
+      })
     const sql = yield* PgClient.PgClient
-    const rows = yield* sql.withTransaction(
+    yield* sql.withTransaction(
       Effect.gen(function* () {
+        // A reconciliation timestamp is not proof that a generation has ended. Only archive a
+        // superseded generation, and hold the authority/cycle rows through the append.
+        const terminal = yield* sql`
+          SELECT true AS matches
+          FROM authority_generations AS generation
+          JOIN authority_state AS state
+            ON state.singleton
+            AND state.generation_hash <> generation.generation_hash
+            AND state.version > generation.authority_version
+          JOIN autonomous_cycles AS cycle
+            ON cycle.cycle_id = ${envelope.cycleId}
+            AND cycle.account_id = generation.account_id
+            AND cycle.qualification_run_id = COALESCE(generation.qualification_run_id, generation.research_plan_hash)
+          WHERE generation.generation_hash = ${envelope.authorityGenerationHash}
+            AND generation.maximum = 'PAPER'
+            AND generation.broker_identity_hash = ${envelope.receipt.bindings.account.accountReferenceHash}
+            AND generation.broker_provider = ${envelope.receipt.bindings.account.provider}
+            AND generation.broker_environment = ${envelope.receipt.bindings.account.environment}
+            AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+            AND cycle.terminal_at <= ${envelope.createdAt}::timestamptz
+            AND (
+              EXISTS (
+                SELECT 1 FROM intents AS cycle_intent
+                WHERE cycle_intent.cycle_id = cycle.cycle_id
+                  AND cycle_intent.account_id = generation.account_id
+                  AND cycle_intent.authority_generation_hash = generation.generation_hash
+              )
+              OR EXISTS (
+                SELECT 1 FROM autonomous_cycle_shadow_decisions AS decision
+                WHERE decision.cycle_id = cycle.cycle_id
+                  AND decision.decision_hash = cycle.decision_hash
+                  AND decision.schema_version = 'bayn.paper-cycle-decision.v1'
+                  AND decision.document ->> 'mode' = 'PAPER'
+                  AND decision.document #>> '{bindings,accountId}' = generation.account_id
+                  AND decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id
+                  AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+              )
+            )
+            AND EXISTS (
+              SELECT 1 FROM authority_generations AS successor
+              WHERE successor.previous_generation_hash = generation.generation_hash
+                AND successor.account_id = generation.account_id
+                AND successor.authority_version > generation.authority_version
+                AND successor.activated_at > ${envelope.createdAt}::timestamptz
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM intents AS intent
+              WHERE intent.authority_generation_hash = generation.generation_hash
+                AND (intent.state <> 'TERMINAL' OR intent.updated_at > ${envelope.createdAt}::timestamptz)
+            )
+          FOR SHARE OF state, cycle
+        `.pipe(Effect.flatMap(decodePersistenceMatches))
+        if (terminal.length !== 1 || terminal[0]?.matches !== true)
+          return yield* new ForwardPerformanceReceiptPersistenceError({
+            message: 'Cannot persist a forward-performance receipt before its generation is superseded and settled',
+          })
+
         yield* sql`
           INSERT INTO autonomous_forward_performance_receipts (
             authority_generation_hash, cycle_id, document, created_at
@@ -289,17 +403,17 @@ export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceRec
           )
           ON CONFLICT (authority_generation_hash) DO NOTHING
         `
-        return yield* sql<{ readonly matches: boolean }>`
+        const rows = yield* sql`
           SELECT document = ${sql.json(envelope)} AS matches
           FROM autonomous_forward_performance_receipts
           WHERE authority_generation_hash = ${envelope.authorityGenerationHash}
-        `
+        `.pipe(Effect.flatMap(decodePersistenceMatches))
+        if (rows.length !== 1 || rows[0]?.matches !== true)
+          return yield* new ForwardPerformanceReceiptPersistenceError({
+            message: 'A different forward-performance receipt already exists for this authority generation',
+          })
       }),
     )
-    if (rows.length !== 1 || rows[0]?.matches !== true)
-      return yield* new ForwardPerformanceReceiptPersistenceError({
-        message: 'A different forward-performance receipt already exists for this authority generation',
-      })
   }).pipe(
     Effect.mapError((cause) =>
       cause instanceof ForwardPerformanceReceiptPersistenceError

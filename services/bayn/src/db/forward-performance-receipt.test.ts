@@ -8,8 +8,10 @@ import { canonicalHashV1 } from '../hash'
 import {
   decodeForwardPerformanceReceiptEnvelopeResult,
   makeForwardPerformanceReceiptEnvelope,
+  makePersistableForwardPerformanceReceiptEnvelope,
   persistForwardPerformanceReceipt,
 } from './forward-performance-receipt'
+import { makePersistenceReceipt } from './forward-performance-receipt.test-support'
 
 const hash = 'a'.repeat(64)
 
@@ -93,9 +95,10 @@ const envelope = { ...envelopeMaterial, contentHash: canonicalHashV1(envelopeMat
 
 describe('forward-performance receipt persistence contract', () => {
   test('persists once and accepts an exact idempotent replay', async () => {
-    const packet = Result.getOrThrow(makeForwardPerformanceReceiptEnvelope(envelopeMaterial))
+    const packet = Result.getOrThrow(makePersistableForwardPerformanceReceiptEnvelope(hash, makePersistenceReceipt()))
     const rows: Array<typeof packet> = []
     const query = (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
+      if (strings.join('').includes('FROM authority_generations')) return Effect.succeed([{ matches: true }])
       if (strings.join('').includes('INSERT INTO')) {
         const incoming = values[2] as typeof packet
         if (!rows.some((row) => row.authorityGenerationHash === incoming.authorityGenerationHash)) rows.push(incoming)
@@ -119,9 +122,13 @@ describe('forward-performance receipt persistence contract', () => {
   })
 
   test('rejects a conflicting replay for the same authority generation', async () => {
-    const packet = Result.getOrThrow(makeForwardPerformanceReceiptEnvelope(envelopeMaterial))
+    const packet = Result.getOrThrow(makePersistableForwardPerformanceReceiptEnvelope(hash, makePersistenceReceipt()))
     const query = (strings: TemplateStringsArray, ..._values: readonly unknown[]) =>
-      Effect.succeed(strings.join('').includes('INSERT INTO') ? [] : [{ matches: false }])
+      Effect.succeed(
+        strings.join('').includes('INSERT INTO')
+          ? []
+          : [{ matches: strings.join('').includes('FROM authority_generations') }],
+      )
     const sql = Object.assign(query, {
       json: (value: unknown) => value,
       withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
@@ -130,6 +137,82 @@ describe('forward-performance receipt persistence contract', () => {
       persistForwardPerformanceReceipt(packet).pipe(Effect.provideService(PgClient.PgClient, sql)),
     )
     expect(exit._tag).toBe('Failure')
+  })
+
+  test('rejects insufficient evidence with non-null cycle and reconciliation before any database call', async () => {
+    for (const overrides of [
+      { unclosedCycleCount: 1 },
+      { unresolvedMutationCount: 1 },
+      { openPositionCount: 1 },
+      { accountingReceiptsExact: false },
+      { ledgerExact: false },
+      { missingLedgerAccountCount: 1 },
+      {
+        ledgerTotals: {
+          realizedGainMicros: '100',
+          realizedLossMicros: '0',
+          brokerExecutionFeesMicros: '20',
+          otherChargedCostsMicros: null,
+          cashYieldMicros: '0',
+        },
+      },
+    ]) {
+      const receipt = makePersistenceReceipt(overrides)
+      expect(receipt.window.lastCycleId).not.toBeNull()
+      expect(receipt.window.closedAt).not.toBeNull()
+      expect(receipt.evidence.status).toBe('INSUFFICIENT_EVIDENCE')
+      expect(Result.isFailure(makePersistableForwardPerformanceReceiptEnvelope(hash, receipt))).toBe(true)
+      const packet = Result.getOrThrow(
+        makeForwardPerformanceReceiptEnvelope({
+          ...envelopeMaterial,
+          receipt,
+          receiptHash: receipt.receiptHash,
+        }),
+      )
+      let calls = 0
+      const query = () => {
+        calls += 1
+        return Effect.succeed([{ matches: true }])
+      }
+      const sql = Object.assign(query, {
+        json: (value: unknown) => value,
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      }) as unknown as PgClient.PgClient
+      const result = await Effect.runPromise(
+        persistForwardPerformanceReceipt(packet).pipe(Effect.result, Effect.provideService(PgClient.PgClient, sql)),
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      expect(calls).toBe(0)
+    }
+  })
+
+  test('rejects an active generation before any insert even when its current report is sufficient', async () => {
+    const packet = Result.getOrThrow(makePersistableForwardPerformanceReceiptEnvelope(hash, makePersistenceReceipt()))
+    let inserts = 0
+    const query = (strings: TemplateStringsArray) => {
+      if (strings.join('').includes('INSERT INTO')) inserts += 1
+      return Effect.succeed([])
+    }
+    const sql = Object.assign(query, {
+      json: (value: unknown) => value,
+      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+    }) as unknown as PgClient.PgClient
+    const result = await Effect.runPromise(
+      persistForwardPerformanceReceipt(packet).pipe(Effect.result, Effect.provideService(PgClient.PgClient, sql)),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure.message).toContain('superseded and settled')
+    expect(inserts).toBe(0)
+  })
+
+  test('uses only the closed evidence timestamp for repeatable envelope identity', () => {
+    const receipt = makePersistenceReceipt()
+    const first = Result.getOrThrow(makePersistableForwardPerformanceReceiptEnvelope(hash, receipt))
+    const second = Result.getOrThrow(makePersistableForwardPerformanceReceiptEnvelope(hash, receipt))
+    expect(first).toEqual(second)
+    expect(receipt.window.closedAt).toBe(first.createdAt)
+    expect(receipt.window.lastCycleId).toBe(first.cycleId)
+    expect(Result.getOrThrow(decodeForwardPerformanceReceiptEnvelopeResult(first))).toEqual(first)
   })
 
   test('round-trips unresolved operating costs with retained trading totals and stable hashes', () => {

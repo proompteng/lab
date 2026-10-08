@@ -869,8 +869,13 @@ opt in explicitly after the evidence window has closed:
 node dist/forward-performance-command.js --authority-generation <generation-hash> --persist-receipt
 ```
 
-Receipt persistence is append-only and idempotent for unchanged evidence; a conflicting receipt for the same
-authority generation fails closed.
+Receipt persistence is restricted to a superseded PAPER generation with sufficient, closed, exactly reconciled
+evidence. A non-null reconciliation timestamp alone does not prove terminality. The command rejects active or
+unsettled generations, open windows, unknown costs and other evidence gaps before inserting anything; use the
+read-only invocation for provisional diagnostics. Generation retirement and the final cycle are checked against
+PostgreSQL inside the append transaction. No receipt is written to rearm a still-active generation.
+Persistence is append-only and idempotent for unchanged evidence; the creation timestamp comes from the fixed
+evidence cut, not invocation time. A conflicting receipt for the same authority generation fails closed.
 
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
