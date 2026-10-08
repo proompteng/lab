@@ -56,6 +56,8 @@ import {
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
   codexEventDisplayText,
+  codexEventIsIndependentOfThreadSnapshot,
+  codexEventKey,
   codexEventMatchesThread,
   codexEventShouldRender,
   codexEventSupersedesRestoredItem,
@@ -96,7 +98,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
-  const retainedApprovals = useRef(new Map<string, CodexBufferedEvent>())
+  const retainedEvents = useRef<CodexBufferedEvent[]>([])
   const [submittedPrompts, setSubmittedPrompts] = useState<SubmittedPrompt[]>([])
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
@@ -262,7 +264,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setHistoryItems([])
     setRestoredHistorySequence(0)
     setEvents([])
-    retainedApprovals.current.clear()
+    retainedEvents.current = []
     setSubmittedPrompts([])
     draftsRef.current.clear()
     lastScrollTop.current = 0
@@ -389,7 +391,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           conversationTitleFromRegistry(current, thread.id),
           titleFromTranscript(restored.historyItems),
         )
-        const updatedAt = current.find((conversation) => conversation.id === thread.id)?.updatedAt ?? Date.now()
+        const existing = current.find((conversation) => conversation.id === thread.id)
+        const updatedAt = existing?.unavailable
+          ? Math.max(Date.now(), existing.updatedAt + 1)
+          : (existing?.updatedAt ?? Date.now())
         return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt }, current)
       })
       return { ...restored, activeTurnId }
@@ -489,10 +494,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       if (!pending.length) return
       const batch = pending
       pending = []
+      const retainedKeys = new Set(retainedEvents.current.map(codexEventKey))
       setEvents((current) =>
         batch.reduce(
           (next, event) =>
-            codexEventMatchesThread(event, threadIdRef.current)
+            event.threadId === threadIdRef.current &&
+            (!codexEventIsIndependentOfThreadSnapshot(event) || retainedKeys.has(codexEventKey(event)))
               ? appendCodexEventAfterRestore(
                   next,
                   event,
@@ -501,31 +508,28 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                   restoredItemSequencesRef.current,
                 )
               : next,
-          current,
+          current.filter((event) => event.kind !== 'approval' || retainedKeys.has(codexEventKey(event))),
         ),
       )
     }
     source.onmessage = (message) => {
-      const event = parseCodexEvent(message.data)
-      if (!event) {
+      const parsed = parseCodexEvent(message.data)
+      if (!parsed) {
         setError('Agent returned an invalid event')
         return
       }
-      lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
-      const resolvedApprovalId = codexResolvedApprovalId(event)
-      if (resolvedApprovalId) {
-        retainedApprovals.current.delete(resolvedApprovalId)
-      } else if (event.kind === 'approval' && event.approvalId) {
-        const approval = appendCodexEvent([], event)[0]
-        if (approval) retainedApprovals.current.set(event.approvalId, approval)
-      } else if (event.method === 'turn/completed' && event.turnId) {
-        for (const [id, approval] of retainedApprovals.current) {
-          if (approval.threadId === event.threadId && approval.turnId === event.turnId) {
-            retainedApprovals.current.delete(id)
-          }
-        }
-      }
       const currentThread = threadIdRef.current
+      const event = { ...parsed, threadId: parsed.threadId || currentThread }
+      lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
+      if (
+        codexEventIsIndependentOfThreadSnapshot(event) ||
+        codexResolvedApprovalId(event) ||
+        event.method === 'turn/completed'
+      ) {
+        retainedEvents.current = appendCodexEvent(retainedEvents.current, event).filter(
+          codexEventIsIndependentOfThreadSnapshot,
+        )
+      }
       if (!codexEventMatchesThread(event, currentThread)) return
       const eventMethod = event.method.toLowerCase()
       if (eventMethod === 'account/login/completed') {
@@ -838,7 +842,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setError('')
     try {
       await runTengriAction({ action: 'resolve-approval', agentId, approvalId: event.approvalId, decision })
-      retainedApprovals.current.delete(event.approvalId)
+      retainedEvents.current = retainedEvents.current.filter((candidate) => candidate.approvalId !== event.approvalId)
       setEvents((current) => current.filter((candidate) => candidate.approvalId !== event.approvalId))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Approval could not be resolved')
@@ -879,6 +883,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   function resetTranscriptUi(nextThreadId: string) {
+    if (!nextThreadId) retainedEvents.current = retainedEvents.current.filter((event) => event.threadId)
     if (!threadIdRef.current && !nextThreadId) {
       draftsRef.current.delete('')
     } else {
@@ -898,7 +903,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setCurrentActiveTurnId('')
     setHistoryItems([])
     setRestoredHistorySequence(0)
-    setEvents([...retainedApprovals.current.values()].filter((event) => codexEventMatchesThread(event, nextThreadId)))
+    setEvents(retainedEvents.current.filter((event) => event.threadId === nextThreadId))
     setFollowingConversation(true)
     setReplayRecovering(false)
     replayRecoveryRef.current = false

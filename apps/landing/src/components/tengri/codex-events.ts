@@ -87,6 +87,12 @@ export function appendCodexEvent(
     const next = current.filter((candidate) => candidate.approvalId !== resolvedApprovalId)
     return next.length === current.length ? current : next
   }
+  if (event.method === 'turn/completed' && event.turnId) {
+    current = current.filter(
+      (candidate) =>
+        candidate.kind !== 'approval' || candidate.threadId !== event.threadId || candidate.turnId !== event.turnId,
+    )
+  }
   if (isRawReasoningDelta(event)) return current
   const key = codexEventKey(event)
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
@@ -140,7 +146,9 @@ export function appendCodexEvent(
   }
 
   return [
-    ...current.slice(-(MAX_CODEX_EVENTS - 1)),
+    ...current.filter(
+      (candidate, index) => index >= current.length - MAX_CODEX_EVENTS + 1 || candidate.kind === 'approval',
+    ),
     isDeltaEvent(event)
       ? {
           ...event,
@@ -286,7 +294,7 @@ export function codexEventMatchesThread(event: TengriCodexEvent, threadId: strin
   return !event.threadId || event.threadId === threadId
 }
 
-function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent) {
+export function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent) {
   return event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error' || event.kind === 'usage'
 }
 
@@ -1081,7 +1089,7 @@ function isRawReasoningDelta(event: TengriCodexEvent) {
   return event.method.toLowerCase() === 'item/reasoning/textdelta'
 }
 
-function codexEventKey(event: TengriCodexEvent) {
+export function codexEventKey(event: TengriCodexEvent) {
   return `${event.sequence}:${event.method}:${event.threadId}:${event.turnId}:${event.itemId}:${event.approvalId}`
 }
 

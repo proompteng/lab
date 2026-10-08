@@ -76,6 +76,59 @@ describe('Accepted prompt retention', () => {
 })
 
 describe('Codex event replay', () => {
+  test('keeps pending approvals when later notices exceed the event buffer', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: '101',
+    }
+    let current = appendCodexEvent([], approval)
+    for (let sequence = 8; sequence < 520; sequence += 1) {
+      current = appendCodexEvent(current, {
+        ...event,
+        sequence,
+        kind: 'warning',
+        method: 'tengri/eventOmitted',
+        approvalId: '',
+      })
+    }
+    expect(current.filter((event) => event.kind === 'approval')).toEqual([approval])
+    expect(current.filter((event) => event.kind === 'warning').length).toBeLessThanOrEqual(500)
+    const resolved = appendCodexEvent(current, {
+      ...event,
+      sequence: 520,
+      kind: 'thread-state',
+      method: 'serverRequest/resolved',
+      rawJson: '{"params":{"requestId":101}}',
+    })
+    expect(resolved.filter((event) => event.kind === 'approval')).toEqual([])
+  })
+
+  test('removes approvals when their turn completes without a resolution notification', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: '101',
+    }
+    const anotherTurn = { ...approval, turnId: 'turn-2', approvalId: '102' }
+    const anotherThread = { ...approval, threadId: 'thread-2', approvalId: '103' }
+    const completed = {
+      ...event,
+      sequence: 8,
+      kind: 'thread-state' as const,
+      method: 'turn/completed',
+      itemId: '',
+      text: '',
+    }
+    const next = appendCodexEvent([approval, anotherTurn, anotherThread], completed)
+    expect(next.filter((event) => event.kind === 'approval')).toEqual([anotherTurn, anotherThread])
+    expect(
+      appendCodexEvent(appendCodexEvent([], approval), completed).filter((event) => event.kind === 'approval'),
+    ).toEqual([])
+  })
+
   test('deduplicates an event replayed after an SSE reconnect', () => {
     const current = [event]
     expect(appendCodexEvent(current, { ...event })).toBe(current)

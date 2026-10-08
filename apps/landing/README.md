@@ -67,7 +67,10 @@ switch conversations while another response runs. Text and image drafts, along w
 echo, remain with their conversation while the chat view stays open. Switching keeps sidebar rows in place, restores
 the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
 including requests received while another conversation is selected; server resolutions and completed turns clear
-retained requests. The header is
+both retained requests and visible controls. Notices remain attached to the conversation selected when they arrive,
+including events queued before a switch. The event buffer bounds ordinary history while retaining pending approvals
+until resolution or completion. Successful recovery clears an unavailable sidebar marker with a newer timestamp;
+ordinary selection preserves row order. The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
 no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
 send/stop button. Composer height updates before paint, preserves scrolling within long drafts, and

@@ -2235,6 +2235,32 @@ test('retries a temporary conversation failure without replacing the saved threa
   expect(mock.actions.filter((action) => action.action === 'create-thread')).toHaveLength(0)
 })
 
+test('clears an unavailable sidebar marker after successful conversation recovery', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-08-26T12:00:00.000Z'))
+  await mockTengri(page, {
+    resumeThreadErrors: [{ status: 404, error: 'Conversation unavailable', code: 'conversation_not_found' }],
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-recoverable')
+    localStorage.setItem(
+      'tengri-conversations:microvm-ada',
+      JSON.stringify([{ id: 'thread-recoverable', title: 'Recoverable', updatedAt: 1 }]),
+    )
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  const row = tengri.locator('[data-conversation-id="thread-recoverable"]')
+  await expect(row.getByText('Unavailable', { exact: true })).toBeVisible()
+  await tengri.getByRole('button', { name: 'Retry conversation recovery' }).click()
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(row.getByText('Unavailable', { exact: true })).toHaveCount(0)
+  await expect
+    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('tengri-conversations:microvm-ada') ?? '[]')))
+    .toEqual([
+      { id: 'thread-recoverable', title: 'Recoverable', updatedAt: Date.parse('2026-08-26T12:00:00.000Z') + 1 },
+    ])
+})
+
 test('uses one composer control for sending, steering, and stopping a response', async ({ page }, testInfo) => {
   const mock = await mockTengri(page)
   await page.goto('/')
@@ -4532,6 +4558,76 @@ test('creates and switches running conversations while retaining each draft and 
   expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
 })
 
+test('keeps queued warnings and errors with their arrival conversation across navigation', async ({ page }) => {
+  await mockTengri(page)
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha')
+    localStorage.setItem(
+      'tengri-conversations:microvm-ada',
+      JSON.stringify([
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2 },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 1 },
+      ]),
+    )
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  const sidebar = tengri.getByTestId('agent-conversation-sidebar')
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await page.evaluate(() => {
+    const source = (
+      window as typeof window & {
+        __tengriEventSources?: Array<{
+          closed: boolean
+          onmessage: ((event: MessageEvent) => void) | null
+          url: string
+        }>
+      }
+    ).__tengriEventSources?.find((candidate) => !candidate.closed && candidate.url.includes('/api/tengri/events?'))
+    if (!source?.onmessage) throw new Error('Codex event stream is unavailable')
+    const requestFrame = window.requestAnimationFrame
+    const frames: FrameRequestCallback[] = []
+    window.requestAnimationFrame = (callback) => {
+      frames.push(callback)
+      return 1_000_000 + frames.length
+    }
+    try {
+      for (const event of [
+        { sequence: 1, kind: 'warning', threadId: 'thread-alpha', text: 'Alpha warning before a frame' },
+        { sequence: 2, kind: 'error', threadId: '', text: 'Alpha error without a thread identifier' },
+      ]) {
+        source.onmessage(
+          new MessageEvent('message', {
+            data: JSON.stringify({
+              ...event,
+              method: 'tengri/eventOmitted',
+              turnId: '',
+              itemId: '',
+              approvalId: '',
+              rawJson: '{}',
+            }),
+          }),
+        )
+      }
+    } finally {
+      window.requestAnimationFrame = requestFrame
+    }
+    Object.assign(window, { releaseQueuedCodexFrames: () => frames.forEach((frame) => frame(performance.now())) })
+  })
+  await sidebar.locator('[data-conversation-id="thread-beta"]').click()
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await page.evaluate(() => {
+    const release = (window as typeof window & { releaseQueuedCodexFrames?: () => void }).releaseQueuedCodexFrames
+    if (!release) throw new Error('Queued Codex frames are unavailable')
+    release()
+  })
+  await expect(tengri.getByText('Alpha warning before a frame', { exact: true })).toHaveCount(0)
+  await expect(tengri.getByText('Alpha error without a thread identifier', { exact: true })).toHaveCount(0)
+  await sidebar.locator('[data-conversation-id="thread-alpha"]').click()
+  await expect(tengri.getByText('Alpha warning before a frame', { exact: true })).toHaveCount(1)
+  await expect(tengri.getByText('Alpha error without a thread identifier', { exact: true })).toHaveCount(1)
+})
+
 test('retains approvals across navigation and reconciles background approval outcomes', async ({ page }) => {
   const history = (status: string, turnId: string) =>
     JSON.stringify({ thread: { turns: [{ id: turnId, status, items: [] }] } })
@@ -4621,6 +4717,39 @@ test('retains approvals across navigation and reconciles background approval out
   await sidebar.locator('[data-conversation-id="thread-alpha"]').click()
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
   await expect(approval).toHaveCount(0)
+  await emitCodexEvent(page, {
+    ...event,
+    sequence: 6,
+    turnId: 'turn-alpha-next',
+    kind: 'thread-state',
+    method: 'turn/started',
+    approvalId: '',
+    itemId: '',
+    text: '',
+    rawJson: '{}',
+  })
+  await emitCodexEvent(page, {
+    ...event,
+    sequence: 7,
+    turnId: 'turn-alpha-next',
+    approvalId: '104',
+    itemId: 'approval-alpha-next',
+  })
+  await expect(approve).toBeVisible()
+  await emitCodexEvent(page, {
+    ...event,
+    sequence: 8,
+    turnId: 'turn-alpha-next',
+    kind: 'thread-state',
+    method: 'turn/completed',
+    approvalId: '',
+    itemId: '',
+    text: '',
+    rawJson: '{}',
+  })
+  await expect(approval).toHaveCount(0)
+  await expect(tengri.getByLabel('Agent status', { exact: true })).toHaveText('Ready')
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
 })
 
 test('keeps the latest sidebar selection when an earlier history request finishes later', async ({ page }) => {
