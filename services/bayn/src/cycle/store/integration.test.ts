@@ -1157,6 +1157,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             ) ON COMMIT DROP`
             yield* sql`DELETE FROM fills`
             yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`UPDATE autonomous_cycles SET qualification_run_id = ${researchPlanHash},
+              strategy_protocol_hash = 'protocol'`
             for (const expiry of [
               executionActivationExpiredRestrictionReason,
               legacyExecutionActivationExpiredRestrictionReason,
