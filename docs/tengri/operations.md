@@ -322,7 +322,11 @@ bun run lint:argocd
 
 The isolated KVM runner preserves JSON timing results, host test logs, and Firecracker logs before removing its own
 private container and volumes. Its real-guest test checks same-shell/file continuity, current owner/epoch, host SVID
-rotation, and snapshot page eviction. This boundary excludes BFF authentication, real Kubernetes latency, raw PVC
+rotation, and snapshot page eviction. Routine image publication gates on three real sleep/resume cycles per
+architecture, with every resume below one second. A three-minute first sleep exercises renewal beyond the previous
+host certificate lifetime. The manual `Tengri images` workflow input `kvm_samples=50` runs the longer performance
+qualification. Smoke receipts have `validationMode: smoke` and a null p95; they do not establish a latency
+distribution. This boundary excludes BFF authentication, real Kubernetes latency, raw PVC
 allocation, fresh-creation distribution, and six concurrent guests. Those exclusions remain acceptance requirements,
 not inferred successes. Measure at least 50 fresh prepared creations and 50 cold-cache resumes through the authenticated
 product path before claiming p95 below one second. Report sleep duration separately.
