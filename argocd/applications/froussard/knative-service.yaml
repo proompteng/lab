@@ -24,7 +24,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: app
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:a10b0ffe0d5346e51846825ebe2e1423e87beed3e9973451ac2bb2d1e6d05677
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:b95045674a09c0eb271c12793b322c0a75bd0391714560eac1c348cee5640c10
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -73,9 +73,9 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: kargo-sha-03dc4bbc04081323a9b1d8924e192f2f8d9077a3
+              value: kargo-sha-a0619edf0ebdc5efd64e7000ad7985c4fb66156a
             - name: FROUSSARD_COMMIT
-              value: 03dc4bbc04081323a9b1d8924e192f2f8d9077a3
+              value: a0619edf0ebdc5efd64e7000ad7985c4fb66156a
             - name: LGTM_TEMPO_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4317
             - name: LGTM_MIMIR_METRICS_ENDPOINT
