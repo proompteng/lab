@@ -14,6 +14,7 @@ canary_active_data=
 canary_writer_pid=
 canary_stop_file=
 canary_work=
+canary_raw_emitted=false
 
 cleanup() {
   local canary_exit=$?
@@ -32,13 +33,15 @@ cleanup() {
         cat "$canary_log"
       fi
     done
-    for canary_log in "$canary_work"/transactions.*; do
-      if [[ -f $canary_log ]]; then
-        printf 'BAYN_WAL_CANARY_FAILURE_RAW_BEGIN file=%s exitCode=%s\n' "$canary_log" "$canary_exit"
-        cat "$canary_log"
-        printf 'BAYN_WAL_CANARY_FAILURE_RAW_END file=%s\n' "$canary_log"
-      fi
-    done
+    if [[ $canary_raw_emitted != true ]]; then
+      for canary_log in "$canary_work"/transactions.*; do
+        if [[ -f $canary_log ]]; then
+          printf 'BAYN_WAL_CANARY_FAILURE_RAW_BEGIN file=%s exitCode=%s\n' "$canary_log" "$canary_exit"
+          cat "$canary_log"
+          printf 'BAYN_WAL_CANARY_FAILURE_RAW_END file=%s\n' "$canary_log"
+        fi
+      done
+    fi
   fi
   exit "$canary_exit"
 }
@@ -60,6 +63,7 @@ for canary_layout in shared separate separate shared; do
   canary_data="$canary_data_root/$canary_name"
   canary_wal="$canary_wal_root/$canary_name"
   canary_work="$canary_work_root/$canary_name"
+  canary_raw_emitted=false
   [[ ! -e $canary_data && ! -e $canary_wal && ! -e $canary_work ]]
   mkdir -p "$canary_work/socket"
   canary_init=(initdb -D "$canary_data" --username=canary --auth-local=trust --auth-host=reject --data-checksums)
@@ -103,6 +107,7 @@ for canary_layout in shared separate separate shared; do
   printf 'BAYN_WAL_CANARY_RAW_BEGIN phase=%s layout=%s exitCode=%s\n' "$canary_phase" "$canary_layout" "$canary_benchmark_exit"
   if [[ -f ${canary_raw_logs[0]} ]]; then cat "${canary_raw_logs[@]}"; fi
   printf 'BAYN_WAL_CANARY_RAW_END phase=%s layout=%s\n' "$canary_phase" "$canary_layout"
+  canary_raw_emitted=true
   printf '{"event":"bayn.wal-canary.execution","phase":%s,"layout":"%s","benchmarkExitCode":%s,"writerExitCode":%s}\n' \
     "$canary_phase" "$canary_layout" "$canary_benchmark_exit" "$canary_writer_exit"
   if [[ $canary_benchmark_exit != 0 ]]; then exit "$canary_benchmark_exit"; fi
