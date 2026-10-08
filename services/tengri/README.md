@@ -20,8 +20,12 @@ and epoch. The controller binds the MicroVM with resourceVersion compare-and-swa
 claims cannot assign two slots to one MicroVM UID or start two owners in one slot. Deletion before a Lease claim
 consumes the candidate epoch with the same Lease CAS, preventing a late claim while retaining the unused prepared slot.
 
-The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker 1.16.1, CPU identity,
-snapshot generation, and owner/epoch. Snapshot restore consumes the generation before vCPUs run, then thaws root/home,
+The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker revision, CPU identity,
+snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
+upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
+buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
+`1.16.1+tengri-direct-io.1`; journals from another VMM revision require fenced recovery. Snapshot restore consumes the
+generation before vCPUs run, then thaws root/home,
 sets the guest clock, binds the owner, and checks files, a PTY round trip, and initialized Codex. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
