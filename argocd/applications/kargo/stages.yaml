@@ -2011,9 +2011,9 @@ spec:
               - key: metadata.name
                 value: bayn-execution-activate-${{ commitFrom(vars.gitRepo).ID[0:12] }}
               - key: metadata.labels.app\.kubernetes\.io/version
-                value: ${{ commitFrom(vars.gitRepo).ID[0:12] }}
+                value: sha-${{ commitFrom(vars.gitRepo).ID[0:12] }}
               - key: spec.template.metadata.labels.app\.kubernetes\.io/version
-                value: ${{ commitFrom(vars.gitRepo).ID[0:12] }}
+                value: sha-${{ commitFrom(vars.gitRepo).ID[0:12] }}
         - uses: git-commit
           as: commit
           config:
