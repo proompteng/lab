@@ -39,6 +39,7 @@ import { cn } from '@/lib/utils'
 import {
   conversationTitleFromRegistry,
   markStoredConversationUnavailable,
+  mergePersistedConversationRegistry,
   promoteAcceptedConversationTitle,
   readStoredConversations,
   resolveConversationTitle,
@@ -387,15 +388,16 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       const activeTurnId = commitActiveTurn ? restoredActiveTurnId : activeTurnIdRef.current
       if (commitActiveTurn) setCurrentActiveTurnId(activeTurnId)
       setConversations((current) => {
+        const registry = mergePersistedConversationRegistry(current, readStoredConversations(agentId))
         const title = resolveConversationTitle(
-          conversationTitleFromRegistry(current, thread.id),
+          conversationTitleFromRegistry(registry, thread.id),
           titleFromTranscript(restored.historyItems),
         )
-        const existing = current.find((conversation) => conversation.id === thread.id)
+        const existing = registry.find((conversation) => conversation.id === thread.id)
         const updatedAt = existing?.unavailable
           ? Math.max(Date.now(), existing.updatedAt + 1)
           : (existing?.updatedAt ?? Date.now())
-        return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt }, current)
+        return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt }, registry)
       })
       return { ...restored, activeTurnId }
     },

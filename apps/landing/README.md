@@ -69,7 +69,8 @@ the selected history, and focuses the composer when recovery completes. Pending 
 including requests received while another conversation is selected; server resolutions and completed turns clear
 both retained requests and visible controls. Notices remain attached to the conversation selected when they arrive,
 including events queued before a switch. The event buffer bounds ordinary history while retaining pending approvals
-until resolution or completion. Successful recovery clears an unavailable sidebar marker with a newer timestamp;
+until resolution or completion. Successful recovery merges the persisted registry and clears unavailable markers
+from this tab or another tab with a newer timestamp;
 ordinary selection preserves row order. The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
 no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular

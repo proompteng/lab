@@ -2261,6 +2261,39 @@ test('clears an unavailable sidebar marker after successful conversation recover
     ])
 })
 
+test('clears a newer unavailable marker persisted by another tab after successful recovery', async ({ page }) => {
+  const now = Date.parse('2026-08-26T12:00:00.000Z')
+  await page.clock.setFixedTime(new Date(now))
+  await mockTengri(page)
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-recoverable')
+    localStorage.setItem(
+      'tengri-conversations:microvm-ada',
+      JSON.stringify([{ id: 'thread-recoverable', title: 'Recoverable', updatedAt: 1 }]),
+    )
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  const sidebar = tengri.getByTestId('agent-conversation-sidebar')
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await sidebar.getByRole('button', { name: 'New conversation' }).click()
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBeNull()
+  await page.evaluate((updatedAt) => {
+    localStorage.setItem(
+      'tengri-conversations:microvm-ada',
+      JSON.stringify([{ id: 'thread-recoverable', title: 'Recoverable', updatedAt, unavailable: true }]),
+    )
+  }, now + 100)
+  const row = sidebar.locator('[data-conversation-id="thread-recoverable"]')
+  await expect(row.getByText('Unavailable', { exact: true })).toHaveCount(0)
+  await row.click()
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(row.getByText('Unavailable', { exact: true })).toHaveCount(0)
+  await expect
+    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('tengri-conversations:microvm-ada') ?? '[]')))
+    .toEqual([{ id: 'thread-recoverable', title: 'Recoverable', updatedAt: now + 101 }])
+})
+
 test('uses one composer control for sending, steering, and stopping a response', async ({ page }, testInfo) => {
   const mock = await mockTengri(page)
   await page.goto('/')
