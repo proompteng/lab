@@ -88,10 +88,6 @@ spire-server:
                 service_account_allow_list: [spire-system:spire-agent]
                 allowed_node_label_keys: []
                 allowed_pod_label_keys: []
-              galactic-guests:
-                audience: [spire-server]
-                service_account_allow_list: [tengri:nanoagent]
-                use_pod_uid_for_agent_id: true
     bundlePublisher:
       k8s_configmap:
         plugin_data:
@@ -101,11 +97,6 @@ spire-server:
                 namespace: spire-system
                 configmap_name: spire-bundle
                 configmap_key: bundle.spiffe
-              galactic-guests:
-                format: pem
-                namespace: tengri
-                configmap_name: spire-guest-bundle
-                configmap_key: bundle.pem
   controllerManager:
     enabled: true
     resources:

@@ -29,7 +29,7 @@ export function CodeDraftRecoveryNotice({
   return (
     <aside
       aria-label="Unsaved draft recovery"
-      className={`font-system rounded-xl border border-amber-400/50 bg-zinc-950 p-4 text-sm text-zinc-100 shadow-2xl ${placement === 'inline' ? 'mx-4 mb-4' : 'fixed inset-x-3 bottom-3 z-[1000] mx-auto max-w-lg'}`}
+      className={`font-geist rounded-xl border border-amber-400/50 bg-zinc-950 p-4 text-sm text-zinc-100 shadow-2xl ${placement === 'inline' ? 'mx-4 mb-4' : 'fixed inset-x-3 bottom-3 z-[1000] mx-auto max-w-lg'}`}
     >
       <p className="font-semibold" role="alert">
         Keep a copy of your unsaved edits

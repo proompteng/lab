@@ -13,5 +13,5 @@ spec:
     # Six runners, six host supervisors, and the controller with its mesh proxy.
     requests.cpu: "26"
     limits.cpu: "27"
-    requests.memory: 51Gi
-    limits.memory: 51Gi
+    requests.memory: 56Gi
+    limits.memory: 56Gi

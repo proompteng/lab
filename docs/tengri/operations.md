@@ -5,6 +5,11 @@ runner, Pod-local TAP, private snapshot/root disks, and a retained 16 GiB Ceph r
 by [the service README](../../services/tengri/README.md) and [slot code](../../services/tengri/src/slot/).
 The [KVM/TAP design](kvm-tap-design.md) records the acceptance contract. A source merge is not a live cutover.
 
+Each 8 GiB guest uses a 9 GiB host runner reservation, matching native acceptance. Artifact-copy initialization is
+bounded separately at 2 GiB. The 56 GiB namespace memory quota includes six runners, their supervisors, and the
+controller and proxy. Repeated unchanged lifecycle failures retain their condition transition time and wait for the
+controller's retry interval instead of creating another Kubernetes status event.
+
 Never drain, cordon, reboot, relabel, change scheduling on, or reconfigure shared nodes for this migration. Only the
 specifically approved Tengri Pods may be stopped. Leave global Kata RuntimeClasses/extensions and unrelated workloads
 alone. No direct worktree deployment, host-device chmod, privileged slot, host PID/network, or host filesystem mount
@@ -15,10 +20,13 @@ is part of this lifecycle.
 - Controller/runner/supervisor and generated CRD live under `services/tengri/`.
 - Guest kernel/root and Nanoagent live under `services/nanoagent/`.
 - Tengri desired state lives under `argocd/applications/tengri/`.
-- Device allocation lives under `argocd/applications/tengri-devices/`, enrolled in the platform ApplicationSet at wave 1.
+- Device allocation and its slot admission restriction live under `argocd/applications/tengri-devices/`, enrolled in the
+  platform ApplicationSet at wave 1. That Application installs the policy and binding at wave -1 before the device
+  plugin at wave 0, independently of held Tengri image delivery.
 - SPIRE registers only the host slot supervisor, with the exact Pod UID and container selector.
-- Existing guest `nanoagent` ServiceAccount, token and registration RBAC, admission restrictions, attestation and bundle publication remain configured until the last old guest is stopped at cutover.
-- The existing guest NetworkPolicy and controller egress remain through cutover; prepared slots use `tengri-slots`.
+- Prepared slots use `tengri-slots`, host supervisor SPIRE registration, and a private guest vsock credential.
+- Legacy guest identity and network resources are absent from the final source. Their reviewed removal follows the
+  last approved old guest's writer fencing; the initial cutover cannot reconcile that removal while an old guest runs.
 - `tengri` namespace admission is already `privileged`; slot admission constrains the device/capability profile.
 
 Keep immutable controller and guest digests from the same source revision. CRD and namespace retain their
@@ -175,7 +183,12 @@ A reviewed cutover follows this order:
 1. Complete native builds, component checks, isolated KVM acceptance, and permission review. Record exact source,
    paired artifacts, kernel/Firecracker pins, measurement boundary, p50/p95/max, RAM release, failures, and exclusions.
 2. Through reviewed GitOps, reconcile only approved device/host-SPIRE prerequisites. Verify actual allocations and
-   supervisor identity without modifying nodes. Do not remove registrations used by running old guests yet.
+   supervisor identity without modifying nodes. Confirm the slot admission policy and its Deny binding are installed
+   before KVM/TUN allocations are advertised. Before the initial device Application enrollment, record zero advertised
+   `runtime.proompteng.ai/kvm-tun` capacity across all nodes and zero existing Pod requests or limits for that resource
+   across all namespaces, including pending Pods. A new admission policy does not fence earlier allocations. If either
+   inventory is nonempty, stop enrollment and obtain scoped authority to fence those allocations or withdraw the
+   plugin; prove the inventories are empty before proceeding. Do not remove registrations used by running old guests yet.
 3. Stop only the approved old Tengri guests at the owner/maintenance boundary. Prove the old VMM/process and its
    storage writer are fenced. Retain every original MicroVM UID, home PVC UID, filesystem, ownership, and contents.
    Keep the old controller quiesced throughout fencing and enrollment so it cannot restart old writers or recreate bootstrap Secrets.
@@ -195,7 +208,11 @@ A reviewed cutover follows this order:
    are prepared. The old Kata path has no transferable snapshot, so existing processes restart once at cutover.
 6. Remove the old `nanoagent` ServiceAccount, its token-issuance Role rule, `tengri-guest-identities` ClusterRole/Binding
    and admission policy/binding, guest PSAT/token-renewal resources, `tengri-microvm-guests`, and its controller egress rule only after
-   their last approved old guest is stopped. Verify authenticated
+   their last approved old guest is stopped. Reconcile the reviewed SPIRE configuration while preserving its host
+   attestor, host bundle publisher, datastore, signing-key volumes, and host workload registrations. Verify host canary
+   identity rotation. The old `spire-guest-bundle` ConfigMap and `tengri-microvm-guests` policy have pruning protection;
+   source omission does not delete them. Retire those exact resources with UID/resourceVersion preconditions only after
+   their publisher/consumers are gone, then verify all retired resources are absent. Verify authenticated
    create/resume through files, a real terminal, initialized Codex, previews, and editor content. Confirm unchanged
    retained PVC UIDs and unchanged shared-node scheduling. Accept no health-only substitute.
 

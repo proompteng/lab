@@ -97,7 +97,7 @@ func main() {
 		}
 		switch os.Args[1] {
 		case "/app/services/bayn/dist/forward-performance-command.js":
-			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256>] | --help")
+			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help")
 		case "/app/services/bayn/dist/inference-cost-command.js":
 			fmt.Println("Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --ledger-session YYYY-MM-DD | --help")
 		case "/app/services/bayn/dist/backtest-command.js":
@@ -153,12 +153,12 @@ verify_image() {
 }
 
 pack_image
-test "$(verify_image)" = 'Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
+test "$(verify_image)" = 'Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help'
 
 chmod u+w "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
 cat > "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance" <<'EOF'
 #!/bin/sh
-printf '%s\n' 'Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
+printf '%s\n' 'Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help'
 EOF
 chmod 0555 "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
 pack_image

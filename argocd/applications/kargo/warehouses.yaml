@@ -865,6 +865,7 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         includePaths:
+          - apps/landing
           - services/tengri
           - services/nanoagent
           - .github/workflows/tengri-images.yml
