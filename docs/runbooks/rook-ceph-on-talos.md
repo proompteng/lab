@@ -106,13 +106,15 @@ recovery reservation. Use the complete `custom` profile in GitOps:
 
 | mClock class                            | Reservation | Weight | Limit           |
 | --------------------------------------- | ----------- | ------ | --------------- |
-| Client                                  | 40%         | 1      | Unlimited (`0`) |
+| Client                                  | 60%         | 1      | Unlimited (`0`) |
 | Background recovery                     | 10%         | 1      | Unlimited (`0`) |
-| Background best-effort, including scrub | 50%         | 2      | Unlimited (`0`) |
+| Background best-effort, including scrub | 30%         | 2      | Unlimited (`0`) |
 
 Reservations sum to 100% of modeled OSD capacity. Idle capacity can serve any
 class; these are scheduling reservations, not fixed bandwidth partitions.
-Client latency may increase while scrub work uses its larger share. Keep
+The client reservation protects foreground work while the background best-effort
+reservation remains above the built-in profiles' 5%. This is a scheduling tradeoff,
+not a latency guarantee or a limit on other client workloads. Keep
 `osd_max_scrubs=1` to bound concurrent HDD seeks. The seven-day deep-scrub
 interval and overdue health alerts remain enabled.
 
@@ -134,8 +136,24 @@ use the Galactic toolbox and reapply only the exact merged values. Otherwise,
 record the mismatched daemon, key, and intended value and obtain authorization
 before mutating runtime configuration. For example, the October rollout dropped
 `osd_mclock_scheduler_client_res`; restoring its committed `0.4` value completes
-the profile without changing the intended tuning. Confirm all nine effective
+the then-committed profile without changing its intended tuning. Confirm all nine effective
 values again after the last OSD restart.
+
+For reservation-only changes while every OSD already uses `custom`, keep the
+profile and `osd-config-revision` annotation unchanged. Both reservation keys are
+runtime-updatable; let Rook reconcile the reviewed values, then read every OSD's
+effective configuration. Do not restart OSDs to force a scheduling adjustment.
+If the effective values remain stale, stop and investigate reconciliation before
+using the explicitly authorized runtime repair procedure above.
+
+Compare equal-duration before/after windows of client errors and latency, OSD
+operation latency, host disk queues, and I/O pressure. Check per-PG scrub progress
+alongside them; lower client latency must not come from disabled integrity work.
+Preserve the all-day eligibility, one-scrub concurrency, intervals, and alerts.
+If client impact worsens or scrub progress stalls, revert the two reservation
+values through reviewed GitOps to the prior client `0.4` and best-effort `0.5`,
+again without changing the profile or rollout annotation. Keep incident-specific
+measurements outside this runbook.
 
 Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 
