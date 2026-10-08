@@ -4,6 +4,44 @@ import { SqlClient } from 'effect/sql'
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
 
+  // Settlement runs before reconciliation. Admission here must not depend on the later
+  // reconciliation it is responsible for producing; it cannot itself clear authority.
+  yield* sql`
+    CREATE FUNCTION research_paper_expired_zero_execution(current_generation_hash text)
+    RETURNS boolean
+    LANGUAGE sql
+    STABLE
+    AS $function$
+      SELECT EXISTS (
+        SELECT 1 FROM authority_state AS state
+        JOIN authority_generations AS generation ON generation.generation_hash = state.generation_hash
+        WHERE state.singleton
+          AND generation.generation_hash = current_generation_hash
+          AND generation.maximum = 'PAPER'
+          AND generation.broker_environment = 'sandbox'
+          AND state.maximum = 'PAPER'
+          AND state.effective = 'OBSERVE'
+          AND state.kill_state = 'ACTIVE'
+          AND state.reason IN (
+            'execution activation lease restricted effective authority: immutable activation request expired',
+            'PAPER activation lease restricted effective authority: immutable activation request expired'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM intents AS intent
+            WHERE intent.authority_generation_hash = generation.generation_hash
+              AND (
+                EXISTS (SELECT 1 FROM fills AS fill WHERE fill.intent_id = intent.intent_id)
+                OR EXISTS (SELECT 1 FROM accounting_transactions AS transaction WHERE transaction.intent_id = intent.intent_id)
+                OR EXISTS (
+                  SELECT 1 FROM orders AS broker_order
+                  WHERE broker_order.intent_id = intent.intent_id AND broker_order.filled_quantity_micros > 0
+                )
+              )
+          )
+      )
+    $function$
+  `
+
   // A zero-execution mandate cannot produce qualified performance. Prove settlement instead;
   // do not fabricate a profitability receipt or exempt a mandate that actually traded.
   yield* sql`
@@ -36,18 +74,7 @@ export default Effect.gen(function* () {
           AND reconciliation.expected_hash = reconciliation.observed_hash
           AND jsonb_array_length(reconciliation.discrepancies) = 0
           AND reconciliation.reconciled_at > state.updated_at
-          AND NOT EXISTS (
-            SELECT 1 FROM intents AS intent
-            WHERE intent.authority_generation_hash = generation.generation_hash
-              AND (
-                EXISTS (SELECT 1 FROM fills AS fill WHERE fill.intent_id = intent.intent_id)
-                OR EXISTS (SELECT 1 FROM accounting_transactions AS transaction WHERE transaction.intent_id = intent.intent_id)
-                OR EXISTS (
-                  SELECT 1 FROM orders AS broker_order
-                  WHERE broker_order.intent_id = intent.intent_id AND broker_order.filled_quantity_micros > 0
-                )
-              )
-          )
+          AND research_paper_expired_zero_execution(generation.generation_hash)
           AND NOT EXISTS (
             SELECT 1 FROM intents AS intent
             WHERE intent.account_id = generation.account_id

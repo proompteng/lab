@@ -1026,11 +1026,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`ALTER TABLE intents ADD state_version integer DEFAULT 1`
             yield* sql`CREATE TEMP TABLE authority_generations (
               generation_hash text, account_id text, maximum text, activation_schema_version text,
-              qualification_run_id text, research_plan_hash text, strategy_protocol_hash text
+              qualification_run_id text, research_plan_hash text, strategy_protocol_hash text,
+              broker_environment text DEFAULT 'sandbox'
             ) ON COMMIT DROP`
             yield* sql`INSERT INTO authority_generations VALUES (
               ${generationHash}, 'account', 'PAPER', 'bayn.paper-authority-generation.v3',
-              NULL, ${researchPlanHash}, 'protocol'
+              NULL, ${researchPlanHash}, 'protocol', 'sandbox'
             )`
             yield* sql`CREATE TEMP TABLE authority_state (
               singleton boolean, generation_hash text, maximum text, effective text, kill_state text,
@@ -1098,8 +1099,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               ADD activated_at timestamptz,
               ADD broker_identity_schema_version text DEFAULT 'bayn.broker-identity.v2',
               ADD broker_identity_hash text DEFAULT 'identity',
-              ADD broker_provider text DEFAULT 'alpaca',
-              ADD broker_environment text DEFAULT 'sandbox'`
+              ADD broker_provider text DEFAULT 'alpaca'`
             yield* sql`UPDATE authority_generations SET proof_plan_hash = ${researchPlanHash}`
             yield* sql`INSERT INTO authority_generations (
               generation_hash, previous_generation_hash, maximum, authority_version, activated_at, account_id

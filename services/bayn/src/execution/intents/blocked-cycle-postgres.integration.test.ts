@@ -38,6 +38,8 @@ import { MutationOperation } from '../../broker/alpaca-mutations'
 import { makeMutationEventPostgres } from '../mutations/postgres/events'
 import { makeMutationStartPostgres } from '../mutations/postgres/start'
 import { WriterFence, WriterFenceLive } from '../writer-fence'
+import { recoverTerminalGenerationToObserve } from '../../blocked-generation-recovery'
+import { operationalError } from '../../errors'
 import {
   defaultIntradayMomentumProtocolDocument,
   intradayMomentumExecutionModel,
@@ -285,6 +287,133 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         const settlement = yield* blocked.settleCurrentTerminalGeneration({
           accountId,
           observedAt: fixture.reconciledAt,
+        })
+
+        test.each(
+          [executionActivationExpiredRestrictionReason, legacyExecutionActivationExpiredRestrictionReason].flatMap(
+            (reason) => ['no-cycle', 'unused-preopen-cycle'].map((scenario) => ({ reason, scenario })),
+          ),
+        )(
+          'recovers zero-execution expiry through the production coordinator: $scenario / $reason',
+          async ({ reason, scenario }) => {
+            const fixture = makeFixture()
+            const generationHash = canonicalHashV1({ generation: 'execution' })
+            await runtime.runPromise(
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                const cycles = yield* CycleStore
+                const blocked = yield* BlockedCycleIntentStore
+                const fence = yield* WriterFence
+                yield* seedExecutionAuthority(sql, fixture)
+                if (scenario === 'unused-preopen-cycle') {
+                  yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
+                  yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
+                }
+                yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+        reason = ${reason}, version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
+                const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
+                let reconciliations = 0
+                const reconcile = Effect.gen(function* () {
+                  // Reaching here proves that settlement did not require the new reconciliation in advance.
+                  reconciliations += 1
+                  expect(yield* authority.readAuthorityState).toMatchObject({
+                    generationHash,
+                    effective: Authority.Observe,
+                    kill: KillState.Active,
+                  })
+                  expect(
+                    yield* sql`SELECT count(*)::integer AS count FROM autonomous_forward_performance_receipts`,
+                  ).toEqual([{ count: 0 }])
+                  const exactHash = canonicalHashV1({ reconciliation: 'zero-expiry-current' })
+                  yield* sql`INSERT INTO position_snapshots (
+          snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+        ) VALUES (
+          ${exactHash}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${exactHash}, clock_timestamp(), 0, ${exactHash}
+        )`
+                  yield* sql`INSERT INTO reconciliations (
+          reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+          content_hash, status, discrepancies, reconciled_at
+        ) VALUES (
+          ${exactHash}, 'bayn.paper-reconciliation.v1', ${accountId}, ${exactHash}, ${exactHash},
+          ${exactHash}, 'EXACT', ${sql.json([])}, clock_timestamp()
+        )`
+                }).pipe(
+                  Effect.mapError((cause) =>
+                    operationalError({
+                      component: 'database',
+                      operation: 'reconcile-test-fixture',
+                      message: 'failed to reconcile test fixture',
+                      cause,
+                    }),
+                  ),
+                )
+                const recover = recoverTerminalGenerationToObserve({
+                  accountId,
+                  blockedIntents: blocked,
+                  authorityStore: authority,
+                  writerFence: fence,
+                  reconcileAfterSettlement: reconcile,
+                })
+                const result = yield* recover
+                expect(result).toMatchObject({
+                  _tag: 'RolledOver',
+                  previousGenerationHash: generationHash,
+                  terminalIntentCount: 0,
+                })
+                const state = yield* authority.readAuthorityState
+                expect(state).toMatchObject({
+                  maximum: Authority.Observe,
+                  effective: Authority.Observe,
+                  kill: KillState.Clear,
+                })
+                expect(state.generationHash).not.toBe(generationHash)
+                if (scenario === 'unused-preopen-cycle') {
+                  expect(Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId)).state).toBe(
+                    CycleState.Blocked,
+                  )
+                }
+                expect(yield* recover).toEqual({ _tag: 'NotRequired' })
+                expect(reconciliations).toBe(1)
+                expect(
+                  yield* sql`SELECT count(*)::integer AS count FROM autonomous_forward_performance_receipts`,
+                ).toEqual([{ count: 0 }])
+              }).pipe(Effect.provide(WriterFenceLive)),
+            )
+          },
+        )
+
+        test('settles a zero-execution expiry without clearing authority when fresh reconciliation fails', async () => {
+          const fixture = makeFixture()
+          await runtime.runPromise(
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              const blocked = yield* BlockedCycleIntentStore
+              const fence = yield* WriterFence
+              yield* seedExecutionAuthority(sql, fixture)
+              yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+        reason = ${executionActivationExpiredRestrictionReason}, version = version + 1,
+        updated_at = ${fixture.restrictedAt} WHERE singleton`
+              const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
+              const before = yield* authority.readAuthorityState
+              const error = operationalError({
+                component: 'database',
+                operation: 'reconcile-test-fixture',
+                message: 'injected unavailable reconciliation',
+              })
+              const result = yield* recoverTerminalGenerationToObserve({
+                accountId,
+                blockedIntents: blocked,
+                authorityStore: authority,
+                writerFence: fence,
+                reconcileAfterSettlement: Effect.fail(error),
+              }).pipe(Effect.result)
+              expect(result).toEqual(Result.fail(error))
+              expect(yield* authority.readAuthorityState).toEqual(before)
+              expect(
+                yield* sql`SELECT count(*)::integer AS count FROM autonomous_forward_performance_receipts`,
+              ).toEqual([{ count: 0 }])
+            }).pipe(Effect.provide(WriterFenceLive)),
+          )
         })
         expect(settlement).toMatchObject({
           _tag: 'TerminalGenerationSettled',
