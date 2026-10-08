@@ -148,6 +148,9 @@ all pod logs in that namespace; it cannot constrain this grant by pod label. The
 records, then replaces matching content-hash access lines with `bayn.rgw-access.v1` JSON containing only method,
 object hash, HTTP status, the native logged-byte field and gateway latency. It retains no query strings, headers,
 principals, agents or bucket names. Object hashes stay in log content rather than metric or stream labels.
+The receipt filter accepts the LF or CRLF terminator preserved by Alloy's Kubernetes log reader. The native Alloy
+regression in `packages/scripts/src/shared/__tests__/bayn-rgw-observability-contract.test.ts` exercises that reader
+shape, malformed records and query redaction through the deployed version's processing stages.
 
 After the configuration-digest rollout, verify native `get pods --subresource=log` authorization for
 `system:serviceaccount:observability:observability-cluster-metrics-alloy` in `rook-ceph`, both discovered RGW pods,
