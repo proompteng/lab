@@ -33,8 +33,9 @@ service and activation hook receive no research credential. Access alone does no
 
 Before any object write or consumer observation, the recorder writes an ordinal-zero `session-attempt` chunk to SQL.
 It contains the frozen declaration and a fresh attempt nonce. This sole control receipt claims the fixed capture ID.
-It is the only chunk whose SQL write precedes object export. SQL must acknowledge the claim before its empty raw object,
-metadata, and index can be exported, and all must acknowledge before raw admission begins. The marker participates in
+It is the only chunk whose SQL write precedes object export. SQL must acknowledge the claim before its single v2 frame
+can be exported. That frame contains the exact claim metadata and no raw values; its verified PUT/GET acknowledgement
+must arrive before raw admission begins. The marker participates in
 the ordinary hash and export chains but represents no consumer start or market delivery. Readers reject a marker in
 any other position. Normal data chunks retain object-readback-before-SQL ordering.
 The claim's complete SQL-and-export operation uses the smaller of the one-second write timeout and the remaining
@@ -223,7 +224,7 @@ original bytes, transport timestamps, and reproduced reducer dispositions. A sea
 an interval proof. Any recorded capture invalidation conservatively prevents import.
 
 The reader derives the sole manifest address from the exact durable SQL seal, fetches that object and its referenced
-seal, and walks the index chain. Each exported metadata chunk must equal its SQL counterpart. The aggregate input-byte
+seal, and walks the frame chain. Each frame's embedded metadata must equal its SQL counterpart. The aggregate input-byte
 budget charges the supplied SQL seal, object reads, and SQL metadata reads. The metadata callback receives the smaller
 of the remaining budget, the 4 MiB object limit, and the exact exported metadata length. Each callback must enforce its
 limit before materializing the payload. This bound covers input bytes, not total JavaScript memory.
@@ -240,7 +241,7 @@ snapshot, and control-study code performs replay. Legacy delivery, regeneration,
 cannot be mixed. Tombstones retain their original evidence but fail the native epoch, so an interval spanning one
 cannot become a valid replay source. A valid input interval does not imply sufficient decision evidence, complete
 controller execution, or profitable strategy behavior. Controller receipts remain unchanged and their coverage is
-`UNKNOWN`. Every capture seal, index, and export manifest remains `UNQUALIFIED`.
+`UNKNOWN`. Every capture seal, frame, and export manifest remains `UNQUALIFIED`.
 
 The native fixture derives topic counts from committed KafkaTopic configuration and the execution controller's
 technical topic. It exercises the current 25-partition profile with committed, aborted, and open transactions,
