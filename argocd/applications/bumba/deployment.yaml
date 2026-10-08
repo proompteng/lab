@@ -73,7 +73,7 @@ spec:
             - name: TEMPORAL_TASK_QUEUE
               value: bumba
             - name: TEMPORAL_WORKER_BUILD_ID
-              value: bumba@a0619edf0ebdc5efd64e7000ad7985c4fb66156a
+              value: bumba@23a5def0ac9c3acc4063c2d47d783f302c413ccb
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
               value: "12"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY

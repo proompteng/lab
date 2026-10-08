@@ -1,5 +1,6 @@
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
+import type { WriterFenceService } from '../execution/writer-fence'
 import { Data, DateTime, Effect, Option, Redacted, Result, Scope } from 'effect'
 
 import type { ForwardPerformanceConfig } from './config'
@@ -78,6 +79,7 @@ export interface ForwardPerformanceReaders {
     sql: PgClient.PgClient,
     accountId: string,
     authorityGenerationHash?: string,
+    writerFence?: WriterFenceService,
   ) => Effect.Effect<ForwardPerformancePostgresEvidence, ForwardPerformancePostgresError>
   readonly ledger: (
     config: Pick<ForwardPerformanceConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
@@ -580,14 +582,14 @@ const requireBrokerIdentity = (
 const readForwardPerformanceInput = (
   loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
-  options: { readonly authorityGenerationHash?: string } = {},
+  options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
 ): Effect.Effect<ForwardPerformanceEvidenceInput, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
   Effect.gen(function* () {
     const config = yield* requireBrokerIdentity(loadedConfig)
     const identity = config.execution.brokerIdentity
     const sql = yield* PgClient.PgClient
     const postgres = yield* readers
-      .postgres(sql, identity.accountId, options.authorityGenerationHash)
+      .postgres(sql, identity.accountId, options.authorityGenerationHash, options.writerFence)
       .pipe(Effect.mapError((cause) => programError('postgres-read', cause.message, cause)))
     const marketVolumeEvidence = yield* readers
       .marketVolume(config, postgres.marketVolumeRequests)
@@ -702,7 +704,7 @@ const runForwardPerformanceDataFirst = (
 export const runForwardPerformanceReport = (
   loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
-  options: { readonly authorityGenerationHash?: string } = {},
+  options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
 ): Effect.Effect<ForwardPerformanceReport, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
   readForwardPerformanceInput(loadedConfig, readers, options).pipe(
     Effect.flatMap((input) =>
