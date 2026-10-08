@@ -25,6 +25,7 @@ COPY internal ./internal
 COPY vscode-extension ./vscode-extension
 COPY test-guest-admin.sh /out/test-guest-admin.sh
 COPY browser-client.html browser-client.js ./
+COPY developer-profile.sh ./
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent . && \
