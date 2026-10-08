@@ -66,7 +66,7 @@ test('a native-cadence burst drains before the periodic flush without expanding 
     }),
   ))
 
-test('cumulative counters include raw, metadata, index, seal and manifest bytes plus every SQL payload', () =>
+test('cumulative counters include frame, seal and manifest bytes plus every SQL payload', () =>
   run(
     Effect.gen(function* () {
       const saved = sessionMemory()
@@ -87,7 +87,7 @@ test('cumulative counters include raw, metadata, index, seal and manifest bytes 
       const seal = yield* recorder.finish
       expect(seal?.persistedChunks).toBe(3)
       expect(seal?.persistedReceipts).toBe(4)
-      expect(saved.objects).toHaveLength(11)
+      expect(saved.objects).toHaveLength(5)
       const status = yield* recorder.status
       expect(status.attemptedObjectBytes).toBe(
         saved.objects.reduce((sum, object) => sum + object.payload.byteLength, 0),
@@ -160,7 +160,8 @@ test('unknown acknowledgements keep their logical byte charge and concurrent fin
       recorder.record({ ...marketEvent, originalTransport: captureKafkaTransport(0) }, undefined, Buffer.from('é'))
       const finishing = yield* recorder.finish.pipe(Effect.forkChild)
       yield* Deferred.await(entered)
-      expect((yield* recorder.status).attemptedObjectBytes).toBe(2)
+      expect((yield* recorder.status).attemptedObjectBytes).toBe(attempted)
+      expect(attempted).toBeGreaterThan(2)
       yield* Deferred.succeed(release, undefined)
       const one = yield* Fiber.join(finishing)
       expect(yield* recorder.finish).toEqual(one)
