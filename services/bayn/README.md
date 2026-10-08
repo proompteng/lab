@@ -862,6 +862,32 @@ configured runtime:
 node dist/forward-performance-command.js --authority-generation <generation-hash>
 ```
 
+That invocation remains read-only. To append the generation report to the durable forward-performance receipt table,
+opt in explicitly after the evidence window has closed:
+
+```sh
+node dist/forward-performance-command.js --authority-generation <generation-hash> --persist-receipt
+```
+
+Receipt persistence requires a terminal PAPER generation with sufficient, closed, exactly reconciled evidence.
+Terminal means either already superseded, or still current but non-effective with the system-authored completion or
+activation-expiry restriction reconciled after that restriction. The latter permits the receipt required by normal
+authority rollover without first requiring rollover itself. Operator kills and retryable restrictions do not qualify.
+A non-null reconciliation timestamp alone does not prove terminality. The command rejects active or unsettled
+generations, open windows, unknown costs and other evidence gaps before inserting anything; use the read-only
+invocation for provisional diagnostics. Terminality and the final cycle are checked inside the append transaction.
+Appending a receipt does not update authority, clear a kill, or itself rearm a mandate.
+An expired sandbox mandate with no execution evidence may use the existing rearm path without a profitability
+receipt. That narrow exception requires a fresh exact reconciliation, a trusted flat position observation, no open
+or unknown orders, and settled mutations. Any fill, accounted execution or positive filled-order quantity bound to
+the generation retains the receipt requirement. Zero executions remain unqualified and never imply profitability.
+The write command acquires the execution writer fence before reading report evidence and holds it through the
+append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
+The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.
+Read-only diagnostics retain their independent repeatable-read, read-only transaction and do not acquire that fence.
+Persistence is append-only and idempotent for unchanged evidence; the creation timestamp comes from the fixed
+evidence cut, not invocation time. A conflicting receipt for the same authority generation fails closed.
+
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
 Native-only account history does not. A native scope without completed executions remains unqualified; successful
