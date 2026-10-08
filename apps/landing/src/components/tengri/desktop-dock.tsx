@@ -54,8 +54,9 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
   const labelGeometry = useMotionValue({ centerX: 0, halfWidth: 0, viewportWidth: 0 })
   const labelShift = useTransform(() => {
     const { centerX, halfWidth, viewportWidth } = labelGeometry.get()
+    const horizontalOffset = offset.get()
     if (viewportWidth === 0) return 0
-    const center = centerX + offset.get()
+    const center = centerX + horizontalOffset
     return clamp(center, halfWidth + 8, viewportWidth - halfWidth - 8) - center
   })
   const labelArrowShift = useTransform(labelShift, (value) => -value)
