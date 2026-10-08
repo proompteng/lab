@@ -4615,7 +4615,7 @@ test('retains draft conversation notices after assigning its first server thread
   await composer.fill('Start the first conversation')
   await tengri.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect(sidebar.locator('[data-conversation-id="thread-1"]')).toBeVisible()
-  await sidebar.getByRole('button', { name: 'New conversation' }).click()
+  await sidebar.getByLabel('New conversation', { exact: true }).click()
   for (const kind of ['warning', 'error']) {
     await expect(tengri.getByText(`Draft conversation ${kind}`, { exact: true })).toHaveCount(0)
   }
