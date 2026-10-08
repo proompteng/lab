@@ -4471,6 +4471,21 @@ test('lists local conversations in the sidebar and switches or starts a new one'
   await expect.soft(tengri).toHaveScreenshot('tengri-agent-conversations.png')
 })
 
+test('clears unsent text and images when starting another new conversation', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  const composer = tengri.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+  await composer.fill('Discard this unsent draft')
+  await pasteClipboardImage(page, composer)
+  await expect(tengri.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  await tengri.getByTestId('agent-conversation-sidebar').getByLabel('New conversation', { exact: true }).click()
+  await expect(composer).toHaveValue('')
+  await expect(tengri.getByRole('list', { name: 'Image attachments' })).toHaveCount(0)
+  await expect(composer).toBeFocused()
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+})
+
 test('creates and switches running conversations while retaining each draft and accepted prompt', async ({ page }) => {
   const activeThread = JSON.stringify({ thread: { turns: [{ id: 'turn-1', status: 'inProgress', items: [] }] } })
   const mock = await mockTengri(page, { resumeThreadRawJson: activeThread })

@@ -879,7 +879,11 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   function resetTranscriptUi(nextThreadId: string) {
-    draftsRef.current.set(threadIdRef.current, { text: prompt, images: imagesRef.current })
+    if (!threadIdRef.current && !nextThreadId) {
+      draftsRef.current.delete('')
+    } else {
+      draftsRef.current.set(threadIdRef.current, { text: prompt, images: imagesRef.current })
+    }
     const draft = draftsRef.current.get(nextThreadId)
     setPrompt(draft?.text ?? '')
     commitImages(draft?.images ?? [])
