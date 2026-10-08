@@ -12,7 +12,6 @@ resources:
   - postgres-cluster.yaml
   - postgres-monitoring.yaml
   - postgres-scheduled-backup.yaml
-  - wal-latency-canary.yaml
   - tigerbeetle-cluster.yaml
   - tigerbeetle-networkpolicy.yaml
   - egress-proxy.yaml
@@ -28,9 +27,6 @@ resources:
   - networkpolicy.yaml
   - jev-sealedsecret.yaml
 configMapGenerator:
-  - name: bayn-wal-canary-script
-    files:
-      - wal-latency-canary.sh
   - name: bayn-egress-proxy
     files:
       - squid.conf
