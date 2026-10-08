@@ -175,6 +175,7 @@ try {
   assert.deepEqual(
     Buffer.concat(exported.map((chunk) => chunk.raw)),
     Buffer.concat(payloads.filter((value) => value !== undefined)),
+    JSON.stringify({ invalidations, seal: JSON.parse(seals[0].payload) }),
   )
   assert.ok(boundaries.some(({ phase }) => phase === 'ASSIGNED'))
   assert.ok(boundaries.some(({ phase }) => phase === 'STOPPED'))

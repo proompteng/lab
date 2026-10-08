@@ -6,11 +6,11 @@ mod crd;
 mod gateway;
 mod grpc;
 mod guest;
-mod guest_identity;
 mod identity;
 mod metrics;
 mod pod;
 mod runtime_secret;
+mod slot;
 mod tickets;
 
 use std::{env, future::Future, net::SocketAddr, path::PathBuf, time::Duration};
@@ -57,6 +57,13 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    match env::args().nth(1).as_deref() {
+        Some("slot-runner") => return slot::runner::run().await,
+        Some("slot-supervisor") => return slot::supervisor::run().await,
+        Some(argument) => anyhow::bail!("unknown Tengri command {argument}"),
+        None => {}
+    }
+
     let namespace = env_value("TENGRI_NAMESPACE").unwrap_or_else(|| DEFAULT_NAMESPACE.to_owned());
     let listen_address = env_value("TENGRI_LISTEN_ADDRESS")
         .unwrap_or_else(|| DEFAULT_LISTEN_ADDRESS.to_owned())
@@ -91,6 +98,23 @@ async fn main() -> anyhow::Result<()> {
     let client = Client::try_default()
         .await
         .context("create Kubernetes client")?;
+    let own_pod_name = required_env("TENGRI_POD_NAME")?;
+    let own_pods =
+        kube::Api::<k8s_openapi::api::core::v1::Pod>::namespaced(client.clone(), &namespace);
+    let own_pod = retry_kubernetes_startup_operation(
+        || own_pods.get(&own_pod_name),
+        STARTUP_KUBERNETES_RETRY_ATTEMPTS,
+        STARTUP_KUBERNETES_INITIAL_RETRY_DELAY,
+        STARTUP_KUBERNETES_MAX_RETRY_DELAY,
+    )
+    .await
+    .context("read controller image for slot supervisor")?;
+    let runtime_image = own_pod
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.containers.iter().find(|c| c.name == "tengri"))
+        .and_then(|container| container.image.clone())
+        .context("controller Pod has no Tengri image")?;
     let authorization = authz::WorkspaceAuthorization::new(
         &required_env("TENGRI_AUTHZ_ENDPOINT")?,
         PathBuf::from(required_env("TENGRI_AUTHZ_KEY_FILE")?),
@@ -156,6 +180,8 @@ async fn main() -> anyhow::Result<()> {
             namespace: controller_namespace,
             tickets,
             guest_image: controller_guest_image.into(),
+            runtime_image: runtime_image.into(),
+            architecture,
             identity: workload_identity,
             authorization,
         })
@@ -245,22 +271,22 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-async fn retry_kubernetes_startup_operation<F, Fut>(
+async fn retry_kubernetes_startup_operation<F, Fut, T>(
     mut operation: F,
     max_attempts: usize,
     initial_delay: Duration,
     max_delay: Duration,
-) -> Result<(), kube::Error>
+) -> Result<T, kube::Error>
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = Result<(), kube::Error>>,
+    Fut: Future<Output = Result<T, kube::Error>>,
 {
     debug_assert!(max_attempts > 0);
 
     let mut retry_delay = initial_delay;
     for attempt in 1..=max_attempts {
         match operation().await {
-            Ok(()) => return Ok(()),
+            Ok(value) => return Ok(value),
             Err(error) if attempt < max_attempts && retryable_startup_kubernetes_error(&error) => {
                 warn!(
                     attempt,
@@ -419,7 +445,7 @@ mod tests {
             move || {
                 operation_attempts.fetch_add(1, Ordering::SeqCst);
                 async {
-                    Err(kube::Error::Api(
+                    Err::<(), _>(kube::Error::Api(
                         kube::core::Status::failure("forbidden", "Forbidden")
                             .with_code(403)
                             .boxed(),
@@ -445,7 +471,7 @@ mod tests {
         let error = retry_kubernetes_startup_operation(
             move || {
                 operation_attempts.fetch_add(1, Ordering::SeqCst);
-                async { Err(connection_refused_error()) }
+                async { Err::<(), _>(connection_refused_error()) }
             },
             3,
             Duration::ZERO,

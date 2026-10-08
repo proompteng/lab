@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -47,7 +48,7 @@ describe('Tengri image workflow', () => {
     expect(source).not.toContain('latest_digest')
     expect(source).not.toContain('sha256sum "${index_path}"')
     expect(source).not.toContain('release-contract.json')
-    expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent'])
+    expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent', 'validate-kvm'])
     expect(existsSync(resolve(repositoryRoot, 'argocd/applications/kargo'))).toBe(true)
   })
 
@@ -71,6 +72,7 @@ describe('Tengri image workflow', () => {
     expect(guestValidation).toContain('bash validate-rootfs.test.sh')
     expect(images.jobs?.publish?.needs).toContain('validate-tengri')
     expect(images.jobs?.publish?.needs).toContain('validate-nanoagent')
+    expect(images.jobs?.publish?.needs).toContain('validate-kvm')
   })
 
   it('withholds Kargo aliases until both images and their retained indexes succeed', () => {
@@ -100,6 +102,55 @@ describe('Tengri image workflow', () => {
     expect(steps[prepared]?.run).not.toContain('kargo-sha-')
     expect(steps[exposed]?.run).toContain('publish_kargo_alias "${TENGRI_IMAGE}" "${TENGRI_DIGEST}"')
     expect(steps[exposed]?.run).toContain('publish_kargo_alias "${NANOAGENT_IMAGE}" "${NANOAGENT_DIGEST}"')
+  })
+
+  it('holds automatic discovery until prepared-slot cutover is explicitly ready', () => {
+    const images = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      jobs: { publish: { steps: Array<{ name?: string; run?: string; env?: Record<string, string> }> } }
+    }
+    const exposed = images.jobs.publish.steps.find((step) => step.name === 'Expose both verified images to Kargo')
+    if (!exposed?.run) throw new Error('Kargo exposure step is missing')
+    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-cutover-hold-'))
+    const calls = resolve(fixture, 'calls')
+    const summary = resolve(fixture, 'summary')
+    try {
+      for (const command of ['crane', 'docker']) {
+        writeFileSync(resolve(fixture, command), '#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$CALLS"\nexit 42\n', {
+          mode: 0o755,
+        })
+      }
+      for (const ready of ['', 'false', 'TRUE', 'true']) {
+        const result = Bun.spawnSync(['bash', '-c', exposed.run], {
+          cwd: fixture,
+          env: {
+            ...process.env,
+            PATH: `${fixture}:${process.env.PATH}`,
+            CALLS: calls,
+            GITHUB_STEP_SUMMARY: summary,
+            TENGRI_PREPARED_SLOT_CUTOVER_READY: ready,
+            SOURCE_SHA: '1'.repeat(40),
+            GITHUB_SHA: '1'.repeat(40),
+            TENGRI_DIGEST: `sha256:${'2'.repeat(64)}`,
+            NANOAGENT_DIGEST: `sha256:${'3'.repeat(64)}`,
+            TENGRI_IMAGE: 'registry.example.test/tengri',
+            NANOAGENT_IMAGE: 'registry.example.test/nanoagent',
+          },
+        })
+        if (ready === 'true') {
+          expect(result.exitCode).not.toBe(0)
+          expect(readFileSync(calls, 'utf8')).toContain('crane digest registry.example.test/tengri:kargo-sha-')
+        } else {
+          expect(result.exitCode).toBe(0)
+          expect(existsSync(calls)).toBe(false)
+          expect(readFileSync(summary, 'utf8')).toContain('publication held')
+        }
+      }
+      expect(exposed.env?.TENGRI_PREPARED_SLOT_CUTOVER_READY).toBe(
+        "${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY || 'false' }}",
+      )
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
   })
 
   it('propagates an image preparation failure out of command substitution', () => {
@@ -154,6 +205,78 @@ describe('Tengri image workflow', () => {
     expect(source).not.toContain('cosign sign')
   })
 
+  it.each(['save', 'config', 'portable'])('verifies the saved configuration for fixture %s', (scenario) => {
+    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      jobs: { build: { steps: Array<{ name?: string; if?: string; run?: string }> } }
+    }
+    const steps = workflow.jobs.build.steps
+    const exported = steps.find((step) => step.name === 'Export native KVM fixture image')
+    const retained = steps.find((step) => step.name === 'Retain native KVM fixture image')
+    expect(exported?.if).toBe("${{ github.event_name == 'pull_request' && matrix.architecture == 'amd64' }}")
+    expect(retained?.if).toBe(exported?.if)
+    expect(exported?.run).not.toMatch(/--device|--cap-add|bash services\/tengri\/test-kvm.sh/)
+
+    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-fixture-export-failure-'))
+    try {
+      const image = `registry.example.test/nanoagent:sha-${'1'.repeat(40)}-amd64`
+      const config = JSON.stringify({ architecture: 'amd64', os: 'linux', rootfs: { type: 'layers', diff_ids: [] } })
+      const digest = createHash('sha256').update(config).digest('hex')
+      const configPath = `blobs/sha256/${digest}`
+      mkdirSync(resolve(fixture, 'blobs/sha256'), { recursive: true })
+      writeFileSync(
+        resolve(fixture, 'manifest.json'),
+        JSON.stringify([{ Config: configPath, RepoTags: [image], Layers: [] }]),
+      )
+      const archive = resolve(fixture, 'image.tar')
+      const archiveFiles = ['manifest.json']
+      if (scenario !== 'config') {
+        writeFileSync(resolve(fixture, configPath), config)
+        archiveFiles.push(configPath)
+      }
+      const saved = Bun.spawnSync(['tar', '-cf', archive, '-C', fixture, ...archiveFiles])
+      expect(saved.exitCode).toBe(0)
+      writeFileSync(
+        resolve(fixture, 'docker'),
+        '#!/bin/sh\nif [ "$1" = save ]; then cat "$FIXTURE_ARCHIVE"; exit "$SAVE_EXIT"; fi\nprintf "sha256:%s\\n" "$MANIFEST_DIGEST"\n',
+        { mode: 0o755 },
+      )
+      const result = Bun.spawnSync(['bash', '-c', exported?.run ?? ''], {
+        cwd: fixture,
+        env: {
+          ...process.env,
+          PATH: `${fixture}:${process.env.PATH}`,
+          SERVICE: 'nanoagent',
+          IMAGE_REPOSITORY: 'registry.example.test/nanoagent',
+          GITHUB_SHA: '1'.repeat(40),
+          PR_HEAD_REVISION: '2'.repeat(40),
+          FIXTURE_ARCHIVE: archive,
+          SAVE_EXIT: scenario === 'save' ? '42' : '0',
+          MANIFEST_DIGEST: 'f'.repeat(64),
+        },
+      })
+      const receiptPath = resolve(fixture, '.artifacts/kvm-fixture/nanoagent.json')
+      const checksumsPath = resolve(fixture, '.artifacts/kvm-fixture/nanoagent-SHA256SUMS')
+      if (scenario === 'portable') {
+        expect(result.exitCode).toBe(0)
+        const receipt: unknown = JSON.parse(readFileSync(receiptPath, 'utf8'))
+        expect(receipt).toEqual({
+          sourceRevision: '1'.repeat(40),
+          prHeadRevision: '2'.repeat(40),
+          image,
+          configDigest: `sha256:${digest}`,
+        })
+        expect(existsSync(checksumsPath)).toBe(true)
+      } else {
+        if (scenario === 'save') expect(result.exitCode).toBe(42)
+        else expect(result.exitCode).not.toBe(0)
+        expect(existsSync(receiptPath)).toBe(false)
+        expect(existsSync(checksumsPath)).toBe(false)
+      }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
+  })
+
   it('uses the repository mirror instead of anonymous Docker Hub base pulls', () => {
     const nanoagent = readFileSync(nanoagentDockerfilePath, 'utf8')
     const tengri = readFileSync(tengriDockerfilePath, 'utf8')
@@ -182,7 +305,8 @@ describe('Tengri image workflow', () => {
     expect(nanoagent).toContain('cargo new --quiet --lib /tmp/cargo-library-smoke')
     expect(nanoagent).toContain('(cd /tmp/cargo-library-smoke && cargo test --quiet)')
     expect(nanoagent).not.toContain('/bundle/rust/bin/rustdoc;')
-    expect(nanoagent).toContain('ENTRYPOINT ["/usr/local/bin/nanoagent"]')
+    expect(nanoagent).toContain('COPY --from=boot-artifacts /guest /guest')
+    expect(nanoagent).toContain('build-boot-artifacts "$TARGETARCH"')
     expect(tengri).toContain('ARG DEBIAN_BASE_IMAGE=mirror.gcr.io/debian')
     expect(tengri).toContain('ARG RUST_BASE_IMAGE=mirror.gcr.io/rust')
   })

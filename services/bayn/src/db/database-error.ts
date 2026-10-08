@@ -104,7 +104,7 @@ const runDatabaseDataFirst = <A, E, R>(
 ): Effect.Effect<A, DatabaseError, R> =>
   effect.pipe(
     Effect.mapError((cause) => classifyDatabaseError(operation, cause)),
-    withObservedStage('bayn.postgres.operation', { dependency: 'postgresql', slowAfterMs: 1_000 }),
+    withObservedStage('bayn.postgres.operation', { dependency: 'postgresql', operation, slowAfterMs: 1_000 }),
     Effect.annotateLogs({ operation }),
   )
 

@@ -1,6 +1,7 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import { Cause, Config, Context, Effect, Exit, Layer, Logger, Option } from 'effect'
 import { OtlpSerialization, OtlpTracer } from 'effect/observability'
+import { HttpClient, type HttpClientError } from 'effect/http'
 import { operationCurrentTimeMillis } from './operation-timeout'
 
 export type OtlpTraceEndpoint =
@@ -30,8 +31,25 @@ type SpanAttributes = Readonly<Record<string, string | number | boolean>>
 export interface ActiveExecutionStage {
   readonly stage: string
   readonly dependency?: string
+  readonly operation?: string
   readonly startedAt: number
 }
+
+export interface ExecutionStageTiming {
+  readonly stage: string
+  readonly dependency?: string
+  readonly operation?: string
+  readonly count: number
+  readonly inclusiveElapsedMs: number
+  readonly maxElapsedMs: number
+  readonly failures: number
+  readonly interruptions: number
+}
+
+export const ExecutionStageTimings = Context.Reference<Map<string, ExecutionStageTiming> | undefined>(
+  'bayn/ExecutionStageTimings',
+  { defaultValue: () => undefined },
+)
 
 export const ActiveExecutionStages = Context.Reference<Map<symbol, ActiveExecutionStage> | undefined>(
   'bayn/ActiveExecutionStages',
@@ -68,8 +86,35 @@ const resourceAttributes = (options: TelemetryRuntimeOptions): Record<string, st
   ...(options.instanceId === undefined ? {} : { 'service.instance.id': options.instanceId }),
 })
 
-const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) =>
-  OtlpTracer.layer({
+const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) => {
+  const exportLoggers = new Set([Logger.withConsoleError(Logger.formatJson)])
+  const exportFailure = (
+    failureReason: 'http-status' | HttpClientError.HttpClientError['reason']['_tag'],
+    httpStatus?: number,
+  ) =>
+    Effect.logWarning('Bayn OTLP trace export attempt failed').pipe(
+      Effect.annotateLogs({
+        stage: 'bayn.telemetry.export',
+        dependency: 'telemetry',
+        serviceName: options.serviceName,
+        ...(options.serviceVersion === undefined ? {} : { sourceRevision: options.serviceVersion }),
+        failureReason,
+        ...(httpStatus === undefined ? {} : { httpStatus }),
+      }),
+      Effect.provideService(Logger.CurrentLoggers, exportLoggers),
+    )
+  const httpClient = Layer.effect(
+    HttpClient.HttpClient,
+    Effect.map(HttpClient.HttpClient, (client) =>
+      client.pipe(
+        HttpClient.tap((response) =>
+          response.status >= 200 && response.status < 300 ? Effect.void : exportFailure('http-status', response.status),
+        ),
+        HttpClient.tapError((error) => exportFailure(error.reason._tag)),
+      ),
+    ),
+  ).pipe(Layer.provide(NodeHttpClient.layerNodeHttp))
+  return OtlpTracer.layer({
     url: endpoint,
     resource: {
       serviceName: options.serviceName,
@@ -79,7 +124,8 @@ const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) =>
     exportInterval: '1 second',
     maxBatchSize: 128,
     shutdownTimeout: '3 seconds',
-  }).pipe(Layer.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, OtlpSerialization.layerProtobuf)))
+  }).pipe(Layer.provide(Layer.mergeAll(httpClient, OtlpSerialization.layerProtobuf)))
+}
 
 const optionalText = (name: string) =>
   Config.option(Config.String(name)).pipe(
@@ -149,23 +195,47 @@ export const withObservedSpan =
 export const withObservedStage =
   (
     stage: string,
-    options: { readonly dependency?: string; readonly slowAfterMs?: number; readonly recordCompletion?: boolean } = {},
+    options: {
+      readonly dependency?: string
+      readonly operation?: string
+      readonly slowAfterMs?: number
+      readonly recordCompletion?: boolean
+    } = {},
   ) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
     Effect.gen(function* () {
       const startedAt = yield* operationCurrentTimeMillis
       const activeStages = yield* ActiveExecutionStages
-      const stageId = Symbol(stage)
-      activeStages?.set(stageId, {
+      const stageTimings = yield* ExecutionStageTimings
+      const identity = {
         stage,
         ...(options.dependency === undefined ? {} : { dependency: options.dependency }),
-        startedAt,
-      })
+        ...(options.operation === undefined ? {} : { operation: options.operation }),
+      }
+      const stageId = Symbol(stage)
+      activeStages?.set(stageId, { ...identity, startedAt })
       return yield* effect.pipe(
         Effect.onExit((exit) =>
           operationCurrentTimeMillis.pipe(
             Effect.flatMap((finishedAt) => {
               const elapsedMs = Math.max(0, finishedAt - startedAt)
+              const outcome = Exit.isSuccess(exit)
+                ? 'succeeded'
+                : Cause.hasInterruptsOnly(exit.cause)
+                  ? 'interrupted'
+                  : 'failed'
+              if (stageTimings !== undefined) {
+                const key = `${stage}:${options.operation ?? ''}`
+                const previous = stageTimings.get(key)
+                stageTimings.set(key, {
+                  ...identity,
+                  count: (previous?.count ?? 0) + 1,
+                  inclusiveElapsedMs: (previous?.inclusiveElapsedMs ?? 0) + elapsedMs,
+                  maxElapsedMs: Math.max(previous?.maxElapsedMs ?? 0, elapsedMs),
+                  failures: (previous?.failures ?? 0) + (outcome === 'failed' ? 1 : 0),
+                  interruptions: (previous?.interruptions ?? 0) + (outcome === 'interrupted' ? 1 : 0),
+                })
+              }
               const slow = elapsedMs >= (options.slowAfterMs ?? 1_000)
               if (Exit.isSuccess(exit) && !slow && options.recordCompletion !== true) return Effect.void
               const log = Exit.isFailure(exit)
@@ -173,17 +243,21 @@ export const withObservedStage =
                 : slow
                   ? Effect.logWarning('Bayn operation exceeded its diagnostic threshold')
                   : Effect.logInfo('Bayn execution stage completed')
-              return log.pipe(
-                Effect.annotateLogs({
-                  service: 'bayn',
-                  stage,
-                  ...(options.dependency === undefined ? {} : { dependency: options.dependency }),
-                  elapsedMs,
-                  outcome: Exit.isSuccess(exit)
-                    ? 'succeeded'
-                    : exit.cause.reasons.some(Cause.isInterruptReason)
-                      ? 'interrupted'
-                      : 'failed',
+              return Effect.currentSpan.pipe(
+                Effect.orDie,
+                Effect.flatMap((span) => {
+                  const backendPid = span.attributes.get('postgresql.pid')
+                  return log.pipe(
+                    Effect.annotateLogs({
+                      service: 'bayn',
+                      ...identity,
+                      elapsedMs,
+                      outcome,
+                      ...(typeof backendPid === 'number' && Number.isInteger(backendPid) && backendPid > 0
+                        ? { 'postgresql.pid': backendPid }
+                        : {}),
+                    }),
+                  )
                 }),
               )
             }),
@@ -191,4 +265,9 @@ export const withObservedStage =
         ),
         Effect.ensuring(Effect.sync(() => activeStages?.delete(stageId))),
       )
-    }).pipe(withObservedSpan(stage))
+    }).pipe(
+      withObservedSpan(stage, {
+        ...(options.dependency === undefined ? {} : { 'bayn.dependency': options.dependency }),
+        ...(options.operation === undefined ? {} : { 'bayn.operation': options.operation }),
+      }),
+    )

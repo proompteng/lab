@@ -85,6 +85,18 @@ const evidence = (requests: readonly ReturnType<typeof row>[]) => ({
 })
 
 describe('inference operating-cost evidence', () => {
+  test('keeps command diagnostics on stderr and reserves stdout for report data', () => {
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, `${import.meta.dir}/inference-cost-command.ts`, '--invalid'],
+      env: {},
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    expect(result.exitCode).toBe(1)
+    expect(new TextDecoder().decode(result.stdout)).toBe('')
+    expect(new TextDecoder().decode(result.stderr)).toContain('InferenceCostError')
+  })
+
   test('prices metered usage without adding output charges or rounding each call', () => {
     const result = Result.getOrThrow(makeInferenceCostReport(evidence([row()]), rateCard))
     expect(result.coverage).toBe(InferenceCostCoverage.Estimated)

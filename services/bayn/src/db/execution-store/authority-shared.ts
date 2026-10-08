@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { postgresWallClock, type DatabaseClock } from '../clock'
+import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from '../clock'
 import { Effect, Schema } from 'effect'
 
 import {
@@ -39,7 +39,7 @@ export const authorityStateFromRow = (
     kill: row.kill_state,
     ...(row.reason === null ? {} : { reason: row.reason }),
     version,
-    updatedAt: row.updated_at.toISOString(),
+    updatedAt: row.updated_at,
   })
 }
 
@@ -183,7 +183,8 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient, clock: DatabaseClo
         const currentRows = yield* sql<Record<string, unknown>>`
           SELECT
             schema_version, generation_hash, maximum, effective, kill_state, reason,
-            version::text AS version, updated_at, ${clock.now} AS observed_at
+            version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at,
+            ${clock.now} AS observed_at
           FROM authority_state
           WHERE singleton
           FOR UPDATE
