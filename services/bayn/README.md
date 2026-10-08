@@ -877,6 +877,10 @@ A non-null reconciliation timestamp alone does not prove terminality. The comman
 generations, open windows, unknown costs and other evidence gaps before inserting anything; use the read-only
 invocation for provisional diagnostics. Terminality and the final cycle are checked inside the append transaction.
 Appending a receipt does not update authority, clear a kill, or itself rearm a mandate.
+An expired sandbox mandate with no execution evidence may use the existing rearm path without a profitability
+receipt. That narrow exception requires a fresh exact reconciliation, a trusted flat position observation, no open
+or unknown orders, and settled mutations. Any fill, accounted execution or positive filled-order quantity bound to
+the generation retains the receipt requirement. Zero executions remain unqualified and never imply profitability.
 The write command acquires the execution writer fence before reading report evidence and holds it through the
 append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
 The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.
