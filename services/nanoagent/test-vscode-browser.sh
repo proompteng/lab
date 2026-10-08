@@ -42,7 +42,10 @@ python3 - <<'PY'
 import socket
 for port in (8080, 13338, 3143, 33082, 33083, 3443):
     with socket.socket() as listener:
+        # The preceding editor fixture can leave closed connections in TIME_WAIT.
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(('127.0.0.1', port))
+        listener.listen()
 PY
 trap cleanup EXIT INT TERM
 mkdir -p "$fixture_root/home/workspace"
