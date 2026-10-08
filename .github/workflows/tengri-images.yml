@@ -242,6 +242,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install execution network tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends iproute2
+
       - name: Build native KVM test harness
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
