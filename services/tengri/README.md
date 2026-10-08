@@ -249,7 +249,19 @@ remains the same after loading the archive into a classic image store.
 CI builds these artifacts without executing the KVM fixture. It requires no SSH devbox. Device execution still
 requires the scoped approval below.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, and `TENGRI_KVM_SAMPLES` select the artifacts,
-absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. It uses a private Docker
+absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. Routine main publication runs
+three real sleep/resume cycles on each architecture. Every resume must finish below one second, and publication still
+requires file and same-shell continuity, initialized Codex, host identity rotation, VMM termination, snapshot page
+eviction, guest administration, and browser startup. The first sleep lasts three minutes so the previous host SVID
+expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
+`validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
+
+For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
+`TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
+and fixture builds export main-only registry caches; dependency compilation is cached separately from service source
+changes. Fixture cache and test-binary tags are excluded from Kargo discovery.
+
+The fixture uses a private Docker
 network/PID namespace, one CPU, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts.
 It checks real files, the same PTY shell, initialized Codex, stop/page-eviction, and rotating host identities, preserving
 diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared

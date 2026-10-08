@@ -24,6 +24,14 @@ on:
       - 'packages/scripts/src/tengri/**'
       - 'packages/scripts/src/shared/cli.ts'
   workflow_dispatch:
+    inputs:
+      kvm_samples:
+        description: Native sleep/resume cycles per architecture (50 for performance qualification)
+        type: choice
+        options:
+          - '3'
+          - '50'
+        default: '3'
 
 concurrency:
   group: tengri-images-${{ github.ref }}
@@ -157,6 +165,7 @@ jobs:
           load: ${{ github.event_name == 'pull_request' && (matrix.service == 'nanoagent' || matrix.architecture == 'amd64') }}
           tags: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           cache-from: type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
+          cache-to: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && format('type=registry,ref={0}:cache-{1},mode=max', matrix.image, matrix.architecture) || '' }}
           provenance: mode=max
           sbom: true
 
@@ -247,7 +256,22 @@ jobs:
       - name: Install execution network tools
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends iproute2
 
-      - name: Build native KVM test harness
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Build guest test binaries
+        uses: docker/build-push-action@v6
+        with:
+          context: services/nanoagent
+          platforms: linux/${{ matrix.architecture }}
+          target: kvm-tests
+          push: true
+          tags: ${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }}
+
+      - name: Pull paired boot artifacts
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
         run: |
@@ -256,20 +280,27 @@ jobs:
           guest="${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
           docker pull "$runtime"
           docker pull "$guest"
-          docker build --platform "linux/${ARCHITECTURE}" --target build \
-            --tag tengri-nanoagent-tests:validation services/nanoagent
-          docker build --platform "linux/${ARCHITECTURE}" \
-            --file services/tengri/Dockerfile.kvm-test \
-            --build-arg "RUNTIME_IMAGE=$runtime" \
-            --build-arg NANOAGENT_TEST_IMAGE=tengri-nanoagent-tests:validation \
-            --tag tengri-kvm-test:validation services/tengri
+
+      - name: Build native KVM test harness
+        uses: docker/build-push-action@v6
+        with:
+          context: services/tengri
+          file: services/tengri/Dockerfile.kvm-test
+          platforms: linux/${{ matrix.architecture }}
+          load: true
+          tags: tengri-kvm-test:validation
+          build-args: |
+            RUNTIME_IMAGE=${{ env.TENGRI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+            NANOAGENT_TEST_IMAGE=${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }}
+          cache-to: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }},mode=max
 
       - name: Verify real guest administration and snapshot lifecycle
         env:
           TENGRI_KVM_TEST_IMAGE: tengri-kvm-test:validation
           TENGRI_KVM_GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           TENGRI_KVM_OUTPUT: ${{ github.workspace }}/.artifacts/kvm
-          TENGRI_KVM_SAMPLES: '50'
+          TENGRI_KVM_SAMPLES: ${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}
         run: bash services/tengri/test-kvm.sh
 
       - name: Retain KVM diagnostics
