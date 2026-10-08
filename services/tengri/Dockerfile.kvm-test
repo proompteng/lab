@@ -9,6 +9,9 @@ RUN apt-get update -o Acquire::Retries=3 && \
 WORKDIR /src
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
+RUN mkdir src && printf 'fn main() {}\n' | tee src/main.rs > src/crdgen.rs && \
+    CARGO_BUILD_JOBS=2 cargo test --locked --release --no-run --bin tengri && \
+    cargo clean --package tengri && rm -rf src
 COPY src ./src
 RUN (CARGO_BUILD_JOBS=2 cargo test --locked --release --no-run --bin tengri > /tmp/kvm-build.log 2>&1 || \
     { cat /tmp/kvm-build.log; exit 1; }) && \
