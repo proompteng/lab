@@ -3761,6 +3761,26 @@ test('keeps a wide focused Dock tooltip within the viewport while neighbouring i
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(640)
 })
 
+test('keeps the desktop viewport fixed when Dock focus would scroll clipped content', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  await page.setViewportSize({ width: 320, height: 680 })
+  await page.addStyleTag({ content: '[data-tengri-dock] [role="tooltip"] { min-width: 350px; }' })
+
+  const desktop = page.getByRole('main')
+  await desktop.evaluate((element) => {
+    element.scrollLeft = 12
+  })
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).focus()
+  await dock.getByRole('button', { name: 'Open Finder' }).focus()
+  expect(await desktop.evaluate((element) => element.scrollLeft)).toBe(0)
+  const bounds = await desktop.boundingBox()
+  if (!bounds) throw new Error('Desktop viewport is missing')
+  expect(bounds.x).toBe(0)
+  expect(bounds.width).toBe(320)
+})
+
 test('minimizes to the app icon and leaves hidden window geometry idle during clock and menu updates', async ({
   page,
 }) => {
