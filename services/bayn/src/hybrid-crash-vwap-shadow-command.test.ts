@@ -119,12 +119,43 @@ describe('hybrid crash-VWAP shadow command', () => {
       expect(Exit.isSuccess(await run({ BAYN_HYBRID_CRASH_VWAP: 'shadow' }))).toBe(true)
       const record = JSON.parse(await readFile(outputPath, 'utf8'))
       expect(record).toMatchObject({
+        inputSha256: sha256(input),
         mode: HybridCrashVwapMode.Shadow,
         sessionDate: '2026-10-07',
         evaluatedAt: '2026-10-07T20:05:00.000Z',
         candidates: [{ symbol: 'CRDO', signalMinuteOfDay: open + 35, entryMinuteOfDay: open + 37 }],
       })
       expect(JSON.parse(stdout.join(''))).toMatchObject({ mode: 'shadow', outputPath, candidates: 1 })
+      const firstRecordHash = JSON.parse(stdout.join('')).recordHash
+
+      // A changed entry-bar high does not change candidate fields, but must change durable input identity.
+      const changedInput = JSON.stringify({
+        ...JSON.parse(input),
+        barsBySymbol: {
+          CRDO: bars.map((bar) => (bar.minuteOfDay === open + 37 ? { ...bar, high: bar.high + 1 } : bar)),
+        },
+      })
+      const changedInputPath = join(directory, 'changed-bars.json')
+      const changedOutputPath = join(directory, 'changed-record.json')
+      await writeFile(changedInputPath, changedInput)
+      stdout.length = 0
+      expect(
+        Exit.isSuccess(
+          await run({ BAYN_HYBRID_CRASH_VWAP: 'shadow' }, [
+            '--input',
+            changedInputPath,
+            '--input-sha256',
+            sha256(changedInput),
+            '--output',
+            changedOutputPath,
+          ]),
+        ),
+      ).toBe(true)
+      const changedRecord = JSON.parse(await readFile(changedOutputPath, 'utf8'))
+      expect(changedRecord.candidates).toEqual(record.candidates)
+      expect(changedRecord.inputSha256).toBe(sha256(changedInput))
+      expect(changedRecord.inputSha256).not.toBe(record.inputSha256)
+      expect(JSON.parse(stdout.join('')).recordHash).not.toBe(firstRecordHash)
 
       expect(Exit.isFailure(await run({ BAYN_HYBRID_CRASH_VWAP: 'shadow' }))).toBe(true)
       expect(Exit.isFailure(await run({ BAYN_HYBRID_CRASH_VWAP: 'on' }))).toBe(true)

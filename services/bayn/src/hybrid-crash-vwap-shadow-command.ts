@@ -74,7 +74,10 @@ export const runHybridCrashVwapShadowCommand = (rawArgs: readonly string[]) =>
     if (sha256(inputText) !== args.inputHash)
       return yield* new HybridCrashVwapFailure({ message: 'Hybrid crash-VWAP session bars hash differs' })
     const session = yield* Effect.fromResult(decodeHybridCrashVwapSessionBars(inputText))
-    const record = evaluateHybridCrashVwapShadow({ session, evaluatedAt: yield* currentUtcInstant })
+    const record = {
+      ...evaluateHybridCrashVwapShadow({ session, evaluatedAt: yield* currentUtcInstant }),
+      inputSha256: args.inputHash,
+    }
     const recordHash = yield* Effect.fromResult(canonicalHashV1Result(record))
     yield* fs.writeFileString(args.outputPath, `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx' })
     const summary = {
