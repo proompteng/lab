@@ -42,7 +42,7 @@ test('native Alloy accepts Kubernetes RGW line endings and forwards only sanitiz
   ]
   const listeners = [0, 1].map(() => Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response() }))
   const [apiPort, adminPort] = listeners.map((listener) => listener.port)
-  for (const listener of listeners) listener.stop(true)
+  for (const listener of listeners) await listener.stop(true)
   const directory = mkdtempSync(join(tmpdir(), 'bayn-rgw-alloy-'))
   const fixturePath = join(directory, 'config.river')
   writeFileSync(
