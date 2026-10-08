@@ -361,6 +361,75 @@ loki.process "bayn_pod_logs" {
 	forward_to = [loki.write.bayn.receiver]
 }
 
+discovery.kubernetes "bayn_rgw_log_pods" {
+	role = "pod"
+
+	namespaces {
+		names = ["rook-ceph"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app=rook-ceph-rgw,rgw=objectstore"
+	}
+}
+
+discovery.relabel "bayn_rgw_logs" {
+	targets = discovery.kubernetes.bayn_rgw_log_pods.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name"]
+		regex         = "rgw"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_container_name"]
+		target_label  = "container"
+	}
+}
+
+loki.source.kubernetes "bayn_rgw_logs" {
+	targets    = discovery.relabel.bayn_rgw_logs.output
+	forward_to = [loki.process.bayn_rgw_logs.receiver]
+}
+
+loki.process "bayn_rgw_logs" {
+	stage.static_labels {
+		values = {job = "bayn-rgw"}
+	}
+
+	stage.match {
+		selector            = "{job=\"bayn-rgw\"} !~ \"^.* 1 beast:.* \\\"(?P<method>PUT|GET|HEAD|DELETE) /bayn-research-captures-[0-9a-f-]+/research-capture/sha256/(?P<objectHash>[0-9a-f]{64})(\\\\?[^ \\\"]*)? HTTP/[0-9.]+\\\" (?P<httpStatus>[0-9]{3}) (?P<loggedBytes>[0-9]+).* latency=(?P<latencySeconds>[0-9]+(?:\\\\.[0-9]+)?)s$\""
+		action              = "drop"
+		drop_counter_reason = "non_bayn_rgw_access"
+	}
+
+	stage.regex {
+		expression = "^.* 1 beast:.* \"(?P<method>PUT|GET|HEAD|DELETE) /bayn-research-captures-[0-9a-f-]+/research-capture/sha256/(?P<objectHash>[0-9a-f]{64})(\\?[^ \"]*)? HTTP/[0-9.]+\" (?P<httpStatus>[0-9]{3}) (?P<loggedBytes>[0-9]+).* latency=(?P<latencySeconds>[0-9]+(?:\\.[0-9]+)?)s$"
+	}
+
+	stage.template {
+		source   = "bayn_rgw_access"
+		template = "{{ printf \"{\\\"schemaVersion\\\":\\\"bayn.rgw-access.v1\\\",\\\"method\\\":%q,\\\"objectHash\\\":%q,\\\"httpStatus\\\":%q,\\\"loggedBytes\\\":%q,\\\"latencySeconds\\\":%q}\" .method .objectHash .httpStatus .loggedBytes .latencySeconds }}"
+	}
+
+	stage.output {
+		source = "bayn_rgw_access"
+	}
+	forward_to = [loki.write.bayn.receiver]
+}
+
 loki.write "bayn" {
 	endpoint {
 		url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
