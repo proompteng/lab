@@ -44,12 +44,21 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
   ref,
 ) {
   const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const labelRef = useRef<HTMLSpanElement | null>(null)
   const interactionRef = useRef<{ focused: boolean; pointerDistance: number | null }>({
     focused: false,
     pointerDistance: null,
   })
   const targetScale = useMotionValue(BASE_SCALE)
   const offset = useMotionValue(0)
+  const labelGeometry = useMotionValue({ centerX: 0, halfWidth: 0, viewportWidth: 0 })
+  const labelShift = useTransform(() => {
+    const { centerX, halfWidth, viewportWidth } = labelGeometry.get()
+    if (viewportWidth === 0) return 0
+    const center = centerX + offset.get()
+    return clamp(center, halfWidth + 8, viewportWidth - halfWidth - 8) - center
+  })
+  const labelArrowShift = useTransform(labelShift, (value) => -value)
   const magnificationLimit = useRef(1)
   const targetLift = useMotionValue(0)
   const scale = useSpring(targetScale, MAGNIFICATION_SPRING)
@@ -97,6 +106,31 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
     applyInteraction()
   }, [applyInteraction])
 
+  useLayoutEffect(() => {
+    const button = buttonRef.current
+    const label = labelRef.current
+    if (!button || !label) return
+    const measureLabel = () => {
+      const bounds = button.getBoundingClientRect()
+      const transform = getComputedStyle(button).transform
+      const translation = transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m41
+      labelGeometry.set({
+        centerX: bounds.left + bounds.width / 2 - translation,
+        halfWidth: label.getBoundingClientRect().width / 2,
+        viewportWidth: window.innerWidth,
+      })
+    }
+    measureLabel()
+    const observer = new ResizeObserver(measureLabel)
+    observer.observe(button)
+    observer.observe(label)
+    window.addEventListener('resize', measureLabel)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measureLabel)
+    }
+  }, [labelGeometry])
+
   useImperativeHandle(
     ref,
     () => ({
@@ -132,13 +166,17 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
         style={{ scaleX: scale, scaleY: hitScaleY }}
       />
       <motion.span
+        ref={labelRef}
         aria-hidden="true"
         role="tooltip"
         className="pointer-events-none absolute bottom-full left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-[6px] border border-white/10 bg-zinc-800/95 px-2.5 py-1 text-[13px] leading-4 font-normal text-white/95 opacity-0 shadow-[0_3px_10px_rgba(0,0,0,0.25)] group-hover:opacity-100 group-focus-visible:opacity-100"
-        style={{ y: labelLift }}
+        style={{ x: labelShift, y: labelLift }}
       >
         {APP_TITLES[app]}
-        <span className="absolute top-[calc(100%-3px)] left-1/2 h-1.5 w-1.5 -translate-x-1/2 rotate-45 border-r border-b border-white/10 bg-zinc-800" />
+        <motion.span
+          className="absolute top-[calc(100%-3px)] left-1/2 h-1.5 w-1.5 -translate-x-1/2 rotate-45 border-r border-b border-white/10 bg-zinc-800"
+          style={{ x: labelArrowShift }}
+        />
       </motion.span>
       <span
         aria-hidden="true"
