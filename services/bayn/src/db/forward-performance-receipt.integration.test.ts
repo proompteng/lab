@@ -1,13 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Redacted, Result } from 'effect'
+import { Deferred, Effect, Exit, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
+import { forwardPerformanceSnapshot } from '../forward-performance/postgres/snapshot'
 import { PostgresClientLive } from './postgres-client'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import {
   makeForwardPerformanceReceiptEnvelope,
   makePersistableForwardPerformanceReceiptEnvelope,
   persistForwardPerformanceReceipt,
+  evaluateAndPersistForwardPerformanceReceipt,
 } from './forward-performance-receipt'
 import { makePersistenceReceipt } from './forward-performance-receipt.test-support'
 
@@ -17,7 +20,25 @@ const successor = 'f'.repeat(64)
 const packet = () =>
   Result.getOrThrow(makePersistableForwardPerformanceReceiptEnvelope(generation, makePersistenceReceipt()))
 
-const withDatabase = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient>) => {
+const makeRuntime = () => {
+  const url = baynTestPostgresUrl ?? ''
+  const parsed = new URL(url)
+  if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
+    throw new Error('Receipt persistence tests require an isolated local _test database')
+  return ManagedRuntime.make(
+    WriterFenceLive.pipe(
+      Layer.provideMerge(
+        PostgresClientLive({
+          operationTimeoutMs: 5_000,
+          postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
+        }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  )
+}
+
+const withDatabase = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient | WriterFence>) => {
   const url = baynTestPostgresUrl ?? ''
   const parsed = new URL(url)
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
@@ -25,7 +46,8 @@ const withDatabase = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient>) => 
   return Effect.runPromise(
     Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
-      return yield* sql.withTransaction(
+      const fence = yield* WriterFence
+      return yield* fence.transaction(
         Effect.gen(function* () {
           yield* sql`CREATE TEMP TABLE authority_generations (
           generation_hash text PRIMARY KEY, previous_generation_hash text, authority_version bigint,
@@ -72,10 +94,14 @@ const withDatabase = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient>) => 
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        PostgresClientLive({
-          operationTimeoutMs: 5_000,
-          postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
-        }),
+        WriterFenceLive.pipe(
+          Layer.provideMerge(
+            PostgresClientLive({
+              operationTimeoutMs: 5_000,
+              postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
+            }),
+          ),
+        ),
       ),
       Effect.provide(NodeServices.layer),
     ),
@@ -83,6 +109,104 @@ const withDatabase = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient>) => 
 }
 
 postgres('Forward-performance receipt terminality', () => {
+  test('read-only diagnostics retain a repeatable-read, read-only snapshot', async () => {
+    const runtime = makeRuntime()
+    try {
+      const rows = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* forwardPerformanceSnapshot(sql).withTransaction(sql`
+          SELECT current_setting('transaction_isolation') AS isolation,
+                 current_setting('transaction_read_only') AS read_only
+        `)
+        }),
+      )
+      expect(rows).toEqual([{ isolation: 'repeatable read', read_only: 'on' }])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  test('report evaluation holds the real ingestion fence before reading and releases it on failure', async () => {
+    const runtime = makeRuntime()
+    const contender = makeRuntime()
+    const started = await Effect.runPromise(Deferred.make<void>())
+    const release = await Effect.runPromise(Deferred.make<void>())
+    const attempt = runtime.runPromiseExit(
+      evaluateAndPersistForwardPerformanceReceipt(generation, (fence) =>
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const rows = yield* forwardPerformanceSnapshot(sql, fence).withTransaction(sql`
+          SELECT current_setting('transaction_read_only') AS read_only
+        `)
+          expect(rows).toEqual([{ read_only: 'off' }])
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          return yield* Effect.fail('evidence read failed before append')
+        }),
+      ),
+    )
+    try {
+      await Effect.runPromise(Deferred.await(started).pipe(Effect.timeout('5 seconds')))
+      const blocked = await contender.runPromise(
+        Effect.flatMap(WriterFence, (fence) => fence.check).pipe(Effect.result),
+      )
+      expect(Result.isFailure(blocked)).toBe(true)
+      if (Result.isFailure(blocked)) expect(blocked.failure.failure).toBe('busy')
+      await Effect.runPromise(Deferred.succeed(release, undefined))
+      const exit = await attempt
+      expect(exit).toMatchObject({
+        _tag: 'Failure',
+        cause: { reasons: [{ _tag: 'Fail', error: 'evidence read failed before append' }] },
+      })
+      await contender.runPromise(Effect.flatMap(WriterFence, (fence) => fence.check))
+    } finally {
+      await Effect.runPromise(Deferred.succeed(release, undefined))
+      await attempt
+      await runtime.dispose()
+      await contender.dispose()
+    }
+  }, 15_000)
+
+  test('an in-flight ingester prevents receipt evidence reads until its transaction commits', async () => {
+    const runtime = makeRuntime()
+    const ingester = makeRuntime()
+    const started = await Effect.runPromise(Deferred.make<void>())
+    const release = await Effect.runPromise(Deferred.make<void>())
+    const ingest = ingester.runPromiseExit(
+      Effect.flatMap(WriterFence, (fence) =>
+        fence.transaction(Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))),
+      ),
+    )
+    let reads = 0
+    const evaluate = () =>
+      Effect.sync(() => {
+        reads += 1
+      }).pipe(Effect.andThen(Effect.fail('read after ingestion')))
+    try {
+      await Effect.runPromise(Deferred.await(started).pipe(Effect.timeout('5 seconds')))
+      const blocked = await runtime.runPromise(
+        evaluateAndPersistForwardPerformanceReceipt(generation, evaluate).pipe(Effect.result),
+      )
+      expect(Result.isFailure(blocked)).toBe(true)
+      if (Result.isFailure(blocked))
+        expect(blocked.failure).toMatchObject({ _tag: 'WriterFenceError', failure: 'busy' })
+      expect(reads).toBe(0)
+      await Effect.runPromise(Deferred.succeed(release, undefined))
+      expect(Exit.isSuccess(await ingest)).toBe(true)
+      const retry = await runtime.runPromise(
+        evaluateAndPersistForwardPerformanceReceipt(generation, evaluate).pipe(Effect.result),
+      )
+      expect(retry).toEqual(Result.fail('read after ingestion'))
+      expect(reads).toBe(1)
+    } finally {
+      await Effect.runPromise(Deferred.succeed(release, undefined))
+      await ingest
+      await runtime.dispose()
+      await ingester.dispose()
+    }
+  }, 15_000)
+
   test('rejects an active generation even if a successor row has been prepared', async () => {
     const result = await withDatabase(
       Effect.gen(function* () {
@@ -102,7 +226,9 @@ postgres('Forward-performance receipt terminality', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const original = packet()
-        yield* persistForwardPerformanceReceipt(original)
+        yield* evaluateAndPersistForwardPerformanceReceipt(generation, (fence) =>
+          forwardPerformanceSnapshot(sql, fence).withTransaction(Effect.succeed({ receipt: original.receipt })),
+        )
         yield* persistForwardPerformanceReceipt(packet())
         const different = Result.getOrThrow(
           makePersistableForwardPerformanceReceiptEnvelope(

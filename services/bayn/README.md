@@ -874,6 +874,10 @@ evidence. A non-null reconciliation timestamp alone does not prove terminality. 
 unsettled generations, open windows, unknown costs and other evidence gaps before inserting anything; use the
 read-only invocation for provisional diagnostics. Generation retirement and the final cycle are checked against
 PostgreSQL inside the append transaction. No receipt is written to rearm a still-active generation.
+The write command acquires the execution writer fence before reading report evidence and holds it through the
+append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
+The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.
+Read-only diagnostics retain their independent repeatable-read, read-only transaction and do not acquire that fence.
 Persistence is append-only and idempotent for unchanged evidence; the creation timestamp comes from the fixed
 evidence cut, not invocation time. A conflicting receipt for the same authority generation fails closed.
 

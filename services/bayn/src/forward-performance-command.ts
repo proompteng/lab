@@ -6,10 +6,8 @@ import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
 import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
 import { Sha256Schema } from './schemas'
-import {
-  makePersistableForwardPerformanceReceiptEnvelope,
-  persistForwardPerformanceReceipt,
-} from './db/forward-performance-receipt'
+import { evaluateAndPersistForwardPerformanceReceipt } from './db/forward-performance-receipt'
+import { WriterFenceLive } from './execution/writer-fence'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 
 export { runForwardPerformance } from './forward-performance'
@@ -61,17 +59,15 @@ const runProof = (options: { readonly authorityGenerationHash?: string; readonly
     Effect.gen(function* () {
       const config = yield* loadForwardPerformanceConfig()
       const report = yield* Effect.gen(function* () {
-        const report = yield* runForwardPerformanceReport(config, undefined, options)
         if (options.persistReceipt === true && options.authorityGenerationHash !== undefined) {
-          const envelope = yield* Effect.fromResult(
-            makePersistableForwardPerformanceReceiptEnvelope(options.authorityGenerationHash, report.receipt),
-          )
-          yield* persistForwardPerformanceReceipt(envelope)
+          return yield* evaluateAndPersistForwardPerformanceReceipt(options.authorityGenerationHash, (writerFence) =>
+            runForwardPerformanceReport(config, undefined, { ...options, writerFence }),
+          ).pipe(Effect.timeout(config.operationTimeoutMs))
         }
-        return report
+        return yield* runForwardPerformanceReport(config, undefined, options)
       }).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- command subprogram owns its scoped PostgreSQL layer
-        Effect.provide(PostgresClientLive(config)),
+        Effect.provide(WriterFenceLive.pipe(Layer.provideMerge(PostgresClientLive(config)))),
       )
       const output = yield* Effect.fromResult(canonicalJsonV1Result(report)).pipe(
         Effect.mapError(

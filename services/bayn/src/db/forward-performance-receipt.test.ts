@@ -1,4 +1,5 @@
-import { Effect, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Result } from 'effect'
+import { WriterFence, WriterFenceError, type WriterFenceService } from '../execution/writer-fence'
 import { PgClient } from '@effect/sql-pg'
 import { makeIntradayPerformanceFixture } from '../forward-performance/intraday-cycle.test-support'
 import { makeIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
@@ -10,8 +11,18 @@ import {
   makeForwardPerformanceReceiptEnvelope,
   makePersistableForwardPerformanceReceiptEnvelope,
   persistForwardPerformanceReceipt,
+  evaluateAndPersistForwardPerformanceReceipt,
 } from './forward-performance-receipt'
 import { makePersistenceReceipt } from './forward-performance-receipt.test-support'
+
+const testDatabase = (sql: PgClient.PgClient) =>
+  Layer.mergeAll(
+    Layer.succeed(PgClient.PgClient, sql),
+    Layer.succeed(WriterFence, {
+      check: Effect.void,
+      transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+    }),
+  )
 
 const hash = 'a'.repeat(64)
 
@@ -93,6 +104,146 @@ const envelopeMaterial = {
 
 const envelope = { ...envelopeMaterial, contentHash: canonicalHashV1(envelopeMaterial) }
 
+const fencedPersistenceHarness = () => {
+  const events: string[] = []
+  const rows: unknown[] = []
+  let held = false
+  const transaction: WriterFenceService['transaction'] = (effect) =>
+    Effect.suspend(() =>
+      held
+        ? effect
+        : Effect.acquireUseRelease(
+            Effect.sync(() => {
+              held = true
+              events.push('acquire')
+              return rows.length
+            }),
+            () => effect,
+            (length, exit) =>
+              Effect.sync(() => {
+                events.push(Exit.isSuccess(exit) ? 'commit' : 'rollback')
+                if (Exit.isFailure(exit)) rows.splice(length)
+                held = false
+              }),
+          ),
+    )
+  const query = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
+    Effect.suspend(() => {
+      expect(held).toBe(true)
+      if (strings.join('').includes('INSERT INTO')) {
+        events.push('append')
+        rows.push(values[2])
+        return Effect.succeed([])
+      }
+      events.push('verify')
+      return Effect.succeed([{ matches: true }])
+    })
+  const sql = Object.assign(query, {
+    json: (value: unknown) => value,
+    withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+  }) as unknown as PgClient.PgClient
+  const fence: WriterFenceService = { check: Effect.void, transaction }
+  return {
+    events,
+    rows,
+    fence,
+    layer: Layer.mergeAll(Layer.succeed(PgClient.PgClient, sql), Layer.succeed(WriterFence, fence)),
+  }
+}
+
+describe('forward-performance fenced evaluation', () => {
+  test('owns the writer fence before the first evidence read through append and commit', async () => {
+    const harness = fencedPersistenceHarness()
+    const report = { receipt: makePersistenceReceipt() }
+    const result = await Effect.runPromise(
+      evaluateAndPersistForwardPerformanceReceipt(hash, (fence) =>
+        Effect.sync(() => {
+          expect(fence).toBe(harness.fence)
+          expect(harness.events).toEqual(['acquire'])
+          harness.events.push('read')
+          return report
+        }),
+      ).pipe(Effect.provide(harness.layer)),
+    )
+    expect(result).toBe(report)
+    expect(harness.events).toEqual(['acquire', 'read', 'verify', 'append', 'verify', 'commit'])
+    expect(harness.rows).toHaveLength(1)
+  })
+
+  test('a busy execution writer prevents both evaluation and persistence', async () => {
+    let evaluated = false
+    const busy = new WriterFenceError({
+      failure: 'busy',
+      operation: 'transaction',
+      message: 'ingestion owns the writer',
+    })
+    const harness = fencedPersistenceHarness()
+    const result = await Effect.runPromise(
+      evaluateAndPersistForwardPerformanceReceipt(hash, () =>
+        Effect.sync(() => {
+          evaluated = true
+          return { receipt: makePersistenceReceipt() }
+        }),
+      ).pipe(
+        // Override the actual boundary, not the evaluator, so it cannot consume a pre-fence snapshot.
+        Effect.provideService(WriterFence, { check: Effect.fail(busy), transaction: () => Effect.fail(busy) }),
+        Effect.provide(harness.layer),
+        Effect.result,
+      ),
+    )
+    expect(result).toEqual(Result.fail(busy))
+    expect(evaluated).toBe(false)
+    expect(harness.rows).toHaveLength(0)
+  })
+
+  test('evaluation failure rolls back and does not append a provisional receipt', async () => {
+    const harness = fencedPersistenceHarness()
+    const result = await Effect.runPromise(
+      evaluateAndPersistForwardPerformanceReceipt(hash, () => Effect.fail('evidence unavailable')).pipe(
+        Effect.result,
+        Effect.provide(harness.layer),
+      ),
+    )
+    expect(result).toEqual(Result.fail('evidence unavailable'))
+    expect(harness.events).toEqual(['acquire', 'rollback'])
+    expect(harness.rows).toHaveLength(0)
+  })
+
+  test('interrupted evidence reads release the fence exactly once and allow a fresh evaluation', async () => {
+    const harness = fencedPersistenceHarness()
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const attempt = yield* evaluateAndPersistForwardPerformanceReceipt(hash, () =>
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(attempt)
+        const exit = yield* Fiber.await(attempt)
+        expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+        expect(harness.events).toEqual(['acquire', 'rollback'])
+        expect(harness.rows).toHaveLength(0)
+        return yield* evaluateAndPersistForwardPerformanceReceipt(hash, () =>
+          Effect.succeed({ receipt: makePersistenceReceipt() }),
+        )
+      }).pipe(Effect.provide(harness.layer)),
+    )
+    expect(result.receipt.evidence.status).toBe('SUFFICIENT')
+    expect(harness.events).toEqual(['acquire', 'rollback', 'acquire', 'verify', 'append', 'verify', 'commit'])
+  })
+
+  test('evaluation defects remain defects without writing a receipt', async () => {
+    const harness = fencedPersistenceHarness()
+    const defect = new Error('invalid evidence invariant')
+    const exit = await Effect.runPromiseExit(
+      evaluateAndPersistForwardPerformanceReceipt(hash, () => Effect.die(defect)).pipe(Effect.provide(harness.layer)),
+    )
+    expect(exit).toMatchObject({ _tag: 'Failure', cause: { reasons: [{ _tag: 'Die', defect }] } })
+    expect(harness.events).toEqual(['acquire', 'rollback'])
+    expect(harness.rows).toHaveLength(0)
+  })
+})
+
 describe('forward-performance receipt persistence contract', () => {
   test('persists once and accepts an exact idempotent replay', async () => {
     const packet = Result.getOrThrow(makePersistableForwardPerformanceReceiptEnvelope(hash, makePersistenceReceipt()))
@@ -116,7 +267,7 @@ describe('forward-performance receipt persistence contract', () => {
       Effect.gen(function* () {
         yield* persistForwardPerformanceReceipt(packet)
         yield* persistForwardPerformanceReceipt(packet)
-      }).pipe(Effect.provideService(PgClient.PgClient, sql)),
+      }).pipe(Effect.provide(testDatabase(sql))),
     )
     expect(rows).toEqual([packet])
   })
@@ -134,7 +285,7 @@ describe('forward-performance receipt persistence contract', () => {
       withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
     }) as unknown as PgClient.PgClient
     const exit = await Effect.runPromiseExit(
-      persistForwardPerformanceReceipt(packet).pipe(Effect.provideService(PgClient.PgClient, sql)),
+      persistForwardPerformanceReceipt(packet).pipe(Effect.provide(testDatabase(sql))),
     )
     expect(exit._tag).toBe('Failure')
   })
@@ -179,7 +330,7 @@ describe('forward-performance receipt persistence contract', () => {
         withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
       }) as unknown as PgClient.PgClient
       const result = await Effect.runPromise(
-        persistForwardPerformanceReceipt(packet).pipe(Effect.result, Effect.provideService(PgClient.PgClient, sql)),
+        persistForwardPerformanceReceipt(packet).pipe(Effect.result, Effect.provide(testDatabase(sql))),
       )
       expect(Result.isFailure(result)).toBe(true)
       expect(calls).toBe(0)
@@ -198,7 +349,7 @@ describe('forward-performance receipt persistence contract', () => {
       withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
     }) as unknown as PgClient.PgClient
     const result = await Effect.runPromise(
-      persistForwardPerformanceReceipt(packet).pipe(Effect.result, Effect.provideService(PgClient.PgClient, sql)),
+      persistForwardPerformanceReceipt(packet).pipe(Effect.result, Effect.provide(testDatabase(sql))),
     )
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) expect(result.failure.message).toContain('superseded and settled')
@@ -235,7 +386,7 @@ describe('forward-performance receipt persistence contract', () => {
         withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
       }) as unknown as PgClient.PgClient
       const result = await Effect.runPromise(
-        persistForwardPerformanceReceipt(candidate).pipe(Effect.result, Effect.provideService(PgClient.PgClient, sql)),
+        persistForwardPerformanceReceipt(candidate).pipe(Effect.result, Effect.provide(testDatabase(sql))),
       )
       expect(Result.isFailure(result)).toBe(true)
       expect(calls).toBe(0)

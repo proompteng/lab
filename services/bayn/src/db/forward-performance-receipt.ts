@@ -1,6 +1,7 @@
 import { IntradayPerformanceVolumeEvidenceSchema } from '../forward-performance/intraday-schema'
 import { validIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
 import { Data, Effect, Result, Schema } from 'effect'
+import { WriterFence, withWriterFence, type WriterFenceService } from '../execution/writer-fence'
 import { PgClient } from '@effect/sql-pg'
 
 import { canonicalHashV1Result } from '../hash'
@@ -326,6 +327,30 @@ export const makePersistableForwardPerformanceReceiptEnvelope = (
 
 const decodePersistenceMatches = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ matches: Schema.Boolean })))
 
+export const evaluateAndPersistForwardPerformanceReceipt = <
+  A extends { readonly receipt: ForwardPerformanceReceipt },
+  E,
+  R,
+>(
+  authorityGenerationHash: string,
+  evaluate: (writerFence: WriterFenceService) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const writerFence = yield* WriterFence
+    // Own the same serialization boundary as broker/accounting ingestion before the first read,
+    // and retain it through the immutable append. No pre-fence snapshot is reused for a write.
+    return yield* writerFence.transaction(
+      Effect.gen(function* () {
+        const report = yield* evaluate(writerFence)
+        const envelope = yield* Effect.fromResult(
+          makePersistableForwardPerformanceReceiptEnvelope(authorityGenerationHash, report.receipt),
+        )
+        yield* persistForwardPerformanceReceipt(envelope)
+        return report
+      }),
+    )
+  })
+
 export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceReceiptEnvelope) =>
   Effect.gen(function* () {
     yield* Effect.fromResult(
@@ -344,11 +369,12 @@ export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceRec
         message: 'Forward-performance envelope must bind the report cycle and stable evidence timestamp',
       })
     const sql = yield* PgClient.PgClient
-    yield* sql.withTransaction(
-      Effect.gen(function* () {
-        // A reconciliation timestamp is not proof that a generation has ended. Only archive a
-        // superseded generation, and hold the authority/cycle rows through the append.
-        const terminal = yield* sql`
+    yield* withWriterFence(
+      sql.withTransaction(
+        Effect.gen(function* () {
+          // A reconciliation timestamp is not proof that a generation has ended. Only archive a
+          // superseded generation, and hold the authority/cycle rows through the append.
+          const terminal = yield* sql`
           SELECT true AS matches
           FROM authority_generations AS generation
           JOIN authority_state AS state
@@ -398,12 +424,12 @@ export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceRec
             )
           FOR SHARE OF state, cycle
         `.pipe(Effect.flatMap(decodePersistenceMatches))
-        if (terminal.length !== 1 || terminal[0]?.matches !== true)
-          return yield* new ForwardPerformanceReceiptPersistenceError({
-            message: 'Cannot persist a forward-performance receipt before its generation is superseded and settled',
-          })
+          if (terminal.length !== 1 || terminal[0]?.matches !== true)
+            return yield* new ForwardPerformanceReceiptPersistenceError({
+              message: 'Cannot persist a forward-performance receipt before its generation is superseded and settled',
+            })
 
-        yield* sql`
+          yield* sql`
           INSERT INTO autonomous_forward_performance_receipts (
             authority_generation_hash, cycle_id, document, created_at
           ) VALUES (
@@ -411,16 +437,17 @@ export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceRec
           )
           ON CONFLICT (authority_generation_hash) DO NOTHING
         `
-        const rows = yield* sql`
+          const rows = yield* sql`
           SELECT document = ${sql.json(envelope)} AS matches
           FROM autonomous_forward_performance_receipts
           WHERE authority_generation_hash = ${envelope.authorityGenerationHash}
         `.pipe(Effect.flatMap(decodePersistenceMatches))
-        if (rows.length !== 1 || rows[0]?.matches !== true)
-          return yield* new ForwardPerformanceReceiptPersistenceError({
-            message: 'A different forward-performance receipt already exists for this authority generation',
-          })
-      }),
+          if (rows.length !== 1 || rows[0]?.matches !== true)
+            return yield* new ForwardPerformanceReceiptPersistenceError({
+              message: 'A different forward-performance receipt already exists for this authority generation',
+            })
+        }),
+      ),
     )
   }).pipe(
     Effect.mapError((cause) =>
