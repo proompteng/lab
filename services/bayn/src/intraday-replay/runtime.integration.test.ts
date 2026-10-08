@@ -1414,10 +1414,10 @@ durableTest.each(
           maximumHoldDueAt: utcInstantFromEpochMillis(
             Date.parse(entryFill.transactionTime) + protocol.maximumHoldingMinutes * 60_000,
           ),
-          maximumHoldEvaluatedAt: expect.any(String),
         })
         if (waiting.result?.outcome !== 'RECOVERED' || waiting.result.action !== 'WAITING')
           throw new Error('Expected the full execution cycle to forward its held-position wait')
+        expect(typeof waiting.result.maximumHoldEvaluatedAt).toBe('string')
         const evaluatedMs = Date.parse(waiting.result.maximumHoldEvaluatedAt ?? '')
         expect(evaluatedMs).toBeGreaterThanOrEqual(Date.parse(managementStartedAt))
         expect(evaluatedMs).toBeLessThanOrEqual(Date.parse(waiting.result.observedAt))
