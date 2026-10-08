@@ -519,8 +519,18 @@ export async function issueEditorSession(
   }
 }
 
-export async function revokeEditorSessions(subject: string) {
+export async function revokeDesktopPreviews(subject: string) {
   await unary('revokeEditorSessions', {}, subject)
+}
+
+export async function issueBrowserSession(subject: string, agentId: string): Promise<TengriPreviewSession> {
+  const response = await unary<RawRecord>('issueBrowserSession', { id: agentId }, subject, 400_000)
+  return {
+    id: stringValue(response.id),
+    launchUrl: stringValue(response.launchUrl),
+    expiresAt: stringValue(response.expiresAt),
+    previewOrigin: stringValue(response.previewOrigin),
+  }
 }
 
 export async function revokePreviewSession(
