@@ -85,6 +85,47 @@ test('Bayn compares CNPG resources after admission defaulting', () => {
   expect(bayn.annotations['argocd.argoproj.io/compare-options']).toBe('ServerSideDiff=true,IncludeMutationWebhook=true')
 })
 
+test('Bayn isolates the bounded WAL experiment from production storage and credentials', () => {
+  const resources = YAML.parseAllDocuments(readRepoFile('argocd/applications/bayn/wal-latency-canary.yaml')).map(
+    (document) => document.toJSON(),
+  )
+  const job = resources.find((resource) => resource.kind === 'Job')
+  const policy = resources.find((resource) => resource.kind === 'NetworkPolicy')
+  const claims = resources.filter((resource) => resource.kind === 'PersistentVolumeClaim')
+  const cluster = readManifest('argocd/applications/bayn/postgres-cluster.yaml')
+  const pod = job.spec.template.spec
+
+  expect(job.spec.backoffLimit).toBe(0)
+  expect(job.spec.activeDeadlineSeconds).toBeLessThanOrEqual(900)
+  expect(pod.automountServiceAccountToken).toBe(false)
+  expect(pod.restartPolicy).toBe('Never')
+  expect(pod.containers).toHaveLength(1)
+  expect(pod.containers[0].image).toBe(cluster.spec.imageName)
+  expect(pod.containers[0].env).toBeUndefined()
+  expect(pod.containers[0].envFrom).toBeUndefined()
+  expect(pod.volumes.filter((volume: { secret?: unknown }) => volume.secret !== undefined)).toEqual([])
+  expect(
+    pod.volumes.flatMap((volume: { persistentVolumeClaim?: { claimName: string } }) =>
+      volume.persistentVolumeClaim ? [volume.persistentVolumeClaim.claimName] : [],
+    ),
+  ).toEqual(['bayn-wal-canary-data-v1', 'bayn-wal-canary-wal-v1'])
+  expect(claims).toHaveLength(2)
+  for (const claim of claims) {
+    expect(claim.spec).toEqual({
+      accessModes: ['ReadWriteOncePod'],
+      storageClassName: cluster.spec.storage.storageClass,
+      resources: { requests: { storage: '4Gi' } },
+    })
+  }
+  expect(policy.spec.podSelector.matchLabels).toEqual({
+    'app.kubernetes.io/name': job.spec.template.metadata.labels['app.kubernetes.io/name'],
+  })
+  expect(policy.spec.policyTypes).toEqual(['Ingress', 'Egress'])
+  expect(policy.spec.ingress).toEqual([])
+  expect(policy.spec.egress).toEqual([])
+  expect(cluster.spec.walStorage).toBeUndefined()
+})
+
 test('Bayn keeps the read plane and serialized execution service tolerant of one node loss', () => {
   const deployment = readManifest('argocd/applications/bayn/deployment.yaml')
   const egressProxyResources = YAML.parseAllDocuments(readRepoFile('argocd/applications/bayn/egress-proxy.yaml')).map(
