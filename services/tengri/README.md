@@ -5,6 +5,10 @@ Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared 
 resume restores that owner's latest committed snapshot. Neither request schedules a Pod, attaches storage, boots a
 kernel, or installs tools. Empty or preparing capacity returns an explicit error.
 
+The host runner reserves 9 GiB, including 1 GiB beyond guest RAM for preparation and VMM overhead, matching the native
+acceptance fixture. Artifact staging has a separate 2 GiB limit so copying the boot disk does not exhaust a 128 MiB
+container through charged file pages. The namespace quota covers all six runners, supervisors, and the controller.
+
 Sleep freezes and snapshots the guest, flushes its disks, stops and reaps the VMM, and evicts the snapshot's file pages
 before acknowledging completion. The stable slot Pod, home PVC, TAP, and small host supervisor remain. Kubernetes
 resource requests still reserve resume capacity even while resident guest RAM is released.

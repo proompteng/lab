@@ -48,9 +48,9 @@ spire-agent:
   resources:
     requests:
       cpu: 50m
-      memory: 64Mi
-    limits:
       memory: 256Mi
+    limits:
+      memory: 512Mi
 spiffe-csi-driver:
   kubeletPath: /var/lib/kubelet
   resources:

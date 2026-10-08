@@ -70,6 +70,29 @@ function manifest(path: string) {
   return document
 }
 
+test('the namespace quota covers six slots at the accepted native memory limit', () => {
+  function mib(value: unknown) {
+    const match = /^(\d+)(Mi|Gi)$/.exec(String(value))
+    if (!match) throw new Error('Expected a bounded memory quantity')
+    return Number(match[1]) * (match[2] === 'Gi' ? 1024 : 1)
+  }
+  const quota = manifest('argocd/applications/tengri/resource-quota.yaml')
+  const slots = Number(quota.getIn(['spec', 'hard', 'count/leases.coordination.k8s.io']))
+  const native = readFileSync(new URL('../../../../services/tengri/test-kvm.sh', import.meta.url), 'utf8')
+  const nativeMemory = /--memory=(\d+)g/.exec(native)
+  if (!nativeMemory) throw new Error('Native acceptance must constrain runner memory')
+  const deployment = manifest('argocd/applications/tengri/deployment.yaml')
+  const controller = mib(
+    deployment.getIn(['spec', 'template', 'spec', 'containers', 0, 'resources', 'limits', 'memory']),
+  )
+  const proxy = mib(
+    deployment.getIn(['spec', 'template', 'metadata', 'annotations', 'sidecar.istio.io/proxyMemoryLimit']),
+  )
+  const required = slots * (Number(nativeMemory[1]) * 1024 + 128) + controller + proxy
+  expect(mib(quota.getIn(['spec', 'hard', 'limits.memory']))).toBeGreaterThanOrEqual(required)
+  expect(mib(quota.getIn(['spec', 'hard', 'requests.memory']))).toBeGreaterThanOrEqual(required)
+})
+
 test('the platform enrolls the KVM/TUN prerequisite without changing namespace policy', () => {
   const elements = manifest('argocd/applicationsets/platform.yaml').getIn([
     'spec',

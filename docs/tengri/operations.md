@@ -5,6 +5,11 @@ runner, Pod-local TAP, private snapshot/root disks, and a retained 16 GiB Ceph r
 by [the service README](../../services/tengri/README.md) and [slot code](../../services/tengri/src/slot/).
 The [KVM/TAP design](kvm-tap-design.md) records the acceptance contract. A source merge is not a live cutover.
 
+Each 8 GiB guest uses a 9 GiB host runner reservation, matching native acceptance. Artifact-copy initialization is
+bounded separately at 2 GiB. The 56 GiB namespace memory quota includes six runners, their supervisors, and the
+controller and proxy. Repeated unchanged lifecycle failures retain their condition transition time and wait for the
+controller's retry interval instead of creating another Kubernetes status event.
+
 Never drain, cordon, reboot, relabel, change scheduling on, or reconfigure shared nodes for this migration. Only the
 specifically approved Tengri Pods may be stopped. Leave global Kata RuntimeClasses/extensions and unrelated workloads
 alone. No direct worktree deployment, host-device chmod, privileged slot, host PID/network, or host filesystem mount
