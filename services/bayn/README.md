@@ -44,6 +44,11 @@ from capital authority. Authorized bootstrap drains a predecessor controller, pu
 exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
 inactive while the observation object's delayed loop continues to retry.
 
+The observation owner's child runtimes share the worker's configured logger and tracer. The
+`bayn.broker.observation.poll` span contains capture and publication spans; capture carries its span and log context
+across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
+observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
+
 Each poll retains the complete paginated order, fill and fee history with the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
 hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same

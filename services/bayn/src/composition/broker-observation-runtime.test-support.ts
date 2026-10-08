@@ -1,6 +1,6 @@
 import { mock } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Layer } from 'effect'
+import { Clock, Effect, Layer, Logger, References, Tracer } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import type { ApplicationPlanFor } from '../app'
@@ -9,6 +9,25 @@ import * as actualSession from '../broker/alpaca/session'
 import * as actualPostgres from '../db/postgres-client'
 
 let attempts = 0
+const spans: Tracer.NativeSpan[] = []
+const tracer = Tracer.make({
+  span(options) {
+    const span = new Tracer.NativeSpan(options)
+    spans.push(span)
+    return span
+  },
+})
+const logs: { message: string; annotations: Readonly<Record<string, unknown>> }[] = []
+const logger = Logger.make(({ message, fiber }) => {
+  logs.push({
+    message: Array.isArray(message) && typeof message[0] === 'string' ? message[0] : '',
+    annotations: fiber.getRef(References.CurrentLogAnnotations),
+  })
+})
+const loggers = new Set([logger])
+const telemetry = Layer.mergeAll(Layer.succeed(Logger.CurrentLoggers, loggers), Layer.succeed(Tracer.Tracer, tracer))
+let persistenceTelemetry: { loggerInherited: boolean; tracerInherited: boolean } | undefined
+let brokerTelemetry: { loggerInherited: boolean; tracerInherited: boolean } | undefined
 const releaseAcquisition = Promise.withResolvers<void>()
 const acquisitionFinished = Promise.withResolvers<void>()
 const sql = (strings: TemplateStringsArray) => {
@@ -23,7 +42,17 @@ const sql = (strings: TemplateStringsArray) => {
 
 await mock.module('../db/postgres-client', () => ({
   ...actualPostgres,
-  PostgresClientLive: () => Layer.succeed(PgClient.PgClient, sql as unknown as PgClient.PgClient),
+  PostgresClientLive: () =>
+    Layer.effect(
+      PgClient.PgClient,
+      Effect.gen(function* () {
+        persistenceTelemetry = {
+          loggerInherited: (yield* Logger.CurrentLoggers) === loggers,
+          tracerInherited: (yield* Tracer.Tracer) === tracer,
+        }
+        return sql as unknown as PgClient.PgClient
+      }),
+    ),
 }))
 await mock.module('../broker/alpaca/http', () => ({
   ...actualHttp,
@@ -44,6 +73,10 @@ await mock.module('../broker/alpaca/session', () => ({
     Layer.effect(
       actualSession.BrokerSession,
       Effect.gen(function* () {
+        brokerTelemetry = {
+          loggerInherited: (yield* Logger.CurrentLoggers) === loggers,
+          tracerInherited: (yield* Tracer.Tracer) === tracer,
+        }
         const http = yield* HttpClient.HttpClient
         yield* http.get('https://example.invalid/fake')
         yield* Effect.promise(() => releaseAcquisition.promise)
@@ -78,8 +111,27 @@ const result = await Effect.runPromise(
       releaseAcquisition.resolve()
       yield* Effect.promise(() => acquisitionFinished.promise)
       const nextPollNotBeforeMs = yield* Effect.promise(() => runtime.nextPollNotBeforeMs(signal))
-      return { poll, attemptsAtReturn, attemptsAfterReturn: attempts, nextPollNotBeforeMs }
+      return {
+        poll,
+        attemptsAtReturn,
+        attemptsAfterReturn: attempts,
+        nextPollNotBeforeMs,
+        persistenceTelemetry,
+        brokerTelemetry,
+      }
     }),
-  ),
+  ).pipe(Effect.provide(telemetry)),
 )
-process.stdout.write(`BROKER_POLL_RESULT=${JSON.stringify(result)}\n`)
+process.stdout.write(
+  `BROKER_POLL_RESULT=${JSON.stringify({
+    ...result,
+    logs,
+    spans: spans.map((span) => ({
+      name: span.name,
+      spanId: span.spanId,
+      traceId: span.traceId,
+      parentSpanId: span.parent._tag === 'Some' ? span.parent.value.spanId : undefined,
+      sourceRevision: span.attributes.get('bayn.source.revision'),
+    })),
+  })}\n`,
+)
