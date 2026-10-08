@@ -50,6 +50,7 @@ import {
 import { CodexEventCard } from './codex-event-card'
 import { CodexCopyButton } from './codex-copy-button'
 import {
+  appendCodexEvent,
   appendCodexEventAfterRestore,
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
@@ -62,6 +63,7 @@ import {
   codexLoginCompletionIsUncorrelated,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
+  codexResolvedApprovalId,
   codexResumeCommitIsCurrent,
   codexTranscriptFromThread,
   parseCodexEvent,
@@ -94,6 +96,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
+  const retainedApprovals = useRef(new Map<string, CodexBufferedEvent>())
   const [submittedPrompts, setSubmittedPrompts] = useState<SubmittedPrompt[]>([])
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
@@ -259,6 +262,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setHistoryItems([])
     setRestoredHistorySequence(0)
     setEvents([])
+    retainedApprovals.current.clear()
     setSubmittedPrompts([])
     draftsRef.current.clear()
     lastScrollTop.current = 0
@@ -508,6 +512,19 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         return
       }
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
+      const resolvedApprovalId = codexResolvedApprovalId(event)
+      if (resolvedApprovalId) {
+        retainedApprovals.current.delete(resolvedApprovalId)
+      } else if (event.kind === 'approval' && event.approvalId) {
+        const approval = appendCodexEvent([], event)[0]
+        if (approval) retainedApprovals.current.set(event.approvalId, approval)
+      } else if (event.method === 'turn/completed' && event.turnId) {
+        for (const [id, approval] of retainedApprovals.current) {
+          if (approval.threadId === event.threadId && approval.turnId === event.turnId) {
+            retainedApprovals.current.delete(id)
+          }
+        }
+      }
       const currentThread = threadIdRef.current
       if (!codexEventMatchesThread(event, currentThread)) return
       const eventMethod = event.method.toLowerCase()
@@ -821,6 +838,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setError('')
     try {
       await runTengriAction({ action: 'resolve-approval', agentId, approvalId: event.approvalId, decision })
+      retainedApprovals.current.delete(event.approvalId)
       setEvents((current) => current.filter((candidate) => candidate.approvalId !== event.approvalId))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Approval could not be resolved')
@@ -876,7 +894,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setCurrentActiveTurnId('')
     setHistoryItems([])
     setRestoredHistorySequence(0)
-    setEvents([])
+    setEvents([...retainedApprovals.current.values()].filter((event) => codexEventMatchesThread(event, nextThreadId)))
     setFollowingConversation(true)
     setReplayRecovering(false)
     replayRecoveryRef.current = false

@@ -4655,6 +4655,97 @@ test('creates and switches running conversations while retaining each draft and 
   expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
 })
 
+test('retains approvals across navigation and reconciles background approval outcomes', async ({ page }) => {
+  const history = (status: string, turnId: string) =>
+    JSON.stringify({ thread: { turns: [{ id: turnId, status, items: [] }] } })
+  const histories = {
+    'thread-alpha': history('inProgress', 'turn-alpha'),
+    'thread-beta': history('inProgress', 'turn-beta'),
+  }
+  const mock = await mockTengri(page, { resumeThreadRawJsonById: histories })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha')
+    localStorage.setItem(
+      'tengri-conversations:microvm-ada',
+      JSON.stringify([
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2 },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 1 },
+      ]),
+    )
+  })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const sidebar = chrome.getByTestId('agent-conversation-sidebar')
+  const approval = chrome.getByRole('article', { name: 'Codex approval' })
+  const approve = chrome.getByRole('button', { name: 'Approve once', exact: true })
+  const event = {
+    threadId: 'thread-alpha',
+    turnId: 'turn-alpha',
+    kind: 'approval',
+    method: 'item/commandExecution/requestApproval',
+    itemId: 'approval-alpha-one',
+    approvalId: '101',
+    text: 'Run the first Alpha check?',
+    rawJson: JSON.stringify({ params: { availableDecisions: ['accept', 'decline'] } }),
+  }
+  await expect(chrome.getByRole('textbox', { name: 'Steer the current turn' })).toBeEnabled()
+  await emitCodexEvent(page, { ...event, sequence: 1 })
+  await expect(approve).toBeVisible()
+  await sidebar.getByLabel('New conversation', { exact: true }).click()
+  await expect(approval).toHaveCount(0)
+  await sidebar.locator('[data-conversation-id="thread-alpha"]').click()
+  await expect(approval).toHaveText(/Run the first Alpha check\?/)
+  await expect(approve).toBeVisible()
+  await sidebar.locator('[data-conversation-id="thread-beta"]').click()
+  await expect(approval).toHaveCount(0)
+  await emitCodexEvent(page, {
+    ...event,
+    sequence: 2,
+    itemId: 'approval-alpha-two',
+    approvalId: '102',
+    text: 'Run the second Alpha check?',
+  })
+  await emitCodexEvent(page, {
+    ...event,
+    sequence: 3,
+    kind: 'thread-state',
+    method: 'serverRequest/resolved',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: JSON.stringify({ params: { threadId: 'thread-alpha', requestId: 101 } }),
+  })
+  await expect(approval).toHaveCount(0)
+  await sidebar.locator('[data-conversation-id="thread-alpha"]').click()
+  await expect(approval).toHaveCount(1)
+  await expect(approval).toHaveText(/Run the second Alpha check\?/)
+  await approve.click()
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'resolve-approval'))
+    .toMatchObject([{ approvalId: '102', decision: 'approve-once' }])
+  await expect(approval).toHaveCount(0)
+  await sidebar.locator('[data-conversation-id="thread-beta"]').click()
+  await sidebar.locator('[data-conversation-id="thread-alpha"]').click()
+  await expect(approval).toHaveCount(0)
+  await emitCodexEvent(page, { ...event, sequence: 4, itemId: 'approval-alpha-three', approvalId: '103' })
+  await expect(approve).toBeVisible()
+  await sidebar.locator('[data-conversation-id="thread-beta"]').click()
+  histories['thread-alpha'] = history('completed', 'turn-alpha')
+  await emitCodexEvent(page, {
+    ...event,
+    sequence: 5,
+    kind: 'thread-state',
+    method: 'turn/completed',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{}',
+  })
+  await sidebar.locator('[data-conversation-id="thread-alpha"]').click()
+  await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(approval).toHaveCount(0)
+})
+
 test('keeps the latest sidebar selection when an earlier history request finishes later', async ({ page }) => {
   const history = (name: string) =>
     JSON.stringify({
@@ -5006,7 +5097,8 @@ test('keeps the composer stable while typing and resizing multiline drafts', asy
   await prompt.fill('Short again')
   await expect(prompt).toHaveCSS('height', '48px')
   await page.setViewportSize({ width: 390, height: 844 })
-  await prompt.fill('A wrapped draft '.repeat(20))
+  await prompt.fill('A wrapped draft '.repeat(40))
+  await expect.poll(() => prompt.evaluate((element) => element.scrollHeight)).toBeGreaterThan(160)
   await expect(prompt).toHaveCSS('height', '160px')
   await prompt.pressSequentially(' more', { delay: 20 })
   await expect(prompt).toBeFocused()

@@ -1085,7 +1085,7 @@ function codexEventKey(event: TengriCodexEvent) {
   return `${event.sequence}:${event.method}:${event.threadId}:${event.turnId}:${event.itemId}:${event.approvalId}`
 }
 
-function codexResolvedApprovalId(event: TengriCodexEvent) {
+export function codexResolvedApprovalId(event: TengriCodexEvent) {
   if (event.method.toLowerCase() !== 'serverrequest/resolved') return ''
   const requestId = record(parseRawEvent(event.rawJson).params).requestId
   if (typeof requestId === 'string') return boundedIdentifier(requestId, 256)

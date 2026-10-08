@@ -65,7 +65,9 @@ browser-local conversations for the agent (newest first) with an active highligh
 thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. You can start or
 switch conversations while another response runs. Text and image drafts, along with prompts waiting for their server
 echo, remain with their conversation while the desktop stays open. Switching keeps sidebar rows in place, restores
-the selected history, and focuses the composer when recovery completes. The header is
+the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
+including requests received while another conversation is selected; server resolutions and completed turns clear
+retained requests. The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
 no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
 send/stop button. Composer height updates before paint, preserves scrolling within long drafts, and
