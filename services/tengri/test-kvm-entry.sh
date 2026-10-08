@@ -5,7 +5,10 @@ umask 077
 case "$TENGRI_KVM_NETWORK_MTU" in
   *[!0-9]*|'') echo 'KVM fixture requires a valid IPv4 interface MTU' >&2; exit 1 ;;
 esac
-[ "$TENGRI_KVM_NETWORK_MTU" -ge 576 ] && [ "$TENGRI_KVM_NETWORK_MTU" -le 65535 ]
+if [ "$TENGRI_KVM_NETWORK_MTU" -lt 576 ] || [ "$TENGRI_KVM_NETWORK_MTU" -gt 65535 ]; then
+  echo 'KVM fixture interface MTU is outside the IPv4 range' >&2
+  exit 1
+fi
 ip link set dev eth0 mtu "$TENGRI_KVM_NETWORK_MTU"
 /usr/local/bin/tengri-network
 chmod 0777 /work

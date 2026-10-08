@@ -15,10 +15,10 @@ network_mtu="$(cat /sys/class/net/eth0/mtu)"
 case "$network_mtu" in
   *[!0-9]*|'') echo 'Slot requires a valid IPv4 interface MTU' >&2; exit 1 ;;
 esac
-[ "$network_mtu" -ge 576 ] && [ "$network_mtu" -le 65535 ] || {
+if [ "$network_mtu" -lt 576 ] || [ "$network_mtu" -gt 65535 ]; then
   echo 'Slot interface MTU is outside the IPv4 range' >&2
   exit 1
-}
+fi
 [ "$network_mtu" -le 1500 ] || network_mtu=1500
 tcp_mss="$((network_mtu - 40))"
 
