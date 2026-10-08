@@ -2779,7 +2779,7 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   // Agent/chat visual baselines are validated on Linux CI only. Real Darwin PNGs need
   // macOS `playwright test --update-snapshots` as a follow-up (interim Darwin copies removed).
   if (process.platform !== 'darwin') {
-    await expect(chrome).toHaveScreenshot('tengri-compact-chat.png')
+    await expect.soft(chrome).toHaveScreenshot('tengri-compact-chat.png')
   }
   await chrome.getByRole('button', { name: 'Approve once', exact: true }).click()
   await expect
@@ -2813,7 +2813,7 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   }).toPass({ timeout: 10_000 })
   await page.mouse.move(0, 0)
   if (process.platform !== 'darwin') {
-    await expect(chrome).toHaveScreenshot('tengri-compact-chat-narrow.png')
+    await expect.soft(chrome).toHaveScreenshot('tengri-compact-chat-narrow.png')
   }
 })
 
