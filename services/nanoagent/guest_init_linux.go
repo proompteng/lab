@@ -5,7 +5,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,11 +14,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"syscall"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/mdlayher/vsock"
 	"golang.org/x/sys/unix"
 )
@@ -46,6 +43,7 @@ type guestLifecycle struct {
 	root, home *os.File
 	claim      *guestClaim
 	frozen     bool
+	terminal   *guestReadinessTerminal
 }
 
 const fsFreeze = 0xC0045877
@@ -80,7 +78,12 @@ func runGuestInit(logger *slog.Logger) error {
 		return err
 	}
 	defer home.Close()
-	lifecycle := &guestLifecycle{root: root, home: home}
+	terminal, err := startGuestReadinessTerminal("/home/nanoagent/workspace", &syscall.Credential{Uid: 1000, Gid: 1000})
+	if err != nil {
+		return err
+	}
+	defer terminal.close()
+	lifecycle := &guestLifecycle{root: root, home: home, terminal: terminal}
 	listener, err := vsock.Listen(1025, nil)
 	if err != nil {
 		return err
@@ -215,7 +218,7 @@ func (guest *guestLifecycle) handle(connection net.Conn) {
 func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 	switch request.Action {
 	case "ready":
-		return guestUsable()
+		return guest.usable()
 	case "freeze":
 		if guest.frozen {
 			return errors.New("guest is already frozen")
@@ -254,13 +257,13 @@ func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 			return err
 		}
 		guest.claim = &request.Claim
-		return guestUsable()
+		return guest.usable()
 	default:
 		return errors.New("unknown guest lifecycle action")
 	}
 }
 
-func guestUsable() error {
+func (guest *guestLifecycle) usable() error {
 	client := &http.Client{Timeout: time.Second}
 	response, err := client.Get("http://127.0.0.1:8080/readyz")
 	if err != nil {
@@ -279,28 +282,5 @@ func guestUsable() error {
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read workspace: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, "/bin/bash", "--noprofile", "--norc", "-c", "printf tengri-ready")
-	command.Dir = filepath.Clean("/home/nanoagent/workspace")
-	command.Env = childEnvironment()
-	terminal, err := pty.StartWithAttrs(command, nil, &syscall.SysProcAttr{
-		Setsid: true, Setctty: true, Credential: &syscall.Credential{Uid: 1000, Gid: 1000},
-	})
-	if err != nil {
-		return err
-	}
-	defer terminal.Close()
-	output, readErr := io.ReadAll(io.LimitReader(terminal, 32))
-	waitErr := command.Wait()
-	if waitErr != nil {
-		return waitErr
-	}
-	if readErr != nil && !errors.Is(readErr, syscall.EIO) {
-		return readErr
-	}
-	if string(output) != "tengri-ready" {
-		return errors.New("guest terminal round trip failed")
-	}
-	return nil
+	return guest.terminal.check()
 }

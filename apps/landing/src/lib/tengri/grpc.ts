@@ -32,6 +32,8 @@ import { readTengriBffSecret } from './runtime-secrets'
 import { parseCodexModelPage, type TengriCodexOptions } from './codex-models'
 import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
+import { codexHistoryResponse } from './codex-history-stream'
+import type { CodexHistoryPage } from './codex-history'
 
 const DEFAULT_GRPC_DEADLINE_MS = 15_000
 const LIFECYCLE_GRPC_DEADLINE_MS = 310_000
@@ -352,9 +354,43 @@ export async function resumeCodexThread(
   agentId: string,
   threadId: string,
   options: TengriCodexOptions = {},
+  signal: AbortSignal = new AbortController().signal,
 ) {
-  const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId, ...options }, subject, 130_000)
-  return normalizeCodexThread(response)
+  const source = await stream(
+    'resumeCodexThread',
+    { agentId, threadId, ...options },
+    subject,
+    NO_PRESERVED_SCALAR_DEFAULTS,
+    130_000,
+  )
+  return codexHistoryResponse(source, signal, normalizeCodexHistoryPage, (error) => {
+    if (error instanceof TengriUnavailableError) return error
+    if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'number') {
+      return mapGrpcError(error as grpc.ServiceError, 'resumeCodexThread')
+    }
+    return new TengriUnavailableError('Codex conversation recovery returned invalid history')
+  })
+}
+
+function normalizeCodexHistoryPage(response: RawRecord): CodexHistoryPage {
+  let part: CodexHistoryPage['part']
+  switch (response.part) {
+    case 'CODEX_HISTORY_PART_THREAD':
+      part = 'thread'
+      break
+    case 'CODEX_HISTORY_PART_ITEMS':
+      part = 'items'
+      break
+    case 'CODEX_HISTORY_PART_TURNS':
+      part = 'turns'
+      break
+    default:
+      throw new TengriUnavailableError('Codex conversation recovery returned invalid history')
+  }
+  if (typeof response.rawJson !== 'string' || !response.rawJson) {
+    throw new TengriUnavailableError('Codex conversation recovery returned invalid history')
+  }
+  return { type: 'page', part, rawJson: response.rawJson, eventSequence: sequenceValue(response.eventSequence) }
 }
 
 function normalizeCodexThread(response: RawRecord): TengriCodexThread {
@@ -483,8 +519,18 @@ export async function issueEditorSession(
   }
 }
 
-export async function revokeEditorSessions(subject: string) {
+export async function revokeDesktopPreviews(subject: string) {
   await unary('revokeEditorSessions', {}, subject)
+}
+
+export async function issueBrowserSession(subject: string, agentId: string): Promise<TengriPreviewSession> {
+  const response = await unary<RawRecord>('issueBrowserSession', { id: agentId }, subject, 400_000)
+  return {
+    id: stringValue(response.id),
+    launchUrl: stringValue(response.launchUrl),
+    expiresAt: stringValue(response.expiresAt),
+    previewOrigin: stringValue(response.previewOrigin),
+  }
 }
 
 export async function revokePreviewSession(
@@ -568,12 +614,13 @@ async function stream(
   request: RawRecord,
   subject: string,
   preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
+  deadlineMs = 0,
 ) {
   const client = await getClient()
   const method = client[methodName] as StreamMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
   const canonicalRequest = canonicalizeProto3Request(request, preservedScalarDefaults)
-  return method.call(client, canonicalRequest, metadata(subject, methodName, canonicalRequest), callOptions(0))
+  return method.call(client, canonicalRequest, metadata(subject, methodName, canonicalRequest), callOptions(deadlineMs))
 }
 
 function canonicalizeProto3Request(

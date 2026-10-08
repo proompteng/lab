@@ -88,12 +88,17 @@ func TestEditorBrowserFixture(t *testing.T) {
 	}
 	api, err := newAPIServer(apiConfig{bootstrapToken: "editor-browser-fixture", codeServerBinary: binary,
 		homeRoot: home, workspaceRoot: filepath.Join(home, "workspace"), shell: "/bin/bash",
-		evidence: evidence{MicroVMID: "editor-fixture"}})
+		browserBinary: os.Getenv("TENGRI_BROWSER_TEST_BINARY"), browserBootstrap: os.Getenv("TENGRI_BROWSER_TEST_BOOTSTRAP"),
+		browserAssets: os.Getenv("TENGRI_BROWSER_TEST_ASSETS"), evidence: evidence{MicroVMID: "editor-fixture"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer api.close()
-	listener, err := net.Listen("tcp", "127.0.0.1:8080")
+	address := os.Getenv("TENGRI_EDITOR_TEST_BIND_ADDR")
+	if address == "" {
+		address = "127.0.0.1:8080"
+	}
+	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +106,9 @@ func TestEditorBrowserFixture(t *testing.T) {
 	var once sync.Once
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /_test/shutdown", func(w http.ResponseWriter, r *http.Request) { once.Do(func() { close(done) }) })
+	if api.browser != nil {
+		installBrowserAcceptance(mux, api.browser, home)
+	}
 	mux.Handle("/", newHandler(api))
 	server := &http.Server{Handler: mux, Protocols: fixtureHTTPProtocols(), ReadHeaderTimeout: 5 * time.Second}
 	defer server.Close()
@@ -135,7 +143,7 @@ func TestEditorStartFailureIsReportedAndRetryable(t *testing.T) {
 }
 
 func TestEditorPortForwardingCannotExposeGuestControlPorts(t *testing.T) {
-	for _, path := range []string{"/proxy/8080/v1/files", "/absproxy/13338/", "/proxy/08080/", "/proxy/13337/", "/proxy/22/", "/proxy/host:8080/"} {
+	for _, path := range []string{"/proxy/8080/v1/files", "/absproxy/13338/", "/proxy/13339/", "/proxy/08080/", "/proxy/13337/", "/proxy/22/", "/proxy/host:8080/"} {
 		if allowedEditorProxyPath(path) {
 			t.Errorf("exposed control path %s", path)
 		}

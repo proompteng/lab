@@ -20,9 +20,13 @@ and epoch. The controller binds the MicroVM with resourceVersion compare-and-swa
 claims cannot assign two slots to one MicroVM UID or start two owners in one slot. Deletion before a Lease claim
 consumes the candidate epoch with the same Lease CAS, preventing a late claim while retaining the unused prepared slot.
 
-The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker 1.16.1, CPU identity,
-snapshot generation, and owner/epoch. Snapshot restore consumes the generation before vCPUs run, then thaws root/home,
-sets the guest clock, binds the owner, and checks files, a PTY round trip, and initialized Codex. A failed save may resume
+The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker revision, CPU identity,
+snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
+upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
+buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
+`1.16.1+tengri-direct-io.1`; journals from another VMM revision require fenced recovery. Snapshot restore consumes the
+generation before vCPUs run, then thaws root/home,
+sets the guest clock, binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
 If the final sleep journal write fails after a completed save, the runner retains that snapshot's pending commit.
@@ -52,22 +56,29 @@ mounts only its boot artifacts, disks, token, and sockets.
 The short-lived TAP init container receives NET_ADMIN inside the Pod network namespace. It creates `tengri0`, private
 10.250.0.0/30 addressing, NAT, and protected-destination filtering. It asserts CNI forwarding is already enabled and
 never changes node sysctls, routes, bridges, scheduling, or machine configuration.
+The TAP uses the smaller of the Pod interface MTU and 1500 bytes. TCP SYN and SYN-ACK packets cap their advertised
+segment size in both directions without raising an existing smaller value. The isolated KVM fixture also inherits
+its execution network MTU inside its private Docker interface, so a 1400-byte CNI path is exercised correctly.
+The Linux browser acceptance fixture also uses an ephemeral Docker bridge with that MTU and removes it after the test.
 
 The runner briefly starts as root with MKNOD/SETUID/SETGID. It creates a private device inode in its container's `/dev`
 for the allocated raw home device, then drops to UID/GID 65532 with no effective, permitted, inheritable, or ambient
 capabilities. It never chmods a node device. Firecracker inherits that unprivileged identity, no environment secrets,
 no capabilities, NoNewPrivs, and its default seccomp filter.
 
-The separately reviewed [device allocation](../../argocd/applications/tengri-devices/) delegates only KVM and TUN
+The separately reviewed [device allocation](../../argocd/applications/tengri-devices/) installs slot admission before
+advertising devices and delegates only KVM and TUN
 through the official generic device plugin. The platform ApplicationSet enrolls it in `kube-system` at wave 1, before
 the controller's wave 2. Verify actual device allocations before an authorized cutover. The existing namespace admission
 already permits this narrowly constrained profile; no namespace policy change is required. Existing guest SPIRE
 attestation, the `nanoagent` ServiceAccount, token/registration RBAC, admission restrictions and bundle publication remain
 until the final old guest has stopped.
 
-The image workflow withholds both Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
+The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
 is exactly `true`. Keep it unset until the separately approved cutover has fenced old writers and enrolled their
 retained homes against the staged immutable image pair. Kargo's existing automatic promotion policy remains in place.
+Proompteng's resume API uses the streaming controller contract, so its BFF must join the same approved maintenance
+cutover. Restore lifecycle traffic only after both applications run the reviewed source and conversation recovery passes.
 
 Nanoagent runs as UID 1000 in the guest, with passwordless sudo inside that guest. Guest root edits and processes
 survive snapshot sleep. Root and memory are local to the slot Pod and reset after an explicitly fenced cold replacement;
@@ -107,8 +118,11 @@ the new path, size, and revision.
 Paginated Codex conversations resume with `excludeTurns: true`, then load `thread/items/list` and metadata-only
 `thread/turns/list` in ascending pages. Each item carries the event cursor captured with its page; the desktop uses
 that cursor to discard covered replay while retaining updates that arrive after an earlier page. The initial resume
-cursor remains the baseline for new items. Retrieval is bounded to 90 seconds, 256 pages, and 10 MiB, and any failed
-page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
+cursor remains the baseline for new items. The controller streams metadata, item pages, and turn pages through `ResumeCodexThread`; the BFF forwards bounded
+NDJSON records and the desktop assembles the complete snapshot. Retrieval is bounded to 90 seconds, 256 pages,
+10 MiB per native page, and 64 MiB of total native JSON. The desktop enforces the same aggregate byte budget before
+parsing each page. An explicit completion record is required, and any
+failed or interrupted page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 
 The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
@@ -244,7 +258,7 @@ preview launch ticket for virtual port 13337. Its DNS-safe origin derives from o
 identity, so reload restores the native workspace and backups while another owner, incarnation, or window gets another
 origin. Session cookies expire after 24 hours. The one-use launch token is also the revocation generation: a delayed
 cleanup cannot revoke a replacement session on the same origin. Generic preview revocation retains its existing behavior.
-Before sign-out clears authentication, `RevokeEditorSessions` removes every pending and active editor lease for the
+Before sign-out clears authentication, `RevokeEditorSessions` removes every pending and active Chrome and editor lease for the
 authenticated owner. A revocation failure blocks sign-out so it can be retried. The gateway also closes established
 preview WebSockets within one second of session revocation or expiry.
 

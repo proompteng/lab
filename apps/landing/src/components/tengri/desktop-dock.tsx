@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, useMotionValue, useMotionValueEvent, useSpring, useTransform } from 'motion/react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
 
 import { APP_TITLES } from '@/lib/tengri/window-manager'
@@ -44,12 +44,22 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
   ref,
 ) {
   const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const labelRef = useRef<HTMLSpanElement | null>(null)
   const interactionRef = useRef<{ focused: boolean; pointerDistance: number | null }>({
     focused: false,
     pointerDistance: null,
   })
   const targetScale = useMotionValue(BASE_SCALE)
   const offset = useMotionValue(0)
+  const labelGeometry = useMotionValue({ centerX: 0, halfWidth: 0, viewportWidth: 0 })
+  const labelShift = useTransform(() => {
+    const { centerX, halfWidth, viewportWidth } = labelGeometry.get()
+    const horizontalOffset = offset.get()
+    if (viewportWidth === 0) return 0
+    const center = centerX + horizontalOffset
+    return clamp(center, halfWidth + 8, viewportWidth - halfWidth - 8) - center
+  })
+  const labelArrowShift = useTransform(labelShift, (value) => -value)
   const magnificationLimit = useRef(1)
   const targetLift = useMotionValue(0)
   const scale = useSpring(targetScale, MAGNIFICATION_SPRING)
@@ -97,6 +107,31 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
     applyInteraction()
   }, [applyInteraction])
 
+  useLayoutEffect(() => {
+    const button = buttonRef.current
+    const label = labelRef.current
+    if (!button || !label) return
+    const measureLabel = () => {
+      const bounds = button.getBoundingClientRect()
+      const transform = getComputedStyle(button).transform
+      const translation = transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m41
+      labelGeometry.set({
+        centerX: bounds.left + bounds.width / 2 - translation,
+        halfWidth: label.getBoundingClientRect().width / 2,
+        viewportWidth: window.innerWidth,
+      })
+    }
+    measureLabel()
+    const observer = new ResizeObserver(measureLabel)
+    observer.observe(button)
+    observer.observe(label)
+    window.addEventListener('resize', measureLabel)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measureLabel)
+    }
+  }, [labelGeometry])
+
   useImperativeHandle(
     ref,
     () => ({
@@ -120,7 +155,7 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
       id={`tengri-dock-${app}`}
       type="button"
       aria-label={`Open ${APP_TITLES[app]}`}
-      className="group relative flex h-[68px] w-14 shrink-0 touch-manipulation items-center justify-center rounded-[14px] px-0 pb-1 outline-none transition-colors duration-150 focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent motion-reduce:transition-none"
+      className="group relative flex h-[68px] w-[var(--dock-icon-size)] shrink-0 touch-manipulation items-center justify-center rounded-[14px] px-0 pb-1 outline-none transition-colors duration-150 focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent motion-reduce:transition-none"
       style={{ x: offset }}
       onClick={() => onOpenApp(app)}
       onFocus={() => setFocused(true)}
@@ -128,28 +163,32 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
     >
       <motion.span
         aria-hidden="true"
-        className="absolute bottom-0 left-1/2 h-[68px] w-14 origin-bottom -translate-x-1/2"
+        className="absolute bottom-0 left-1/2 h-[68px] w-[var(--dock-icon-size)] origin-bottom -translate-x-1/2"
         style={{ scaleX: scale, scaleY: hitScaleY }}
       />
       <motion.span
+        ref={labelRef}
         aria-hidden="true"
         role="tooltip"
         className="pointer-events-none absolute bottom-full left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-[6px] border border-white/10 bg-zinc-800/95 px-2.5 py-1 text-[13px] leading-4 font-normal text-white/95 opacity-0 shadow-[0_3px_10px_rgba(0,0,0,0.25)] group-hover:opacity-100 group-focus-visible:opacity-100"
-        style={{ y: labelLift }}
+        style={{ x: labelShift, y: labelLift }}
       >
         {APP_TITLES[app]}
-        <span className="absolute top-[calc(100%-3px)] left-1/2 h-1.5 w-1.5 -translate-x-1/2 rotate-45 border-r border-b border-white/10 bg-zinc-800" />
+        <motion.span
+          className="absolute top-[calc(100%-3px)] left-1/2 h-1.5 w-1.5 -translate-x-1/2 rotate-45 border-r border-b border-white/10 bg-zinc-800"
+          style={{ x: labelArrowShift }}
+        />
       </motion.span>
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-1/2 grid h-14 w-14 -translate-y-[calc(50%-0.1875rem)] place-items-center"
+        className="pointer-events-none absolute inset-x-0 top-1/2 grid h-[var(--dock-icon-size)] w-[var(--dock-icon-size)] -translate-y-[calc(50%-0.1875rem)] place-items-center"
       >
         <motion.span
           aria-hidden="true"
-          className="grid h-14 w-14 shrink-0 place-items-center will-change-transform"
+          className="grid h-[var(--dock-icon-size)] w-[var(--dock-icon-size)] shrink-0 place-items-center will-change-transform"
           style={{ y: lift, scale, transformOrigin: 'bottom center' }}
         >
-          <DesktopAppIcon app={app} className="size-14" />
+          <DesktopAppIcon app={app} className="size-[var(--dock-icon-size)]" />
         </motion.span>
       </span>
       <span
@@ -267,6 +306,7 @@ export function DesktopDock({
     <nav
       ref={navRef}
       aria-label="Dock"
+      style={{ '--dock-icon-size': `clamp(40px, calc((100vw - 56px) / ${DOCK_APPS.length}), 56px)` } as CSSProperties}
       className="pointer-events-auto relative flex h-[76px] max-w-[calc(100vw-1rem)] items-end justify-center gap-[clamp(0px,0.8vw,0.5rem)] overflow-visible rounded-[18px] border border-transparent px-[clamp(0.25rem,1.25vw,0.75rem)] pt-0 pb-1.5 touch-manipulation select-none"
       data-tengri-dock="true"
       onPointerEnter={handlePointerEnter}

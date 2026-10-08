@@ -156,7 +156,7 @@ export function DesktopWindowFrame({
   )
 
   const bounds = window.bounds
-  const unifiedToolbar = window.app === 'chrome' || window.app === 'finder' || window.app === 'settings'
+  const unifiedToolbar = window.app === 'finder' || window.app === 'settings'
   return (
     <motion.div
       ref={elementRef}
@@ -221,7 +221,7 @@ export function DesktopWindowFrame({
           className={cn(
             'flex shrink-0 touch-none select-none items-center px-2.5',
             unifiedToolbar
-              ? `pointer-events-none absolute inset-x-0 top-0 z-10 ${window.app === 'chrome' ? 'h-10' : 'h-[52px]'}`
+              ? 'pointer-events-none absolute inset-x-0 top-0 z-10 h-[52px]'
               : 'relative h-9 border-b border-black/25 bg-gradient-to-b from-[#38383b] to-[#303033]',
           )}
         >

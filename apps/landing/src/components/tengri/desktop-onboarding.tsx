@@ -134,7 +134,7 @@ export default function DesktopOnboarding() {
 
   return (
     <RecoveryOwnerContext value={recoveryOwnerId}>
-      <main className="font-system relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
+      <main className="font-geist relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
         <div aria-hidden="true" className="absolute inset-0 bg-[url('/tengri/wallpaper.webp')] bg-cover bg-center" />
         <div aria-hidden="true" className="absolute inset-0 bg-black/10" />
         <header className="absolute inset-x-0 top-0 z-20 flex h-8 items-center justify-between border-b border-white/10 bg-white/[0.055] px-4 text-[12px] text-white/72 backdrop-blur-2xl">

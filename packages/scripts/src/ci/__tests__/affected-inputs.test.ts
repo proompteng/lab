@@ -165,6 +165,67 @@ const text = (value: unknown): string => {
   return value
 }
 
+test('Tengri runtime repairs publish the desktop from the same source', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing planner steps')
+  const inputs = property(
+    steps.find((step) => property(step, 'id') === 'filter'),
+    'with',
+  )
+  const configured = parseTargets(
+    text(property(inputs, 'workspaces')),
+    text(property(inputs, 'filters')),
+    '',
+    'pull_request',
+  )
+  const workspaces = Object.fromEntries(
+    Object.values(configured)
+      .flatMap((target) => target.workspaces)
+      .map((path) => [path, { name: path || 'root' }]),
+  )
+  const lock = { ...before, workspaces: { ...workspaces, ...before.workspaces } }
+  for (const source of ['services/tengri/src/slot/vmm.rs', 'services/tengri/network.sh']) {
+    for (const event of ['pull_request', 'push']) {
+      const paths = property(property(property(workflow, 'on'), event), 'paths')
+      if (!Array.isArray(paths)) throw new Error('Missing image trigger paths')
+      expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(true)
+    }
+    expect(selectAffectedInputs([source], configured, lock, lock)).toEqual({
+      proompteng: true,
+      app: false,
+      synthesis: false,
+      docs: false,
+    })
+  }
+})
+
+test('Tengri desktop repairs publish both native images from the same source', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/tengri-images.yml', 'utf8'))
+  const source = 'apps/landing/src/components/tengri/desktop-dock.tsx'
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing native image trigger paths')
+    expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(true)
+  }
+})
+
+test('Tengri Warehouse discovers the source of desktop repairs', () => {
+  const manifests: unknown = Bun.YAML.parse(readFileSync('argocd/applications/kargo/warehouses.yaml', 'utf8'))
+  if (!Array.isArray(manifests)) throw new Error('Missing Warehouse manifests')
+  const warehouse = manifests.find((manifest) => property(property(manifest, 'metadata'), 'name') === 'tengri')
+  const subscriptions = property(property(warehouse, 'spec'), 'subscriptions')
+  if (!Array.isArray(subscriptions)) throw new Error('Missing Warehouse subscriptions')
+  const git = property(
+    subscriptions.find((subscription) => property(subscription, 'git') !== undefined),
+    'git',
+  )
+  const paths = property(git, 'includePaths')
+  if (!Array.isArray(paths)) throw new Error('Missing Warehouse source paths')
+  const source = 'apps/landing/src/components/tengri/desktop-dock.tsx'
+  expect(paths.some((path) => source.startsWith(`${text(path)}/`))).toBe(true)
+})
+
 test.each([
   'bayn-ci.yml',
   'bumba-ci.yml',

@@ -2413,6 +2413,99 @@ data:
           ],
           "title": "Running build",
           "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "description": "Number of failed export attempts per rolling five minutes, grouped by source, failure reason and HTTP status. Empty data may mean no recorded failures or unavailable logs; it does not prove successful trace delivery. Counts are attempts, not lost spans.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "decimals": 0,
+              "min": 0,
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 0,
+            "y": 49
+          },
+          "id": 40,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum by (export_service, export_reason, export_http_status) (count_over_time({namespace=\"bayn\",container=~\"bayn|execution-controller|activate\"} |= \"bayn.telemetry.export\" | json export_stage=\"annotations.stage\", export_service=\"annotations.serviceName\", export_reason=\"annotations.failureReason\", export_http_status=\"annotations.httpStatus\" | export_stage=\"bayn.telemetry.export\" | __error__=\"\" [5m]))",
+              "legendFormat": "{{export_service}} · {{export_reason}} · {{export_http_status}}",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Trace export failures",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "description": "Up to 1,000 native trace-export failure records in the selected interval, newest first. Open log details for source revision, reason and HTTP status. Empty data may mean no recorded failures or unavailable logs; check collector and Loki health before declaring recovery. Records count attempts, not lost spans.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 16,
+            "x": 8,
+            "y": 49
+          },
+          "id": 41,
+          "options": {
+            "dedupStrategy": "none",
+            "enableLogDetails": true,
+            "prettifyLogMessage": true,
+            "showCommonLabels": false,
+            "showLabels": false,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "expr": "{namespace=\"bayn\",container=~\"bayn|execution-controller|activate\"} |= \"bayn.telemetry.export\" | json export_stage=\"annotations.stage\", export_service=\"annotations.serviceName\", export_reason=\"annotations.failureReason\", export_http_status=\"annotations.httpStatus\" | export_stage=\"bayn.telemetry.export\" | __error__=\"\"",
+              "maxLines": 1000,
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Trace export failure logs",
+          "type": "logs"
         }
       ],
       "refresh": "30s",
@@ -2433,6 +2526,6 @@ data:
       "timezone": "browser",
       "title": "Bayn Trading Operations",
       "uid": "bayn-cycle-operations",
-      "version": 7,
+      "version": 8,
       "weekStart": ""
     }

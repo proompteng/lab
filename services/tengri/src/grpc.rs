@@ -32,8 +32,8 @@ use crate::{
     },
     gateway::PreviewOrigin,
     guest::{
-        CodexOptions, EDITOR_BRIDGE_PORT, EDITOR_PORT, GuestClient, GuestError,
-        TerminalCreation as GuestTerminalCreation,
+        BROWSER_PORT, CodexHistoryPart as GuestHistoryPart, CodexOptions, EDITOR_BRIDGE_PORT,
+        EDITOR_PORT, GuestClient, GuestError, TerminalCreation as GuestTerminalCreation,
     },
     metrics,
     pod::{FINALIZER_NAME, SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
@@ -46,19 +46,20 @@ pub mod proto {
 
 use proto::{
     Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
-    CodexEvent, CodexEventKind, CodexImage, CodexLogin, CodexModels, CodexThread, CodexTurn,
-    CreateAgentRequest, CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest,
-    DeleteAgentRequest, DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind,
-    GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
-    IssueEditorSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
-    ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest, ListFilesRequest,
-    ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest,
-    PreviewSession, ReadFileRequest, ReadFileResponse, ResolveCodexApprovalRequest,
-    ResumeAgentRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest, SearchFilesRequest,
-    SearchFilesResponse, SendCodexInputRequest, SleepAgentRequest, StartCodexLoginRequest,
-    SteerCodexInputRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
-    UpdatePowerSettingsRequest, WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest,
-    WriteFileRequest, WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
+    CodexEvent, CodexEventKind, CodexHistoryPage, CodexHistoryPart, CodexImage, CodexLogin,
+    CodexModels, CodexThread, CodexTurn, CreateAgentRequest, CreateCodexThreadRequest,
+    CreateDirectoryRequest, CreateTerminalRequest, DeleteAgentRequest, DeleteFileRequest, Empty,
+    FileEntry, FileEvent, FileEventKind, GetAgentRequest, GetCodexAccountRequest,
+    GetCodexLoginRequest, InterruptCodexTurnRequest, IssueEditorSessionRequest,
+    IssuePreviewSessionRequest, IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse,
+    ListCodexModelsRequest, ListFilesRequest, ListFilesResponse, ListTerminalsRequest,
+    ListTerminalsResponse, MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
+    ResolveCodexApprovalRequest, ResumeAgentRequest, ResumeCodexThreadRequest,
+    RevokePreviewSessionRequest, SearchFilesRequest, SearchFilesResponse, SendCodexInputRequest,
+    SleepAgentRequest, StartCodexLoginRequest, SteerCodexInputRequest, TerminalSession,
+    TerminalTicket, TerminateTerminalRequest, UpdatePowerSettingsRequest, WatchAgentRequest,
+    WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest, WriteFileResponse,
+    micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
@@ -959,28 +960,42 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
+    type ResumeCodexThreadStream =
+        Pin<Box<dyn Stream<Item = Result<CodexHistoryPage, Status>> + Send>>;
+
     async fn resume_codex_thread(
         &self,
         request: Request<ResumeCodexThreadRequest>,
-    ) -> Result<Response<CodexThread>, Status> {
+    ) -> Result<Response<Self::ResumeCodexThreadStream>, Status> {
         let principal = self.authorize(&request, "ResumeCodexThread").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         let options = CodexOptions::parse(request.model, request.reasoning_effort)
             .map_err(Status::invalid_argument)?;
-        let snapshot = self
+        let access =
+            self.authorization
+                .access(&self.namespace, &request.agent_id, &principal.owner_hash);
+        let history = self
             .guest(&principal, &request.agent_id)
             .await?
             .resume_codex_thread(&request.thread_id, &options)
             .await
             .map_err(map_guest_error)?;
-        let value = snapshot.result;
-        Ok(Response::new(CodexThread {
-            id: json_string(&value, &["/thread/id"]),
-            raw_json: value.to_string(),
-            event_sequence: snapshot.event_sequence,
-            item_event_sequences: snapshot.item_event_sequences,
-        }))
+        access.require().await?;
+        let stream = history.map(|page| {
+            page.map(|page| CodexHistoryPage {
+                part: match page.part {
+                    GuestHistoryPart::Thread => CodexHistoryPart::Thread,
+                    GuestHistoryPart::Items => CodexHistoryPart::Items,
+                    GuestHistoryPart::Turns => CodexHistoryPart::Turns,
+                }
+                .into(),
+                raw_json: page.snapshot.result.to_string(),
+                event_sequence: page.snapshot.event_sequence,
+            })
+            .map_err(map_guest_error)
+        });
+        Ok(Response::new(access.guard_stream(stream)))
     }
 
     async fn send_codex_input(
@@ -1194,12 +1209,40 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
+    async fn issue_browser_session(
+        &self,
+        request: Request<GetAgentRequest>,
+    ) -> Result<Response<PreviewSession>, Status> {
+        let principal = self.authorize(&request, "IssueBrowserSession").await?;
+        let request = request.into_inner();
+        self.guest(&principal, &request.id)
+            .await?
+            .open_browser()
+            .await
+            .map_err(map_guest_error)?;
+        let issued = self.tickets.issue_preview(
+            &principal.owner_hash,
+            &request.id,
+            BROWSER_PORT,
+            "/",
+            "",
+        )?;
+        let preview_origin = self.preview_origin.origin(&issued.id);
+        Ok(Response::new(PreviewSession {
+            id: issued.id,
+            launch_url: issued.url,
+            expires_at: issued.expires_at,
+            preview_origin,
+        }))
+    }
+
     async fn revoke_editor_sessions(
         &self,
         request: Request<Empty>,
     ) -> Result<Response<Empty>, Status> {
         let principal = self.authorize(&request, "RevokeEditorSessions").await?;
-        self.tickets.revoke_editors(&principal.owner_hash)?;
+        self.tickets
+            .revoke_desktop_previews(&principal.owner_hash)?;
         Ok(Response::new(Empty {}))
     }
 
@@ -2363,6 +2406,7 @@ fn validate_preview_port(value: u32) -> Result<u16, Status> {
                     crate::guest::GUEST_API_PORT,
                     EDITOR_PORT,
                     EDITOR_BRIDGE_PORT,
+                    BROWSER_PORT,
                 ]
                 .contains(port)
         })
@@ -3497,7 +3541,7 @@ mod tests {
 
     #[test]
     fn preview_ports_reject_guest_control_and_editor_listeners() {
-        for port in [0, 22, 1023, 8080, 8443, 13337, 13338, 65536] {
+        for port in [0, 22, 1023, 8080, 8443, 13337, 13338, 13339, 65536] {
             assert_eq!(
                 validate_preview_port(port).unwrap_err().code(),
                 tonic::Code::InvalidArgument

@@ -23,6 +23,10 @@ import {
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
+import {
+  executionActivationExpiredRestrictionReason,
+  legacyExecutionActivationExpiredRestrictionReason,
+} from '../../execution/mandate'
 import { BlockedCycleIntentStore } from '../../execution/intents/blocked-cycle'
 import { BlockedCycleIntentStoreLive } from '../../execution/intents/blocked-cycle-postgres'
 import { canonicalHashV1 } from '../../hash'
@@ -33,6 +37,9 @@ import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleStore, CycleStoreLive } from '.'
 import { makeCycleQueries } from './queries'
 import { DecisionEvidenceMismatch } from './model'
+import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
+import { databaseUtcInstant } from '../../db/clock'
 import { decideJevEntry } from '../../jev/decision'
 import { nativeJevDecisionEvidence } from '../../jev/native.test-support'
 
@@ -429,7 +436,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     const authorityGenerationHash = '2'.repeat(64)
     const policyHash = 'a'.repeat(64)
     const parentAuthorityUpdatedAt = '2026-08-28T14:57:30.000Z'
-    const authorityUpdatedAt = '2026-08-28T14:58:00.000Z'
+    const authorityUpdatedAt = '2026-08-28T14:58:00.038402Z'
     const forgedReconciledAt = '2026-08-28T14:57:00.000Z'
     const reconciledAt = '2026-08-28T14:59:00.000Z'
     const observedAt = '2026-08-28T15:00:00.000Z'
@@ -679,7 +686,34 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             })}
           )
         `
-        const exact = yield* queries.decisionEvidenceMismatch(document)
+        // Exercise the production PostgreSQL read/decoder: Date conversion used to truncate this identity.
+        const storedAuthority = yield* makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), undefined)
+          .readAuthorityState
+        expect(storedAuthority.updatedAt).toBe(authorityUpdatedAt)
+        const exact = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: { ...document.bindings, riskContext: { ...riskContext, authority: storedAuthority } },
+        })
+        const changedTimestamp = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            riskContext: {
+              ...riskContext,
+              authority: { ...storedAuthority, updatedAt: '2026-08-28T14:58:00.038403Z' },
+            },
+          },
+        })
+        const truncatedTimestamp = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            riskContext: {
+              ...riskContext,
+              authority: { ...storedAuthority, updatedAt: new Date(authorityUpdatedAt).toISOString() },
+            },
+          },
+        })
         const missingReconciliation = yield* queries.decisionEvidenceMismatch({
           ...document,
           bindings: { ...document.bindings, reconciliationId: '9'.repeat(64) },
@@ -747,9 +781,16 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           ...document,
           bindings: { ...document.bindings, policyHash: 'c'.repeat(64) },
         } as unknown as ExecutionDecisionDocument)
+        const nonemptyPlanMissingRiskFacts = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          deltaRisk: [],
+          targetPlan: { intentTargets: [{}] },
+        } as unknown as ExecutionDecisionDocument)
         return {
           missingStreamReference,
           exact,
+          changedTimestamp,
+          truncatedTimestamp,
           missingReconciliation,
           prematureDecision,
           missingPricing,
@@ -759,6 +800,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           forgedEquity,
           forgedPolicyHash,
           forgedReconciliationCutoff,
+          nonemptyPlanMissingRiskFacts,
         }
       }),
     )
@@ -766,6 +808,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(result).toEqual({
       missingStreamReference: DecisionEvidenceMismatch.DecisionMarketData,
       exact: null,
+      changedTimestamp: DecisionEvidenceMismatch.RiskContext,
+      truncatedTimestamp: DecisionEvidenceMismatch.RiskContext,
       missingReconciliation: DecisionEvidenceMismatch.Reconciliation,
       prematureDecision: DecisionEvidenceMismatch.Reconciliation,
       missingPricing: DecisionEvidenceMismatch.ExecutionMarketData,
@@ -775,7 +819,32 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       forgedEquity: DecisionEvidenceMismatch.RiskContext,
       forgedPolicyHash: DecisionEvidenceMismatch.RiskContext,
       forgedReconciliationCutoff: DecisionEvidenceMismatch.RiskContext,
+      nonemptyPlanMissingRiskFacts: DecisionEvidenceMismatch.RiskContext,
     })
+  })
+
+  test('reads exact PostgreSQL authority instants in UTC without changing historical millisecond encodings', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SET LOCAL TIME ZONE 'America/Los_Angeles'`
+            for (const [stored, expected] of [
+              ['2026-08-28T14:58:00.038402Z', '2026-08-28T14:58:00.038402Z'],
+              ['2026-08-28T14:58:00.038000Z', '2026-08-28T14:58:00.038Z'],
+              ['2026-08-28T14:58:00.000000Z', '2026-08-28T14:58:00.000Z'],
+            ]) {
+              const [row] = yield* sql<{ value: string; exact: boolean }>`
+                SELECT ${databaseUtcInstant(sql, sql`${stored}::timestamptz`)} AS value,
+                  ${databaseUtcInstant(sql, sql`${stored}::timestamptz`)}::timestamptz = ${stored}::timestamptz AS exact
+              `
+              expect(row).toEqual({ value: expected, exact: true })
+            }
+          }),
+        )
+      }),
+    )
   })
 
   test('bounds terminal recovery reads over a large history without admitting stale or incomplete evidence', async () => {
@@ -957,11 +1026,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`ALTER TABLE intents ADD state_version integer DEFAULT 1`
             yield* sql`CREATE TEMP TABLE authority_generations (
               generation_hash text, account_id text, maximum text, activation_schema_version text,
-              qualification_run_id text, research_plan_hash text, strategy_protocol_hash text
+              qualification_run_id text, research_plan_hash text, strategy_protocol_hash text,
+              broker_environment text DEFAULT 'sandbox'
             ) ON COMMIT DROP`
             yield* sql`INSERT INTO authority_generations VALUES (
               ${generationHash}, 'account', 'PAPER', 'bayn.paper-authority-generation.v3',
-              NULL, ${researchPlanHash}, 'protocol'
+              NULL, ${researchPlanHash}, 'protocol', 'sandbox'
             )`
             yield* sql`CREATE TEMP TABLE authority_state (
               singleton boolean, generation_hash text, maximum text, effective text, kill_state text,
@@ -1029,8 +1099,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               ADD activated_at timestamptz,
               ADD broker_identity_schema_version text DEFAULT 'bayn.broker-identity.v2',
               ADD broker_identity_hash text DEFAULT 'identity',
-              ADD broker_provider text DEFAULT 'alpaca',
-              ADD broker_environment text DEFAULT 'sandbox'`
+              ADD broker_provider text DEFAULT 'alpaca'`
             yield* sql`UPDATE authority_generations SET proof_plan_hash = ${researchPlanHash}`
             yield* sql`INSERT INTO authority_generations (
               generation_hash, previous_generation_hash, maximum, authority_version, activated_at, account_id
@@ -1077,6 +1146,76 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             expect(yield* rearmEligible).toBe(false)
             yield* sql`UPDATE mutation_events SET event_type = 'RECOVERY_FOUND' WHERE sequence = 350`
             yield* sql`UPDATE authority_state SET reason = 'operator kill switch'`
+            expect(yield* rearmEligible).toBe(false)
+
+            // Expiry with zero executions has no qualified performance receipt. The real migrated
+            // rearm predicate must accept a settled empty/NO_TRADE mandate, without weakening
+            // account settlement or treating the missing performance as profitable.
+            yield* sql`CREATE TEMP TABLE accounting_transactions (intent_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_forward_performance_receipts (
+              authority_generation_hash text
+            ) ON COMMIT DROP`
+            yield* sql`DELETE FROM fills`
+            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`UPDATE autonomous_cycles SET qualification_run_id = ${researchPlanHash},
+              strategy_protocol_hash = 'protocol'`
+            for (const expiry of [
+              executionActivationExpiredRestrictionReason,
+              legacyExecutionActivationExpiredRestrictionReason,
+            ]) {
+              yield* sql`UPDATE authority_state SET reason = ${expiry}`
+              expect(yield* rearmEligible).toBe(true)
+              yield* sql`UPDATE autonomous_cycles SET state = 'NO_TRADE'`
+              expect(yield* rearmEligible).toBe(true)
+            }
+            const expiredState = yield* sql`SELECT * FROM authority_state`
+            yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id) VALUES ('account','broker-order','intent')`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`DELETE FROM fills`
+            yield* sql`UPDATE orders SET filled_quantity_micros = 1`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`INSERT INTO accounting_transactions VALUES ('intent')`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`DELETE FROM accounting_transactions`
+            yield* sql`UPDATE intents SET state = 'SUBMITTING'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE intents SET state = 'TERMINAL'`
+            yield* sql`UPDATE mutation_events SET event_type = 'SUBMIT_STARTED' WHERE sequence = 350`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE mutation_events SET event_type = 'RECOVERY_FOUND' WHERE sequence = 350`
+            yield* sql`UPDATE autonomous_cycles SET state = 'ACTIVE'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE autonomous_cycles SET state = 'NO_TRADE'`
+            yield* sql`UPDATE orders SET status = 'NEW'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE orders SET status = 'CANCELED', intent_id = NULL`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE orders SET intent_id = 'intent'`
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:04:00Z'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:02:00Z'`
+            yield* sql`UPDATE position_snapshots SET position_count = 1 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(true)
+            expect(yield* sql`SELECT * FROM authority_state`).toEqual(expiredState)
+            expect(yield* sql`SELECT * FROM autonomous_forward_performance_receipts`).toHaveLength(0)
+
+            // A mandate that expired before creating any cycle/intent must also be able to retire.
+            yield* sql`DELETE FROM autonomous_cycle_shadow_decisions`
+            yield* sql`DELETE FROM autonomous_cycles`
+            yield* sql`DELETE FROM mutation_events`
+            yield* sql`DELETE FROM orders`
+            yield* sql`DELETE FROM broker_events`
+            yield* sql`DELETE FROM intents`
+            expect(yield* rearmEligible).toBe(true)
+            yield* sql`UPDATE position_snapshots SET position_count = 1 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0 WHERE snapshot_id = 'z-tied'`
+            yield* sql`UPDATE authority_state SET updated_at = '2026-09-08T17:04:00Z'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE authority_state SET updated_at = '2026-09-08T17:01:30Z', reason = 'operator kill switch'`
             expect(yield* rearmEligible).toBe(false)
           }),
         )
