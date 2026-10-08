@@ -53,10 +53,16 @@ reconnect with their event cursor. HMAC metadata still binds every request to it
 Missing, denied, malformed, or expired identity fails the request; there is no plaintext option. Local development
 requires an attested SPIRE identity too. Native tests use a private fixture Workload API and real TLS certificates.
 
+The desktop uses one system font stack for interface text, including portal menus and diagrams. Code and the terminal
+share the bundled JetBrains Mono Desktop face. Chat prompts, responses, and the composer use 14 px text with 24 px line
+height; code and activity details use 12 px text with 20 px line height.
 The Codex view uses a near-black canvas, quiet zinc typography, and blue for primary actions. User messages sit on the
 right with a soft background; agent responses stay on the left without speaker headings. A left conversation sidebar (~240–260px) lists
 browser-local conversations for the agent (newest first) with an active highlight and **New** control; the active
-thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. The header is
+thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. You can start or
+switch conversations while another response runs. Text and image drafts, along with prompts waiting for their server
+echo, remain with their conversation while the desktop stays open. Switching keeps sidebar rows in place, restores
+the selected history, and focuses the composer when recovery completes. The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
 no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
 send/stop button. Composer height updates before paint, preserves scrolling within long drafts, and

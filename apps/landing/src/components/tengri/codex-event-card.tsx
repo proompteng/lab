@@ -121,7 +121,7 @@ export const CodexEventCard = memo(function CodexEventCard({
           />
           Reasoning summary
         </summary>
-        <div className="mt-2 pl-6 leading-relaxed text-zinc-400">
+        <div className="mt-2 pl-6 leading-6 text-zinc-400">
           <Markdown text={text} />
         </div>
       </details>
@@ -172,7 +172,7 @@ export const CodexEventCard = memo(function CodexEventCard({
 
   if (kind === 'plan') {
     return (
-      <article aria-label="Codex plan" className="px-1 py-2 text-sm leading-relaxed text-zinc-300">
+      <article aria-label="Codex plan" className="px-1 py-2 text-sm leading-6 text-zinc-300">
         <div className="mb-2 flex items-center gap-2 text-xs font-medium tracking-wide text-zinc-400 uppercase">
           <ListChecks className="size-3.5" aria-hidden="true" />
           Plan
@@ -204,7 +204,7 @@ export const CodexEventCard = memo(function CodexEventCard({
 
   if (!text || kind === 'thread-state' || kind === 'unknown') return null
   return (
-    <article aria-label="Codex response" className="min-w-0 text-left text-sm leading-relaxed text-zinc-200">
+    <article aria-label="Codex response" className="min-w-0 text-left text-sm leading-6 text-zinc-200">
       <Markdown text={text} />
     </article>
   )
@@ -256,7 +256,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
         <span className="font-medium tracking-wide text-zinc-400 uppercase">Code</span>
         <CodexCopyButton label="Copy code block" value={() => codeRef.current?.textContent || ''} />
       </div>
-      <pre ref={codeRef} className="overflow-auto p-3.5 font-mono text-xs leading-6 text-zinc-200">
+      <pre ref={codeRef} className="overflow-auto p-3.5 font-mono text-xs leading-5 text-zinc-200">
         {children}
       </pre>
     </div>

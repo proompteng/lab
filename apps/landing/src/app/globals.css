@@ -6,6 +6,10 @@
 @source not "../../../../.pnpm-store";
 @source not "../../../../.bun";
 
+:root {
+  --font-system: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+}
+
 @font-face {
   font-family: 'JetBrains Mono Desktop';
   src: url('/tengri/fonts/JetBrainsMono-Regular.woff2') format('woff2');
@@ -69,8 +73,9 @@
   }
 
   .font-system {
+    --font-sans: var(--font-system);
     --font-mono: 'JetBrains Mono Desktop', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-    font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--font-system);
     -webkit-font-smoothing: antialiased;
   }
 

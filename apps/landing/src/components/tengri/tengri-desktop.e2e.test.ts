@@ -154,6 +154,7 @@ type MockOptions = {
   resumeThreadItemEventSequences?: Record<string, number>
   resumeThreadErrors?: Array<{ status: number; error: string; code?: string }>
   resumeThreadRawJson?: string
+  resumeThreadRawJsonById?: Record<string, string>
   searchDelays?: Record<string, number>
   searchTruncated?: boolean
   preserveDraftStorageOnReload?: boolean
@@ -168,6 +169,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
   let resumeThreadResponses = 0
+  let createdThreads = 0
   let codexAccountFailuresReleased = !options.failCodexAccountUntilReleased
   let heldCodexAccountRequest = false
   let sendTurnFailuresRemaining = options.failSendTurnOnce ? 1 : 0
@@ -678,7 +680,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'create-thread':
-        result = { id: 'thread-1', rawJson: '{}', eventSequence: 0 }
+        result = { id: `thread-${++createdThreads}`, rawJson: '{}', eventSequence: 0 }
         break
       case 'list-terminals':
         result = terminalStore.sessions
@@ -1986,6 +1988,31 @@ test('keeps identical pending prompts separate when their echoes arrive one at a
   await expect(log.getByText(text, { exact: true })).toHaveCount(2)
   await emitCodexEvent(page, { ...item, sequence: 3, itemId: 'second-user' })
   await expect(log.getByText(text, { exact: true })).toHaveCount(2)
+})
+
+test('keeps the transcript visible when a turn finishes before its prompt echo', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  await page.getByLabel('Message your agent').fill('Inspect the workspace.')
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeVisible()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: '',
+    kind: 'thread-state',
+    method: 'turn/completed',
+    text: '',
+    approvalId: '',
+    rawJson: '{}',
+  })
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  await expect(page.getByRole('article', { name: 'Your message' })).toHaveText('Inspect the workspace.')
+  await expect(page.getByRole('button', { name: 'Explore the project', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click()
+  await expect(page.getByRole('article', { name: 'Your message' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Explore the project', exact: true })).toBeVisible()
 })
 
 test('keeps the Dock clear of new and maximized window controls', async ({ page }) => {
@@ -4582,6 +4609,178 @@ test('lists local conversations in the sidebar and switches or starts a new one'
   }
 })
 
+test('creates and switches running conversations while retaining each draft and accepted prompt', async ({ page }) => {
+  const activeThread = JSON.stringify({ thread: { turns: [{ id: 'turn-1', status: 'inProgress', items: [] }] } })
+  const mock = await mockTengri(page, { resumeThreadRawJson: activeThread })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const sidebar = chrome.getByTestId('agent-conversation-sidebar')
+  const composer = chrome.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+  const newConversation = sidebar.getByLabel('New conversation', { exact: true })
+  await composer.fill('Keep the first conversation running.')
+  await chrome.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(newConversation).toBeEnabled()
+  await newConversation.click()
+  await expect(composer).toHaveValue('')
+  await expect(composer).toBeFocused()
+  await expect(chrome.getByRole('article', { name: 'Your message' })).toHaveCount(0)
+  await composer.fill('Work on the second conversation.')
+  await chrome.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'create-thread').length).toBe(2)
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'send-turn').map((action) => action.threadId))
+    .toEqual(['thread-1', 'thread-2'])
+  await sidebar.locator('[data-conversation-id="thread-1"]').click()
+  await expect(composer).toBeEnabled()
+  await expect(composer).toBeFocused()
+  await expect(chrome.getByRole('article', { name: 'Your message' })).toHaveText('Keep the first conversation running.')
+  await composer.fill('First draft')
+  await pasteClipboardImage(page, composer)
+  await expect(chrome.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  await sidebar.locator('[data-conversation-id="thread-2"]').click()
+  await expect(composer).toBeEnabled()
+  await expect(composer).toHaveValue('')
+  await expect(chrome.getByRole('list', { name: 'Image attachments' })).toHaveCount(0)
+  await expect(chrome.getByRole('article', { name: 'Your message' })).toHaveText('Work on the second conversation.')
+  await composer.fill('Second draft')
+  await sidebar.locator('[data-conversation-id="thread-1"]').click()
+  await expect(composer).toHaveValue('First draft')
+  await expect(chrome.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  await newConversation.click()
+  await expect(composer).toHaveValue('')
+  await expect(chrome.getByRole('article', { name: 'Your message' })).toHaveCount(0)
+  await sidebar.locator('[data-conversation-id="thread-2"]').click()
+  await expect(composer).toHaveValue('Second draft')
+  await expect(chrome.getByRole('list', { name: 'Image attachments' })).toHaveCount(0)
+  expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
+})
+
+test('keeps the latest sidebar selection when an earlier history request finishes later', async ({ page }) => {
+  const history = (name: string) =>
+    JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: `turn-${name}`,
+            status: 'completed',
+            items: [{ id: `answer-${name}`, type: 'agentMessage', text: `${name} history` }],
+          },
+        ],
+      },
+    })
+  const mock = await mockTengri(page, {
+    holdReplayResume: true,
+    resumeThreadRawJsonById: {
+      'thread-alpha': history('Alpha'),
+      'thread-beta': history('Beta'),
+      'thread-gamma': history('Gamma'),
+    },
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha')
+    localStorage.setItem(
+      'tengri-conversations:microvm-ada',
+      JSON.stringify([
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 3 },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 2 },
+        { id: 'thread-gamma', title: 'Gamma', updatedAt: 1 },
+      ]),
+    )
+  })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const sidebar = chrome.getByTestId('agent-conversation-sidebar')
+  await expect(chrome.getByRole('article', { name: 'Codex response' })).toHaveText('Alpha history')
+  await sidebar.locator('[data-conversation-id="thread-beta"]').click()
+  await mock.waitForHeldResume()
+  await sidebar.locator('[data-conversation-id="thread-gamma"]').click()
+  await expect(chrome.getByRole('article', { name: 'Codex response' })).toHaveText('Gamma history')
+  mock.releaseHeldResume()
+  await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(3)
+  await expect(chrome.getByRole('article', { name: 'Codex response' })).toHaveText('Gamma history')
+  await expect(sidebar.locator('[data-conversation-id="thread-gamma"]')).toHaveAttribute('aria-current', 'true')
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-gamma')
+  expect(
+    await sidebar
+      .locator('[data-conversation-id]')
+      .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-conversation-id'))),
+  ).toEqual(['thread-alpha', 'thread-beta', 'thread-gamma'])
+})
+
+test('uses consistent fonts and body typography in chat, portal menus, diagrams, and the terminal', async ({
+  page,
+}) => {
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'completed',
+            items: [
+              { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'Inspect the workspace.' }] },
+              {
+                id: 'answer-1',
+                type: 'agentMessage',
+                text: 'Reading the workspace.\n\n```ts\nconst ready = true\n```\n\n```mermaid\nflowchart LR\nA[Start] --> B[Done]\n```',
+              },
+              { id: 'output-1', type: 'commandExecution', aggregatedOutput: 'Workspace ready' },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-1')
+    const fonts = new Set<string>()
+    Object.defineProperty(window, '__terminalFonts', { value: fonts })
+    // oxlint-disable-next-line typescript/unbound-method -- Applied to the measured canvas context below.
+    const measureText = OffscreenCanvasRenderingContext2D.prototype.measureText
+    OffscreenCanvasRenderingContext2D.prototype.measureText = function (
+      this: OffscreenCanvasRenderingContext2D,
+      text: string,
+    ) {
+      if (this.font.includes('13px')) fonts.add(this.font)
+      return measureText.call(this, text)
+    }
+  })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const user = chrome.getByRole('article', { name: 'Your message' })
+  const response = chrome.getByRole('article', { name: 'Codex response' })
+  const prompt = chrome.getByRole('textbox', { name: 'Message your agent' })
+  const systemFont = await prompt.evaluate((element) => getComputedStyle(element).fontFamily)
+  for (const text of [user, response, prompt]) {
+    await expect(text).toHaveCSS('font-family', systemFont)
+    await expect(text).toHaveCSS('font-size', '14px')
+    await expect(text).toHaveCSS('line-height', '24px')
+  }
+  await expect(
+    response.getByRole('img', { name: 'Mermaid diagram', exact: true }).locator('svg text').first(),
+  ).toHaveCSS('font-family', systemFont)
+  await chrome.getByRole('article', { name: 'Codex output' }).locator('summary').click()
+  const output = chrome.getByRole('article', { name: 'Codex output' }).locator('pre')
+  const monoFont = await output.evaluate((element) => getComputedStyle(element).fontFamily)
+  await expect(response.locator('pre')).toHaveCSS('font-family', monoFont)
+  await expect(response.locator('pre')).toHaveCSS('line-height', '20px')
+  await chrome.getByRole('combobox', { name: 'Model', exact: true }).click()
+  await expect(page.getByRole('listbox')).toHaveCSS('font-family', systemFont)
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+  await expect(
+    page
+      .getByRole('region', { name: 'Terminal window' })
+      .getByRole('status')
+      .filter({ hasText: /^Connected$/ }),
+  ).toBeVisible()
+  const measuredFonts = await page.evaluate(() => [
+    ...(window as typeof window & { __terminalFonts: Set<string> }).__terminalFonts,
+  ])
+  const normalize = (font: string) => font.replace(/["'\s]/g, '').toLowerCase()
+  expect(measuredFonts.map((font) => normalize(font.slice(font.indexOf('13px') + 4)))).toContain(normalize(monoFont))
+})
+
 test('keeps opened tool output stable during streaming and renders copyable structured responses', async ({ page }) => {
   await mockTengri(page, {
     resumeThreadRawJson: JSON.stringify({
@@ -5096,7 +5295,9 @@ test('bounds pasted images and removes attachments before sending', async ({ pag
 })
 
 function recoveryRecords(threadId: string, options: MockOptions) {
-  const result = JSON.parse(options.resumeThreadRawJson ?? '{"thread":{"turns":[]}}') as Record<string, unknown>
+  const result = JSON.parse(
+    options.resumeThreadRawJsonById?.[threadId] ?? options.resumeThreadRawJson ?? '{"thread":{"turns":[]}}',
+  ) as Record<string, unknown>
   const thread = result.thread as Record<string, unknown>
   const turns = (thread.turns ?? []) as Array<Record<string, unknown>>
   const baseline = options.resumeThreadEventSequence ?? 0

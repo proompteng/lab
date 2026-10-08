@@ -6,7 +6,6 @@ import {
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
-  codexCanStartNewConversation,
   codexEventDisplayText,
   codexEventContinuesRestoredItem,
   codexEventMatchesThread,
@@ -38,6 +37,7 @@ const event: TengriCodexEvent = {
 describe('Accepted prompt retention', () => {
   const prompt = {
     id: 'sent-1',
+    threadId: 'thread-1',
     text: 'Inspect the workspace.',
     previousItemIds: new Set(['previous-user', 'previous-answer']),
   }
@@ -383,19 +383,6 @@ describe('Codex event replay', () => {
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-1')).toBe(true)
     expect(codexResumeCommitIsCurrent(2, 3, 'thread-1', 'thread-1')).toBe(false)
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-2')).toBe(false)
-  })
-
-  test('allows abandoning a thread after replay recovery fails', () => {
-    const failedRecovery = {
-      activeTurnId: 'stale-turn',
-      recovering: false,
-      submitting: false,
-      threadReady: false,
-    }
-
-    expect(codexCanStartNewConversation(failedRecovery)).toBe(true)
-    expect(codexCanStartNewConversation({ ...failedRecovery, recovering: true })).toBe(false)
-    expect(codexCanStartNewConversation({ ...failedRecovery, threadReady: true })).toBe(false)
   })
 
   test('reconciles reordered snapshot responses and event deliveries against the server cursor', () => {

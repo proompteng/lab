@@ -49,7 +49,7 @@ type CodexTextSegment = {
 }
 export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment }
 
-export type SubmittedPrompt = { id: string; text: string; previousItemIds: ReadonlySet<string> }
+export type SubmittedPrompt = { id: string; threadId: string; text: string; previousItemIds: ReadonlySet<string> }
 
 export function reconcileSubmittedPrompts(
   items: readonly { id: string; kind: TengriCodexEventKind; text: string }[],
@@ -388,20 +388,6 @@ export function codexResumeCommitIsCurrent(
   currentThreadId: string,
 ) {
   return requestGeneration === currentGeneration && requestedThreadId === currentThreadId
-}
-
-export function codexCanStartNewConversation({
-  activeTurnId,
-  recovering,
-  submitting,
-  threadReady,
-}: {
-  activeTurnId: string
-  recovering: boolean
-  submitting: boolean
-  threadReady: boolean
-}) {
-  return !recovering && !submitting && (!activeTurnId || !threadReady)
 }
 
 export function codexActiveTurnIdFromThread(rawJson: string) {

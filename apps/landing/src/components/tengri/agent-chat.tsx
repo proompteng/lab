@@ -54,7 +54,6 @@ import {
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
-  codexCanStartNewConversation,
   codexEventDisplayText,
   codexEventMatchesThread,
   codexEventShouldRender,
@@ -99,6 +98,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
+  const draftsRef = useRef(new Map<string, { text: string; images: DraftImage[] }>())
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
   const [interrupting, setInterrupting] = useState(false)
@@ -116,7 +116,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const conversationRef = useRef<HTMLDivElement | null>(null)
   const conversationContentRef = useRef<HTMLDivElement | null>(null)
   const promptRef = useRef<HTMLTextAreaElement | null>(null)
-  const focusComposerAfterDrawerClose = useRef(false)
+  const focusComposerRequested = useRef(false)
   const compactDrawerOpen = Boolean(account?.authenticated) && !sidebarWide && sidebarOpen
   const drawerFocus = useModalFocus<HTMLElement>(compactDrawerOpen)
   const accountRefreshGeneration = useRef(0)
@@ -139,12 +139,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const accountChecked = account !== null
   const showStopAction = Boolean(activeTurnId) && !prompt.trim() && images.length === 0
   const readingImages = images.some((image) => image.input === null)
-  const canStartNewConversation = codexCanStartNewConversation({
-    activeTurnId,
-    recovering: replayRecovering,
-    submitting,
-    threadReady,
-  })
+  const canChangeConversation = !submitting && !interrupting && !readingImages && resolvingApprovals.size === 0
 
   const setCurrentActiveTurnId = useCallback((turnId: string) => {
     activeTurnIdRef.current = turnId
@@ -264,6 +259,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setRestoredHistorySequence(0)
     setEvents([])
     setSubmittedPrompts([])
+    draftsRef.current.clear()
     setPrompt('')
     setFollowingConversation(true)
     setReplayRecovering(false)
@@ -307,11 +303,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [account?.authenticated])
 
   useEffect(() => {
-    if (!focusComposerAfterDrawerClose.current) return
-    if (!sidebarWide && sidebarOpen) return
-    focusComposerAfterDrawerClose.current = false
+    if (!focusComposerRequested.current || !active || compactDrawerOpen || promptRef.current?.disabled) return
+    focusComposerRequested.current = false
     requestAnimationFrame(() => promptRef.current?.focus())
-  }, [sidebarOpen, sidebarWide])
+  }, [active, compactDrawerOpen, replayRecovering, submitting, threadId, threadReady])
 
   useEffect(() => {
     if (!active) return
@@ -388,7 +383,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           conversationTitleFromRegistry(current, thread.id),
           titleFromTranscript(restored.historyItems),
         )
-        return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt: Date.now() }, current)
+        const updatedAt = current.find((conversation) => conversation.id === thread.id)?.updatedAt ?? Date.now()
+        return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt }, current)
       })
       return { ...restored, activeTurnId }
     },
@@ -653,19 +649,26 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     acknowledged,
     matchedItemIds,
     pending: pendingPrompts,
-  } = reconcileSubmittedPrompts(transcriptCards, submittedPrompts)
+  } = reconcileSubmittedPrompts(
+    transcriptCards,
+    submittedPrompts.filter((prompt) => prompt.threadId === threadId),
+  )
   useEffect(() => {
     if (acknowledged.size) {
       setSubmittedPrompts((current) =>
         current
           .filter((prompt) => !acknowledged.has(prompt.id))
-          .map((prompt) => ({
-            ...prompt,
-            previousItemIds: new Set([...prompt.previousItemIds, ...matchedItemIds]),
-          })),
+          .map((prompt) =>
+            prompt.threadId === threadId
+              ? {
+                  ...prompt,
+                  previousItemIds: new Set([...prompt.previousItemIds, ...matchedItemIds]),
+                }
+              : prompt,
+          ),
       )
     }
-  }, [acknowledged, matchedItemIds])
+  }, [acknowledged, matchedItemIds, threadId])
   for (const { prompt, beforeItemId } of pendingPrompts) {
     const index = transcriptCards.findIndex((item) => item.id === beforeItemId)
     transcriptCards.splice(index < 0 ? transcriptCards.length : index, 0, {
@@ -773,12 +776,14 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         ...current,
         {
           id: crypto.randomUUID(),
+          threadId: currentThread.id,
           text: [text, ...inputImages.map(() => '[Image]')].filter(Boolean).join('\n'),
           previousItemIds,
         },
       ])
       setPrompt('')
       commitImages([])
+      draftsRef.current.delete(currentThread.id)
       // The turn was accepted, so its prompt can now title a still-untitled conversation.
       if (text) {
         setConversations((current) => promoteAcceptedConversationTitle(agentId, currentThread.id, text, current))
@@ -801,6 +806,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const thread = threadId
       ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId, ...optionsRef.current })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
+    if (!threadId) draftsRef.current.delete('')
     const state = commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
     setThreadReady(true)
     return { id: thread.id, activeTurnId: state.activeTurnId }
@@ -852,6 +858,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   function resetTranscriptUi(nextThreadId: string) {
+    draftsRef.current.set(threadIdRef.current, { text: prompt, images: imagesRef.current })
+    const draft = draftsRef.current.get(nextThreadId)
+    setPrompt(draft?.text ?? '')
+    commitImages(draft?.images ?? [])
     threadIdRef.current = nextThreadId
     restoredHistoryRef.current = new Map()
     restoredItemSequencesRef.current = new Map()
@@ -863,50 +873,39 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setHistoryItems([])
     setRestoredHistorySequence(0)
     setEvents([])
-    setSubmittedPrompts([])
     setFollowingConversation(true)
     setReplayRecovering(false)
+    replayRecoveryRef.current = false
     setError('')
     completedTurns.current.clear()
   }
 
   function focusComposerAfterConversationChange() {
+    focusComposerRequested.current = true
     // Compact overlay unmounts on the next paint after sidebarOpen flips; wait for that
     // before focusing so keyboard input is not trapped behind the drawer backdrop.
     if (!sidebarWide && sidebarOpen) {
-      focusComposerAfterDrawerClose.current = true
       setSidebarOpen(false)
       return
     }
-    requestAnimationFrame(() => promptRef.current?.focus())
+    requestAnimationFrame(() => {
+      if (promptRef.current?.disabled) return
+      focusComposerRequested.current = false
+      promptRef.current?.focus()
+    })
   }
 
   function newConversation() {
-    if (
-      !codexCanStartNewConversation({
-        activeTurnId,
-        recovering: replayRecovering || replayRecoveryRef.current,
-        submitting,
-        threadReady,
-      })
-    ) {
-      return
-    }
+    if (!canChangeConversation) return
     removeStoredThread(agentId)
     resetTranscriptUi('')
     focusComposerAfterConversationChange()
   }
 
   function switchConversation(nextThreadId: string) {
-    if (nextThreadId === threadIdRef.current) return
-    if (
-      !codexCanStartNewConversation({
-        activeTurnId,
-        recovering: replayRecovering || replayRecoveryRef.current,
-        submitting,
-        threadReady,
-      })
-    ) {
+    if (!canChangeConversation) return
+    if (nextThreadId === threadIdRef.current) {
+      focusComposerAfterConversationChange()
       return
     }
     writeStoredThread(agentId, nextThreadId)
@@ -1016,7 +1015,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           </span>
           <button
             type="button"
-            disabled={!canStartNewConversation}
+            disabled={!canChangeConversation}
             onClick={newConversation}
             className="inline-flex size-7 items-center justify-center rounded-md text-zinc-400 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
             aria-label="New conversation"
@@ -1036,7 +1035,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                     <button
                       type="button"
                       data-conversation-id={conversation.id}
-                      disabled={!active && !canStartNewConversation}
+                      disabled={!canChangeConversation}
                       aria-current={active ? 'true' : undefined}
                       onClick={() => switchConversation(conversation.id)}
                       className={cn(
@@ -1077,7 +1076,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           {!sidebarOpen ? (
             <button
               type="button"
-              disabled={!canStartNewConversation}
+              disabled={!canChangeConversation}
               onClick={newConversation}
               aria-label="New conversation"
               className="ml-auto inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-zinc-500 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
@@ -1104,7 +1103,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               )
             }}
           >
-            {historyItems.length === 0 && renderedEvents.length === 0 && !activeTurnId && !submitting ? (
+            {transcriptCards.length === 0 && !activeTurnId && !submitting ? (
               <EmptyConversation
                 onSelectPrompt={(text) => {
                   setPrompt(text)
@@ -1177,7 +1176,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                   {conversationMissing ? (
                     <button
                       type="button"
-                      disabled={!canStartNewConversation}
+                      disabled={!canChangeConversation}
                       className="rounded-md border border-white/[0.08] px-2.5 py-1.5 text-zinc-300 outline-none hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35"
                       onClick={newConversation}
                     >
