@@ -171,6 +171,11 @@ Before SDK deserialization, response streams are bound to that abort signal. The
 for error and discarded response bodies, including PUT responses. Remote error codes and transport error names are
 not retained. Oversized or stalled error bodies fail capture and their streams close.
 
+Object client spans retain the validated content SHA-256 for direct joins to sanitized gateway receipts. Timestamped
+events separate PUT start and acknowledgement, GET start and response headers, and exact-byte verification. A cancelled
+request has no acknowledgement or verification event. HTTP 412 retains its status before the required readback. Hashes
+remain trace attributes, never metric labels; bucket names, keys, endpoints, credentials and raw bytes are excluded.
+
 The existing at-most-one-second write deadline contains the complete export-and-SQL operation, and finalization is
 cached once. It is not a production throughput claim. A timeout, readback failure, SQL failure, restart or missing seal
 leaves incomplete evidence and cannot change execution, retries, liquidation or capital authority.
