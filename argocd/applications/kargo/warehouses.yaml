@@ -24,7 +24,7 @@ spec:
           - apps/landing
           - packages/backend
           - packages/design
-          - services/tengri/proto
+          - services/tengri
           - nix/images/proompteng.nix
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
