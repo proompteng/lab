@@ -85,8 +85,9 @@ if [[ -n "${TENGRI_BROWSER_TEST_IMAGE:-}" ]]; then
     [[ "$fixture_network_mtu" =~ ^[0-9]+$ ]]
     if [[ "$fixture_network_mtu" -lt 576 || "$fixture_network_mtu" -gt 65535 ]]; then exit 1; fi
     # A nested Docker bridge must fit the runner's CNI path for cold browser downloads.
-    fixture_network="${fixture_container}-network"
-    docker network create --driver bridge --opt "com.docker.network.driver.mtu=$fixture_network_mtu" "$fixture_network" >/dev/null
+    created_network="$(docker network create --driver bridge \
+      --opt "com.docker.network.driver.mtu=$fixture_network_mtu" "${fixture_container}-network")"
+    fixture_network="$created_network"
     fixture_container_options+=(--network "$fixture_network")
   fi
   docker create --name "$fixture_container" --hostname tengri-browser-acceptance --user 1000:1000 --security-opt seccomp=unconfined --shm-size=256m \
