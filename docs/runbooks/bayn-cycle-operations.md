@@ -221,6 +221,23 @@ an unavailable cycle projection and a failed scrape have their own alerts. This 
 input cause from the condition alone. Mimir ingestion uses the shared Kafka cluster, so this is not out-of-band
 detection of a Kafka or storage outage. No alert here proves storage repair, strategy alpha, or permission to trade.
 
+## Trace-export failures
+
+The **Trace export failures** panel counts failed export attempts in each rolling five-minute window, grouped by
+service, failure reason and HTTP status. **Trace export failure logs** shows up to 1,000 corresponding native warning
+records, newest first. Both use the existing Loki datasource and Bayn container log stream; they add no work to order
+execution or position closure.
+
+Open log details to inspect `annotations.sourceRevision`, `annotations.serviceName`, `annotations.failureReason`
+and, for HTTP failures, `annotations.httpStatus`. These are failed attempts, not a count of lost spans. Empty results
+may mean no recorded failures or unavailable logs. Verify the collector and Loki before treating an empty panel as
+recovery; these panels do not prove trace delivery.
+
+For HTTP 503 failures, correlate the same interval with Tempo distributor ingestion logs and the shared Kafka
+producer, quorum and storage evidence. Use retained logs and persisted transaction records alongside traces when
+ingestion is failing. An idle Kafka snapshot, current ISR membership or a ready distributor does not establish the
+cause of an earlier timeout or prove repair.
+
 ## Database latency investigation
 
 The `bayn-postgres-monitoring` ConfigMap adds PostgreSQL 18 catalog queries to the existing CNPG scrape; it does not

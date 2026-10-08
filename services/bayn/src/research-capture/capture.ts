@@ -249,8 +249,8 @@ export const ResearchCaptureChunkSchema = Schema.Struct({
 export type ResearchCaptureChunk = typeof ResearchCaptureChunkSchema.Type
 
 const ResearchCaptureExportRootSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.research-capture-export-root.v1'),
-  lastIndexHash: Schema.NullOr(Sha256Schema),
+  schemaVersion: Schema.Literal('bayn.research-capture-export-root.v2'),
+  lastChunkHash: Schema.NullOr(Sha256Schema),
   exportedChunks: NonNegativeIntegerSchema,
 })
 
@@ -309,7 +309,7 @@ export const decodeResearchCaptureSeal = (input: ResearchCaptureBytes) =>
     if (
       seal.exportRoot !== undefined &&
       (seal.exportRoot.exportedChunks !== seal.persistedChunks ||
-        (seal.persistedChunks === 0 ? seal.exportRoot.lastIndexHash !== null : seal.exportRoot.lastIndexHash === null))
+        (seal.persistedChunks === 0 ? seal.exportRoot.lastChunkHash !== null : seal.exportRoot.lastChunkHash === null))
     )
       return yield* Result.fail(fail('Export root differs from the exact persisted chunk frontier'))
     return seal

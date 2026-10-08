@@ -11,9 +11,20 @@ if ip -4 route show | awk '{print $1}' | grep -q '^10\.250\.'; then
   exit 1
 fi
 
+network_mtu="$(cat /sys/class/net/eth0/mtu)"
+case "$network_mtu" in
+  *[!0-9]*|'') echo 'Slot requires a valid IPv4 interface MTU' >&2; exit 1 ;;
+esac
+if [ "$network_mtu" -lt 576 ] || [ "$network_mtu" -gt 65535 ]; then
+  echo 'Slot interface MTU is outside the IPv4 range' >&2
+  exit 1
+fi
+[ "$network_mtu" -le 1500 ] || network_mtu=1500
+tcp_mss="$((network_mtu - 40))"
+
 ip tuntap add dev tengri0 mode tap user 65532
 ip address add 10.250.0.1/30 dev tengri0
-ip link set dev tengri0 up
+ip link set dev tengri0 mtu "$network_mtu" up
 
 dns_rules=''
 while read -r kind resolver _; do
@@ -47,6 +58,8 @@ table inet tengri {
   }
   chain forward {
     type filter hook forward priority 0; policy accept;
+    iifname "tengri0" meta nfproto ipv4 tcp flags & (syn | rst) == syn tcp option maxseg size > $tcp_mss tcp option maxseg size set $tcp_mss
+    oifname "tengri0" meta nfproto ipv4 tcp flags & (syn | rst) == syn tcp option maxseg size > $tcp_mss tcp option maxseg size set $tcp_mss
     iifname "tengri0" jump guest
     oifname "tengri0" ct state established,related accept
     oifname "tengri0" drop
