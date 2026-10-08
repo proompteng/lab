@@ -4591,6 +4591,47 @@ test('creates and switches running conversations while retaining each draft and 
   expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
 })
 
+test('retains draft conversation notices after assigning its first server thread identifier', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  const sidebar = tengri.getByTestId('agent-conversation-sidebar')
+  const composer = tengri.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+  await expect(composer).toBeEnabled()
+  for (const [index, kind] of ['warning', 'error'].entries()) {
+    await emitCodexEvent(page, {
+      sequence: index + 1,
+      threadId: '',
+      turnId: '',
+      itemId: '',
+      approvalId: '',
+      rawJson: '{}',
+      kind,
+      method: 'tengri/eventOmitted',
+      text: `Draft conversation ${kind}`,
+    })
+    await expect(tengri.getByText(`Draft conversation ${kind}`, { exact: true })).toHaveCount(1)
+  }
+  await composer.fill('Start the first conversation')
+  await tengri.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(sidebar.locator('[data-conversation-id="thread-1"]')).toBeVisible()
+  await sidebar.getByRole('button', { name: 'New conversation' }).click()
+  for (const kind of ['warning', 'error']) {
+    await expect(tengri.getByText(`Draft conversation ${kind}`, { exact: true })).toHaveCount(0)
+  }
+  await composer.fill('Start the second conversation')
+  await tengri.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(sidebar.locator('[data-conversation-id="thread-2"]')).toBeVisible()
+  for (const kind of ['warning', 'error']) {
+    await expect(tengri.getByText(`Draft conversation ${kind}`, { exact: true })).toHaveCount(0)
+  }
+  await sidebar.locator('[data-conversation-id="thread-1"]').click()
+  await expect(composer).toBeEnabled()
+  for (const kind of ['warning', 'error']) {
+    await expect(tengri.getByText(`Draft conversation ${kind}`, { exact: true })).toHaveCount(1)
+  }
+})
+
 test('keeps queued warnings and errors with their arrival conversation across navigation', async ({ page }) => {
   await mockTengri(page)
   await page.addInitScript(() => {

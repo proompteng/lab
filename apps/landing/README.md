@@ -68,7 +68,8 @@ echo, remain with their conversation while the chat view stays open. Switching k
 the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
 including requests received while another conversation is selected; server resolutions and completed turns clear
 both retained requests and visible controls. Notices remain attached to the conversation selected when they arrive,
-including events queued before a switch. The event buffer bounds ordinary history while retaining pending approvals
+including events queued before a switch, and adopt the server thread ID when a draft conversation is first created.
+The event buffer bounds ordinary history while retaining pending approvals
 until resolution or completion. Successful recovery merges the persisted registry and clears unavailable markers
 from this tab or another tab with a newer timestamp;
 ordinary selection preserves row order. The header is

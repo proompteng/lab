@@ -832,7 +832,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const thread = threadId
       ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId, ...optionsRef.current })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
-    if (!threadId) draftsRef.current.delete('')
+    if (!threadId) {
+      draftsRef.current.delete('')
+      const assignThread = (event: CodexBufferedEvent) => (event.threadId ? event : { ...event, threadId: thread.id })
+      retainedEvents.current = retainedEvents.current.map(assignThread)
+      const retained = retainedEvents.current.filter((event) => event.threadId === thread.id)
+      setEvents((current) => retained.reduce((next, event) => appendCodexEvent(next, event), current.map(assignThread)))
+    }
     const state = commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
     setThreadReady(true)
     return { id: thread.id, activeTurnId: state.activeTurnId }
