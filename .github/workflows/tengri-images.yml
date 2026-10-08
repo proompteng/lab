@@ -31,7 +31,7 @@ on:
         options:
           - '3'
           - '50'
-        default: '50'
+        default: '3'
 
 concurrency:
   group: tengri-images-${{ github.ref }}

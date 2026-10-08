@@ -23,7 +23,7 @@ describe('Tengri image workflow', () => {
     }
     const input = workflow.on.workflow_dispatch.inputs.kvm_samples
     expect(input.options).toEqual(['3', '50'])
-    expect(input.default).toBe('50')
+    expect(input.default).toBe('3')
     const test = workflow.jobs['validate-kvm'].steps.find(
       (step) => step.name === 'Verify real guest administration and snapshot lifecycle',
     )

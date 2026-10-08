@@ -350,18 +350,14 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     );
     client.lifecycle("stop", &claim).await?;
     timings.sort_by(f64::total_cmp);
-    let p95 = timings[(samples * 95).div_ceil(100) - 1];
-    let resume_budget_ms = if samples >= 50 {
-        p95
-    } else {
-        timings[samples - 1]
-    };
+    let p95 = (samples >= 50).then(|| timings[(samples * 95).div_ceil(100) - 1]);
+    let resume_budget_ms = p95.unwrap_or(timings[samples - 1]);
     fs::write("/work/result.json", serde_json::to_vec_pretty(&json!({
         "boundary":"slot mTLS request through real guest file, PTY and initialized Codex RPC",
         "excludes":["BFF authentication", "Kubernetes API latency", "six concurrent guests", "fresh creation distribution", "raw PVC allocation"],
-        "validationMode":if samples >= 50 { "benchmark" } else { "smoke" },
+        "validationMode":if p95.is_some() { "benchmark" } else { "smoke" },
         "createSamples":1,"createMs":create_ms,"resumeSamples":samples,
-        "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":(samples >= 50).then_some(p95),"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
+        "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
         "memoryAndSleep":memory,"guestAdministration":true,"concurrentGuestRequests":true,
         "browserStarted":true,"browserComputerToolInstalled":true
