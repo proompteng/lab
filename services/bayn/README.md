@@ -89,6 +89,13 @@ existing continuation qualifies. Elapsed, missing or invalid timestamps, other r
 keep their normal cadence. Every wake rechecks source readiness and the existing completed-window admission; it
 does not repeat inference on an already consumed window or change broker polling, signal history or position limits.
 
+Held-position waits also retain the first-fill-based maximum-hold deadline. A future deadline caps the next wake,
+while an earlier signal boundary still wins. The absolute bound survives management work, completion persistence,
+and worker replay. If work crosses a deadline that was future when management checked it, one continuation rechecks
+the position; an already-overdue evaluation retains the normal evidence-wait cadence. This schedules exit evaluation,
+not a guaranteed broker-flat time: fresh reconciliation, executable quotes, risk checks and partial-fill recovery
+remain required. Old retained completions keep their existing durable replay command order.
+
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
 with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute

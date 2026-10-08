@@ -1392,6 +1392,7 @@ durableTest.each(
           ).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
           return { _tag: 'ManagementUnavailable' as const }
         }
+        let managementStartedAt = yield* currentUtcInstant
         let waiting = yield* runtime.advance
         for (
           let attempt = 0;
@@ -1401,13 +1402,25 @@ durableTest.each(
           const nextMs = (yield* Clock.currentTimeMillis) + 1000
           yield* clock.advanceTo(utcInstantFromEpochMillis(nextMs))
           yield* TestClock.setTime(nextMs)
+          managementStartedAt = yield* currentUtcInstant
           waiting = yield* runtime.advance
         }
+        const entryFill = (yield* broker.snapshot).fills.find((fill) => fill.side === OrderSide.Buy)
+        if (entryFill === undefined) throw new Error('Held-position wait requires its actual entry fill')
         expect(waiting.result).toMatchObject({
           outcome: 'RECOVERED',
           action: 'WAITING',
           waitReason: 'JEV_POSITION_HELD',
+          maximumHoldDueAt: utcInstantFromEpochMillis(
+            Date.parse(entryFill.transactionTime) + protocol.maximumHoldingMinutes * 60_000,
+          ),
+          maximumHoldEvaluatedAt: expect.any(String),
         })
+        if (waiting.result?.outcome !== 'RECOVERED' || waiting.result.action !== 'WAITING')
+          throw new Error('Expected the full execution cycle to forward its held-position wait')
+        const evaluatedMs = Date.parse(waiting.result.maximumHoldEvaluatedAt ?? '')
+        expect(evaluatedMs).toBeGreaterThanOrEqual(Date.parse(managementStartedAt))
+        expect(evaluatedMs).toBeLessThanOrEqual(Date.parse(waiting.result.observedAt))
         const recreated = yield* createRuntime
         expect(recreated.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
         const frozenAt = yield* Clock.currentTimeMillis

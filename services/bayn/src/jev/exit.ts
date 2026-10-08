@@ -57,6 +57,8 @@ export const jevProtectiveStopCrossed = (
   stopBps: number,
 ): boolean =>
   (basisMicros * 1_000_000n - bidMicros * quantityMicros) * 10_000n >= basisMicros * 1_000_000n * BigInt(stopBps)
+export const jevMaximumHoldDueAt = (firstFillAt: string, maximumHoldingMinutes: number): string =>
+  new Date(Date.parse(firstFillAt) + maximumHoldingMinutes * 60_000).toISOString()
 const equal = (left: unknown, right: unknown) => {
   const a = canonicalHashV1Result(left)
   const b = canonicalHashV1Result(right)

@@ -277,6 +277,72 @@ test('optional capture preserves synchronous scheduling, supplied command timest
   expect(await exercise('mutating')).toEqual(baseline)
 })
 
+test.each([false, true])(
+  'absolute wake uses persisted due after worker %s replay and scheduling drift',
+  async (replayed) => {
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 4,
+      nextSequence: 4,
+    }
+    const deliveries: Delivery[] = []
+    const events: string[] = []
+    const result = {
+      completedAt: '2026-08-13T18:00:03.000Z',
+      outcome: {
+        _tag: ExecutionControllerOutcome.Waiting,
+        receiptHash: 'd'.repeat(64),
+        nextDelayMs: 4_000,
+        nextWakeAt: '2026-08-13T18:00:07.000Z',
+      },
+    }
+    const controller = handlers(
+      makeBaynExecutionController(config, {
+        advance: async () => {
+          events.push('advance')
+          return result
+        },
+        log: async () => undefined,
+        projectState: async () => undefined,
+      }),
+    )
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, value: ExecutionControllerState) => {
+        state = value
+        events.push('set')
+      },
+      run: async (_name: string, action: () => Promise<unknown>) => (replayed ? result : action()),
+      genericSend: (delivery: Delivery) => {
+        deliveries.push(delivery)
+        events.push('send')
+      },
+      date: {
+        toJSON: async () => {
+          events.push('clock')
+          return '2026-08-13T18:00:05.000Z'
+        },
+      },
+      request: () => ({ id: 'absolute-wake-fixture', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    await controller.tick(context, {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 1,
+      sequence: 4,
+      issuedAt: '2026-08-13T18:00:00.000Z',
+    })
+    expect(state.nextDueAt).toBe('2026-08-13T18:00:07.000Z')
+    expect(deliveries).toHaveLength(1)
+    expect(deliveries[0]).toMatchObject({ delay: 2_000, parameter: { sequence: 5 } })
+    expect(events).toEqual(replayed ? ['set', 'clock', 'send'] : ['advance', 'set', 'clock', 'send'])
+  },
+)
+
 describe('native Restate execution controller', () => {
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {
     expect(executionControllerInitialTickDelayMs).toBe(0)

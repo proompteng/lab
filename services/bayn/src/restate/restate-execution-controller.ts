@@ -740,17 +740,13 @@ export const makeBaynExecutionController = (
             runtimeAttempted,
           })
           if (!runtimeAttempted) invalidateResearchCapture(capture, CaptureInvalidation.ControllerReplay)
-          scheduleTick(
-            ctx,
-            completed,
-            result.outcome.nextDelayMs,
-            0,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            capture,
-          )
+          // Old journaled results keep their command order. New absolute wakes account for projection I/O and replay.
+          const scheduleAt = result.outcome.nextWakeAt === undefined ? undefined : Date.parse(await ctx.date.toJSON())
+          const completionDelay =
+            completed.nextDueAt === undefined || scheduleAt === undefined
+              ? result.outcome.nextDelayMs
+              : Math.min(result.outcome.nextDelayMs, Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt))
+          scheduleTick(ctx, completed, completionDelay, 0, undefined, undefined, undefined, undefined, capture)
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
             controllerKey: ctx.key,
             epoch: completed.epoch,

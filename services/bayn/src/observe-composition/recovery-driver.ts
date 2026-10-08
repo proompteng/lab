@@ -419,6 +419,24 @@ export const decisionReadinessContinuationDelayMs = (
     : undefined
 }
 
+/** A holding deadline selected before eligibility caps one wait, without changing overdue retry cadence. */
+export const maximumHoldContinuationDelayMs = (
+  result: CycleRunResult,
+  normalDelayMs: number,
+  observedAt: string,
+): number | undefined => {
+  if (result.outcome !== 'RECOVERED' || result.action !== 'WAITING' || result.maximumHoldDueAt === undefined)
+    return undefined
+  const dueAt = Date.parse(result.maximumHoldDueAt)
+  const remainingMs = dueAt - Date.parse(observedAt)
+  if (!Number.isSafeInteger(remainingMs) || dueAt >= Date.parse(result.cycle.window.executionCloseAt)) return undefined
+  if (remainingMs > 0) return Math.min(remainingMs, normalDelayMs)
+  // Slow management work may cross a deadline that was still future when evaluated. Recheck once; the next
+  // fresh management pass takes the maximum-hold exit path and cannot emit this pre-eligibility wait again.
+  const evaluatedAt = Date.parse(result.maximumHoldEvaluatedAt ?? '')
+  return evaluatedAt < dueAt && evaluatedAt <= Date.parse(observedAt) ? 1 : undefined
+}
+
 /** Projection health is checked after the pass; a later failure owns its continuation timing. */
 export const checkAdvancedMarketProjection = <R>(
   advanced: RecoveryFirstCycleAdvance,
@@ -589,6 +607,22 @@ const makeRecoveryFirstCycleDriverEffect = (
             const continuation =
               closeQuoteContinuationDelayMs(advanced.result, cadence, observedAt) ??
               decisionReadinessContinuationDelayMs(advanced.result, cadence, observedAt)
+            const maximumHold = maximumHoldContinuationDelayMs(advanced.result, cadence, observedAt)
+            if (maximumHold !== undefined) {
+              const delay = Math.min(continuation ?? cadence, maximumHold)
+              return {
+                ...advanced,
+                nextDelayMs: delay,
+                nextWakeAt: new Date(
+                  Math.min(
+                    continuation === undefined ? Number.POSITIVE_INFINITY : Date.parse(observedAt) + continuation,
+                    advanced.result.outcome === 'RECOVERED' && advanced.result.action === 'WAITING'
+                      ? Date.parse(advanced.result.maximumHoldDueAt ?? '')
+                      : Number.POSITIVE_INFINITY,
+                  ),
+                ).toISOString(),
+              }
+            }
             return continuation === undefined ? advanced : { ...advanced, nextDelayMs: continuation }
           }),
         )
