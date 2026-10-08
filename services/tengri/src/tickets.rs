@@ -11,7 +11,7 @@ use http::Uri;
 use rand::distr::{Alphanumeric, SampleString};
 use sha2::{Digest, Sha256};
 
-use crate::guest::EDITOR_PORT;
+use crate::guest::{BROWSER_PORT, EDITOR_PORT};
 use tonic::Status;
 
 const TICKET_LIFETIME: Duration = Duration::from_secs(30);
@@ -169,7 +169,7 @@ impl TicketStore {
         Ok(issued)
     }
 
-    pub fn revoke_editors(&self, owner_hash: &str) -> Result<(), Status> {
+    pub fn revoke_desktop_previews(&self, owner_hash: &str) -> Result<(), Status> {
         let mut tickets = self
             .tickets
             .lock()
@@ -183,13 +183,14 @@ impl TicketStore {
                 && matches!(
                     ticket.scope,
                     TicketScope::Preview {
-                        port: EDITOR_PORT,
+                        port: EDITOR_PORT | BROWSER_PORT,
                         ..
                     }
                 ))
         });
         previews.retain(|_, session| {
-            !(session.owner_hash == owner_hash && session.port == EDITOR_PORT)
+            !(session.owner_hash == owner_hash
+                && matches!(session.port, EDITOR_PORT | BROWSER_PORT))
         });
         Ok(())
     }
@@ -540,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn logout_revokes_all_owned_editor_leases_and_pending_launches() {
+    fn logout_revokes_owned_desktop_previews_and_pending_launches() {
         let store = TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).unwrap();
         let owner = "a".repeat(64);
         let other_owner = "b".repeat(64);
@@ -561,18 +562,36 @@ mod tests {
             .issue_editor(&other_owner, "other", "uid", "first")
             .unwrap();
         let other = store.consume_preview(&other.token).unwrap();
+        let browser_pending = store
+            .issue_preview(&owner, "agent", crate::guest::BROWSER_PORT, "/", "")
+            .unwrap();
+        let browser = store
+            .issue_preview(&owner, "agent", crate::guest::BROWSER_PORT, "/", "")
+            .unwrap();
+        let browser = store.consume_preview(&browser.token).unwrap();
+        let other_browser = store
+            .issue_preview(&other_owner, "other", crate::guest::BROWSER_PORT, "/", "")
+            .unwrap();
+        let other_browser = store.consume_preview(&other_browser.token).unwrap();
         let preview = store.issue_preview(&owner, "agent", 3000, "/", "").unwrap();
         let preview = store.consume_preview(&preview.token).unwrap();
 
-        store.revoke_editors(&owner).unwrap();
-        store.revoke_editors(&owner).unwrap();
+        store.revoke_desktop_previews(&owner).unwrap();
+        store.revoke_desktop_previews(&owner).unwrap();
 
         assert!(store.consume_preview(&pending.token).is_err());
+        assert!(store.consume_preview(&browser_pending.token).is_err());
+        assert!(store.preview_session(&browser.id, &browser.token).is_err());
         for session in sessions {
             assert!(store.preview_session(&session.id, &session.token).is_err());
         }
         assert!(store.consume_preview(&other_pending.token).is_ok());
         assert!(store.preview_session(&other.id, &other.token).is_ok());
+        assert!(
+            store
+                .preview_session(&other_browser.id, &other_browser.token)
+                .is_ok()
+        );
         assert!(store.preview_session(&preview.id, &preview.token).is_ok());
     }
 

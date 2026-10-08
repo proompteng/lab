@@ -4,7 +4,10 @@ import { makeIntradayPerformanceVolumeEvidence } from '../forward-performance/in
 import { describe, expect, test } from 'bun:test'
 
 import { canonicalHashV1 } from '../hash'
-import { decodeForwardPerformanceReceiptEnvelopeResult } from './forward-performance-receipt'
+import {
+  decodeForwardPerformanceReceiptEnvelopeResult,
+  makeForwardPerformanceReceiptEnvelope,
+} from './forward-performance-receipt'
 
 const hash = 'a'.repeat(64)
 
@@ -87,6 +90,36 @@ const envelopeMaterial = {
 const envelope = { ...envelopeMaterial, contentHash: canonicalHashV1(envelopeMaterial) }
 
 describe('forward-performance receipt persistence contract', () => {
+  test('round-trips unresolved operating costs with retained trading totals and stable hashes', () => {
+    const material = {
+      ...receiptMaterial,
+      totals: {
+        ...receiptMaterial.totals,
+        grossRealizedPnlMicros: '100',
+        brokerExecutionFeesMicros: '20',
+      },
+      evidence: {
+        ...receiptMaterial.evidence,
+        reasonCodes: ['OPERATING_COST_EVIDENCE_GAP'] as const,
+      },
+    }
+    const receipt = { ...material, receiptHash: canonicalHashV1(material) }
+    const packet = {
+      ...envelopeMaterial,
+      receipt,
+      receiptHash: receipt.receiptHash,
+    }
+    const first = Result.getOrThrow(makeForwardPerformanceReceiptEnvelope(packet))
+    const second = Result.getOrThrow(makeForwardPerformanceReceiptEnvelope(packet))
+    const decoded = Result.getOrThrow(decodeForwardPerformanceReceiptEnvelopeResult(first))
+    expect(decoded).toEqual(first)
+    expect(second).toEqual(first)
+    expect(decoded.receipt.totals.grossRealizedPnlMicros).toBe('100')
+    expect(decoded.receipt.totals.otherChargedCostsMicros).toBeNull()
+    expect(decoded.receipt.totals.netRealizedPnlAfterCostsMicros).toBeNull()
+    expect(decoded.receipt.profitability).toBe('UNDETERMINED')
+  })
+
   test('preserves legacy receipts and hashes without inserting episode evidence', () => {
     const decoded = Result.getOrThrow(decodeForwardPerformanceReceiptEnvelopeResult(envelope))
     expect(decoded).toEqual(envelope)

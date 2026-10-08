@@ -207,7 +207,8 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
               const saved = yield* readBatch(id)
               if (
                 saved?.plan.cycleId === cycleId &&
-                saved.plan.authorityGenerationHash === authorityGenerationHash &&
+                (authorityGenerationHash === undefined ||
+                  saved.plan.authorityGenerationHash === authorityGenerationHash) &&
                 saved.result === null
               )
                 pending.push(id)

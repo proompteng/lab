@@ -1,6 +1,6 @@
 # Original receipt capture
 
-Production capture is **disabled by default**. All deployment manifests leave it disabled and grant no new access.
+Production capture is **disabled by default**. Deployment manifests leave the fixed-session setting absent.
 The native execution worker has optional, fixed-session wiring through `BAYN_RESEARCH_CAPTURE_SESSION`. An absent or
 invalid setting acquires no capture recorder, S3 client, or capture database operation. Live activation, credentials,
 and capacity qualification require separate review and approval.
@@ -27,8 +27,9 @@ capture failure, or deadline without an actual cut ends the attempt without sele
 The worker uses its existing PostgreSQL client and capture tables. Explicit S3 configuration uses
 `BAYN_RESEARCH_CAPTURE_S3_ENDPOINT`, `BAYN_RESEARCH_CAPTURE_S3_BUCKET`, `BAYN_RESEARCH_CAPTURE_S3_REGION`,
 `BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID`, and `BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY`.
-Use the native OBC's actual `BUCKET_NAME`, not the claim name or the legacy research bucket. No manifest mounts these
-credentials as part of this implementation. Mounting credentials or granting access requires separate approval.
+Use the native OBC's actual `BUCKET_NAME`, not the claim name or the legacy research bucket. The approved execution-worker
+manifest references the existing `bayn-research-captures` owner Secret and connection ConfigMap. The public status
+service and activation hook receive no research credential. Access alone does not start capture or qualify capacity.
 
 Before any object write or consumer observation, the recorder writes an ordinal-zero `session-attempt` chunk to SQL.
 It contains the frozen declaration and a fresh attempt nonce. This sole control receipt claims the fixed capture ID.
@@ -81,7 +82,10 @@ Terminal observations distinguish whether that runtime action ran in this worker
 completeness. Consumers must retain repetitions and join by native identity rather than treating them as additional execution.
 
 Admission is synchronous and bounded by receipt count and UTF8 byte size. A scoped Effect worker persists text chunks
-outside execution. Chunks bind the preceding exact-byte hash. The append-only database identity is capture plus ordinal;
+outside execution. A one-slot dropping notification wakes it when retained receipts or reserved bytes reach one quarter
+of their configured ceiling. The periodic flush remains the idle deadline. Admission never waits for this notification
+or persistence, and in-flight raw writes keep their original reservations. Chunks bind the preceding exact-byte hash.
+The append-only database identity is capture plus ordinal;
 duplicate retries compare both SHA-256 and exact payload text. Different formatting is different evidence. Seals bind
 the committed frontier. PostgreSQL triggers reject updates, deletes, truncation, and appends after a seal.
 
@@ -145,6 +149,16 @@ establish a verified export. Metadata-only seal bytes and hashes remain unchange
 
 The existing whole-worker verifier still requires genuine consumer closure. Deriving a manifest from an UNQUALIFIED
 sealed prefix does not fabricate `STOPPED`, prove a complete session, or authorize an original-arrival replay source.
+
+Each chunk verifies its raw, metadata and immutable index objects concurrently, with at most three object operations
+in flight. The index binds content hashes computed before these writes; an early index acknowledgement does not advance
+the SQL or export frontier. All three verifications must succeed before the SQL chunk append, and that append must
+acknowledge before the frontier advances. A failed write interrupts both siblings; orphan objects remain `UNQUALIFIED`.
+The one-second aggregate write deadline, byte reservations and receipt admission bounds are unchanged. The existing
+64 KiB envelope covers three bounded 8 KiB SDK response collectors; concurrency does not qualify storage capacity.
+The deadline invalidates admission immediately, before waiting for write interruption or transaction cleanup.
+An uninterruptible COMMIT may finish later; that outcome cannot acknowledge a chunk or advance the recorder's frontier.
+Cleanup remains owned and awaited, and later receipts are counted as observed without retaining their payloads.
 
 The scoped S3 adapter accepts explicit bucket, endpoint, region and redacted credentials. It has no environment reader,
 ambient credential provider. Session wiring must use the verified native OBC's actual `BUCKET_NAME`,

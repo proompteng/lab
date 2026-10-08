@@ -491,6 +491,17 @@ const openOrder = (brokerOrderId: string) => ({
 })
 
 describe('bounded execution risk', () => {
+  test('retains exact authority identity while preserving millisecond observation ordering', () => {
+    const state = makeState()
+    const updatedAt = '2026-07-21T20:59:30.000402Z'
+    const accepted = decodeState({ ...state, authority: { ...state.authority, updatedAt } })
+    expect(accepted.authority.updatedAt).toBe(updatedAt)
+    expect(accepted.authorityObservedAt).toBe(observedAt)
+    expect(() =>
+      decodeState({ ...state, authority: { ...state.authority, updatedAt: '2026-07-21T20:59:30.001001Z' } }),
+    ).toThrow()
+  })
+
   test('uses the execution-model half-up notional at the intent and mutation boundary', () => {
     const intent = makeIntent({ quantityMicros: '1', notionalLimitMicros: '100' })
     const state = makeState({

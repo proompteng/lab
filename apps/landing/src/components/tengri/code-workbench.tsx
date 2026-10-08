@@ -3,7 +3,7 @@
 import { LoaderCircle, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { TengriPreviewSession } from '@/lib/tengri/types'
-import { safePreviewLaunchUrl, safePreviewSessionOrigin } from './chrome-model'
+import { safePreviewLaunchUrl, safePreviewSessionOrigin } from './preview-session'
 import { runTengriAction } from './client'
 import { listRecoverableCodeDrafts, type CodeDraft } from './code-editor-draft-storage'
 import { enqueueCodeOpenRequest, type CodeOpenRequest } from './code-editor-model'

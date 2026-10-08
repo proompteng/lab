@@ -1,7 +1,13 @@
 import { makeStrategyProtocolHashResult } from './contracts'
 import { JevBatchPlanVersion } from './jev/batch'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
-import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
+import {
+  defaultJevProtocolDocument,
+  jevBehaviorHash,
+  momentumFirstJevProtocolDocument,
+  momentumFirstJevBehaviorHash,
+  type JevProtocol,
+} from './jev/protocol'
 import { JevExitReason } from './jev/exit'
 import {
   SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
@@ -1164,6 +1170,22 @@ export const jevProtocolIdentityMatches = (
 ): boolean => {
   const parameterHash = canonicalHashV1Result(protocol)
   if (Result.isFailure(parameterHash)) return false
+  if (protocol.schemaVersion === 'bayn.jev.protocol.v2') {
+    const candidateHash = canonicalHashV1Result(momentumFirstJevProtocolDocument)
+    const candidateIdentity = makeStrategyProtocolHashResult({
+      name: 'jev',
+      behaviorHash: momentumFirstJevBehaviorHash,
+      parameterHash: parameterHash.success,
+      parameterSchemaVersion: protocol.schemaVersion,
+    })
+    return (
+      (batchVersion === undefined || batchVersion === JevBatchPlanVersion.V4) &&
+      Result.isSuccess(candidateHash) &&
+      candidateHash.success === parameterHash.success &&
+      Result.isSuccess(candidateIdentity) &&
+      candidateIdentity.success === strategyProtocolHash
+    )
+  }
   const retained =
     parameterHash.success === retainedJevParameterHash && strategyProtocolHash === retainedJevStrategyProtocolHash
   if (batchVersion === JevBatchPlanVersion.V1 || batchVersion === JevBatchPlanVersion.V2) return retained
@@ -1970,7 +1992,6 @@ const decodeDocumentFailure = (
 
 const decodeDocumentResult = Schema.decodeUnknownResult(ObserveShadowDecisionDocumentSchema, strictParseOptions)
 const decodeExecutionDocumentResult = Schema.decodeUnknownResult(ExecutionDecisionDocumentSchema, strictParseOptions)
-const isRuntimeStrategyDecision = Schema.is(RuntimeStrategyDecisionSchema)
 
 export const makeObserveShadowDecisionDocument = (
   material: unknown,
@@ -2015,19 +2036,8 @@ export const makeExecutionDecisionDocument = (
       makeDocumentFailure('canonicalization', 'execution decision material is not canonicalizable', cause),
     ),
     (contentHash) =>
-      Result.flatMap(
-        Result.mapError(decodeExecutionDocumentResult({ ...material, contentHash }), (cause) =>
-          makeDocumentFailure('contract', 'execution decision material failed its durable contract', cause),
-        ),
-        (document) =>
-          document.strategyDecision !== undefined && !isRuntimeStrategyDecision(document.strategyDecision)
-            ? Result.fail(
-                makeDocumentFailure(
-                  'contract',
-                  'new execution decision material must use the active runtime strategy schema',
-                ),
-              )
-            : Result.succeed(document),
+      Result.mapError(decodeExecutionDocumentResult({ ...material, contentHash }), (cause) =>
+        makeDocumentFailure('contract', 'execution decision material failed its durable contract', cause),
       ),
   )
 }

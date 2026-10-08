@@ -9,6 +9,7 @@ import {
   snapshotReferenceIssueTags,
 } from '../../db/snapshot-reference'
 import { decodeInputManifestArtifact } from '../../evidence-contracts'
+import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { InputManifest } from '../../types'
@@ -201,19 +202,34 @@ const makeCycleBindingProgramsDataFirst = (
     )
 
   const requireDecisionEvidence = (document: CycleDecisionDocument): Effect.Effect<void, CycleStoreInternalError> =>
-    queries
-      .decisionEvidenceMatches(document)
-      .pipe(
-        Effect.flatMap((matches) =>
-          matches
-            ? Effect.void
-            : failCycleStore(
-                'bind-decision',
-                'invariant',
-                'decision does not match its durable market-data and exact reconciliation evidence',
+    queries.decisionEvidenceMismatch(document).pipe(
+      Effect.flatMap((mismatch) =>
+        mismatch === null
+          ? Effect.void
+          : Effect.logWarning('Bayn decision evidence rejected').pipe(
+              Effect.annotateLogs({
+                schemaVersion: 'bayn.decision-evidence-rejection.v1',
+                mismatch,
+                cycleId: document.bindings.cycleId,
+                snapshotId: document.bindings.snapshotId,
+                reconciliationId: document.bindings.reconciliationId,
+                plannedIntentCount: document.targetPlan.intentTargets.length,
+                riskEvaluationCount: document.deltaRisk.length,
+                riskContextBound:
+                  document.mode === legacyExecutionAuthorityToken && document.bindings.riskContext !== undefined,
+                firstRiskStatePresent:
+                  document.mode === legacyExecutionAuthorityToken && document.deltaRisk[0]?.facts?.state !== undefined,
+              }),
+              Effect.andThen(
+                failCycleStore(
+                  'bind-decision',
+                  'invariant',
+                  `decision does not match its durable market-data and exact reconciliation evidence [${mismatch}]`,
+                ),
               ),
-        ),
-      )
+            ),
+      ),
+    )
 
   const interpretSnapshotDecision = (
     manifest: InputManifest,
@@ -324,6 +340,7 @@ const makeCycleBindingProgramsDataFirst = (
       'bind-decision',
       upgradeDecisionDocumentConstraints(sql).pipe(
         Effect.andThen(decodeDecisionInput({ cycleId, document, observedAt })),
+        Effect.tap((input) => queries.retainValidatedDecision(input.document)),
         Effect.flatMap((input) =>
           sql.withTransaction(
             mutations.readLocked('bind-decision', input.cycleId).pipe(

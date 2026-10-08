@@ -48,19 +48,47 @@ discovery.relabel "cnpg_metrics" {
 	}
 }
 
+discovery.relabel "cnpg_bayn_metrics" {
+	targets = discovery.relabel.cnpg_metrics.output
+
+	rule {
+		action        = "keep"
+		source_labels = ["namespace", "cluster"]
+		regex         = "bayn;bayn-db"
+	}
+}
+
+discovery.relabel "cnpg_other_metrics" {
+	targets = discovery.relabel.cnpg_metrics.output
+
+	rule {
+		action        = "drop"
+		source_labels = ["namespace", "cluster"]
+		regex         = "bayn;bayn-db"
+	}
+}
+
 prometheus.relabel "cnpg_metrics" {
 	forward_to = [prometheus.remote_write.mimir.receiver]
 
 	rule {
 		action        = "keep"
 		source_labels = ["__name__", "name"]
-		regex         = "up;.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_collector_(last_collection_error|collection_errors_total|collection_duration_seconds);.*|cnpg_bayn_io_((reads|writes|fsyncs|read_bytes|write_bytes|read_seconds|write_seconds|fsync_seconds)_total|stats_reset_seconds|timing_(relation|wal)_enabled);.*|cnpg_bayn_replication_((connected|streaming|synchronous|measured_flush_lag)_standbys|max_(flush_lag_seconds|reply_age_seconds|unflushed_bytes));.*|cnpg_bayn_waits_(backends|active_query_age_seconds);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size|track_io_timing|track_wal_io_timing)"
+		regex         = "(up|scrape_duration_seconds);.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_collector_(last_collection_error|collection_errors_total|collection_duration_seconds);.*|cnpg_bayn_io_((reads|writes|fsyncs|read_bytes|write_bytes|read_seconds|write_seconds|fsync_seconds)_total|stats_reset_seconds|timing_(relation|wal)_enabled);.*|cnpg_bayn_replication_((connected|streaming|synchronous|measured_flush_lag)_standbys|max_(flush_lag_seconds|reply_age_seconds|unflushed_bytes));.*|cnpg_bayn_waits_(backends|active_query_age_seconds);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size|track_io_timing|track_wal_io_timing)"
 	}
+}
+
+prometheus.scrape "cnpg_bayn" {
+	job_name        = "cnpg-postgres"
+	targets         = discovery.relabel.cnpg_bayn_metrics.output
+	scrape_interval = "5s"
+	scrape_timeout  = "4s"
+	forward_to      = [prometheus.relabel.cnpg_metrics.receiver]
 }
 
 prometheus.scrape "cnpg" {
 	job_name        = "cnpg-postgres"
-	targets         = discovery.relabel.cnpg_metrics.output
+	targets         = discovery.relabel.cnpg_other_metrics.output
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"
 	forward_to      = [prometheus.relabel.cnpg_metrics.receiver]
@@ -333,6 +361,75 @@ loki.process "bayn_pod_logs" {
 	forward_to = [loki.write.bayn.receiver]
 }
 
+discovery.kubernetes "bayn_rgw_log_pods" {
+	role = "pod"
+
+	namespaces {
+		names = ["rook-ceph"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app=rook-ceph-rgw,rgw=objectstore"
+	}
+}
+
+discovery.relabel "bayn_rgw_logs" {
+	targets = discovery.kubernetes.bayn_rgw_log_pods.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name"]
+		regex         = "rgw"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_container_name"]
+		target_label  = "container"
+	}
+}
+
+loki.source.kubernetes "bayn_rgw_logs" {
+	targets    = discovery.relabel.bayn_rgw_logs.output
+	forward_to = [loki.process.bayn_rgw_logs.receiver]
+}
+
+loki.process "bayn_rgw_logs" {
+	stage.static_labels {
+		values = {job = "bayn-rgw"}
+	}
+
+	stage.match {
+		selector            = "{job=\"bayn-rgw\"} !~ \"^.* 1 beast:.* \\\"(?P<method>PUT|GET|HEAD|DELETE) /bayn-research-captures-[0-9a-f-]+/research-capture/sha256/(?P<objectHash>[0-9a-f]{64})(\\\\?[^ \\\"]*)? HTTP/[0-9.]+\\\" (?P<httpStatus>[0-9]{3}) (?P<loggedBytes>[0-9]+).* latency=(?P<latencySeconds>[0-9]+(?:\\\\.[0-9]+)?)s(?:\\\\r?\\\\n)?$\""
+		action              = "drop"
+		drop_counter_reason = "non_bayn_rgw_access"
+	}
+
+	stage.regex {
+		expression = "^.* 1 beast:.* \"(?P<method>PUT|GET|HEAD|DELETE) /bayn-research-captures-[0-9a-f-]+/research-capture/sha256/(?P<objectHash>[0-9a-f]{64})(\\?[^ \"]*)? HTTP/[0-9.]+\" (?P<httpStatus>[0-9]{3}) (?P<loggedBytes>[0-9]+).* latency=(?P<latencySeconds>[0-9]+(?:\\.[0-9]+)?)s(?:\\r?\\n)?$"
+	}
+
+	stage.template {
+		source   = "bayn_rgw_access"
+		template = "{{ printf \"{\\\"schemaVersion\\\":\\\"bayn.rgw-access.v1\\\",\\\"method\\\":%q,\\\"objectHash\\\":%q,\\\"httpStatus\\\":%q,\\\"loggedBytes\\\":%q,\\\"latencySeconds\\\":%q}\" .method .objectHash .httpStatus .loggedBytes .latencySeconds }}"
+	}
+
+	stage.output {
+		source = "bayn_rgw_access"
+	}
+	forward_to = [loki.write.bayn.receiver]
+}
+
 loki.write "bayn" {
 	endpoint {
 		url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
@@ -344,8 +441,8 @@ prometheus.relabel "arc_resource_metrics" {
 
 	rule {
 		action        = "keep"
-		source_labels = ["__name__"]
-		regex         = "up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_fs_usage_bytes|kube_argocd_application_deployment_history_info|kube_cnpg_backup_stopped_at|kube_cnpg_scheduled_backup_last_schedule_time|kube_cronjob_created|kube_cronjob_status_last_successful_time|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_daemonset_status_number_unavailable|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_node_status_allocatable|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_info|kube_pod_labels|kube_pod_status_phase|kube_replicaset_spec_replicas|kube_replicaset_status_ready_replicas|kube_restate_deployment_spec_replicas|kube_service_info|kube_statefulset_status_replicas_ready|kubelet_volume_stats_available_bytes|kubelet_volume_stats_capacity_bytes"
+		source_labels = ["__name__", "namespace", "container"]
+		regex         = "(up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_fs_usage_bytes|kube_argocd_application_deployment_history_info|kube_cnpg_backup_stopped_at|kube_cnpg_scheduled_backup_last_schedule_time|kube_cronjob_created|kube_cronjob_status_last_successful_time|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_daemonset_status_number_unavailable|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_node_status_allocatable|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_info|kube_pod_labels|kube_pod_status_phase|kube_replicaset_spec_replicas|kube_replicaset_status_ready_replicas|kube_restate_deployment_spec_replicas|kube_service_info|kube_statefulset_status_replicas_ready|kubelet_volume_stats_available_bytes|kubelet_volume_stats_capacity_bytes);.*;.*|container_cpu_cfs_(periods_total|throttled_periods_total|throttled_seconds_total);bayn;.*|container_cpu_cfs_(periods_total|throttled_periods_total|throttled_seconds_total);torghut;torghut-ws"
 	}
 }
 

@@ -11,6 +11,7 @@ import {
   type IntradaySnapshotQuery,
 } from '../market-data'
 import { strictParseOptions } from '../schemas'
+import { withObservedStage } from '../telemetry'
 import { ExecutionMarketDataBindingSchema, type ExecutionMarketDataBinding } from '../shadow-decision-contract'
 
 export class IntradayMarketDataFailure extends Data.TaggedError('IntradayMarketDataFailure')<{
@@ -30,7 +31,10 @@ const failure = (
 export const loadIntradaySnapshot = (
   marketData: IntradayMarketDataService,
   query: IntradaySnapshotQuery,
-): Effect.Effect<VerifiedStrategyMarketSnapshot, OperationalError> => marketData.loadSnapshot(query)
+): Effect.Effect<VerifiedStrategyMarketSnapshot, OperationalError> =>
+  Effect.suspend(() => marketData.loadSnapshot(query)).pipe(
+    withObservedStage('bayn.market-data.snapshot', { dependency: 'market-data', operation: query.purpose ?? 'signal' }),
+  )
 
 const decodeExecutionMarketDataBinding = Schema.decodeUnknownResult(
   ExecutionMarketDataBindingSchema,

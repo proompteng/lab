@@ -1,10 +1,11 @@
 import { PgClient } from '@effect/sql-pg'
-import { postgresWallClock, type DatabaseClock } from './clock'
+import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clock'
 import { Data, Effect, Result, Schema } from 'effect'
 
 import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import type { RuntimeConfig } from '../config'
+import type { WriterFenceService } from '../execution/writer-fence'
 import type { JournalService } from '../ledger'
 import {
   Authority,
@@ -42,6 +43,7 @@ import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
   UtcInstantSchema as UtcInstant,
+  UtcDatabaseInstantSchema,
   strictParseOptions,
 } from '../schemas'
 import { MutationEventType } from '../execution/mutations'
@@ -167,7 +169,7 @@ const ReconciliationRiskContextRow = Schema.Tuple([
     authority_kill: Schema.NullOr(Schema.Enum(KillState)),
     authority_reason: Schema.NullOr(NonEmptyString),
     authority_version: Schema.NullOr(Schema.String),
-    authority_updated_at: Schema.NullOr(Schema.Date),
+    authority_updated_at: Schema.NullOr(UtcDatabaseInstantSchema),
     authority_observed_at: Schema.NullOr(Schema.Date),
     daily_traded_notional_micros: UnsignedMicrosSchema,
     day_start_equity_micros: SignedMicrosSchema,
@@ -401,6 +403,7 @@ export const makeReconciliation = (
   sql: PgClient.PgClient,
   journal: JournalService,
   config: Pick<RuntimeConfig, 'tigerBeetle'>,
+  writerFence: WriterFenceService,
   clock: DatabaseClock = postgresWallClock(sql),
 ) => {
   const bindings = (accountId: string): Effect.Effect<readonly IntentBinding[], ReconciliationStoreError> =>
@@ -589,6 +592,8 @@ export const makeReconciliation = (
           FROM account_snapshots AS snapshot
           JOIN broker_events AS event ON event.event_id = snapshot.event_id
           WHERE snapshot.account_id = ${accountId}
+            AND event.account_id = snapshot.account_id
+            AND event.event_kind = 'ACCOUNT'
           ORDER BY event.source_sequence
           LIMIT 1
         `.pipe(Effect.flatMap(decodeOpeningCash))
@@ -682,7 +687,7 @@ export const makeReconciliation = (
             authority.kill_state AS authority_kill,
             authority.reason AS authority_reason,
             authority.version::text AS authority_version,
-            authority.updated_at AS authority_updated_at,
+            ${databaseUtcInstant(sql, sql`authority.updated_at`)} AS authority_updated_at,
             CASE WHEN authority.singleton IS NULL THEN NULL ELSE ${clock.now} END AS authority_observed_at,
             coalesce((
               SELECT sum(transaction.notional_micros)::text
@@ -735,7 +740,7 @@ export const makeReconciliation = (
     )
 
   const reconcile = (snapshot: BrokerSnapshot): Effect.Effect<ReconciliationWriteResult, ReconciliationStoreError> =>
-    runStore('reconcile', sql.withTransaction(reconcileTransaction(snapshot)))
+    runStore('reconcile', writerFence.transaction(reconcileTransaction(snapshot)))
 
   return { bindings, reconcile }
 }

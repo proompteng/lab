@@ -5,10 +5,12 @@ resources:
   - mesh-security.yaml
   - crd.yaml
   - sealed-secret.yaml
+  - spicedb-key-sealedsecret.yaml
   - service-account.yaml
   - auth-nonces.yaml
   - rbac.yaml
   - spire-admission.yaml
+  - slot-admission.yaml
   - deployment.yaml
   - services.yaml
   - ingressroute.yaml

@@ -2,7 +2,7 @@
 
 Tengri's Chrome home page (`tengri://agent`) is the Codex client for the signed-in user's microVM. It is not a log
 viewer and it does not use AgentRun. The browser talks only to the authenticated Next.js BFF; the BFF signs the GitHub
-subject for the Rust Tengri control plane; Tengri calls the Nanoagent process inside the owner's `kata-fc` guest.
+subject for the Rust Tengri control plane; Tengri reaches Nanoagent through the owner's authenticated Firecracker slot supervisor.
 
 ```text
 Chrome agent tab
@@ -25,8 +25,11 @@ signed GitHub subject and the server-owned `MicroVM` owner hash.
    explicit restart invalidates that attempt.
 3. Nanoagent persists the resulting Codex login under the PVC-backed user home. Tengri does not inject or share an
    `OPENAI_API_KEY`.
-4. The first message creates a thread. Later messages resume the browser's persisted thread ID, and **New
-   conversation** starts a separate thread without deleting earlier guest-side thread state.
+4. The first message creates a thread. The browser keeps the **active** thread id in `tengri-thread:${agentId}` and a
+   client-side conversation registry in `tengri-conversations:${agentId}` (`{ id, title, updatedAt }[]`, title from the
+   first user message). Later messages resume the active thread. The left sidebar lists registry entries (newest first);
+   choosing one sets the active thread and resumes it. **New conversation** clears the active thread and transcript UI
+   without removing other registry entries or guest-side thread state. There is no `ListCodexThreads` gRPC yet.
 5. A message starts a turn. While that turn is active, subsequent input steers it and the stop control interrupts it.
 6. Typed app-server events update assistant text, reasoning summaries, plans, tools, file changes, approvals, usage,
    warnings, and errors in place.
@@ -55,13 +58,12 @@ silently substitute a model. A running turn can still be steered or interrupted.
 
 Terminal and Codex operate in a guest with a writable operating-system root and passwordless `sudo` for the
 `nanoagent` user. The owner can install system packages, edit `/etc` and `/usr/local`, manage guest processes, mount
-filesystems, and configure guest networking. Codex uses `danger-full-access`; the `kata-fc` VM provides the isolation
+filesystems, and configure guest networking. Codex uses `danger-full-access`; the Firecracker VM provides the isolation
 boundary around guest administration.
 
-The root filesystem has the image's 512 MiB capacity and is ephemeral. Container recreation, sleep/resume, or guest
-replacement restores that root from the image. Home and `/workspace` use the retained 16 GiB PVC, including Codex
-credentials, threads, and tools installed there. Running guests adopt a new image and Pod template at the next safe
-sleep/resume boundary.
+The root filesystem has 1 GiB capacity. Snapshot sleep/resume preserves root changes and guest processes while releasing
+resident guest RAM. A fenced cold replacement resets the root from the image. Home and `/workspace` use the retained
+16 GiB PVC, including Codex credentials, threads, and installed tools. Ordinary sleep keeps the claimed runtime image.
 
 ## API path
 
@@ -106,8 +108,11 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
 - A failed turn renders the app-server failure text as an error before clearing active-turn controls.
 - A missing saved conversation returns HTTP 404 with `code: conversation_not_found`, rather than a control-plane
   outage. The desktop keeps the saved thread ID during retries and offers **Start a new conversation** beside the
-  error. Only that explicit action clears the browser's selection; the next message creates a thread in the same
-  guest workspace. Temporary failures remain retryable without replacing the conversation or resetting the agent.
+  error. Only that explicit action clears the browser's active selection; the next message creates a thread in the same
+  guest workspace. The matching registry entry can be marked unavailable without wiping other conversations. Temporary
+  failures remain retryable without replacing the conversation or resetting the agent.
+- Deleting an agent clears `tengri-thread:${agentId}` and `tengri-conversations:${agentId}` alongside other desktop
+  local/session keys for that agent.
 - Account refreshes and login-completion events are tied to the current device-login attempt so stale responses cannot
   overwrite a newer login.
 - A reconnecting browser restores the active device-login snapshot from the same app-server generation. Nanoagent
@@ -145,7 +150,7 @@ The live acceptance path runs only after the GitOps rollout described in
 [`operations.md`](./operations.md). It must prove the complete owner-scoped path:
 
 1. Sign in with GitHub and create or resume one agent.
-2. Verify its Pod uses `runtimeClassName: kata-fc`, `privileged: false`, and no host namespaces or filesystem mounts.
+2. Verify its slot Pod uses the normal OCI runtime, `privileged: false`, and no host namespaces or filesystem mounts.
    In Terminal, verify `sudo -n id -u` returns `0` and an owner-requested system-file edit or package install succeeds.
 3. Open Chrome at `tengri://agent`, complete a per-user Codex device login, and create a thread.
 4. Select a model and supported reasoning effort. Send a real turn that reads or edits `/workspace`; confirm the
@@ -153,7 +158,8 @@ The live acceptance path runs only after the GitOps rollout described in
 5. Exercise one advertised approval decision, steer or interrupt a running turn, and reload Chrome during a turn to
    prove replay and thread recovery.
 6. Read the changed file in Finder, Code, and Terminal to prove all surfaces share the same guest filesystem.
-7. Sleep and resume the agent; verify the same Codex account and thread remain available from the retained PVC.
+7. Sleep and resume the agent; verify the VMM exited during sleep, then verify the same shell PID, Codex account,
+   thread, root edits, and home files. Measure authenticated creation/resume through file, terminal, and Codex readiness.
 
 Do not substitute fixture output, a manually created Pod, a privileged launcher, or a permanent canary DaemonSet for
 this acceptance path.

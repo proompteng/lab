@@ -21,66 +21,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type SpireBootstrap struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PodUid        string                 `protobuf:"bytes,1,opt,name=pod_uid,json=podUid,proto3" json:"pod_uid,omitempty"`
-	Token         []byte                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
-	TrustBundle   []byte                 `protobuf:"bytes,3,opt,name=trust_bundle,json=trustBundle,proto3" json:"trust_bundle,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SpireBootstrap) Reset() {
-	*x = SpireBootstrap{}
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SpireBootstrap) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SpireBootstrap) ProtoMessage() {}
-
-func (x *SpireBootstrap) ProtoReflect() protoreflect.Message {
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SpireBootstrap.ProtoReflect.Descriptor instead.
-func (*SpireBootstrap) Descriptor() ([]byte, []int) {
-	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *SpireBootstrap) GetPodUid() string {
-	if x != nil {
-		return x.PodUid
-	}
-	return ""
-}
-
-func (x *SpireBootstrap) GetToken() []byte {
-	if x != nil {
-		return x.Token
-	}
-	return nil
-}
-
-func (x *SpireBootstrap) GetTrustBundle() []byte {
-	if x != nil {
-		return x.TrustBundle
-	}
-	return nil
-}
-
 type Empty struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -89,7 +29,7 @@ type Empty struct {
 
 func (x *Empty) Reset() {
 	*x = Empty{}
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[1]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -101,7 +41,7 @@ func (x *Empty) String() string {
 func (*Empty) ProtoMessage() {}
 
 func (x *Empty) ProtoReflect() protoreflect.Message {
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[1]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -114,7 +54,7 @@ func (x *Empty) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Empty.ProtoReflect.Descriptor instead.
 func (*Empty) Descriptor() ([]byte, []int) {
-	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{1}
+	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{0}
 }
 
 type GuestInfo struct {
@@ -127,7 +67,7 @@ type GuestInfo struct {
 
 func (x *GuestInfo) Reset() {
 	*x = GuestInfo{}
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[2]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -139,7 +79,7 @@ func (x *GuestInfo) String() string {
 func (*GuestInfo) ProtoMessage() {}
 
 func (x *GuestInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[2]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -152,7 +92,7 @@ func (x *GuestInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GuestInfo.ProtoReflect.Descriptor instead.
 func (*GuestInfo) Descriptor() ([]byte, []int) {
-	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{2}
+	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *GuestInfo) GetMicrovmId() string {
@@ -178,7 +118,7 @@ type Editor struct {
 
 func (x *Editor) Reset() {
 	*x = Editor{}
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[3]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -190,7 +130,7 @@ func (x *Editor) String() string {
 func (*Editor) ProtoMessage() {}
 
 func (x *Editor) ProtoReflect() protoreflect.Message {
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[3]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -203,10 +143,54 @@ func (x *Editor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Editor.ProtoReflect.Descriptor instead.
 func (*Editor) Descriptor() ([]byte, []int) {
-	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{3}
+	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Editor) GetPort() uint32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+type Browser struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Port          uint32                 `protobuf:"varint,1,opt,name=port,proto3" json:"port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Browser) Reset() {
+	*x = Browser{}
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Browser) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Browser) ProtoMessage() {}
+
+func (x *Browser) ProtoReflect() protoreflect.Message {
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Browser.ProtoReflect.Descriptor instead.
+func (*Browser) Descriptor() ([]byte, []int) {
+	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *Browser) GetPort() uint32 {
 	if x != nil {
 		return x.Port
 	}
@@ -2192,17 +2176,15 @@ var File_proompteng_runtime_guest_v1_nanoagent_proto protoreflect.FileDescriptor
 
 const file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc = "" +
 	"\n" +
-	"+proompteng/runtime/guest/v1/nanoagent.proto\x12\x1bproompteng.runtime.guest.v1\"b\n" +
-	"\x0eSpireBootstrap\x12\x17\n" +
-	"\apod_uid\x18\x01 \x01(\tR\x06podUid\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\fR\x05token\x12!\n" +
-	"\ftrust_bundle\x18\x03 \x01(\fR\vtrustBundle\"\a\n" +
+	"+proompteng/runtime/guest/v1/nanoagent.proto\x12\x1bproompteng.runtime.guest.v1\"\a\n" +
 	"\x05Empty\"U\n" +
 	"\tGuestInfo\x12\x1d\n" +
 	"\n" +
 	"microvm_id\x18\x01 \x01(\tR\tmicrovmId\x12)\n" +
 	"\x10protocol_version\x18\x02 \x01(\rR\x0fprotocolVersion\"\x1c\n" +
 	"\x06Editor\x12\x12\n" +
+	"\x04port\x18\x01 \x01(\rR\x04port\"\x1d\n" +
+	"\aBrowser\x12\x12\n" +
 	"\x04port\x18\x01 \x01(\rR\x04port\"\x1a\n" +
 	"\x04Path\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\"\x86\x01\n" +
@@ -2347,12 +2329,12 @@ const file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc = "" +
 	"\braw_json\x18\x04 \x01(\fR\arawJson\"~\n" +
 	"\x10OperationFailure\x12)\n" +
 	"\x10current_revision\x18\x02 \x01(\tR\x0fcurrentRevision\x12,\n" +
-	"\x12resource_too_large\x18\x03 \x01(\bR\x10resourceTooLargeJ\x04\b\x01\x10\x02R\vhttp_status2\xc8\x0e\n" +
-	"\x10NanoagentService\x12h\n" +
-	"\x15RefreshSpireBootstrap\x12+.proompteng.runtime.guest.v1.SpireBootstrap\x1a\".proompteng.runtime.guest.v1.Empty\x12U\n" +
+	"\x12resource_too_large\x18\x03 \x01(\bR\x10resourceTooLargeJ\x04\b\x01\x10\x02R\vhttp_status2\xb7\x0e\n" +
+	"\x10NanoagentService\x12U\n" +
 	"\aGetInfo\x12\".proompteng.runtime.guest.v1.Empty\x1a&.proompteng.runtime.guest.v1.GuestInfo\x12U\n" +
 	"\n" +
-	"OpenEditor\x12\".proompteng.runtime.guest.v1.Empty\x1a#.proompteng.runtime.guest.v1.Editor\x12U\n" +
+	"OpenEditor\x12\".proompteng.runtime.guest.v1.Empty\x1a#.proompteng.runtime.guest.v1.Editor\x12W\n" +
+	"\vOpenBrowser\x12\".proompteng.runtime.guest.v1.Empty\x1a$.proompteng.runtime.guest.v1.Browser\x12U\n" +
 	"\tListFiles\x12!.proompteng.runtime.guest.v1.Path\x1a%.proompteng.runtime.guest.v1.FileList\x12W\n" +
 	"\bReadFile\x12!.proompteng.runtime.guest.v1.Path\x1a(.proompteng.runtime.guest.v1.FileContent\x12a\n" +
 	"\tWriteFile\x12&.proompteng.runtime.guest.v1.FileWrite\x1a,.proompteng.runtime.guest.v1.FileWriteResult\x12\\\n" +
@@ -2387,10 +2369,10 @@ func file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP() []byte {
 
 var file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_proompteng_runtime_guest_v1_nanoagent_proto_goTypes = []any{
-	(*SpireBootstrap)(nil),   // 0: proompteng.runtime.guest.v1.SpireBootstrap
-	(*Empty)(nil),            // 1: proompteng.runtime.guest.v1.Empty
-	(*GuestInfo)(nil),        // 2: proompteng.runtime.guest.v1.GuestInfo
-	(*Editor)(nil),           // 3: proompteng.runtime.guest.v1.Editor
+	(*Empty)(nil),            // 0: proompteng.runtime.guest.v1.Empty
+	(*GuestInfo)(nil),        // 1: proompteng.runtime.guest.v1.GuestInfo
+	(*Editor)(nil),           // 2: proompteng.runtime.guest.v1.Editor
+	(*Browser)(nil),          // 3: proompteng.runtime.guest.v1.Browser
 	(*Path)(nil),             // 4: proompteng.runtime.guest.v1.Path
 	(*FileEntry)(nil),        // 5: proompteng.runtime.guest.v1.FileEntry
 	(*FileList)(nil),         // 6: proompteng.runtime.guest.v1.FileList
@@ -2431,15 +2413,15 @@ var file_proompteng_runtime_guest_v1_nanoagent_proto_depIdxs = []int32{
 	17, // 4: proompteng.runtime.guest.v1.TerminalList.sessions:type_name -> proompteng.runtime.guest.v1.TerminalSession
 	21, // 5: proompteng.runtime.guest.v1.TerminalInput.attach:type_name -> proompteng.runtime.guest.v1.TerminalAttach
 	22, // 6: proompteng.runtime.guest.v1.TerminalInput.resize:type_name -> proompteng.runtime.guest.v1.TerminalResize
-	1,  // 7: proompteng.runtime.guest.v1.TerminalInput.ping:type_name -> proompteng.runtime.guest.v1.Empty
-	1,  // 8: proompteng.runtime.guest.v1.TerminalInput.terminate:type_name -> proompteng.runtime.guest.v1.Empty
+	0,  // 7: proompteng.runtime.guest.v1.TerminalInput.ping:type_name -> proompteng.runtime.guest.v1.Empty
+	0,  // 8: proompteng.runtime.guest.v1.TerminalInput.terminate:type_name -> proompteng.runtime.guest.v1.Empty
 	24, // 9: proompteng.runtime.guest.v1.TerminalOutput.ready:type_name -> proompteng.runtime.guest.v1.TerminalReady
 	25, // 10: proompteng.runtime.guest.v1.TerminalOutput.reset:type_name -> proompteng.runtime.guest.v1.TerminalReset
 	26, // 11: proompteng.runtime.guest.v1.TerminalOutput.output:type_name -> proompteng.runtime.guest.v1.TerminalData
-	1,  // 12: proompteng.runtime.guest.v1.TerminalOutput.pong:type_name -> proompteng.runtime.guest.v1.Empty
-	0,  // 13: proompteng.runtime.guest.v1.NanoagentService.RefreshSpireBootstrap:input_type -> proompteng.runtime.guest.v1.SpireBootstrap
-	1,  // 14: proompteng.runtime.guest.v1.NanoagentService.GetInfo:input_type -> proompteng.runtime.guest.v1.Empty
-	1,  // 15: proompteng.runtime.guest.v1.NanoagentService.OpenEditor:input_type -> proompteng.runtime.guest.v1.Empty
+	0,  // 12: proompteng.runtime.guest.v1.TerminalOutput.pong:type_name -> proompteng.runtime.guest.v1.Empty
+	0,  // 13: proompteng.runtime.guest.v1.NanoagentService.GetInfo:input_type -> proompteng.runtime.guest.v1.Empty
+	0,  // 14: proompteng.runtime.guest.v1.NanoagentService.OpenEditor:input_type -> proompteng.runtime.guest.v1.Empty
+	0,  // 15: proompteng.runtime.guest.v1.NanoagentService.OpenBrowser:input_type -> proompteng.runtime.guest.v1.Empty
 	4,  // 16: proompteng.runtime.guest.v1.NanoagentService.ListFiles:input_type -> proompteng.runtime.guest.v1.Path
 	4,  // 17: proompteng.runtime.guest.v1.NanoagentService.ReadFile:input_type -> proompteng.runtime.guest.v1.Path
 	8,  // 18: proompteng.runtime.guest.v1.NanoagentService.WriteFile:input_type -> proompteng.runtime.guest.v1.FileWrite
@@ -2449,31 +2431,31 @@ var file_proompteng_runtime_guest_v1_nanoagent_proto_depIdxs = []int32{
 	12, // 22: proompteng.runtime.guest.v1.NanoagentService.SearchFiles:input_type -> proompteng.runtime.guest.v1.FileSearch
 	14, // 23: proompteng.runtime.guest.v1.NanoagentService.WatchFiles:input_type -> proompteng.runtime.guest.v1.FileWatch
 	16, // 24: proompteng.runtime.guest.v1.NanoagentService.CreateTerminal:input_type -> proompteng.runtime.guest.v1.TerminalCreate
-	1,  // 25: proompteng.runtime.guest.v1.NanoagentService.ListTerminals:input_type -> proompteng.runtime.guest.v1.Empty
+	0,  // 25: proompteng.runtime.guest.v1.NanoagentService.ListTerminals:input_type -> proompteng.runtime.guest.v1.Empty
 	20, // 26: proompteng.runtime.guest.v1.NanoagentService.TerminateTerminal:input_type -> proompteng.runtime.guest.v1.TerminalID
 	23, // 27: proompteng.runtime.guest.v1.NanoagentService.AttachTerminal:input_type -> proompteng.runtime.guest.v1.TerminalInput
 	28, // 28: proompteng.runtime.guest.v1.NanoagentService.CodexCall:input_type -> proompteng.runtime.guest.v1.CodexRequest
-	1,  // 29: proompteng.runtime.guest.v1.NanoagentService.CodexLogin:input_type -> proompteng.runtime.guest.v1.Empty
+	0,  // 29: proompteng.runtime.guest.v1.NanoagentService.CodexLogin:input_type -> proompteng.runtime.guest.v1.Empty
 	31, // 30: proompteng.runtime.guest.v1.NanoagentService.ResolveCodexApproval:input_type -> proompteng.runtime.guest.v1.CodexApproval
 	32, // 31: proompteng.runtime.guest.v1.NanoagentService.WatchCodexEvents:input_type -> proompteng.runtime.guest.v1.CodexWatch
-	1,  // 32: proompteng.runtime.guest.v1.NanoagentService.RefreshSpireBootstrap:output_type -> proompteng.runtime.guest.v1.Empty
-	2,  // 33: proompteng.runtime.guest.v1.NanoagentService.GetInfo:output_type -> proompteng.runtime.guest.v1.GuestInfo
-	3,  // 34: proompteng.runtime.guest.v1.NanoagentService.OpenEditor:output_type -> proompteng.runtime.guest.v1.Editor
+	1,  // 32: proompteng.runtime.guest.v1.NanoagentService.GetInfo:output_type -> proompteng.runtime.guest.v1.GuestInfo
+	2,  // 33: proompteng.runtime.guest.v1.NanoagentService.OpenEditor:output_type -> proompteng.runtime.guest.v1.Editor
+	3,  // 34: proompteng.runtime.guest.v1.NanoagentService.OpenBrowser:output_type -> proompteng.runtime.guest.v1.Browser
 	6,  // 35: proompteng.runtime.guest.v1.NanoagentService.ListFiles:output_type -> proompteng.runtime.guest.v1.FileList
 	7,  // 36: proompteng.runtime.guest.v1.NanoagentService.ReadFile:output_type -> proompteng.runtime.guest.v1.FileContent
 	9,  // 37: proompteng.runtime.guest.v1.NanoagentService.WriteFile:output_type -> proompteng.runtime.guest.v1.FileWriteResult
 	5,  // 38: proompteng.runtime.guest.v1.NanoagentService.CreateDirectory:output_type -> proompteng.runtime.guest.v1.FileEntry
 	5,  // 39: proompteng.runtime.guest.v1.NanoagentService.MoveFile:output_type -> proompteng.runtime.guest.v1.FileEntry
-	1,  // 40: proompteng.runtime.guest.v1.NanoagentService.DeleteFile:output_type -> proompteng.runtime.guest.v1.Empty
+	0,  // 40: proompteng.runtime.guest.v1.NanoagentService.DeleteFile:output_type -> proompteng.runtime.guest.v1.Empty
 	13, // 41: proompteng.runtime.guest.v1.NanoagentService.SearchFiles:output_type -> proompteng.runtime.guest.v1.FileSearchResult
 	15, // 42: proompteng.runtime.guest.v1.NanoagentService.WatchFiles:output_type -> proompteng.runtime.guest.v1.FileEvent
 	18, // 43: proompteng.runtime.guest.v1.NanoagentService.CreateTerminal:output_type -> proompteng.runtime.guest.v1.TerminalCreated
 	19, // 44: proompteng.runtime.guest.v1.NanoagentService.ListTerminals:output_type -> proompteng.runtime.guest.v1.TerminalList
-	1,  // 45: proompteng.runtime.guest.v1.NanoagentService.TerminateTerminal:output_type -> proompteng.runtime.guest.v1.Empty
+	0,  // 45: proompteng.runtime.guest.v1.NanoagentService.TerminateTerminal:output_type -> proompteng.runtime.guest.v1.Empty
 	27, // 46: proompteng.runtime.guest.v1.NanoagentService.AttachTerminal:output_type -> proompteng.runtime.guest.v1.TerminalOutput
 	29, // 47: proompteng.runtime.guest.v1.NanoagentService.CodexCall:output_type -> proompteng.runtime.guest.v1.CodexResult
 	30, // 48: proompteng.runtime.guest.v1.NanoagentService.CodexLogin:output_type -> proompteng.runtime.guest.v1.CodexLoginState
-	1,  // 49: proompteng.runtime.guest.v1.NanoagentService.ResolveCodexApproval:output_type -> proompteng.runtime.guest.v1.Empty
+	0,  // 49: proompteng.runtime.guest.v1.NanoagentService.ResolveCodexApproval:output_type -> proompteng.runtime.guest.v1.Empty
 	33, // 50: proompteng.runtime.guest.v1.NanoagentService.WatchCodexEvents:output_type -> proompteng.runtime.guest.v1.CodexEvent
 	32, // [32:51] is the sub-list for method output_type
 	13, // [13:32] is the sub-list for method input_type

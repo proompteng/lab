@@ -47,6 +47,15 @@ performance counters against the manager's inventory of up OSDs.
 
 ## Diagnose the bottleneck
 
+The objectstore gateways use Beast with `tcp_nodelay=1` through `gateway.rgwCommandFlags.rgw_frontends` in
+`argocd/applications/rook-ceph/cluster-values.yaml`. The explicit frontend retains Rook's existing container port
+8080 behind Service port 80; update that override when changing gateway listeners. Ceph's
+[frontend option](https://docs.ceph.com/en/tentacle/radosgw/frontends/#tcp-nodelay) disables Nagle's packet batching.
+Compare exact-byte S3 readback's response-header and body-completion times before and after rollout. A short successful
+read does not qualify sustained original capture capacity or resolve slow backend PUT acknowledgement. Preserve the
+native write deadline and unknown-outcome handling. Rook rolls the two gateways one at a time; verify both effective
+frontend arguments, ready endpoints, existing client writes and fresh telemetry before accepting the change.
+
 The recording rules use seconds, ratios, and queue depth, not milliseconds or percentages. Useful queries are:
 
 ```promql
@@ -75,8 +84,14 @@ or negative link speeds produce no utilization ratio. Weighted disk I/O time est
 disk busy time alone does not establish saturation on a parallel NVMe device.
 
 Correlate `node` with `ceph osd metadata` before attributing an OSD to an HDD or its shared NVMe DB device.
-Do not infer per-application latency from a shared OSD metric. Existing pod-level RBD I/O series identify noisy
-clients; application histograms or a separately authorized disposable-PVC benchmark establish application tails.
+Do not infer per-application latency from a shared OSD metric. The host agent retains kernel `rbd` device counters
+alongside physical disks under `job="node-storage"`. These identify client-volume work after mapping the device to a PVC.
+Resolve the PVC's PV and its CSI `volumeAttributes.imageName`, then match that image to the host's
+`/sys/bus/rbd/devices/*/name` and `block/rbd*`. The agent's read-only sysfs mount exposes these paths under `/host/sys`.
+Archive that mapping with a timestamp during each session and after a remount; `rbd` device numbers are temporary.
+Keep client RBD and physical OSD disk measurements separate when calculating totals. Correlate the SQL trace's
+backend PID and lifetime with PostgreSQL waits for a specific stall. Application histograms or a separately authorized
+disposable-PVC benchmark establish application tails; block counters remain sampled storage context.
 
 ## Remove stale recovery overrides
 

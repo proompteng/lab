@@ -163,7 +163,9 @@ jobs:
             /tmp/tengri-vscode.*/gateway.log
             /tmp/tengri-vscode.*/desktop.log
             /tmp/tengri-vscode.*/proxy.log
-            /tmp/tengri-vscode.*/home/.tengri/vscode/server.log
+            /tmp/tengri-vscode.*/vscode.log
+            /tmp/tengri-vscode.*/browser.log
+            /tmp/tengri-vscode.*/browser-results
           if-no-files-found: ignore
           retention-days: 7
 

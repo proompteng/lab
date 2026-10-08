@@ -1,7 +1,7 @@
 import { gzipSync } from 'node:zlib'
 import { Effect, Result, Schema } from 'effect'
 
-import { canonicalHashV1, sha256 } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import { validateBacktestSourceManifest, validateBacktestSourceReceipt } from '../intraday-replay/source'
 import {
   advanceHistoricalMarketCursor,
@@ -76,10 +76,10 @@ export const replayResearchCaptureInterval = (
       universeHash: cut.universeHash,
       expectedPartitions: cut.expectedPartitions,
     }
-    if (
-      canonicalHashV1(requested) !== canonicalHashV1(selectedRequest) ||
-      cut.universeHash !== canonicalHashV1(universe)
-    )
+    const requestedHash = yield* canonicalHashV1Result(requested)
+    const selectedRequestHash = yield* canonicalHashV1Result(selectedRequest)
+    const universeHash = yield* canonicalHashV1Result(universe)
+    if (requestedHash !== selectedRequestHash || cut.universeHash !== universeHash)
       return yield* Result.fail(fail('Capture interval differs from the independently selected request or universe'))
     const assignments = receipts.filter(
       (receipt) =>
@@ -176,11 +176,14 @@ export const replayResearchCaptureInterval = (
       captureId: verified.seal.captureId,
       consumerEpoch: cut.consumerEpoch,
       exportManifestHash: manifestBytes.contentHash,
-      intervalReceiptHash: canonicalHashV1(cutReceipt),
+      intervalReceiptHash: yield* canonicalHashV1Result(cutReceipt),
       finalConsumerSequence: cut.finalConsumerSequence,
     }
     const events: HistoricalMarketArrival[] = []
-    let cursor: HistoricalMarketCursor = yield* createHistoricalMarketCursor(canonicalHashV1(deliveryModel), universe)
+    let cursor: HistoricalMarketCursor = yield* createHistoricalMarketCursor(
+      yield* canonicalHashV1Result(deliveryModel),
+      universe,
+    )
     for (const [index, receipt] of markets.entries()) {
       const event = receipt.event
       if (event.kind !== 'market-record' || event.originalTransport === undefined)
