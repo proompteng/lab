@@ -315,14 +315,22 @@ The batch store commits the full plan before any candidate request can be claime
 database's request receipts and resolutions, serializes competing recovery, and seals unattempted requests at expiry.
 Requested candidates start concurrently across the complete source-verified batch, within its ten-second
 validity window; a slow, failed, or missing result still makes the batch unusable for an entry.
+If mandatory observation persistence consumes the original validity window before an unrecorded batch can start,
+admission returns typed expiry and observation evaluation waits with `INFERENCE_UNAVAILABLE`. It creates no plan,
+request claim, model call or decision. The retained observation still consumes its signal window, and protection
+checks remain first on every management pass. The admission span and JSON warning retain the batch and cycle IDs,
+original observation and expiry times, checked time and elapsed admission lag. Clock regression, corrupted evidence
+and persistence failures remain errors; recorded batches still recover against their original deadline.
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
 
-The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, to avoid
-repeating pure source replay immediately after binding. Every reread still queries PostgreSQL and requires full
-JSONB equality with that retained body; changed documents take complete validation. Returned documents are detached,
-and completion, supersession, current authority, pricing and expiry checks remain fresh. A retained decoding result
-does not prove that its binding committed and cannot create a missing database row.
+The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, after binding
+or a cold durable read. Every reread still queries PostgreSQL and requires full JSONB equality with that retained
+body. A match returns fresh completion and generation evidence without returning or decoding the full document body;
+changed documents return the complete body and take complete validation. Returned documents are detached, and
+completion, supersession, current authority, pricing and expiry checks remain fresh. A retained decoding result does
+not prove that its binding committed and cannot create a missing database row. The `bayn.cycle.decision-read` stage
+records retained wire bytes, match and body row counts, and elapsed read time without recording document contents.
 
 Native decision binding and position management use these contracts. Deployment and full lifecycle acceptance
 remain separate requirements. Historical inference evidence, an API response, or a batch result grants no execution

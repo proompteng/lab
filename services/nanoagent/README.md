@@ -10,6 +10,12 @@ Nanoagent disables Linux dumpability, closes the pipe after
 reading it, and never returns, hashes into public metadata, or logs the credential. Public health probes remain
 unauthenticated.
 
+Guest preparation also starts one private UID 1000 shell on a PTY for lifecycle readiness. Each ready or resume hook
+checks initialized Nanoagent/Codex, reads the retained workspace, and exchanges a fresh challenge with that same shell
+within one second. The shell and PTY survive in the snapshot; restore does not fork another readiness process.
+Unexpected output, an exited shell, or a timeout fails closed and reaps the probe. This private probe does not consume
+a user terminal session. Native acceptance still exercises real guest files, the user's retained PTY, and Codex RPCs.
+
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared

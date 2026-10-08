@@ -110,31 +110,7 @@ async fn reconcile(
         && current.uid() == microvm.uid()
         && current.metadata.generation == microvm.metadata.generation
     {
-        let mut status = current.status.clone().unwrap_or_default();
-        let capacity = error.downcast_ref::<NoPreparedSlot>().is_some();
-        status.phase = if capacity {
-            MicroVMPhase::Pending
-        } else {
-            MicroVMPhase::Failed
-        };
-        status.guest_ready = false;
-        status.failure_reason = Some(
-            if capacity {
-                "PoolPreparing"
-            } else {
-                "SnapshotLifecycleFailed"
-            }
-            .into(),
-        );
-        status.message = Some(error.to_string());
-        status.conditions = vec![MicroVMCondition {
-            type_: "Ready".into(),
-            status: "False".into(),
-            reason: status.failure_reason.clone().expect("failure reason"),
-            message: error.to_string(),
-            last_transition_at: Utc::now().to_rfc3339(),
-        }];
-        status.observed_generation = microvm.metadata.generation.unwrap_or_default();
+        let status = failure_status(&current, error);
         let _ = patch_status(
             &context.client,
             &context.namespace,
@@ -146,6 +122,42 @@ async fn reconcile(
     }
     result?;
     Ok(Action::requeue(Duration::from_secs(5)))
+}
+
+fn failure_status(microvm: &MicroVM, error: &anyhow::Error) -> MicroVMStatus {
+    let mut status = microvm.status.clone().unwrap_or_default();
+    let capacity = error.downcast_ref::<NoPreparedSlot>().is_some();
+    let phase = if capacity {
+        MicroVMPhase::Pending
+    } else {
+        MicroVMPhase::Failed
+    };
+    let last_transition_at = status
+        .conditions
+        .first()
+        .filter(|_| status.phase == phase)
+        .map(|condition| condition.last_transition_at.clone())
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
+    status.phase = phase;
+    status.guest_ready = false;
+    status.failure_reason = Some(
+        if capacity {
+            "PoolPreparing"
+        } else {
+            "SnapshotLifecycleFailed"
+        }
+        .into(),
+    );
+    status.message = Some(error.to_string());
+    status.conditions = vec![MicroVMCondition {
+        type_: "Ready".into(),
+        status: "False".into(),
+        reason: status.failure_reason.clone().expect("failure reason"),
+        message: error.to_string(),
+        last_transition_at,
+    }];
+    status.observed_generation = microvm.metadata.generation.unwrap_or_default();
+    status
 }
 
 pub async fn converge(
@@ -1745,6 +1757,28 @@ mod tests {
             Some("10".into())
         );
         assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unchanged_failure_does_not_trigger_another_reconciliation() {
+        for error in [anyhow::anyhow!("slot unavailable"), NoPreparedSlot.into()] {
+            let mut microvm = agent();
+            let mut status = failure_status(&microvm, &error);
+            status.conditions[0].last_transition_at = "2026-10-08T19:00:00Z".into();
+            microvm.status = Some(status);
+            let next = failure_status(&microvm, &error);
+            let (client, pending) = mock(vec![]);
+            patch_status(
+                &client,
+                "tengri",
+                &microvm,
+                &next,
+                &metrics::Metrics::default(),
+            )
+            .await
+            .unwrap();
+            assert!(pending.lock().unwrap().is_empty());
+        }
     }
 
     #[test]
