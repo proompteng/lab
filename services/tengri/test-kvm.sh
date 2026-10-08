@@ -5,6 +5,9 @@ set -euo pipefail
 : "${TENGRI_KVM_GUEST_IMAGE:?set the paired real guest boot image}"
 : "${TENGRI_KVM_OUTPUT:?set an absolute local result directory}"
 [[ "$TENGRI_KVM_OUTPUT" == /* && "${TENGRI_KVM_SAMPLES:-50}" =~ ^[1-9][0-9]*$ ]]
+fixture_interface="$(ip -4 route get 1.1.1.1 | awk '{for (i=1; i<NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+[[ "$fixture_interface" =~ ^[a-zA-Z0-9_.:-]+$ ]]
+fixture_network_mtu="$(cat "/sys/class/net/${fixture_interface}/mtu")"
 fixture_name="tengri-kvm-$(date -u +%Y%m%d%H%M%S)-${RANDOM}"
 mkdir -p "$TENGRI_KVM_OUTPUT"
 artifacts_volume="${fixture_name}-artifacts"
@@ -31,5 +34,6 @@ docker run --name "$fixture_name" --cpus=1 --memory=9g --memory-swap=9g --pids-l
   --mount "type=volume,source=${artifacts_volume},target=/guest,readonly" \
   --mount "type=volume,source=${work_volume},target=/work" \
   --env NANOAGENT_RPC_FIXTURE=/fixture/nanoagent-tests \
+  --env "TENGRI_KVM_NETWORK_MTU=${fixture_network_mtu}" \
   --env "TENGRI_GUEST_IMAGE=${guest_digest}" --env "TENGRI_KVM_SAMPLES=${TENGRI_KVM_SAMPLES:-50}" \
   "$TENGRI_KVM_TEST_IMAGE"

@@ -21,8 +21,8 @@ import { GitSourceRevisionSchema, PositiveIntegerSchema, strictParseOptions } fr
 import { sha256 } from '../hash'
 import {
   buildResearchCaptureExportChunk,
-  persistResearchCaptureExportChunk,
   persistResearchCaptureExportSeal,
+  researchCaptureExportChunkHeaderBytes,
   researchCaptureExportEntryReservation,
   researchCaptureExportEnvelopeReservation,
   type ResearchCaptureObjectStore,
@@ -109,7 +109,7 @@ export const makeResearchCaptureRecorder = (
     let previousContentHash: string | null = null
     let queuedBytes = objectStore === undefined ? 0 : researchCaptureExportEnvelopeReservation
     let retainedReceipts = 0
-    let previousIndexHash: string | null = null
+    let previousChunkHash: string | null = null
     let exportManifestHash: string | null = null
     let lastObservedAtMs = 0
     let finished: ResearchCaptureSeal | undefined
@@ -163,7 +163,7 @@ export const makeResearchCaptureRecorder = (
           invalidate(CaptureInvalidation.InvalidEvent)
           return
         }
-        const bytes = Buffer.byteLength(JSON.stringify(retained.success), 'utf8')
+        const bytes = Buffer.byteLength(payload, 'utf8')
         if (objectStore !== undefined && event.kind === 'market-record') {
           if (event.originalTransport === undefined) {
             invalidate(CaptureInvalidation.InvalidEvent)
@@ -258,12 +258,17 @@ export const makeResearchCaptureRecorder = (
             previousContentHash,
             receipts: [],
           }
-          let size = Buffer.byteLength(JSON.stringify(chunk), 'utf8')
+          let size =
+            Buffer.byteLength(JSON.stringify(chunk), 'utf8') +
+            (objectStore === undefined ? 0 : researchCaptureExportChunkHeaderBytes)
           let end = start
           while (end < entries.length) {
             const entry = entries[end]
             if (entry === undefined) break
-            const addedBytes = entry.bytes + (end === start ? 0 : 1)
+            const addedBytes =
+              entry.bytes +
+              (end === start ? 0 : 1) +
+              (objectStore === undefined ? 0 : (entry.rawValue?.byteLength ?? 0))
             if (size + addedBytes > maximumResearchCaptureChunkBytes) break
             size += addedBytes
             end++
@@ -277,24 +282,20 @@ export const makeResearchCaptureRecorder = (
             receipts: entries.slice(start, end).map((entry) => entry.receipt),
           }
           const bytes = encodeResearchCapture(completeChunk)
-          let verifiedIndexHash = previousIndexHash
+          let verifiedChunkHash = previousChunkHash
           yield* boundedWrite(() =>
             Effect.gen(function* () {
               if (claiming) yield* writeSql('append', bytes)
               if (boundedObjects !== undefined) {
-                const objects = buildResearchCaptureExportChunk(
-                  completeChunk,
-                  bytes,
-                  entries.slice(start, end),
-                  previousIndexHash,
-                )
-                verifiedIndexHash = yield* persistResearchCaptureExportChunk(boundedObjects, objects)
+                const object = buildResearchCaptureExportChunk(bytes, entries.slice(start, end), previousChunkHash)
+                yield* boundedObjects.putVerified(object)
+                verifiedChunkHash = object.contentHash
               }
               if (!claiming) yield* writeSql('append', bytes)
             }),
           )
           if (invalidations.has(CaptureInvalidation.Persistence)) return
-          previousIndexHash = verifiedIndexHash
+          previousChunkHash = verifiedChunkHash
           persistedChunks++
           previousContentHash = bytes.contentHash
           persistedReceipts = entries[end - 1]?.receipt.sequence ?? persistedReceipts
@@ -354,8 +355,8 @@ export const makeResearchCaptureRecorder = (
               ? {}
               : {
                   exportRoot: {
-                    schemaVersion: 'bayn.research-capture-export-root.v1' as const,
-                    lastIndexHash: previousIndexHash,
+                    schemaVersion: 'bayn.research-capture-export-root.v2' as const,
+                    lastChunkHash: previousChunkHash,
                     exportedChunks: persistedChunks,
                   },
                 }),

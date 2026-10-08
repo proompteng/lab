@@ -231,6 +231,12 @@ describe('Bayn cycle operations alert contract', () => {
       readonly version: number
       readonly time: { readonly from: string; readonly to: string }
       readonly panels: readonly {
+        readonly datasource:
+          | { readonly type: 'prometheus'; readonly uid: 'prom' }
+          | {
+              readonly type: 'loki'
+              readonly uid: 'loki'
+            }
         readonly description?: string
         readonly gridPos: {
           readonly h: number
@@ -244,6 +250,8 @@ describe('Bayn cycle operations alert contract', () => {
           readonly expr?: string
           readonly instant?: boolean
           readonly legendFormat?: string
+          readonly maxLines?: number
+          readonly queryType?: 'range' | 'instant'
           readonly range?: boolean
           readonly refId?: string
         }[]
@@ -259,7 +267,7 @@ describe('Bayn cycle operations alert contract', () => {
 
     expect(dashboard.uid).toBe('bayn-cycle-operations')
     expect(dashboard.title).toBe('Bayn Trading Operations')
-    expect(dashboard.version).toBe(7)
+    expect(dashboard.version).toBe(8)
     expect(dashboard.time).toEqual({ from: 'now-24h', to: 'now' })
     expect(dashboard.description).toContain('zero orders are explained by the first stage that did not advance')
     expect(dashboard.panels.map(({ title }) => title)).toEqual([
@@ -302,8 +310,36 @@ describe('Bayn cycle operations alert contract', () => {
       'Execution latency',
       'Safety freshness',
       'Running build',
+      'Trace export failures',
+      'Trace export failure logs',
     ])
     expect(new Set(dashboard.panels.map(({ title }) => title)).size).toBe(dashboard.panels.length)
+    const exportFailures = dashboard.panels.find(({ title }) => title === 'Trace export failures')
+    const exportLogs = dashboard.panels.find(({ title }) => title === 'Trace export failure logs')
+    expect(exportFailures?.type).toBe('timeseries')
+    expect(exportLogs?.type).toBe('logs')
+    for (const panel of [exportFailures, exportLogs]) {
+      expect(panel?.datasource).toEqual({ type: 'loki', uid: 'loki' })
+      expect(panel?.targets).toHaveLength(1)
+      expect(panel?.targets?.[0]?.queryType).toBe('range')
+      const expression = panel?.targets?.[0]?.expr
+      expect(expression).toContain('{namespace="bayn",container=~"bayn|execution-controller|activate"}')
+      expect(expression).toMatch(/\|= "bayn\.telemetry\.export" \| json /)
+      expect(expression).toContain('export_stage="annotations.stage"')
+      expect(expression).toContain('export_service="annotations.serviceName"')
+      expect(expression).toContain('export_reason="annotations.failureReason"')
+      expect(expression).toContain('export_http_status="annotations.httpStatus"')
+      expect(expression).toContain('| export_stage="bayn.telemetry.export" | __error__=""')
+      expect(expression).not.toMatch(/vector\(|or\s+(?:on\([^)]*\)\s+)?0/)
+      expect(panel?.description).toContain('unavailable logs')
+    }
+    expect(exportFailures?.targets?.[0]?.expr).toBe(
+      `sum by (export_service, export_reason, export_http_status) (count_over_time(${exportLogs?.targets?.[0]?.expr} [5m]))`,
+    )
+    expect(exportFailures?.description).toContain('failed export attempts')
+    expect(exportFailures?.description).toContain('lost spans')
+    expect(exportLogs?.targets?.[0]?.maxLines).toBe(1000)
+    expect(exportLogs?.options?.dedupStrategy).toBe('none')
     const targetsPanel = dashboard.panels.find(({ title }) => title === 'Targets')
     expect(targetsPanel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
     expect(targetsPanel?.fieldConfig?.defaults?.mappings?.[0]?.options?.['-1']?.text).toBe('NO DECISION')

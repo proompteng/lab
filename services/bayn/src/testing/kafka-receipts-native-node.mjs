@@ -164,23 +164,24 @@ try {
   }
   assert.notEqual(receipts[2].event.rawValueSha256, receipts[3].event.rawValueSha256)
   const objectText = (object) => ({ contentHash: object.contentHash, payload: object.payload.toString('utf8') })
-  const exported = chunks.map((metadata, index) => ({
-    metadata,
-    raw: objects[index * 3].payload,
-    index: objectText(objects[index * 3 + 2]),
-  }))
+  const exported = objects.slice(0, chunks.length)
+  assert.equal(objects.length, chunks.length + 2)
   const verified = Result.getOrThrow(verifyResearchCaptureExport(exported, seals[0], objectText(objects.at(-1))))
+  assert.deepEqual(
+    verified.chunks.map((chunk) => chunk.metadata),
+    chunks,
+  )
   assert.equal(verified.complete, false)
   assert.equal(verified.exportVerified, true)
   assert.deepEqual(
-    Buffer.concat(exported.map((chunk) => chunk.raw)),
+    Buffer.concat(verified.chunks.flatMap((chunk) => [...chunk.rawValues.values()].filter((value) => value !== null))),
     Buffer.concat(payloads.filter((value) => value !== undefined)),
     JSON.stringify({ invalidations, seal: JSON.parse(seals[0].payload) }),
   )
   assert.ok(boundaries.some(({ phase }) => phase === 'ASSIGNED'))
   assert.ok(boundaries.some(({ phase }) => phase === 'STOPPED'))
   console.log(
-    'native Kafka: original bytes, immutable export ranges, tombstones, consumer epoch and offsets verified; UNQUALIFIED',
+    'native Kafka: original bytes, immutable frames, tombstones, consumer epoch and offsets verified; UNQUALIFIED',
   )
 
   const configuredTopics = JSON.parse(readFileSync(process.argv[2], 'utf8'))

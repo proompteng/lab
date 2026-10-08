@@ -20,8 +20,12 @@ and epoch. The controller binds the MicroVM with resourceVersion compare-and-swa
 claims cannot assign two slots to one MicroVM UID or start two owners in one slot. Deletion before a Lease claim
 consumes the candidate epoch with the same Lease CAS, preventing a late claim while retaining the unused prepared slot.
 
-The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker 1.16.1, CPU identity,
-snapshot generation, and owner/epoch. Snapshot restore consumes the generation before vCPUs run, then thaws root/home,
+The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker revision, CPU identity,
+snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
+upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
+buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
+`1.16.1+tengri-direct-io.1`; journals from another VMM revision require fenced recovery. Snapshot restore consumes the
+generation before vCPUs run, then thaws root/home,
 sets the guest clock, binds the owner, and checks files, a PTY round trip, and initialized Codex. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
@@ -52,13 +56,18 @@ mounts only its boot artifacts, disks, token, and sockets.
 The short-lived TAP init container receives NET_ADMIN inside the Pod network namespace. It creates `tengri0`, private
 10.250.0.0/30 addressing, NAT, and protected-destination filtering. It asserts CNI forwarding is already enabled and
 never changes node sysctls, routes, bridges, scheduling, or machine configuration.
+The TAP uses the smaller of the Pod interface MTU and 1500 bytes. TCP SYN and SYN-ACK packets cap their advertised
+segment size in both directions without raising an existing smaller value. The isolated KVM fixture also inherits
+its execution network MTU inside its private Docker interface, so a 1400-byte CNI path is exercised correctly.
+The Linux browser acceptance fixture also uses an ephemeral Docker bridge with that MTU and removes it after the test.
 
 The runner briefly starts as root with MKNOD/SETUID/SETGID. It creates a private device inode in its container's `/dev`
 for the allocated raw home device, then drops to UID/GID 65532 with no effective, permitted, inheritable, or ambient
 capabilities. It never chmods a node device. Firecracker inherits that unprivileged identity, no environment secrets,
 no capabilities, NoNewPrivs, and its default seccomp filter.
 
-The separately reviewed [device allocation](../../argocd/applications/tengri-devices/) delegates only KVM and TUN
+The separately reviewed [device allocation](../../argocd/applications/tengri-devices/) installs slot admission before
+advertising devices and delegates only KVM and TUN
 through the official generic device plugin. The platform ApplicationSet enrolls it in `kube-system` at wave 1, before
 the controller's wave 2. Verify actual device allocations before an authorized cutover. The existing namespace admission
 already permits this narrowly constrained profile; no namespace policy change is required. Existing guest SPIRE
