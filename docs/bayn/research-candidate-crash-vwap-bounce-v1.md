@@ -10,19 +10,19 @@ High-frequency hybrid producer: **bars emit candidates**; **Jev (or a future dec
 
 ## Signal definition (frozen for shadow)
 
-| Field | Value |
-|-------|-------|
-| Family | `crash_vwap_bounce` |
-| Crash | 1-minute close-to-close return ≤ **−80 bp** |
-| VWAP distance | `(close / session_vwap − 1) × 1e4 ≤ −60` |
-| Session age | ≥ **30** minutes after RTH open (09:30 ET) |
-| Bounce confirm | Wait **+1** minute; require `close[t+1] > close[signal]` |
-| Entry | Close of bounce bar (or next open in live wiring) |
-| Max hold | **90** minutes |
-| Stop | **Hard −50 bp** (current Bayn mandate — no change) |
-| Flatten | 15:55 ET |
-| Position | ≤1, ≤20% equity (Bayn envelope) |
-| Cost stress | Research scored at **10 bp** RT; winner also dual-positive at 15 bp |
+| Field          | Value                                                               |
+| -------------- | ------------------------------------------------------------------- |
+| Family         | `crash_vwap_bounce`                                                 |
+| Crash          | 1-minute close-to-close return ≤ **−80 bp**                         |
+| VWAP distance  | `(close / session_vwap − 1) × 1e4 ≤ −60`                            |
+| Session age    | ≥ **30** minutes after RTH open (09:30 ET)                          |
+| Bounce confirm | Wait **+1** minute; require `close[t+1] > close[signal]`            |
+| Entry          | Close of bounce bar (or next open in live wiring)                   |
+| Max hold       | **90** minutes                                                      |
+| Stop           | **Hard −50 bp** (current Bayn mandate — no change)                  |
+| Flatten        | 15:55 ET                                                            |
+| Position       | ≤1, ≤20% equity (Bayn envelope)                                     |
+| Cost stress    | Research scored at **10 bp** RT; winner also dual-positive at 15 bp |
 
 ## What this is not
 
@@ -43,7 +43,7 @@ High-frequency hybrid producer: **bars emit candidates**; **Jev (or a future dec
 These **also** cleared dual ≥$3k but require explicit protocol change before any promote attempt:
 
 1. Delayed stop arm 5–15m with stop=50 (~+$20k cells) — unprotected window
-2. Soft stop (partial exit at −50) 
+2. Soft stop (partial exit at −50)
 3. Wider hard stops 75 / 100 / 150
 4. No stop / time-stop only (v4 path)
 
@@ -51,13 +51,31 @@ These **also** cleared dual ≥$3k but require explicit protocol change before a
 
 ## Shadow mode
 
-Env: `BAYN_HYBRID_CRASH_VWAP`
+Entry point: `services/bayn/src/hybrid-crash-vwap-shadow-command.ts`, built by `bun run build` as
+`dist/hybrid-crash-vwap-shadow-command.js` (script `hybrid:crash-vwap-shadow`). It is not packaged into the Bayn image or
+scheduled by GitOps. It is an offline research command like `bayn-control-study`: it reads one session of 1-minute bars, never touches the broker, the
+ledger or the live `jev` strategy, and writes a new record file (it refuses to overwrite).
 
-| Value | Behavior |
-|-------|----------|
-| `off` (default) | No-op |
-| `shadow` | Evaluate producer; log compare record `bayn.hybrid-crash-vwap.shadow.v1`; **no fill change** |
-| `on` | Coerced to `shadow` until a separate promotion RFC |
+```sh
+BAYN_HYBRID_CRASH_VWAP=shadow node dist/hybrid-crash-vwap-shadow-command.js \
+  --input session-bars.json --input-sha256 <sha256-of-input> --output shadow-record.json
+```
+
+Env `BAYN_HYBRID_CRASH_VWAP` is decoded once at startup through Effect `Config` with the closed vocabulary below. Any
+other value (including `on`) fails startup instead of silently disabling the experiment.
+
+| Value                            | Behavior                                                                                       |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `off` (default; also when unset) | No-op; prints `{"mode":"off","outputPath":null}` and writes nothing                            |
+| `shadow`                         | Evaluate producer; write compare record `bayn.hybrid-crash-vwap.shadow.v1`; **no fill change** |
+
+There is no `on` value until a separate promotion RFC adds one.
+
+Input (`bayn.hybrid-crash-vwap.session-bars.v1`) is Schema-decoded and validated: ISO `sessionDate`, bars filed under
+their own symbol, strictly ascending `minuteOfDay` (America/New_York), positive OHLC with open and close inside `[low, high]`, and
+non-negative volume. The crash return and the +1 minute bounce confirm require exact minute continuity; a gap in sparse
+IEX bars excludes that opportunity rather than stretching the frozen 1-minute signal. `evaluatedAt` comes from the Effect
+`Clock`, so a replay under a fixed clock reproduces the same record and `recordHash`.
 
 ## Prospective freeze checklist (before any promote RFC)
 
