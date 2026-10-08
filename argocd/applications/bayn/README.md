@@ -22,6 +22,12 @@ The Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; the ConfigM
 RGW account, additional application user, IAM policy, policy allowlist change, or bootstrap Job is required for this path.
 The existing controller-scoped RGW egress permits TCP 8080, the target of service port 80.
 
+The execution worker receives the existing reflected owner keys through `BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID`
+and `BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY`. Its bucket and region come from the reflected ConfigMap.
+The public status service and activation hook receive no research credential. This approved access change leaves
+`BAYN_RESEARCH_CAPTURE_SESSION` absent, so it starts no recorder, S3 client or capture writes. Before enabling a fixed
+session, verify the source/reflection match without printing keys and pass native integrity and representative capacity.
+
 Bayn-specific acceptance does not run as a hook of the shared Rook application. The former
 `bayn-research-storage-bootstrap` Job, code-only ConfigMap generator, and obsolete scripts are absent from desired state.
 Its earlier positive checks did not complete
