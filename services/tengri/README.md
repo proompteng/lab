@@ -55,6 +55,7 @@ never changes node sysctls, routes, bridges, scheduling, or machine configuratio
 The TAP uses the smaller of the Pod interface MTU and 1500 bytes. TCP SYN and SYN-ACK packets cap their advertised
 segment size in both directions without raising an existing smaller value. The isolated KVM fixture also inherits
 its execution network MTU inside its private Docker interface, so a 1400-byte CNI path is exercised correctly.
+The Linux browser acceptance fixture also uses an ephemeral Docker bridge with that MTU and removes it after the test.
 
 The runner briefly starts as root with MKNOD/SETUID/SETGID. It creates a private device inode in its container's `/dev`
 for the allocated raw home device, then drops to UID/GID 65532 with no effective, permitted, inheritable, or ambient

@@ -129,9 +129,9 @@ jobs:
         with:
           toolchain: 1.90.0
 
-      - name: Install editor acceptance protobuf compiler
+      - name: Install editor acceptance prerequisites
         if: ${{ matrix.target == 'landing' }}
-        run: sudo apt-get install --yes --no-install-recommends protobuf-compiler
+        run: sudo apt-get install --yes --no-install-recommends protobuf-compiler iproute2
 
       - name: Run landing validation
         if: ${{ matrix.target == 'landing' }}
