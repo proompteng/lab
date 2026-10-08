@@ -925,8 +925,9 @@ mod tests {
         };
         slot.transition(saving.clone()).await.unwrap();
         slot.vm = Some(Vmm::from_child(
-            tokio::process::Command::new("sleep")
-                .arg("30")
+            tokio::process::Command::new("cat")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
                 .kill_on_drop(true)
                 .spawn()
                 .unwrap(),
