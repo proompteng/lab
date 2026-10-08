@@ -178,7 +178,11 @@ A reviewed cutover follows this order:
    paired artifacts, kernel/Firecracker pins, measurement boundary, p50/p95/max, RAM release, failures, and exclusions.
 2. Through reviewed GitOps, reconcile only approved device/host-SPIRE prerequisites. Verify actual allocations and
    supervisor identity without modifying nodes. Confirm the slot admission policy and its Deny binding are installed
-   before KVM/TUN allocations are advertised. Do not remove registrations used by running old guests yet.
+   before KVM/TUN allocations are advertised. Before the initial device Application enrollment, record zero advertised
+   `runtime.proompteng.ai/kvm-tun` capacity across all nodes and zero existing Pod requests or limits for that resource
+   across all namespaces, including pending Pods. A new admission policy does not fence earlier allocations. If either
+   inventory is nonempty, stop enrollment and obtain scoped authority to fence those allocations or withdraw the
+   plugin; prove the inventories are empty before proceeding. Do not remove registrations used by running old guests yet.
 3. Stop only the approved old Tengri guests at the owner/maintenance boundary. Prove the old VMM/process and its
    storage writer are fenced. Retain every original MicroVM UID, home PVC UID, filesystem, ownership, and contents.
    Keep the old controller quiesced throughout fencing and enrollment so it cannot restart old writers or recreate bootstrap Secrets.
