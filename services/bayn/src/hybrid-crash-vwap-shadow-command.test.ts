@@ -63,8 +63,10 @@ describe('hybrid crash-VWAP shadow command', () => {
         ...Array.from({ length: 35 }, (_, m) => ({ minuteOfDay: open + m, close: 100 })),
         { minuteOfDay: open + 35, close: 99 },
         { minuteOfDay: open + 36, close: 99.2 },
+        { minuteOfDay: open + 37, close: 99.3 },
       ].map(({ minuteOfDay, close }) => ({
         symbol: 'CRDO',
+        timestamp: new Date(Date.UTC(2026, 9, 7, 4, minuteOfDay)).toISOString(),
         minuteOfDay,
         open: close,
         high: close,
@@ -75,6 +77,15 @@ describe('hybrid crash-VWAP shadow command', () => {
       const input = JSON.stringify({
         schemaVersion: hybridCrashVwapSessionBarsSchemaVersion,
         sessionDate: '2026-10-07',
+        source: {
+          provider: 'alpaca',
+          feed: 'iex',
+          datasetId: 'synthetic-test',
+          calendarSource: 'synthetic-test',
+          universe: ['CRDO'],
+          completedThroughMinuteOfDay: open + 37,
+          sessionCloseMinuteOfDay: 960,
+        },
         barsBySymbol: { CRDO: bars },
       })
       const inputPath = join(directory, 'bars.json')
@@ -111,7 +122,7 @@ describe('hybrid crash-VWAP shadow command', () => {
         mode: HybridCrashVwapMode.Shadow,
         sessionDate: '2026-10-07',
         evaluatedAt: '2026-10-07T20:05:00.000Z',
-        candidates: [{ symbol: 'CRDO', signalMinuteOfDay: open + 35, entryMinuteOfDay: open + 36 }],
+        candidates: [{ symbol: 'CRDO', signalMinuteOfDay: open + 35, entryMinuteOfDay: open + 37 }],
       })
       expect(JSON.parse(stdout.join(''))).toMatchObject({ mode: 'shadow', outputPath, candidates: 1 })
 

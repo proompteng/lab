@@ -1,7 +1,7 @@
 /**
  * RESEARCH hybrid producer: crash ∩ VWAP + bounce confirm.
  *
- * Schema: bayn.hybrid-crash-vwap.shadow.v1
+ * Schema: bayn.hybrid-crash-vwap.shadow.v2
  * Status: RESEARCH_ONLY — never changes live fills.
  *
  * Mode is decoded once at the command boundary (`BAYN_HYBRID_CRASH_VWAP`, see
@@ -18,11 +18,12 @@ import {
   PositiveFiniteSchema,
   strictParseOptions,
   SymbolSchema,
+  UtcSourceTimestampSchema,
 } from '../schemas'
 
-export const hybridCrashVwapSchemaVersion = 'bayn.hybrid-crash-vwap.shadow.v1' as const
-export const hybridCrashVwapSessionBarsSchemaVersion = 'bayn.hybrid-crash-vwap.session-bars.v1' as const
-export const hybridCrashVwapModel = 'crash-vwap-bounce-1.0.0' as const
+export const hybridCrashVwapSchemaVersion = 'bayn.hybrid-crash-vwap.shadow.v2' as const
+export const hybridCrashVwapSessionBarsSchemaVersion = 'bayn.hybrid-crash-vwap.session-bars.v2' as const
+export const hybridCrashVwapModel = 'crash-vwap-bounce-2.0.0' as const
 
 /** Frozen research definition — do not retune without a new candidate id. */
 export const hybridCrashVwapParams = {
@@ -34,6 +35,7 @@ export const hybridCrashVwapParams = {
   stopBp: 50,
   rthOpenMinutes: 9 * 60 + 30, // 09:30 ET as minute-of-day
   flattenMinutes: 15 * 60 + 55, // 15:55 ET
+  signalCutoffBeforeFlattenMinutes: 5,
 } as const
 
 /** Closed `BAYN_HYBRID_CRASH_VWAP` vocabulary. There is no live mode until a separate promotion RFC. */
@@ -48,6 +50,8 @@ const MinuteOfDaySchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximu
 
 export const HybridBarSchema = Schema.Struct({
   symbol: SymbolSchema,
+  /** Start of the one-minute bar, matching the declared New York session. */
+  timestamp: UtcSourceTimestampSchema,
   /** Minutes from midnight in America/New_York (RTH clock). */
   minuteOfDay: MinuteOfDaySchema,
   open: PositiveFiniteSchema,
@@ -62,6 +66,15 @@ export type HybridBar = typeof HybridBarSchema.Type
 export const HybridCrashVwapSessionBarsSchema = Schema.Struct({
   schemaVersion: Schema.Literal(hybridCrashVwapSessionBarsSchemaVersion),
   sessionDate: IsoDateSchema,
+  source: Schema.Struct({
+    provider: Schema.Literal('alpaca'),
+    feed: Schema.Literal('iex'),
+    datasetId: Schema.String.check(Schema.isMinLength(1)),
+    calendarSource: Schema.String.check(Schema.isMinLength(1)),
+    sessionCloseMinuteOfDay: Schema.Literals([780, 960]),
+    universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1)),
+    completedThroughMinuteOfDay: MinuteOfDaySchema,
+  }),
   barsBySymbol: Schema.Record(SymbolSchema, Schema.Array(HybridBarSchema)),
 })
 
@@ -80,7 +93,10 @@ export type HybridCrashVwapCandidate = {
   readonly vwapDistBp: number
   readonly sessionVwap: number
   readonly signalClose: number
-  readonly entryClose: number
+  readonly confirmationMinuteOfDay: number
+  readonly confirmationClose: number
+  readonly entryOpen: number
+  readonly entryBasis: 'NEXT_BAR_OPEN_RESEARCH_PROXY_NOT_EXECUTABLE_QUOTE'
 }
 
 export type HybridCrashVwapShadowRecord = {
@@ -91,6 +107,11 @@ export type HybridCrashVwapShadowRecord = {
   readonly evaluatedAt: string
   readonly params: typeof hybridCrashVwapParams
   readonly candidates: readonly HybridCrashVwapCandidate[]
+  readonly source: HybridCrashVwapSessionBars['source']
+  readonly qualification: 'UNQUALIFIED_SOURCE_DECLARATION_NOT_INDEPENDENTLY_VERIFIED'
+  readonly acceptanceEligible: false
+  readonly historicalEvidence: 'UNVERIFIED_GENERATOR_AND_CORPUS_UNAVAILABLE_NO_RERUN'
+  readonly exclusions: readonly { readonly symbol: string; readonly reason: 'INCOMPLETE_RTH_MINUTE_COVERAGE' }[]
   readonly note: 'RESEARCH_ONLY_no_live_fills'
 }
 
@@ -108,9 +129,52 @@ export const decodeHybridCrashVwapSessionBars = (text: string) =>
         (cause) => new HybridCrashVwapFailure({ message: 'Hybrid crash-VWAP session bars are malformed', cause }),
       ),
     )
+    const clock = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    })
+    if (
+      new Set(session.source.universe).size !== session.source.universe.length ||
+      session.source.completedThroughMinuteOfDay < hybridCrashVwapParams.rthOpenMinutes ||
+      session.source.completedThroughMinuteOfDay >= session.source.sessionCloseMinuteOfDay
+    )
+      return yield* Result.fail(
+        new HybridCrashVwapFailure({
+          message: 'Hybrid crash-VWAP declared universe or completion watermark is invalid',
+        }),
+      )
     for (const [symbol, bars] of Object.entries(session.barsBySymbol)) {
+      if (!session.source.universe.includes(symbol))
+        return yield* Result.fail(
+          new HybridCrashVwapFailure({
+            message: `Hybrid crash-VWAP symbol ${symbol} is outside the declared universe`,
+          }),
+        )
       let previousMinute = -1
       for (const bar of bars) {
+        const parts = Object.fromEntries(
+          clock.formatToParts(new Date(bar.timestamp)).map((part) => [part.type, part.value]),
+        )
+        if (
+          `${parts['year']}-${parts['month']}-${parts['day']}` !== session.sessionDate ||
+          Number(parts['hour']) * 60 + Number(parts['minute']) !== bar.minuteOfDay ||
+          Date.parse(bar.timestamp) % 60_000 !== 0 ||
+          !/:00(?:\.0+)?Z$/.test(bar.timestamp) ||
+          bar.minuteOfDay < hybridCrashVwapParams.rthOpenMinutes ||
+          bar.minuteOfDay >= session.source.sessionCloseMinuteOfDay ||
+          bar.minuteOfDay > session.source.completedThroughMinuteOfDay
+        )
+          return yield* Result.fail(
+            new HybridCrashVwapFailure({
+              message: `Hybrid crash-VWAP bar ${symbol} has inconsistent RTH session identity`,
+            }),
+          )
         if (bar.symbol !== symbol)
           return yield* Result.fail(
             new HybridCrashVwapFailure({ message: `Hybrid crash-VWAP bar ${bar.symbol} is filed under ${symbol}` }),
@@ -145,10 +209,14 @@ export const sessionVwapSeries = (bars: readonly HybridBar[]): number[] => {
   let pv = 0
   let vv = 0
   for (const b of bars) {
+    if (b.minuteOfDay < hybridCrashVwapParams.rthOpenMinutes) {
+      out.push(Number.NaN)
+      continue
+    }
     const tp = (b.high + b.low + b.close) / 3
     pv += tp * b.volume
     vv += b.volume
-    out.push(vv > 0 ? pv / vv : b.close)
+    out.push(vv > 0 ? pv / vv : Number.NaN)
   }
   return out
 }
@@ -162,8 +230,10 @@ export const sessionVwapSeries = (bars: readonly HybridBar[]): number[] => {
 export const collectCrashVwapBounceCandidates = (
   bars: readonly HybridBar[],
   params: typeof hybridCrashVwapParams = hybridCrashVwapParams,
+  sessionCloseMinuteOfDay = 960,
 ): HybridCrashVwapCandidate[] => {
-  if (bars.length < 3) return []
+  if (bars.length < 4 || bars[0]?.minuteOfDay !== params.rthOpenMinutes) return []
+  const flatten = Math.min(params.flattenMinutes, sessionCloseMinuteOfDay - 5)
   const vwap = sessionVwapSeries(bars)
   const out: HybridCrashVwapCandidate[] = []
   for (let i = 1; i < bars.length; i++) {
@@ -171,27 +241,34 @@ export const collectCrashVwapBounceCandidates = (
     const previous = bars[i - 1]
     const signalVwap = vwap[i]
     if (signal === undefined || previous === undefined || signalVwap === undefined) continue
+    // A late or gapped prefix cannot supply cumulative session VWAP. Never invent sparse IEX bars.
+    if (signal.minuteOfDay !== params.rthOpenMinutes + i) break
     if (previous.minuteOfDay !== signal.minuteOfDay - 1) continue
     const age = signal.minuteOfDay - params.rthOpenMinutes
     if (age < params.ageMinMinutes) continue
-    if (signal.minuteOfDay >= params.flattenMinutes - 5) continue
-    if (previous.close <= 0 || signalVwap <= 0) continue
+    if (signal.minuteOfDay >= flatten - params.signalCutoffBeforeFlattenMinutes) continue
+    if (previous.close <= 0 || !Number.isFinite(signalVwap) || signalVwap <= 0) continue
     const crashBp = (signal.close / previous.close - 1) * 1e4
     const distBp = (signal.close / signalVwap - 1) * 1e4
     if (crashBp > -params.crashBp || distBp > -params.vwapDistBp) continue
     const bounce = bars[i + params.bounceBars]
     if (bounce === undefined || bounce.minuteOfDay !== signal.minuteOfDay + params.bounceBars) continue
     if (bounce.close <= signal.close) continue
-    if (bounce.minuteOfDay >= params.flattenMinutes - 2) continue
+    const entry = bars[i + params.bounceBars + 1]
+    if (entry === undefined || entry.minuteOfDay !== bounce.minuteOfDay + 1 || entry.minuteOfDay >= flatten) continue
+    if ([previous, signal, bounce, entry].some((bar) => bar.volume <= 0)) continue
     out.push({
       symbol: signal.symbol,
       signalMinuteOfDay: signal.minuteOfDay,
-      entryMinuteOfDay: bounce.minuteOfDay,
+      entryMinuteOfDay: entry.minuteOfDay,
       crashBp,
       vwapDistBp: distBp,
       sessionVwap: signalVwap,
       signalClose: signal.close,
-      entryClose: bounce.close,
+      confirmationMinuteOfDay: bounce.minuteOfDay,
+      confirmationClose: bounce.close,
+      entryOpen: entry.open,
+      entryBasis: 'NEXT_BAR_OPEN_RESEARCH_PROXY_NOT_EXECUTABLE_QUOTE',
     })
   }
   return out
@@ -203,10 +280,21 @@ export const evaluateHybridCrashVwapShadow = (input: {
   readonly evaluatedAt: string
 }): HybridCrashVwapShadowRecord => {
   const candidates: HybridCrashVwapCandidate[] = []
-  for (const symbol of Object.keys(input.session.barsBySymbol).toSorted()) {
+  const exclusions: { symbol: string; reason: 'INCOMPLETE_RTH_MINUTE_COVERAGE' }[] = []
+  for (const symbol of input.session.source.universe.toSorted()) {
     const bars = input.session.barsBySymbol[symbol]
-    if (bars === undefined || bars.length === 0) continue
-    candidates.push(...collectCrashVwapBounceCandidates(bars))
+    if (bars === undefined) {
+      exclusions.push({ symbol, reason: 'INCOMPLETE_RTH_MINUTE_COVERAGE' })
+      continue
+    }
+    if (
+      bars.length !== input.session.source.completedThroughMinuteOfDay - hybridCrashVwapParams.rthOpenMinutes + 1 ||
+      bars.some((bar, i) => bar.minuteOfDay !== hybridCrashVwapParams.rthOpenMinutes + i)
+    )
+      exclusions.push({ symbol, reason: 'INCOMPLETE_RTH_MINUTE_COVERAGE' })
+    candidates.push(
+      ...collectCrashVwapBounceCandidates(bars, hybridCrashVwapParams, input.session.source.sessionCloseMinuteOfDay),
+    )
   }
   candidates.sort(
     (a, b) => a.entryMinuteOfDay - b.entryMinuteOfDay || (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0),
@@ -219,6 +307,11 @@ export const evaluateHybridCrashVwapShadow = (input: {
     evaluatedAt: input.evaluatedAt,
     params: hybridCrashVwapParams,
     candidates,
+    source: input.session.source,
+    qualification: 'UNQUALIFIED_SOURCE_DECLARATION_NOT_INDEPENDENTLY_VERIFIED',
+    acceptanceEligible: false,
+    historicalEvidence: 'UNVERIFIED_GENERATOR_AND_CORPUS_UNAVAILABLE_NO_RERUN',
+    exclusions,
     note: 'RESEARCH_ONLY_no_live_fills',
   }
 }

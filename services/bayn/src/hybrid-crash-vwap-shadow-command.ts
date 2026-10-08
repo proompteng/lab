@@ -84,6 +84,10 @@ export const runHybridCrashVwapShadowCommand = (rawArgs: readonly string[]) =>
       recordHash,
       sessionDate: record.sessionDate,
       candidates: record.candidates.length,
+      qualification: record.qualification,
+      acceptanceEligible: record.acceptanceEligible,
+      historicalEvidence: record.historicalEvidence,
+      exclusions: record.exclusions,
     }
     yield* Effect.logInfo('Hybrid crash-VWAP shadow record written').pipe(Effect.annotateLogs(summary))
     yield* print(JSON.stringify(summary))
