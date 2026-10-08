@@ -3736,6 +3736,31 @@ test('keeps Dock tooltips above magnified artwork, centers idle icons, and stays
   await expectWithinViewport(settings)
 })
 
+test('keeps a wide focused Dock tooltip within the viewport while neighbouring icons magnify', async ({ page }) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.setViewportSize({ width: 640, height: 680 })
+  await page.goto('/')
+  await page.addStyleTag({ content: '[data-tengri-dock] [role="tooltip"] { min-width: 350px; }' })
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  const finder = dock.getByRole('button', { name: 'Open Finder' })
+  const tooltip = finder.locator('[role="tooltip"]')
+  await finder.focus()
+  await expect(tooltip).toHaveCSS('opacity', '1')
+  await expect.poll(async () => (await tooltip.boundingBox())?.x ?? -1).toBeGreaterThanOrEqual(0)
+
+  const code = dock.getByRole('button', { name: 'Open Code' })
+  await code.hover()
+  await expect.poll(async () => (await code.locator('img').boundingBox())?.width ?? 0).toBeGreaterThan(70)
+  await expect(finder).toBeFocused()
+  await expect(tooltip).toHaveCSS('opacity', '1')
+  const bounds = await tooltip.boundingBox()
+  if (!bounds) throw new Error('Focused Dock tooltip is missing')
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(640)
+})
+
 test('minimizes to the app icon and leaves hidden window geometry idle during clock and menu updates', async ({
   page,
 }) => {
