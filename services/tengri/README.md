@@ -52,6 +52,9 @@ mounts only its boot artifacts, disks, token, and sockets.
 The short-lived TAP init container receives NET_ADMIN inside the Pod network namespace. It creates `tengri0`, private
 10.250.0.0/30 addressing, NAT, and protected-destination filtering. It asserts CNI forwarding is already enabled and
 never changes node sysctls, routes, bridges, scheduling, or machine configuration.
+The TAP uses the smaller of the Pod interface MTU and 1500 bytes. TCP SYN and SYN-ACK packets cap their advertised
+segment size in both directions without raising an existing smaller value. The isolated KVM fixture also inherits
+its execution network MTU inside its private Docker interface, so a 1400-byte CNI path is exercised correctly.
 
 The runner briefly starts as root with MKNOD/SETUID/SETGID. It creates a private device inode in its container's `/dev`
 for the allocated raw home device, then drops to UID/GID 65532 with no effective, permitted, inheritable, or ambient
