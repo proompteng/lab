@@ -90,6 +90,9 @@ RWX performance workflow:
 
 1. `docs/runbooks/rook-ceph-rwx-performance.md`
 
+For host and client-volume counters and timestamped RBD mappings, use
+[`ceph-performance-telemetry.md`](ceph-performance-telemetry.md).
+
 ## Scrub Catch-Up Posture
 
 The current OSD posture clears deep-scrub debt on the shared HDDs. Scrubs can
