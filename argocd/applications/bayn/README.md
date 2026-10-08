@@ -53,7 +53,9 @@ the comparison. A serialized data writer appends 128KiB of random bytes and call
 Archive every phase's transaction count, nearest-rank p50/p95/p99/max latency, count above one second, version/settings, WAL path,
 filesystem and WAL IO counters. The Job emits raw measured transaction logs to stdout between phase markers,
 including partial logs when the benchmark fails. Archive that stdout with `kubectl logs` before Pod or log retention
-expires. Record simultaneous Ceph scrub and shared IO conditions. A failed or incomplete Job has no comparative
+expires. Termination cleanup emits completed samples between `BAYN_WAL_CANARY_FAILURE_RAW_BEGIN` and
+`BAYN_WAL_CANARY_FAILURE_RAW_END`; preserve them as an incomplete phase, without counting them again as a successful
+phase. Record simultaneous Ceph scrub and shared IO conditions. A failed or incomplete Job has no comparative
 result; it has no retry and a fifteen-minute active deadline including the settling interval. Startup and benchmark
 failures emit their retained local logs. A failed competing writer also rejects the phase. These short local durability
 measurements do not include cross-host synchronous replication, S3 verification or original-session receipt capacity. The production

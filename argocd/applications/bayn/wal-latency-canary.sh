@@ -32,6 +32,13 @@ cleanup() {
         cat "$canary_log"
       fi
     done
+    for canary_log in "$canary_work"/transactions.*; do
+      if [[ -f $canary_log ]]; then
+        printf 'BAYN_WAL_CANARY_FAILURE_RAW_BEGIN file=%s exitCode=%s\n' "$canary_log" "$canary_exit"
+        cat "$canary_log"
+        printf 'BAYN_WAL_CANARY_FAILURE_RAW_END file=%s\n' "$canary_log"
+      fi
+    done
   fi
   exit "$canary_exit"
 }
