@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, useMotionValue, useMotionValueEvent, useSpring, useTransform } from 'motion/react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
 
 import { APP_TITLES } from '@/lib/tengri/window-manager'
@@ -120,7 +120,7 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
       id={`tengri-dock-${app}`}
       type="button"
       aria-label={`Open ${APP_TITLES[app]}`}
-      className="group relative flex h-[68px] w-14 shrink-0 touch-manipulation items-center justify-center rounded-[14px] px-0 pb-1 outline-none transition-colors duration-150 focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent motion-reduce:transition-none"
+      className="group relative flex h-[68px] w-[var(--dock-icon-size)] shrink-0 touch-manipulation items-center justify-center rounded-[14px] px-0 pb-1 outline-none transition-colors duration-150 focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent motion-reduce:transition-none"
       style={{ x: offset }}
       onClick={() => onOpenApp(app)}
       onFocus={() => setFocused(true)}
@@ -128,7 +128,7 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
     >
       <motion.span
         aria-hidden="true"
-        className="absolute bottom-0 left-1/2 h-[68px] w-14 origin-bottom -translate-x-1/2"
+        className="absolute bottom-0 left-1/2 h-[68px] w-[var(--dock-icon-size)] origin-bottom -translate-x-1/2"
         style={{ scaleX: scale, scaleY: hitScaleY }}
       />
       <motion.span
@@ -142,14 +142,14 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
       </motion.span>
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-1/2 grid h-14 w-14 -translate-y-[calc(50%-0.1875rem)] place-items-center"
+        className="pointer-events-none absolute inset-x-0 top-1/2 grid h-[var(--dock-icon-size)] w-[var(--dock-icon-size)] -translate-y-[calc(50%-0.1875rem)] place-items-center"
       >
         <motion.span
           aria-hidden="true"
-          className="grid h-14 w-14 shrink-0 place-items-center will-change-transform"
+          className="grid h-[var(--dock-icon-size)] w-[var(--dock-icon-size)] shrink-0 place-items-center will-change-transform"
           style={{ y: lift, scale, transformOrigin: 'bottom center' }}
         >
-          <DesktopAppIcon app={app} className="size-14" />
+          <DesktopAppIcon app={app} className="size-[var(--dock-icon-size)]" />
         </motion.span>
       </span>
       <span
@@ -267,6 +267,7 @@ export function DesktopDock({
     <nav
       ref={navRef}
       aria-label="Dock"
+      style={{ '--dock-icon-size': `clamp(40px, calc((100vw - 56px) / ${DOCK_APPS.length}), 56px)` } as CSSProperties}
       className="pointer-events-auto relative flex h-[76px] max-w-[calc(100vw-1rem)] items-end justify-center gap-[clamp(0px,0.8vw,0.5rem)] overflow-visible rounded-[18px] border border-transparent px-[clamp(0.25rem,1.25vw,0.75rem)] pt-0 pb-1.5 touch-manipulation select-none"
       data-tengri-dock="true"
       onPointerEnter={handlePointerEnter}

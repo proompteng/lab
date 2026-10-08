@@ -84,8 +84,14 @@ or negative link speeds produce no utilization ratio. Weighted disk I/O time est
 disk busy time alone does not establish saturation on a parallel NVMe device.
 
 Correlate `node` with `ceph osd metadata` before attributing an OSD to an HDD or its shared NVMe DB device.
-Do not infer per-application latency from a shared OSD metric. Existing pod-level RBD I/O series identify noisy
-clients; application histograms or a separately authorized disposable-PVC benchmark establish application tails.
+Do not infer per-application latency from a shared OSD metric. The host agent retains kernel `rbd` device counters
+alongside physical disks under `job="node-storage"`. These identify client-volume work after mapping the device to a PVC.
+Resolve the PVC's PV and its CSI `volumeAttributes.imageName`, then match that image to the host's
+`/sys/bus/rbd/devices/*/name` and `block/rbd*`. The agent's read-only sysfs mount exposes these paths under `/host/sys`.
+Archive that mapping with a timestamp during each session and after a remount; `rbd` device numbers are temporary.
+Keep client RBD and physical OSD disk measurements separate when calculating totals. Correlate the SQL trace's
+backend PID and lifetime with PostgreSQL waits for a specific stall. Application histograms or a separately authorized
+disposable-PVC benchmark establish application tails; block counters remain sampled storage context.
 
 ## Remove stale recovery overrides
 

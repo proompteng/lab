@@ -687,6 +687,7 @@ sleep 30
 	}
 
 	supervisor := newCodexSupervisor(binary, directory)
+	supervisor.browserMCP = true
 	supervisor.start()
 	t.Cleanup(supervisor.close)
 
@@ -706,6 +707,11 @@ sleep 30
 			args, err := os.ReadFile(arguments)
 			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.1-sol\n") {
 				t.Fatalf("Codex default model arguments = %q, error = %v", args, err)
+			}
+			for _, browserOption := range []string{`mcp_servers.tengri_browser.args=["browser-mcp"]`, "mcp_servers.tengri_browser.tool_timeout_sec=300", "mcp_servers.tengri_browser.required=true"} {
+				if !strings.Contains(string(args), browserOption+"\n") {
+					t.Fatalf("Codex browser configuration missing %s: %q", browserOption, args)
+				}
 			}
 			return
 		}

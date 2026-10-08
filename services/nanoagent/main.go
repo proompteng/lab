@@ -42,6 +42,13 @@ type evidence struct {
 type fileReader func(string) ([]byte, error)
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "browser-mcp" {
+		if err := runBrowserMCP(os.Stdin, os.Stdout, os.Getenv("HOME")); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if len(os.Args) == 2 && os.Args[1] == "guest-init" {
 		if err := runGuestInit(logger); err != nil {
@@ -122,6 +129,9 @@ func run(logger *slog.Logger) error {
 		bootstrapToken:      bootstrapToken,
 		codeServerBinary:    os.Getenv("CODE_SERVER_BINARY"),
 		codeServerBootstrap: os.Getenv("CODE_SERVER_BOOTSTRAP_COMMAND"),
+		browserBinary:       os.Getenv("BROWSER_BINARY"),
+		browserBootstrap:    os.Getenv("BROWSER_BOOTSTRAP_COMMAND"),
+		browserAssets:       os.Getenv("BROWSER_ASSETS_DIRECTORY"),
 		codexBinary:         codexBinary,
 		evidence:            current,
 		homeRoot:            homeRoot,

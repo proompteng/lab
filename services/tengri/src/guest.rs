@@ -28,6 +28,7 @@ pub use codex_options::CodexOptions;
 
 pub(crate) const GUEST_API_PORT: u16 = 8443;
 pub const EDITOR_PORT: u16 = 13337;
+pub const BROWSER_PORT: u16 = 13339;
 pub const EDITOR_BRIDGE_PORT: u16 = 13338;
 const BOOTSTRAP_TOKEN_KEY: &str = "token";
 const MAX_GUEST_FILE_BYTES: usize = 4 << 20;
@@ -167,7 +168,7 @@ pub struct CodexEvent {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CodexCallResponse {
-    result: Value,
+    pub(crate) result: Value,
     #[serde(default)]
     event_sequence: u64,
 }
@@ -317,6 +318,10 @@ impl GuestClient {
     }
     pub async fn open_editor(&self) -> Result<(), GuestError> {
         self.rpc.open_editor().await
+    }
+
+    pub async fn open_browser(&self) -> Result<(), GuestError> {
+        self.rpc.open_browser().await
     }
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
         self.rpc.list_files(path).await

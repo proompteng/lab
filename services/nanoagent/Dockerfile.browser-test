@@ -1,0 +1,19 @@
+FROM mcr.microsoft.com/playwright:v1.59.1-noble
+LABEL ai.proompteng.tengri.browser-test=true
+
+RUN apt-get update && apt-get install --yes --no-install-recommends \
+    curl jq tigervnc-standalone-server openbox scrot x11-utils xauth xclip xdotool \
+    && rm -rf /var/lib/apt/lists/* \
+    && set -- /ms-playwright/chromium-*/chrome-linux*/chrome_sandbox \
+    && test "$#" -eq 1 && test -x "$1" \
+    && install -o root -g root -m 4755 "$1" /usr/local/sbin/chrome-devel-sandbox \
+    && ln -s /usr/local/sbin/chrome-devel-sandbox "${1%/*}/chrome-sandbox" \
+    && install -d -o 1000 -g 1000 /home/nanoagent /usr/share/nanoagent/novnc \
+    && curl --fail --location --silent --show-error --retry 3 \
+       https://registry.npmjs.org/@novnc/novnc/-/novnc-1.7.0.tgz -o /tmp/novnc.tgz \
+    && echo '32689f18d6abe96bc6530828a6bd0b9ae33bda07c083a6575ed255b5a8f2e903  /tmp/novnc.tgz' | sha256sum --check --status - \
+    && tar -xzf /tmp/novnc.tgz -C /usr/share/nanoagent/novnc --strip-components=1 \
+    && rm /tmp/novnc.tgz
+COPY --chmod=0555 bootstrap-browser.sh /usr/local/bin/bootstrap-browser
+ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox \
+    CHROMIUM_BINARY=/home/nanoagent/.local/bin/chromium

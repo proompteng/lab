@@ -144,7 +144,7 @@ impl Vmm {
         .await?;
         vm.request(Method::PUT, "/boot-source", json!({
             "kernel_image_path": config.kernel,
-            "boot_args": format!("console={} reboot=k panic=1 pci=off root=/dev/vda rw init=/usr/local/sbin/tengri-init", if cfg!(target_arch = "aarch64") {"ttyAMA0"} else {"ttyS0"})
+            "boot_args": "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/usr/local/sbin/tengri-init"
         })).await?;
         for (id, path, root) in [
             ("root", &config.root_disk, true),

@@ -951,7 +951,8 @@ async fn proxy_http(
     }
     let headers = upstream.headers().clone();
     let is_editor = session.port == crate::guest::EDITOR_PORT;
-    let inject_bridge = should_inject_preview_bridge(&request_method, status, &headers);
+    let inject_bridge = session.port != crate::guest::BROWSER_PORT
+        && should_inject_preview_bridge(&request_method, status, &headers);
     let upstream_body = state
         .authorization
         .access(&state.namespace, &session.agent_id, &session.owner_hash)

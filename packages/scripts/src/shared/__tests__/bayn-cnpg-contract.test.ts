@@ -52,6 +52,7 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
       },
     },
   })
+  expect(cluster.spec.walStorage).toBeUndefined()
   expect(cluster.spec.imageName).toBe(
     'ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1',
   )
