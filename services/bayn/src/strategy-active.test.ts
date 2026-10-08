@@ -37,7 +37,7 @@ describe('active strategy composition', () => {
       name: 'jev',
       behaviorHash: activeStrategyBehaviorHash,
       parameterHash,
-      parameterSchemaVersion: 'bayn.jev.protocol.v1',
+      parameterSchemaVersion: 'bayn.jev.protocol.v2',
     })
   })
 })

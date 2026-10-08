@@ -266,7 +266,7 @@ const expected = {
       'apps/landing',
       'packages/backend',
       'packages/design',
-      'services/tengri/proto',
+      'services/tengri',
       'nix/images/proompteng.nix',
       ...productImageCommonInputs,
       'argocd/applications/proompteng',
@@ -576,6 +576,7 @@ const expected = {
     images: [imageRepo('tengri'), imageRepo('nanoagent')],
     apps: ['tengri'],
     includePaths: [
+      'apps/landing',
       'services/tengri',
       'services/nanoagent',
       '.github/workflows/tengri-images.yml',

@@ -557,16 +557,17 @@ export function TerminalApp({
         import('@xterm/addon-unicode11'),
       ])
       if (disposed || !hostRef.current) return
+      const fontFamily = getComputedStyle(hostRef.current).getPropertyValue('--font-mono').trim()
       const terminal = new xterm.Terminal({
         allowProposedApi: true,
         disableStdin: true,
         cursorBlink: true,
         cursorInactiveStyle: 'outline',
         cursorStyle: 'bar',
-        fontFamily: 'SFMono-Regular, Menlo, Monaco, monospace',
+        fontFamily,
         fontSize: 13,
         letterSpacing: 0,
-        lineHeight: 1.2,
+        lineHeight: 18 / 13,
         rightClickSelectsWord: true,
         scrollback: 10_000,
         theme: {
@@ -698,7 +699,7 @@ export function TerminalApp({
       resizeObserver.observe(host)
       if ('fonts' in document) {
         void document.fonts
-          .load('13px "JetBrains Mono"')
+          .load(`13px ${fontFamily}`)
           .then(() => !disposed && fit(fitAddon))
           .catch(() => undefined)
       }

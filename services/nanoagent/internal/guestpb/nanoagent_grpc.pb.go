@@ -19,25 +19,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	NanoagentService_RefreshSpireBootstrap_FullMethodName = "/proompteng.runtime.guest.v1.NanoagentService/RefreshSpireBootstrap"
-	NanoagentService_GetInfo_FullMethodName               = "/proompteng.runtime.guest.v1.NanoagentService/GetInfo"
-	NanoagentService_OpenEditor_FullMethodName            = "/proompteng.runtime.guest.v1.NanoagentService/OpenEditor"
-	NanoagentService_ListFiles_FullMethodName             = "/proompteng.runtime.guest.v1.NanoagentService/ListFiles"
-	NanoagentService_ReadFile_FullMethodName              = "/proompteng.runtime.guest.v1.NanoagentService/ReadFile"
-	NanoagentService_WriteFile_FullMethodName             = "/proompteng.runtime.guest.v1.NanoagentService/WriteFile"
-	NanoagentService_CreateDirectory_FullMethodName       = "/proompteng.runtime.guest.v1.NanoagentService/CreateDirectory"
-	NanoagentService_MoveFile_FullMethodName              = "/proompteng.runtime.guest.v1.NanoagentService/MoveFile"
-	NanoagentService_DeleteFile_FullMethodName            = "/proompteng.runtime.guest.v1.NanoagentService/DeleteFile"
-	NanoagentService_SearchFiles_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/SearchFiles"
-	NanoagentService_WatchFiles_FullMethodName            = "/proompteng.runtime.guest.v1.NanoagentService/WatchFiles"
-	NanoagentService_CreateTerminal_FullMethodName        = "/proompteng.runtime.guest.v1.NanoagentService/CreateTerminal"
-	NanoagentService_ListTerminals_FullMethodName         = "/proompteng.runtime.guest.v1.NanoagentService/ListTerminals"
-	NanoagentService_TerminateTerminal_FullMethodName     = "/proompteng.runtime.guest.v1.NanoagentService/TerminateTerminal"
-	NanoagentService_AttachTerminal_FullMethodName        = "/proompteng.runtime.guest.v1.NanoagentService/AttachTerminal"
-	NanoagentService_CodexCall_FullMethodName             = "/proompteng.runtime.guest.v1.NanoagentService/CodexCall"
-	NanoagentService_CodexLogin_FullMethodName            = "/proompteng.runtime.guest.v1.NanoagentService/CodexLogin"
-	NanoagentService_ResolveCodexApproval_FullMethodName  = "/proompteng.runtime.guest.v1.NanoagentService/ResolveCodexApproval"
-	NanoagentService_WatchCodexEvents_FullMethodName      = "/proompteng.runtime.guest.v1.NanoagentService/WatchCodexEvents"
+	NanoagentService_GetInfo_FullMethodName              = "/proompteng.runtime.guest.v1.NanoagentService/GetInfo"
+	NanoagentService_OpenEditor_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/OpenEditor"
+	NanoagentService_OpenBrowser_FullMethodName          = "/proompteng.runtime.guest.v1.NanoagentService/OpenBrowser"
+	NanoagentService_ListFiles_FullMethodName            = "/proompteng.runtime.guest.v1.NanoagentService/ListFiles"
+	NanoagentService_ReadFile_FullMethodName             = "/proompteng.runtime.guest.v1.NanoagentService/ReadFile"
+	NanoagentService_WriteFile_FullMethodName            = "/proompteng.runtime.guest.v1.NanoagentService/WriteFile"
+	NanoagentService_CreateDirectory_FullMethodName      = "/proompteng.runtime.guest.v1.NanoagentService/CreateDirectory"
+	NanoagentService_MoveFile_FullMethodName             = "/proompteng.runtime.guest.v1.NanoagentService/MoveFile"
+	NanoagentService_DeleteFile_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/DeleteFile"
+	NanoagentService_SearchFiles_FullMethodName          = "/proompteng.runtime.guest.v1.NanoagentService/SearchFiles"
+	NanoagentService_WatchFiles_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/WatchFiles"
+	NanoagentService_CreateTerminal_FullMethodName       = "/proompteng.runtime.guest.v1.NanoagentService/CreateTerminal"
+	NanoagentService_ListTerminals_FullMethodName        = "/proompteng.runtime.guest.v1.NanoagentService/ListTerminals"
+	NanoagentService_TerminateTerminal_FullMethodName    = "/proompteng.runtime.guest.v1.NanoagentService/TerminateTerminal"
+	NanoagentService_AttachTerminal_FullMethodName       = "/proompteng.runtime.guest.v1.NanoagentService/AttachTerminal"
+	NanoagentService_CodexCall_FullMethodName            = "/proompteng.runtime.guest.v1.NanoagentService/CodexCall"
+	NanoagentService_CodexLogin_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/CodexLogin"
+	NanoagentService_ResolveCodexApproval_FullMethodName = "/proompteng.runtime.guest.v1.NanoagentService/ResolveCodexApproval"
+	NanoagentService_WatchCodexEvents_FullMethodName     = "/proompteng.runtime.guest.v1.NanoagentService/WatchCodexEvents"
 )
 
 // NanoagentServiceClient is the client API for NanoagentService service.
@@ -47,9 +47,9 @@ const (
 // The authenticated API of one MicroVM. Ownership is enforced by Tengri before
 // dialing the guest; every RPC also requires that VM's bootstrap credential.
 type NanoagentServiceClient interface {
-	RefreshSpireBootstrap(ctx context.Context, in *SpireBootstrap, opts ...grpc.CallOption) (*Empty, error)
 	GetInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*GuestInfo, error)
 	OpenEditor(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Editor, error)
+	OpenBrowser(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Browser, error)
 	ListFiles(ctx context.Context, in *Path, opts ...grpc.CallOption) (*FileList, error)
 	ReadFile(ctx context.Context, in *Path, opts ...grpc.CallOption) (*FileContent, error)
 	WriteFile(ctx context.Context, in *FileWrite, opts ...grpc.CallOption) (*FileWriteResult, error)
@@ -77,16 +77,6 @@ func NewNanoagentServiceClient(cc grpc.ClientConnInterface) NanoagentServiceClie
 	return &nanoagentServiceClient{cc}
 }
 
-func (c *nanoagentServiceClient) RefreshSpireBootstrap(ctx context.Context, in *SpireBootstrap, opts ...grpc.CallOption) (*Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Empty)
-	err := c.cc.Invoke(ctx, NanoagentService_RefreshSpireBootstrap_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *nanoagentServiceClient) GetInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*GuestInfo, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GuestInfo)
@@ -101,6 +91,16 @@ func (c *nanoagentServiceClient) OpenEditor(ctx context.Context, in *Empty, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Editor)
 	err := c.cc.Invoke(ctx, NanoagentService_OpenEditor_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nanoagentServiceClient) OpenBrowser(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Browser, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Browser)
+	err := c.cc.Invoke(ctx, NanoagentService_OpenBrowser_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -295,9 +295,9 @@ type NanoagentService_WatchCodexEventsClient = grpc.ServerStreamingClient[CodexE
 // The authenticated API of one MicroVM. Ownership is enforced by Tengri before
 // dialing the guest; every RPC also requires that VM's bootstrap credential.
 type NanoagentServiceServer interface {
-	RefreshSpireBootstrap(context.Context, *SpireBootstrap) (*Empty, error)
 	GetInfo(context.Context, *Empty) (*GuestInfo, error)
 	OpenEditor(context.Context, *Empty) (*Editor, error)
+	OpenBrowser(context.Context, *Empty) (*Browser, error)
 	ListFiles(context.Context, *Path) (*FileList, error)
 	ReadFile(context.Context, *Path) (*FileContent, error)
 	WriteFile(context.Context, *FileWrite) (*FileWriteResult, error)
@@ -325,14 +325,14 @@ type NanoagentServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedNanoagentServiceServer struct{}
 
-func (UnimplementedNanoagentServiceServer) RefreshSpireBootstrap(context.Context, *SpireBootstrap) (*Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method RefreshSpireBootstrap not implemented")
-}
 func (UnimplementedNanoagentServiceServer) GetInfo(context.Context, *Empty) (*GuestInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetInfo not implemented")
 }
 func (UnimplementedNanoagentServiceServer) OpenEditor(context.Context, *Empty) (*Editor, error) {
 	return nil, status.Error(codes.Unimplemented, "method OpenEditor not implemented")
+}
+func (UnimplementedNanoagentServiceServer) OpenBrowser(context.Context, *Empty) (*Browser, error) {
+	return nil, status.Error(codes.Unimplemented, "method OpenBrowser not implemented")
 }
 func (UnimplementedNanoagentServiceServer) ListFiles(context.Context, *Path) (*FileList, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFiles not implemented")
@@ -403,24 +403,6 @@ func RegisterNanoagentServiceServer(s grpc.ServiceRegistrar, srv NanoagentServic
 	s.RegisterService(&NanoagentService_ServiceDesc, srv)
 }
 
-func _NanoagentService_RefreshSpireBootstrap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SpireBootstrap)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(NanoagentServiceServer).RefreshSpireBootstrap(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: NanoagentService_RefreshSpireBootstrap_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NanoagentServiceServer).RefreshSpireBootstrap(ctx, req.(*SpireBootstrap))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _NanoagentService_GetInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -453,6 +435,24 @@ func _NanoagentService_OpenEditor_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NanoagentServiceServer).OpenEditor(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NanoagentService_OpenBrowser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NanoagentServiceServer).OpenBrowser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NanoagentService_OpenBrowser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NanoagentServiceServer).OpenBrowser(ctx, req.(*Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -728,16 +728,16 @@ var NanoagentService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*NanoagentServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "RefreshSpireBootstrap",
-			Handler:    _NanoagentService_RefreshSpireBootstrap_Handler,
-		},
-		{
 			MethodName: "GetInfo",
 			Handler:    _NanoagentService_GetInfo_Handler,
 		},
 		{
 			MethodName: "OpenEditor",
 			Handler:    _NanoagentService_OpenEditor_Handler,
+		},
+		{
+			MethodName: "OpenBrowser",
+			Handler:    _NanoagentService_OpenBrowser_Handler,
 		},
 		{
 			MethodName: "ListFiles",

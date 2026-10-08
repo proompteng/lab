@@ -45,6 +45,48 @@ func rpcTestContext(t *testing.T) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer test-bootstrap-token")
 }
 
+func TestRPCBrowserMCPStatusReachesCodex(t *testing.T) {
+	api := testAPIServer(t)
+	api.codex, _ = readyCodexSupervisor(t)
+	writer := api.codex.stdin.(*codexWireWriter)
+	client, _ := rpcTestClient(t, api)
+	ctx := rpcTestContext(t)
+	type callResult struct {
+		response *pb.CodexResult
+		err      error
+	}
+	done := make(chan callResult, 1)
+	go func() {
+		response, err := client.CodexCall(ctx, &pb.CodexRequest{Method: "mcpServerStatus/list", ParamsJson: []byte(`{"limit":50}`)})
+		done <- callResult{response: response, err: err}
+	}()
+	var wire []byte
+	select {
+	case wire = <-writer.messages:
+	case result := <-done:
+		t.Fatalf("MCP status was rejected before reaching Codex: %v", result.err)
+	case <-ctx.Done():
+		t.Fatal("MCP status did not reach Codex")
+	}
+	var request codexRPCMessage
+	if err := json.Unmarshal(wire, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Method != "mcpServerStatus/list" || string(request.Params) != `{"limit":50}` {
+		t.Fatalf("Codex received a different request: %s", wire)
+	}
+	statusJSON := json.RawMessage(`{"data":[{"name":"tengri_browser","tools":{"computer":{"name":"computer","inputSchema":{"type":"object"}}}}]}`)
+	api.codex.resolveResponse(codexRPCMessage{ID: request.ID, Result: statusJSON})
+	select {
+	case result := <-done:
+		if result.err != nil || result.response == nil || !bytes.Equal(result.response.ResultJson, statusJSON) {
+			t.Fatalf("MCP status did not survive the guest RPC: %v, %v", result.response, result.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("Codex status response did not reach the RPC caller")
+	}
+}
+
 func TestRPCAuthenticatesUnaryAndStreamingOnSharedHTTPPort(t *testing.T) {
 	api := testAPIServer(t)
 	client, address := rpcTestClient(t, api)
@@ -67,7 +109,7 @@ func TestRPCAuthenticatesUnaryAndStreamingOnSharedHTTPPort(t *testing.T) {
 		t.Fatalf("unauthorized request mutated workspace: %v", err)
 	}
 	info, err := client.GetInfo(ctx, &pb.Empty{})
-	if err != nil || info.MicrovmId != "interop-agent" || info.ProtocolVersion != 1 {
+	if err != nil || info.MicrovmId != "interop-agent" || info.ProtocolVersion != guestProtocolVersion {
 		t.Fatalf("authenticated info = %v, %v", info, err)
 	}
 	response, err := http.Get(address + "/healthz")

@@ -1,14 +1,105 @@
 import { describe, expect, test } from 'bun:test'
 import { createServer } from 'node:http'
 
-import { NodeHttpClient } from '@effect/platform-node'
-import { ConfigProvider, Deferred, Effect, Exit, Fiber, Layer, Logger, References } from 'effect'
+import { ConfigProvider, Console, Deferred, Effect, Exit, Fiber, Logger, References } from 'effect'
 import { TestClock } from 'effect/testing'
-import { OtlpSerialization, OtlpTracer } from 'effect/observability'
 
-import { decodeOtlpTraceEndpoint, telemetryRuntimeConfig, withObservedSpan, withObservedStage } from './telemetry'
+import {
+  ExecutionStageTimings,
+  type ExecutionStageTiming,
+  decodeOtlpTraceEndpoint,
+  makeTelemetryRuntimeLayer,
+  telemetryRuntimeConfig,
+  withObservedSpan,
+  withObservedStage,
+} from './telemetry'
 
 describe('Bayn telemetry', () => {
+  test('retains a backend PID on slow and failed stage logs without copying other span data or logging fast calls', async () => {
+    const annotations: Readonly<Record<string, unknown>>[] = []
+    const logger = Logger.make(({ fiber }) => {
+      annotations.push(fiber.getRef(References.CurrentLogAnnotations))
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan('postgresql.pid', 573682).pipe(
+          Effect.andThen(Effect.annotateCurrentSpan('private.fixture', 'do-not-copy-span-data')),
+          Effect.andThen(TestClock.adjust(1_200)),
+          withObservedStage('bayn.postgres.commit', { dependency: 'postgresql' }),
+        )
+        yield* Effect.annotateCurrentSpan('postgresql.pid', 573683).pipe(
+          Effect.andThen(Effect.fail('fixture rollback')),
+          withObservedStage('bayn.postgres.rollback', { dependency: 'postgresql' }),
+          Effect.exit,
+        )
+        yield* Effect.annotateCurrentSpan('postgresql.pid', 573684).pipe(
+          withObservedStage('bayn.postgres.commit', { dependency: 'postgresql' }),
+        )
+        yield* Effect.annotateCurrentSpan('postgresql.pid', 'invalid-pid-canary').pipe(
+          Effect.andThen(TestClock.adjust(1_200)),
+          withObservedStage('bayn.postgres.commit', { dependency: 'postgresql' }),
+        )
+      }).pipe(Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([logger]))),
+    )
+    expect(annotations).toHaveLength(3)
+    expect(annotations[0]).toMatchObject({ 'postgresql.pid': 573682, elapsedMs: 1_200, outcome: 'succeeded' })
+    expect(annotations[1]).toMatchObject({ 'postgresql.pid': 573683, outcome: 'failed' })
+    expect(annotations[2]).not.toHaveProperty('postgresql.pid')
+    expect(JSON.stringify(annotations)).not.toContain('do-not-copy-span-data')
+    expect(JSON.stringify(annotations)).not.toContain('invalid-pid-canary')
+  })
+
+  test('aggregates repeated operations without conflating different operations or inclusive time', async () => {
+    const timings = new Map<string, ExecutionStageTiming>()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.adjust(10).pipe(
+          withObservedStage('bayn.execution-store.operation', { dependency: 'postgresql', operation: 'ingest' }),
+        )
+        yield* TestClock.adjust(20).pipe(
+          withObservedStage('bayn.execution-store.operation', { dependency: 'postgresql', operation: 'ingest' }),
+        )
+        yield* TestClock.adjust(40).pipe(
+          withObservedStage('bayn.execution-store.operation', { dependency: 'postgresql', operation: 'valuation' }),
+        )
+      }).pipe(
+        withObservedStage('bayn.reconciliation.persist'),
+        Effect.provideService(ExecutionStageTimings, timings),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    expect([...timings.values()]).toEqual([
+      {
+        stage: 'bayn.execution-store.operation',
+        dependency: 'postgresql',
+        operation: 'ingest',
+        count: 2,
+        inclusiveElapsedMs: 30,
+        maxElapsedMs: 20,
+        failures: 0,
+        interruptions: 0,
+      },
+      {
+        stage: 'bayn.execution-store.operation',
+        dependency: 'postgresql',
+        operation: 'valuation',
+        count: 1,
+        inclusiveElapsedMs: 40,
+        maxElapsedMs: 40,
+        failures: 0,
+        interruptions: 0,
+      },
+      {
+        stage: 'bayn.reconciliation.persist',
+        count: 1,
+        inclusiveElapsedMs: 70,
+        maxElapsedMs: 70,
+        failures: 0,
+        interruptions: 0,
+      },
+    ])
+  })
+
   test('records the interrupted stage and elapsed time while preserving cancellation and finalization', async () => {
     const annotations: Readonly<Record<string, unknown>>[] = []
     let finalized = false
@@ -98,6 +189,13 @@ describe('Bayn telemetry', () => {
   })
 
   test('exports Effect spans as OTLP protobuf', async () => {
+    const output: unknown[] = []
+    const errors: unknown[] = []
+    const testConsole: Console.Console = {
+      ...console,
+      log: (...messages) => output.push(...messages),
+      error: (...messages) => errors.push(...messages),
+    }
     let resolveRequest: ((request: { readonly path: string; readonly body: Uint8Array }) => void) | undefined
     const received = new Promise<{ readonly path: string; readonly body: Uint8Array }>((resolve) => {
       resolveRequest = resolve
@@ -114,21 +212,132 @@ describe('Bayn telemetry', () => {
     const address = server.address()
     if (address === null || typeof address === 'string') throw new Error('telemetry test server did not bind TCP')
 
-    const tracer = OtlpTracer.layer({
-      url: `http://127.0.0.1:${address.port}/v1/traces`,
-      resource: { serviceName: 'bayn-telemetry-test', serviceVersion: 'test-version' },
-      maxBatchSize: 1,
-      exportInterval: '1 millis',
-      shutdownTimeout: '1 second',
-    }).pipe(Layer.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, OtlpSerialization.layerProtobuf)))
+    const tracer = makeTelemetryRuntimeLayer({
+      endpoint: `http://127.0.0.1:${address.port}/v1/traces`,
+      serviceName: 'bayn-telemetry-test',
+      serviceVersion: 'test-version',
+    })
 
     try {
-      await Effect.runPromise(Effect.void.pipe(withObservedSpan('bayn.test.export'), Effect.provide(tracer)))
+      await Effect.runPromise(
+        Effect.void.pipe(
+          withObservedSpan('bayn.test.export'),
+          Effect.provide(tracer),
+          Effect.provideService(Console.Console, testConsole),
+        ),
+      )
       const request = await received
       expect(request.path).toBe('/v1/traces')
       expect(request.body.byteLength).toBeGreaterThan(0)
       expect(Buffer.from(request.body).includes(Buffer.from('bayn-telemetry-test'))).toBe(true)
       expect(Buffer.from(request.body).includes(Buffer.from('bayn.test.export'))).toBe(true)
+      expect(output).toHaveLength(0)
+      expect(errors).toHaveLength(0)
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((cause) => (cause === undefined ? resolve() : reject(cause))),
+      )
+    }
+  })
+
+  test('retains rejected trace exports as bounded warnings without collector response contents', async () => {
+    const output: unknown[] = []
+    const stdout: unknown[] = []
+    const testConsole: Console.Console = {
+      ...console,
+      log: (...messages) => stdout.push(...messages),
+      error: (...messages) => output.push(...messages),
+    }
+    let requests = 0
+    const server = createServer((request, response) => {
+      request.resume()
+      request.on('end', () => {
+        requests += 1
+        response.writeHead(400).end('private-collector-response')
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('telemetry test server did not bind TCP')
+
+    try {
+      await Effect.runPromise(
+        Console.log('{"schemaVersion":"test-report.v1"}').pipe(
+          withObservedSpan('bayn.test.rejected-export'),
+          Effect.provide(
+            makeTelemetryRuntimeLayer({
+              serviceName: 'bayn-telemetry-test',
+              serviceVersion: 'test-version',
+              endpoint: `http://127.0.0.1:${address.port}/v1/traces`,
+            }),
+          ),
+          Effect.provideService(Console.Console, testConsole),
+        ),
+      )
+      expect(requests).toBe(1)
+      expect(stdout).toEqual(['{"schemaVersion":"test-report.v1"}'])
+      expect(output).toHaveLength(1)
+      expect(JSON.parse(String(output[0]))).toMatchObject({
+        level: 'WARN',
+        message: 'Bayn OTLP trace export attempt failed',
+        annotations: {
+          stage: 'bayn.telemetry.export',
+          dependency: 'telemetry',
+          serviceName: 'bayn-telemetry-test',
+          sourceRevision: 'test-version',
+          failureReason: 'http-status',
+          httpStatus: 400,
+        },
+      })
+      expect(output.join()).not.toContain('private-collector-response')
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((cause) => (cause === undefined ? resolve() : reject(cause))),
+      )
+    }
+  })
+
+  test('retains trace transport failures without changing the application result or leaking raw errors', async () => {
+    const output: unknown[] = []
+    const stdout: unknown[] = []
+    const testConsole: Console.Console = {
+      ...console,
+      log: (...messages) => stdout.push(...messages),
+      error: (...messages) => output.push(...messages),
+    }
+    const server = createServer((request) => {
+      request.resume()
+      request.on('end', () => request.socket.destroy(new Error('private-collector-transport')))
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('telemetry test server did not bind TCP')
+
+    try {
+      const result = await Effect.runPromise(
+        Effect.succeed('application-result').pipe(
+          withObservedSpan('bayn.test.transport-failure'),
+          Effect.provide(
+            makeTelemetryRuntimeLayer({
+              serviceName: 'bayn-telemetry-test',
+              endpoint: `http://127.0.0.1:${address.port}/v1/traces`,
+            }),
+          ),
+          Effect.provideService(Console.Console, testConsole),
+        ),
+      )
+      expect(result).toBe('application-result')
+      expect(stdout).toHaveLength(0)
+      expect(output.length).toBeGreaterThan(0)
+      for (const message of output) {
+        expect(JSON.parse(String(message))).toMatchObject({
+          level: 'WARN',
+          message: 'Bayn OTLP trace export attempt failed',
+          annotations: { stage: 'bayn.telemetry.export', failureReason: 'TransportError' },
+        })
+      }
+      expect(output.join()).not.toContain('private-collector-transport')
+      expect(output.join()).not.toContain('127.0.0.1')
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((cause) => (cause === undefined ? resolve() : reject(cause))),

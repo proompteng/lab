@@ -2,6 +2,7 @@ import { Socket } from 'node:net'
 
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, FileSystem, Layer, Redacted } from 'effect'
+import { Statement } from 'effect/sql'
 
 import type { RuntimeConfig } from '../config'
 import { classifyDatabaseError, databaseError, runDatabase } from './database-error'
@@ -30,6 +31,10 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
           url.searchParams.getAll('host').at(-1) ??
           (decodeURIComponent(url.hostname.replace(/^\[|\]$/g, '')) || 'localhost'),
         port: Number(url.searchParams.getAll('port').at(-1) ?? (url.port || '5432')),
+        username: url.searchParams.getAll('user').at(-1) ?? (decodeURIComponent(url.username) || undefined),
+        database:
+          url.searchParams.getAll('dbname').at(-1) ??
+          (decodeURIComponent(url.pathname.replace(/^\//, '')) || undefined),
       }
     },
     catch: () =>
@@ -40,40 +45,47 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
     const fileSystem = yield* FileSystem.FileSystem
     return yield* fileSystem.readFileString(config.postgres.caPath)
   })
-  return Layer.unwrap(
-    readCertificate.pipe(
-      Effect.mapError((cause) =>
-        databaseError({
-          failure: 'unavailable',
-          operation: 'tls',
-          message: 'failed to read PostgreSQL CA certificate',
-          cause,
-        }),
-      ),
-      Effect.flatMap((ca) =>
-        sessionConnection.pipe(
-          Effect.map(({ url, host, port }) =>
-            PgClient.layerFrom(
-              PgClient.make({
-                url,
-                ssl: ca === undefined ? undefined : { ca, rejectUnauthorized: true },
-                applicationName: 'bayn',
-                connectTimeout: statementTimeoutMs,
-                stream: () => {
-                  const socket = new Socket()
-                  socket.setNoDelay(true)
-                  socket.setTimeout(socketTimeoutMs, () => {
-                    socket.destroy(new Error('PostgreSQL connection exceeded its inactivity deadline'))
-                  })
-                  return socket.connect(host.startsWith('/') ? { path: `${host}/.s.PGSQL.${port}` } : { host, port })
-                },
-                idleTimeout: '30 seconds',
-                maxConnections: 8,
-                minConnections: 0,
-                transformJson: false,
-              }).pipe(
-                Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
-                Effect.mapError((cause) => classifyDatabaseError('connect', cause)),
+  return Layer.merge(
+    Layer.succeed(Statement.SpanPropagationEnabled, true),
+    Layer.unwrap(
+      readCertificate.pipe(
+        Effect.mapError((cause) =>
+          databaseError({
+            failure: 'unavailable',
+            operation: 'tls',
+            message: 'failed to read PostgreSQL CA certificate',
+            cause,
+          }),
+        ),
+        Effect.flatMap((ca) =>
+          sessionConnection.pipe(
+            Effect.map(({ url, host, port, username, database }) =>
+              PgClient.layerFrom(
+                PgClient.make({
+                  url,
+                  host,
+                  port,
+                  username,
+                  database,
+                  ssl: ca === undefined ? undefined : { ca, rejectUnauthorized: true },
+                  applicationName: 'bayn',
+                  connectTimeout: statementTimeoutMs,
+                  stream: () => {
+                    const socket = new Socket()
+                    socket.setNoDelay(true)
+                    socket.setTimeout(socketTimeoutMs, () => {
+                      socket.destroy(new Error('PostgreSQL connection exceeded its inactivity deadline'))
+                    })
+                    return socket.connect(host.startsWith('/') ? { path: `${host}/.s.PGSQL.${port}` } : { host, port })
+                  },
+                  idleTimeout: '30 seconds',
+                  maxConnections: 8,
+                  minConnections: 0,
+                  transformJson: false,
+                }).pipe(
+                  Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+                  Effect.mapError((cause) => classifyDatabaseError('connect', cause)),
+                ),
               ),
             ),
           ),

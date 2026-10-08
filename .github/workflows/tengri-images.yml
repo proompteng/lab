@@ -3,6 +3,7 @@ name: Tengri images
 on:
   pull_request:
     paths:
+      - 'apps/landing/**'
       - 'services/tengri/**'
       - 'services/nanoagent/**'
       - '.github/workflows/tengri-images.yml'
@@ -14,6 +15,7 @@ on:
     branches:
       - main
     paths:
+      - 'apps/landing/**'
       - 'services/tengri/**'
       - 'services/nanoagent/**'
       - '.github/workflows/tengri-images.yml'
@@ -102,6 +104,7 @@ jobs:
           bash -n bootstrap-toolchain.sh
           bash -n bootstrap-developer-tools.sh test-developer-tools-cache.sh
           bash -n validate-rootfs.sh validate-rootfs.test.sh
+          bash -n build-boot-artifacts.sh tengri-init.sh
           bash validate-rootfs.test.sh
           bash bootstrap-codex.sh --validate-manifest
           test -z "$(gofmt -l .)"
@@ -151,22 +154,133 @@ jobs:
           context: ${{ matrix.context }}
           platforms: linux/${{ matrix.architecture }}
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          load: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
+          load: ${{ github.event_name == 'pull_request' && (matrix.service == 'nanoagent' || matrix.architecture == 'amd64') }}
           tags: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           cache-from: type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
           provenance: mode=max
           sbom: true
 
-      - name: Verify guest administrator access
+      - name: Verify boot artifact checksums
         if: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
         env:
-          GUEST_ADMIN_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          GUEST_BOOT_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
         run: |
           set -euo pipefail
-          docker run --rm --interactive --user 1000:1000 \
-            --cap-add ALL --security-opt seccomp=unconfined \
-            --entrypoint /bin/bash "$GUEST_ADMIN_IMAGE" -s -- --runtime \
-            < services/nanoagent/test-guest-admin.sh
+          docker run --rm --read-only --cap-drop ALL \
+            --entrypoint /usr/bin/sha256sum "$GUEST_BOOT_IMAGE" --check /guest/SHA256SUMS
+
+      - name: Build isolated KVM test image
+        if: ${{ github.event_name == 'pull_request' && matrix.service == 'tengri' && matrix.architecture == 'amd64' }}
+        env:
+          RUNTIME_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-amd64
+        run: |
+          set -euo pipefail
+          docker build --builder default --platform linux/amd64 --target build \
+            --tag tengri-nanoagent-tests:fixture services/nanoagent
+          docker build --builder default --platform linux/amd64 \
+            --file services/tengri/Dockerfile.kvm-test \
+            --build-arg "RUNTIME_IMAGE=$RUNTIME_IMAGE" \
+            --build-arg NANOAGENT_TEST_IMAGE=tengri-nanoagent-tests:fixture \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --tag tengri-kvm-test:fixture services/tengri
+
+      - name: Export native KVM fixture image
+        if: ${{ github.event_name == 'pull_request' && matrix.architecture == 'amd64' }}
+        env:
+          SERVICE: ${{ matrix.service }}
+          IMAGE_REPOSITORY: ${{ matrix.image }}
+          PR_HEAD_REVISION: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          image="${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}-amd64"
+          mkdir -p .artifacts/kvm-fixture
+          if [[ "$SERVICE" == tengri ]]; then
+            image=tengri-kvm-test:fixture
+            cp services/tengri/test-kvm.sh .artifacts/kvm-fixture/
+          fi
+          docker save "$image" | gzip -1 > ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz"
+          config_path="$(tar -xzOf ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz" manifest.json | \
+            jq -er --arg image "$image" '[.[] | select(.RepoTags | index($image))] |
+              if length == 1 then .[0].Config | select(type == "string" and length > 0)
+              else error("fixture image must have exactly one saved configuration") end')"
+          config_digest="sha256:$(tar -xzOf ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz" -- "$config_path" | \
+            sha256sum | cut -d ' ' -f 1)"
+          [[ "$config_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          jq -n --arg revision "$GITHUB_SHA" --arg head "$PR_HEAD_REVISION" \
+            --arg image "$image" --arg digest "$config_digest" \
+            '{sourceRevision: $revision, prHeadRevision: $head, image: $image, configDigest: $digest}' \
+            > ".artifacts/kvm-fixture/${SERVICE}.json"
+          cd .artifacts/kvm-fixture
+          sha256sum "${SERVICE}-images.tar.gz" "${SERVICE}.json" > "${SERVICE}-SHA256SUMS"
+          if [[ "$SERVICE" == tengri ]]; then
+            sha256sum test-kvm.sh >> "${SERVICE}-SHA256SUMS"
+          fi
+
+      - name: Retain native KVM fixture image
+        if: ${{ github.event_name == 'pull_request' && matrix.architecture == 'amd64' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-kvm-fixture-${{ matrix.service }}-amd64
+          path: .artifacts/kvm-fixture/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  validate-kvm:
+    name: Validate KVM slot (${{ matrix.architecture }})
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install execution network tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends iproute2
+
+      - name: Build native KVM test harness
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          runtime="${TENGRI_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
+          guest="${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
+          docker pull "$runtime"
+          docker pull "$guest"
+          docker build --platform "linux/${ARCHITECTURE}" --target build \
+            --tag tengri-nanoagent-tests:validation services/nanoagent
+          docker build --platform "linux/${ARCHITECTURE}" \
+            --file services/tengri/Dockerfile.kvm-test \
+            --build-arg "RUNTIME_IMAGE=$runtime" \
+            --build-arg NANOAGENT_TEST_IMAGE=tengri-nanoagent-tests:validation \
+            --tag tengri-kvm-test:validation services/tengri
+
+      - name: Verify real guest administration and snapshot lifecycle
+        env:
+          TENGRI_KVM_TEST_IMAGE: tengri-kvm-test:validation
+          TENGRI_KVM_GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          TENGRI_KVM_OUTPUT: ${{ github.workspace }}/.artifacts/kvm
+          TENGRI_KVM_SAMPLES: '50'
+        run: bash services/tengri/test-kvm.sh
+
+      - name: Retain KVM diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-kvm-${{ matrix.architecture }}-${{ github.sha }}
+          path: .artifacts/kvm/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -174,6 +288,7 @@ jobs:
       - build
       - validate-tengri
       - validate-nanoagent
+      - validate-kvm
     runs-on: arc-arm64
     timeout-minutes: 30
     permissions:
@@ -294,11 +409,16 @@ jobs:
 
       - name: Expose both verified images to Kargo
         env:
+          TENGRI_PREPARED_SLOT_CUTOVER_READY: ${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY || 'false' }}
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           TENGRI_DIGEST: ${{ steps.images.outputs.tengri_digest }}
           NANOAGENT_DIGEST: ${{ steps.images.outputs.nanoagent_digest }}
         run: |
           set -euo pipefail
+          if [[ "${TENGRI_PREPARED_SLOT_CUTOVER_READY}" != 'true' ]]; then
+            echo 'Prepared-slot publication held: both Kargo aliases require approved old-writer fencing and retained-home enrollment. Set TENGRI_PREPARED_SLOT_CUTOVER_READY=true only after that cutover prerequisite is complete.' >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
           [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
           [[ "${TENGRI_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${NANOAGENT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]

@@ -1,5 +1,9 @@
 # Bayn GitOps rollout notes
 
+Kargo writes activation Job and pod version labels as `sha-<12-character revision>`. The prefix keeps numeric and
+exponent-looking commit prefixes as YAML strings, as Kubernetes requires for label values. The activation Job name,
+full source revision, immutable image digest and authored research lineage retain their existing contracts.
+
 ## Research storage foundation
 
 Research storage uses the standard Rook `ObjectBucketClaim` named `bayn-research-captures` in `rook-ceph`.
@@ -22,6 +26,12 @@ The Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; the ConfigM
 RGW account, additional application user, IAM policy, policy allowlist change, or bootstrap Job is required for this path.
 The existing controller-scoped RGW egress permits TCP 8080, the target of service port 80.
 
+The execution worker receives the existing reflected owner keys through `BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID`
+and `BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY`. Its bucket and region come from the reflected ConfigMap.
+The public status service and activation hook receive no research credential. This approved access change leaves
+`BAYN_RESEARCH_CAPTURE_SESSION` absent, so it starts no recorder, S3 client or capture writes. Before enabling a fixed
+session, verify the source/reflection match without printing keys and pass native integrity and representative capacity.
+
 Bayn-specific acceptance does not run as a hook of the shared Rook application. The former
 `bayn-research-storage-bootstrap` Job, code-only ConfigMap generator, and obsolete scripts are absent from desired state.
 Its earlier positive checks did not complete
@@ -41,6 +51,27 @@ The existing two-instance `bayn-db` cluster retains 100Gi per replica through `r
 primary's `pg_stat_replication`. The standby must be `streaming`, with `sync_state` of `sync` or `quorum`, and included
 in `synchronous_standby_names`. CNPG's `ANY 1` configuration uses `quorum`. Keep `synchronous_commit=on`.
 
+The disposable WAL comparison completed on 2026-10-08 at source `9bb51b5c1fc38033cacd4c1d732d81a08fd7c460`
+([PR #14855](https://github.com/proompteng/lab/pull/14855)). PostgreSQL 18.6 measured four twenty-second phases on
+isolated `rook-ceph-block` volumes on the primary host, after Kafka bootstrap completed. One transaction client
+ran alongside a bounded data writer. Both layouts retained `fsync=on`, `full_page_writes=on`,
+`synchronous_commit=on` and `wal_sync_method=fdatasync`.
+
+| Phase | Layout | Transactions | p95 (ms) | p99 (ms) | Maximum (ms) | Above 1 second |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | Shared | 975 | 88.359 | 445.288 | 1425.809 | 1 |
+| 2 | Separate | 2522 | 23.163 | 97.308 | 329.558 | 0 |
+| 3 | Separate | 2221 | 26.805 | 105.383 | 962.324 | 0 |
+| 4 | Shared | 2323 | 27.000 | 112.975 | 342.442 | 0 |
+
+All 8,041 samples, nearest-rank percentiles, settings and WAL IO records were independently verified against
+streamed logs and retained PVC files with SHA-256 manifests before cleanup. Time-aligned Ceph, host, RBD,
+PostgreSQL and CPU-throttling queries were available. The repeated shared phase was comparable to the separate
+phases, so the first shared spike does not establish a reproducible layout benefit. These short local durability
+measurements do not qualify cross-host replication, S3-plus-SQL capture capacity or profitability.
+`bayn-db` retains its existing storage layout. The canary Job, policy, script ConfigMap and two isolated claims are
+removed from desired state after archival; production database volumes and backup/replication settings are preserved.
+
 Bayn overrides CNPG's five-second WAL sender and receiver inactivity deadlines with PostgreSQL's sixty-second
 defaults. At 2026-10-06 23:11 UTC, storage stalls exceeded five seconds and caused repeated replication disconnects,
 quorum loss and recovery churn. The larger replication heartbeat window prevents that additional churn; it does
@@ -58,14 +89,22 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v1` and pinned TypeSafe model `jev-1.13.0`. Its behavior, parameter, and protocol
+The active implementation uses momentum-first `bayn.jev.protocol.v2` and pinned TypeSafe model `jev-1.13.0`. Its behavior, parameter, and protocol
 hashes require a matching sealed research mandate; image promotion alone cannot update that strategy authority.
 The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
-subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
+subsequent reviewed releases. Preserve the existing sandbox broker identity and every limit outside an explicitly reviewed mandate change.
 
-The candidate quote/window-trade policy is bound to Jev behavior v3 and its parameter identity. Its build hashes,
-sealed mandate, and all three runtime lineages change together. The mandate keeps the existing authored build anchor,
-sandbox account, Research authority type, risk policy, and limits; broker and model credentials are unchanged.
+The active entry gate requires exact positive own and SPY-relative 30-minute momentum before Jev. It is bound to
+`bayn.jev.momentum-first.behavior.v1`, protocol v2 and batch v4; Jev's probability ranking, questions, sizing and
+position management remain unchanged. Its build hashes, sealed mandate and all three runtime lineages change together.
+The paired Research mandate selects the approved $1,000,000 sandbox daily gross-turnover budget, with the same account,
+credentials, exposure/loss limits and exits. Account/day turnover is retained across the rotation.
+
+Verify strategy protocol hash `3b062274793e0a13b97334dbb38858e7322cc045280d0a8ed36b533aa8f38111` and mandate request hash
+`8f85240c1a0f8d54650b0914cbfadf3245311c32c650f2a295cc76dabad7063f` against the runtime and sealed identity annotation.
+The image's build-account policy hash is not the account-bound risk hash in the mandate. Retained v1-v3 evidence remains
+immutable and decodable. Rollback needs a reviewed source/mandate pair through native drain and fresh flat/exact
+preflight; never restore obsolete identity expectations, rewrite evidence or reset turnover to make a binary start.
 
 The Jev mandate preserves the existing published build as its lineage anchor and binds the new strategy explicitly.
 Kargo writes the exact newly published source and image into the activation endpoint of every runtime lineage. The
@@ -82,6 +121,18 @@ The worker requires Kafka and consumes verified raw-feature joins through the co
 catch-up completed in 223 seconds on the slower worker. Freshness and entry checks apply after catch-up. Verify the sealed request's
 content hash, all three build-lineage bindings, the native activation hook, exact reconciliation, and natural controller
 progress. Retained-data diagnostics establish observation now; they do not establish historical live availability.
+
+Without a configured research capture, each worker starts its existing read-only Kafka projection when the endpoint
+starts. The trading driver, broker session, model client and capital activation remain lazy. The same server-scoped
+projection is reused by the first execution runtime and its replacements, without another consumer. Bootstrap remains
+asynchronous: an accepting TCP endpoint does not imply complete signal history, and existing snapshot checks still
+reject rebuilding, missing or late input. A configured capture retains its existing lazy recorder/consumer lifecycle;
+prewarm does not start SQL/S3 recording on standby replicas.
+
+Prewarm moves the eventual per-replica consumption earlier. Both current replicas, and old/new replicas overlapping
+during rollout, can consume concurrently; it is not a claim of zero additional aggregate CPU or memory. Keep the
+existing resource limits and verify aggregate CPU/RSS, queue/backlog recovery and scoped consumer cleanup. Warming a
+replica does not make an upstream bar published outside its permitted finalization window admissible.
 
 ## Regular-session trading boundaries
 

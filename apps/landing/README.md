@@ -53,27 +53,50 @@ reconnect with their event cursor. HMAC metadata still binds every request to it
 Missing, denied, malformed, or expired identity fails the request; there is no plaintext option. Local development
 requires an attested SPIRE identity too. Native tests use a private fixture Workload API and real TLS certificates.
 
-The Codex view places user messages on the right with left-aligned text and a subtle background, and agent responses
-on the left, without visible speaker headings. The rounded composer uses a subtle border and keeps model and reasoning
-choices beside the send/stop control. Composer height updates before paint, preserves scrolling within long drafts,
-and observes width changes without restarting the observer on each keystroke. Prompt suggestions prepare a
-draft for review before submission. Commands, output, diffs, and reasoning summaries expand from compact activity rows.
+The desktop follows [Vercel's Geist typography](https://vercel.com/geist/typography): bundled Geist Sans for interface
+text, portal menus, and diagrams, and Geist Mono for code and the terminal. Chat copy and primary labels use 14/20 px;
+metadata uses 12/16 px, and code uses 13/18 px. Named copy, label, button, and heading utilities set size, line height,
+weight, and spacing together. Fonts are self-hosted with `next/font/local`; source and license are in
+[the font directory](public/tengri/fonts/README.md).
+An explicit symbol fallback preserves monospace columns for glyphs Geist Mono does not contain, such as checkmarks.
+The Codex view uses a near-black canvas, quiet zinc typography, and blue for primary actions. User messages sit on the
+right with a soft background; agent responses stay on the left without speaker headings. A left conversation sidebar (~240–260px) lists
+browser-local conversations for the agent (newest first) with an active highlight and **New** control; the active
+thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. You can start or
+switch conversations while another response runs. Text and image drafts, along with prompts waiting for their server
+echo, remain with their conversation while the chat view stays open. Switching keeps sidebar rows in place, restores
+the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
+including requests received while another conversation is selected; server resolutions and completed turns clear
+both retained requests and visible controls. Notices remain attached to the conversation selected when they arrive,
+including events queued before a switch, and adopt the server thread ID when a draft conversation is first created.
+The event buffer bounds ordinary history while retaining pending approvals
+until resolution or completion. Successful recovery merges the persisted registry and clears unavailable markers
+from this tab or another tab with a newer timestamp;
+ordinary selection preserves row order. The header is
+thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
+no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
+send/stop button. Composer height updates before paint, preserves scrolling within long drafts, and
+observes width changes without restarting the observer on each keystroke. The empty state is a short line plus text-link
+starters. Commands, output, diffs, and reasoning summaries expand from compact rows without outlined cards. Approvals
+use a soft surface with a muted label and Approve / Deny actions. Accepted prompts stay in the transcript while waiting
+for the server's message item; the canonical item replaces the local prompt without duplicating it. Streamed text
+updates once per animation frame, unchanged message cards are memoized, and a stable content observer follows changes
+without rebuilding on every chunk. Following stops when the reader scrolls upward, so a delayed scroll event after
+content growth does not leave the viewport behind the response.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
 Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under
 `/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
 by saved conversations.
 
-Active turns show a Thinking label with a one-second highlight moving left to right; reduced motion keeps the label still.
-Usage shows the remaining weekly percentage and rounds credits up to a whole number. The dock keeps its blurred
-material stationary while its outline and icons magnify, with labels appearing without an opacity animation.
-Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid` blocks render as
-flowchart, sequence, and class diagrams and update as responses stream. Other diagram types and diagrams with
-images or remote CSS resources keep their copyable source visible; invalid or incomplete diagrams do too. Accepted
-types have explicit pre-layout resource checks. SVG sanitization and the existing CSP remain enforced.
-The conversation follows new events
-while the reader is at the bottom. Reading earlier messages preserves the scroll position until the reader chooses
-**Jump to latest**.
+Active turns show a quiet Thinking… label. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
+dock keeps its blurred material stationary while its outline and icons magnify, with labels appearing without an
+opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
+blocks render as flowchart, sequence, and class diagrams and update as responses stream. Other diagram types and
+diagrams with images or remote CSS resources keep their copyable source visible; invalid or incomplete diagrams do too.
+Accepted types have explicit pre-layout resource checks. SVG sanitization and the existing CSP remain enforced.
+The conversation follows new events while the reader is at the bottom. Reading earlier messages preserves the scroll
+position until the reader chooses **Jump to latest**.
 
 1. Set the Better Auth, GitHub OAuth, gRPC endpoint, HMAC, and `TENGRI_PUBLIC_URL` variables from `.env.example`.
    The public URL must match the Rust controller and is exposed to the browser only as the allowlisted preview gateway
@@ -95,9 +118,7 @@ the Deployment directly.
 
 Code keeps recoverable drafts scoped to the GitHub owner and agent creation identity. File reads include a SHA-256
 revision; saves require that base revision and verify the returned revision. A competing API save returns a conflict
-and preserves the local draft. Guests from before conditional-save support remain readable, but editing requires a
-sleep/resume update. Refresh the browser after both web and runtime promotion; older clients cannot submit
-unconditional writes to the updated runtime.
+and preserves the local draft.
 
 Draft storage never evicts another unsaved edit to make room. When browser storage is unavailable or full, Tengri
 keeps a temporary recovery copy and exposes a download on the desktop and lifecycle screens. A page-unload warning
@@ -110,8 +131,10 @@ download them before closing the tab if storage cannot be restored.
 
 The Tengri desktop uses macOS-style unified toolbars, full-height sidebars, restrained window shadows, and a
 proximity-magnifying Dock. Apple’s original Big Sur wallpaper and application artwork are bundled locally; provenance
-is in [`public/tengri/README.md`](public/tengri/README.md). Finder, Chrome, Code, Terminal, and Settings continue to
-operate on the real guest workspace.
+is in [`public/tengri/README.md`](public/tengri/README.md). Finder, Chrome, Tengri, Code, Terminal, and Settings operate on the real guest workspace.
+Chrome opens the guest's full Chromium browser. Tengri owns Codex chat and has its own generated Dock icon.
+The agent's computer tool operates the same browser, with a human takeover control.
+See [browser architecture and research](../../docs/tengri/browser.md).
 
 Desktop, setup, and confirmation windows share their traffic-light controls: 14 px flat circles with 23 px between centers,
 with colors and rounded hover glyphs matched to native macOS screenshots. Each retains a separate 24 px hit target.

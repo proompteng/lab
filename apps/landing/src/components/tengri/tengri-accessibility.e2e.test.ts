@@ -17,7 +17,6 @@ const readyAgent = {
   readyAt: '2026-08-26T12:00:08.000Z',
   lastActivityAt: '2026-08-26T12:30:00.000Z',
   idleDeadline: '2026-08-26T13:30:00.000Z',
-  expiresAt: '2026-08-26T16:00:00.000Z',
   conditions: [],
 }
 
@@ -80,47 +79,21 @@ async function mockReadyDesktop(page: Page) {
   })
 }
 
-test('exposes usable browser tabs, connection state, and contrast', async ({ page }) => {
+test('exposes the separate Tengri app, connection state, and accessible controls', async ({ page }) => {
   await mockReadyDesktop(page)
   await page.goto('/')
-
-  await expect(page.getByRole('region', { name: 'Chrome window' })).toBeVisible()
+  const agent = page.getByRole('region', { name: 'Tengri window' })
+  await expect(agent).toBeVisible()
   await expect(page.getByText('Connected', { exact: true })).toBeAttached()
   await expect(page.getByLabel('Agent status')).toHaveText('Ready')
-
-  const tablist = page.getByRole('tablist', { name: 'Browser tabs' })
-  const firstTab = tablist.getByRole('tab', { name: /Tengri Agent/ })
-  await expect(firstTab).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByRole('tabpanel', { name: /Tengri Agent/ })).toBeVisible()
-
-  await page.getByRole('button', { name: 'New tab' }).click()
-  const tabs = tablist.getByRole('tab', { name: /Tengri Agent/ })
-  await expect(tabs).toHaveCount(2)
-  await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
-
-  const seriousContrastViolations = (await new AxeBuilder({ page }).analyze()).violations.filter(
-    (violation) => violation.impact === 'critical' || violation.impact === 'serious',
-  )
-  expect(seriousContrastViolations).toEqual([])
-
-  await tabs.nth(1).focus()
-  await page.keyboard.press('ArrowLeft')
-  await expect(tabs.nth(0)).toBeFocused()
-  await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
-
-  await page.keyboard.press('Delete')
-  await expect(tablist.getByRole('tab')).toHaveCount(1)
-  await expect(tablist.getByRole('tab')).toBeFocused()
-
-  await page.keyboard.press('Delete')
-  await expect(page.getByRole('region', { name: 'Chrome window' })).toHaveCount(0)
-
-  const chromeLauncher = page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Chrome' })
-  await chromeLauncher.click()
-  await expect(tablist.getByRole('tab')).toHaveCount(1)
-  await chromeLauncher.hover()
-  await expect(chromeLauncher.getByRole('tooltip', { includeHidden: true })).toHaveCSS('opacity', '1')
-
+  await expect(agent.getByRole('textbox', { name: 'Message your agent' })).toBeFocused()
+  await agent.getByRole('button', { name: 'Close Tengri', exact: true }).click()
+  await expect(agent).toHaveCount(0)
+  const launcher = page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Tengri' })
+  await launcher.click()
+  await expect(agent.getByRole('textbox', { name: 'Message your agent' })).toBeFocused()
+  await launcher.hover()
+  await expect(launcher.getByRole('tooltip', { includeHidden: true })).toHaveCSS('opacity', '1')
   const seriousViolations = (await new AxeBuilder({ page }).analyze()).violations.filter(
     (violation) => violation.impact === 'critical' || violation.impact === 'serious',
   )

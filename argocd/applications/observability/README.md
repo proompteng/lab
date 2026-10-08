@@ -117,8 +117,20 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
+The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
+and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn` and the `torghut-ws` container in namespace
+`torghut`. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
+Other Torghut containers remain excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
+than zero throttling. See [producer stall diagnostics](../../../services/dorvud/README.md#producer-stall-diagnostics)
+for JVM, Kafka, probe, and restart correlation.
 The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic
 series declared by Bayn's catalog-only monitoring queries, including timing-enabled flags and statistics-reset times.
+Bayn's `bayn-db` instances are scraped every five seconds with a four-second scrape timeout; the other CNPG
+targets retain their thirty-second cadence. Complementary target filters prevent duplicate scrapes and preserve the
+`cnpg-postgres` job labels. `scrape_duration_seconds` is retained alongside exporter collection errors to expose the
+cost and availability of this sampling. These catalog reads run in the collector, outside the execution and closure
+paths. A wait shorter than five seconds can still be missed; correlate retained samples with application spans and
+PostgreSQL slow-statement logs before attributing a commit stall to WAL I/O or synchronous replication.
 It also retains bounded exporter collection errors and durations so a failed built-in collector cannot be mistaken
 for zero I/O. Unknown future metric families and unrelated PostgreSQL settings remain excluded. A new exporter
 metric requires both its query definition and this ingestion policy; direct endpoint availability is not Mimir proof.
@@ -128,6 +140,21 @@ The Rook application owns a read-only host Alloy DaemonSet (`node-storage` job) 
 NIC throughput/link speed/drops, CPU, memory, and pressure. It pushes to the same Mimir gateway without exposing
 a listener on the provider LAN. See the [Ceph telemetry runbook](../../../docs/runbooks/ceph-performance-telemetry.md)
 for ingestion acceptance, recording-rule units, missing-data alerts, and the bounded recovery-override cleanup.
+
+The same central Alloy retains sanitized Bayn object-store access receipts as `job="bayn-rgw"` in the existing Loki
+destination. Discovery selects `app=rook-ceph-rgw,rgw=objectstore` pods in `rook-ceph` and only their `rgw` container.
+The approved namespace Role grants `GET pods/log` to the existing collector service account. RBAC permits reading
+all pod logs in that namespace; it cannot constrain this grant by pod label. The pipeline drops unrelated and malformed
+records, then replaces matching content-hash access lines with `bayn.rgw-access.v1` JSON containing only method,
+object hash, HTTP status, the native logged-byte field and gateway latency. It retains no query strings, headers,
+principals, agents or bucket names. Object hashes stay in log content rather than metric or stream labels.
+The receipt filter accepts the LF or CRLF terminator preserved by Alloy's Kubernetes log reader. The native Alloy
+regression in `packages/scripts/src/shared/__tests__/bayn-rgw-observability-contract.test.ts` exercises that reader
+shape, malformed records and query redaction through the deployed version's processing stages.
+
+After the configuration-digest rollout, verify native `get pods --subresource=log` authorization for
+`system:serviceaccount:observability:observability-cluster-metrics-alloy` in `rook-ceph`, both discovered RGW pods,
+and exact content-hash receipt joins in Loki. Collector readiness alone does not establish receipt ingestion.
 
 Validate the Mimir tenant after sync:
 

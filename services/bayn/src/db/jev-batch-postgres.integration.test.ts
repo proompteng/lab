@@ -19,6 +19,7 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import type { Statement } from 'effect/sql/Statement'
 
 import { CycleStore, CycleStoreLive } from '../cycle/store'
+import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
 import { operationalError } from '../errors'
 import { canonicalHashV1 } from '../hash'
 import { Authority } from '../execution/contracts'
@@ -29,14 +30,14 @@ import {
   makeJevBatchPlan,
   usableJevBatchInferences,
 } from '../jev/batch'
-import { evaluateJevBatch, JevBatchStore, recoverJevBatch } from '../jev/batch-evaluation'
+import { evaluateJevBatch, JevBatchExpired, JevBatchStore, recoverJevBatch } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { JevResolutionStatus } from '../jev/resolution'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
-import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { CandidateObservationStore, makeCandidateObservation } from '../observe-composition/candidate-observation'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
 import { utcInstantFromEpochMillis } from '../time'
@@ -134,6 +135,77 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         }),
         atObservation,
       ),
+    )
+  })
+
+  test('generation-wide pending lookup remains exact-cycle scoped and cannot seal another account', async () => {
+    const generation = 'c'.repeat(64)
+    const nextObservation = Result.getOrThrow(
+      makeCandidateObservation({ ...fixture.input, authorityGenerationHash: generation }),
+    )
+    const session = fixture.snapshot.manifest.calendar.sessions[0]
+    if (session === undefined) throw new Error('Missing fixture session')
+    const executionPolicy = fixture.draft.identity.executionPolicy
+    if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
+      throw new Error('Fixture requires its original intraday policy')
+    const foreignDraft = Result.getOrThrow(
+      makeIntradayCycleDraft(
+        {
+          cycleBindingId: 'a'.repeat(64),
+          strategyName: 'intraday-momentum',
+          strategyProtocolHash: fixture.draft.identity.strategyProtocolHash,
+          accountId: 'another-jev-evidence-account',
+          executionPolicy,
+        },
+        fixture.snapshot.manifest.calendar,
+        session,
+      ),
+    )
+    const foreignObservation = Result.getOrThrow(
+      makeCandidateObservation({
+        ...fixture.input,
+        cycleId: foreignDraft.identity.cycleId,
+      }),
+    )
+    const nextPlan = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation: nextObservation.payload,
+        expiresAt: plan.expiresAt,
+        planVersion: JevBatchPlanVersion.V1,
+      }),
+    )
+    const foreignPlan = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation: foreignObservation.payload,
+        expiresAt: plan.expiresAt,
+        planVersion: JevBatchPlanVersion.V1,
+      }),
+    )
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const batches = yield* JevBatchStore
+        const observations = yield* CandidateObservationStore
+        yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
+        VALUES (${generation}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 2, ${plan.observedAt})`
+        yield* (yield* CycleStore).acquire(foreignDraft, fixture.cycle.createdAt)
+        yield* observations.record(nextObservation)
+        yield* observations.record(foreignObservation)
+        for (const candidate of [plan, nextPlan, foreignPlan]) yield* batches.begin(candidate)
+        expect(yield* batches.pending(plan.cycleId, plan.authorityGenerationHash)).toEqual([plan.batchId])
+        expect(yield* batches.pending(plan.cycleId)).toEqual([plan.batchId, nextPlan.batchId].sort())
+        yield* TestClock.adjust('5 seconds')
+        for (const id of yield* batches.pending(plan.cycleId)) {
+          const sealed = yield* batches.finish(id)
+          expect(
+            sealed.result?.candidates.filter((candidate) => candidate.status === JevCandidateResultStatus.Unattempted),
+          ).toHaveLength(requested.length)
+        }
+        expect(yield* batches.pending(plan.cycleId)).toEqual([])
+        expect(yield* batches.pending(foreignPlan.cycleId)).toEqual([foreignPlan.batchId])
+        expect((yield* batches.read(foreignPlan.batchId))?.result).toBeNull()
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+      }).pipe(atObservation),
     )
   })
 
@@ -384,10 +456,54 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const store = yield* JevBatchStore
         for (const now of [observed - 1, observed + 5000]) {
           yield* TestClock.setTime(now)
-          expect(Result.isFailure(yield* store.begin(plan).pipe(Effect.result))).toBe(true)
+          const result = yield* store.begin(plan).pipe(Effect.result)
+          expect(Result.isFailure(result)).toBe(true)
+          if (Result.isFailure(result))
+            expect(result.failure._tag).toBe(now < observed ? 'OperationalError' : 'JevBatchExpired')
         }
         expect(yield* store.read(plan.batchId)).toBeNull()
+        expect(yield* (yield* PgClient.PgClient)`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
       }).pipe(atObservation),
+    )
+  })
+
+  test('expired verified admission makes no claim or provider call and preserves committed recovery', async () => {
+    let calls = 0
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* TestClock.setTime(observed + 16000)
+        const result = yield* evaluateJevBatch(plan).pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(JevBatchExpired)
+          expect(result.failure).toMatchObject({
+            batchId: plan.batchId,
+            observedAt: plan.observedAt,
+            expiresAt: plan.expiresAt,
+            checkedAt: utcInstantFromEpochMillis(observed + 16000),
+          })
+        }
+        expect(yield* sql`SELECT batch_id FROM jev_batch_plans`).toEqual([])
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+        expect(calls).toBe(0)
+        yield* TestClock.setTime(observed)
+        const saved = yield* store.begin(plan)
+        yield* TestClock.setTime(observed + 16000)
+        expect(yield* store.begin(plan)).toEqual(saved)
+        expect((yield* recoverJevBatch(plan.batchId)).result).not.toBeNull()
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+        expect(calls).toBe(0)
+      }).pipe(
+        Effect.provideService(JevClient, {
+          evaluate: (request) =>
+            Effect.sync(() => {
+              calls += 1
+            }).pipe(Effect.andThen(successful.evaluate(request))),
+        }),
+        atObservation,
+      ),
     )
   })
 

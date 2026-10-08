@@ -1,7 +1,7 @@
 import { gzipSync } from 'node:zlib'
 import { Effect, Result, Schema } from 'effect'
 
-import { canonicalHashV1, sha256 } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import { validateBacktestSourceManifest, validateBacktestSourceReceipt } from '../intraday-replay/source'
 import {
   advanceHistoricalMarketCursor,
@@ -14,14 +14,13 @@ import { strictParseOptions } from '../schemas'
 import {
   CaptureIntervalRequestSchema,
   ResearchCaptureFailure,
-  decodeResearchCaptureChunk,
   maximumResearchCaptureChunkBytes,
   type CaptureIntervalRequest,
   type ResearchCaptureBytes,
 } from './capture'
 import {
   deriveResearchCaptureExportManifest,
-  ResearchCaptureByteIndexSchema,
+  decodeResearchCaptureExportChunk,
   ResearchCaptureExportManifestSchema,
   verifyResearchCaptureExportPrefix,
 } from './export'
@@ -47,20 +46,9 @@ export const replayResearchCaptureInterval = (
       return yield* Result.fail(fail('An invalidated or incomplete observation prefix cannot prove an interval'))
     const receipts = []
     const rawBySequence = new Map<number, Uint8Array | null>()
-    for (const bytes of chunks) {
-      const chunk = yield* decodeResearchCaptureChunk(bytes.metadata)
-      const index = yield* Schema.decodeUnknownResult(
-        Schema.fromJsonString(ResearchCaptureByteIndexSchema),
-        strictParseOptions,
-      )(bytes.index.payload)
-      receipts.push(...chunk.receipts)
-      for (const range of index.ranges)
-        rawBySequence.set(
-          range.receiptSequence,
-          range.byteOffset === null || range.byteLength === null
-            ? null
-            : bytes.raw.subarray(range.byteOffset, range.byteOffset + range.byteLength),
-        )
+    for (const bytes of verified.chunks) {
+      receipts.push(...bytes.chunk.receipts)
+      for (const [sequence, raw] of bytes.rawValues) rawBySequence.set(sequence, raw)
     }
     const cuts = receipts.filter(
       (receipt) => receipt.event.kind === 'consumer-interval-cut' && receipt.event.intervalId === requested.intervalId,
@@ -76,10 +64,10 @@ export const replayResearchCaptureInterval = (
       universeHash: cut.universeHash,
       expectedPartitions: cut.expectedPartitions,
     }
-    if (
-      canonicalHashV1(requested) !== canonicalHashV1(selectedRequest) ||
-      cut.universeHash !== canonicalHashV1(universe)
-    )
+    const requestedHash = yield* canonicalHashV1Result(requested)
+    const selectedRequestHash = yield* canonicalHashV1Result(selectedRequest)
+    const universeHash = yield* canonicalHashV1Result(universe)
+    if (requestedHash !== selectedRequestHash || cut.universeHash !== universeHash)
       return yield* Result.fail(fail('Capture interval differs from the independently selected request or universe'))
     const assignments = receipts.filter(
       (receipt) =>
@@ -176,11 +164,14 @@ export const replayResearchCaptureInterval = (
       captureId: verified.seal.captureId,
       consumerEpoch: cut.consumerEpoch,
       exportManifestHash: manifestBytes.contentHash,
-      intervalReceiptHash: canonicalHashV1(cutReceipt),
+      intervalReceiptHash: yield* canonicalHashV1Result(cutReceipt),
       finalConsumerSequence: cut.finalConsumerSequence,
     }
     const events: HistoricalMarketArrival[] = []
-    let cursor: HistoricalMarketCursor = yield* createHistoricalMarketCursor(canonicalHashV1(deliveryModel), universe)
+    let cursor: HistoricalMarketCursor = yield* createHistoricalMarketCursor(
+      yield* canonicalHashV1Result(deliveryModel),
+      universe,
+    )
     for (const [index, receipt] of markets.entries()) {
       const event = receipt.event
       if (event.kind !== 'market-record' || event.originalTransport === undefined)
@@ -322,15 +313,12 @@ export const readResearchCaptureInterval = (input: {
     if (sealObject.payload !== input.seal.payload || sealObject.contentHash !== input.seal.contentHash)
       return yield* fail('Durable SQL seal differs from its exported object')
     const chunks: Array<ExportChunks[number]> = []
-    let hash = manifest.lastIndexHash
+    let hash = manifest.lastChunkHash
     for (let ordinal = manifest.exportedChunks - 1; ordinal >= 0; ordinal--) {
-      if (hash === null) return yield* fail('Capture index chain omits its declared tail')
-      const indexBytes = asText(yield* read(hash))
-      const index = yield* Schema.decodeUnknownEffect(
-        Schema.fromJsonString(ResearchCaptureByteIndexSchema),
-        strictParseOptions,
-      )(indexBytes.payload)
-      const metadata = asText(yield* read(index.metadata.contentHash))
+      if (hash === null) return yield* fail('Capture frame chain omits its declared tail')
+      const object = yield* read(hash)
+      const decoded = yield* Effect.fromResult(decodeResearchCaptureExportChunk(object))
+      const metadata = decoded.metadata
       const metadataBytes = Buffer.byteLength(metadata.payload, 'utf8')
       if (metadataBytes > remaining) return yield* fail('SQL metadata exceeds the remaining capture read budget')
       const sqlLimit = Math.min(remaining, maximumResearchCaptureChunkBytes, metadataBytes)
@@ -340,11 +328,10 @@ export const readResearchCaptureInterval = (input: {
       remaining -= sqlBytes
       if (metadata.contentHash !== sqlMetadata.contentHash || metadata.payload !== sqlMetadata.payload)
         return yield* fail('Exported metadata differs from its exact SQL chunk')
-      const raw = yield* read(index.raw.contentHash)
-      chunks.push({ index: indexBytes, metadata, raw: raw.payload })
-      hash = index.previousIndexHash
+      chunks.push(object)
+      hash = decoded.previousChunkHash
     }
-    if (hash !== null) return yield* fail('Capture index chain exceeds the declared frontier')
+    if (hash !== null) return yield* fail('Capture frame chain exceeds the declared frontier')
     return yield* Effect.fromResult(
       replayResearchCaptureInterval(chunks.reverse(), input.seal, manifestBytes, input.request, input.universe),
     )

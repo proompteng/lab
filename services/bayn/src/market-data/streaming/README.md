@@ -105,6 +105,24 @@ have been removed. See the [backtest workflow](../../../README.md#replay-and-bac
 
 ## Session measurements
 
+Native execution provides telemetry while acquiring its worker resources, so Kafka bootstrap, supervision and
+measurement fibers inherit the JSON logger and trace exporter. Retained projection measurements are one JSON line
+per sample rather than multiline console fragments.
+
+`Streaming market snapshot rejected` retains `bayn.market-snapshot-failure.v1` diagnostics for a rejected observation:
+the query window and observation time, query-bound symbol and topic, exact millisecond or nanosecond event and
+ingestion times, and the publication delay and governing bound when available. The allowlist excludes raw payloads,
+exception messages, arbitrary failure facts and credentials. Missing fields remain unknown. These warnings preserve
+the original typed failure and trading eligibility; late benchmark bars continue to block the observation.
+When a required rolling feature is unavailable, the same warning retains its definition identity and exact query
+window, together with expected and observed minute-bar counts and the ordered missing minute timestamps. This coverage
+is selected from the rejected observation's actual consumer cut, including its local arrival-time bound; it is not a
+later periodic coverage sample. A complete bar window with no matching observed feature reports an empty missing list.
+Only this rejection branch computes the missing list, which the validated query bounds to at most 30 minutes. No
+additional feed, archive, database or broker request is made, and these diagnostics do not supply a replacement bar.
+Coverage is computed at the live logging boundary; decision failure facts and frozen replay report identities retain
+their original contents.
+
 Each worker logs `Kafka feature incorporated` for accepted features before join-history retention can discard them.
 Retries of retained semantic IDs do not create another receipt; deduplicate by epoch and feature ID when aggregating. The
 `bayn.feature-availability.v1` record binds the feature ID and Kafka coordinates to its actual local receipt time,

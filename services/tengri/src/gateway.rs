@@ -788,6 +788,7 @@ async fn preview_host_proxy(
             &token,
             Some(request.headers()),
             guest.client.preview_tls.clone(),
+            &guest.client.claim_headers,
         )
         .await
         {
@@ -950,7 +951,8 @@ async fn proxy_http(
     }
     let headers = upstream.headers().clone();
     let is_editor = session.port == crate::guest::EDITOR_PORT;
-    let inject_bridge = should_inject_preview_bridge(&request_method, status, &headers);
+    let inject_bridge = session.port != crate::guest::BROWSER_PORT
+        && should_inject_preview_bridge(&request_method, status, &headers);
     let upstream_body = state
         .authorization
         .access(&state.namespace, &session.agent_id, &session.owner_hash)
@@ -1049,9 +1051,11 @@ async fn connect_upstream_websocket(
     token: &str,
     forwarded_headers: Option<&HeaderMap>,
     tls: Option<Arc<rustls::ClientConfig>>,
+    claim_headers: &HeaderMap,
 ) -> Result<(UpstreamWebSocket, Option<String>), UpstreamWebSocketError> {
-    let request = upstream_websocket_request(target, token, forwarded_headers)
+    let mut request = upstream_websocket_request(target, token, forwarded_headers)
         .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
+    request.headers_mut().extend(claim_headers.clone());
     let requested_protocols = websocket_protocols(request.headers())
         .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
     let config = WebSocketConfig::default()
@@ -1429,6 +1433,8 @@ fn forward_request_header(name: &HeaderName) -> bool {
             | "x-forwarded-for"
             | "x-forwarded-host"
             | "x-forwarded-proto"
+            | "x-tengri-microvm-uid"
+            | "x-tengri-claim-epoch"
     )
 }
 
@@ -1480,7 +1486,7 @@ mod tests {
                 "https://proompteng.ai".to_owned(),
             )
             .expect("preview origin"),
-            crate::identity::WorkloadIdentity::Fixture,
+            crate::identity::WorkloadIdentity::Fixture(8080),
             crate::authz::WorkspaceAuthorization::Fixture,
         )
         .expect("gateway state")

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { isMap, parseDocument } from 'yaml'
+import { isMap, isSeq, parseDocument } from 'yaml'
 
 type Rule = {
   resources?: string[]
@@ -36,8 +36,12 @@ type NetworkPolicy = {
   kind?: string
   metadata?: { name?: string; annotations?: Record<string, string> }
   spec?: {
+    podSelector?: { matchLabels?: Record<string, string> }
     ingress?: Array<{
-      from?: Array<{ namespaceSelector?: { matchLabels?: Record<string, string> } }>
+      from?: Array<{
+        namespaceSelector?: { matchLabels?: Record<string, string> }
+        podSelector?: { matchLabels?: Record<string, string> }
+      }>
       ports?: Array<{ port?: number; protocol?: string }>
     }>
     egress?: Array<{
@@ -60,6 +64,130 @@ const services = documents<Service>('argocd/applications/tengri/services.yaml')
 const ingressRoutes = documents<IngressRoute>('argocd/applications/tengri/ingressroute.yaml')
 const networkPolicies = documents<NetworkPolicy>('argocd/applications/tengri/network-policies.yaml')
 
+function manifest(path: string) {
+  const document = parseDocument(readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8'))
+  expect(document.errors).toEqual([])
+  return document
+}
+
+test('the platform enrolls the KVM/TUN prerequisite without changing namespace policy', () => {
+  const elements = manifest('argocd/applicationsets/platform.yaml').getIn([
+    'spec',
+    'generators',
+    0,
+    'matrix',
+    'generators',
+    1,
+    'list',
+    'elements',
+  ])
+  if (!isSeq(elements)) throw new Error('Platform applications must be a sequence')
+  const devices = elements.items.find((entry) => isMap(entry) && entry.get('name') === 'tengri-devices')
+  if (!isMap(devices)) throw new Error('The KVM/TUN application must be enrolled')
+  expect(devices.get('path')).toBe('argocd/applications/tengri-devices')
+  expect(devices.get('namespace')).toBe('kube-system')
+  expect(devices.get('automation')).toBe('auto')
+  expect(devices.get('enabled')).toBe('true')
+  expect(devices.getIn(['annotations', 'argocd.argoproj.io/sync-wave'])).toBe('1')
+  expect(devices.get('managedNamespaceMetadata')).toBeUndefined()
+})
+
+test('device allocation installs its admission restriction before advertising KVM/TUN', () => {
+  const devices = manifest('argocd/applications/tengri-devices/kustomization.yaml').get('resources')
+  const controller = manifest('argocd/applications/tengri/kustomization.yaml').get('resources')
+  if (!isSeq(devices) || !isSeq(controller)) throw new Error('Application resources must be sequences')
+  expect(devices.toJSON()).toContain('slot-admission.yaml')
+  expect(controller.toJSON()).not.toContain('slot-admission.yaml')
+
+  const admission = documents<{
+    kind?: string
+    metadata?: { name?: string; annotations?: Record<string, string> }
+    spec?: { failurePolicy?: string; policyName?: string; validationActions?: string[] }
+  }>('argocd/applications/tengri-devices/slot-admission.yaml')
+  expect(admission).toHaveLength(2)
+  for (const resource of admission) {
+    expect(resource.metadata?.annotations?.['argocd.argoproj.io/sync-wave']).toBe('-1')
+  }
+  expect(admission.find((resource) => resource.kind === 'ValidatingAdmissionPolicy')).toMatchObject({
+    metadata: { name: 'tengri-slot-devices' },
+    spec: { failurePolicy: 'Fail' },
+  })
+  expect(admission.find((resource) => resource.kind === 'ValidatingAdmissionPolicyBinding')).toMatchObject({
+    spec: { policyName: 'tengri-slot-devices', validationActions: ['Deny'] },
+  })
+  const plugin = manifest('argocd/applications/tengri-devices/device-plugin.yaml')
+  expect(plugin.getIn(['metadata', 'annotations', 'argocd.argoproj.io/sync-wave']) ?? '0').toBe('0')
+})
+
+test('source delivery preserves guest attestation and published trust until cutover', () => {
+  const accounts = documents<{ kind?: string; metadata?: { name?: string }; automountServiceAccountToken?: boolean }>(
+    'argocd/applications/tengri/service-account.yaml',
+  )
+  for (const name of ['nanoagent', 'tengri-slot']) {
+    expect(accounts.find((account) => account.metadata?.name === name)).toMatchObject({
+      kind: 'ServiceAccount',
+      automountServiceAccountToken: false,
+    })
+  }
+  const controller = rbac.find((document) => document.kind === 'Role' && document.metadata?.name === 'tengri')
+  expect(controller?.rules?.find((rule) => rule.resources?.includes('serviceaccounts/token'))).toEqual({
+    apiGroups: [''],
+    resources: ['serviceaccounts/token'],
+    resourceNames: ['nanoagent'],
+    verbs: ['create'],
+  })
+  expect(
+    rbac.find((document) => document.kind === 'ClusterRole' && document.metadata?.name === 'tengri-guest-identities')
+      ?.rules,
+  ).toEqual([
+    {
+      apiGroups: ['spire.spiffe.io'],
+      resources: ['clusterstaticentries'],
+      verbs: ['get', 'list', 'create', 'patch', 'delete'],
+    },
+  ])
+  expect(
+    rbac.find(
+      (document) => document.kind === 'ClusterRoleBinding' && document.metadata?.name === 'tengri-guest-identities',
+    ),
+  ).toMatchObject({
+    metadata: { name: 'tengri-guest-identities' },
+    subjects: [{ kind: 'ServiceAccount', name: 'tengri', namespace: 'tengri' }],
+    roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'tengri-guest-identities' },
+  })
+  const tengriResources = manifest('argocd/applications/tengri/kustomization.yaml').get('resources')
+  if (!isSeq(tengriResources)) throw new Error('Tengri resources must be a sequence')
+  expect(tengriResources.toJSON()).toContain('spire-admission.yaml')
+  const values = manifest('argocd/applications/spire-server/values.yaml')
+  const plugins = ['spire-server', 'unsupportedBuiltInPlugins']
+  const guest = values.getIn([...plugins, 'nodeAttestor', 'k8s_psat', 'plugin_data', 'clusters', 0, 'galactic-guests'])
+  if (!isMap(guest)) throw new Error('Existing guest attestation must remain configured')
+  expect(guest.toJSON()).toEqual({
+    audience: ['spire-server'],
+    service_account_allow_list: ['tengri:nanoagent'],
+    use_pod_uid_for_agent_id: true,
+  })
+  const publisher = values.getIn([
+    ...plugins,
+    'bundlePublisher',
+    'k8s_configmap',
+    'plugin_data',
+    'clusters',
+    0,
+    'galactic-guests',
+  ])
+  if (!isMap(publisher)) throw new Error('Existing guest trust must keep renewing')
+  expect(publisher.toJSON()).toEqual({
+    format: 'pem',
+    namespace: 'tengri',
+    configmap_name: 'spire-guest-bundle',
+    configmap_key: 'bundle.pem',
+  })
+  const resources = manifest('argocd/applications/spire-server/kustomization.yaml').get('resources')
+  if (!isSeq(resources)) throw new Error('SPIRE resources must be a sequence')
+  expect(resources.toJSON()).toContain('guest-bundle.yaml')
+})
+
 test('Tengri can create and clean up agent Pods, Secrets, and PVCs', () => {
   const role = rbac.find((document) => document.kind === 'Role' && document.metadata?.name === 'tengri')
   const podRule = role?.rules?.find((rule) => rule.resources?.includes('pods'))
@@ -71,16 +199,44 @@ test('Tengri can create and clean up agent Pods, Secrets, and PVCs', () => {
   expect(persistentResourceRule?.verbs).toEqual(['create', 'delete', 'get', 'list', 'patch', 'watch'])
 })
 
-test('Tengri network isolation survives Application deletion', () => {
+test('Tengri preserves retained network policies during the runtime migration', () => {
   const policies = networkPolicies.filter((document) => document.kind === 'NetworkPolicy')
   expect(policies.map((policy) => policy.metadata?.name).sort()).toEqual([
     'tengri-control-plane',
     'tengri-default-deny',
     'tengri-microvm-guests',
+    'tengri-slots',
   ])
   for (const policy of policies) {
     expect(policy.metadata?.annotations?.['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
   }
+  const existing = policies.find((policy) => policy.metadata?.name === 'tengri-microvm-guests')
+  expect(existing?.spec?.podSelector?.matchLabels).toEqual({
+    'app.kubernetes.io/name': 'nanoagent',
+    'app.kubernetes.io/component': 'microvm',
+  })
+  expect(existing?.spec?.egress).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        to: expect.arrayContaining([
+          expect.objectContaining({
+            namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'spire-server' } },
+          }),
+        ]),
+      }),
+    ]),
+  )
+  const controller = policies.find((policy) => policy.metadata?.name === 'tengri-control-plane')
+  expect(controller?.spec?.egress).toEqual(
+    expect.arrayContaining([
+      {
+        to: [{ podSelector: { matchLabels: existing?.spec?.podSelector?.matchLabels } }],
+        ports: [{ protocol: 'TCP', port: 8443 }],
+      },
+    ]),
+  )
+  const slots = policies.find((policy) => policy.metadata?.name === 'tengri-slots')
+  expect(slots?.spec?.podSelector?.matchLabels).toEqual({ 'app.kubernetes.io/name': 'tengri-slot' })
 })
 
 test('public control and preview traffic use isolated Services and routes', () => {
@@ -138,7 +294,7 @@ test('only the controller can reach the shared SpiceDB API', () => {
     ],
     ports: [{ protocol: 'TCP', port: 8443 }],
   })
-  const guest = networkPolicies.find((policy) => policy.metadata?.name === 'tengri-microvm-guests')
+  const guest = networkPolicies.find((policy) => policy.metadata?.name === 'tengri-slots')
   expect(
     guest?.spec?.egress?.some((rule) =>
       rule.to?.some((target) => target.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'ofz'),
@@ -150,10 +306,7 @@ test('only the controller can reach the shared SpiceDB API', () => {
 })
 
 test('the SpiceDB credential is sealed for the controller namespace and mounted as a file', () => {
-  const manifest = (path: string) =>
-    parseDocument(readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8'))
   const sealed = manifest('argocd/applications/tengri/spicedb-key-sealedsecret.yaml')
-  expect(sealed.errors).toEqual([])
   expect(sealed.get('kind')).toBe('SealedSecret')
   expect(sealed.getIn(['metadata', 'namespace'])).toBe('tengri')
   expect(sealed.getIn(['spec', 'template', 'metadata', 'name'])).toBe('tengri-spicedb-key')

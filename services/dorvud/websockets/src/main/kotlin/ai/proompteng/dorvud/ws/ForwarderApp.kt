@@ -2262,18 +2262,21 @@ internal fun isRegularMarketSession(
 fun main() =
   runBlocking {
     try {
-      val cfg = ForwarderConfig.fromEnv()
-      val app = ForwarderApp(cfg)
-      val health = HealthServer(app, cfg)
-      health.start()
-      val job = app.start()
-      Runtime.getRuntime().addShutdownHook(
-        Thread {
-          health.stop()
-          app.stop()
-        },
-      )
-      job.join()
+      observeJvmMetrics(Metrics.registry).use { jvmMetrics ->
+        val cfg = ForwarderConfig.fromEnv()
+        val app = ForwarderApp(cfg)
+        val health = HealthServer(app, cfg)
+        health.start()
+        val job = app.start()
+        Runtime.getRuntime().addShutdownHook(
+          Thread {
+            jvmMetrics.close()
+            health.stop()
+            app.stop()
+          },
+        )
+        job.join()
+      }
     } catch (e: Exception) {
       logger.error(e) { "forwarder failed to start" }
       exitProcess(1)

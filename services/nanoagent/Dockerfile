@@ -23,6 +23,9 @@ RUN go mod download
 COPY *.go ./
 COPY internal ./internal
 COPY vscode-extension ./vscode-extension
+COPY test-guest-admin.sh /out/test-guest-admin.sh
+COPY browser-client.html browser-client.js ./
+COPY developer-profile.sh ./
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent . && \
@@ -63,9 +66,12 @@ FROM ${UV_BASE_IMAGE}:${UV_VERSION} AS uv-runtime
 FROM ${UBUNTU_BASE_IMAGE}:24.04 AS runtime
 
 ENV CARGO_HOME=/home/nanoagent/.cargo \
+    BROWSER_RUNTIME_ARCHIVE=/usr/share/nanoagent/browser-runtime.tar.xz \
+    BROWSER_BINARY=/usr/local/bin/launch-browser \
+    BROWSER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-browser \
+    BROWSER_ASSETS_DIRECTORY=/usr/share/nanoagent/novnc \
+    CHROMIUM_BINARY=/home/nanoagent/.local/bin/chromium \
     CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server \
-    SPIRE_AGENT_BINARY=/home/nanoagent/.local/bin/spire-agent \
-    SPIRE_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-spire-agent \
     CODE_SERVER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-code-server \
     CODEX_BINARY=/home/nanoagent/.local/bin/codex \
     CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
@@ -89,6 +95,7 @@ RUN set -eux; \
       bubblewrap \
       ca-certificates \
       curl \
+      e2fsprogs \
       file \
       git \
       gzip \
@@ -104,6 +111,7 @@ RUN set -eux; \
       sudo \
       tar \
       tini \
+      util-linux \
       xz-utils; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
@@ -136,14 +144,61 @@ RUN set -eux; \
     test -x /bin/bash
 
 COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
+COPY --chmod=0555 bootstrap-browser.sh /usr/local/bin/bootstrap-browser
+COPY --chmod=0555 bootstrap-browser-runtime.sh /usr/local/bin/bootstrap-browser-runtime
+COPY --chmod=0555 launch-browser.sh /usr/local/bin/launch-browser
+COPY --chmod=0555 browser-xkbcomp.sh /usr/bin/xkbcomp
+RUN set -eux; \
+    curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --retry 3 \
+      https://registry.npmjs.org/@novnc/novnc/-/novnc-1.7.0.tgz --output /tmp/novnc.tgz; \
+    printf '32689f18d6abe96bc6530828a6bd0b9ae33bda07c083a6575ed255b5a8f2e903  /tmp/novnc.tgz\n' | sha256sum --check --status -; \
+    mkdir -p /usr/share/nanoagent/novnc; \
+    tar -xzf /tmp/novnc.tgz --strip-components=1 --no-same-owner --no-same-permissions -C /usr/share/nanoagent/novnc; \
+    chmod -R a+rX /usr/share/nanoagent/novnc; \
+    rm /tmp/novnc.tgz
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
 COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
-COPY --chmod=0555 bootstrap-spire-agent.sh /usr/local/bin/bootstrap-spire-agent
+COPY --chmod=0555 tengri-init.sh /usr/local/sbin/tengri-init
 COPY --chmod=0555 bootstrap-developer-tools.sh /usr/local/bin/bootstrap-developer-tools
 COPY --chmod=0444 astronvim-init.lua /usr/share/nanoagent/astronvim-init.lua
 RUN chmod 0755 /usr/share/nanoagent
 COPY --chmod=0444 developer-profile.sh /etc/profile.d/tengri-development.sh
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
+
+# Keep the verified graphics packages in the immutable image instead of relying
+# on superseded Ubuntu archive URLs. Extract the bundle on the retained home.
+FROM runtime AS browser-runtime-bundle
+RUN set -eux; \
+    apt-get update -o Acquire::Retries=3; \
+    mkdir -p /out/runtime /tmp/browser-debs; \
+    apt-get -o Dir::Cache::archives=/tmp/browser-debs --download-only --yes --no-install-recommends install \
+      fonts-liberation \
+      libasound2t64 \
+      libatk-bridge2.0-0 \
+      libcups2 \
+      libdrm2 \
+      libgbm1 \
+      libgtk-3-0t64 \
+      libnss3 \
+      libxcomposite1 \
+      libxdamage1 \
+      libxfixes3 \
+      libxkbcommon0 \
+      libxrandr2 \
+      openbox \
+      scrot \
+      tigervnc-standalone-server \
+      x11-utils \
+      xauth \
+      xclip \
+      xdotool; \
+    for package in /tmp/browser-debs/*.deb; do dpkg-deb --extract "$package" /out/runtime; done; \
+    rm -rf /out/runtime/usr/share/man /out/runtime/usr/share/locale; \
+    find /out/runtime/usr/share/doc -type f ! -name copyright -delete; \
+    test -x /out/runtime/usr/bin/Xtigervnc; \
+    test -x /out/runtime/usr/bin/xclip; \
+    XZ_OPT='-T2 -8' tar --create --xz --file /out/browser-runtime.tar.xz \
+      --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner --directory /out/runtime .
 
 FROM runtime AS guest-admin-smoke
 
@@ -315,6 +370,15 @@ RUN test -x /usr/local/bin/bootstrap-toolchain && bootstrap-toolchain --validate
     ln -s /home/nanoagent/.local/bin/gcc /usr/bin/gcc && \
     ln -s /home/nanoagent/.linuxbrew/bin/make /usr/bin/make
 
+COPY --from=browser-runtime-bundle /out/browser-runtime.tar.xz /usr/share/nanoagent/browser-runtime.tar.xz
+
+FROM runtime-with-toolchain AS browser-smoke
+USER 1000:1000
+RUN --network=none bootstrap-browser-runtime "$BROWSER_RUNTIME_ARCHIVE" && \
+    test -s "$HOME/.tengri/browser/runtime-path"
+RUN bootstrap-toolchain --install-only && bootstrap-browser --install-only && \
+    launch-browser --validate-install > /tmp/browser-version
+
 FROM runtime-with-toolchain AS toolchain-smoke
 
 ENV BUN_INSTALL=/home/nanoagent/.toolchain-smoke/.local \
@@ -389,14 +453,6 @@ USER 1000:1000
 RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
     "$HOME/.local/bin/code-server" --config "$HOME/config.yaml" --version > /tmp/code-server-version
 
-FROM runtime-with-toolchain AS spire-agent-smoke
-ENV HOME=/home/nanoagent/.spire-smoke
-COPY --from=build /out/nanoagent-tests /tmp/nanoagent-tests
-RUN mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
-    "$HOME/.local/bin/spire-agent" --version > /tmp/spire-agent-version && \
-    SPIRE_AGENT_VALIDATE_BINARY="$HOME/.local/bin/spire-agent" \
-      /tmp/nanoagent-tests -test.run '^TestSPIREAgentConfiguration$' -test.v
-
 FROM runtime-with-toolchain AS developer-tools-smoke
 COPY --chmod=0555 test-developer-tools-cache.sh /usr/local/bin/test-developer-tools-cache
 USER 1000:1000
@@ -427,7 +483,7 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
 FROM runtime-with-toolchain AS guest-rootfs
 
 COPY --from=guest-admin-smoke /tmp/guest-admin-validation.txt /usr/share/nanoagent/guest-admin-validation.txt
-COPY --from=spire-agent-smoke /tmp/spire-agent-version /usr/share/nanoagent/spire-agent-version
+COPY --from=browser-smoke /tmp/browser-version /usr/share/nanoagent/browser-version
 COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version
@@ -436,16 +492,18 @@ COPY --from=developer-tools-smoke /tmp/developer-tools-version /usr/share/nanoag
 FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS rootfs-check
 
 RUN apt-get update -o Acquire::Retries=3 && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs curl ca-certificates && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 COPY --from=guest-rootfs / /rootfs/
 COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
 RUN validate-rootfs /rootfs /rootfs-validation.txt
 
-FROM guest-rootfs
+FROM rootfs-check AS boot-artifacts
+ARG TARGETARCH
+COPY --chmod=0555 build-boot-artifacts.sh /usr/local/bin/build-boot-artifacts
+RUN build-boot-artifacts "$TARGETARCH"
 
-COPY --from=rootfs-check /rootfs-validation.txt /usr/share/nanoagent/rootfs-validation.txt
-USER 1000:1000
-WORKDIR /home/nanoagent
-EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/nanoagent"]
+FROM ${UBUNTU_BASE_IMAGE}:24.04
+COPY --from=boot-artifacts /guest /guest
+USER 65532:65532
+ENTRYPOINT ["/bin/cp", "/guest/rootfs.ext4", "/guest/vmlinux", "/artifacts/"]
