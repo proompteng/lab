@@ -1,5 +1,5 @@
 import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Result, Schema, Stream } from 'effect'
-import { Headers, HttpClient, HttpClientRequest } from 'effect/http'
+import { HttpClient, HttpClientRequest } from 'effect/http'
 
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
@@ -176,7 +176,6 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
                   }),
             ),
             withObservedStage('bayn.jev.inference', { dependency: 'jev', operation: 'evaluate' }),
-            Effect.provideService(Headers.CurrentRedactedNames, ['authorization']),
           )
         })
       return { evaluate }
