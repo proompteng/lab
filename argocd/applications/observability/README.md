@@ -141,6 +141,18 @@ NIC throughput/link speed/drops, CPU, memory, and pressure. It pushes to the sam
 a listener on the provider LAN. See the [Ceph telemetry runbook](../../../docs/runbooks/ceph-performance-telemetry.md)
 for ingestion acceptance, recording-rule units, missing-data alerts, and the bounded recovery-override cleanup.
 
+The same central Alloy retains sanitized Bayn object-store access receipts as `job="bayn-rgw"` in the existing Loki
+destination. Discovery selects `app=rook-ceph-rgw,rgw=objectstore` pods in `rook-ceph` and only their `rgw` container.
+The approved namespace Role grants `GET pods/log` to the existing collector service account. RBAC permits reading
+all pod logs in that namespace; it cannot constrain this grant by pod label. The pipeline drops unrelated and malformed
+records, then replaces matching content-hash access lines with `bayn.rgw-access.v1` JSON containing only method,
+object hash, HTTP status, the native logged-byte field and gateway latency. It retains no query strings, headers,
+principals, agents or bucket names. Object hashes stay in log content rather than metric or stream labels.
+
+After the configuration-digest rollout, verify native `get pods --subresource=log` authorization for
+`system:serviceaccount:observability:observability-cluster-metrics-alloy` in `rook-ceph`, both discovered RGW pods,
+and exact content-hash receipt joins in Loki. Collector readiness alone does not establish receipt ingestion.
+
 Validate the Mimir tenant after sync:
 
 ```bash
