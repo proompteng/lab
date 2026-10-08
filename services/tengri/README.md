@@ -70,9 +70,10 @@ The separately reviewed [device allocation](../../argocd/applications/tengri-dev
 advertising devices and delegates only KVM and TUN
 through the official generic device plugin. The platform ApplicationSet enrolls it in `kube-system` at wave 1, before
 the controller's wave 2. Verify actual device allocations before an authorized cutover. The existing namespace admission
-already permits this narrowly constrained profile; no namespace policy change is required. Existing guest SPIRE
-attestation, the `nanoagent` ServiceAccount, token/registration RBAC, admission restrictions and bundle publication remain
-until the final old guest has stopped.
+already permits this narrowly constrained profile; no namespace policy change is required. The final cutover retires
+legacy guest SPIRE attestation, the `nanoagent` ServiceAccount, token/registration RBAC, static-entry admission, bundle
+publication, and the old guest network path after the final old guest and its storage writer are fenced. Slots use only
+the host supervisor registration and private vsock credential.
 
 The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
 is exactly `true`. Keep it unset until the separately approved cutover has fenced old writers and enrolled their

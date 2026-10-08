@@ -119,73 +119,71 @@ test('device allocation installs its admission restriction before advertising KV
   expect(plugin.getIn(['metadata', 'annotations', 'argocd.argoproj.io/sync-wave']) ?? '0').toBe('0')
 })
 
-test('source delivery preserves guest attestation and published trust until cutover', () => {
+test('slot supervisors retain host attestation after retiring guest identity privileges', () => {
   const accounts = documents<{ kind?: string; metadata?: { name?: string }; automountServiceAccountToken?: boolean }>(
     'argocd/applications/tengri/service-account.yaml',
   )
-  for (const name of ['nanoagent', 'tengri-slot']) {
-    expect(accounts.find((account) => account.metadata?.name === name)).toMatchObject({
-      kind: 'ServiceAccount',
-      automountServiceAccountToken: false,
-    })
-  }
-  const controller = rbac.find((document) => document.kind === 'Role' && document.metadata?.name === 'tengri')
-  expect(controller?.rules?.find((rule) => rule.resources?.includes('serviceaccounts/token'))).toEqual({
-    apiGroups: [''],
-    resources: ['serviceaccounts/token'],
-    resourceNames: ['nanoagent'],
-    verbs: ['create'],
+  expect(accounts.map((account) => account.metadata?.name).sort()).toEqual(['tengri', 'tengri-slot'])
+  expect(accounts.find((account) => account.metadata?.name === 'tengri-slot')).toMatchObject({
+    kind: 'ServiceAccount',
+    automountServiceAccountToken: false,
   })
+  expect(rbac.some((document) => document.kind === 'ClusterRole' || document.kind === 'ClusterRoleBinding')).toBe(false)
   expect(
-    rbac.find((document) => document.kind === 'ClusterRole' && document.metadata?.name === 'tengri-guest-identities')
-      ?.rules,
-  ).toEqual([
-    {
-      apiGroups: ['spire.spiffe.io'],
-      resources: ['clusterstaticentries'],
-      verbs: ['get', 'list', 'create', 'patch', 'delete'],
-    },
-  ])
-  expect(
-    rbac.find(
-      (document) => document.kind === 'ClusterRoleBinding' && document.metadata?.name === 'tengri-guest-identities',
-    ),
-  ).toMatchObject({
-    metadata: { name: 'tengri-guest-identities' },
-    subjects: [{ kind: 'ServiceAccount', name: 'tengri', namespace: 'tengri' }],
-    roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'tengri-guest-identities' },
-  })
+    rbac
+      .flatMap((document) => document.rules ?? [])
+      .some((rule) =>
+        rule.resources?.some((resource) => ['serviceaccounts/token', 'clusterstaticentries'].includes(resource)),
+      ),
+  ).toBe(false)
   const tengriResources = manifest('argocd/applications/tengri/kustomization.yaml').get('resources')
   if (!isSeq(tengriResources)) throw new Error('Tengri resources must be a sequence')
-  expect(tengriResources.toJSON()).toContain('spire-admission.yaml')
+  expect(tengriResources.toJSON()).not.toContain('spire-admission.yaml')
+
   const values = manifest('argocd/applications/spire-server/values.yaml')
   const plugins = ['spire-server', 'unsupportedBuiltInPlugins']
-  const guest = values.getIn([...plugins, 'nodeAttestor', 'k8s_psat', 'plugin_data', 'clusters', 0, 'galactic-guests'])
-  if (!isMap(guest)) throw new Error('Existing guest attestation must remain configured')
-  expect(guest.toJSON()).toEqual({
-    audience: ['spire-server'],
-    service_account_allow_list: ['tengri:nanoagent'],
-    use_pod_uid_for_agent_id: true,
+  const attestors = values.getIn([...plugins, 'nodeAttestor', 'k8s_psat', 'plugin_data', 'clusters', 0])
+  if (!isMap(attestors)) throw new Error('Host attestation must remain configured')
+  expect(attestors.toJSON()).toEqual({
+    galactic: {
+      audience: ['spire-server'],
+      service_account_allow_list: ['spire-system:spire-agent'],
+      allowed_node_label_keys: [],
+      allowed_pod_label_keys: [],
+    },
   })
-  const publisher = values.getIn([
-    ...plugins,
-    'bundlePublisher',
-    'k8s_configmap',
-    'plugin_data',
-    'clusters',
-    0,
-    'galactic-guests',
+  const publishers = values.getIn([...plugins, 'bundlePublisher', 'k8s_configmap', 'plugin_data', 'clusters', 0])
+  if (!isMap(publishers)) throw new Error('Host trust must keep renewing')
+  expect(publishers.toJSON()).toEqual({
+    'chart-internal': {
+      format: 'spiffe',
+      namespace: 'spire-system',
+      configmap_name: 'spire-bundle',
+      configmap_key: 'bundle.spiffe',
+    },
+  })
+  const supervisor = values.getIn([
+    'spire-server',
+    'controllerManager',
+    'identities',
+    'clusterSPIFFEIDs',
+    'tengri-slot',
   ])
-  if (!isMap(publisher)) throw new Error('Existing guest trust must keep renewing')
-  expect(publisher.toJSON()).toEqual({
-    format: 'pem',
-    namespace: 'tengri',
-    configmap_name: 'spire-guest-bundle',
-    configmap_key: 'bundle.pem',
+  if (!isMap(supervisor)) throw new Error('Slot supervisor registration must remain configured')
+  expect(supervisor.toJSON()).toEqual({
+    enabled: true,
+    spiffeIDTemplate: 'spiffe://{{ .TrustDomain }}/ns/tengri/slot/pod/{{ .PodMeta.UID }}',
+    namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'tengri' } },
+    podSelector: {
+      matchLabels: { 'app.kubernetes.io/name': 'tengri-slot', 'spiffe.io/spire-managed-identity': 'true' },
+    },
+    workloadSelectorTemplates: ['k8s:sa:tengri-slot', 'k8s:container-name:supervisor'],
+    ttl: '2m',
+    fallback: false,
   })
   const resources = manifest('argocd/applications/spire-server/kustomization.yaml').get('resources')
   if (!isSeq(resources)) throw new Error('SPIRE resources must be a sequence')
-  expect(resources.toJSON()).toContain('guest-bundle.yaml')
+  expect(resources.toJSON()).not.toContain('guest-bundle.yaml')
 })
 
 test('Tengri can create and clean up agent Pods, Secrets, and PVCs', () => {
@@ -199,42 +197,21 @@ test('Tengri can create and clean up agent Pods, Secrets, and PVCs', () => {
   expect(persistentResourceRule?.verbs).toEqual(['create', 'delete', 'get', 'list', 'patch', 'watch'])
 })
 
-test('Tengri preserves retained network policies during the runtime migration', () => {
+test('the controller reaches prepared slots without preserving an old guest network path', () => {
   const policies = networkPolicies.filter((document) => document.kind === 'NetworkPolicy')
   expect(policies.map((policy) => policy.metadata?.name).sort()).toEqual([
     'tengri-control-plane',
     'tengri-default-deny',
-    'tengri-microvm-guests',
     'tengri-slots',
   ])
   for (const policy of policies) {
     expect(policy.metadata?.annotations?.['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
   }
-  const existing = policies.find((policy) => policy.metadata?.name === 'tengri-microvm-guests')
-  expect(existing?.spec?.podSelector?.matchLabels).toEqual({
-    'app.kubernetes.io/name': 'nanoagent',
-    'app.kubernetes.io/component': 'microvm',
-  })
-  expect(existing?.spec?.egress).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        to: expect.arrayContaining([
-          expect.objectContaining({
-            namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'spire-server' } },
-          }),
-        ]),
-      }),
-    ]),
-  )
   const controller = policies.find((policy) => policy.metadata?.name === 'tengri-control-plane')
-  expect(controller?.spec?.egress).toEqual(
-    expect.arrayContaining([
-      {
-        to: [{ podSelector: { matchLabels: existing?.spec?.podSelector?.matchLabels } }],
-        ports: [{ protocol: 'TCP', port: 8443 }],
-      },
-    ]),
-  )
+  const guestTargets = controller?.spec?.egress
+    ?.flatMap((rule) => rule.to ?? [])
+    .filter((target) => target.podSelector && !target.namespaceSelector)
+  expect(guestTargets).toEqual([{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'tengri-slot' } } }])
   const slots = policies.find((policy) => policy.metadata?.name === 'tengri-slots')
   expect(slots?.spec?.podSelector?.matchLabels).toEqual({ 'app.kubernetes.io/name': 'tengri-slot' })
 })

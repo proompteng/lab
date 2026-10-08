@@ -19,8 +19,9 @@ is part of this lifecycle.
   platform ApplicationSet at wave 1. That Application installs the policy and binding at wave -1 before the device
   plugin at wave 0, independently of held Tengri image delivery.
 - SPIRE registers only the host slot supervisor, with the exact Pod UID and container selector.
-- Existing guest `nanoagent` ServiceAccount, token and registration RBAC, admission restrictions, attestation and bundle publication remain configured until the last old guest is stopped at cutover.
-- The existing guest NetworkPolicy and controller egress remain through cutover; prepared slots use `tengri-slots`.
+- Prepared slots use `tengri-slots`, host supervisor SPIRE registration, and a private guest vsock credential.
+- Legacy guest identity and network resources are absent from the final source. Their reviewed removal follows the
+  last approved old guest's writer fencing; the initial cutover cannot reconcile that removal while an old guest runs.
 - `tengri` namespace admission is already `privileged`; slot admission constrains the device/capability profile.
 
 Keep immutable controller and guest digests from the same source revision. CRD and namespace retain their
@@ -202,7 +203,11 @@ A reviewed cutover follows this order:
    are prepared. The old Kata path has no transferable snapshot, so existing processes restart once at cutover.
 6. Remove the old `nanoagent` ServiceAccount, its token-issuance Role rule, `tengri-guest-identities` ClusterRole/Binding
    and admission policy/binding, guest PSAT/token-renewal resources, `tengri-microvm-guests`, and its controller egress rule only after
-   their last approved old guest is stopped. Verify authenticated
+   their last approved old guest is stopped. Reconcile the reviewed SPIRE configuration while preserving its host
+   attestor, host bundle publisher, datastore, signing-key volumes, and host workload registrations. Verify host canary
+   identity rotation. The old `spire-guest-bundle` ConfigMap and `tengri-microvm-guests` policy have pruning protection;
+   source omission does not delete them. Retire those exact resources with UID/resourceVersion preconditions only after
+   their publisher/consumers are gone, then verify all retired resources are absent. Verify authenticated
    create/resume through files, a real terminal, initialized Codex, previews, and editor content. Confirm unchanged
    retained PVC UIDs and unchanged shared-node scheduling. Accept no health-only substitute.
 
