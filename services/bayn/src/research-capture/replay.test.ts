@@ -172,7 +172,6 @@ const fixture = (mutate?: (receipts: ResearchCaptureReceipt[]) => ResearchCaptur
   }
   const metadata = encodeResearchCapture(chunk)
   const objects = buildResearchCaptureExportChunk(
-    chunk,
     metadata,
     selected.map((receipt) => ({
       receipt,
@@ -192,30 +191,21 @@ const fixture = (mutate?: (receipts: ResearchCaptureReceipt[]) => ResearchCaptur
     lastContentHash: metadata.contentHash,
     invalidations: [],
     exportRoot: {
-      schemaVersion: 'bayn.research-capture-export-root.v1',
+      schemaVersion: 'bayn.research-capture-export-root.v2',
       exportedChunks: 1,
-      lastIndexHash: objects.index.contentHash,
+      lastChunkHash: objects.contentHash,
     },
   })
   const manifest = Result.getOrThrow(deriveResearchCaptureExportManifest(seal))
   const manifestBytes = { contentHash: manifest.contentHash, payload: Buffer.from(manifest.payload).toString('utf8') }
-  const chunks = [
-    {
-      metadata,
-      raw: objects.raw.payload,
-      index: { contentHash: objects.index.contentHash, payload: Buffer.from(objects.index.payload).toString('utf8') },
-    },
-  ]
+  const chunks = [objects]
   const stored = new Map(
-    [
-      objects.raw,
-      objects.metadata,
-      objects.index,
-      manifest,
-      { contentHash: seal.contentHash, payload: Buffer.from(seal.payload) },
-    ].map((object) => [object.contentHash, object.payload]),
+    [objects, manifest, { contentHash: seal.contentHash, payload: Buffer.from(seal.payload) }].map((object) => [
+      object.contentHash,
+      object.payload,
+    ]),
   )
-  return { chunks, seal, manifestBytes, stored, receipts: selected, projection }
+  return { chunks, metadata, seal, manifestBytes, stored, receipts: selected, projection }
 }
 
 test('a sealed active-worker interval replays exact bytes, timestamps, dispositions and receipt order without STOPPED', async () => {
@@ -289,7 +279,7 @@ test('reader follows only the durable root, checks actual objects and exact SQL 
         }),
       readMetadataChunk: (_ordinal, limit) =>
         Effect.sync(() => {
-          const chunk = corruptSql ? { ...data.chunks[0].metadata, payload: '{}' } : data.chunks[0].metadata
+          const chunk = corruptSql ? { ...data.metadata, payload: '{}' } : data.metadata
           if (Buffer.byteLength(chunk.payload, 'utf8') > limit)
             throw new Error('Fixture SQL read exceeds its byte limit')
           return chunk
@@ -305,7 +295,7 @@ test('reader follows only the durable root, checks actual objects and exact SQL 
 
 test('capture budget charges SQL metadata and passes its exact allowed size to the reader', async () => {
   const data = fixture()
-  const metadata = data.chunks[0].metadata
+  const metadata = data.metadata
   const sqlBytes = Buffer.byteLength(metadata.payload, 'utf8')
   const objectBytes = [...data.stored.values()].reduce((sum, bytes) => sum + bytes.byteLength, 0)
   const totalBytes = Buffer.byteLength(data.seal.payload, 'utf8') + objectBytes + sqlBytes

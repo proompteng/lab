@@ -31,7 +31,11 @@ import {
   marketEvent,
   recoverCaptureFromStoredObjects,
 } from '../research-capture/capture.test-support'
-import { researchCaptureObjectKey, type ResearchCaptureObject } from '../research-capture/export'
+import {
+  decodeResearchCaptureExportChunk,
+  researchCaptureObjectKey,
+  type ResearchCaptureObject,
+} from '../research-capture/export'
 import { makeResearchCaptureRecorder } from '../research-capture/recorder'
 import { sessionConfig } from '../research-capture/session.test-support'
 
@@ -113,15 +117,17 @@ postgresTest('a session claim commits before objects and a fresh attempt cannot 
       }
       let objects = 0
       const first = yield* makeResearchCaptureRecorder(store, options, {
-        putVerified: () =>
+        putVerified: (object) =>
           Effect.gen(function* () {
             const claim = yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)
             expect(claim.payload).toContain('session-attempt')
+            if (objects === 0)
+              expect(Result.getOrThrow(decodeResearchCaptureExportChunk(object)).metadata).toEqual(claim)
             objects++
           }),
       })
       const claimed = yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)
-      expect(objects).toBe(3)
+      expect(objects).toBe(1)
       const second = yield* makeResearchCaptureRecorder(store, options, {
         putVerified: () => Effect.die('a reused claim must not write objects'),
       })
@@ -311,7 +317,7 @@ postgresTest('durable SQL seal recovers raw objects after process state and seal
           return bucket.get(key)
         }),
       )
-      expect(reads).toHaveLength(4)
+      expect(reads).toHaveLength(3)
       expect(recovered.seal.exportRoot?.exportedChunks).toBe(1)
       expect(recovered.exportVerified).toBe(true)
       expect(recovered.structurallyClosed).toBe(true)

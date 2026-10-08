@@ -1,11 +1,14 @@
 import { expect, test } from 'bun:test'
 import { Readable } from 'node:stream'
 import type { S3ClientConfig, S3ClientResolvedConfig } from '@aws-sdk/client-s3'
-import { Deferred, Effect, Exit, Fiber, Redacted, Tracer } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Redacted, Result, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
-import { researchCaptureObject } from './export'
+import { captureKafkaTransport } from './capture'
+import { captureEvent, marketEvent, recoverCaptureFromStoredObjects } from './capture.test-support'
+import { researchCaptureObject, researchCaptureObjectKey, type ResearchCaptureObject } from './export'
+import { makeResearchCaptureRecorder, type ResearchCaptureStore } from './recorder'
 import { makeS3ResearchCaptureObjectStore } from './s3'
 
 const options = {
@@ -107,6 +110,89 @@ const fixture = (fault: Fault = 'none') => {
     ...captureSpans(),
   }
 }
+
+test('the recorder verifies one binary frame with two S3 requests before SQL and verifies both terminal objects', async () => {
+  const objects = new Map<string, ResearchCaptureObject>()
+  const requests: string[] = []
+  const writes: string[] = []
+  const chunks: Parameters<ResearchCaptureStore['append']>[0][] = []
+  const seals: Parameters<ResearchCaptureStore['seal']>[0][] = []
+  let destroys = 0
+  const handler: S3ClientConfig['requestHandler'] = {
+    handle: async (request: Request) => {
+      requests.push(request.method)
+      const key = request.path.slice('/synthetic-captures/'.length)
+      if (request.method === 'PUT') {
+        if (request.headers['if-none-match'] !== '*' || !(request.body instanceof Uint8Array))
+          throw new Error('Expected one conditional binary write')
+        const object = researchCaptureObject(Buffer.from(request.body))
+        if (researchCaptureObjectKey(object.contentHash) !== key) throw new Error('Wrong content address')
+        objects.set(key, object)
+        writes.push('put')
+        return { response: { statusCode: 200, headers: {}, body: Readable.from([]) } }
+      }
+      const object = objects.get(key)
+      if (object === undefined) throw new Error('Readback omitted a preceding write')
+      writes.push('get')
+      return {
+        response: {
+          statusCode: 200,
+          headers: { 'content-length': String(object.payload.byteLength) },
+          body: Readable.from([object.payload]),
+        },
+      }
+    },
+    destroy: () => {
+      destroys++
+    },
+  }
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(100)
+        const objectStore = yield* makeS3ResearchCaptureObjectStore(options, handler)
+        const recorder = yield* makeResearchCaptureRecorder(
+          {
+            append: (bytes) =>
+              Effect.sync(() => {
+                writes.push('sql-chunk')
+                chunks.push(bytes)
+              }),
+            seal: (bytes) =>
+              Effect.sync(() => {
+                writes.push('sql-seal')
+                seals.push(bytes)
+              }),
+          },
+          {
+            captureId: 'native-s3-fixture',
+            sourceRevision: 'a'.repeat(40),
+            maximumQueuedReceipts: 32,
+            maximumQueuedBytes: 256 * 1024,
+            maximumReceiptBytes: 4096,
+            flushIntervalMs: 10,
+            writeTimeoutMs: 100,
+          },
+          objectStore,
+        )
+        recorder.record(captureEvent('STARTED'), 100)
+        recorder.record({ ...marketEvent, originalTransport: captureKafkaTransport(100) }, 100, Buffer.from('é'))
+        recorder.record(captureEvent('STOPPED'), 100)
+        yield* recorder.finish
+        expect((yield* recorder.status).invalidations).toEqual([])
+      }),
+    ).pipe(provideTestLayer(TestClock.layer())),
+  )
+  expect(requests.filter((method) => method === 'PUT')).toHaveLength(3)
+  expect(requests.filter((method) => method === 'GET')).toHaveLength(3)
+  expect(writes.slice(0, 3)).toEqual(['put', 'get', 'sql-chunk'])
+  expect(writes.at(-1)).toBe('sql-seal')
+  expect(objects.size).toBe(3)
+  expect(destroys).toBe(1)
+  const verified = Result.getOrThrow(recoverCaptureFromStoredObjects(chunks, seals[0], (key) => objects.get(key)))
+  expect(verified.structurallyClosed).toBe(true)
+  expect(verified.complete).toBe(false)
+})
 
 test.each(['none', 'existing'] as const)(
   'S3 %s path uses one conditional put then exact full readback',

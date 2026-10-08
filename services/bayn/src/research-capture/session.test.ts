@@ -133,7 +133,7 @@ test('one successful native cut closes once while the worker remains alive and e
       expect(status.phase).toBe('finished')
       expect(status.phase === 'finished' && status.seal?.qualification).toBe(CaptureQualification.Unqualified)
       expect(status.phase === 'finished' && status.seal?.invalidations).toEqual([])
-      expect(saved.writes.slice(0, 4)).toEqual(['sql-chunk', 'object', 'object', 'object'])
+      expect(saved.writes.slice(0, 2)).toEqual(['sql-chunk', 'object'])
       expect(saved.writes.slice(-3)).toEqual(['object', 'object', 'sql-seal'])
       const receiptCount = status.phase === 'finished' ? status.seal?.observedReceipts : undefined
       session.observer.record(captureEvent('STOPPED'))
@@ -148,20 +148,10 @@ test('one successful native cut closes once while the worker remains alive and e
       const sealed = saved.seals[0]
       const manifest = saved.objects.at(-1)
       if (sealed === undefined || manifest === undefined) throw new Error('Expected sealed export')
-      const verified = verifyResearchCaptureExportPrefix(
-        saved.chunks.map((metadata, ordinal) => {
-          const raw = saved.objects[ordinal * 3]
-          const index = saved.objects[ordinal * 3 + 2]
-          if (raw === undefined || index === undefined) throw new Error('Expected exported prefix objects')
-          return {
-            metadata,
-            raw: raw.payload,
-            index: { contentHash: index.contentHash, payload: Buffer.from(index.payload).toString('utf8') },
-          }
-        }),
-        sealed,
-        { contentHash: manifest.contentHash, payload: Buffer.from(manifest.payload).toString('utf8') },
-      )
+      const verified = verifyResearchCaptureExportPrefix(saved.objects.slice(0, saved.chunks.length), sealed, {
+        contentHash: manifest.contentHash,
+        payload: Buffer.from(manifest.payload).toString('utf8'),
+      })
       expect(Result.isSuccess(verified) && verified.success.exportVerified).toBe(true)
       expect(Result.isSuccess(verified) && verified.success.complete).toBe(false)
       expect(saved.chunks[0]?.payload).toContain('session-attempt')
