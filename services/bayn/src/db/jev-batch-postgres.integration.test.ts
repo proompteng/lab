@@ -30,7 +30,7 @@ import {
   makeJevBatchPlan,
   usableJevBatchInferences,
 } from '../jev/batch'
-import { evaluateJevBatch, JevBatchStore, recoverJevBatch } from '../jev/batch-evaluation'
+import { evaluateJevBatch, JevBatchExpired, JevBatchStore, recoverJevBatch } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevClaim, JevEvaluationStore } from '../jev/evaluation'
@@ -456,10 +456,54 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const store = yield* JevBatchStore
         for (const now of [observed - 1, observed + 5000]) {
           yield* TestClock.setTime(now)
-          expect(Result.isFailure(yield* store.begin(plan).pipe(Effect.result))).toBe(true)
+          const result = yield* store.begin(plan).pipe(Effect.result)
+          expect(Result.isFailure(result)).toBe(true)
+          if (Result.isFailure(result))
+            expect(result.failure._tag).toBe(now < observed ? 'OperationalError' : 'JevBatchExpired')
         }
         expect(yield* store.read(plan.batchId)).toBeNull()
+        expect(yield* (yield* PgClient.PgClient)`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
       }).pipe(atObservation),
+    )
+  })
+
+  test('expired verified admission makes no claim or provider call and preserves committed recovery', async () => {
+    let calls = 0
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* TestClock.setTime(observed + 16000)
+        const result = yield* evaluateJevBatch(plan).pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(JevBatchExpired)
+          expect(result.failure).toMatchObject({
+            batchId: plan.batchId,
+            observedAt: plan.observedAt,
+            expiresAt: plan.expiresAt,
+            checkedAt: utcInstantFromEpochMillis(observed + 16000),
+          })
+        }
+        expect(yield* sql`SELECT batch_id FROM jev_batch_plans`).toEqual([])
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+        expect(calls).toBe(0)
+        yield* TestClock.setTime(observed)
+        const saved = yield* store.begin(plan)
+        yield* TestClock.setTime(observed + 16000)
+        expect(yield* store.begin(plan)).toEqual(saved)
+        expect((yield* recoverJevBatch(plan.batchId)).result).not.toBeNull()
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+        expect(calls).toBe(0)
+      }).pipe(
+        Effect.provideService(JevClient, {
+          evaluate: (request) =>
+            Effect.sync(() => {
+              calls += 1
+            }).pipe(Effect.andThen(successful.evaluate(request))),
+        }),
+        atObservation,
+      ),
     )
   })
 
