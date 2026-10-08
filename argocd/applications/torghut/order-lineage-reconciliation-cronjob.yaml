@@ -88,11 +88,11 @@ spec:
                 - name: SIM_DB_DSN
                   value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
                 - name: TORGHUT_VERSION
-                  value: kargo-sha-a0619edf0ebdc5efd64e7000ad7985c4fb66156a
+                  value: kargo-sha-23a5def0ac9c3acc4063c2d47d783f302c413ccb
                 - name: TORGHUT_COMMIT
-                  value: a0619edf0ebdc5efd64e7000ad7985c4fb66156a
+                  value: 23a5def0ac9c3acc4063c2d47d783f302c413ccb
                 - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:32a660ab7ed6c148c4b5639ab1177fad5650453591ce444db04e506b64f0ee8a
+                  value: sha256:46fbc4d536114b156f17ad4e958b5e74ab27ed5f42f1b58d5300c5d62ab92c05
                 - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
                   value: linux/amd64,linux/arm64
                 - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
