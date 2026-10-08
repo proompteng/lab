@@ -595,9 +595,9 @@ describe('Tengri gRPC BFF transport', () => {
     })
   })
 
-  test('revokes editor sessions for the authenticated subject without a caller-selected owner', async () => {
-    const { revokeEditorSessions } = await import('./grpc')
-    await revokeEditorSessions('github:42')
+  test('revokes desktop previews for the authenticated subject without a caller-selected owner', async () => {
+    const { revokeDesktopPreviews } = await import('./grpc')
+    await revokeDesktopPreviews('github:42')
     expect(receivedRequest).toEqual({})
     expect(metadataValue('x-tengri-subject')).toBe('github:42')
     expect(metadataValue('x-tengri-signature')).not.toBe('')

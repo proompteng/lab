@@ -169,6 +169,7 @@ bash generate-proto.sh
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
 bash -n bootstrap-developer-tools.sh developer-profile.sh
+bash -n bootstrap-browser.sh bootstrap-browser-runtime.sh launch-browser.sh browser-xkbcomp.sh
 bash -n validate-rootfs.sh validate-rootfs.test.sh
 # On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
 bash validate-rootfs.test.sh
@@ -212,3 +213,11 @@ workbench. Acceptance tests exercise TypeScript diagnostics to detect actual lan
 See [the desktop acceptance runner](../../apps/landing/README.md#vs-code-in-the-desktop). Sleep and resume retain the
 slot's image and live editor process. An image change requires the explicit fenced recovery procedure in
 [the operations guide](../../docs/tengri/operations.md).
+
+## Chrome and agent computer use
+
+The guest runs a persistent headed Chromium browser with a private TigerVNC display. The desktop and Codex's
+`computer` MCP tool share that display. The immutable image bundles a compressed graphics archive inside the
+enforced 1 GiB root filesystem. Its expanded libraries and pinned Chromium build install on the retained home.
+The boot init configures these browser paths before starting Nanoagent and its Codex MCP server.
+See [browser architecture and research](../../docs/tengri/browser.md).
