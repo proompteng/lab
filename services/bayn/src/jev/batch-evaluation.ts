@@ -1,4 +1,4 @@
-import { Clock, Context, Effect } from 'effect'
+import { Clock, Context, Data, Effect } from 'effect'
 
 import type { OperationalError } from '../errors'
 import { decodeJevBatchPlan, JevCandidatePlanStatus, type JevBatchPlan, type JevBatchResult } from './batch'
@@ -9,6 +9,14 @@ export interface JevBatchEvidence {
   readonly result: JevBatchResult | null
 }
 
+export class JevBatchExpired extends Data.TaggedError('JevBatchExpired')<{
+  readonly batchId: string
+  readonly cycleId: string
+  readonly observedAt: string
+  readonly expiresAt: string
+  readonly checkedAt: string
+}> {}
+
 export class JevBatchStore extends Context.Service<
   JevBatchStore,
   {
@@ -17,7 +25,7 @@ export class JevBatchStore extends Context.Service<
       cycleId: string,
       authorityGenerationHash?: string,
     ) => Effect.Effect<readonly string[], OperationalError>
-    readonly begin: (plan: JevBatchPlan) => Effect.Effect<JevBatchEvidence, OperationalError>
+    readonly begin: (plan: JevBatchPlan) => Effect.Effect<JevBatchEvidence, OperationalError | JevBatchExpired>
     readonly finish: (batchId: string) => Effect.Effect<JevBatchEvidence, OperationalError>
   }
 >()('@proompteng/bayn/JevBatchStore') {}

@@ -315,6 +315,12 @@ The batch store commits the full plan before any candidate request can be claime
 database's request receipts and resolutions, serializes competing recovery, and seals unattempted requests at expiry.
 Requested candidates start concurrently across the complete source-verified batch, within its ten-second
 validity window; a slow, failed, or missing result still makes the batch unusable for an entry.
+If mandatory observation persistence consumes the original validity window before an unrecorded batch can start,
+admission returns typed expiry and observation evaluation waits with `INFERENCE_UNAVAILABLE`. It creates no plan,
+request claim, model call or decision. The retained observation still consumes its signal window, and protection
+checks remain first on every management pass. The admission span and JSON warning retain the batch and cycle IDs,
+original observation and expiry times, checked time and elapsed admission lag. Clock regression, corrupted evidence
+and persistence failures remain errors; recorded batches still recover against their original deadline.
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
 
