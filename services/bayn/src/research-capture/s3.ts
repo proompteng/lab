@@ -7,7 +7,7 @@ import {
   S3ServiceException,
   type S3ClientConfig,
 } from '@aws-sdk/client-s3'
-import { Effect, Redacted, Result, Schema } from 'effect'
+import { Clock, Effect, Redacted, Result, Schema } from 'effect'
 
 import { sha256 } from '../hash'
 import {
@@ -126,6 +126,7 @@ export const makeS3ResearchCaptureObjectStore = (
       putVerified: (object) =>
         Effect.gen(function* () {
           const span = yield* Effect.currentSpan.pipe(Effect.orDie)
+          const clock = yield* Clock.Clock
           return yield* Effect.tryPromise({
             try: async (signal) => {
               if (
@@ -133,6 +134,7 @@ export const makeS3ResearchCaptureObjectStore = (
                 sha256(object.payload) !== object.contentHash
               )
                 throw failure('Capture object exceeds its byte limit or differs from its content address')
+              span.attribute('bayn.capture.object.sha256', object.contentHash)
               const location = { Bucket: options.bucket, Key: researchCaptureObjectKey(object.contentHash) }
               const put = new PutObjectCommand({
                 ...location,
@@ -150,13 +152,22 @@ export const makeS3ResearchCaptureObjectStore = (
                 { step: 'deserialize', priority: 'low', name: 'captureResponseCancellation' },
               )
               span.attribute('bayn.capture.object.phase', CaptureObjectPhase.ConditionalPut)
-              try {
-                await client.send(put, { abortSignal: signal })
-              } catch (cause) {
-                if (!(cause instanceof S3ServiceException) || cause.$metadata.httpStatusCode !== 412) throw cause
-              }
+              span.event('bayn.capture.object.put.started', clock.currentTimeNanosUnsafe())
+              const putStatus = await client.send(put, { abortSignal: signal }).then(
+                (response) => response.$metadata.httpStatusCode,
+                (cause: unknown) => {
+                  if (!(cause instanceof S3ServiceException) || cause.$metadata.httpStatusCode !== 412) throw cause
+                  return 412
+                },
+              )
               if (signal.aborted) throw failure('Capture object operation was cancelled before readback')
+              span.event(
+                'bayn.capture.object.put.acknowledged',
+                clock.currentTimeNanosUnsafe(),
+                putStatus === undefined ? {} : { 'http.response.status_code': putStatus },
+              )
               span.attribute('bayn.capture.object.phase', CaptureObjectPhase.Readback)
+              span.event('bayn.capture.object.readback.started', clock.currentTimeNanosUnsafe())
               const get = new GetObjectCommand(location)
               get.middlewareStack.add(
                 (next) => async (args) => {
@@ -167,6 +178,11 @@ export const makeS3ResearchCaptureObjectStore = (
                 { step: 'deserialize', priority: 'low', name: 'captureResponseCancellation' },
               )
               const response = await client.send(get, { abortSignal: signal })
+              if (signal.aborted) {
+                if (response.Body instanceof Readable && !response.Body.destroyed) response.Body.destroy()
+                throw failure('Capture object operation was cancelled during readback')
+              }
+              span.event('bayn.capture.object.readback.headers_received', clock.currentTimeNanosUnsafe())
               const decoded = Schema.decodeUnknownResult(ReadbackSchema)(response)
               const body = response.Body
               if (
@@ -203,6 +219,7 @@ export const makeS3ResearchCaptureObjectStore = (
                 )
                   throw failure('Capture readback was interrupted, truncated, or has a different hash')
                 span.attribute('bayn.capture.object.phase', CaptureObjectPhase.Verified)
+                span.event('bayn.capture.object.verified', clock.currentTimeNanosUnsafe())
               } finally {
                 signal.removeEventListener('abort', abort)
                 if (!stream.destroyed) stream.destroy()

@@ -31,7 +31,7 @@ type Fault =
   | 'wrong-length'
   | 'stream-error'
 const captureSpans = () => {
-  const spans: Tracer.Span[] = []
+  const spans: Tracer.NativeSpan[] = []
   const tracer = Tracer.make({
     span: (options) => {
       const span = new Tracer.NativeSpan(options)
@@ -134,7 +134,20 @@ test.each(['none', 'existing'] as const)(
       'bayn.operation': 'PUT_VERIFIED',
       'bayn.capture.object.bytes': object.payload.byteLength,
       'bayn.capture.object.phase': 'VERIFIED',
+      'bayn.capture.object.sha256': object.contentHash,
     })
+    expect(server.spans[0]?.events.map(([name, , attributes]) => ({ name, attributes }))).toEqual([
+      { name: 'bayn.capture.object.put.started', attributes: {} },
+      {
+        name: 'bayn.capture.object.put.acknowledged',
+        attributes: { 'http.response.status_code': fault === 'existing' ? 412 : 200 },
+      },
+      { name: 'bayn.capture.object.readback.started', attributes: {} },
+      { name: 'bayn.capture.object.readback.headers_received', attributes: {} },
+      { name: 'bayn.capture.object.verified', attributes: {} },
+    ])
+    const times = server.spans[0]?.events.map(([, time]) => time) ?? []
+    expect(times.every((time, index) => index === 0 || time >= (times[index - 1] ?? time))).toBe(true)
     expect(server.spans[0]?.status).toMatchObject({ _tag: 'Ended', exit: { _tag: 'Success' } })
   },
 )
@@ -219,7 +232,11 @@ test.each([
         : 'VERIFY_BYTES',
   )
   expect(server.spans[0]?.status).toMatchObject({ _tag: 'Ended', exit: { _tag: 'Failure' } })
-  const serializedSpans = JSON.stringify(server.spans.map((span) => Object.fromEntries(span.attributes)))
+  expect(server.spans[0]?.events.map(([name]) => name)).not.toContain('bayn.capture.object.verified')
+  const serializedSpans = JSON.stringify(
+    server.spans.map((span) => ({ attributes: Object.fromEntries(span.attributes), events: span.events })),
+    (_key, value) => (typeof value === 'bigint' ? String(value) : value),
+  )
   expect(serializedSpans).not.toContain('synthetic-access')
   expect(serializedSpans).not.toContain('synthetic-secret')
   expect(serializedSpans).not.toContain('fixture payload')
@@ -276,8 +293,37 @@ test.each([
       blockedMethod === 'PUT' ? 'CONDITIONAL_PUT' : 'READBACK',
     )
     expect(spans[0]?.status._tag).toBe('Ended')
+    expect(spans[0]?.events.map(([name]) => name)).toEqual(
+      blockedMethod === 'PUT'
+        ? ['bayn.capture.object.put.started']
+        : [
+            'bayn.capture.object.put.started',
+            'bayn.capture.object.put.acknowledged',
+            'bayn.capture.object.readback.started',
+          ],
+    )
   },
 )
+
+test('S3 rejects an unvalidated object identity before tracing it or sending requests', async () => {
+  const server = fixture()
+  const object = { ...researchCaptureObject('fixture payload'), contentHash: 'unvalidated-private-identity' }
+  const exit = await Effect.runPromiseExit(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const store = yield* makeS3ResearchCaptureObjectStore(options, server.handler)
+        yield* store.putVerified(object)
+      }),
+    ).pipe(Effect.provideService(Tracer.Tracer, server.tracer)),
+  )
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(server.requests).toHaveLength(0)
+  expect(server.spans[0]?.attributes.has('bayn.capture.object.sha256')).toBe(false)
+  expect(server.spans[0]?.events).toEqual([])
+  expect(JSON.stringify(server.spans.map((span) => Object.fromEntries(span.attributes)))).not.toContain(
+    object.contentHash,
+  )
+})
 
 test('S3 timeout destroys a stalled response stream after successful headers', async () => {
   let responseBody: Readable | undefined
@@ -309,6 +355,12 @@ test('S3 timeout destroys a stalled response stream after successful headers', a
   expect(spans).toHaveLength(1)
   expect(spans[0]?.attributes.get('bayn.capture.object.phase')).toBe('VERIFY_BYTES')
   expect(spans[0]?.status._tag).toBe('Ended')
+  expect(spans[0]?.events.map(([name]) => name)).toEqual([
+    'bayn.capture.object.put.started',
+    'bayn.capture.object.put.acknowledged',
+    'bayn.capture.object.readback.started',
+    'bayn.capture.object.readback.headers_received',
+  ])
 })
 
 test.each([
