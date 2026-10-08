@@ -114,6 +114,22 @@ impl RpcClient {
         }
         Ok(())
     }
+    pub async fn open_browser(&self) -> Result<(), GuestError> {
+        let result = self
+            .client
+            .clone()
+            .open_browser(self.request(proto::Empty {}, Some(Duration::from_secs(300))))
+            .await
+            .map_err(rpc_error)?
+            .into_inner();
+        if result.port != u32::from(BROWSER_PORT) {
+            return Err(GuestError::Api {
+                status: StatusCode::BAD_GATEWAY,
+                message: "Nanoagent returned an unexpected browser port".into(),
+            });
+        }
+        Ok(())
+    }
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
         let result = self
             .client

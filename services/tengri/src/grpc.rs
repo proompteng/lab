@@ -32,8 +32,8 @@ use crate::{
     },
     gateway::PreviewOrigin,
     guest::{
-        CodexHistoryPart as GuestHistoryPart, CodexOptions, EDITOR_BRIDGE_PORT, EDITOR_PORT,
-        GuestClient, GuestError, TerminalCreation as GuestTerminalCreation,
+        BROWSER_PORT, CodexHistoryPart as GuestHistoryPart, CodexOptions, EDITOR_BRIDGE_PORT,
+        EDITOR_PORT, GuestClient, GuestError, TerminalCreation as GuestTerminalCreation,
     },
     metrics,
     pod::{FINALIZER_NAME, SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
@@ -1209,12 +1209,40 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
+    async fn issue_browser_session(
+        &self,
+        request: Request<GetAgentRequest>,
+    ) -> Result<Response<PreviewSession>, Status> {
+        let principal = self.authorize(&request, "IssueBrowserSession").await?;
+        let request = request.into_inner();
+        self.guest(&principal, &request.id)
+            .await?
+            .open_browser()
+            .await
+            .map_err(map_guest_error)?;
+        let issued = self.tickets.issue_preview(
+            &principal.owner_hash,
+            &request.id,
+            BROWSER_PORT,
+            "/",
+            "",
+        )?;
+        let preview_origin = self.preview_origin.origin(&issued.id);
+        Ok(Response::new(PreviewSession {
+            id: issued.id,
+            launch_url: issued.url,
+            expires_at: issued.expires_at,
+            preview_origin,
+        }))
+    }
+
     async fn revoke_editor_sessions(
         &self,
         request: Request<Empty>,
     ) -> Result<Response<Empty>, Status> {
         let principal = self.authorize(&request, "RevokeEditorSessions").await?;
-        self.tickets.revoke_editors(&principal.owner_hash)?;
+        self.tickets
+            .revoke_desktop_previews(&principal.owner_hash)?;
         Ok(Response::new(Empty {}))
     }
 
@@ -2378,6 +2406,7 @@ fn validate_preview_port(value: u32) -> Result<u16, Status> {
                     crate::guest::GUEST_API_PORT,
                     EDITOR_PORT,
                     EDITOR_BRIDGE_PORT,
+                    BROWSER_PORT,
                 ]
                 .contains(port)
         })
@@ -3512,7 +3541,7 @@ mod tests {
 
     #[test]
     fn preview_ports_reject_guest_control_and_editor_listeners() {
-        for port in [0, 22, 1023, 8080, 8443, 13337, 13338, 65536] {
+        for port in [0, 22, 1023, 8080, 8443, 13337, 13338, 13339, 65536] {
             assert_eq!(
                 validate_preview_port(port).unwrap_err().code(),
                 tonic::Code::InvalidArgument
