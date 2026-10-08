@@ -3,6 +3,12 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Deferred, Effect, Exit, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
+import {
+  executionActivationExpiredRestrictionReason,
+  executionMandateCompletedRestrictionReason,
+  legacyExecutionActivationExpiredRestrictionReason,
+  legacyV1CompletedRestrictionReason,
+} from '../execution/mandate'
 import { forwardPerformanceSnapshot } from '../forward-performance/postgres/snapshot'
 import { PostgresClientLive } from './postgres-client'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -54,7 +60,10 @@ const withDatabase = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient | Wri
           account_id text, qualification_run_id text, research_plan_hash text, maximum text,
           broker_identity_hash text, broker_provider text, broker_environment text, activated_at timestamptz
         ) ON COMMIT DROP`
-          yield* sql`CREATE TEMP TABLE authority_state (singleton boolean, generation_hash text, version bigint) ON COMMIT DROP`
+          yield* sql`CREATE TEMP TABLE authority_state (
+          singleton boolean, generation_hash text, version bigint, maximum text, effective text,
+          kill_state text, reason text, updated_at timestamptz
+        ) ON COMMIT DROP`
           yield* sql`CREATE TEMP TABLE autonomous_cycles (
           cycle_id text PRIMARY KEY, account_id text, qualification_run_id text, state text, terminal_at timestamptz,
           decision_hash text
@@ -81,7 +90,9 @@ const withDatabase = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient | Wri
           ${successor}, ${generation}, 2, 'persistence-test-account', NULL, NULL, 'OBSERVE',
           ${'d'.repeat(64)}, 'alpaca', 'sandbox', '2026-07-20T21:02:00Z'
         )`
-          yield* sql`INSERT INTO authority_state VALUES (true, ${successor}, 2)`
+          yield* sql`INSERT INTO authority_state VALUES (
+          true, ${successor}, 2, 'OBSERVE', 'OBSERVE', 'CLEAR', NULL, '2026-07-20T21:02:00Z'
+        )`
           yield* sql`INSERT INTO autonomous_cycles VALUES (
           ${generation}, 'persistence-test-account', ${'1'.repeat(64)}, 'COMPLETED', '2026-07-20T21:00:00Z', NULL
         )`
@@ -109,6 +120,110 @@ const withDatabase = <A, E>(program: Effect.Effect<A, E, PgClient.PgClient | Wri
 }
 
 postgres('Forward-performance receipt terminality', () => {
+  for (const reason of [
+    executionMandateCompletedRestrictionReason,
+    executionActivationExpiredRestrictionReason,
+    legacyV1CompletedRestrictionReason,
+    legacyExecutionActivationExpiredRestrictionReason,
+  ]) {
+    test(`appends before receipt-gated rollover without changing restricted authority: ${reason}`, async () => {
+      const result = await withDatabase(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`DELETE FROM authority_generations WHERE generation_hash = ${successor}`
+          yield* sql`UPDATE authority_state SET generation_hash = ${generation}, version = 2,
+          maximum = 'PAPER', effective = 'OBSERVE', kill_state = 'ACTIVE', reason = ${reason},
+          updated_at = '2026-07-20T21:00:30Z'`
+          const before = yield* sql`SELECT * FROM authority_state`
+          const original = packet()
+          yield* evaluateAndPersistForwardPerformanceReceipt(generation, () =>
+            Effect.succeed({ receipt: original.receipt }),
+          )
+          yield* persistForwardPerformanceReceipt(packet())
+          const after = yield* sql`SELECT * FROM authority_state`
+          const rows = yield* sql`SELECT document FROM autonomous_forward_performance_receipts`
+          const successors =
+            yield* sql`SELECT * FROM authority_generations WHERE previous_generation_hash = ${generation}`
+          return { before, after, rows, original, successors }
+        }),
+      )
+      expect(result.rows).toEqual([{ document: result.original }])
+      expect(result.after).toEqual(result.before)
+      expect(result.after[0]).toMatchObject({
+        generation_hash: generation,
+        effective: 'OBSERVE',
+        kill_state: 'ACTIVE',
+        reason,
+      })
+      expect(result.successors).toHaveLength(0)
+    })
+  }
+
+  for (const change of [
+    'effective-paper',
+    'clear-kill',
+    'operator-kill',
+    'retryable-restriction',
+    'missing-reason',
+    'post-cut-restriction',
+    'unreconciled-restriction',
+    'unfinished-intent',
+    'later-intent',
+    'open-cycle',
+  ] as const) {
+    test(`refuses a nonterminal or unsettled current restriction: ${change}`, async () => {
+      const result = await withDatabase(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`DELETE FROM authority_generations WHERE generation_hash = ${successor}`
+          yield* sql`UPDATE authority_state SET generation_hash = ${generation}, version = 2,
+          maximum = 'PAPER', effective = 'OBSERVE', kill_state = 'ACTIVE',
+          reason = ${executionMandateCompletedRestrictionReason}, updated_at = '2026-07-20T21:00:30Z'`
+          switch (change) {
+            case 'effective-paper':
+              yield* sql`UPDATE authority_state SET effective = 'PAPER'`
+              break
+            case 'clear-kill':
+              yield* sql`UPDATE authority_state SET kill_state = 'CLEAR'`
+              break
+            case 'operator-kill':
+              yield* sql`UPDATE authority_state SET reason = 'operator requested kill'`
+              break
+            case 'retryable-restriction':
+              yield* sql`UPDATE authority_state SET reason = 'execution autonomous cycle loop restricted effective authority: retryable failure'`
+              break
+            case 'missing-reason':
+              yield* sql`UPDATE authority_state SET reason = NULL`
+              break
+            case 'post-cut-restriction':
+              yield* sql`UPDATE authority_state SET updated_at = '2026-07-20T21:01:01Z'`
+              break
+            case 'unreconciled-restriction':
+              yield* sql`UPDATE authority_state SET updated_at = ${packet().createdAt}::timestamptz`
+              break
+            case 'unfinished-intent':
+              yield* sql`UPDATE intents SET state = 'SUBMITTING'`
+              break
+            case 'later-intent':
+              yield* sql`UPDATE intents SET updated_at = '2026-07-20T21:01:01Z'`
+              break
+            case 'open-cycle':
+              yield* sql`UPDATE autonomous_cycles SET state = 'ACTIVE', terminal_at = NULL`
+              break
+          }
+          const before = yield* sql`SELECT * FROM authority_state`
+          const refused = yield* persistForwardPerformanceReceipt(packet()).pipe(Effect.result)
+          const rows = yield* sql`SELECT * FROM autonomous_forward_performance_receipts`
+          const after = yield* sql`SELECT * FROM authority_state`
+          return { refused, rows, before, after }
+        }),
+      )
+      expect(Result.isFailure(result.refused)).toBe(true)
+      expect(result.rows).toHaveLength(0)
+      expect(result.after).toEqual(result.before)
+    })
+  }
+
   test('read-only diagnostics retain a repeatable-read, read-only snapshot', async () => {
     const runtime = makeRuntime()
     try {
@@ -211,7 +326,8 @@ postgres('Forward-performance receipt terminality', () => {
     const result = await withDatabase(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        yield* sql`UPDATE authority_state SET generation_hash = ${generation}, version = 1`
+        yield* sql`UPDATE authority_state SET generation_hash = ${generation}, version = 1,
+          maximum = 'PAPER', effective = 'PAPER', kill_state = 'CLEAR', reason = NULL`
         const refused = yield* persistForwardPerformanceReceipt(packet()).pipe(Effect.result)
         const rows = yield* sql`SELECT * FROM autonomous_forward_performance_receipts`
         return { refused, rows }

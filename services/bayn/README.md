@@ -869,11 +869,14 @@ opt in explicitly after the evidence window has closed:
 node dist/forward-performance-command.js --authority-generation <generation-hash> --persist-receipt
 ```
 
-Receipt persistence is restricted to a superseded PAPER generation with sufficient, closed, exactly reconciled
-evidence. A non-null reconciliation timestamp alone does not prove terminality. The command rejects active or
-unsettled generations, open windows, unknown costs and other evidence gaps before inserting anything; use the
-read-only invocation for provisional diagnostics. Generation retirement and the final cycle are checked against
-PostgreSQL inside the append transaction. No receipt is written to rearm a still-active generation.
+Receipt persistence requires a terminal PAPER generation with sufficient, closed, exactly reconciled evidence.
+Terminal means either already superseded, or still current but non-effective with the system-authored completion or
+activation-expiry restriction reconciled after that restriction. The latter permits the receipt required by normal
+authority rollover without first requiring rollover itself. Operator kills and retryable restrictions do not qualify.
+A non-null reconciliation timestamp alone does not prove terminality. The command rejects active or unsettled
+generations, open windows, unknown costs and other evidence gaps before inserting anything; use the read-only
+invocation for provisional diagnostics. Terminality and the final cycle are checked inside the append transaction.
+Appending a receipt does not update authority, clear a kill, or itself rearm a mandate.
 The write command acquires the execution writer fence before reading report evidence and holds it through the
 append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
 The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.

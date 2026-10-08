@@ -352,7 +352,7 @@ describe('forward-performance receipt persistence contract', () => {
       persistForwardPerformanceReceipt(packet).pipe(Effect.result, Effect.provide(testDatabase(sql))),
     )
     expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) expect(result.failure.message).toContain('superseded and settled')
+    if (Result.isFailure(result)) expect(result.failure.message).toContain('terminal and settled')
     expect(inserts).toBe(0)
   })
 

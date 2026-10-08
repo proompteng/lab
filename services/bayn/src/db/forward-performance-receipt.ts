@@ -2,6 +2,12 @@ import { IntradayPerformanceVolumeEvidenceSchema } from '../forward-performance/
 import { validIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
 import { Data, Effect, Result, Schema } from 'effect'
 import { WriterFence, withWriterFence, type WriterFenceService } from '../execution/writer-fence'
+import {
+  executionActivationExpiredRestrictionReason,
+  executionMandateCompletedRestrictionReason,
+  legacyExecutionActivationExpiredRestrictionReason,
+  legacyV1CompletedRestrictionReason,
+} from '../execution/mandate'
 import { PgClient } from '@effect/sql-pg'
 
 import { canonicalHashV1Result } from '../hash'
@@ -372,15 +378,14 @@ export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceRec
     yield* withWriterFence(
       sql.withTransaction(
         Effect.gen(function* () {
-          // A reconciliation timestamp is not proof that a generation has ended. Only archive a
-          // superseded generation, and hold the authority/cycle rows through the append.
+          // Terminal restrictions precede receipt-gated rollover. Accept that non-effective state
+          // or an already superseded generation, never an active mandate or an operator kill.
+          // Hold the authority/cycle rows through the append without changing authority.
           const terminal = yield* sql`
           SELECT true AS matches
           FROM authority_generations AS generation
           JOIN authority_state AS state
             ON state.singleton
-            AND state.generation_hash <> generation.generation_hash
-            AND state.version > generation.authority_version
           JOIN autonomous_cycles AS cycle
             ON cycle.cycle_id = ${envelope.cycleId}
             AND cycle.account_id = generation.account_id
@@ -410,12 +415,33 @@ export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceRec
                   AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
               )
             )
-            AND EXISTS (
-              SELECT 1 FROM authority_generations AS successor
-              WHERE successor.previous_generation_hash = generation.generation_hash
-                AND successor.account_id = generation.account_id
-                AND successor.authority_version > generation.authority_version
-                AND successor.activated_at > ${envelope.createdAt}::timestamptz
+            AND (
+              (
+                state.generation_hash <> generation.generation_hash
+                AND state.version > generation.authority_version
+                AND EXISTS (
+                  SELECT 1 FROM authority_generations AS successor
+                  WHERE successor.previous_generation_hash = generation.generation_hash
+                    AND successor.account_id = generation.account_id
+                    AND successor.authority_version > generation.authority_version
+                    AND successor.activated_at > ${envelope.createdAt}::timestamptz
+                )
+              )
+              OR (
+                state.generation_hash = generation.generation_hash
+                AND state.version >= generation.authority_version
+                AND state.maximum = 'PAPER'
+                AND state.effective = 'OBSERVE'
+                AND state.kill_state = 'ACTIVE'
+                AND state.reason IN (
+                  ${executionMandateCompletedRestrictionReason},
+                  ${executionActivationExpiredRestrictionReason},
+                  ${legacyV1CompletedRestrictionReason},
+                  ${legacyExecutionActivationExpiredRestrictionReason}
+                )
+                AND state.updated_at >= generation.activated_at
+                AND state.updated_at < ${envelope.createdAt}::timestamptz
+              )
             )
             AND NOT EXISTS (
               SELECT 1 FROM intents AS intent
@@ -426,7 +452,7 @@ export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceRec
         `.pipe(Effect.flatMap(decodePersistenceMatches))
           if (terminal.length !== 1 || terminal[0]?.matches !== true)
             return yield* new ForwardPerformanceReceiptPersistenceError({
-              message: 'Cannot persist a forward-performance receipt before its generation is superseded and settled',
+              message: 'Cannot persist a forward-performance receipt before its generation is terminal and settled',
             })
 
           yield* sql`
