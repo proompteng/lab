@@ -47,12 +47,13 @@ describe('Tengri BFF action schema', () => {
   })
 
   test('validates editor window identity and rejects editor ports in ordinary previews', () => {
+    expect(tengriActionSchema.safeParse({ action: 'browser-session', agentId: 'agent-test' }).success).toBe(true)
     const editor = { action: 'editor-session', agentId: 'agent-test', windowId: 'desktop-stable-code-window' }
     expect(tengriActionSchema.safeParse(editor).success).toBe(true)
     for (const windowId of ['short', '../arbitrary-window-path', 'a'.repeat(129)]) {
       expect(tengriActionSchema.safeParse({ ...editor, windowId }).success).toBe(false)
     }
-    for (const port of [13337, 13338]) {
+    for (const port of [13337, 13338, 13339]) {
       expect(
         tengriActionSchema.safeParse({
           action: 'preview-session',

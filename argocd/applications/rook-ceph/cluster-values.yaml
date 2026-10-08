@@ -74,17 +74,18 @@ cephClusterSpec:
       rgw_s3_auth_use_sts: "false"
     osd:
       bluestore_cache_autotune: "true"
-      # Clear scrub debt on the shared HDDs. Scrub shares the background best-effort
+      # Keep clearing scrub debt while protecting clients on the shared HDDs.
+      # Scrub shares the background best-effort
       # class with backfill, snaptrim and PG deletion; it is not background recovery.
       osd_mclock_profile: "custom"
       # Reservations sum to 100%; zero limits let idle capacity serve any class.
-      osd_mclock_scheduler_client_res: "0.4"
+      osd_mclock_scheduler_client_res: "0.6"
       osd_mclock_scheduler_client_wgt: "1"
       osd_mclock_scheduler_client_lim: "0"
       osd_mclock_scheduler_background_recovery_res: "0.1"
       osd_mclock_scheduler_background_recovery_wgt: "1"
       osd_mclock_scheduler_background_recovery_lim: "0"
-      osd_mclock_scheduler_background_best_effort_res: "0.5"
+      osd_mclock_scheduler_background_best_effort_res: "0.3"
       osd_mclock_scheduler_background_best_effort_wgt: "2"
       osd_mclock_scheduler_background_best_effort_lim: "0"
       # Fallback for future HDD OSDs. Current OSDs have per-daemon measured overrides below.
