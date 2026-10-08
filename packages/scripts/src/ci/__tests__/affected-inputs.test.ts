@@ -165,6 +165,41 @@ const text = (value: unknown): string => {
   return value
 }
 
+test('Tengri runtime repairs publish the desktop from the same source', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
+  const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
+  if (!Array.isArray(steps)) throw new Error('Missing planner steps')
+  const inputs = property(
+    steps.find((step) => property(step, 'id') === 'filter'),
+    'with',
+  )
+  const configured = parseTargets(
+    text(property(inputs, 'workspaces')),
+    text(property(inputs, 'filters')),
+    '',
+    'pull_request',
+  )
+  const workspaces = Object.fromEntries(
+    Object.values(configured)
+      .flatMap((target) => target.workspaces)
+      .map((path) => [path, { name: path || 'root' }]),
+  )
+  const lock = { ...before, workspaces: { ...workspaces, ...before.workspaces } }
+  for (const source of ['services/tengri/src/slot/vmm.rs', 'services/tengri/network.sh']) {
+    for (const event of ['pull_request', 'push']) {
+      const paths = property(property(property(workflow, 'on'), event), 'paths')
+      if (!Array.isArray(paths)) throw new Error('Missing image trigger paths')
+      expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(true)
+    }
+    expect(selectAffectedInputs([source], configured, lock, lock)).toEqual({
+      proompteng: true,
+      app: false,
+      synthesis: false,
+      docs: false,
+    })
+  }
+})
+
 test.each([
   'bayn-ci.yml',
   'bumba-ci.yml',

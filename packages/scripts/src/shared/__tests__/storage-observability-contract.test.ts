@@ -151,6 +151,13 @@ test('host storage collector reads host counters without a public listener or Ku
   })
   expect(config).toMatch(/procfs_path\s*=\s*"\/host\/proc"/)
   expect(config).toMatch(/sysfs_path\s*=\s*"\/host\/sys"/)
+  const deviceFilter = config.match(/device_include\s*=\s*"([^"]+)"/)?.[1]
+  if (!deviceFilter) throw new Error('Missing host storage device filter')
+  const devices = new RegExp(deviceFilter)
+  for (const device of ['sda', 'sdaa', 'nvme0n1', 'nvme3n1', 'rbd0', 'rbd1', 'rbd13'])
+    expect(devices.test(device)).toBe(true)
+  for (const device of ['loop0', 'ram0', 'sda1', 'nvme0n1p4', 'rbd1p1', 'rbd1-extra'])
+    expect(devices.test(device)).toBe(false)
   expect(config).toContain('sys.env("NODE_NAME")')
   // Exporter-provided target labels override scrape job_name. The discovered
   // integrations/unix label must be replaced before these targets are scraped.
