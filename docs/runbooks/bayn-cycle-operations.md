@@ -125,9 +125,21 @@ age of the statement, rather than time spent in its current wait event. A missin
 When original capture is enabled, inspect `bayn.capture.object.put_verified` for the complete conditional PUT and
 exact GET/readback verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
 `VALIDATING`, `CONDITIONAL_PUT`, `READBACK`, `VERIFY_BYTES` or `VERIFIED`. A failed PUT or GET and a stalled body
-therefore remain distinguishable after cancellation. The span records only the dependency, operation, byte length
-and phase; credentials, endpoint, bucket, object keys and raw payloads are excluded. A verified object does not prove
-that its chunk committed to PostgreSQL, and an invalidated capture or unknown write outcome never qualifies a source.
+therefore remain distinguishable after cancellation. The span also records the validated
+`bayn.capture.object.sha256`. In the same bounded session window, join that hash to sanitized gateway receipts in Loki:
+
+```logql
+{job="bayn-rgw"} | json | objectHash="<span SHA-256>"
+```
+
+Compare the gateway's method, HTTP status and latency with the span's timestamped events. The interval from
+`bayn.capture.object.put.started` to `bayn.capture.object.put.acknowledged` measures client PUT acknowledgement.
+`bayn.capture.object.readback.started` to `bayn.capture.object.readback.headers_received` covers GET response headers;
+the remaining interval to `bayn.capture.object.verified` covers exact-byte verification. A cancelled PUT has no client
+acknowledgement event, even if the gateway later logs HTTP 200. HTTP 412 records its actual PUT status and still requires
+exact readback. Retain missing terminal events as incomplete evidence. Hashes are trace attributes, never metric labels;
+credentials, endpoint, bucket, object keys and raw payloads are excluded. A verified object does not prove that its chunk
+committed to PostgreSQL, and an invalidated capture or unknown write outcome never qualifies a source.
 These background capture spans are outside the execution-stage profile and retain the one-second object deadline.
 
 ## Alert actions
