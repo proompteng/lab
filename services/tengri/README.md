@@ -237,6 +237,7 @@ requires the scoped approval below.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, and `TENGRI_KVM_SAMPLES` select the artifacts,
 absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. It uses a private Docker
 network/PID namespace, one CPU, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts.
+The fixture owns a Docker bridge whose MTU matches the caller's IPv4 default interface, including ARC's Pod network.
 It checks real files, the same PTY shell, initialized Codex, stop/page-eviction, and rotating host identities, preserving
 diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared
 creation and repeated slot resumes do not prove the full authenticated BFF/Kubernetes creation distribution or six
