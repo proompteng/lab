@@ -85,7 +85,7 @@ spec:
           args:
             - /canary-data/bayn-wal-canary-v1
             - /canary-wal/bayn-wal-canary-v1
-            - /tmp/bayn-wal-canary-v1
+            - /canary-data/bayn-wal-canary-v1/evidence
           resources:
             requests:
               cpu: 250m

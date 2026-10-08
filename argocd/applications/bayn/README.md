@@ -53,7 +53,14 @@ the comparison. A serialized data writer appends 128KiB of random bytes and call
 Archive every phase's transaction count, nearest-rank p50/p95/p99/max latency, count above one second, version/settings, WAL path,
 filesystem and WAL IO counters. The Job emits raw measured transaction logs to stdout between phase markers,
 including partial logs when the benchmark fails. Archive that stdout with `kubectl logs` before Pod or log retention
-expires. Termination cleanup emits completed samples between `BAYN_WAL_CANARY_FAILURE_RAW_BEGIN` and
+expires, and stream it from startup for complete diagnostics across log rotation. Raw transaction files and their
+relative-path `raw.sha256` manifests are fsynced onto the named data PVC under
+`/canary-data/bayn-wal-canary-v1/evidence/<layout>-<phase>`. Completed settings, phase summaries and WAL IO records
+are retained there as JSON. Raw logging uses the data filesystem in both layouts; evidence synchronization happens
+after the measured interval. Copy each closed phase directory from the running Pod and verify every raw hash and
+summary before accepting the comparison. The data claim retains files after the Pod exits; if live collection is
+interrupted, recover them through a reviewed read-only mount of that named claim before cleanup. Container stdout
+alone may expose only the latest rotated segment. Termination cleanup emits completed samples between `BAYN_WAL_CANARY_FAILURE_RAW_BEGIN` and
 `BAYN_WAL_CANARY_FAILURE_RAW_END` when the normal raw output did not complete. Cleanup omits files whose normal
 raw output already completed. Treat interrupted output as an incomplete phase. Record simultaneous Ceph scrub and
 shared IO conditions. A failed or incomplete Job has no comparative

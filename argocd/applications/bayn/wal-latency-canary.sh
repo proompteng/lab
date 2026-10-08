@@ -16,6 +16,14 @@ canary_stop_file=
 canary_work=
 canary_raw_emitted=false
 
+persist_raw() {
+  local canary_logs=("$canary_work"/transactions.*)
+  if [[ -f ${canary_logs[0]} ]]; then
+    (cd "$canary_work" && sha256sum transactions.*) >"$canary_work/raw.sha256"
+    sync "${canary_logs[@]}" "$canary_work/raw.sha256"
+  fi
+}
+
 cleanup() {
   local canary_exit=$?
   trap - EXIT
@@ -27,6 +35,7 @@ cleanup() {
     pg_ctl -D "$canary_active_data" -m fast -w -t 30 stop || canary_exit=1
   fi
   if [[ $canary_exit != 0 && -n $canary_work ]]; then
+    if [[ $canary_raw_emitted != true ]]; then persist_raw || canary_exit=1; fi
     for canary_log in "$canary_work"/{initdb,postgres,warmup,pgbench}.log; do
       if [[ -f $canary_log ]]; then
         printf 'BAYN_WAL_CANARY_FAILURE_LOG file=%s exitCode=%s\n' "$canary_log" "$canary_exit"
@@ -76,7 +85,8 @@ for canary_layout in shared separate separate shared; do
   psql "${canary_connection[@]}" -X -v ON_ERROR_STOP=1 -c \
     'CREATE TABLE receipts (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, payload text NOT NULL);'
   psql "${canary_connection[@]}" -X -A -t -v ON_ERROR_STOP=1 -c \
-    "SELECT json_build_object('event','bayn.wal-canary.settings','phase',$canary_phase,'layout','$canary_layout','version',current_setting('server_version'),'fsync',current_setting('fsync'),'fullPageWrites',current_setting('full_page_writes'),'synchronousCommit',current_setting('synchronous_commit'),'walSyncMethod',current_setting('wal_sync_method'),'systemIdentifier',(pg_control_system()).system_identifier,'capacityQualified',false);"
+    "SELECT json_build_object('event','bayn.wal-canary.settings','phase',$canary_phase,'layout','$canary_layout','version',current_setting('server_version'),'fsync',current_setting('fsync'),'fullPageWrites',current_setting('full_page_writes'),'synchronousCommit',current_setting('synchronous_commit'),'walSyncMethod',current_setting('wal_sync_method'),'systemIdentifier',(pg_control_system()).system_identifier,'capacityQualified',false);" \
+    | tee "$canary_work/settings.json"
   printf 'BAYN_WAL_CANARY_PATH phase=%s layout=%s wal=%s\n' "$canary_phase" "$canary_layout" "$(readlink -f "$canary_data/pg_wal")"
   df -P "$canary_data" "$canary_data/pg_wal"
   pgbench "${canary_connection[@]}" -n -c 1 -j 1 -M prepared --max-tries=1 \
@@ -104,6 +114,7 @@ for canary_layout in shared separate separate shared; do
   canary_stop_file=
   cat "$canary_work/pgbench.log"
   canary_raw_logs=("$canary_work"/transactions.*)
+  persist_raw
   printf 'BAYN_WAL_CANARY_RAW_BEGIN phase=%s layout=%s exitCode=%s\n' "$canary_phase" "$canary_layout" "$canary_benchmark_exit"
   if [[ -f ${canary_raw_logs[0]} ]]; then cat "${canary_raw_logs[@]}"; fi
   printf 'BAYN_WAL_CANARY_RAW_END phase=%s layout=%s\n' "$canary_phase" "$canary_layout"
@@ -123,10 +134,12 @@ for canary_layout in shared separate separate shared; do
       if (NR != expected || NR == 0) exit 1;
       p50=int((NR*50+99)/100); p95=int((NR*95+99)/100); p99=int((NR*99+99)/100);
       printf "{\"event\":\"bayn.wal-canary.phase\",\"phase\":%d,\"layout\":\"%s\",\"startedAt\":\"%s\",\"completedAt\":\"%s\",\"samples\":%d,\"p50Ms\":%.3f,\"p95Ms\":%.3f,\"p99Ms\":%.3f,\"maxMs\":%.3f,\"overOneSecond\":%d,\"capacityQualified\":false}\n", phase,layout,started,ended,NR,latency[p50]/1000,latency[p95]/1000,latency[p99]/1000,latency[NR]/1000,slow;
-    }' "$canary_work/latencies-us.txt"
+    }' "$canary_work/latencies-us.txt" | tee "$canary_work/phase.json"
   psql "${canary_connection[@]}" -X -A -t -v ON_ERROR_STOP=1 -c \
-    "SELECT json_build_object('event','bayn.wal-canary.io','phase',$canary_phase,'layout','$canary_layout','walIo',(SELECT json_agg(to_jsonb(i)) FROM pg_stat_io i WHERE object='wal' AND coalesce(fsyncs,0)>0));"
+    "SELECT json_build_object('event','bayn.wal-canary.io','phase',$canary_phase,'layout','$canary_layout','walIo',(SELECT json_agg(to_jsonb(i)) FROM pg_stat_io i WHERE object='wal' AND coalesce(fsyncs,0)>0));" \
+    | tee "$canary_work/io.json"
   pg_ctl -D "$canary_data" -m fast -w -t 30 stop
   canary_active_data=
+  sync "$canary_work"/{settings,phase,io}.json
 done
 printf '{"event":"bayn.wal-canary.complete","phases":4,"productionLayoutChanged":false,"capacityQualified":false}\n'

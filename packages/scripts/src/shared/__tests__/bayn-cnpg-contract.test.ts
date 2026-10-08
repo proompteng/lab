@@ -103,6 +103,7 @@ test('Bayn isolates the bounded WAL experiment from production storage and crede
   expect(pod.containers[0].image).toBe(cluster.spec.imageName)
   expect(pod.containers[0].env).toBeUndefined()
   expect(pod.containers[0].envFrom).toBeUndefined()
+  expect(pod.containers[0].args[2]).toBe('/canary-data/bayn-wal-canary-v1/evidence')
   expect(pod.volumes.filter((volume: { secret?: unknown }) => volume.secret !== undefined)).toEqual([])
   expect(
     pod.volumes.flatMap((volume: { persistentVolumeClaim?: { claimName: string } }) =>
