@@ -92,6 +92,33 @@ test('the platform enrolls the KVM/TUN prerequisite without changing namespace p
   expect(devices.get('managedNamespaceMetadata')).toBeUndefined()
 })
 
+test('device allocation installs its admission restriction before advertising KVM/TUN', () => {
+  const devices = manifest('argocd/applications/tengri-devices/kustomization.yaml').get('resources')
+  const controller = manifest('argocd/applications/tengri/kustomization.yaml').get('resources')
+  if (!isSeq(devices) || !isSeq(controller)) throw new Error('Application resources must be sequences')
+  expect(devices.toJSON()).toContain('slot-admission.yaml')
+  expect(controller.toJSON()).not.toContain('slot-admission.yaml')
+
+  const admission = documents<{
+    kind?: string
+    metadata?: { name?: string; annotations?: Record<string, string> }
+    spec?: { failurePolicy?: string; policyName?: string; validationActions?: string[] }
+  }>('argocd/applications/tengri-devices/slot-admission.yaml')
+  expect(admission).toHaveLength(2)
+  for (const resource of admission) {
+    expect(resource.metadata?.annotations?.['argocd.argoproj.io/sync-wave']).toBe('-1')
+  }
+  expect(admission.find((resource) => resource.kind === 'ValidatingAdmissionPolicy')).toMatchObject({
+    metadata: { name: 'tengri-slot-devices' },
+    spec: { failurePolicy: 'Fail' },
+  })
+  expect(admission.find((resource) => resource.kind === 'ValidatingAdmissionPolicyBinding')).toMatchObject({
+    spec: { policyName: 'tengri-slot-devices', validationActions: ['Deny'] },
+  })
+  const plugin = manifest('argocd/applications/tengri-devices/device-plugin.yaml')
+  expect(plugin.getIn(['metadata', 'annotations', 'argocd.argoproj.io/sync-wave']) ?? '0').toBe('0')
+})
+
 test('source delivery preserves guest attestation and published trust until cutover', () => {
   const accounts = documents<{ kind?: string; metadata?: { name?: string }; automountServiceAccountToken?: boolean }>(
     'argocd/applications/tengri/service-account.yaml',

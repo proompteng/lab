@@ -58,7 +58,8 @@ for the allocated raw home device, then drops to UID/GID 65532 with no effective
 capabilities. It never chmods a node device. Firecracker inherits that unprivileged identity, no environment secrets,
 no capabilities, NoNewPrivs, and its default seccomp filter.
 
-The separately reviewed [device allocation](../../argocd/applications/tengri-devices/) delegates only KVM and TUN
+The separately reviewed [device allocation](../../argocd/applications/tengri-devices/) installs slot admission before
+advertising devices and delegates only KVM and TUN
 through the official generic device plugin. The platform ApplicationSet enrolls it in `kube-system` at wave 1, before
 the controller's wave 2. Verify actual device allocations before an authorized cutover. The existing namespace admission
 already permits this narrowly constrained profile; no namespace policy change is required. Existing guest SPIRE
