@@ -41,40 +41,26 @@ The existing two-instance `bayn-db` cluster retains 100Gi per replica through `r
 primary's `pg_stat_replication`. The standby must be `streaming`, with `sync_state` of `sync` or `quorum`, and included
 in `synchronous_standby_names`. CNPG's `ANY 1` configuration uses `quorum`. Keep `synchronous_commit=on`.
 
-The disposable `bayn-wal-canary-v1` Job tests separate WAL storage before changing `bayn-db`. It runs the same
-PostgreSQL 18.6 image on the current primary's host, with two isolated 4Gi `rook-ceph-block` claims, no credentials,
-no Kubernetes token and no network access. Four shared/separate/separate/shared phases use one transaction client,
-five seconds of warmup and twenty measured seconds each. The Job starts after workload readiness and waits another
-five minutes for Kafka bootstrap to settle before testing. Verify that bootstrap actually completed before accepting
-the comparison. A serialized data writer appends 128KiB of random bytes and calls
-`fdatasync` no more than once per 100ms. It therefore adds at most 1.25MiB/s before storage delays. Both layouts retain
-`fsync=on`, `full_page_writes=on`, `synchronous_commit=on` and the production `fdatasync` WAL method.
+The disposable WAL comparison completed on 2026-10-08 at source `9bb51b5c1fc38033cacd4c1d732d81a08fd7c460`
+([PR #14855](https://github.com/proompteng/lab/pull/14855)). PostgreSQL 18.6 measured four twenty-second phases on
+isolated `rook-ceph-block` volumes on the primary host, after Kafka bootstrap completed. One transaction client
+ran alongside a bounded data writer. Both layouts retained `fsync=on`, `full_page_writes=on`,
+`synchronous_commit=on` and `wal_sync_method=fdatasync`.
 
-Archive every phase's transaction count, nearest-rank p50/p95/p99/max latency, count above one second, version/settings, WAL path,
-filesystem and WAL IO counters. The Job emits raw measured transaction logs to stdout between phase markers,
-including partial logs when the benchmark fails. Archive that stdout with `kubectl logs` before Pod or log retention
-expires, and stream it from startup for complete diagnostics across log rotation. Raw transaction files and their
-relative-path `raw.sha256` manifests are fsynced onto the named data PVC under
-`/canary-data/bayn-wal-canary-v1/evidence/<layout>-<phase>`. Completed settings, phase summaries and WAL IO records
-are retained there as JSON. Raw logging uses the data filesystem in both layouts; evidence synchronization happens
-after the measured interval. Copy each closed phase directory from the running Pod and verify every raw hash and
-summary before accepting the comparison. The data claim retains files after the Pod exits; if live collection is
-interrupted, recover them through a reviewed read-only mount of that named claim before cleanup. Container stdout
-alone may expose only the latest rotated segment. Termination cleanup emits completed samples between `BAYN_WAL_CANARY_FAILURE_RAW_BEGIN` and
-`BAYN_WAL_CANARY_FAILURE_RAW_END` when the normal raw output did not complete. Cleanup omits files whose normal
-raw output already completed. Treat interrupted output as an incomplete phase. Record simultaneous Ceph scrub and
-shared IO conditions. A failed or incomplete Job has no comparative
-result; it has no retry and a fifteen-minute active deadline including the settling interval. Startup and benchmark
-failures emit their retained local logs. A failed competing writer also rejects the phase. These short local durability
-measurements do not include cross-host synchronous replication, S3 verification or original-session receipt capacity. The production
-database and its storage remain unchanged. CNPG 1.30.1 supports adding WAL volumes to an existing cluster, but
-cannot remove them afterward. Only measured improvement can justify that subsequent reviewed layout change.
-See [CNPG's exact-version addition tests](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/tests/e2e/pg_wal_volume_test.go)
-and [storage contract](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/docs/src/storage.md).
+| Phase | Layout | Transactions | p95 (ms) | p99 (ms) | Maximum (ms) | Above 1 second |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | Shared | 975 | 88.359 | 445.288 | 1425.809 | 1 |
+| 2 | Separate | 2522 | 23.163 | 97.308 | 329.558 | 0 |
+| 3 | Separate | 2221 | 26.805 | 105.383 | 962.324 | 0 |
+| 4 | Shared | 2323 | 27.000 | 112.975 | 342.442 | 0 |
 
-After archiving and checking the result, remove only the canary Job, NetworkPolicy, generated script ConfigMap,
-two named canary claims and their desired-state references through a reviewed GitOps change. The claims contain
-only this experiment. Preserve `bayn-db`, all existing PVCs and its backup/replication settings during cleanup.
+All 8,041 samples, nearest-rank percentiles, settings and WAL IO records were independently verified against
+streamed logs and retained PVC files with SHA-256 manifests before cleanup. Time-aligned Ceph, host, RBD,
+PostgreSQL and CPU-throttling queries were available. The repeated shared phase was comparable to the separate
+phases, so the first shared spike does not establish a reproducible layout benefit. These short local durability
+measurements do not qualify cross-host replication, S3-plus-SQL capture capacity or profitability.
+`bayn-db` retains its existing storage layout. The canary Job, policy, script ConfigMap and two isolated claims are
+removed from desired state after archival; production database volumes and backup/replication settings are preserved.
 
 Bayn overrides CNPG's five-second WAL sender and receiver inactivity deadlines with PostgreSQL's sixty-second
 defaults. At 2026-10-06 23:11 UTC, storage stalls exceeded five seconds and caused repeated replication disconnects,
