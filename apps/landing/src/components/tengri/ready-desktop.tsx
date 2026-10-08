@@ -756,7 +756,7 @@ export function ReadyDesktop({
       <main
         aria-hidden={confirmOpen || spotlightOpen || undefined}
         inert={confirmOpen || spotlightOpen || undefined}
-        className="font-geist relative isolate h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white selection:bg-[#78a9ff]/35"
+        className="font-geist relative isolate h-[100dvh] min-h-[520px] w-screen overflow-clip bg-[#142849] text-white selection:bg-[#78a9ff]/35"
       >
         <DesktopWallpaper />
         <MenuBar
