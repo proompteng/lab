@@ -328,6 +328,14 @@ const decodePersistenceMatches = Schema.decodeUnknownEffect(Schema.Array(Schema.
 
 export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceReceiptEnvelope) =>
   Effect.gen(function* () {
+    yield* Effect.fromResult(
+      decodeForwardPerformanceReceiptEnvelopeResult(envelope).pipe(
+        Result.mapError(
+          (cause) =>
+            new ForwardPerformanceReceiptPersistenceError({ message: 'Invalid forward-performance envelope', cause }),
+        ),
+      ),
+    )
     const expected = yield* Effect.fromResult(
       makePersistableForwardPerformanceReceiptEnvelope(envelope.authorityGenerationHash, envelope.receipt),
     )

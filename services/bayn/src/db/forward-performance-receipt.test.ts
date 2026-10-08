@@ -215,6 +215,33 @@ describe('forward-performance receipt persistence contract', () => {
     expect(Result.getOrThrow(decodeForwardPerformanceReceiptEnvelopeResult(first))).toEqual(first)
   })
 
+  test('rejects altered envelope bindings or invocation-time timestamps before database access', async () => {
+    const packet = Result.getOrThrow(makePersistableForwardPerformanceReceiptEnvelope(hash, makePersistenceReceipt()))
+    const { contentHash: _contentHash, ...material } = packet
+    const invocationTimed = Result.getOrThrow(
+      makeForwardPerformanceReceiptEnvelope({
+        ...material,
+        createdAt: '2026-07-20T21:01:01.000Z',
+      }),
+    )
+    for (const candidate of [{ ...packet, cycleId: 'e'.repeat(64) }, invocationTimed]) {
+      let calls = 0
+      const query = () => {
+        calls += 1
+        return Effect.succeed([{ matches: true }])
+      }
+      const sql = Object.assign(query, {
+        json: (value: unknown) => value,
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+      }) as unknown as PgClient.PgClient
+      const result = await Effect.runPromise(
+        persistForwardPerformanceReceipt(candidate).pipe(Effect.result, Effect.provideService(PgClient.PgClient, sql)),
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      expect(calls).toBe(0)
+    }
+  })
+
   test('round-trips unresolved operating costs with retained trading totals and stable hashes', () => {
     const material = {
       ...receiptMaterial,
