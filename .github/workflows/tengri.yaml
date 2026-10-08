@@ -62,10 +62,10 @@ jobs:
       - name: Run Tengri desktop browser suite
         run: bun run --cwd apps/landing test:e2e
 
-      - name: Build desktop for VS Code acceptance
+      - name: Build desktop for browser acceptance
         run: bun run --cwd apps/landing build
 
-      - name: Run real VS Code acceptance
+      - name: Run real Chromium, CUA, and VS Code acceptance
         env:
           TENGRI_EDITOR_NEXT_MODE: start
         run: bash services/nanoagent/test-vscode-browser.sh
@@ -82,6 +82,8 @@ jobs:
             /tmp/tengri-vscode.*/gateway.log
             /tmp/tengri-vscode.*/desktop.log
             /tmp/tengri-vscode.*/proxy.log
-            /tmp/tengri-vscode.*/home/.tengri/vscode/server.log
+            /tmp/tengri-vscode.*/vscode.log
+            /tmp/tengri-vscode.*/browser.log
+            /tmp/tengri-vscode.*/browser-results
           if-no-files-found: ignore
           retention-days: 7

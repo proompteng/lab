@@ -1,6 +1,6 @@
 # Original receipt capture
 
-Production capture is **disabled by default**. All deployment manifests leave it disabled and grant no new access.
+Production capture is **disabled by default**. Deployment manifests leave the fixed-session setting absent.
 The native execution worker has optional, fixed-session wiring through `BAYN_RESEARCH_CAPTURE_SESSION`. An absent or
 invalid setting acquires no capture recorder, S3 client, or capture database operation. Live activation, credentials,
 and capacity qualification require separate review and approval.
@@ -27,8 +27,9 @@ capture failure, or deadline without an actual cut ends the attempt without sele
 The worker uses its existing PostgreSQL client and capture tables. Explicit S3 configuration uses
 `BAYN_RESEARCH_CAPTURE_S3_ENDPOINT`, `BAYN_RESEARCH_CAPTURE_S3_BUCKET`, `BAYN_RESEARCH_CAPTURE_S3_REGION`,
 `BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID`, and `BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY`.
-Use the native OBC's actual `BUCKET_NAME`, not the claim name or the legacy research bucket. No manifest mounts these
-credentials as part of this implementation. Mounting credentials or granting access requires separate approval.
+Use the native OBC's actual `BUCKET_NAME`, not the claim name or the legacy research bucket. The approved execution-worker
+manifest references the existing `bayn-research-captures` owner Secret and connection ConfigMap. The public status
+service and activation hook receive no research credential. Access alone does not start capture or qualify capacity.
 
 Before any object write or consumer observation, the recorder writes an ordinal-zero `session-attempt` chunk to SQL.
 It contains the frozen declaration and a fresh attempt nonce. This sole control receipt claims the fixed capture ID.

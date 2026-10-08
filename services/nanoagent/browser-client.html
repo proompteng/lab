@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chrome</title>
+<style>
+html,body,#screen{margin:0;width:100%;height:100%;overflow:hidden;background:#202124;color:#e8eaed;font:13px system-ui}
+#status{position:absolute;inset:0;display:grid;place-content:center;text-align:center;pointer-events:none}
+#clipboard{position:absolute;right:12px;bottom:12px;padding:7px 12px;background:#303134;border:1px solid #ffffff20;border-radius:8px;color:inherit;cursor:pointer}
+#control{position:absolute;left:12px;bottom:12px;padding:7px 12px;background:#303134;border:1px solid #ffffff20;border-radius:8px;color:inherit;cursor:pointer}
+[hidden]{display:none!important}
+</style>
+<div id="screen" aria-label="Chrome browser" tabindex="0"></div>
+<div id="status" role="status">Connecting to Chrome…</div>
+<button id="clipboard" hidden>Copy selected text</button>
+<button id="control" title="Pause agent computer tools while you use Chrome">Take control</button>
+<script type="module" src="/browser.js"></script>
+</html>

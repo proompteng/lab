@@ -64,7 +64,7 @@ right with a soft background; agent responses stay on the left without speaker h
 browser-local conversations for the agent (newest first) with an active highlight and **New** control; the active
 thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. You can start or
 switch conversations while another response runs. Text and image drafts, along with prompts waiting for their server
-echo, remain with their conversation while the desktop stays open. Switching keeps sidebar rows in place, restores
+echo, remain with their conversation while the chat view stays open. Switching keeps sidebar rows in place, restores
 the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
 including requests received while another conversation is selected; server resolutions and completed turns clear
 retained requests. The header is
@@ -126,8 +126,10 @@ download them before closing the tab if storage cannot be restored.
 
 The Tengri desktop uses macOS-style unified toolbars, full-height sidebars, restrained window shadows, and a
 proximity-magnifying Dock. Apple’s original Big Sur wallpaper and application artwork are bundled locally; provenance
-is in [`public/tengri/README.md`](public/tengri/README.md). Finder, Chrome, Code, Terminal, and Settings continue to
-operate on the real guest workspace.
+is in [`public/tengri/README.md`](public/tengri/README.md). Finder, Chrome, Tengri, Code, Terminal, and Settings operate on the real guest workspace.
+Chrome opens the guest's full Chromium browser. Tengri owns Codex chat and has its own generated Dock icon.
+The agent's computer tool operates the same browser, with a human takeover control.
+See [browser architecture and research](../../docs/tengri/browser.md).
 
 Desktop, setup, and confirmation windows share their traffic-light controls: 14 px flat circles with 23 px between centers,
 with colors and rounded hover glyphs matched to native macOS screenshots. Each retains a separate 24 px hit target.

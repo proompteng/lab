@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,6 +91,7 @@ type codexProcessGeneration struct {
 
 type codexSupervisor struct {
 	binary          string
+	browserMCP      bool
 	cwd             string
 	closed          atomic.Bool
 	requestID       atomic.Uint64
@@ -185,13 +188,25 @@ func (supervisor *codexSupervisor) run() {
 }
 
 func (supervisor *codexSupervisor) runProcess() error {
-	command := exec.Command(
-		supervisor.binary,
+	arguments := []string{
 		"--model", "gpt-6.1-sol",
 		"--sandbox", "danger-full-access",
 		"--ask-for-approval", "on-request",
-		"app-server",
-	)
+	}
+	if supervisor.browserMCP {
+		binary, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("locate browser MCP executable: %w", err)
+		}
+		arguments = append(arguments,
+			"-c", "mcp_servers.tengri_browser.command="+strconv.Quote(binary),
+			"-c", `mcp_servers.tengri_browser.args=["browser-mcp"]`,
+			"-c", "mcp_servers.tengri_browser.tool_timeout_sec=300",
+			"-c", "mcp_servers.tengri_browser.required=true",
+		)
+	}
+	arguments = append(arguments, "app-server")
+	command := exec.Command(supervisor.binary, arguments...)
 	command.Dir = supervisor.cwd
 	command.Env = childEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
