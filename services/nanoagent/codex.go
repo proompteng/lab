@@ -1156,6 +1156,9 @@ func (supervisor *codexSupervisor) publish(method, approvalID string, value any)
 	if direct, ok := value.(json.RawMessage); ok {
 		raw = append([]byte(nil), direct...)
 	}
+	if method == "item/started" || method == "item/completed" {
+		raw = codexReplayMessage(raw)
+	}
 	if len(raw) > codexEventMaxBytes {
 		raw = codexOversizedEvent(method, len(raw))
 		method = "tengri/eventOmitted"
@@ -1178,6 +1181,57 @@ func (supervisor *codexSupervisor) publish(method, approvalID string, value any)
 			close(subscription.channel)
 		}
 	}
+}
+
+func codexReplayMessage(raw json.RawMessage) json.RawMessage {
+	var message map[string]json.RawMessage
+	var params, item map[string]json.RawMessage
+	if json.Unmarshal(raw, &message) != nil || json.Unmarshal(message["params"], &params) != nil ||
+		json.Unmarshal(params["item"], &item) != nil {
+		return raw
+	}
+	if string(item["type"]) != `"mcpToolCall"` && string(item["type"]) != `"dynamicToolCall"` {
+		return raw
+	}
+	changed := false
+	projectImages := func(container map[string]json.RawMessage, field string) {
+		var content []json.RawMessage
+		if json.Unmarshal(container[field], &content) != nil {
+			return
+		}
+		replacement := json.RawMessage(`{"type":"text","text":"[Image output]"}`)
+		if field == "contentItems" {
+			replacement = json.RawMessage(`{"type":"inputText","text":"[Image output]"}`)
+		}
+		projected := false
+		for index, block := range content {
+			var image struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(block, &image) == nil && (image.Type == "image" || image.Type == "inputImage") {
+				content[index] = replacement
+				projected = true
+			}
+		}
+		if projected {
+			container[field], _ = json.Marshal(content)
+			changed = true
+		}
+	}
+	projectImages(item, "contentItems")
+	var result map[string]json.RawMessage
+	if json.Unmarshal(item["result"], &result) == nil && result != nil {
+		projectImages(result, "content")
+		item["result"], _ = json.Marshal(result)
+	}
+	if !changed {
+		return raw
+	}
+	params["item"], _ = json.Marshal(item)
+	message["params"], _ = json.Marshal(params)
+	message["rawOmitted"] = json.RawMessage("true")
+	projected, _ := json.Marshal(message)
+	return projected
 }
 
 func (supervisor *codexSupervisor) subscribe(after uint64) (uint64, <-chan codexEvent, error) {
