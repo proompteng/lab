@@ -22,8 +22,10 @@ const backendBlock = (name: string): string => {
 }
 
 describe('private registry write-pressure boundary', () => {
-  it('rate-limits every mutation while keeping tiny manifest commits out of the blob queue', () => {
-    expect(haproxyConfig).toContain('filter bwlim-in registry_upload default-limit 5m default-period 1s')
+  it('shares one upload budget across concurrent mutations and isolates manifest commits', () => {
+    expect(haproxyConfig).toContain('stick-table type string len 32 size 1 store bytes_in_rate(1s)')
+    expect(haproxyConfig).toContain('filter bwlim-in registry_upload limit 5m key str(registry)')
+    expect(haproxyConfig).not.toContain('default-limit')
     expect(haproxyConfig).toContain('acl write_request method POST PUT PATCH DELETE')
     expect(haproxyConfig).toContain('acl manifest_write method PUT')
     expect(haproxyConfig).toContain('acl manifest_path path_reg ^/v2/.+/manifests/[^/]+$')
@@ -45,7 +47,7 @@ describe('private registry write-pressure boundary', () => {
 
     const writeBackend = backendBlock('registry_write')
     expect(writeBackend).toContain('option http-server-close')
-    expect(writeBackend).toContain('127.0.0.1:5000 maxconn 1 maxqueue 128 check')
+    expect(writeBackend).toContain('127.0.0.1:5000 maxconn 32 maxqueue 128 check')
   })
 
   it('keeps image pulls concurrent and separate from the write queue', () => {

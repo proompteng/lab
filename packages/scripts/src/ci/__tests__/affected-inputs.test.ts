@@ -200,6 +200,32 @@ test('Tengri runtime repairs publish the desktop from the same source', () => {
   }
 })
 
+test('Tengri desktop repairs publish both native images from the same source', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/tengri-images.yml', 'utf8'))
+  const source = 'apps/landing/src/components/tengri/desktop-dock.tsx'
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing native image trigger paths')
+    expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(true)
+  }
+})
+
+test('Tengri Warehouse discovers the source of desktop repairs', () => {
+  const manifests: unknown = Bun.YAML.parse(readFileSync('argocd/applications/kargo/warehouses.yaml', 'utf8'))
+  if (!Array.isArray(manifests)) throw new Error('Missing Warehouse manifests')
+  const warehouse = manifests.find((manifest) => property(property(manifest, 'metadata'), 'name') === 'tengri')
+  const subscriptions = property(property(warehouse, 'spec'), 'subscriptions')
+  if (!Array.isArray(subscriptions)) throw new Error('Missing Warehouse subscriptions')
+  const git = property(
+    subscriptions.find((subscription) => property(subscription, 'git') !== undefined),
+    'git',
+  )
+  const paths = property(git, 'includePaths')
+  if (!Array.isArray(paths)) throw new Error('Missing Warehouse source paths')
+  const source = 'apps/landing/src/components/tengri/desktop-dock.tsx'
+  expect(paths.some((path) => source.startsWith(`${text(path)}/`))).toBe(true)
+})
+
 test.each([
   'bayn-ci.yml',
   'bumba-ci.yml',

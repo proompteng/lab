@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{fs, sync::watch};
 use vmm::Vmm;
 
-pub const FIRECRACKER_VERSION: &str = "1.16.1";
+pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-direct-io.1";
 pub const GUEST_API_PORT: u32 = 1024;
 pub const GUEST_CONTROL_PORT: u32 = 1025;
 
@@ -679,6 +679,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn previous_firecracker_revision_cannot_restore_an_owned_snapshot() {
+        let config = config();
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        let owner = claim("owner-a", 1);
+        slot.transition(SlotState::Sleeping {
+            claim: owner.clone(),
+            snapshot: Snapshot { generation: 1 },
+        })
+        .await
+        .unwrap();
+        drop(slot);
+        let path = config.directory.join("journal.json");
+        let mut journal: Journal = serde_json::from_slice(&fs::read(&path).await.unwrap()).unwrap();
+        journal.identity.firecracker_version = "1.16.1".into();
+        let previous = serde_json::to_vec(&journal).unwrap();
+        fs::write(&path, &previous).await.unwrap();
+        let Err(error) = Slot::open(config.clone()).await else {
+            panic!("restored a snapshot from another Firecracker revision");
+        };
+        assert!(error.to_string().contains("snapshot identity changed"));
+        assert_eq!(fs::read(&path).await.unwrap(), previous);
+        assert_eq!(journal.state.claim(), Some(&owner));
+        fs::remove_dir_all(config.directory).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn failed_restore_keeps_the_owner_and_consumes_the_snapshot() {
         let config = config();
         let mut slot = Slot::open(config.clone()).await.unwrap();
@@ -899,8 +925,9 @@ mod tests {
         };
         slot.transition(saving.clone()).await.unwrap();
         slot.vm = Some(Vmm::from_child(
-            tokio::process::Command::new("sleep")
-                .arg("30")
+            tokio::process::Command::new("cat")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
                 .kill_on_drop(true)
                 .spawn()
                 .unwrap(),

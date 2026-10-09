@@ -44,6 +44,11 @@ from capital authority. Authorized bootstrap drains a predecessor controller, pu
 exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
 inactive while the observation object's delayed loop continues to retry.
 
+The observation owner's child runtimes share the worker's configured logger and tracer. The
+`bayn.broker.observation.poll` span contains capture and publication spans; capture carries its span and log context
+across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
+observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
+
 Each poll retains the complete paginated order, fill and fee history with the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
 hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same
@@ -317,14 +322,22 @@ The batch store commits the full plan before any candidate request can be claime
 database's request receipts and resolutions, serializes competing recovery, and seals unattempted requests at expiry.
 Requested candidates start concurrently across the complete source-verified batch, within its ten-second
 validity window; a slow, failed, or missing result still makes the batch unusable for an entry.
+If mandatory observation persistence consumes the original validity window before an unrecorded batch can start,
+admission returns typed expiry and observation evaluation waits with `INFERENCE_UNAVAILABLE`. It creates no plan,
+request claim, model call or decision. The retained observation still consumes its signal window, and protection
+checks remain first on every management pass. The admission span and JSON warning retain the batch and cycle IDs,
+original observation and expiry times, checked time and elapsed admission lag. Clock regression, corrupted evidence
+and persistence failures remain errors; recorded batches still recover against their original deadline.
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
 
-The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, to avoid
-repeating pure source replay immediately after binding. Every reread still queries PostgreSQL and requires full
-JSONB equality with that retained body; changed documents take complete validation. Returned documents are detached,
-and completion, supersession, current authority, pricing and expiry checks remain fresh. A retained decoding result
-does not prove that its binding committed and cannot create a missing database row.
+The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, after binding
+or a cold durable read. Every reread still queries PostgreSQL and requires full JSONB equality with that retained
+body. A match returns fresh completion and generation evidence without returning or decoding the full document body;
+changed documents return the complete body and take complete validation. Returned documents are detached, and
+completion, supersession, current authority, pricing and expiry checks remain fresh. A retained decoding result does
+not prove that its binding committed and cannot create a missing database row. The `bayn.cycle.decision-read` stage
+records retained wire bytes, match and body row counts, and elapsed read time without recording document contents.
 
 Native decision binding and position management use these contracts. Deployment and full lifecycle acceptance
 remain separate requirements. Historical inference evidence, an API response, or a batch result grants no execution
@@ -481,6 +494,8 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
+- Jev HTTP spans retain Effect's default redaction for authorization, cookies, Set-Cookie and API-key headers while
+  preserving HTTP status, timing and rate-limit diagnostics. The inference client preserves caller-provided redaction.
 - Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings to stderr. They contain the
   telemetry stage, service, source revision when configured, and HTTP status or transport reason. Collector bodies,
   headers, endpoints, and raw errors are omitted, and command JSON output stays on stdout. Successful exports remain
