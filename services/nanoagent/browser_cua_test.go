@@ -239,6 +239,48 @@ func TestBrowserScreenshotFitsAppServerFrameWithoutChangingCoordinates(t *testin
 	}
 }
 
+func TestBrowserScreenshotDoesNotWriteToRetainedHome(t *testing.T) {
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
+	fixture := t.TempDir()
+	t.Setenv("PATH", fixture+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 3))); err != nil {
+		t.Fatal(err)
+	}
+	imagePath := filepath.Join(fixture, "screen.png")
+	if err := os.WriteFile(imagePath, encoded.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Reject writes outside the temporary filesystem, as a full home disk does.
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$3\" in\n  %q/*) /bin/cp %q \"$3\" ;;\n  *) echo 'No space left on retained home' >&2; exit 1 ;;\nesac\n", scratch, imagePath)
+	if err := os.WriteFile(filepath.Join(fixture, "scrot"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
+	defer browser.close()
+	if err := os.MkdirAll(filepath.Join(browser.home, ".tengri", "browser"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := browser.screenshot(context.Background())
+	if err != nil {
+		t.Fatalf("full retained home must not prevent screenshots: %v", err)
+	}
+	content := result["content"].([]any)[0].(map[string]any)
+	data, err := base64.StdEncoding.DecodeString(content["data"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration, err := png.DecodeConfig(bytes.NewReader(data))
+	if err != nil || configuration.Width != 2 || configuration.Height != 3 {
+		t.Fatalf("invalid screenshot: %+v, %v", configuration, err)
+	}
+	entries, err := os.ReadDir(scratch)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("temporary screenshot was not removed: %v, %v", entries, err)
+	}
+}
+
 func TestBrowserMCPPreservesCompletedInputWhenScreenshotFails(t *testing.T) {
 	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
 	defer browser.close()

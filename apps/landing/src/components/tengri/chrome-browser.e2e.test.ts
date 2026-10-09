@@ -61,7 +61,7 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
                   architecture: 'amd64',
                   cpuMillis: 4000,
                   memoryMib: 8192,
-                  workspaceGib: 16,
+                  workspaceGib: 32,
                   power: { idleTimeoutMinutes: 60 },
                   createdAt: '2026-09-08T00:00:00Z',
                   conditions: [],

@@ -141,6 +141,10 @@ export const makeJevBatchStore = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* requireAutocommit
       const batchId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
+      // A management receipt may have committed its final batch atomically. Its
+      // immutable, decoded result needs no new transaction or durability wait.
+      const committed = yield* read(batchId)
+      if (committed !== null && committed.result !== null) return committed
       return yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* Schema.decodeUnknownEffect(

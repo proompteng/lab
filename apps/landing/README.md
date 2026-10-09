@@ -90,8 +90,8 @@ Failed sends preserve the text and attachments for retry. Images are stored in t
 by saved conversations.
 
 Active turns show a quiet Thinking… label. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
-dock keeps its blurred material stationary while its outline and icons magnify, with labels appearing without an
-opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
+dock uses one flat zinc surface without backdrop blur or a bright top edge. Its surface and icons magnify, with labels
+appearing without an opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
 blocks render as flowchart, sequence, and class diagrams and update as responses stream. Other diagram types and
 diagrams with images or remote CSS resources keep their copyable source visible; invalid or incomplete diagrams do too.
 Accepted types have explicit pre-layout resource checks. SVG sanitization and the existing CSP remain enforced.
@@ -134,6 +134,8 @@ proximity-magnifying Dock. Apple’s original Big Sur wallpaper and application 
 is in [`public/tengri/README.md`](public/tengri/README.md). Finder, Chrome, Tengri, Code, Terminal, and Settings operate on the real guest workspace.
 Chrome opens the guest's full Chromium browser. Tengri owns Codex chat and has its own generated Dock icon.
 The agent's computer tool operates the same browser, with a human takeover control.
+Browser approvals use a compact "Allow browser control?" card with request details available on demand. One-use,
+session, and deny choices retain the scopes advertised by the request.
 See [browser architecture and research](../../docs/tengri/browser.md).
 
 Desktop, setup, and confirmation windows share their traffic-light controls: 14 px flat circles with 23 px between centers,
@@ -147,9 +149,11 @@ geometry is measured at gesture boundaries; app content is memoized independentl
 updates its own leaf component. Minimized windows retain their application sessions and finish their animation at the
 corresponding Dock icon. Reduced-motion preferences update while the desktop is open.
 
-Dock magnification reserves space between icons and expands the glass background with transforms, using cached
+Dock magnification reserves space between icons and expands its flat surface with transforms, using cached
 geometry and limiting expansion at narrow viewport edges. Activating a window returns keyboard focus to its last
 control; Terminal is ready for typing when opened. Minimize preserves the window's zoom state and normal bounds.
+Maximized windows fill the desktop below the menu bar with square corners and no margins. The Dock hides until the
+pointer reaches the bottom edge or a Dock control receives keyboard focus. Normal windows remain above the Dock.
 The Window menu lists the active app's individual windows, identifies minimized windows, and marks the active window.
 
 Finder's toolbar, sidebar proportions, row density, action menu, and icon view were compared directly with Finder

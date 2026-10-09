@@ -256,6 +256,15 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
   return ''
 }
 
+export function codexApprovalTitle(event: TengriCodexEvent): string | undefined {
+  if (event.kind !== 'approval' || event.method !== 'mcpServer/elicitation/request') return undefined
+  const params = record(parseRawEvent(event.rawJson).params)
+  const meta = record(params._meta)
+  return params.serverName === 'tengri_browser' && meta.codex_approval_kind === 'mcp_tool_call'
+    ? 'Allow browser control?'
+    : undefined
+}
+
 export function codexApprovalDecisions(event: TengriCodexEvent): CodexApprovalDecision[] {
   if (event.kind !== 'approval') return []
   const params = record(parseRawEvent(event.rawJson).params)
