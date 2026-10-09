@@ -1,9 +1,14 @@
 # Tengri operations
 
 Tengri uses six prepared Firecracker slots under the normal OCI runtime. Each has a host supervisor, unprivileged VMM
-runner, Pod-local TAP, private snapshot/root disks, and a retained 16 GiB Ceph raw-block home. Source behavior is defined
+runner, Pod-local TAP, private snapshot/root disks, and a retained 32 GiB Ceph raw-block home. Source behavior is defined
 by [the service README](../../services/tengri/README.md) and [slot code](../../services/tengri/src/slot/).
 The [KVM/TAP design](kvm-tap-design.md) records the acceptance contract. A source merge is not a live cutover.
+
+Each 8 GiB guest uses a 9 GiB host runner reservation, matching native acceptance. Artifact-copy initialization is
+bounded separately at 2 GiB. The 56 GiB namespace memory quota includes six runners, their supervisors, and the
+controller and proxy. Repeated unchanged lifecycle failures retain their condition transition time and wait for the
+controller's retry interval instead of creating another Kubernetes status event.
 
 Never drain, cordon, reboot, relabel, change scheduling on, or reconfigure shared nodes for this migration. Only the
 specifically approved Tengri Pods may be stopped. Leave global Kata RuntimeClasses/extensions and unrelated workloads
@@ -19,8 +24,9 @@ is part of this lifecycle.
   platform ApplicationSet at wave 1. That Application installs the policy and binding at wave -1 before the device
   plugin at wave 0, independently of held Tengri image delivery.
 - SPIRE registers only the host slot supervisor, with the exact Pod UID and container selector.
-- Existing guest `nanoagent` ServiceAccount, token and registration RBAC, admission restrictions, attestation and bundle publication remain configured until the last old guest is stopped at cutover.
-- The existing guest NetworkPolicy and controller egress remain through cutover; prepared slots use `tengri-slots`.
+- Prepared slots use `tengri-slots`, host supervisor SPIRE registration, and a private guest vsock credential.
+- Legacy guest identity and network resources are absent from the final source. Their reviewed removal follows the
+  last approved old guest's writer fencing; the initial cutover cannot reconcile that removal while an old guest runs.
 - `tengri` namespace admission is already `privileged`; slot admission constrains the device/capability profile.
 
 Keep immutable controller and guest digests from the same source revision. CRD and namespace retain their
@@ -123,7 +129,7 @@ credentials, or guest bootstrap tokens.
 ## Lifecycle behavior
 
 `CreateAgent` derives one deterministic CR name per authenticated GitHub owner and claims a prepared slot. The fixed
-profile is 4 vCPU, 8 GiB RAM, and 16 GiB home. A completed create or resume means the resume hook passed filesystem,
+profile is 4 vCPU, 8 GiB RAM, and 32 GiB home. A completed create or resume means the resume hook passed filesystem,
 PTY, and initialized-Codex checks. Preparing or exhausted capacity returns an explicit error.
 
 Manual sleep and `spec.power.idleTimeoutMinutes` use the same snapshot operation. The default idle timeout is 60
@@ -135,6 +141,36 @@ requests stay reserved; resident guest RAM is released.
 The journal consumes a snapshot before vCPUs run. A failed save can recover only its still-live guest. A failed restore,
 changed disk/image/kernel/CPU identity, lost active runner, or missing Pod retains the claim and home for fenced recovery.
 No Lease expiry or missing Kubernetes object proves that a previous storage writer stopped.
+
+### Growing retained homes to 32 GiB
+
+The only current profile uses a 32 GiB home; the six-home namespace quota is 192 GiB. Existing homes must grow in
+place, preserving the PVC UID, filesystem UUID, MicroVM UID, owner grant, and files. The CRD permits increasing the
+recorded workspace size and rejects shrinking it. It does not admit new 16 GiB profiles.
+
+Use the reviewed image pair through the normal Kargo delivery path. During the authorized maintenance window,
+quiesce lifecycle traffic and controller reconciliation, inventory the original MicroVM/PVC/slot UIDs, and save
+filesystem UUIDs and hashes of representative retained files. Stop and fence each former VMM and storage writer
+before modifying its disk or enrolling a replacement slot. Follow the retained-home enrollment procedure below;
+never delete a retained PVC or initialize it as blank.
+
+After the reviewed quota and CRD have reconciled, increase each original PVC's `spec.resources.requests.storage`
+to `32Gi` using UID and resourceVersion preconditions. Wait for its reported capacity and attached raw block device
+to reach 34,359,738,368 bytes. Update the existing MicroVM's `spec.resources.workspaceGib` to `32` and enroll the
+same PVC with initialization marked `complete` against the reviewed boot image. Cold boot the replacement slot;
+ordinary snapshot resume retains the former guest device geometry and does not execute guest initialization.
+
+Guest initialization requires the full 32 GiB raw device, checks the recognized ext4 filesystem with `e2fsck -p -f`,
+and runs `resize2fs /dev/vdb` before mounting it and starting Nanoagent. Only clean or corrected filesystem checks
+permit growth. A check or resize failure prevents readiness and preserves the home for
+recovery. Verify `/dev/vdb` capacity, `df -B1 /home/nanoagent`, unchanged filesystem UUID and retained-file hashes,
+a synced write, conversation recovery, terminal use, and browser operation before reopening lifecycle traffic.
+Expansion cannot be rolled back by shrinking the PVC. On failure, retain the expanded PVC and fenced claim and
+repair or repeat the cold boot; do not restore an older memory snapshot over the changed filesystem.
+
+[Firecracker's block update documentation](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/api_requests/patch-block.md)
+requires an unused, unmounted guest device for its supported `PATCH /drives` procedure. Do not use that API to
+change an active home. Kubernetes expands the raw PVC; guest initialization grows its ext4 filesystem.
 
 Deletion first records authenticated VMM stop proof on the MicroVM. Then it deletes the exact Pod incarnation and its
 owned disks/token/Lease with UID and resourceVersion preconditions, and removes the finalizer. The durable stop receipt
@@ -202,7 +238,11 @@ A reviewed cutover follows this order:
    are prepared. The old Kata path has no transferable snapshot, so existing processes restart once at cutover.
 6. Remove the old `nanoagent` ServiceAccount, its token-issuance Role rule, `tengri-guest-identities` ClusterRole/Binding
    and admission policy/binding, guest PSAT/token-renewal resources, `tengri-microvm-guests`, and its controller egress rule only after
-   their last approved old guest is stopped. Verify authenticated
+   their last approved old guest is stopped. Reconcile the reviewed SPIRE configuration while preserving its host
+   attestor, host bundle publisher, datastore, signing-key volumes, and host workload registrations. Verify host canary
+   identity rotation. The old `spire-guest-bundle` ConfigMap and `tengri-microvm-guests` policy have pruning protection;
+   source omission does not delete them. Retire those exact resources with UID/resourceVersion preconditions only after
+   their publisher/consumers are gone, then verify all retired resources are absent. Verify authenticated
    create/resume through files, a real terminal, initialized Codex, previews, and editor content. Confirm unchanged
    retained PVC UIDs and unchanged shared-node scheduling. Accept no health-only substitute.
 
@@ -312,7 +352,11 @@ bun run lint:argocd
 
 The isolated KVM runner preserves JSON timing results, host test logs, and Firecracker logs before removing its own
 private container and volumes. Its real-guest test checks same-shell/file continuity, current owner/epoch, host SVID
-rotation, and snapshot page eviction. This boundary excludes BFF authentication, real Kubernetes latency, raw PVC
+rotation, and snapshot page eviction. Routine image publication gates on three real sleep/resume cycles per
+architecture, with every resume below one second. A three-minute first sleep exercises renewal beyond the previous
+host certificate lifetime. The manual `Tengri images` workflow input `kvm_samples=50` runs the longer performance
+qualification. Smoke receipts have `validationMode: smoke` and a null p95; they do not establish a latency
+distribution. This boundary excludes BFF authentication, real Kubernetes latency, raw PVC
 allocation, fresh-creation distribution, and six concurrent guests. Those exclusions remain acceptance requirements,
 not inferred successes. Measure at least 50 fresh prepared creations and 50 cold-cache resumes through the authenticated
 product path before claiming p95 below one second. Report sleep duration separately.

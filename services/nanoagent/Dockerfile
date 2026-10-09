@@ -18,6 +18,9 @@ ARG TARGETARCH
 ARG TARGETOS
 
 WORKDIR /src
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs && \
+    rm -rf /var/lib/apt/lists/*
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
@@ -25,11 +28,16 @@ COPY internal ./internal
 COPY vscode-extension ./vscode-extension
 COPY test-guest-admin.sh /out/test-guest-admin.sh
 COPY browser-client.html browser-client.js ./
+COPY developer-profile.sh ./
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent . && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go test -c -o /out/nanoagent-tests
+
+FROM scratch AS kvm-tests
+COPY --from=build /out/nanoagent-tests /out/nanoagent-tests
+COPY --from=build /out/test-guest-admin.sh /out/test-guest-admin.sh
 
 FROM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS go-runtime
 
@@ -433,7 +441,7 @@ RUN mkdir -p "$HOME" && \
 
 # Download and verify the pinned native Codex package during every image build. The
 # package is intentionally not copied into the final rootfs; a guest installs the
-# same verified package into its persistent 16 GiB home volume on first boot.
+# same verified package into its persistent 32 GiB home volume on first boot.
 FROM runtime AS codex-smoke
 
 ENV CODEX_BINARY=/home/nanoagent/.smoke/.local/bin/codex \

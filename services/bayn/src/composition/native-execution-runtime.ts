@@ -349,6 +349,9 @@ const replayProjectedAdvance = (
         _tag: status.lastOutcome,
         receiptHash: status.lastReceiptHash,
         nextDelayMs: Date.parse(status.nextDueAt) - Date.parse(status.completedAt),
+        ...(status.lastPass?.result === 'SUCCESS' && status.lastPass.nextWakeAt !== undefined
+          ? { nextWakeAt: status.lastPass.nextWakeAt }
+          : {}),
       },
     }),
     projectionFailure,
@@ -409,7 +412,11 @@ const advanceAndProject = (
         outcome: {
           _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
-          nextDelayMs: outcome.nextDelayMs,
+          nextDelayMs:
+            outcome.nextWakeAt === undefined
+              ? outcome.nextDelayMs
+              : Math.min(outcome.nextDelayMs, Math.max(1, Date.parse(outcome.nextWakeAt) - Date.parse(completedAt))),
+          ...(outcome.nextWakeAt === undefined ? {} : { nextWakeAt: outcome.nextWakeAt }),
         },
       }),
     ),
@@ -426,7 +433,7 @@ const advanceAndProject = (
           lastOutcome: controllerOutcome(outcome._tag),
           lastReceiptHash: outcome.receiptHash,
           completedAt,
-          nextDueAt: new Date(Date.parse(completedAt) + outcome.nextDelayMs).toISOString(),
+          nextDueAt: new Date(Date.parse(completedAt) + step.outcome.nextDelayMs).toISOString(),
           lastPass: outcome.observation,
         })
         .pipe(

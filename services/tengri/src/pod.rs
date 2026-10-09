@@ -8,7 +8,7 @@ use kube::{ResourceExt, api::ObjectMeta};
 use rand::distr::{Alphanumeric, SampleString};
 use serde_json::json;
 
-use crate::crd::{MicroVM, MicroVMArchitecture};
+use crate::crd::{MicroVM, MicroVMArchitecture, WORKSPACE_GIB};
 
 pub const FINALIZER_NAME: &str = "runtime.proompteng.ai/finalizer";
 pub const STORAGE_LAYOUT_ANNOTATION: &str = "runtime.proompteng.ai/storage-layout";
@@ -62,7 +62,7 @@ pub fn build_pvc(namespace: &str, slot: &str) -> PersistentVolumeClaim {
     )]));
     serde_json::from_value(json!({"metadata": metadata, "spec": {
         "accessModes": ["ReadWriteOnce"], "storageClassName": STORAGE_CLASS, "volumeMode": "Block",
-        "resources": {"requests": {"storage": "16Gi"}}
+        "resources": {"requests": {"storage": format!("{WORKSPACE_GIB}Gi")}}
     }}))
     .expect("valid fixed home PVC")
 }
@@ -82,8 +82,8 @@ pub fn validate_home(claim: &PersistentVolumeClaim) -> anyhow::Result<()> {
                 .as_ref()
                 .and_then(|r| r.requests.as_ref())
                 .and_then(|r| r.get("storage"))
-                .is_some_and(|q| q.0 == "16Gi"),
-        "home PVC violates the private 16 GiB raw-block contract"
+                .is_some_and(|q| q.0 == format!("{WORKSPACE_GIB}Gi")),
+        "home PVC violates the private {WORKSPACE_GIB} GiB raw-block contract"
     );
     Ok(())
 }
@@ -148,7 +148,7 @@ pub fn build_slot_pod(
         "nodeSelector": {"kubernetes.io/arch": architecture.kubernetes_label()},
         "initContainers": [
             {"name": "guest-artifacts", "image": guest_image, "command": ["/bin/cp", "/guest/rootfs.ext4", "/guest/vmlinux", "/artifacts/"],
-                "securityContext": restricted, "resources": {"requests": {"cpu": "100m", "memory": "64Mi"}, "limits": {"cpu": "1", "memory": "128Mi"}},
+                "securityContext": restricted, "resources": {"requests": {"cpu": "100m", "memory": "64Mi"}, "limits": {"cpu": "1", "memory": "2Gi"}},
                 "volumeMounts": [{"name": "artifacts", "mountPath": "/artifacts"}]},
             {"name": "tap", "image": runtime_image, "command": ["/usr/local/bin/tengri-network"],
                 "securityContext": network, "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"cpu": "100m", "memory": "64Mi", "runtime.proompteng.ai/kvm-tun": "1"}}}
@@ -166,8 +166,8 @@ pub fn build_slot_pod(
                     {"name": "workload-api", "mountPath": "/spiffe-workload-api", "readOnly": true}]},
             {"name": "runner", "image": runtime_image, "args": ["slot-runner"], "env": env,
                 "securityContext": runner,
-                "resources": {"requests": {"cpu": "4", "memory": "8320Mi", "ephemeral-storage": "26Gi"},
-                    "limits": {"cpu": "4", "memory": "8320Mi", "ephemeral-storage": "26Gi", "runtime.proompteng.ai/kvm-tun": "1"}},
+                "resources": {"requests": {"cpu": "4", "memory": "9Gi", "ephemeral-storage": "26Gi"},
+                    "limits": {"cpu": "4", "memory": "9Gi", "ephemeral-storage": "26Gi", "runtime.proompteng.ai/kvm-tun": "1"}},
                 "volumeDevices": [{"name": "home", "devicePath": "/dev/tengri-home"}],
                 "volumeMounts": [{"name": "snapshots", "mountPath": "/var/lib/tengri"}, {"name": "sockets", "mountPath": "/run/tengri"},
                     {"name": "artifacts", "mountPath": "/guest", "readOnly": true}, {"name": "bootstrap", "mountPath": "/run/guest-bootstrap", "readOnly": true}]}
@@ -185,6 +185,77 @@ pub fn build_slot_pod(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_requires_the_fixed_capacity_without_replacing_its_identity() {
+        let mut home = build_pvc("tengri", "test-slot");
+        home.metadata.uid = Some("retained-home-uid".into());
+        validate_home(&home).unwrap();
+        assert_eq!(home.uid().as_deref(), Some("retained-home-uid"));
+        let requests = home
+            .spec
+            .as_mut()
+            .unwrap()
+            .resources
+            .as_mut()
+            .unwrap()
+            .requests
+            .as_mut()
+            .unwrap();
+        requests.get_mut("storage").unwrap().0 = "16Gi".into();
+        assert!(validate_home(&home).is_err());
+    }
+
+    #[test]
+    fn slot_memory_covers_the_guest_and_artifact_copy() {
+        fn bytes(quantity: &str) -> u64 {
+            for (suffix, multiplier) in [("Gi", 1_u64 << 30), ("Mi", 1_u64 << 20)] {
+                if let Some(number) = quantity.strip_suffix(suffix) {
+                    return number.parse::<u64>().unwrap() * multiplier;
+                }
+            }
+            panic!("unsupported memory quantity");
+        }
+        let mut home = build_pvc("tengri", "test-slot");
+        home.metadata.uid = Some("home-uid".into());
+        let spec = build_slot_pod(
+            "tengri",
+            "test-slot",
+            "guest-image",
+            "runtime-image",
+            MicroVMArchitecture::Amd64,
+            &home,
+        )
+        .spec
+        .unwrap();
+        let runner = spec.containers.iter().find(|c| c.name == "runner").unwrap();
+        let resources = runner.resources.as_ref().unwrap();
+        let limit = bytes(&resources.limits.as_ref().unwrap()["memory"].0);
+        assert_eq!(
+            limit,
+            bytes(&resources.requests.as_ref().unwrap()["memory"].0)
+        );
+        assert!(limit >= (u64::from(crate::crd::MEMORY_MIB) << 20) + (1 << 30));
+        let copier = &spec.init_containers.as_ref().unwrap()[0];
+        let copy_memory = &copier.resources.as_ref().unwrap().limits.as_ref().unwrap()["memory"].0;
+        let artifacts = spec
+            .volumes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|v| v.name == "artifacts")
+            .unwrap();
+        let artifact_capacity = &artifacts
+            .empty_dir
+            .as_ref()
+            .unwrap()
+            .size_limit
+            .as_ref()
+            .unwrap()
+            .0;
+        assert!(bytes(copy_memory) >= bytes(artifact_capacity));
+    }
+
     #[test]
     fn slot_keeps_host_credentials_and_snapshot_disks_separate() {
         let mut home = build_pvc("tengri", "test-slot");

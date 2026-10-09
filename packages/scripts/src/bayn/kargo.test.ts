@@ -176,3 +176,24 @@ test('writes source, digest, and research lineage into the correct field in ever
   expect(lineageValues).toHaveLength(3)
   expect(new Set(lineageValues).size).toBe(1)
 })
+
+test.each([
+  '231623095676dfd33097df91c6ca8406ebabeedd',
+  `012345678901${'a'.repeat(28)}`,
+  `1234567890e2${'b'.repeat(28)}`,
+])('keeps activation version labels as YAML strings for revision %s', (revision) => {
+  const activation = steps.find(
+    (step: { uses: string; config: { path: string } }) =>
+      step.uses === 'yaml-update' && step.config.path === './out/argocd/applications/bayn/execution-activation.yaml',
+  )
+  const labels = activation.config.updates.filter((update: { key: string }) =>
+    update.key.endsWith('labels.app\\.kubernetes\\.io/version'),
+  )
+  expect(labels).toHaveLength(2)
+  for (const update of labels) {
+    const expanded = update.value.replace('${{ commitFrom(vars.gitRepo).ID[0:12] }}', revision.slice(0, 12))
+    const rendered = YAML.parse(`version: ${expanded}`).version
+    expect(typeof rendered).toBe('string')
+    expect(rendered).toBe(`sha-${revision.slice(0, 12)}`)
+  }
+})

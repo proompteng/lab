@@ -103,6 +103,7 @@ export const ExecutionAdvanceStepResultSchema = Schema.Struct({
     _tag: Schema.Enum(ExecutionControllerOutcome),
     receiptHash: Sha256Schema,
     nextDelayMs: DelaySchema,
+    nextWakeAt: Schema.optionalKey(UtcInstantSchema),
   }),
 })
 export type ExecutionAdvanceStepResult = typeof ExecutionAdvanceStepResultSchema.Type

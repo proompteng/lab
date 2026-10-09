@@ -13,6 +13,172 @@ const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dock
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
 
 describe('Tengri image workflow', () => {
+  it('uses three release cycles and reserves fifty cycles for explicit benchmarking', () => {
+    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      on: { workflow_dispatch: { inputs: { kvm_samples: { options: string[]; default: string } } } }
+      jobs: {
+        'validate-kvm': { steps: Array<{ name?: string; env?: Record<string, string> }> }
+        publish: { needs: string[] }
+      }
+    }
+    const input = workflow.on.workflow_dispatch.inputs.kvm_samples
+    expect(input.options).toEqual(['3', '50'])
+    expect(input.default).toBe('3')
+    const test = workflow.jobs['validate-kvm'].steps.find(
+      (step) => step.name === 'Verify real guest administration and snapshot lifecycle',
+    )
+    expect(test?.env?.TENGRI_KVM_SAMPLES).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}",
+    )
+    expect(workflow.jobs.publish.needs).toContain('validate-kvm')
+  })
+
+  it('exports registry caches only on main and reuses the native harness cache', () => {
+    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      jobs: Record<
+        string,
+        { steps: Array<{ name?: string; with?: Record<string, unknown>; 'continue-on-error'?: boolean }> }
+      >
+    }
+    const runtime = workflow.jobs.build?.steps.find((step) => step.name === 'Build native image')
+    expect(runtime?.with?.['cache-to']).toContain("github.event_name != 'pull_request'")
+    expect(runtime?.with?.['cache-to']).toContain('mode=max')
+    expect(runtime?.with?.['cache-to']).toContain('ignore-error=true')
+    expect(runtime?.['continue-on-error']).not.toBe(true)
+    const harness = workflow.jobs['validate-kvm']?.steps.find((step) => step.name === 'Build native KVM test harness')
+    expect(harness?.with?.['cache-from']).toContain(':cache-kvm-')
+    expect(harness?.with?.['cache-to']).toContain(':cache-kvm-')
+    expect(harness?.with?.['cache-to']).toContain('ignore-error=true')
+    expect(harness?.['continue-on-error']).not.toBe(true)
+    expect(harness?.with?.load).toBe(true)
+    expect(harness?.with?.push).not.toBe(true)
+  })
+
+  it('reuses the runtime release compilation for the native fixture without shipping test binaries', () => {
+    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }> }>
+    }
+    const dockerfile = readFileSync(tengriDockerfilePath, 'utf8')
+    const runtime = dockerfile.split(' AS runtime\n')[1]?.split('\nFROM runtime AS kvm-test')[0]
+    const fixture = dockerfile.split('\nFROM runtime AS kvm-test\n')[1]?.split('\nFROM runtime AS release')[0]
+    expect(dockerfile).toContain('cargo test --locked --release --all-targets')
+    expect(dockerfile).toContain('/out-kvm-test --list --ignored | grep -Fx')
+    expect(runtime).toContain('COPY --from=build /out-tengri /usr/local/bin/tengri')
+    expect(runtime).not.toContain('/out-kvm-test')
+    expect(fixture).toContain('COPY --from=build /out-kvm-test /fixture/kvm-test')
+    expect(fixture).not.toContain('cargo ')
+    expect(existsSync(resolve(repositoryRoot, 'services/tengri/Dockerfile.kvm-test'))).toBe(false)
+    const harness = workflow.jobs['validate-kvm'].steps.find((step) => step.name === 'Build native KVM test harness')
+    expect(harness?.with?.file).toBe('services/tengri/Dockerfile')
+    expect(harness?.with?.target).toBe('kvm-test')
+    expect(harness?.with?.['cache-from']).toContain(
+      'type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}',
+    )
+    const prFixture = workflow.jobs.build.steps.find((step) => step.name === 'Build isolated KVM test image')
+    expect(prFixture?.run).toContain('docker buildx build --load')
+    expect(prFixture?.run).not.toContain('--builder default')
+  })
+
+  it.each(['0', '1', '2', 'invalid'])(
+    'rejects insufficient lifecycle samples %s before touching devices',
+    (samples) => {
+      const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-samples-'))
+      const calls = resolve(fixture, 'calls')
+      try {
+        writeFileSync(resolve(fixture, 'ip'), '#!/bin/sh\nprintf called > "$CALLS"\nexit 42\n', { mode: 0o755 })
+        const result = Bun.spawnSync(['bash', resolve(repositoryRoot, 'services/tengri/test-kvm.sh')], {
+          env: {
+            ...process.env,
+            PATH: `${fixture}:${process.env.PATH}`,
+            CALLS: calls,
+            TENGRI_KVM_TEST_IMAGE: 'private-fixture',
+            TENGRI_KVM_GUEST_IMAGE: 'private-guest',
+            TENGRI_KVM_OUTPUT: fixture,
+            TENGRI_KVM_SAMPLES: samples,
+          },
+        })
+        expect(result.exitCode).not.toBe(0)
+        expect(existsSync(calls)).toBe(false)
+      } finally {
+        rmSync(fixture, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each(['missing', 'empty', 'present'])(
+    'requires a retained lifecycle receipt when the fixture exits successfully: %s',
+    (receipt) => {
+      const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-receipt-'))
+      try {
+        writeFileSync(resolve(fixture, 'ip'), '#!/bin/sh\nprintf "1.1.1.1 dev fixture0\\n"\n', { mode: 0o755 })
+        writeFileSync(resolve(fixture, 'cat'), '#!/bin/sh\nprintf "1500\\n"\n', { mode: 0o755 })
+        writeFileSync(
+          resolve(fixture, 'docker'),
+          `#!/bin/sh
+if [ "$1" = cp ]; then
+  case "$2" in *:/work/result.json)
+  case "$RECEIPT" in
+    empty) : > "$3" ;;
+    present) printf '{"resumeSamples":3}\\n' > "$3" ;;
+  esac
+  ;; esac
+fi
+exit 0
+`,
+          { mode: 0o755 },
+        )
+        const result = Bun.spawnSync(['bash', resolve(repositoryRoot, 'services/tengri/test-kvm.sh')], {
+          env: {
+            ...process.env,
+            PATH: `${fixture}:${process.env.PATH}`,
+            RECEIPT: receipt,
+            TENGRI_KVM_TEST_IMAGE: 'private-fixture',
+            TENGRI_KVM_GUEST_IMAGE: 'private-guest',
+            TENGRI_KVM_OUTPUT: fixture,
+            TENGRI_KVM_SAMPLES: '3',
+          },
+        })
+        expect(result.exitCode === 0).toBe(receipt === 'present')
+      } finally {
+        rmSync(fixture, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each([false, true])('requires the exact native test before configuring the fixture: %s', (present) => {
+    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-test-list-'))
+    const calls = resolve(fixture, 'calls')
+    const testName =
+      'slot::kvm_test::real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages'
+    try {
+      const entry = readFileSync(resolve(repositoryRoot, 'services/tengri/test-kvm-entry.sh'), 'utf8')
+        .replaceAll('/fixture/kvm-test', resolve(fixture, 'kvm-test'))
+        .replaceAll('/usr/local/bin/tengri-network', resolve(fixture, 'network'))
+      writeFileSync(resolve(fixture, 'entry'), entry)
+      writeFileSync(resolve(fixture, 'kvm-test'), '#!/bin/sh\nprintf "%s\\n" "$TEST_LIST"\n', { mode: 0o755 })
+      writeFileSync(resolve(fixture, 'stat'), '#!/bin/sh\nprintf "65532\\n"\n', { mode: 0o755 })
+      for (const command of ['ip', 'network', 'chmod', 'setpriv']) {
+        writeFileSync(resolve(fixture, command), `#!/bin/sh\nprintf '${command}\\n' >> "$CALLS"\n`, {
+          mode: 0o755,
+        })
+      }
+      const result = Bun.spawnSync(['sh', resolve(fixture, 'entry')], {
+        env: {
+          ...process.env,
+          PATH: `${fixture}:${process.env.PATH}`,
+          CALLS: calls,
+          TEST_LIST: present ? `${testName}: test` : '',
+          TENGRI_KVM_NETWORK_MTU: '1500',
+        },
+      })
+      expect(result.exitCode === 0).toBe(present)
+      expect(existsSync(calls)).toBe(present)
+      if (present) expect(readFileSync(calls, 'utf8')).toContain('setpriv')
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
+  })
+
   it('publishes signed multi-architecture images for Kargo discovery', () => {
     const source = readFileSync(imagesPath, 'utf8')
     const workflow = YAML.parse(source) as {

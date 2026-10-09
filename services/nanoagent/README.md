@@ -1,7 +1,7 @@
 # Nanoagent guest API
 
 Nanoagent runs as UID 1000 inside each Tengri Firecracker guest. Tengri owns the VMM outside the guest, in a normal OCI
-slot Pod. The guest has its own Linux kernel, root disk, and retained 16 GiB home. See the
+slot Pod. The guest has its own Linux kernel, root disk, and retained 32 GiB home. See the
 [runtime lifecycle](../tengri/README.md) for the host boundary and snapshot protocol.
 
 The guest `guest-init` helper reads the runner's private boot configuration, mounts the home, and starts Nanoagent as
@@ -9,6 +9,12 @@ UID 1000. It passes the slot credential through a one-use anonymous pipe, with a
 Nanoagent disables Linux dumpability, closes the pipe after
 reading it, and never returns, hashes into public metadata, or logs the credential. Public health probes remain
 unauthenticated.
+
+Guest preparation also starts one private UID 1000 shell on a PTY for lifecycle readiness. Each ready or resume hook
+checks initialized Nanoagent/Codex, reads the retained workspace, and exchanges a fresh challenge with that same shell
+within one second. The shell and PTY survive in the snapshot; restore does not fork another readiness process.
+Unexpected output, an exited shell, or a timeout fails closed and reaps the probe. This private probe does not consume
+a user terminal session. Native acceptance still exercises real guest files, the user's retained PTY, and Codex RPCs.
 
 ## Current API
 
@@ -71,6 +77,8 @@ captured atomically when its app-server response is received, so thread snapshot
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
+The allowed Codex calls include account, model, conversation and turn operations, and read-only MCP server status
+for verifying the browser computer tool.
 
 ## Firecracker rootfs and persistent tools
 
@@ -111,7 +119,8 @@ Cold installation requires GitHub and Homebrew registry access and fails startup
 
 Nanoagent puts the pinned toolchain ahead of Homebrew in child-process PATH. Login shells use the image's
 `/etc/profile.d/tengri-development.sh`, and newly created shell profiles source it too. Existing user shell profiles
-and Neovim configuration are preserved. `EDITOR` and `VISUAL` default to `nvim` unless already configured. A new Neovim
+and Neovim configuration are preserved. The profile exports the fixed Homebrew prefix and paths directly, so opening
+a terminal does not start Homebrew. `EDITOR` and `VISUAL` default to `nvim` unless already configured. A new Neovim
 configuration uses [AstroNvim's documented Lazy plugin setup](https://docs.astronvim.com/) with stable AstroNvim 6.1.0
 and a pinned Lazy bootstrap. Its plugins are installed before Nanoagent becomes ready. Text icons work with the web
 terminal's system monospace font. Run `nvim` to open the editor, `:AstroVersion` to inspect its version, and `:LspInstall`
@@ -138,14 +147,14 @@ Nanoagent starts Codex with `gpt-6.1-sol` as its default model. Explicit thread 
 omitted options preserve an existing thread's settings.
 
 The operating-system root is the private 1 GiB Firecracker disk. Snapshot sleep/resume retains its changes and running
-processes. An explicitly fenced cold replacement resets the root from the image. The 16 GiB home, `/workspace`, Codex account, and
+processes. An explicitly fenced cold replacement resets the root from the image. The 32 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
 `/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
 real guest through the isolated [KVM test](../tengri/test-kvm.sh) to exercise mounts and network administration.
 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159.2 package from the npm registry,
-verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
+verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 32 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available. Preparing a vacant slot allows 35 minutes for language-toolchain, developer-tool,
 and Codex cold installation, before any user can claim it. The language toolchain has a two-minute deadline, developer tools fifteen
@@ -220,4 +229,13 @@ The guest runs a persistent headed Chromium browser with a private TigerVNC disp
 `computer` MCP tool share that display. The immutable image bundles a compressed graphics archive inside the
 enforced 1 GiB root filesystem. Its expanded libraries and pinned Chromium build install on the retained home.
 The boot init configures these browser paths before starting Nanoagent and its Codex MCP server.
+The launcher sets `browser.custom_chrome_frame=false` on every start and disables Openbox decorations. Tengri owns
+the window controls; Chromium keeps its tabs and address bar without a second set of controls inside the preview.
+It hides the noninteractive testing banner with Chromium's documented `--disable-infobars` switch and disables
+memory usage in tab hover cards. Interactive browser prompts remain available.
+Computer-tool screenshots use the guest's temporary filesystem and are removed after encoding, so a full retained
+home does not prevent screen capture. Codex transcripts, browser profiles, tools, and workspace files still share
+the retained home and require free space there.
+Desktop replay replaces tool-result image payloads with `[Image output]` before enforcing its byte limit. The tool's
+identity, completion status, text, and structured result remain available; Codex receives the full original image.
 See [browser architecture and research](../../docs/tengri/browser.md).
