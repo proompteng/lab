@@ -3625,6 +3625,8 @@ test('aligns native window controls with app toolbars and keeps narrow layouts u
   expect(Math.abs(close.y + close.height / 2 - back.y - back.height / 2)).toBeLessThan(1)
 
   await finder.getByRole('button', { name: 'Maximize Finder' }).click()
+  await page.mouse.move(720, 899)
+  await expect.poll(async () => (await dock.boundingBox())?.y ?? 900).toBeLessThan(850)
   await dock.getByRole('button', { name: 'Open Tengri' }).click()
   await expect(finder).toHaveAttribute('data-active', 'false')
   await finder.locator('aside [data-window-drag-region]').click({ position: { x: 140, y: 26 } })
