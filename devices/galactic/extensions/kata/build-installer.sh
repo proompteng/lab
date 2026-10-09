@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly IMAGER_IMAGE='ghcr.io/siderolabs/imager:v1.13.9@sha256:bfeb72d58f918711f29f19337911ff845b7ce776cad17822149ac98e19751d55'
+readonly IMAGER_IMAGE='ghcr.io/siderolabs/imager:v1.14.0@sha256:b4025bdc0aa3392d56997419457d4ca0cf81016c721de36d0128f7a519d11d5f'
 
 usage() {
   echo "usage: $0 <ryzen-amd64|turin-amd64|altra-arm64> <kata-extension@sha256:digest> <output-dir>" >&2
@@ -29,26 +29,26 @@ case "$profile" in
   ryzen-amd64)
     arch='amd64'
     official_extensions=(
-      'ghcr.io/siderolabs/amdgpu:20260810-v1.13.9@sha256:bb9911892eedb003d2da91cb4e12e2e1b8a7a3a794ad03daec57117d96467f3c'
+      'ghcr.io/siderolabs/amdgpu:20260810-v1.14.0@sha256:741b37c0a92fa6fb9178c5607668573081a3957e3143525efdc1265683430fc4'
       'ghcr.io/siderolabs/amd-ucode:20260810@sha256:2f846db3cfe189608ff2d4756243cf6c10f8592d4803c96a5aad6b72fa4e6a7b'
-      'ghcr.io/siderolabs/glibc:2.43@sha256:e01587c3a86fcde9307457f4b3038b8f4f183c9908aa825f14ab5080a5602e4f'
-      'ghcr.io/siderolabs/tailscale:1.102.2@sha256:bbcde50aaa3fe655f5d898a4c55ba0170c0ed14b80f26468b4f7d25d2283d1ef'
+      'ghcr.io/siderolabs/glibc:2.43@sha256:396225a95a04983f882489ae37a9c8fc837a0c9d67c2ce99486d9c0e612f0ab9'
+      'ghcr.io/siderolabs/tailscale:1.102.2@sha256:b84c796cc86125d2d0d09d526486bd0f1627ae39bcbfb97eb17d8b8205a5b857'
     )
     ;;
   turin-amd64 | nvidia-amd64)
     arch='amd64'
     official_extensions=(
-      'ghcr.io/siderolabs/nvidia-container-toolkit-lts:580.178.04-v1.19.1@sha256:a009ea88645161ef780db5f86f1df4b64881f1abd779b021b1a4bab7bfb3e4bb'
-      'ghcr.io/siderolabs/nvidia-open-gpu-kernel-modules-lts:580.178.04-v1.13.9@sha256:8a455dbe923e4eb5d4757b7c286fabcfabe2159204f96ff945a76632f28ad880'
-      'ghcr.io/siderolabs/tailscale:1.102.2@sha256:bbcde50aaa3fe655f5d898a4c55ba0170c0ed14b80f26468b4f7d25d2283d1ef'
+      'ghcr.io/siderolabs/nvidia-container-toolkit-lts:580.178.04-v1.19.1@sha256:8c9e76b10e77564fea9868f63199553a7dc3d00bc6f3c5a6e5dedbd6f23d6e94'
+      'ghcr.io/siderolabs/nvidia-open-gpu-kernel-modules-lts:580.178.04-v1.14.0@sha256:d695ca7ca68248272697bbdfd2f37532c30701d38862ffc960d24571e417f94c'
+      'ghcr.io/siderolabs/tailscale:1.102.2@sha256:b84c796cc86125d2d0d09d526486bd0f1627ae39bcbfb97eb17d8b8205a5b857'
     )
     ;;
   altra-arm64 | nvidia-arm64)
     arch='arm64'
     official_extensions=(
-      'ghcr.io/siderolabs/nvidia-container-toolkit-lts:580.178.04-v1.19.1@sha256:a009ea88645161ef780db5f86f1df4b64881f1abd779b021b1a4bab7bfb3e4bb'
-      'ghcr.io/siderolabs/nvidia-open-gpu-kernel-modules-lts:580.178.04-v1.13.9@sha256:8a455dbe923e4eb5d4757b7c286fabcfabe2159204f96ff945a76632f28ad880'
-      'ghcr.io/siderolabs/tailscale:1.102.2@sha256:bbcde50aaa3fe655f5d898a4c55ba0170c0ed14b80f26468b4f7d25d2283d1ef'
+      'ghcr.io/siderolabs/nvidia-container-toolkit-lts:580.178.04-v1.19.1@sha256:8c9e76b10e77564fea9868f63199553a7dc3d00bc6f3c5a6e5dedbd6f23d6e94'
+      'ghcr.io/siderolabs/nvidia-open-gpu-kernel-modules-lts:580.178.04-v1.14.0@sha256:d695ca7ca68248272697bbdfd2f37532c30701d38862ffc960d24571e417f94c'
+      'ghcr.io/siderolabs/tailscale:1.102.2@sha256:b84c796cc86125d2d0d09d526486bd0f1627ae39bcbfb97eb17d8b8205a5b857'
     )
     ;;
   *)

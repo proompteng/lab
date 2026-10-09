@@ -18,6 +18,7 @@ COPY --from=validator /extensions-validator /usr/local/bin/extensions-validator
 COPY 10-kata-firecracker.part /tmp/10-kata-firecracker.part
 COPY configuration-clh-runtime-rs.toml /tmp/configuration-clh-runtime-rs.toml
 COPY manifest.yaml /extension/manifest.yaml
+COPY test-scratch.sh /tmp/test-scratch.sh
 COPY artifacts /tmp/patched-kata-artifacts
 
 RUN --mount=type=cache,target=/var/cache/downloads \
@@ -236,12 +237,13 @@ RUN --mount=type=cache,target=/var/cache/downloads \
       > /tmp/configuration-rs-fc.toml; \
     install -m 0644 /tmp/configuration-rs-fc.toml \
       /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
-    truncate -s 512M \
+    truncate -s 1G \
       /extension/rootfs/usr/local/share/kata-containers/blockfile-scratch.ext4; \
-    E2FSPROGS_FAKE_TIME=0 mkfs.ext4 -F -q -m 0 \
+    E2FSPROGS_FAKE_TIME=0 mkfs.ext4 -F -q -m 0 -b 4096 -N 32768 -J size=16 \
       -U 00000000-0000-0000-0000-000000000000 \
       -E lazy_itable_init=0,lazy_journal_init=0 \
       /extension/rootfs/usr/local/share/kata-containers/blockfile-scratch.ext4; \
+    sh /tmp/test-scratch.sh /extension/rootfs/usr/local/share/kata-containers/blockfile-scratch.ext4; \
     install -m 0644 /tmp/10-kata-firecracker.part \
       /extension/rootfs/etc/cri/conf.d/10-kata-runtimes.part; \
     test -x /extension/rootfs/usr/local/bin/containerd-shim-kata-v2; \
@@ -289,8 +291,8 @@ RUN --mount=type=cache,target=/var/cache/downloads \
 FROM scratch
 
 LABEL org.opencontainers.image.source="https://github.com/proompteng/lab"
-LABEL org.opencontainers.image.description="Kata Containers 4.1.0 multi-VMM system extension for Talos 1.13"
-LABEL org.opencontainers.image.version="4.1.0-talos-v1.13.9-r5"
+LABEL org.opencontainers.image.description="Kata Containers 4.1.0 multi-VMM system extension for Talos 1.14"
+LABEL org.opencontainers.image.version="4.1.0-talos-v1.14.0-r6"
 
 COPY --from=payload /extension/manifest.yaml /manifest.yaml
 COPY --from=payload /extension/rootfs /rootfs

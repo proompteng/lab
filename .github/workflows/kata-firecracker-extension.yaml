@@ -31,7 +31,7 @@ permissions:
 env:
   IMAGE: registry.ide-newton.ts.net/lab/talos-kata-runtimes
   KATA_SOURCE_COMMIT: 894e1956bb340752b30f7ad49879972234a0098c
-  VERSION: 4.1.0-talos-v1.13.9-r5
+  VERSION: 4.1.0-talos-v1.14.0-r6
 
 jobs:
   changes:
@@ -171,6 +171,32 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
           provenance: mode=max
           sbom: true
+          outputs: ${{ github.event_name == 'pull_request' && format('type=oci,dest=/tmp/kata-extension-{0}.tar', matrix.architecture) || '' }}
+
+      - name: Record PR extension artifact
+        if: github.event_name == 'pull_request'
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+          BUILD_HEAD: ${{ github.sha }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          archive="/tmp/kata-extension-${ARCHITECTURE}.tar"
+          sha256sum "$archive" > "${archive}.sha256"
+          jq -n --arg sourceHead "$SOURCE_HEAD" --arg buildHead "$BUILD_HEAD" \
+            --arg architecture "$ARCHITECTURE" --arg version "$VERSION" \
+            '{sourceHead: $sourceHead, buildHead: $buildHead, architecture: $architecture, version: $version, signed: false}' \
+            > "${archive}.json"
+
+      - name: Upload PR extension artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kata-extension-${{ matrix.architecture }}-${{ github.sha }}
+          path: /tmp/kata-extension-${{ matrix.architecture }}.tar*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
 
   publish:
     name: Publish signed multi-architecture extension
@@ -284,7 +310,7 @@ jobs:
           SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/kata-firecracker-extension.yaml@refs/heads/main
         run: |
           set -euo pipefail
-          tag="installer-v1.13.9-kata-4.1.0-r5-${{ matrix.profile }}"
+          tag="installer-v1.14.0-kata-4.1.0-r6-${{ matrix.profile }}"
           reference="${IMAGE}:${tag}"
           source_reference="$(
             tar -xOf "${INSTALLER_TAR}" manifest.json |
