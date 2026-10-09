@@ -259,7 +259,8 @@ expires before restore. These are lifecycle smoke checks, not a measured latency
 For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
 `TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
 and fixture builds export main-only registry caches; dependency compilation is cached separately from service source
-changes. Fixture cache and test-binary tags are excluded from Kargo discovery.
+changes. Cache exports are best effort; BuildKit reports export errors without canceling required image publication
+or native validation. Fixture cache and test-binary tags are excluded from Kargo discovery.
 
 The fixture uses a private Docker
 network/PID namespace, one CPU, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts.

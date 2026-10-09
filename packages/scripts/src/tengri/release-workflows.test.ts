@@ -35,14 +35,21 @@ describe('Tengri image workflow', () => {
 
   it('exports registry caches only on main and reuses the native harness cache', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
-      jobs: Record<string, { steps: Array<{ name?: string; with?: Record<string, unknown> }> }>
+      jobs: Record<
+        string,
+        { steps: Array<{ name?: string; with?: Record<string, unknown>; 'continue-on-error'?: boolean }> }
+      >
     }
     const runtime = workflow.jobs.build?.steps.find((step) => step.name === 'Build native image')
     expect(runtime?.with?.['cache-to']).toContain("github.event_name != 'pull_request'")
     expect(runtime?.with?.['cache-to']).toContain('mode=max')
+    expect(runtime?.with?.['cache-to']).toContain('ignore-error=true')
+    expect(runtime?.['continue-on-error']).not.toBe(true)
     const harness = workflow.jobs['validate-kvm']?.steps.find((step) => step.name === 'Build native KVM test harness')
     expect(harness?.with?.['cache-from']).toContain(':cache-kvm-')
     expect(harness?.with?.['cache-to']).toContain(':cache-kvm-')
+    expect(harness?.with?.['cache-to']).toContain('ignore-error=true')
+    expect(harness?.['continue-on-error']).not.toBe(true)
     expect(harness?.with?.load).toBe(true)
     expect(harness?.with?.push).not.toBe(true)
   })
