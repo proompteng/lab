@@ -1199,13 +1199,17 @@ func codexReplayMessage(raw json.RawMessage) json.RawMessage {
 		if json.Unmarshal(container[field], &content) != nil {
 			return
 		}
+		replacement := json.RawMessage(`{"type":"text","text":"[Image output]"}`)
+		if field == "contentItems" {
+			replacement = json.RawMessage(`{"type":"inputText","text":"[Image output]"}`)
+		}
 		projected := false
 		for index, block := range content {
 			var image struct {
 				Type string `json:"type"`
 			}
 			if json.Unmarshal(block, &image) == nil && (image.Type == "image" || image.Type == "inputImage") {
-				content[index] = json.RawMessage(`{"type":"text","text":"[Image output]"}`)
+				content[index] = replacement
 				projected = true
 			}
 		}

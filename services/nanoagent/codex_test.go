@@ -1036,6 +1036,18 @@ func TestCodexReplayProjectsOnlyToolResultImages(t *testing.T) {
 				if test.name == "mcp" && !strings.Contains(projected, "keep-structured-data") {
 					t.Fatal("desktop projection altered structured tool output")
 				}
+				if test.name == "dynamic" {
+					var event struct {
+						Params struct {
+							Item struct {
+								ContentItems []struct{ Type string } `json:"contentItems"`
+							} `json:"item"`
+						} `json:"params"`
+					}
+					if err := json.Unmarshal([]byte(projected), &event); err != nil || len(event.Params.Item.ContentItems) != 2 || event.Params.Item.ContentItems[0].Type != "inputText" {
+						t.Fatalf("projected dynamic image violates the app-server content schema: %s, %v", projected, err)
+					}
+				}
 			} else if projected != original {
 				t.Fatalf("non-image tool output or user input changed: %s", projected)
 			}
