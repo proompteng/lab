@@ -54,6 +54,31 @@ describe('Tengri image workflow', () => {
     expect(harness?.with?.push).not.toBe(true)
   })
 
+  it('reuses the runtime release compilation for the native fixture without shipping test binaries', () => {
+    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      jobs: Record<string, { steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }> }>
+    }
+    const dockerfile = readFileSync(tengriDockerfilePath, 'utf8')
+    const runtime = dockerfile.split(' AS runtime\n')[1]?.split('\nFROM runtime AS kvm-test')[0]
+    const fixture = dockerfile.split('\nFROM runtime AS kvm-test\n')[1]?.split('\nFROM runtime AS release')[0]
+    expect(dockerfile).toContain('cargo test --locked --release --all-targets')
+    expect(dockerfile).toContain('/out-kvm-test --list --ignored | grep -Fx')
+    expect(runtime).toContain('COPY --from=build /out-tengri /usr/local/bin/tengri')
+    expect(runtime).not.toContain('/out-kvm-test')
+    expect(fixture).toContain('COPY --from=build /out-kvm-test /fixture/kvm-test')
+    expect(fixture).not.toContain('cargo ')
+    expect(existsSync(resolve(repositoryRoot, 'services/tengri/Dockerfile.kvm-test'))).toBe(false)
+    const harness = workflow.jobs['validate-kvm'].steps.find((step) => step.name === 'Build native KVM test harness')
+    expect(harness?.with?.file).toBe('services/tengri/Dockerfile')
+    expect(harness?.with?.target).toBe('kvm-test')
+    expect(harness?.with?.['cache-from']).toContain(
+      'type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}',
+    )
+    const prFixture = workflow.jobs.build.steps.find((step) => step.name === 'Build isolated KVM test image')
+    expect(prFixture?.run).toContain('docker buildx build --load')
+    expect(prFixture?.run).not.toContain('--builder default')
+  })
+
   it.each(['0', '1', '2', 'invalid'])(
     'rejects insufficient lifecycle samples %s before touching devices',
     (samples) => {
