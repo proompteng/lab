@@ -9,10 +9,16 @@ if [ "$TENGRI_KVM_NETWORK_MTU" -lt 576 ] || [ "$TENGRI_KVM_NETWORK_MTU" -gt 6553
   echo 'KVM fixture interface MTU is outside the IPv4 range' >&2
   exit 1
 fi
+test_name=slot::kvm_test::real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages
+tests="$(/fixture/kvm-test --list --ignored)"
+if ! printf '%s\n' "$tests" | grep -Fx "$test_name: test" >/dev/null; then
+  echo 'KVM fixture binary is missing the required native lifecycle test' >&2
+  exit 1
+fi
 ip link set dev eth0 mtu "$TENGRI_KVM_NETWORK_MTU"
 /usr/local/bin/tengri-network
 chmod 0777 /work
 exec setpriv --no-new-privs --reuid=65532 --regid=65532 --groups="$(stat -c %g /dev/kvm)" \
   /fixture/kvm-test --ignored --exact \
-  slot::kvm_test::real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages \
+  "$test_name" \
   --nocapture
