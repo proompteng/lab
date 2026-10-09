@@ -18,8 +18,8 @@ COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
 COPY src ./src
 RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && \
-    cargo test --locked --all-targets && \
-    cargo build --locked --release --bin tengri && \
+    CARGO_BUILD_JOBS=2 cargo test --locked --all-targets && \
+    CARGO_BUILD_JOBS=2 cargo build --locked --release --bin tengri && \
     cp target/release/tengri /out-tengri && \
     test -s /out-tengri
 

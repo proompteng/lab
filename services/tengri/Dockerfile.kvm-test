@@ -13,7 +13,9 @@ COPY src ./src
 RUN (CARGO_BUILD_JOBS=2 cargo test --locked --release --no-run --bin tengri > /tmp/kvm-build.log 2>&1 || \
     { cat /tmp/kvm-build.log; exit 1; }) && \
     kvm_test="$(sed -nE 's/^ *Executable unittests src\/main.rs \((.*)\)$/\1/p' /tmp/kvm-build.log)" && \
-    test -n "$kvm_test" && cp "$kvm_test" /out-kvm-test
+    test -n "$kvm_test" && cp "$kvm_test" /out-kvm-test && \
+    /out-kvm-test --list --ignored | grep -Fx \
+      'slot::kvm_test::real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages: test'
 FROM ${RUNTIME_IMAGE}
 USER 0:0
 RUN apt-get update -o Acquire::Retries=3 && \

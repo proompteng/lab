@@ -32,6 +32,10 @@ RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go test -c -o /out/nanoagent-tests
 
+FROM scratch AS kvm-tests
+COPY --from=build /out/nanoagent-tests /out/nanoagent-tests
+COPY --from=build /out/test-guest-admin.sh /out/test-guest-admin.sh
+
 FROM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS go-runtime
 
 FROM ${NODE_BASE_IMAGE}:${NODE_VERSION}-bookworm-slim AS node-runtime
