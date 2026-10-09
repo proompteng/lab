@@ -192,10 +192,12 @@ configured write timeout. The claim's remaining admission window can shorten tha
 capture identities are not included. Tracing does not change metadata, frame bytes, write order or qualification.
 
 The persistence start, deadline-expired and cleanup-finished events distinguish the one-second validity boundary from
-later cancellation cleanup. An uninterruptible COMMIT can acknowledge after the deadline; its SQL acknowledgement is
-diagnostic and cannot advance the invalidated capture frontier. Correlate object PUT/GET events with actual SQL COMMIT
-spans before attributing a slow operation. COMMIT duration alone does not distinguish local WAL synchronization from
-synchronous-standby waiting. These spans add no storage operation, retry, collector or capacity qualification.
+later cancellation cleanup. An uninterruptible COMMIT can become durable during cleanup, but the pending interruption
+reports a failed-or-unknown SQL outcome: neither `sql.acknowledged` nor `persistence.io_completed` is emitted. Inspect
+the existing driver COMMIT span and `cleanup_finished` event for that late outcome; neither advances the invalidated
+capture frontier. Correlate object PUT/GET events with actual SQL COMMIT spans before attributing a slow operation.
+COMMIT duration alone does not distinguish local WAL synchronization from synchronous-standby waiting. These spans
+add no storage operation, retry, collector or capacity qualification.
 
 The existing at-most-one-second write deadline contains the complete export-and-SQL operation, and finalization is
 cached once. It is not a production throughput claim. A timeout, readback failure, SQL failure, restart or missing seal
