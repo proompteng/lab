@@ -74,7 +74,7 @@ browser_pids+=("$!")
 browser_preferences="$browser_root/profile/Default/Preferences"
 if [[ ! -f "$browser_preferences" ]]; then printf '{}\n' > "$browser_preferences"; fi
 jq --arg directory "$TENGRI_BROWSER_DOWNLOADS" \
-  '.download.default_directory=$directory | .download.prompt_for_download=false | .browser.check_default_browser=false | .profile.default_content_setting_values.notifications=2 | .extensions.theme.system_theme=2' \
+  '.download.default_directory=$directory | .download.prompt_for_download=false | .browser.check_default_browser=false | .browser.custom_chrome_frame=false | .profile.default_content_setting_values.notifications=2 | .extensions.theme.system_theme=2' \
   "$browser_preferences" > "$browser_preferences.tmp"
 mv "$browser_preferences.tmp" "$browser_preferences"
 "$CHROMIUM_BINARY" --user-data-dir="$browser_root/profile" --no-first-run --no-default-browser-check \
