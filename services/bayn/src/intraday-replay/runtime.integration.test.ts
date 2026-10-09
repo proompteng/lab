@@ -1421,6 +1421,8 @@ durableTest.each(
         const evaluatedMs = Date.parse(waiting.result.maximumHoldEvaluatedAt ?? '')
         expect(evaluatedMs).toBeGreaterThanOrEqual(Date.parse(managementStartedAt))
         expect(evaluatedMs).toBeLessThanOrEqual(Date.parse(waiting.result.observedAt))
+        expect(waiting.nextWakeAt).toBe(waiting.result.maximumHoldDueAt)
+        expect(waiting.nextDelayMs).toBeGreaterThan(0)
         const recreated = yield* createRuntime
         expect(recreated.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
         const frozenAt = yield* Clock.currentTimeMillis

@@ -277,9 +277,13 @@ test('optional capture preserves synchronous scheduling, supplied command timest
   expect(await exercise('mutating')).toEqual(baseline)
 })
 
-test.each([false, true])(
-  'absolute wake uses persisted due after worker %s replay and scheduling drift',
-  async (replayed) => {
+test.each([
+  { replayed: false, liveAt: '2026-08-13T18:00:05.000Z', delay: 2_000 },
+  { replayed: true, liveAt: '2026-08-13T18:00:05.000Z', delay: 2_000 },
+  { replayed: true, liveAt: '2026-08-13T18:01:00.000Z', delay: 1 },
+])(
+  'absolute wake uses live transport time after worker replay or a pre-send crash (%j)',
+  async ({ replayed, liveAt, delay }) => {
     let state: ExecutionControllerState = {
       schemaVersion: 1,
       active: true,
@@ -301,14 +305,24 @@ test.each([false, true])(
       },
     }
     const controller = handlers(
-      makeBaynExecutionController(config, {
-        advance: async () => {
-          events.push('advance')
-          return result
+      makeBaynExecutionController(
+        config,
+        {
+          advance: async () => {
+            events.push('advance')
+            return result
+          },
+          log: async () => undefined,
+          projectState: async () => undefined,
         },
-        log: async () => undefined,
-        projectState: async () => undefined,
-      }),
+        [],
+        {
+          currentTimeMillisUnsafe: () => {
+            events.push('transport-clock')
+            return Date.parse(liveAt)
+          },
+        },
+      ),
     )
     const context = {
       key: controllerKey,
@@ -338,8 +352,10 @@ test.each([false, true])(
     })
     expect(state.nextDueAt).toBe('2026-08-13T18:00:07.000Z')
     expect(deliveries).toHaveLength(1)
-    expect(deliveries[0]).toMatchObject({ delay: 2_000, parameter: { sequence: 5 } })
-    expect(events).toEqual(replayed ? ['set', 'clock', 'send'] : ['advance', 'set', 'clock', 'send'])
+    expect(deliveries[0]).toMatchObject({ delay, parameter: { sequence: 5 } })
+    expect(events).toEqual(
+      replayed ? ['set', 'transport-clock', 'send'] : ['advance', 'set', 'transport-clock', 'send'],
+    )
   },
 )
 

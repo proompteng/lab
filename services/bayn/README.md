@@ -100,6 +100,9 @@ and worker replay. If work crosses a deadline that was future when management ch
 the position; an already-overdue evaluation retains the normal evidence-wait cadence. This schedules exit evaluation,
 not a guaranteed broker-flat time: fresh reconciliation, executable quotes, risk checks and partial-fill recovery
 remain required. Old retained completions keep their existing durable replay command order.
+The send boundary uses a live transport clock rather than a journaled time sample, so a restart before send
+persistence cannot add the old remaining delay again. An overdue successor is scheduled once with a one-millisecond
+minimum; actual delivery still depends on Restate availability and the next pass repeats the normal execution guards.
 
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
