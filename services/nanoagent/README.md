@@ -229,4 +229,11 @@ The guest runs a persistent headed Chromium browser with a private TigerVNC disp
 `computer` MCP tool share that display. The immutable image bundles a compressed graphics archive inside the
 enforced 1 GiB root filesystem. Its expanded libraries and pinned Chromium build install on the retained home.
 The boot init configures these browser paths before starting Nanoagent and its Codex MCP server.
+The launcher sets `browser.custom_chrome_frame=false` on every start and disables Openbox decorations. Tengri owns
+the window controls; Chromium keeps its tabs and address bar without a second set of controls inside the preview.
+It hides the noninteractive testing banner with Chromium's documented `--disable-infobars` switch and disables
+memory usage in tab hover cards. Interactive browser prompts remain available.
+Computer-tool screenshots use the guest's temporary filesystem and are removed after encoding, so a full retained
+home does not prevent screen capture. Codex transcripts, browser profiles, tools, and workspace files still share
+the retained home and require free space there.
 See [browser architecture and research](../../docs/tengri/browser.md).

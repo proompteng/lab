@@ -1137,6 +1137,8 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await page.getByRole('button', { name: 'Maximize Finder' }).click()
   await expect(page.getByRole('button', { name: 'Restore Finder' })).toBeVisible()
 
+  await page.mouse.move(720, 899)
+  await expect.poll(async () => (await dock.boundingBox())?.y ?? 900).toBeLessThan(850)
   await dock.getByRole('button', { name: 'Open Terminal' }).click()
   const terminal = page.getByRole('region', { name: 'Terminal window' })
   await expect(terminal.getByLabel('Interactive Tengri terminal')).toHaveAttribute('data-renderer', 'canvas')
@@ -1898,11 +1900,10 @@ test('keeps the transcript visible when a turn finishes before its prompt echo',
   await expect(page.getByRole('button', { name: 'Explore the project', exact: true })).toBeVisible()
 })
 
-test('keeps the Dock clear of new and maximized window controls', async ({ page }) => {
+test('keeps normal windows above the Dock and fills fullscreen without gaps', async ({ page }) => {
   await mockTengri(page)
   await page.goto('/')
   const dock = page.getByRole('navigation', { name: 'Dock' })
-  const tengri = page.getByRole('region', { name: 'Tengri window' })
   await expect(page.getByLabel('Message your agent')).toBeVisible()
   const dockBounds = await dock.boundingBox()
   expect(dockBounds).not.toBeNull()
@@ -1911,14 +1912,48 @@ test('keeps the Dock clear of new and maximized window controls', async ({ page 
     expect(bounds).not.toBeNull()
     expect(bounds!.y + bounds!.height).toBeLessThan(dockBounds!.y)
   }
-  await tengri.getByRole('button', { name: 'Maximize Tengri' }).click()
+  for (const app of ['Tengri', 'Chrome']) {
+    await page.getByRole('button', { name: `Open ${app}`, exact: true }).click()
+    const frame = page.getByRole('region', { name: `${app} window` })
+    const normalBounds = await frame.boundingBox()
+    await frame.getByRole('button', { name: `Maximize ${app}` }).click()
+    await frame.focus()
+    await page.mouse.move(100, 200)
+    await expect.poll(() => frame.boundingBox()).toEqual({ x: 0, y: 30, width: 1440, height: 870 })
+    await expect(frame).toHaveCSS('border-radius', '0px')
+    await expect.poll(async () => (await dock.boundingBox())?.y ?? 0).toBeGreaterThan(890)
+    await page.mouse.move(720, 899)
+    await expect.poll(async () => (await dock.boundingBox())?.y ?? 900).toBeLessThan(850)
+    await expect(dock.locator('..')).toHaveCSS('translate', /^0px(?: 0px)?$/)
+    await dock.getByRole('button', { name: 'Open Settings' }).focus()
+    await page.mouse.move(100, 200)
+    await expect.poll(async () => (await dock.boundingBox())?.y ?? 900).toBeLessThan(850)
+    await frame.getByRole('button', { name: `Restore ${app}` }).click()
+    await expect.poll(() => frame.boundingBox()).toEqual(normalBounds)
+  }
+  await page.setViewportSize({ width: 390, height: 760 })
+  await page.getByRole('region', { name: 'Chrome window' }).getByRole('button', { name: 'Maximize Chrome' }).click()
   await expect
-    .poll(async () => {
-      const bounds = await tengri.boundingBox()
-      return bounds ? bounds.y + bounds.height : Number.POSITIVE_INFINITY
+    .poll(() => page.getByRole('region', { name: 'Chrome window' }).boundingBox())
+    .toEqual({
+      x: 0,
+      y: 30,
+      width: 390,
+      height: 730,
     })
-    .toBeLessThan(dockBounds!.y)
-  await expect(page.getByRole('button', { name: 'Restore Tengri' })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Restore Chrome' })).toBeVisible()
+  await expect
+    .poll(() => page.getByRole('region', { name: 'Chrome window' }).boundingBox())
+    .toEqual({
+      x: 0,
+      y: 30,
+      width: 390,
+      height: 730,
+    })
+  await page
+    .getByRole('region', { name: 'Chrome window' })
+    .screenshot({ path: test.info().outputPath('chrome-fullscreen.png') })
 })
 
 test('refits persisted windows above the Dock after reload and browser resize', async ({ page }) => {
@@ -2625,6 +2660,59 @@ test('keeps capped history items from returning through delayed replay', async (
   await expect(page.getByText('Fresh answer after restore', { exact: true })).toBeVisible()
   await expect(page.getByText('Stale omitted fragment', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Restored answer 500', { exact: true })).toBeVisible()
+})
+
+test('shows compact browser approvals with inspectable details and exact session scope', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  await page.getByLabel('Message your agent').fill('Open a browser tab.')
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeVisible()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'approval',
+    method: 'mcpServer/elicitation/request',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'browser-approval',
+    approvalId: 'browser-approval',
+    text: 'Allow the tengri_browser MCP server to run tool "computer"?',
+    rawJson: JSON.stringify({
+      params: {
+        serverName: 'tengri_browser',
+        message: 'Allow the tengri_browser MCP server to run tool "computer"?',
+        _meta: {
+          codex_approval_kind: 'mcp_tool_call',
+          tool_description: 'Operate the browser in the Tengri desktop.',
+          tool_params: { action: 'key', key: 'ctrl+t' },
+          persist: 'session',
+        },
+      },
+    }),
+  })
+  const approval = page.getByRole('article', { name: 'Codex approval request', exact: true })
+  await expect(approval.getByRole('heading', { name: 'Allow browser control?' })).toBeVisible()
+  await expect(approval.locator('pre')).not.toBeVisible()
+  for (const button of await approval.getByRole('button').all()) {
+    expect((await button.boundingBox())?.height).toBe(24)
+    await expect(button).toHaveCSS('font-size', '12px')
+  }
+  await approval.screenshot({ path: test.info().outputPath('browser-approval-compact.png') })
+  await approval.locator('summary').click()
+  await expect(approval.locator('pre')).toContainText('ctrl+t')
+  await expect(approval.locator('pre')).toContainText('Session approval applies to this tool')
+  await approval.getByRole('button', { name: 'Approve for session', exact: true }).click()
+  await expect
+    .poll(() =>
+      mock.actions.some(
+        (action) =>
+          action.action === 'resolve-approval' &&
+          action.approvalId === 'browser-approval' &&
+          action.decision === 'approve-session',
+      ),
+    )
+    .toBe(true)
 })
 
 test('reconciles paginated item snapshots while keeping the transcript compact and approvals usable', async ({
@@ -3537,6 +3625,8 @@ test('aligns native window controls with app toolbars and keeps narrow layouts u
   expect(Math.abs(close.y + close.height / 2 - back.y - back.height / 2)).toBeLessThan(1)
 
   await finder.getByRole('button', { name: 'Maximize Finder' }).click()
+  await page.mouse.move(720, 899)
+  await expect.poll(async () => (await dock.boundingBox())?.y ?? 900).toBeLessThan(850)
   await dock.getByRole('button', { name: 'Open Tengri' }).click()
   await expect(finder).toHaveAttribute('data-active', 'false')
   await finder.locator('aside [data-window-drag-region]').click({ position: { x: 140, y: 26 } })
