@@ -324,7 +324,7 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
         <dl className="mt-5 grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-white/10 bg-white/10 text-center">
           <Resource label="CPU" value="2 cores" />
           <Resource label="Memory" value="4 GiB" />
-          <Resource label="Workspace" value="16 GiB" />
+          <Resource label="Workspace" value="32 GiB" />
         </dl>
         {errors.root?.server ? (
           <p

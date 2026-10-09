@@ -129,7 +129,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let home_disk = directory.join("home.ext4");
     fs::File::create(&home_disk)
         .await?
-        .set_len(16 << 30)
+        .set_len(u64::from(crate::crd::WORKSPACE_GIB) << 30)
         .await?;
     let kernel = PathBuf::from("/guest/vmlinux");
     let config = SlotConfig {

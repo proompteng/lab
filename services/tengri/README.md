@@ -1,7 +1,7 @@
 # Tengri control plane
 
 Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared Firecracker slots. Every guest has
-4 vCPU, 8 GiB RAM, a private 1 GiB root disk, and a retained 16 GiB Ceph home. Creation restores a prepared snapshot;
+4 vCPU, 8 GiB RAM, a private 1 GiB root disk, and a retained 32 GiB Ceph home. Creation restores a prepared snapshot;
 resume restores that owner's latest committed snapshot. Neither request schedules a Pod, attaches storage, boots a
 kernel, or installs tools. Empty or preparing capacity returns an explicit error.
 

@@ -8,7 +8,7 @@ use kube::{ResourceExt, api::ObjectMeta};
 use rand::distr::{Alphanumeric, SampleString};
 use serde_json::json;
 
-use crate::crd::{MicroVM, MicroVMArchitecture};
+use crate::crd::{MicroVM, MicroVMArchitecture, WORKSPACE_GIB};
 
 pub const FINALIZER_NAME: &str = "runtime.proompteng.ai/finalizer";
 pub const STORAGE_LAYOUT_ANNOTATION: &str = "runtime.proompteng.ai/storage-layout";
@@ -62,7 +62,7 @@ pub fn build_pvc(namespace: &str, slot: &str) -> PersistentVolumeClaim {
     )]));
     serde_json::from_value(json!({"metadata": metadata, "spec": {
         "accessModes": ["ReadWriteOnce"], "storageClassName": STORAGE_CLASS, "volumeMode": "Block",
-        "resources": {"requests": {"storage": "16Gi"}}
+        "resources": {"requests": {"storage": format!("{WORKSPACE_GIB}Gi")}}
     }}))
     .expect("valid fixed home PVC")
 }
@@ -82,8 +82,8 @@ pub fn validate_home(claim: &PersistentVolumeClaim) -> anyhow::Result<()> {
                 .as_ref()
                 .and_then(|r| r.requests.as_ref())
                 .and_then(|r| r.get("storage"))
-                .is_some_and(|q| q.0 == "16Gi"),
-        "home PVC violates the private 16 GiB raw-block contract"
+                .is_some_and(|q| q.0 == format!("{WORKSPACE_GIB}Gi")),
+        "home PVC violates the private {WORKSPACE_GIB} GiB raw-block contract"
     );
     Ok(())
 }
@@ -185,6 +185,26 @@ pub fn build_slot_pod(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_requires_the_fixed_capacity_without_replacing_its_identity() {
+        let mut home = build_pvc("tengri", "test-slot");
+        home.metadata.uid = Some("retained-home-uid".into());
+        validate_home(&home).unwrap();
+        assert_eq!(home.uid().as_deref(), Some("retained-home-uid"));
+        let requests = home
+            .spec
+            .as_mut()
+            .unwrap()
+            .resources
+            .as_mut()
+            .unwrap()
+            .requests
+            .as_mut()
+            .unwrap();
+        requests.get_mut("storage").unwrap().0 = "16Gi".into();
+        assert!(validate_home(&home).is_err());
+    }
 
     #[test]
     fn slot_memory_covers_the_guest_and_artifact_copy() {
