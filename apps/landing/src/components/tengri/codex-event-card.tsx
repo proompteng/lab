@@ -15,6 +15,7 @@ import { CodexMermaid } from './codex-mermaid'
 type CodexEventCardProps = {
   approvalDecisions?: readonly CodexApprovalDecision[]
   approvalId?: string
+  approvalTitle?: string
   kind: TengriCodexEventKind
   onResolveApproval?: (decision: CodexApprovalDecision) => void
   resolvingApproval?: boolean
@@ -24,6 +25,7 @@ type CodexEventCardProps = {
 export const CodexEventCard = memo(function CodexEventCard({
   approvalDecisions = ['approve-once', 'approve-session', 'deny'],
   approvalId,
+  approvalTitle,
   kind,
   onResolveApproval,
   resolvingApproval = false,
@@ -46,12 +48,23 @@ export const CodexEventCard = memo(function CodexEventCard({
         <div className="flex items-start gap-2">
           <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-amber-400/65" aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="text-label-12 text-zinc-400">Approval</span>
-            </div>
-            <p className="mt-0.5 whitespace-pre-wrap break-words text-copy-14 text-zinc-300">
-              {text || 'Codex is requesting approval.'}
-            </p>
+            <h3 className="text-label-14 text-zinc-200">{approvalTitle || 'Approval needed'}</h3>
+            {approvalTitle ? (
+              <>
+                <p className="mt-0.5 text-label-12 text-zinc-400">The agent wants to use your Chrome browser.</p>
+                <details className="group mt-1 text-label-12 text-zinc-400">
+                  <summary className="inline-flex min-h-6 cursor-pointer list-none items-center gap-1 rounded outline-none marker:content-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400">
+                    <ChevronRight className="size-3 group-open:rotate-90" aria-hidden="true" />
+                    Request details
+                  </summary>
+                  <pre className="mt-1 whitespace-pre-wrap break-words text-copy-13-mono">{text}</pre>
+                </details>
+              </>
+            ) : (
+              <p className="mt-0.5 whitespace-pre-wrap break-words text-copy-14 text-zinc-300">
+                {text || 'Codex is requesting approval.'}
+              </p>
+            )}
             <div className="mt-2 flex flex-wrap items-center gap-1">
               {approvalDecisions.includes('approve-once') ? (
                 <ApprovalButton
@@ -225,7 +238,7 @@ function ApprovalButton({
     <button
       type="button"
       className={cn(
-        'inline-flex min-h-7 items-center rounded-md px-2 text-button-12 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40 motion-reduce:transition-none',
+        'inline-flex min-h-6 items-center rounded-md px-1.5 text-xs leading-4 font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40 motion-reduce:transition-none',
         primary
           ? 'bg-blue-600 text-white hover:bg-blue-500'
           : 'border border-white/[0.08] text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200',

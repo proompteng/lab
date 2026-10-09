@@ -77,8 +77,12 @@ jq --arg directory "$TENGRI_BROWSER_DOWNLOADS" \
   '.download.default_directory=$directory | .download.prompt_for_download=false | .browser.check_default_browser=false | .browser.custom_chrome_frame=false | .profile.default_content_setting_values.notifications=2 | .extensions.theme.system_theme=2' \
   "$browser_preferences" > "$browser_preferences.tmp"
 mv "$browser_preferences.tmp" "$browser_preferences"
+browser_local_state="$browser_root/profile/Local State"
+if [[ ! -f "$browser_local_state" ]]; then printf '{}\n' > "$browser_local_state"; fi
+jq '.browser.hovercard.memory_usage_enabled=false' "$browser_local_state" > "$browser_local_state.tmp"
+mv "$browser_local_state.tmp" "$browser_local_state"
 "$CHROMIUM_BINARY" --user-data-dir="$browser_root/profile" --no-first-run --no-default-browser-check \
-  --start-maximized --disable-dev-shm-usage --force-dark-mode --ozone-platform=x11 about:blank &
+  --start-maximized --disable-dev-shm-usage --disable-infobars --force-dark-mode --ozone-platform=x11 about:blank &
 browser_pids+=("$!")
 for ((browser_attempt=0; browser_attempt<150; browser_attempt++)); do
   if xdotool search --onlyvisible --class 'chromium|chrome' >/dev/null 2>&1; then
