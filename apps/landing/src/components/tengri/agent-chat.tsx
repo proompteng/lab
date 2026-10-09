@@ -56,6 +56,7 @@ import {
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
+  codexApprovalTitle,
   codexEventDisplayText,
   codexEventIsIndependentOfThreadSnapshot,
   codexEventKey,
@@ -710,6 +711,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       <CodexEventCard
         key={codexEventWrapperKey(event)}
         approvalDecisions={event.kind === 'approval' ? codexApprovalDecisions(event) : undefined}
+        approvalTitle={codexApprovalTitle(event)}
         approvalId={event.approvalId}
         kind={event.kind}
         onResolveApproval={event.kind === 'approval' ? (decision) => void resolveApproval(event, decision) : undefined}

@@ -39,6 +39,7 @@ const MIN_WINDOW_WIDTH = 320
 const MIN_VISIBLE_HEIGHT = 56
 const MIN_VISIBLE_WIDTH = 96
 const WINDOW_INSET = 8
+const DOCK_RESERVED_HEIGHT = 96
 
 export const APP_TITLES: Record<TengriApp, string> = {
   finder: 'Finder',
@@ -211,12 +212,13 @@ function activateFrontmost(state: WindowManagerState): WindowManagerState {
 
 function newWindow(app: TengriApp, title: string, viewport: Bounds, z: number, id: number): DesktopWindow {
   const preferred = preferredSize(app)
+  const availableHeight = Math.max(0, viewport.height - DOCK_RESERVED_HEIGHT)
   const bounds = fitToViewport(
     {
       x: Math.max(12, (viewport.width - preferred.width) / 2 + (z % 4) * 22),
-      y: Math.max(12, (viewport.height - preferred.height) / 2 + (z % 3) * 18),
+      y: Math.max(12, (availableHeight - preferred.height) / 2 + (z % 3) * 18),
       width: Math.min(preferred.width, viewport.width - 24),
-      height: Math.min(preferred.height, viewport.height - 24),
+      height: Math.min(preferred.height, availableHeight - 24),
     },
     viewport,
   )
@@ -230,19 +232,17 @@ function preferredSize(app: TengriApp) {
 }
 
 function maximizedBounds(viewport: Bounds): Bounds {
-  const horizontal = viewportAxis(viewport.width, MIN_WINDOW_WIDTH)
-  const vertical = viewportAxis(viewport.height, MIN_WINDOW_HEIGHT)
   return {
-    x: horizontal.inset,
-    y: vertical.inset,
-    width: horizontal.available,
-    height: vertical.available,
+    x: 0,
+    y: 0,
+    width: Math.max(0, viewport.width),
+    height: Math.max(0, viewport.height),
   }
 }
 
 export function clampToViewport(bounds: Bounds, viewport: Bounds): Bounds {
   const horizontal = viewportAxis(viewport.width, MIN_WINDOW_WIDTH)
-  const vertical = viewportAxis(viewport.height, MIN_WINDOW_HEIGHT)
+  const vertical = viewportAxis(viewport.height - DOCK_RESERVED_HEIGHT, MIN_WINDOW_HEIGHT)
   const width = clamp(bounds.width, Math.min(MIN_WINDOW_WIDTH, horizontal.available), horizontal.available)
   const height = clamp(bounds.height, Math.min(MIN_WINDOW_HEIGHT, vertical.available), vertical.available)
   return {
@@ -279,11 +279,27 @@ export function resizeBounds(base: Bounds, edge: ResizeEdge, dx: number, dy: num
     next.width = horizontal.size
   }
   if (edge.includes('n')) {
-    const vertical = resizeAxis(base.y, base.height, dy, true, viewport.height, MIN_WINDOW_HEIGHT, MIN_VISIBLE_HEIGHT)
+    const vertical = resizeAxis(
+      base.y,
+      base.height,
+      dy,
+      true,
+      viewport.height - DOCK_RESERVED_HEIGHT,
+      MIN_WINDOW_HEIGHT,
+      MIN_VISIBLE_HEIGHT,
+    )
     next.y = vertical.start
     next.height = vertical.size
   } else if (edge.includes('s')) {
-    const vertical = resizeAxis(base.y, base.height, dy, false, viewport.height, MIN_WINDOW_HEIGHT, MIN_VISIBLE_HEIGHT)
+    const vertical = resizeAxis(
+      base.y,
+      base.height,
+      dy,
+      false,
+      viewport.height - DOCK_RESERVED_HEIGHT,
+      MIN_WINDOW_HEIGHT,
+      MIN_VISIBLE_HEIGHT,
+    )
     next.y = vertical.start
     next.height = vertical.size
   }
@@ -296,7 +312,7 @@ function offsetBounds(bounds: Bounds, x: number, y: number, viewport: Bounds) {
 
 function fitToViewport(bounds: Bounds, viewport: Bounds): Bounds {
   const horizontal = viewportAxis(viewport.width, MIN_WINDOW_WIDTH)
-  const vertical = viewportAxis(viewport.height, MIN_WINDOW_HEIGHT)
+  const vertical = viewportAxis(viewport.height - DOCK_RESERVED_HEIGHT, MIN_WINDOW_HEIGHT)
   const width = clamp(bounds.width, Math.min(MIN_WINDOW_WIDTH, horizontal.available), horizontal.available)
   const height = clamp(bounds.height, Math.min(MIN_WINDOW_HEIGHT, vertical.available), vertical.available)
   return {

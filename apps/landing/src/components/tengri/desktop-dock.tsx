@@ -314,13 +314,9 @@ export function DesktopDock({
       onPointerLeave={resetProximity}
       onPointerCancel={resetProximity}
     >
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute -inset-px rounded-[18px] bg-zinc-800/35 backdrop-blur-2xl backdrop-saturate-125"
-      />
       <motion.span
         aria-hidden="true"
-        className="pointer-events-none absolute -inset-px rounded-[18px] border border-white/10 bg-white/[0.035] shadow-[0_1px_0_rgba(255,255,255,0.04),0_12px_30px_rgba(0,0,0,0.25)]"
+        className="pointer-events-none absolute -inset-px rounded-[18px] border border-white/[0.06] bg-zinc-900/85 shadow-[0_12px_30px_rgba(0,0,0,0.25)]"
         style={{ scaleX: plateScale }}
       />
       {items.map(({ app, ref }) => (
