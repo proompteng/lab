@@ -33,6 +33,7 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
     ),
     waitReason: Schema.optionalKey(CycleWaitReasonSchema),
     readiness: Schema.optionalKey(DecisionReadinessSchema),
+    nextWakeAt: Schema.optionalKey(UtcInstantSchema),
   }).check(
     Schema.makeFilter(
       (observation) =>
