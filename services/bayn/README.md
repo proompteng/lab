@@ -171,6 +171,13 @@ provider precision guarantee. Score answers must also fit the same distribution 
 Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
 discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
 
+Each model request commits its at-most-once claim before inference. Native single-candidate management persists the
+receipt, resolution and complete batch result in one transaction; entry candidates retain independent receipts and
+all-candidate finalization. Receipt recording and recovery lock the batch before the request. A completed batch is
+verified and reused without opening another transaction. Commit failure or interruption cannot expose a partial
+management result, and every consumer still checks the original evidence deadline after persistence. Synchronous
+commit and standby durability are unchanged.
+
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
 the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
 before the close. The default development protocol requires an entry probability of at least 0.65 and a spread no

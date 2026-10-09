@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Schema, type Result } from 'effect'
+import { Clock, Effect, Layer, Option, Schema, type Result } from 'effect'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
@@ -13,6 +13,9 @@ import {
 import { JevClaim, JevEvaluationStore, type JevEvaluationClaim } from '../jev/evaluation'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { reproduceJevRequestFromVerifiedObservation } from '../jev/trading-signals'
+import { decodeJevBatchPlan, decodeJevBatchResult, JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
+import { JevPurpose } from '../jev/portfolio'
+import { utcInstantFromEpochMillis } from '../time'
 import {
   decodeJevResolution,
   JevResolutionStatus,
@@ -113,6 +116,82 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
     INSERT INTO jev_evaluation_resolutions (request_id, resolution_hash, payload)
     VALUES (${resolution.requestId}, ${resolution.resolutionHash}, ${sql.json(resolution)})
   `.pipe(Effect.as(resolution))
+  // Finalization and receipt recording take the batch lock before the request lock.
+  // Only native one-position management shares a commit; entry batches keep their
+  // independent candidate receipts and their existing all-candidate finalization.
+  const lockManagementBatch = (request: JevEvaluationRequest) =>
+    Effect.gen(function* () {
+      const rows = yield* Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ plan: Schema.Unknown })),
+        strictParseOptions,
+      )(
+        yield* sql`
+          SELECT plan.payload AS plan
+          FROM jev_batch_plans AS plan
+          WHERE plan.cycle_id = ${request.cycleId}
+            AND plan.authority_generation_hash = ${request.authorityGenerationHash}
+            AND plan.snapshot_id = ${request.snapshotId}
+            AND jsonb_array_length(plan.payload->'candidates') = 1
+            AND plan.payload #>> '{candidates,0,request,request,state,task,decisionPurpose}' = ${JevPurpose.Manage}
+            AND plan.payload #> '{candidates,0,request}' = ${sql.json(request)}
+          FOR UPDATE OF plan
+        `,
+      )
+      if (rows.length > 1) return yield* persistError('Jev management request belongs to multiple batches')
+      const row = rows[0]
+      if (row === undefined) return null
+      const plan = yield* Effect.fromResult(decodeJevBatchPlan(row.plan))
+      // Read after acquiring the lock: a concurrent finalizer may have inserted
+      // its result while this statement waited, without updating the plan row.
+      const results = yield* Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ payload: Schema.Unknown })),
+        strictParseOptions,
+      )(yield* sql`SELECT payload FROM jev_batch_results WHERE batch_id = ${plan.batchId}`)
+      const stored = results[0]
+      const result = stored === undefined ? null : yield* Effect.fromResult(decodeJevBatchResult(plan, stored.payload))
+      return { plan, result }
+    })
+  const finishManagementBatch = (
+    batch: NonNullable<Effect.Success<ReturnType<typeof lockManagementBatch>>>,
+    request: JevEvaluationRequest,
+    receipt: JevEvaluationReceipt,
+    resolution: JevResolution,
+  ) =>
+    Effect.gen(function* () {
+      // A late receipt may be retained after abandonment, but cannot replace the
+      // immutable batch result or turn an abandoned request into usable evidence.
+      if (batch.result !== null || resolution.status !== JevResolutionStatus.Recorded) return
+      const observations = yield* Schema.decodeUnknownEffect(
+        Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]),
+        strictParseOptions,
+      )(
+        yield* sql`SELECT payload FROM intraday_candidate_observations WHERE content_hash = ${batch.plan.observationHash}`,
+      )
+      const observation = observations[0].payload
+      if ((yield* Effect.fromResult(canonicalHashV1Result(observation))) !== batch.plan.observationHash)
+        return yield* persistError('Jev batch observation bytes differ from their stored hash')
+      const now = yield* Clock.currentTimeMillis
+      if (now < Date.parse(batch.plan.observedAt))
+        return yield* persistError('Jev batch clock regressed before observation')
+      const result = yield* Effect.fromResult(
+        makeJevBatchResult(batch.plan, {
+          schemaVersion: 'bayn.jev-batch-result.v1',
+          batchId: batch.plan.batchId,
+          completedAt: utcInstantFromEpochMillis(now),
+          candidates: [
+            {
+              symbol: request.symbol,
+              status: JevCandidateResultStatus.Resolved,
+              requestId: request.requestId,
+              receipt,
+              resolution,
+            },
+          ],
+        }),
+      )
+      yield* sql`INSERT INTO jev_batch_results (batch_id, result_hash, payload)
+        VALUES (${batch.plan.batchId}, ${result.resultHash}, ${sql.json(result)})`
+    })
   return {
     read,
     begin: (input: JevEvaluationRequest) =>
@@ -185,6 +264,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
         const receipt = yield* Effect.fromResult(decodeJevEvaluationReceipt(request, evidence))
         return yield* sql.withTransaction(
           Effect.gen(function* () {
+            const managementBatch = yield* lockManagementBatch(request)
             yield* lockRequest(request)
             const existing = yield* read(request.requestId)
             yield* sql`
@@ -201,17 +281,20 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
             FROM jev_evaluation_receipts WHERE request_id = ${request.requestId}
           `,
             )
-            if (existing !== null && existing.resolution !== null) return existing.resolution
-            return yield* insertResolution(
-              yield* Effect.fromResult(
-                makeJevResolution(request, receipt, {
-                  schemaVersion: 'bayn.jev-evaluation-resolution.v1',
-                  requestId: request.requestId,
-                  status: JevResolutionStatus.Recorded,
-                  receiptHash: receipt.receiptHash,
-                }),
-              ),
-            )
+            const resolution =
+              existing?.resolution ??
+              (yield* insertResolution(
+                yield* Effect.fromResult(
+                  makeJevResolution(request, receipt, {
+                    schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+                    requestId: request.requestId,
+                    status: JevResolutionStatus.Recorded,
+                    receiptHash: receipt.receiptHash,
+                  }),
+                ),
+              ))
+            if (managementBatch !== null) yield* finishManagementBatch(managementBatch, request, receipt, resolution)
+            return resolution
           }),
         )
       }).pipe(Effect.mapError(persistError)),
