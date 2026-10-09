@@ -260,7 +260,10 @@ container exit also requires a nonempty `result.json`; an empty test selection c
 
 For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
 `TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
-and fixture builds compile only the real source and export main-only registry caches. Cache exports are best effort;
+and fixture builds share the Dockerfile's real-source release compilation. The runtime runs all release unit tests and
+retains the exact native test binary in its build stage. The `kvm-test` target copies that binary from the same stage;
+the production runtime excludes fixture binaries. Native validation imports the runtime's main-only registry cache,
+so it does not compile Tengri again when the cache is available. Cache exports are best effort;
 BuildKit reports export errors without canceling required image publication
 or native validation. Fixture cache and test-binary tags are excluded from Kargo discovery.
 
