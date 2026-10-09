@@ -165,7 +165,7 @@ jobs:
           load: ${{ github.event_name == 'pull_request' && (matrix.service == 'nanoagent' || matrix.architecture == 'amd64') }}
           tags: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           cache-from: type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
-          cache-to: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && format('type=registry,ref={0}:cache-{1},mode=max', matrix.image, matrix.architecture) || '' }}
+          cache-to: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && format('type=registry,ref={0}:cache-{1},mode=max,ignore-error=true', matrix.image, matrix.architecture) || '' }}
           provenance: mode=max
           sbom: true
 
@@ -293,7 +293,7 @@ jobs:
             RUNTIME_IMAGE=${{ env.TENGRI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
             NANOAGENT_TEST_IMAGE=${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }}
-          cache-to: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }},mode=max
+          cache-to: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }},mode=max,ignore-error=true
 
       - name: Verify real guest administration and snapshot lifecycle
         env:
