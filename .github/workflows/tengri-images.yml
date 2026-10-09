@@ -180,16 +180,13 @@ jobs:
 
       - name: Build isolated KVM test image
         if: ${{ github.event_name == 'pull_request' && matrix.service == 'tengri' && matrix.architecture == 'amd64' }}
-        env:
-          RUNTIME_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-amd64
         run: |
           set -euo pipefail
-          docker build --builder default --platform linux/amd64 --target build \
-            --tag tengri-nanoagent-tests:fixture services/nanoagent
-          docker build --builder default --platform linux/amd64 \
-            --file services/tengri/Dockerfile.kvm-test \
-            --build-arg "RUNTIME_IMAGE=$RUNTIME_IMAGE" \
-            --build-arg NANOAGENT_TEST_IMAGE=tengri-nanoagent-tests:fixture \
+          docker buildx build --platform linux/amd64 --target kvm-tests \
+            --output type=local,dest=.artifacts/nanoagent-tests services/nanoagent
+          docker buildx build --load --platform linux/amd64 \
+            --file services/tengri/Dockerfile --target kvm-test \
+            --build-context nanoagent-tests=.artifacts/nanoagent-tests \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --tag tengri-kvm-test:fixture services/tengri
 
@@ -276,23 +273,23 @@ jobs:
           ARCHITECTURE: ${{ matrix.architecture }}
         run: |
           set -euo pipefail
-          runtime="${TENGRI_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
           guest="${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
-          docker pull "$runtime"
           docker pull "$guest"
 
       - name: Build native KVM test harness
         uses: docker/build-push-action@v6
         with:
           context: services/tengri
-          file: services/tengri/Dockerfile.kvm-test
+          file: services/tengri/Dockerfile
+          target: kvm-test
           platforms: linux/${{ matrix.architecture }}
           load: true
           tags: tengri-kvm-test:validation
-          build-args: |
-            RUNTIME_IMAGE=${{ env.TENGRI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
-            NANOAGENT_TEST_IMAGE=${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }}
+          build-contexts: |
+            nanoagent-tests=docker-image://${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: |
+            type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}
+            type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }}
           cache-to: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }},mode=max,ignore-error=true
 
       - name: Verify real guest administration and snapshot lifecycle
