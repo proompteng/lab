@@ -64,6 +64,8 @@ export type RecoveryFirstCycleAdvance = {
   readonly result?: CycleRunResult
   /** Optional one-shot durable scheduling override for the next Restate command. */
   readonly nextDelayMs?: number
+  /** Absolute cap retained until completion, so post-pass work cannot extend a selected wake. */
+  readonly nextWakeAt?: string
 }
 
 export type RecoveryFirstCycleDriver<R = RecoveryFirstRuntime> = {

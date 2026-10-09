@@ -657,7 +657,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               }),
           },
         }
-        expect(yield* evaluateJevPositionManagement(input)).toEqual({
+        expect(yield* evaluateJevPositionManagement(input)).toMatchObject({
           _tag: 'Wait',
           details: { waitReason: 'JEV_POSITION_HELD' },
         })

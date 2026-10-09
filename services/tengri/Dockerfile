@@ -18,8 +18,14 @@ COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
 COPY src ./src
 RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && \
-    cargo test --locked --all-targets && \
-    cargo build --locked --release --bin tengri && \
+    (CARGO_BUILD_JOBS=2 cargo test --locked --release --all-targets > /tmp/tengri-build.log 2>&1 || \
+      { cat /tmp/tengri-build.log; exit 1; }) && \
+    cat /tmp/tengri-build.log && \
+    kvm_test="$(sed -nE 's/^ *Running unittests src\/main.rs \((.*)\)$/\1/p' /tmp/tengri-build.log)" && \
+    test -n "$kvm_test" && cp "$kvm_test" /out-kvm-test && \
+    /out-kvm-test --list --ignored | grep -Fx \
+      'slot::kvm_test::real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages: test' && \
+    CARGO_BUILD_JOBS=2 cargo build --locked --release --bin tengri && \
     cp target/release/tengri /out-tengri && \
     test -s /out-tengri
 
@@ -70,7 +76,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-re
     file /out-firecracker | grep -E 'statically linked|static-pie linked'; \
     /out-firecracker --version
 
-FROM ${DEBIAN_BASE_IMAGE}:bookworm-slim
+FROM ${DEBIAN_BASE_IMAGE}:bookworm-slim AS runtime
 
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates e2fsprogs iproute2 nftables && \
@@ -87,3 +93,16 @@ COPY --chmod=0555 network.sh /usr/local/bin/tengri-network
 USER 65532:65532
 EXPOSE 50051 8080
 ENTRYPOINT ["/usr/local/bin/tengri"]
+
+FROM runtime AS kvm-test
+USER 0:0
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends util-linux && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=build /out-kvm-test /fixture/kvm-test
+COPY --from=nanoagent-tests /out/nanoagent-tests /fixture/nanoagent-tests
+COPY --from=nanoagent-tests /out/test-guest-admin.sh /fixture/test-guest-admin.sh
+COPY --chmod=0555 test-kvm-entry.sh /fixture/entry
+ENTRYPOINT ["/fixture/entry"]
+
+FROM runtime AS release

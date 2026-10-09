@@ -5,6 +5,10 @@ Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared 
 resume restores that owner's latest committed snapshot. Neither request schedules a Pod, attaches storage, boots a
 kernel, or installs tools. Empty or preparing capacity returns an explicit error.
 
+The host runner reserves 9 GiB, including 1 GiB beyond guest RAM for preparation and VMM overhead, matching the native
+acceptance fixture. Artifact staging has a separate 2 GiB limit so copying the boot disk does not exhaust a 128 MiB
+container through charged file pages. The namespace quota covers all six runners, supervisors, and the controller.
+
 Sleep freezes and snapshots the guest, flushes its disks, stops and reaps the VMM, and evicts the snapshot's file pages
 before acknowledging completion. The stable slot Pod, home PVC, TAP, and small host supervisor remain. Kubernetes
 resource requests still reserve resume capacity even while resident guest RAM is released.
@@ -70,9 +74,10 @@ The separately reviewed [device allocation](../../argocd/applications/tengri-dev
 advertising devices and delegates only KVM and TUN
 through the official generic device plugin. The platform ApplicationSet enrolls it in `kube-system` at wave 1, before
 the controller's wave 2. Verify actual device allocations before an authorized cutover. The existing namespace admission
-already permits this narrowly constrained profile; no namespace policy change is required. Existing guest SPIRE
-attestation, the `nanoagent` ServiceAccount, token/registration RBAC, admission restrictions and bundle publication remain
-until the final old guest has stopped.
+already permits this narrowly constrained profile; no namespace policy change is required. The final cutover retires
+legacy guest SPIRE attestation, the `nanoagent` ServiceAccount, token/registration RBAC, static-entry admission, bundle
+publication, and the old guest network path after the final old guest and its storage writer are fenced. Slots use only
+the host supervisor registration and private vsock credential.
 
 The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
 is exactly `true`. Keep it unset until the separately approved cutover has fenced old writers and enrolled their
@@ -244,7 +249,25 @@ remains the same after loading the archive into a classic image store.
 CI builds these artifacts without executing the KVM fixture. It requires no SSH devbox. Device execution still
 requires the scoped approval below.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, and `TENGRI_KVM_SAMPLES` select the artifacts,
-absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. It uses a private Docker
+absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. Routine main publication runs
+three real sleep/resume cycles on each architecture. Every resume must finish below one second, and publication still
+requires file and same-shell continuity, initialized Codex, host identity rotation, VMM termination, snapshot page
+eviction, guest administration, and browser startup. The first sleep lasts three minutes so the previous host SVID
+expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
+`validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
+The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful
+container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
+
+For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
+`TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
+and fixture builds share the Dockerfile's real-source release compilation. The runtime runs all release unit tests and
+retains the exact native test binary in its build stage. The `kvm-test` target copies that binary from the same stage;
+the production runtime excludes fixture binaries. Native validation imports the runtime's main-only registry cache,
+so it does not compile Tengri again when the cache is available. Cache exports are best effort;
+BuildKit reports export errors without canceling required image publication
+or native validation. Fixture cache and test-binary tags are excluded from Kargo discovery.
+
+The fixture uses a private Docker
 network/PID namespace, one CPU, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts.
 It checks real files, the same PTY shell, initialized Codex, stop/page-eviction, and rotating host identities, preserving
 diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared

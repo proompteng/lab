@@ -5,7 +5,7 @@ import { NodeServices } from '@effect/platform-node'
 
 import { CycleState, type AutonomousCycle } from '../cycle'
 import { retryableOperationalError, operationalError } from '../errors'
-import { type IntradayMarketDataService } from '../market-data'
+import { IntradaySnapshotFailure, type IntradayMarketDataService } from '../market-data'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
@@ -13,7 +13,7 @@ import { JevBatchExpired, JevBatchStore } from './batch-evaluation'
 import { JevClient } from './client'
 import { JevEvaluationStore } from './evaluation'
 import { JevExitReason } from './exit'
-import { nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
+import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
 import { JevPositionStore, JevPurpose } from './portfolio'
 import { evaluateJevObservation, evaluateJevPositionManagement } from './runtime'
 import { utcInstantFromEpochMillis } from '../time'
@@ -26,17 +26,27 @@ const scenario = (
     readonly maximumHold?: boolean
     readonly storeFailure?: boolean
     readonly mismatchedWindow?: boolean
+    readonly observedAt?: string
+    readonly firstFillAt?: string
+    readonly laterFillAt?: string
+    readonly pricingUnavailable?: boolean
+    readonly snapshotPending?: boolean
+    readonly completedHold?: boolean
+    readonly inferenceDelayMs?: number
     readonly expiredObservation?: boolean
   } = {},
 ) => {
-  const fixture = nativeJevFixture(JevPurpose.Manage, '2026-09-04T14:30:32.000Z')
+  const fixture = nativeJevFixture(JevPurpose.Manage, options.observedAt ?? '2026-09-04T14:30:32.000Z')
   const original = fixture.portfolio
   if (original.purpose !== JevPurpose.Manage) throw new Error('Expected held-position fixture')
   const portfolio = {
     ...original,
     entryFills: options.maximumHold
       ? original.entryFills.map((fill) => ({ ...fill, occurredAt: '2026-09-04T14:15:32.000Z' }))
-      : original.entryFills,
+      : original.entryFills.map((fill, index) => ({
+          ...fill,
+          occurredAt: (index === 0 ? options.firstFillAt : options.laterFillAt) ?? fill.occurredAt,
+        })),
   }
   const cycle: AutonomousCycle = {
     ...fixture.draft,
@@ -55,7 +65,16 @@ const scenario = (
       Effect.suspend(() => {
         if (query.purpose === undefined) {
           calls.signal += 1
-          if (options.expiredObservation) return Effect.succeed(fixture.snapshot)
+          if (options.completedHold || options.expiredObservation) return Effect.succeed(fixture.snapshot)
+          if (options.snapshotPending)
+            return Effect.fail(
+              operationalError({
+                component: 'market-data',
+                operation: 'snapshot',
+                message: 'signal archive incomplete',
+                cause: new IntradaySnapshotFailure({ reason: 'not-ready', message: 'signal archive incomplete' }),
+              }),
+            )
           if (options.mismatchedWindow)
             return Effect.succeed({
               ...fixture.snapshot,
@@ -73,6 +92,14 @@ const scenario = (
           )
         }
         calls.pricing += 1
+        if (options.pricingUnavailable)
+          return Effect.fail(
+            retryableOperationalError({
+              component: 'market-data',
+              operation: 'snapshot',
+              message: 'execution quote unavailable',
+            }),
+          )
         return Effect.succeed(
           streamingFixtureFromRaw(
             makeIntradayMomentumTestSnapshot(
@@ -100,7 +127,9 @@ const scenario = (
       record: () =>
         options.expiredObservation
           ? TestClock.adjust(fixture.protocol.inferenceValidityMs)
-          : Effect.die('Unexpected observation write'),
+          : options.completedHold
+            ? Effect.void
+            : Effect.die('Unexpected observation write'),
       latestJevWindowEnd: () =>
         Effect.suspend(() => {
           calls.window += 1
@@ -124,21 +153,27 @@ const scenario = (
         }),
       read: () => Effect.die('Unexpected batch read'),
       begin: (plan) =>
-        options.expiredObservation
-          ? Clock.currentTimeMillis.pipe(
-              Effect.flatMap((now) =>
-                Effect.fail(
-                  new JevBatchExpired({
-                    batchId: plan.batchId,
-                    cycleId: plan.cycleId,
-                    observedAt: plan.observedAt,
-                    expiresAt: plan.expiresAt,
-                    checkedAt: utcInstantFromEpochMillis(now),
-                  }),
+        options.completedHold
+          ? Effect.gen(function* () {
+              const result = nativeJevBatchResult(plan, fixture.observation.payload.observedAt, () => 'hold')
+              if (options.inferenceDelayMs !== undefined) yield* TestClock.adjust(options.inferenceDelayMs)
+              return { plan, result }
+            })
+          : options.expiredObservation
+            ? Clock.currentTimeMillis.pipe(
+                Effect.flatMap((now) =>
+                  Effect.fail(
+                    new JevBatchExpired({
+                      batchId: plan.batchId,
+                      cycleId: plan.cycleId,
+                      observedAt: plan.observedAt,
+                      expiresAt: plan.expiresAt,
+                      checkedAt: utcInstantFromEpochMillis(now),
+                    }),
+                  ),
                 ),
-              ),
-            )
-          : Effect.die('Unexpected inference batch'),
+              )
+            : Effect.die('Unexpected inference batch'),
     }),
     Effect.provideService(JevEvaluationStore, {
       read: () => Effect.die('Unexpected evaluation read'),
@@ -160,6 +195,99 @@ const scenario = (
 }
 
 describe('Jev management observation admission', () => {
+  test.each([
+    ['consumed signal', {}, 'SIGNAL_WINDOW_OBSERVED'],
+    ['pending inference', { pending: true }, 'DECISION_PENDING'],
+    ['unavailable signal', { consumed: false }, 'SNAPSHOT_UNAVAILABLE'],
+    ['incomplete signal archive', { consumed: false, snapshotPending: true }, 'SNAPSHOT_UNAVAILABLE'],
+    ['unavailable execution quote', { pricingUnavailable: true }, 'SNAPSHOT_UNAVAILABLE'],
+  ] as const)('retains the first partial-fill hold deadline while waiting for %s', async (_name, options, reason) => {
+    const check = scenario({
+      ...options,
+      firstFillAt: '2026-09-04T14:15:39.000Z',
+      laterFillAt: '2026-09-04T14:27:32.000Z',
+    })
+    expect(await check.run()).toMatchObject({
+      _tag: 'Wait',
+      details: {
+        maximumHoldDueAt: '2026-09-04T14:30:39.000Z',
+        maximumHoldEvaluatedAt: '2026-09-04T14:30:32.000Z',
+        readiness: { reason },
+      },
+    })
+  })
+
+  test('retains the hold deadline through the completed-minute pricing wait', async () => {
+    const check = scenario({
+      observedAt: '2026-09-04T14:30:00.000Z',
+      firstFillAt: '2026-09-04T14:15:07.000Z',
+      laterFillAt: '2026-09-04T14:27:00.000Z',
+    })
+    expect(await check.run()).toMatchObject({
+      _tag: 'Wait',
+      details: {
+        maximumHoldDueAt: '2026-09-04T14:30:07.000Z',
+        maximumHoldEvaluatedAt: '2026-09-04T14:30:00.000Z',
+        readiness: { reason: 'LOOKBACK_WARMUP', availableAt: '2026-09-04T14:30:00.001Z' },
+      },
+    })
+    expect(check.calls).toEqual({ pricing: 0, signal: 0, pending: 0, finish: 0, window: 0 })
+  })
+
+  test('a complete model hold keeps the same actual first-fill deadline', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      firstFillAt: '2026-09-04T14:15:39.000Z',
+      laterFillAt: '2026-09-04T14:27:32.000Z',
+    })
+    expect(await check.run()).toEqual({
+      _tag: 'Wait',
+      details: {
+        waitReason: 'JEV_POSITION_HELD',
+        maximumHoldDueAt: '2026-09-04T14:30:39.000Z',
+        maximumHoldEvaluatedAt: '2026-09-04T14:30:32.000Z',
+      },
+    })
+    expect(check.calls).toEqual({ pricing: 1, signal: 1, pending: 1, finish: 0, window: 1 })
+  })
+
+  test('a slow inference wait retains the time the hold guard ran before its deadline', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      inferenceDelayMs: 11_000,
+      firstFillAt: '2026-09-04T14:15:39.000Z',
+      laterFillAt: '2026-09-04T14:27:32.000Z',
+    })
+    expect(await check.run()).toMatchObject({
+      _tag: 'Wait',
+      details: {
+        maximumHoldDueAt: '2026-09-04T14:30:39.000Z',
+        maximumHoldEvaluatedAt: '2026-09-04T14:30:32.000Z',
+        readiness: { reason: 'INFERENCE_UNAVAILABLE' },
+      },
+    })
+  })
+
+  test.each(['2026-09-04T14:30:39.000Z', '2026-09-04T14:30:40.000Z'])(
+    'the maximum-hold guard runs at %s without a quote or another signal window',
+    async (observedAt) => {
+      const check = scenario({
+        observedAt,
+        firstFillAt: '2026-09-04T14:15:39.000Z',
+        laterFillAt: '2026-09-04T14:27:32.000Z',
+        pending: true,
+        pricingUnavailable: true,
+      })
+      expect(await check.run()).toMatchObject({
+        _tag: 'Exit',
+        target: { reason: JevExitReason.MaximumHold, observedAt },
+      })
+      expect(check.calls).toEqual({ pricing: 0, signal: 0, pending: 0, finish: 0, window: 0 })
+    },
+  )
+
   test('a consumed minute checks protection without loading its full signal history', async () => {
     const check = scenario()
     expect(await check.run()).toMatchObject({
