@@ -255,11 +255,13 @@ requires file and same-shell continuity, initialized Codex, host identity rotati
 eviction, guest administration, and browser startup. The first sleep lasts three minutes so the previous host SVID
 expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
 `validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
+The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful
+container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
 
 For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
 `TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
-and fixture builds export main-only registry caches; dependency compilation is cached separately from service source
-changes. Cache exports are best effort; BuildKit reports export errors without canceling required image publication
+and fixture builds compile only the real source and export main-only registry caches. Cache exports are best effort;
+BuildKit reports export errors without canceling required image publication
 or native validation. Fixture cache and test-binary tags are excluded from Kargo discovery.
 
 The fixture uses a private Docker

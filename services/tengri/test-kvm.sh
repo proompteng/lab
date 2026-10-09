@@ -41,3 +41,8 @@ docker run --name "$fixture_name" --cpus=1 --memory=9g --memory-swap=9g --pids-l
   --env "TENGRI_KVM_NETWORK_MTU=${fixture_network_mtu}" \
   --env "TENGRI_GUEST_IMAGE=${guest_digest}" --env "TENGRI_KVM_SAMPLES=${TENGRI_KVM_SAMPLES:-3}" \
   "$TENGRI_KVM_TEST_IMAGE"
+docker cp "$fixture_name:/work/result.json" "$TENGRI_KVM_OUTPUT/result.json"
+if ! test -s "$TENGRI_KVM_OUTPUT/result.json"; then
+  printf 'KVM acceptance requires a nonempty lifecycle result receipt\n' >&2
+  exit 1
+fi
