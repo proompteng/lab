@@ -20,7 +20,7 @@ const readyAgent = {
   architecture: 'amd64',
   cpuMillis: 4_000,
   memoryMib: 8_192,
-  workspaceGib: 16,
+  workspaceGib: 32,
   power: { idleTimeoutMinutes: 60 },
   nodeName: 'ryzen',
   message: '',

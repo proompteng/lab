@@ -7,7 +7,7 @@ spec:
     count/microvms.runtime.proompteng.ai: "6"
     count/leases.coordination.k8s.io: "6"
     persistentvolumeclaims: "6"
-    requests.storage: 96Gi
+    requests.storage: 192Gi
     pods: "8"
     secrets: "8"
     # Six runners, six host supervisors, and the controller with its mesh proxy.
