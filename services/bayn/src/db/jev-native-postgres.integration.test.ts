@@ -26,10 +26,20 @@ import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority, KillState, OrderSide } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
-import { JevBatchPlanVersion, JevEntryExclusion, makeJevBatchPlan } from '../jev/batch'
+import {
+  JevBatchPlanVersion,
+  JevCandidatePlanStatus,
+  JevCandidateResultStatus,
+  JevEntryExclusion,
+  makeJevBatchPlan,
+  usableJevBatchInferences,
+} from '../jev/batch'
 import { decideJevEntry, decideJevManagement, JevManagementAction, makeJevDefinition } from '../jev/decision'
 import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
 import { JevClient, JevError } from '../jev/client'
+import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
+import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
+import { JevResolutionStatus } from '../jev/resolution'
 import { JevFailure } from '../jev/contract'
 import { decodeJevPortfolio, JevPositionStore, JevPurpose } from '../jev/portfolio'
 import { clientOrderIdForIntentId } from '../execution/intents/domain'
@@ -52,7 +62,7 @@ import {
 } from '../jev/protocol'
 import { makeRuntimeProvenance, makeStrategyProtocolHashResult } from '../contracts'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
-import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { CandidateObservationStore, recordJevObservation } from '../observe-composition/candidate-observation'
 import {
   buildMutationShadowCycleDecision,
   loadExecutionRiskPolicy,
@@ -65,8 +75,8 @@ import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
-import { JevBatchStoreLive } from './jev-batch-postgres'
-import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
+import { JevBatchStoreLive, makeJevBatchStore } from './jev-batch-postgres'
+import { JevEvaluationStoreLive, makeJevEvaluationStore } from './jev-evaluation-postgres'
 import { JevPositionStoreLive } from './jev-position-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
@@ -245,6 +255,37 @@ const seedManagedPosition = (
     return { managed, portfolio: { ...portfolio, brokerState } }
   })
 
+const prepareManagementBatch = Effect.gen(function* () {
+  const { managed, portfolio } = yield* seedManagedPosition()
+  const observation = yield* recordJevObservation({
+    ...nativeInput,
+    portfolio,
+    snapshot: managed.snapshot,
+  })
+  const plan = yield* Effect.fromResult(
+    makeJevTradingSignalBatch({
+      observation: observation.payload,
+      expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
+      planVersion: JevBatchPlanVersion.V3,
+    }),
+  )
+  const candidate = plan.candidates[0]
+  if (plan.candidates.length !== 1 || candidate?.status !== JevCandidatePlanStatus.Requested)
+    throw new Error('Management fixture requires exactly one requested candidate')
+  const request = candidate.request
+  const receipt = yield* Effect.fromResult(
+    makeJevEvaluationReceipt(request, {
+      schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+      requestId: request.requestId,
+      startedAt: plan.observedAt,
+      completedAt: plan.observedAt,
+      outcome: { status: JevOutcome.Received, inference: nativeJevInference(request.request, plan.observedAt, 'hold') },
+    }),
+  )
+  yield* (yield* JevBatchStore).begin(plan)
+  return { plan, request, receipt }
+})
+
 describePostgres('PostgreSQL native Jev execution decisions', () => {
   let runtime: ReturnType<typeof makeRuntime>
   beforeAll(() => {
@@ -273,6 +314,197 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
   })
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('management receipt commits its complete batch atomically and finished reads open no transaction', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const { plan, request, receipt } = yield* prepareManagementBatch
+        const requests = yield* JevEvaluationStore
+        expect(yield* requests.begin(request)).toEqual({ status: JevClaim.Acquired })
+        const resolution = yield* requests.record(request, receipt)
+        const batch = yield* (yield* JevBatchStore).read(plan.batchId)
+        if (batch === null) throw new Error('Management batch did not persist')
+        expect(batch?.result?.candidates).toEqual([
+          {
+            symbol: request.symbol,
+            status: JevCandidateResultStatus.Resolved,
+            requestId: request.requestId,
+            receipt,
+            resolution,
+          },
+        ])
+        const sql = yield* PgClient.PgClient
+        const noTransaction = new Proxy(sql, {
+          get(target, property, receiver) {
+            if (property === 'withTransaction') return () => Effect.die('A committed batch must not open a transaction')
+            return Reflect.get(target, property, receiver)
+          },
+        })
+        const batches = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, noTransaction))
+        expect(yield* batches.finish(plan.batchId)).toEqual(batch)
+        expect(yield* requests.record(request, receipt)).toEqual(resolution)
+        expect(yield* batches.finish(plan.batchId)).toEqual(batch)
+      }).pipe(atObservation),
+    )
+  })
+
+  test('management batch insertion failure rolls back its receipt and resolution but retains the pre-call claim', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const { plan, request, receipt } = yield* prepareManagementBatch
+        const requests = yield* JevEvaluationStore
+        yield* requests.begin(request)
+        const sql = yield* PgClient.PgClient
+        yield* sql`ALTER TABLE jev_batch_results ADD CONSTRAINT fail_management_finalization CHECK (false)`
+        expect(Result.isFailure(yield* requests.record(request, receipt).pipe(Effect.result))).toBe(true)
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_receipts`).toEqual([])
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_resolutions`).toEqual([])
+        expect(yield* requests.begin(request)).toEqual({ status: JevClaim.Pending })
+        expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
+        yield* sql`ALTER TABLE jev_batch_results DROP CONSTRAINT fail_management_finalization`
+        yield* requests.record(request, receipt)
+        expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).not.toBeNull()
+      }).pipe(atObservation),
+    )
+  })
+
+  test.each(['interruption', 'defect'] as const)(
+    '%s rolls back the management receipt and batch together',
+    async (failure) => {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const { plan, request, receipt } = yield* prepareManagementBatch
+          const requests = yield* JevEvaluationStore
+          yield* requests.begin(request)
+          const sql = yield* PgClient.PgClient
+          const interruptedSql = new Proxy(sql, {
+            get(target, property, receiver) {
+              if (property === 'withTransaction')
+                return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                  target.withTransaction(
+                    effect.pipe(
+                      Effect.andThen(
+                        failure === 'interruption'
+                          ? Effect.interrupt
+                          : Effect.die('Synthetic management persistence defect'),
+                      ),
+                    ),
+                  )
+              return Reflect.get(target, property, receiver)
+            },
+          })
+          const interrupted = yield* makeJevEvaluationStore.pipe(
+            Effect.provideService(PgClient.PgClient, interruptedSql),
+          )
+          const exit = yield* interrupted.record(request, receipt).pipe(Effect.exit)
+          expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) expect(Cause.hasInterrupts(exit.cause)).toBe(failure === 'interruption')
+          expect(yield* sql`SELECT request_id FROM jev_evaluation_receipts`).toEqual([])
+          expect(yield* sql`SELECT request_id FROM jev_evaluation_resolutions`).toEqual([])
+          expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
+          expect(yield* requests.begin(request)).toEqual({ status: JevClaim.Pending })
+        }).pipe(atObservation),
+      )
+    },
+  )
+
+  test('concurrent management receipt retries and finalization preserve one exact result', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const { plan, request, receipt } = yield* prepareManagementBatch
+        const requests = yield* JevEvaluationStore
+        const batches = yield* JevBatchStore
+        yield* requests.begin(request)
+        yield* Effect.all(
+          [requests.record(request, receipt), requests.record(request, receipt), batches.finish(plan.batchId)],
+          { concurrency: 3 },
+        )
+        const saved = yield* batches.finish(plan.batchId)
+        expect(saved.result?.candidates).toHaveLength(1)
+        expect((yield* requests.read(request.requestId))?.receipt).toEqual(receipt)
+        const sql = yield* PgClient.PgClient
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([{ batch_id: plan.batchId }])
+      }).pipe(atObservation),
+    )
+  })
+
+  test('a failed management inference commits complete unusable evidence without another request', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const { plan, request } = yield* prepareManagementBatch
+        const requests = yield* JevEvaluationStore
+        yield* requests.begin(request)
+        const receipt = yield* Effect.fromResult(
+          makeJevEvaluationReceipt(request, {
+            schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+            requestId: request.requestId,
+            startedAt: plan.observedAt,
+            completedAt: plan.observedAt,
+            outcome: {
+              status: JevOutcome.Failed,
+              failure: JevFailure.Timeout,
+              httpStatus: null,
+              responseHash: null,
+              rejectedResponse: null,
+            },
+          }),
+        )
+        yield* requests.record(request, receipt)
+        const saved = yield* (yield* JevBatchStore).read(plan.batchId)
+        if (saved === null || saved.result === null) throw new Error('Failed inference batch did not commit')
+        expect(Result.isFailure(usableJevBatchInferences(plan, saved.result, observed))).toBe(true)
+        expect((yield* requests.begin(request)).status).toBe(JevClaim.Recorded)
+      }).pipe(atObservation),
+    )
+  })
+
+  test('a late management receipt cannot replace an abandoned batch result', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const { plan, request, receipt } = yield* prepareManagementBatch
+        const requests = yield* JevEvaluationStore
+        const batches = yield* JevBatchStore
+        yield* requests.begin(request)
+        yield* TestClock.setTime(Date.parse(plan.expiresAt))
+        const abandoned = yield* batches.finish(plan.batchId)
+        expect((yield* requests.record(request, receipt)).status).toBe(JevResolutionStatus.Abandoned)
+        expect(yield* batches.finish(plan.batchId)).toEqual(abandoned)
+        expect((yield* requests.read(request.requestId))?.receipt).toEqual(receipt)
+      }).pipe(atObservation),
+    )
+  })
+
+  test('management evidence that expires during the atomic commit stays unusable without another inference', async () => {
+    let calls = 0
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const { plan, request } = yield* prepareManagementBatch
+        const requests = yield* JevEvaluationStore
+        const delayed = {
+          ...requests,
+          record: (...args: Parameters<typeof requests.record>) =>
+            requests.record(...args).pipe(Effect.tap(() => TestClock.setTime(Date.parse(plan.expiresAt)))),
+        }
+        const result = yield* evaluateJevOnce(request).pipe(
+          Effect.provideService(JevEvaluationStore, delayed),
+          Effect.provideService(JevClient, {
+            evaluate: (input) =>
+              Effect.sync(() => {
+                calls += 1
+                return nativeJevInference(input, plan.observedAt, 'hold')
+              }),
+          }),
+          Effect.result,
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        const saved = yield* (yield* JevBatchStore).finish(plan.batchId)
+        if (saved.result === null) throw new Error('Atomic management batch did not commit')
+        expect(Result.isFailure(usableJevBatchInferences(plan, saved.result, Date.parse(plan.expiresAt)))).toBe(true)
+        expect((yield* requests.begin(request)).status).toBe(JevClaim.Recorded)
+        expect(calls).toBe(1)
+      }).pipe(atObservation),
+    )
   })
 
   test('inactive momentum-first v2 persists native v4 evidence without evaluating non-signals', async () => {
