@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Readable } from 'node:stream'
 import type { S3ClientConfig, S3ClientResolvedConfig } from '@aws-sdk/client-s3'
-import { Deferred, Effect, Exit, Fiber, Redacted, Result, Tracer } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Option, Redacted, Result, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
@@ -112,6 +112,7 @@ const fixture = (fault: Fault = 'none') => {
 }
 
 test('the recorder verifies one binary frame with two S3 requests before SQL and verifies both terminal objects', async () => {
+  const { spans, tracer } = captureSpans()
   const objects = new Map<string, ResearchCaptureObject>()
   const requests: string[] = []
   const writes: string[] = []
@@ -181,7 +182,7 @@ test('the recorder verifies one binary frame with two S3 requests before SQL and
         yield* recorder.finish
         expect((yield* recorder.status).invalidations).toEqual([])
       }),
-    ).pipe(provideTestLayer(TestClock.layer())),
+    ).pipe(provideTestLayer(TestClock.layer()), Effect.provideService(Tracer.Tracer, tracer)),
   )
   expect(requests.filter((method) => method === 'PUT')).toHaveLength(3)
   expect(requests.filter((method) => method === 'GET')).toHaveLength(3)
@@ -189,6 +190,25 @@ test('the recorder verifies one binary frame with two S3 requests before SQL and
   expect(writes.at(-1)).toBe('sql-seal')
   expect(objects.size).toBe(3)
   expect(destroys).toBe(1)
+  const operations = spans.filter((span) => span.name === 'bayn.capture.persistence')
+  expect(operations).toHaveLength(2)
+  for (const [index, operation] of operations.entries()) {
+    const children = spans.filter((span) => Option.getOrUndefined(span.parent)?.spanId === operation.spanId)
+    const sql = children.filter((span) => span.name === 'bayn.capture.sql')
+    const objectSpans = children.filter((span) => span.name === 'bayn.capture.object.put_verified')
+    expect(sql).toHaveLength(1)
+    expect(objectSpans).toHaveLength(index === 0 ? 1 : 2)
+    for (const objectSpan of objectSpans) {
+      expect(objectSpan.traceId).toBe(operation.traceId)
+      expect(objectSpan.events.map(([name]) => name)).toEqual([
+        'bayn.capture.object.put.started',
+        'bayn.capture.object.put.acknowledged',
+        'bayn.capture.object.readback.started',
+        'bayn.capture.object.readback.headers_received',
+        'bayn.capture.object.verified',
+      ])
+    }
+  }
   const verified = Result.getOrThrow(recoverCaptureFromStoredObjects(chunks, seals[0], (key) => objects.get(key)))
   expect(verified.structurallyClosed).toBe(true)
   expect(verified.complete).toBe(false)
