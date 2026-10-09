@@ -131,6 +131,9 @@ func runGuestInit(logger *slog.Logger) error {
 }
 
 func mountGuestHome(initialize bool) error {
+	if err := verifyHomeSize("/dev/vdb"); err != nil {
+		return err
+	}
 	command := exec.Command("/usr/sbin/blkid", "-p", "-o", "value", "-s", "TYPE", "/dev/vdb")
 	typeBytes, err := command.Output()
 	if err != nil {
@@ -151,6 +154,9 @@ func mountGuestHome(initialize bool) error {
 	if err := unix.Mount("/dev/vdb", "/home/nanoagent", "ext4", unix.MS_NODEV|unix.MS_NOSUID, ""); err != nil {
 		return fmt.Errorf("mount private home: %w", err)
 	}
+	if err := resizeGuestHome("/dev/vdb"); err != nil {
+		return err
+	}
 	if err := os.Chown("/home/nanoagent", 1000, 1000); err != nil {
 		return err
 	}
@@ -162,6 +168,29 @@ func mountGuestHome(initialize bool) error {
 	} else {
 		return err
 	}
+}
+
+func resizeGuestHome(device string) error {
+	if output, err := exec.Command("/usr/sbin/resize2fs", device).CombinedOutput(); err != nil {
+		return fmt.Errorf("grow private home filesystem: %w: %s", err, output)
+	}
+	return nil
+}
+
+func verifyHomeSize(path string) error {
+	disk, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer disk.Close()
+	size, err := disk.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("inspect private home capacity: %w", err)
+	}
+	if size != 32<<30 {
+		return fmt.Errorf("unexpected private home size: %d", size)
+	}
+	return nil
 }
 
 func verifyBlankHome(path string) error {
@@ -185,7 +214,7 @@ func verifyBlankHome(path string) error {
 			return err
 		}
 	}
-	if total != 16<<30 {
+	if total != 32<<30 {
 		return fmt.Errorf("unexpected private home size: %d", total)
 	}
 	return nil

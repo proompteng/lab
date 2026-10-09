@@ -18,6 +18,9 @@ ARG TARGETARCH
 ARG TARGETOS
 
 WORKDIR /src
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs && \
+    rm -rf /var/lib/apt/lists/*
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
@@ -438,7 +441,7 @@ RUN mkdir -p "$HOME" && \
 
 # Download and verify the pinned native Codex package during every image build. The
 # package is intentionally not copied into the final rootfs; a guest installs the
-# same verified package into its persistent 16 GiB home volume on first boot.
+# same verified package into its persistent 32 GiB home volume on first boot.
 FROM runtime AS codex-smoke
 
 ENV CODEX_BINARY=/home/nanoagent/.smoke/.local/bin/codex \

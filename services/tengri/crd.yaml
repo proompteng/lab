@@ -87,7 +87,7 @@ spec:
                     type: integer
                   workspaceGib:
                     enum:
-                    - 16
+                    - 32
                     format: uint32
                     minimum: 0.0
                     type: integer
@@ -228,8 +228,8 @@ spec:
           rule: self.spec.ownerHash == oldSelf.spec.ownerHash
         - message: the server-selected architecture is immutable
           rule: self.spec.architecture == oldSelf.spec.architecture
-        - message: workspace size is immutable
-          rule: self.spec.resources.workspaceGib == oldSelf.spec.resources.workspaceGib
+        - message: workspace size cannot shrink
+          rule: self.spec.resources.workspaceGib >= oldSelf.spec.resources.workspaceGib
         - message: creation time is immutable
           rule: self.spec.createdAt == oldSelf.spec.createdAt
     served: true

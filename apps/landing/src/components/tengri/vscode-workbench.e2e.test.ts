@@ -37,7 +37,7 @@ test('runs the upstream VS Code workbench against real guest files and terminals
     architecture: 'amd64',
     cpuMillis: 4000,
     memoryMib: 8192,
-    workspaceGib: 16,
+    workspaceGib: 32,
     power: { idleTimeoutMinutes: 60 },
     nodeName: 'local',
     createdAt: '2026-09-08T00:00:00Z',

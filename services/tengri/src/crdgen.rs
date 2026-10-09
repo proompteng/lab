@@ -44,8 +44,8 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
             {"rule": "self.spec.ownerHash == oldSelf.spec.ownerHash", "message": "ownerHash is immutable"},
             {"rule": "self.spec.architecture == oldSelf.spec.architecture", "message": "the server-selected architecture is immutable"},
             {
-                "rule": "self.spec.resources.workspaceGib == oldSelf.spec.resources.workspaceGib",
-                "message": "workspace size is immutable"
+                "rule": "self.spec.resources.workspaceGib >= oldSelf.spec.resources.workspaceGib",
+                "message": "workspace size cannot shrink"
             },
             {
                 "rule": "self.spec.createdAt == oldSelf.spec.createdAt",
@@ -158,6 +158,18 @@ mod tests {
                 "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/memoryMib/enum"
             ),
             Some(&json!([8_192]))
+        );
+        assert_eq!(
+            crd.pointer(
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/workspaceGib/enum"
+            ),
+            Some(&json!([32]))
+        );
+        assert_eq!(
+            crd.pointer("/spec/versions/0/schema/openAPIV3Schema/x-kubernetes-validations/2/rule"),
+            Some(&json!(
+                "self.spec.resources.workspaceGib >= oldSelf.spec.resources.workspaceGib"
+            ))
         );
         assert_eq!(
             crd.pointer(

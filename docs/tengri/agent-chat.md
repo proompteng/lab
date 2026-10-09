@@ -63,7 +63,7 @@ boundary around guest administration.
 
 The root filesystem has 1 GiB capacity. Snapshot sleep/resume preserves root changes and guest processes while releasing
 resident guest RAM. A fenced cold replacement resets the root from the image. Home and `/workspace` use the retained
-16 GiB PVC, including Codex credentials, threads, and installed tools. Ordinary sleep keeps the claimed runtime image.
+32 GiB PVC, including Codex credentials, threads, and installed tools. Ordinary sleep keeps the claimed runtime image.
 
 ## API path
 
