@@ -16,14 +16,10 @@ RUN apt-get update -o Acquire::Retries=3 && \
 WORKDIR /src
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
-RUN mkdir src && printf 'fn main() {}\n' | tee src/main.rs > src/crdgen.rs && \
-    CARGO_BUILD_JOBS=2 cargo test --locked --all-targets && \
-    CARGO_BUILD_JOBS=2 cargo build --locked --release --bin tengri && \
-    cargo clean --package tengri && rm -rf src
 COPY src ./src
 RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && \
-    cargo test --locked --all-targets && \
-    cargo build --locked --release --bin tengri && \
+    CARGO_BUILD_JOBS=2 cargo test --locked --all-targets && \
+    CARGO_BUILD_JOBS=2 cargo build --locked --release --bin tengri && \
     cp target/release/tengri /out-tengri && \
     test -s /out-tengri
 

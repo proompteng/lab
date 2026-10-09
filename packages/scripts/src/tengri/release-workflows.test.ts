@@ -80,6 +80,80 @@ describe('Tengri image workflow', () => {
     },
   )
 
+  it.each(['missing', 'empty', 'present'])(
+    'requires a retained lifecycle receipt when the fixture exits successfully: %s',
+    (receipt) => {
+      const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-receipt-'))
+      try {
+        writeFileSync(resolve(fixture, 'ip'), '#!/bin/sh\nprintf "1.1.1.1 dev fixture0\\n"\n', { mode: 0o755 })
+        writeFileSync(resolve(fixture, 'cat'), '#!/bin/sh\nprintf "1500\\n"\n', { mode: 0o755 })
+        writeFileSync(
+          resolve(fixture, 'docker'),
+          `#!/bin/sh
+if [ "$1" = cp ]; then
+  case "$2" in *:/work/result.json)
+  case "$RECEIPT" in
+    empty) : > "$3" ;;
+    present) printf '{"resumeSamples":3}\\n' > "$3" ;;
+  esac
+  ;; esac
+fi
+exit 0
+`,
+          { mode: 0o755 },
+        )
+        const result = Bun.spawnSync(['bash', resolve(repositoryRoot, 'services/tengri/test-kvm.sh')], {
+          env: {
+            ...process.env,
+            PATH: `${fixture}:${process.env.PATH}`,
+            RECEIPT: receipt,
+            TENGRI_KVM_TEST_IMAGE: 'private-fixture',
+            TENGRI_KVM_GUEST_IMAGE: 'private-guest',
+            TENGRI_KVM_OUTPUT: fixture,
+            TENGRI_KVM_SAMPLES: '3',
+          },
+        })
+        expect(result.exitCode === 0).toBe(receipt === 'present')
+      } finally {
+        rmSync(fixture, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each([false, true])('requires the exact native test before configuring the fixture: %s', (present) => {
+    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-test-list-'))
+    const calls = resolve(fixture, 'calls')
+    const testName =
+      'slot::kvm_test::real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages'
+    try {
+      const entry = readFileSync(resolve(repositoryRoot, 'services/tengri/test-kvm-entry.sh'), 'utf8')
+        .replaceAll('/fixture/kvm-test', resolve(fixture, 'kvm-test'))
+        .replaceAll('/usr/local/bin/tengri-network', resolve(fixture, 'network'))
+      writeFileSync(resolve(fixture, 'entry'), entry)
+      writeFileSync(resolve(fixture, 'kvm-test'), '#!/bin/sh\nprintf "%s\\n" "$TEST_LIST"\n', { mode: 0o755 })
+      writeFileSync(resolve(fixture, 'stat'), '#!/bin/sh\nprintf "65532\\n"\n', { mode: 0o755 })
+      for (const command of ['ip', 'network', 'chmod', 'setpriv']) {
+        writeFileSync(resolve(fixture, command), `#!/bin/sh\nprintf '${command}\\n' >> "$CALLS"\n`, {
+          mode: 0o755,
+        })
+      }
+      const result = Bun.spawnSync(['sh', resolve(fixture, 'entry')], {
+        env: {
+          ...process.env,
+          PATH: `${fixture}:${process.env.PATH}`,
+          CALLS: calls,
+          TEST_LIST: present ? `${testName}: test` : '',
+          TENGRI_KVM_NETWORK_MTU: '1500',
+        },
+      })
+      expect(result.exitCode === 0).toBe(present)
+      expect(existsSync(calls)).toBe(present)
+      if (present) expect(readFileSync(calls, 'utf8')).toContain('setpriv')
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
+  })
+
   it('publishes signed multi-architecture images for Kargo discovery', () => {
     const source = readFileSync(imagesPath, 'utf8')
     const workflow = YAML.parse(source) as {
