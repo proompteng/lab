@@ -118,7 +118,8 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
 - A reconnecting browser restores the active device-login snapshot from the same app-server generation. Nanoagent
   rejects a stale snapshot after the app server restarts, and Tengri preserves the attempt's original expiry.
 - The UI caps retained events and rendered text. It does not render remote Markdown images or raw unbounded app-server
-  payloads.
+  payloads. Nanoagent projects tool-result images to `[Image output]` before the replay byte limit, retaining the
+  tool's identity, status, text, and structured output. Codex receives the original image payload.
 
 Closing and reopening Chrome does not terminate Codex. Nanoagent supervises one long-lived `codex app-server` process;
 browser reconnects restore the persisted thread and event state from the same microVM.

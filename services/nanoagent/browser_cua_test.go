@@ -239,6 +239,104 @@ func TestBrowserScreenshotFitsAppServerFrameWithoutChangingCoordinates(t *testin
 	}
 }
 
+func TestBrowserScreenshotRetainsCompletedToolInCodexReplay(t *testing.T) {
+	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
+	defer browser.close()
+	root := filepath.Join(browser.home, ".tengri", "browser")
+	runtime := filepath.Join(root, "libraries-test")
+	if err := os.MkdirAll(filepath.Join(runtime, "usr/bin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runtime-path"), []byte(runtime), 0600); err != nil {
+		t.Fatal(err)
+	}
+	picture := image.NewRGBA(image.Rect(0, 0, 1200, 1000))
+	var noise uint32 = 1
+	for index := range picture.Pix {
+		noise ^= noise << 13
+		noise ^= noise >> 17
+		noise ^= noise << 5
+		picture.Pix[index] = byte(noise)
+		if index%4 == 3 {
+			picture.Pix[index] = 255
+		}
+	}
+	path := filepath.Join(root, "screen.png")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(file, picture); err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+	if err := os.WriteFile(filepath.Join(runtime, "usr/bin/scrot"), []byte(fmt.Sprintf("#!/bin/sh\n/bin/cp %q \"$3\"\n", path)), 0700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := browser.screenshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"method": "item/completed",
+		"params": map[string]any{
+			"threadId": "browser-thread", "turnId": "browser-turn",
+			"item": map[string]any{
+				"id": "browser-tool", "type": "mcpToolCall", "status": "completed",
+				"server": "tengri_browser", "tool": "computer", "result": result,
+			},
+		},
+	})
+	if err != nil || len(raw) <= codexEventMaxBytes || len(raw) >= codexProtocolLineMaxBytes {
+		t.Fatalf("fixture must fit the protocol and exceed replay: %d bytes, %v", len(raw), err)
+	}
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	supervisor.readMessagesWithLimit(nil, supervisor.generation, bytes.NewReader(append(raw, '\n')), codexProtocolLineMaxBytes)
+	id, events, err := supervisor.subscribe(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer supervisor.unsubscribe(id)
+	event := <-events
+	if event.Method != "item/completed" {
+		t.Fatalf("browser tool completion was replaced with %s: %s", event.Method, event.Raw)
+	}
+	if len(event.Raw) > 512<<10 {
+		t.Fatalf("browser replay exceeds the controller projection limit: %d bytes", len(event.Raw))
+	}
+	var replay struct {
+		Params struct {
+			ThreadID string `json:"threadId"`
+			TurnID   string `json:"turnId"`
+			Item     struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+				Result struct {
+					Content []struct {
+						Type string `json:"type"`
+						Text string `json:"text"`
+					} `json:"content"`
+					StructuredContent map[string]any `json:"structuredContent"`
+				} `json:"result"`
+			} `json:"item"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(event.Raw, &replay); err != nil {
+		t.Fatal(err)
+	}
+	item := replay.Params.Item
+	if replay.Params.ThreadID != "browser-thread" || replay.Params.TurnID != "browser-turn" || item.ID != "browser-tool" || item.Status != "completed" {
+		t.Fatalf("tool identity or completion lost: %s", event.Raw)
+	}
+	if len(item.Result.Content) != 2 || item.Result.Content[0].Text != "[Image output]" || !strings.Contains(item.Result.Content[1].Text, "1200 x 1000") || item.Result.StructuredContent["width"] != float64(1200) {
+		t.Fatalf("tool output or coordinates lost: %s", event.Raw)
+	}
+	image := result["content"].([]any)[0].(map[string]any)
+	if image["type"] != "image" || len(image["data"].(string)) <= codexEventMaxBytes {
+		t.Fatal("desktop projection changed the original screenshot delivered to Codex")
+	}
+}
+
 func TestBrowserScreenshotDoesNotWriteToRetainedHome(t *testing.T) {
 	scratch := t.TempDir()
 	t.Setenv("TMPDIR", scratch)
