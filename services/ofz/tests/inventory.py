@@ -9,6 +9,48 @@ ROOT = Path(__file__).resolve().parents[3]
 OFZ = ROOT / "services/ofz"
 
 
+def rust_routes(source):
+    operations = set()
+    for route in re.finditer(r'\.route\(\s*"([^"]+)"\s*,', source):
+        start = route.end()
+        depth = 1
+        quoted = escaped = False
+        end = start
+        for end in range(start, len(source)):
+            char = source[end]
+            if quoted:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    quoted = False
+            elif char == '"':
+                quoted = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if not depth:
+                    break
+        assert depth == 0, f"unparsed route: {route.group(1)}"
+        methods = set(
+            re.findall(
+                r"\b(get|head|post|put|patch|delete|options|trace|connect|any)\s*\(",
+                source[start:end],
+            )
+        )
+        assert methods, f"review route method dispatch: {route.group(1)}"
+        # Axum's GET router also handles HEAD with the same handler.
+        if "get" in methods:
+            methods.add("head")
+        operations.update(
+            f"{'*' if method == 'any' else method.upper()} {route.group(1)}"
+            for method in methods
+        )
+    return operations
+
+
 def main():
     catalog = json.loads((OFZ / "operations.json").read_text())
     actions = set(
@@ -45,9 +87,9 @@ def main():
     gateway = gateway[
         gateway.index("pub fn control_router") : gateway.index("async fn readiness")
     ]
-    actual["gateway"] = set(re.findall(r'\.route\(\s*"([^"]+)"', gateway))
+    actual["gateway"] = rust_routes(gateway)
     assert ".fallback(preview_host_proxy)" in gateway, "review changed preview dispatch"
-    actual["gateway"].add("{*preview_host_proxy}")
+    actual["gateway"].add("* {*preview_host_proxy}")
     codex = (ROOT / "services/nanoagent/codex.go").read_text()
     codex = codex[codex.index("func allowedCodexMethod") :]
     codex = codex[: codex.index("\n}")]
@@ -58,7 +100,7 @@ def main():
         route = "/api/tengri/" + str(path.parent.relative_to(api_root))
         route = route.removesuffix("/.")
         for method in re.findall(
-            r"export\s+(?:(?:async\s+)?function|const)\s+(GET|POST|PUT|PATCH|DELETE)\b",
+            r"export\s+(?:(?:async\s+)?function|const)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b",
             path.read_text(),
         ):
             actual["bff_http"].add(f"{method} {route}")
@@ -71,9 +113,9 @@ def main():
         re.findall(r'\b\w+\.Handle(?:Func)?\(\s*"([^"]+)"', guest_http)
     )
     supervisor = (ROOT / "services/tengri/src/slot/supervisor.rs").read_text()
-    actual["supervisor"] = set(re.findall(r'\.route\(\s*"([^"]+)"', supervisor))
+    actual["supervisor"] = rust_routes(supervisor)
     assert ".fallback(forward)" in supervisor, "review changed supervisor dispatch"
-    actual["supervisor"].add("{*forward}")
+    actual["supervisor"].add("* {*forward}")
     computer = (ROOT / "services/nanoagent/browser_cua.go").read_text()
     browser_mcp = computer[computer.index("func runBrowserMCP") :]
     actual["browser_mcp"] = set(re.findall(r'case "([a-z/]+)":', browser_mcp))

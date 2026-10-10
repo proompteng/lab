@@ -63,8 +63,9 @@ mod tests {
     #[test]
     fn interactive_gets_and_restore_are_privileged() {
         for (surface, operation) in [
-            ("gateway", "{*preview_host_proxy}"),
-            ("gateway", "/_tengri/editor/open"),
+            ("gateway", "* {*preview_host_proxy}"),
+            ("gateway", "GET /_tengri/editor/open"),
+            ("gateway", "HEAD /_tengri/editor/open"),
             ("controller", "ResumeCodexThread"),
             ("controller", "GetCodexAccount"),
             ("codex", "account/read"),

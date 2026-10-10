@@ -488,67 +488,127 @@
   },
   {
     "surface": "gateway",
-    "operation": "/v1/terminal/ws",
+    "operation": "GET /v1/terminal/ws",
     "action": "ACTION_TERMINAL_CONTROL"
   },
   {
     "surface": "gateway",
-    "operation": "/v1/preview/open",
+    "operation": "HEAD /v1/terminal/ws",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "gateway",
+    "operation": "GET /v1/preview/open",
     "action": "ACTION_PREVIEW_ACCESS"
   },
   {
     "surface": "gateway",
-    "operation": "/_tengri/bootstrap",
+    "operation": "HEAD /v1/preview/open",
     "action": "ACTION_PREVIEW_ACCESS"
   },
   {
     "surface": "gateway",
-    "operation": "{*preview_host_proxy}",
+    "operation": "POST /v1/preview/open",
     "action": "ACTION_PREVIEW_ACCESS"
   },
   {
     "surface": "gateway",
-    "operation": "/_tengri/editor/open",
+    "operation": "POST /_tengri/bootstrap",
+    "action": "ACTION_PREVIEW_ACCESS"
+  },
+  {
+    "surface": "gateway",
+    "operation": "* {*preview_host_proxy}",
+    "action": "ACTION_PREVIEW_ACCESS"
+  },
+  {
+    "surface": "gateway",
+    "operation": "GET /_tengri/editor/open",
     "action": "ACTION_EDITOR_OPEN"
   },
   {
     "surface": "gateway",
-    "operation": "/livez",
+    "operation": "HEAD /_tengri/editor/open",
+    "action": "ACTION_EDITOR_OPEN"
+  },
+  {
+    "surface": "gateway",
+    "operation": "GET /livez",
     "public": true
   },
   {
     "surface": "gateway",
-    "operation": "/readyz",
+    "operation": "HEAD /livez",
     "public": true
   },
   {
     "surface": "gateway",
-    "operation": "/healthz",
+    "operation": "GET /readyz",
     "public": true
   },
   {
     "surface": "gateway",
-    "operation": "/metrics",
+    "operation": "HEAD /readyz",
     "public": true
   },
   {
     "surface": "gateway",
-    "operation": "/_tengri/open-preview.js",
+    "operation": "GET /healthz",
     "public": true
   },
   {
     "surface": "gateway",
-    "operation": "/_tengri/bootstrap.js",
+    "operation": "HEAD /healthz",
     "public": true
   },
   {
     "surface": "gateway",
-    "operation": "/_tengri/bridge.js",
+    "operation": "GET /metrics",
     "public": true
   },
   {
     "surface": "gateway",
-    "operation": "/_tengri/vscode.js",
+    "operation": "HEAD /metrics",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "GET /_tengri/open-preview.js",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "HEAD /_tengri/open-preview.js",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "GET /_tengri/bootstrap.js",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "HEAD /_tengri/bootstrap.js",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "GET /_tengri/bridge.js",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "HEAD /_tengri/bridge.js",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "GET /_tengri/vscode.js",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "HEAD /_tengri/vscode.js",
     "public": true
   },
   {
@@ -655,41 +715,57 @@
   },
   {
     "surface": "supervisor",
-    "operation": "/livez",
+    "operation": "GET /livez",
     "public": true
   },
   {
     "surface": "supervisor",
-    "operation": "/readyz",
+    "operation": "HEAD /livez",
     "public": true
   },
   {
     "surface": "supervisor",
-    "operation": "/slot/status",
+    "operation": "GET /readyz",
+    "public": true
+  },
+  {
+    "surface": "supervisor",
+    "operation": "HEAD /readyz",
+    "public": true
+  },
+  {
+    "surface": "supervisor",
+    "operation": "GET /slot/status",
     "internal_only": true,
     "action": "ACTION_WORKSPACE_ENROLL"
   },
   {
     "surface": "supervisor",
-    "operation": "/slot/restore",
+    "operation": "HEAD /slot/status",
     "internal_only": true,
     "action": "ACTION_WORKSPACE_ENROLL"
   },
   {
     "surface": "supervisor",
-    "operation": "/slot/sleep",
+    "operation": "POST /slot/restore",
     "internal_only": true,
     "action": "ACTION_WORKSPACE_ENROLL"
   },
   {
     "surface": "supervisor",
-    "operation": "/slot/stop",
+    "operation": "POST /slot/sleep",
     "internal_only": true,
     "action": "ACTION_WORKSPACE_ENROLL"
   },
   {
     "surface": "supervisor",
-    "operation": "{*forward}",
+    "operation": "POST /slot/stop",
+    "internal_only": true,
+    "action": "ACTION_WORKSPACE_ENROLL"
+  },
+  {
+    "surface": "supervisor",
+    "operation": "* {*forward}",
     "internal_only": true,
     "action": "ACTION_WORKSPACE_ENROLL"
   },

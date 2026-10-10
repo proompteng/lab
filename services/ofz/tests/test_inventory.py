@@ -36,11 +36,39 @@ class InventoryTests(unittest.TestCase):
                 content += "\nexport const DELETE = () => new Response();\n"
             return content
 
-        with patch.object(Path, "read_text", inject):
-            with self.assertRaisesRegex(
-                AssertionError, "unclassified=.*DELETE /api/tengri"
-            ):
-                inventory.main()
+        for method in ["DELETE", "HEAD", "OPTIONS"]:
+            with self.subTest(method=method):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("api/tengri/route.ts"):
+                        content += f"\nexport const {method} = () => new Response();\n"
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, f"unclassified=.*{method} /api/tengri"
+                    ):
+                        inventory.main()
+
+    def test_new_gateway_or_supervisor_method_requires_classification(self):
+        read_text = Path.read_text
+        for source in ["gateway.rs", "slot/supervisor.rs"]:
+            with self.subTest(source=source):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith(f"tengri/src/{source}"):
+                        content = content.replace(
+                            '.route("/livez", get(', '.route("/livez", post(', 1
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*POST /livez"
+                    ):
+                        inventory.main()
 
     def test_go_handlers_in_every_source_file_are_classified(self):
         read_text = Path.read_text

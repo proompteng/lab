@@ -23,9 +23,10 @@ be qualified against actual retained data and available space.
 
 Evidence and decisions are recorded in [the implementation trail](ofz-implementation-decisions.tsv).
 
-P1 local evidence: 492 permission assertions against pinned SpiceDB and PostgreSQL; five Rust contract tests; four
+P1 local evidence: 492 permission assertions against pinned SpiceDB and PostgreSQL; five Rust contract tests; five
 inventory tests including deliberately unclassified RPC and HTTP changes; Buf lint; Clippy; Rust/Python/shell checks.
-The catalog covers 148 current operations across eleven surfaces. Delegation checks bind the recorded issuer and
+The catalog covers 163 current operations across eleven surfaces, including each HTTP method and Axum's implicit HEAD.
+Delegation checks bind the recorded issuer and
 workspace, including wrong-workspace replay and missing-binding denial. HTTP inventory covers both Go registration
 APIs across every guest source file. This is contract proof, with runtime enforcement
 and production qualification still pending. Native dispatch caching failed the expiration probe and remains disabled
