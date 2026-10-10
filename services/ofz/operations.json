@@ -1,0 +1,762 @@
+[
+  {
+    "surface": "controller",
+    "operation": "CreateAgent",
+    "action": "ACTION_WORKSPACE_CREATE"
+  },
+  {
+    "surface": "controller",
+    "operation": "ListAgents",
+    "action": "ACTION_PLATFORM_ADMIT"
+  },
+  {
+    "surface": "controller",
+    "operation": "GetAgent",
+    "action": "ACTION_WORKSPACE_METADATA_READ"
+  },
+  {
+    "surface": "controller",
+    "operation": "WatchAgent",
+    "action": "ACTION_WORKSPACE_METADATA_READ"
+  },
+  {
+    "surface": "controller",
+    "operation": "SleepAgent",
+    "action": "ACTION_WORKSPACE_SLEEP"
+  },
+  {
+    "surface": "controller",
+    "operation": "ResumeAgent",
+    "action": "ACTION_WORKSPACE_RESUME"
+  },
+  {
+    "surface": "controller",
+    "operation": "UpdatePowerSettings",
+    "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
+  },
+  {
+    "surface": "controller",
+    "operation": "DeleteAgent",
+    "action": "ACTION_WORKSPACE_DELETE"
+  },
+  {
+    "surface": "controller",
+    "operation": "ListFiles",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "controller",
+    "operation": "ReadFile",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "controller",
+    "operation": "SearchFiles",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "controller",
+    "operation": "WatchFiles",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "controller",
+    "operation": "WriteFile",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "controller",
+    "operation": "CreateDirectory",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "controller",
+    "operation": "MoveFile",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "controller",
+    "operation": "DeleteFile",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "controller",
+    "operation": "CreateTerminal",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "TerminateTerminal",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "IssueTerminalTicket",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "ListTerminals",
+    "action": "ACTION_TERMINAL_OBSERVE"
+  },
+  {
+    "surface": "controller",
+    "operation": "GetCodexAccount",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "ListCodexModels",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "GetCodexLogin",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "StartCodexLogin",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "CreateCodexThread",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "ResumeCodexThread",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "SendCodexInput",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "SteerCodexInput",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "InterruptCodexTurn",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "ResolveCodexApproval",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "WatchCodexEvents",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "IssuePreviewSession",
+    "action": "ACTION_PREVIEW_ACCESS"
+  },
+  {
+    "surface": "controller",
+    "operation": "RevokePreviewSession",
+    "action": "ACTION_PREVIEW_ACCESS"
+  },
+  {
+    "surface": "controller",
+    "operation": "IssueEditorSession",
+    "action": "ACTION_EDITOR_OPEN"
+  },
+  {
+    "surface": "controller",
+    "operation": "RevokeEditorSessions",
+    "action": "ACTION_EDITOR_OPEN"
+  },
+  {
+    "surface": "controller",
+    "operation": "IssueBrowserSession",
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "GetInfo",
+    "action": "ACTION_WORKSPACE_METADATA_READ",
+    "internal_only": true
+  },
+  {
+    "surface": "guest",
+    "operation": "OpenEditor",
+    "action": "ACTION_EDITOR_OPEN"
+  },
+  {
+    "surface": "guest",
+    "operation": "OpenBrowser",
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "ListFiles",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "guest",
+    "operation": "ReadFile",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "guest",
+    "operation": "SearchFiles",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "guest",
+    "operation": "WatchFiles",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "guest",
+    "operation": "WriteFile",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "guest",
+    "operation": "CreateDirectory",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "guest",
+    "operation": "MoveFile",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "guest",
+    "operation": "DeleteFile",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "guest",
+    "operation": "CreateTerminal",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "TerminateTerminal",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "AttachTerminal",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "ListTerminals",
+    "action": "ACTION_TERMINAL_OBSERVE"
+  },
+  {
+    "surface": "guest",
+    "operation": "CodexLogin",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "ResolveCodexApproval",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "WatchCodexEvents",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "CodexCall",
+    "action": "ACTION_CODEX_CONTROL",
+    "dispatch": "codex"
+  },
+  {
+    "surface": "codex",
+    "operation": "account/read",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "account/login/start",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "model/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "mcpServerStatus/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/start",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/resume",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/turns/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/items/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "turn/start",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "turn/steer",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "turn/interrupt",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "create-agent",
+    "action": "ACTION_WORKSPACE_CREATE"
+  },
+  {
+    "surface": "bff",
+    "operation": "delete-agent",
+    "action": "ACTION_WORKSPACE_DELETE"
+  },
+  {
+    "surface": "bff",
+    "operation": "sleep-agent",
+    "action": "ACTION_WORKSPACE_SLEEP"
+  },
+  {
+    "surface": "bff",
+    "operation": "resume-agent",
+    "action": "ACTION_WORKSPACE_RESUME"
+  },
+  {
+    "surface": "bff",
+    "operation": "update-power-settings",
+    "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
+  },
+  {
+    "surface": "bff",
+    "operation": "list-files",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "bff",
+    "operation": "read-file",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "bff",
+    "operation": "search-files",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "bff",
+    "operation": "write-file",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "bff",
+    "operation": "create-directory",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "bff",
+    "operation": "move-file",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "bff",
+    "operation": "delete-file",
+    "action": "ACTION_FILES_WRITE"
+  },
+  {
+    "surface": "bff",
+    "operation": "list-terminals",
+    "action": "ACTION_TERMINAL_OBSERVE"
+  },
+  {
+    "surface": "bff",
+    "operation": "create-terminal",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "terminate-terminal",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "terminal-ticket",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "codex-account",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "codex-login-status",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "codex-login",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "codex-models",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "create-thread",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "resume-thread",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "send-turn",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "steer-turn",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "interrupt-turn",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "resolve-approval",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "preview-session",
+    "action": "ACTION_PREVIEW_ACCESS"
+  },
+  {
+    "surface": "bff",
+    "operation": "revoke-preview-session",
+    "action": "ACTION_PREVIEW_ACCESS"
+  },
+  {
+    "surface": "bff",
+    "operation": "editor-session",
+    "action": "ACTION_EDITOR_OPEN"
+  },
+  {
+    "surface": "bff",
+    "operation": "revoke-editor-sessions",
+    "action": "ACTION_EDITOR_OPEN"
+  },
+  {
+    "surface": "bff",
+    "operation": "browser-session",
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "gateway",
+    "operation": "/v1/terminal/ws",
+    "action": "ACTION_TERMINAL_CONTROL"
+  },
+  {
+    "surface": "gateway",
+    "operation": "/v1/preview/open",
+    "action": "ACTION_PREVIEW_ACCESS"
+  },
+  {
+    "surface": "gateway",
+    "operation": "/_tengri/bootstrap",
+    "action": "ACTION_PREVIEW_ACCESS"
+  },
+  {
+    "surface": "gateway",
+    "operation": "{*preview_host_proxy}",
+    "action": "ACTION_PREVIEW_ACCESS"
+  },
+  {
+    "surface": "gateway",
+    "operation": "/_tengri/editor/open",
+    "action": "ACTION_EDITOR_OPEN"
+  },
+  {
+    "surface": "gateway",
+    "operation": "/livez",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "/readyz",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "/healthz",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "/metrics",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "/_tengri/open-preview.js",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "/_tengri/bootstrap.js",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "/_tengri/bridge.js",
+    "public": true
+  },
+  {
+    "surface": "gateway",
+    "operation": "/_tengri/vscode.js",
+    "public": true
+  },
+  {
+    "surface": "ofz",
+    "operation": "Check",
+    "internal_only": true,
+    "action": "ACTION_POLICY_CHECK"
+  },
+  {
+    "surface": "ofz",
+    "operation": "ExecuteCommand",
+    "internal_only": true,
+    "action": "ACTION_POLICY_COMMAND"
+  },
+  {
+    "surface": "ofz",
+    "operation": "GetCommand",
+    "internal_only": true,
+    "action": "ACTION_POLICY_COMMAND"
+  },
+  {
+    "surface": "ofz",
+    "operation": "ListAccess",
+    "internal_only": true,
+    "action": "ACTION_POLICY_CHECK"
+  },
+  {
+    "surface": "ofz",
+    "operation": "ReadAudit",
+    "internal_only": true,
+    "action": "ACTION_POLICY_CHECK"
+  },
+  {
+    "surface": "ofz",
+    "operation": "EstablishSession",
+    "internal_only": true,
+    "action": "ACTION_SESSION_ESTABLISH"
+  },
+  {
+    "surface": "ofz",
+    "operation": "InspectSession",
+    "internal_only": true,
+    "action": "ACTION_SESSION_INSPECT"
+  },
+  {
+    "surface": "ofz",
+    "operation": "RevokeSession",
+    "internal_only": true,
+    "action": "ACTION_SESSION_ESTABLISH"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri",
+    "dispatch": "optional-session",
+    "action": "ACTION_PLATFORM_ADMIT"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "POST /api/tengri",
+    "dispatch": "bff",
+    "action": "ACTION_PLATFORM_ADMIT"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/events",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/files/events",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "guest_http",
+    "operation": "GET /livez",
+    "public": true
+  },
+  {
+    "surface": "guest_http",
+    "operation": "GET /readyz",
+    "public": true
+  },
+  {
+    "surface": "guest_http",
+    "operation": "GET /healthz",
+    "public": true
+  },
+  {
+    "surface": "guest_http",
+    "operation": "/v1/preview/{port}/{path...}",
+    "action": "ACTION_PREVIEW_ACCESS"
+  },
+  {
+    "surface": "supervisor",
+    "operation": "/livez",
+    "public": true
+  },
+  {
+    "surface": "supervisor",
+    "operation": "/readyz",
+    "public": true
+  },
+  {
+    "surface": "supervisor",
+    "operation": "/slot/status",
+    "internal_only": true,
+    "action": "ACTION_WORKSPACE_ENROLL"
+  },
+  {
+    "surface": "supervisor",
+    "operation": "/slot/restore",
+    "internal_only": true,
+    "action": "ACTION_WORKSPACE_ENROLL"
+  },
+  {
+    "surface": "supervisor",
+    "operation": "/slot/sleep",
+    "internal_only": true,
+    "action": "ACTION_WORKSPACE_ENROLL"
+  },
+  {
+    "surface": "supervisor",
+    "operation": "/slot/stop",
+    "internal_only": true,
+    "action": "ACTION_WORKSPACE_ENROLL"
+  },
+  {
+    "surface": "supervisor",
+    "operation": "{*forward}",
+    "internal_only": true,
+    "action": "ACTION_WORKSPACE_ENROLL"
+  },
+  {
+    "surface": "browser_mcp",
+    "operation": "initialize",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_mcp",
+    "operation": "ping",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_mcp",
+    "operation": "tools/list",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_mcp",
+    "operation": "tools/call",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "status",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "screenshot",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "click",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "double_click",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "drag",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "scroll",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "key",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "type",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "browser_action",
+    "operation": "navigate",
+    "internal_only": true,
+    "action": "ACTION_BROWSER_CONTROL"
+  }
+]
