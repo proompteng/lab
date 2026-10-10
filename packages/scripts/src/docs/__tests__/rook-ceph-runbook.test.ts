@@ -51,7 +51,7 @@ it('targets Galactic consistently throughout the recovery rollback', () => {
   }
 })
 
-it('rolls OSDs when scrub configuration changes', () => {
+it('retains the completed scrub profile rollout annotation during runtime reservation changes', () => {
   const values = readFileSync(join(repoRoot, 'argocd/applications/rook-ceph/cluster-values.yaml'), 'utf8')
   const kustomization = readFileSync(join(repoRoot, 'argocd/applications/rook-ceph/kustomization.yaml'), 'utf8')
   const rolloutPatch = readFileSync(
@@ -74,7 +74,7 @@ it('rolls OSDs when scrub configuration changes', () => {
   ])
 })
 
-it('allows scrubbing all day and reserves capacity for it without overcommitting mClock', () => {
+it('protects clients while allowing all-day scrub progress without overcommitting mClock', () => {
   const values = YAML.parse(readFileSync(join(repoRoot, 'argocd/applications/rook-ceph/cluster-values.yaml'), 'utf8'))
   const osd: Record<string, string> = values.cephClusterSpec.cephConfig.osd
 
@@ -99,9 +99,11 @@ it('allows scrubbing all day and reserves capacity for it without overcommitting
     reservedCapacity += reservation
   }
   expect(reservedCapacity).toBeLessThanOrEqual(1)
-  expect(Number(osd.osd_mclock_scheduler_background_best_effort_res)).toBeGreaterThan(
-    Number(osd.osd_mclock_scheduler_client_res),
+  expect(Number(osd.osd_mclock_scheduler_client_res)).toBeGreaterThan(
+    Number(osd.osd_mclock_scheduler_background_best_effort_res),
   )
+  // Preserve a meaningful scrub reservation above the built-in profiles' 5%.
+  expect(Number(osd.osd_mclock_scheduler_background_best_effort_res)).toBeGreaterThan(0.05)
   expect(Number(osd.osd_mclock_scheduler_background_best_effort_res)).toBeGreaterThan(
     Number(osd.osd_mclock_scheduler_background_recovery_res),
   )

@@ -44,6 +44,11 @@ from capital authority. Authorized bootstrap drains a predecessor controller, pu
 exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
 inactive while the observation object's delayed loop continues to retry.
 
+The observation owner's child runtimes share the worker's configured logger and tracer. The
+`bayn.broker.observation.poll` span contains capture and publication spans; capture carries its span and log context
+across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
+observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
+
 Each poll retains the complete paginated order, fill and fee history with the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
 hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same
@@ -89,6 +94,16 @@ existing continuation qualifies. Elapsed, missing or invalid timestamps, other r
 keep their normal cadence. Every wake rechecks source readiness and the existing completed-window admission; it
 does not repeat inference on an already consumed window or change broker polling, signal history or position limits.
 
+Held-position waits also retain the first-fill-based maximum-hold deadline. A future deadline caps the next wake,
+while an earlier signal boundary still wins. The absolute bound survives management work, completion persistence,
+and worker replay. If work crosses a deadline that was future when management checked it, one continuation rechecks
+the position; an already-overdue evaluation retains the normal evidence-wait cadence. This schedules exit evaluation,
+not a guaranteed broker-flat time: fresh reconciliation, executable quotes, risk checks and partial-fill recovery
+remain required. Old retained completions keep their existing durable replay command order.
+The send boundary uses a live transport clock rather than a journaled time sample, so a restart before send
+persistence cannot add the old remaining delay again. An overdue successor is scheduled once with a one-millisecond
+minimum; actual delivery still depends on Restate availability and the next pass repeats the normal execution guards.
+
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
 with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute
@@ -104,14 +119,20 @@ poll cadence rather than adding artificial delays inside a full history scan. Be
 activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
 and its database ticket. It also journals a single-use worker ticket and reserves one quota window beyond the latest
 allowed capture start and invocation abort bound before issuing requests. A lost or spent ticket, or one whose start
-deadline elapsed, returns unavailable without repeating broker I/O. A completed capture replaces the reservation with
+deadline elapsed, returns unavailable without repeating broker I/O. When the same worker atomically consumes a
+matching unused expired ticket, successful invalidation and the existing journaled poll result prove that capture
+never started. Only then can the owner replace speculative debt with the existing measured HTTP/quota deadline;
+it logs the reason and capture-start lateness without ticket contents. A lost result before journaling still retains
+the full reservation. A journaled result replays without another claim or a reset capture clock.
+A completed capture replaces the reservation with
 its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
 timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
 Completed, typed persistence failures inside a claimed worker also retain the measured request cost, including any
 quota-reset deadline. They return unavailable without publishing a snapshot and retry on the ordinary polling cadence.
 Failed captures dispose their broker runtime before recording failure or sampling the settled request budget, so a lazy
 client acquisition cannot continue issuing requests after recovery returns. Defects, interruption, mixed failure causes,
-and lost or expired capture tickets retain the conservative reservation.
+and missing, mismatched, already claimed or replaced-worker capture tickets retain the conservative reservation.
+Failure or interruption before the unused-ticket result is journaled also retains that reservation.
 Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
 the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
 capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
@@ -165,6 +186,15 @@ each reported probability, so the total allowance scales with the number of choi
 provider precision guarantee. Score answers must also fit the same distribution bounds and a 0.005 score allowance.
 Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
 discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
+
+Each model request commits its at-most-once claim before inference. Native single-candidate management and entry
+batches with exactly one requested candidate persist the receipt, resolution and complete batch result in one
+transaction. Entry results retain every excluded candidate in plan order. Entry batches with multiple requested
+candidates retain independent receipts and all-candidate finalization. Atomic receipt recording and recovery lock
+the batch before the request. A completed batch is verified and reused without opening another transaction. A
+failure, defect or interruption during atomic persistence rolls back the receipt, resolution and result together;
+the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
+evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
 the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
@@ -310,14 +340,29 @@ The batch store commits the full plan before any candidate request can be claime
 database's request receipts and resolutions, serializes competing recovery, and seals unattempted requests at expiry.
 Requested candidates start concurrently across the complete source-verified batch, within its ten-second
 validity window; a slow, failed, or missing result still makes the batch unusable for an entry.
+If mandatory observation persistence consumes the original validity window before an unrecorded batch can start,
+admission returns typed expiry and observation evaluation waits with `INFERENCE_UNAVAILABLE`. It creates no plan,
+request claim, model call or decision. The retained observation still consumes its signal window, and protection
+checks remain first on every management pass. The admission span and JSON warning retain the batch and cycle IDs,
+original observation and expiry times, checked time and elapsed admission lag. Clock regression, corrupted evidence
+and persistence failures remain errors; recorded batches still recover against their original deadline.
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
 
-The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, to avoid
-repeating pure source replay immediately after binding. Every reread still queries PostgreSQL and requires full
-JSONB equality with that retained body; changed documents take complete validation. Returned documents are detached,
-and completion, supersession, current authority, pricing and expiry checks remain fresh. A retained decoding result
-does not prove that its binding committed and cannot create a missing database row.
+Completed batch rereads load all requested candidates' claims, receipts and resolutions together, then retrieve
+matching observations in one grouped query. Each distinct observation crosses the database boundary once and its
+canonical content hash is verified once per read, with exact cycle, generation, snapshot, symbol and time membership
+checked for every request. A batch with resolved candidate evidence uses three queries including its plan/result
+read, independent of candidate count. Single-candidate evidence reads use the same verifier. Missing or corrupt
+evidence and claims for sealed unattempted candidates still fail verification; validation is not cached across reads.
+
+The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, after binding
+or a cold durable read. Every reread still queries PostgreSQL and requires full JSONB equality with that retained
+body. A match returns fresh completion and generation evidence without returning or decoding the full document body;
+changed documents return the complete body and take complete validation. Returned documents are detached, and
+completion, supersession, current authority, pricing and expiry checks remain fresh. A retained decoding result does
+not prove that its binding committed and cannot create a missing database row. The `bayn.cycle.decision-read` stage
+records retained wire bytes, match and body row counts, and elapsed read time without recording document contents.
 
 Native decision binding and position management use these contracts. Deployment and full lifecycle acceptance
 remain separate requirements. Historical inference evidence, an API response, or a batch result grants no execution
@@ -474,6 +519,8 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
+- Jev HTTP spans retain Effect's default redaction for authorization, cookies, Set-Cookie and API-key headers while
+  preserving HTTP status, timing and rate-limit diagnostics. The inference client preserves caller-provided redaction.
 - Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings to stderr. They contain the
   telemetry stage, service, source revision when configured, and HTTP status or transport reason. Collector bodies,
   headers, endpoints, and raw errors are omitted, and command JSON output stays on stdout. Successful exports remain
@@ -861,6 +908,32 @@ configured runtime:
 ```sh
 node dist/forward-performance-command.js --authority-generation <generation-hash>
 ```
+
+That invocation remains read-only. To append the generation report to the durable forward-performance receipt table,
+opt in explicitly after the evidence window has closed:
+
+```sh
+node dist/forward-performance-command.js --authority-generation <generation-hash> --persist-receipt
+```
+
+Receipt persistence requires a terminal PAPER generation with sufficient, closed, exactly reconciled evidence.
+Terminal means either already superseded, or still current but non-effective with the system-authored completion or
+activation-expiry restriction reconciled after that restriction. The latter permits the receipt required by normal
+authority rollover without first requiring rollover itself. Operator kills and retryable restrictions do not qualify.
+A non-null reconciliation timestamp alone does not prove terminality. The command rejects active or unsettled
+generations, open windows, unknown costs and other evidence gaps before inserting anything; use the read-only
+invocation for provisional diagnostics. Terminality and the final cycle are checked inside the append transaction.
+Appending a receipt does not update authority, clear a kill, or itself rearm a mandate.
+An expired sandbox mandate with no execution evidence may use the existing rearm path without a profitability
+receipt. That narrow exception requires a fresh exact reconciliation, a trusted flat position observation, no open
+or unknown orders, and settled mutations. Any fill, accounted execution or positive filled-order quantity bound to
+the generation retains the receipt requirement. Zero executions remain unqualified and never imply profitability.
+The write command acquires the execution writer fence before reading report evidence and holds it through the
+append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
+The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.
+Read-only diagnostics retain their independent repeatable-read, read-only transaction and do not acquire that fence.
+Persistence is append-only and idempotent for unchanged evidence; the creation timestamp comes from the fixed
+evidence cut, not invocation time. A conflicting receipt for the same authority generation fails closed.
 
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.

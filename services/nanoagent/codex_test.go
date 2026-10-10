@@ -152,6 +152,7 @@ func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
 	t.Parallel()
 	allowed := []string{
 		"model/list",
+		"mcpServerStatus/list",
 		"account/read",
 		"account/login/start",
 		"thread/start",
@@ -687,6 +688,7 @@ sleep 30
 	}
 
 	supervisor := newCodexSupervisor(binary, directory)
+	supervisor.browserMCP = true
 	supervisor.start()
 	t.Cleanup(supervisor.close)
 
@@ -706,6 +708,11 @@ sleep 30
 			args, err := os.ReadFile(arguments)
 			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.1-sol\n") {
 				t.Fatalf("Codex default model arguments = %q, error = %v", args, err)
+			}
+			for _, browserOption := range []string{`mcp_servers.tengri_browser.args=["browser-mcp"]`, "mcp_servers.tengri_browser.tool_timeout_sec=300", "mcp_servers.tengri_browser.required=true"} {
+				if !strings.Contains(string(args), browserOption+"\n") {
+					t.Fatalf("Codex browser configuration missing %s: %q", browserOption, args)
+				}
 			}
 			return
 		}
@@ -1002,6 +1009,52 @@ func TestCodexOversizedEventIsReplacedWithTruthfulWarning(t *testing.T) {
 	}
 	if supervisor.buffer[0].ApprovalID != "approval" {
 		t.Fatalf("oversized approval ID = %q, want preserved approval", supervisor.buffer[0].ApprovalID)
+	}
+}
+
+func TestCodexReplayProjectsOnlyToolResultImages(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, item string
+		projected  bool
+	}{
+		{"mcp", `{"type":"mcpToolCall","result":{"content":[{"type":"image","data":"image-data","mimeType":"image/png"},{"type":"text","text":"tool output"}],"structuredContent":{"type":"image","data":"keep-structured-data"}}}`, true},
+		{"dynamic", `{"type":"dynamicToolCall","contentItems":[{"type":"inputImage","imageUrl":"data:image/png;base64,image-data"},{"type":"inputText","text":"tool output"}]}`, true},
+		{"user", `{"type":"userMessage","content":[{"type":"inputImage","imageUrl":"data:image/png;base64,image-data"}]}`, false},
+		{"text", `{"type":"mcpToolCall","result":{"content":[{"type":"text","text":"tool output"}]}}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw := json.RawMessage(`{"method":"item/completed","emittedAtMs":9007199254740993,"params":{"threadId":"thread","turnId":"turn","item":` + test.item + `}}`)
+			original := string(raw)
+			supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+			supervisor.publish("item/completed", "", raw)
+			projected := string(supervisor.buffer[0].Raw)
+			if test.projected {
+				if !strings.Contains(projected, "[Image output]") || strings.Contains(projected, "image-data") || !strings.Contains(projected, "tool output") || !strings.Contains(projected, "9007199254740993") {
+					t.Fatalf("incorrect desktop projection: %s", projected)
+				}
+				if test.name == "mcp" && !strings.Contains(projected, "keep-structured-data") {
+					t.Fatal("desktop projection altered structured tool output")
+				}
+				if test.name == "dynamic" {
+					var event struct {
+						Params struct {
+							Item struct {
+								ContentItems []struct{ Type string } `json:"contentItems"`
+							} `json:"item"`
+						} `json:"params"`
+					}
+					if err := json.Unmarshal([]byte(projected), &event); err != nil || len(event.Params.Item.ContentItems) != 2 || event.Params.Item.ContentItems[0].Type != "inputText" {
+						t.Fatalf("projected dynamic image violates the app-server content schema: %s, %v", projected, err)
+					}
+				}
+			} else if projected != original {
+				t.Fatalf("non-image tool output or user input changed: %s", projected)
+			}
+			if string(raw) != original {
+				t.Fatal("desktop projection mutated the original Codex message")
+			}
+		})
 	}
 }
 

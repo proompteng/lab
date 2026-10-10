@@ -28,6 +28,7 @@ pub use codex_options::CodexOptions;
 
 pub(crate) const GUEST_API_PORT: u16 = 8443;
 pub const EDITOR_PORT: u16 = 13337;
+pub const BROWSER_PORT: u16 = 13339;
 pub const EDITOR_BRIDGE_PORT: u16 = 13338;
 const BOOTSTRAP_TOKEN_KEY: &str = "token";
 const MAX_GUEST_FILE_BYTES: usize = 4 << 20;
@@ -167,7 +168,7 @@ pub struct CodexEvent {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CodexCallResponse {
-    result: Value,
+    pub(crate) result: Value,
     #[serde(default)]
     event_sequence: u64,
 }
@@ -317,6 +318,10 @@ impl GuestClient {
     }
     pub async fn open_editor(&self) -> Result<(), GuestError> {
         self.rpc.open_editor().await
+    }
+
+    pub async fn open_browser(&self) -> Result<(), GuestError> {
+        self.rpc.open_browser().await
     }
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
         self.rpc.list_files(path).await
@@ -501,7 +506,7 @@ mod tests {
                     let value = if request.uri().path().ends_with("/microvms/agent-fixture") {
                         serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"agent-fixture","uid":"microvm-uid","generation":1},"spec":{
                         "displayName":"Guest fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
-                        "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":16},"createdAt":"2026-10-01T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z",
+                        "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-10-01T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z",
                         "slot": {"name":"slot-fixture","podUid":"current-pod-uid","pvcName":"home-fixture","pvcUid":"home-uid","epoch":1}
                     },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1","podUid":pod_uid}})
                     } else {
@@ -550,7 +555,7 @@ mod tests {
             );
             let value = serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"new-incarnation"},"spec":{
                 "displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
-                "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":16},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
+                "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
             }});
             Ok::<_, std::io::Error>(
                 http::Response::builder()

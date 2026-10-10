@@ -14,7 +14,8 @@ import { SqlClient } from 'effect/sql'
 import type { Statement } from 'effect/sql/Statement'
 import { CycleStore, CycleStoreLive } from './cycle/store'
 import { makeCycleQueries } from './cycle/store/queries'
-import { DecisionEvidenceMismatch } from './cycle/store/model'
+import { DecisionEvidenceMismatch, cycleStoreError } from './cycle/store/model'
+import { makeCycleReadPrograms } from './cycle/store/read-program'
 import { cycleDecisionStoreEvidence } from './cycle/store/decision-contract'
 import { PostgresClientLive } from './db/postgres-client'
 import { postgresMigrations } from './db/postgres-migrations'
@@ -565,6 +566,7 @@ describe('intraday shadow decision', () => {
     let superseded = false
     let missing = false
     let queries = 0
+    const suppliedDocuments: unknown[] = []
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -589,6 +591,7 @@ describe('intraday shadow decision', () => {
               expect(query).toContain('paper_cycle_completion_evidence_matches')
               expect(query).toContain('paper_cycle_generation_is_superseded')
               const supplied: unknown = typeof parameters[0] === 'string' ? JSON.parse(parameters[0]) : parameters[0]
+              suppliedDocuments.push(supplied)
               const matches = canonicalHashV1(supplied) === canonicalHashV1(stored)
               queries += 1
               const result = Effect.succeed(
@@ -615,10 +618,13 @@ describe('intraday shadow decision', () => {
           }) as PgClient.PgClient
           const store = makeCycleQueries(sql)
           const read = () => store.selectDecisionDocuments(original.bindings.cycleId)
-          expect(yield* read()).toEqual([original])
-          yield* store.retainValidatedDecision(original)
-          Object.defineProperty(original.bindings, 'accountId', { value: 'caller-poison' })
+          const cold = (yield* read())[0]
+          expect(cold).toEqual(original)
+          if (cold === undefined) throw new Error('Expected cold document')
+          expect(suppliedDocuments).toEqual([null])
+          Object.defineProperty(cold.bindings, 'accountId', { value: 'caller-poison' })
           const first = (yield* read())[0]
+          expect(suppliedDocuments[1]).toEqual(persisted)
           expect(first).toEqual(persisted)
           if (first === undefined) throw new Error('Expected retained document')
           expect(cycleDecisionStoreEvidence(first)).toEqual({
@@ -640,9 +646,9 @@ describe('intraday shadow decision', () => {
           stored = alternate
           expect(yield* read()).toEqual([alternate])
           // A seed (including one from a subsequently failed bind) cannot create a row.
-          yield* store.retainValidatedDecision(alternate)
           missing = true
           expect(yield* read()).toEqual([])
+          expect(suppliedDocuments[5]).toEqual(alternate)
           expect(queries).toBe(6)
           missing = false
           stored = persisted
@@ -669,6 +675,131 @@ describe('intraday shadow decision', () => {
           expect(Result.isFailure(yield* Effect.result(read()))).toBe(true)
         }),
       ).pipe(Effect.provide(Reactivity.layer)),
+    )
+  })
+
+  test.each([true, false])(
+    'cold decision retention is byte bounded: retained=%s',
+    async (retained) => {
+      const base = await Effect.runPromise(buildObserveShadowDecision(fixture()))
+      const baseJson = JSON.stringify(base)
+      const accountCopies = baseJson.split(accountId).length - 1
+      expect(accountCopies).toBeGreaterThan(0)
+      const targetBytes = 8 * 1024 * 1024 + (retained ? -512 : 512)
+      const accountLength = Math.floor((targetBytes - Buffer.byteLength(baseJson)) / accountCopies) + accountId.length
+      const document = await Effect.runPromise(
+        buildObserveShadowDecision(fixture({}, false, 'a'.repeat(accountLength))),
+      )
+      expect(Buffer.byteLength(JSON.stringify(document)) <= 8 * 1024 * 1024).toBe(retained)
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* SqlClient.make({
+              acquirer: Effect.die('Decision retention contract tests never connect to PostgreSQL'),
+              compiler: PgClient.makeCompiler(undefined, false),
+              spanAttributes: [],
+            })
+            const hasRetainedBody: boolean[] = []
+            const sql = new Proxy(client, {
+              apply(target, receiver, args) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+                const [query, parameters] = statement.compile()
+                if (query === 'clock_timestamp()') return statement
+                const supplied = parameters[0]
+                hasRetainedBody.push(supplied !== null)
+                return Effect.succeed([
+                  {
+                    document: supplied === null ? document : null,
+                    matches_retained_document: supplied !== null,
+                    execution_completion_evidence_matches: false,
+                    execution_generation_is_superseded: false,
+                  },
+                ])
+              },
+            }) as PgClient.PgClient
+            const queries = makeCycleQueries(sql)
+            for (let read = 0; read < 2; read += 1) {
+              const result = yield* queries.selectDecisionDocuments(document.bindings.cycleId)
+              expect(result[0]?.contentHash).toBe(document.contentHash)
+            }
+            expect(hasRetainedBody).toEqual([false, retained])
+          }),
+        ).pipe(Effect.provide(Reactivity.layer)),
+      )
+    },
+    30_000,
+  )
+
+  test('decision receipt preserves query failures, defects, cancellation and duplicate guards', async () => {
+    const document = await Effect.runPromise(buildObserveShadowDecision(fixture()))
+    const activeStages = new Map<symbol, ActiveExecutionStage>()
+    const stageTimings = new Map<string, ExecutionStageTiming>()
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const failure = cycleStoreError({
+            operation: 'read-decision-document',
+            failure: 'query',
+            message: 'test query failure',
+          })
+          const defect = new Error('test query defect')
+          let mode: 'success' | 'failure' | 'defect' | 'wait' | 'duplicate' = 'success'
+          const client = yield* SqlClient.make({
+            acquirer: Effect.die('Decision failure contract tests never connect to PostgreSQL'),
+            compiler: PgClient.makeCompiler(undefined, false),
+            spanAttributes: [],
+          })
+          const sql = new Proxy(client, {
+            apply(target, receiver, args) {
+              const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+              const [query, parameters] = statement.compile()
+              if (query === 'clock_timestamp()') return statement
+              if (mode === 'failure') return Effect.fail(failure)
+              if (mode === 'defect') return Effect.die(defect)
+              if (mode === 'wait') return Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+              const row = {
+                document: parameters[0] === null ? document : null,
+                matches_retained_document: parameters[0] !== null,
+                execution_completion_evidence_matches: false,
+                execution_generation_is_superseded: false,
+              }
+              return Effect.succeed(mode === 'duplicate' ? [row, row] : [row])
+            },
+          }) as PgClient.PgClient
+          const queries = makeCycleQueries(sql)
+          const read = () => queries.selectDecisionDocuments(document.bindings.cycleId)
+          expect(yield* read()).toEqual([document])
+          mode = 'failure'
+          const failed = yield* read().pipe(Effect.result)
+          expect(Result.isFailure(failed) && failed.failure === failure).toBe(true)
+          mode = 'defect'
+          const died = yield* read().pipe(Effect.exit)
+          expect(Exit.isFailure(died) && Cause.squash(died.cause) === defect).toBe(true)
+          mode = 'wait'
+          const pending = yield* Effect.forkChild(read())
+          yield* Deferred.await(started)
+          expect(activeStages.size).toBe(1)
+          yield* Fiber.interrupt(pending)
+          const interrupted = yield* Fiber.await(pending)
+          expect(Exit.isFailure(interrupted) && Cause.hasInterruptsOnly(interrupted.cause)).toBe(true)
+          mode = 'duplicate'
+          const duplicate = yield* makeCycleReadPrograms(queries)
+            .readDecisionDocument(document.bindings.cycleId)
+            .pipe(Effect.result)
+          expect(Result.isFailure(duplicate) && duplicate.failure.failure === 'invariant').toBe(true)
+          expect(activeStages.size).toBe(0)
+          expect(stageTimings.get('bayn.cycle.decision-read:read-decision-document')).toMatchObject({
+            count: 5,
+            failures: 2,
+            interruptions: 1,
+          })
+        }),
+      ).pipe(
+        Effect.provide(Reactivity.layer),
+        Effect.provideService(ActiveExecutionStages, activeStages),
+        Effect.provideService(ExecutionStageTimings, stageTimings),
+      ),
     )
   })
 
@@ -840,14 +971,49 @@ describe('intraday shadow decision', () => {
             state_version = state_version + 1, updated_at = ${document.createdAt} WHERE cycle_id = ${input.cycle.identity.cycleId}`
               }),
             )
-            const queries = makeCycleQueries(sql)
+            const projectedRows: ReadonlyArray<Record<string, unknown>>[] = []
+            const observedSql = new Proxy(sql, {
+              apply(target, receiver, args) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, args)
+                if (statement.compile()[0] === 'clock_timestamp()') return statement
+                return statement.pipe(Effect.tap((rows) => Effect.sync(() => projectedRows.push(rows))))
+              },
+            })
+            const queries = makeCycleQueries(observedSql)
             const cold = yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)
             expect(cold).toEqual([document])
-            yield* queries.retainValidatedDecision(document)
             const warm = yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)
             expect(warm).toEqual(cold)
             expect(warm[0]).not.toBe(cold[0])
+            expect(projectedRows[0]?.[0]?.['document']).toEqual(document)
+            expect(projectedRows[0]?.[0]?.['matches_retained_document']).toBe(false)
+            expect(projectedRows[1]?.[0]?.['document']).toBeNull()
+            expect(projectedRows[1]?.[0]?.['matches_retained_document']).toBe(true)
             expect(yield* queries.selectDecisionDocuments(hash('0'))).toEqual([])
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                // Isolate read corruption from immutable write-admission triggers.
+                // The query and fresh evidence functions still execute in PostgreSQL.
+                yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+                  cycle_id text PRIMARY KEY, decision_hash text, document jsonb NOT NULL
+                ) ON COMMIT DROP`
+                yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
+                  SELECT cycle_id, decision_hash, document FROM public.autonomous_cycle_shadow_decisions
+                  WHERE cycle_id = ${input.cycle.identity.cycleId}`
+                expect(yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual(cold)
+                expect(projectedRows.at(-1)?.[0]?.['document']).toBeNull()
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions
+                  SET document = jsonb_set(document, '{bindings,accountId}', '"corrupt-same-hash"'::jsonb)
+                  WHERE cycle_id = ${input.cycle.identity.cycleId}`
+                const corrupted = yield* queries
+                  .selectDecisionDocuments(input.cycle.identity.cycleId)
+                  .pipe(Effect.result)
+                expect(Result.isFailure(corrupted)).toBe(true)
+                expect(projectedRows.at(-1)?.[0]?.['matches_retained_document']).toBe(false)
+                yield* sql`DELETE FROM autonomous_cycle_shadow_decisions WHERE cycle_id = ${input.cycle.identity.cycleId}`
+                expect(yield* queries.selectDecisionDocuments(input.cycle.identity.cycleId)).toEqual([])
+              }),
+            )
             const blocked = yield* cycles
               .block(input.cycle.identity.cycleId, CycleTerminalReason.Risk, buy.evaluation.decision.expiresAt)
               .pipe(Effect.result)

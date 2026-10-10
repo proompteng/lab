@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Exit, Layer, Redacted, Schema, Stream, Tracer } from 'effect'
+import { Cause, Effect, Exit, Layer, Redacted, Schema, Stream, Tracer } from 'effect'
 import { Statement } from 'effect/sql'
+import { SqlError } from 'effect/sql/SqlError'
 
 import { PostgresClientLive } from './postgres-client'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
@@ -12,7 +13,7 @@ const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
 const Rows = Schema.Tuple([Schema.Struct({ pid: Schema.Int })])
 const Values = Schema.Tuple([Schema.Tuple([Schema.Int])])
 const captureSpans = () => {
-  const spans: Tracer.Span[] = []
+  const spans: Tracer.NativeSpan[] = []
   const tracer = Tracer.make({
     span(options) {
       const span = new Tracer.NativeSpan(options)
@@ -189,3 +190,59 @@ postgresTest('a client without SQL propagation leaves a shared caller unlabelled
   )
   expect(spans.some((span) => span.attributes.has('postgresql.pid'))).toBe(false)
 })
+
+postgresTest(
+  'native commit, rollback and aborted commit report completion before releasing their backend',
+  async () => {
+    const { spans, tracer } = captureSpans()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const [committed] = yield* sql
+          .withTransaction(sql`SELECT pg_backend_pid() AS pid`)
+          .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Rows)))
+        const bodyFailure = new Error('native transaction fixture failure')
+        const rolledBack = yield* Effect.exit(sql.withTransaction(Effect.fail(bodyFailure)))
+        expect(Exit.isFailure(rolledBack)).toBe(true)
+        if (Exit.isFailure(rolledBack)) expect(Cause.squash(rolledBack.cause)).toBe(bodyFailure)
+        const abortedCommit = yield* Effect.exit(sql.withTransaction(Effect.exit(sql`SELECT 1 / 0`)))
+        expect(Exit.isFailure(abortedCommit)).toBe(true)
+        if (Exit.isFailure(abortedCommit)) expect(Cause.squash(abortedCommit.cause)).toBeInstanceOf(SqlError)
+        const [after] = yield* sql`SELECT pg_backend_pid() AS pid`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Rows)),
+        )
+        expect(after.pid).toBe(committed.pid)
+        const transactions = spans.filter((span) => span.name === 'sql.transaction')
+        expect(transactions).toHaveLength(3)
+        const phases = [
+          ['commit', 'succeeded'],
+          ['rollback', 'succeeded'],
+          ['commit', 'failed'],
+        ] as const
+        for (const [index, [phase, outcome]] of phases.entries()) {
+          const span = transactions[index]
+          if (span === undefined) throw new Error('Native transaction trace is missing')
+          expect(span.attributes.get('postgresql.pid')).toBe(committed.pid)
+          expect(span.events.map(([name, , attributes]) => ({ name, attributes }))).toEqual([
+            { name: `db.transaction.${phase}`, attributes: {} },
+            { name: `db.transaction.${phase}.completed`, attributes: { 'db.transaction.outcome': outcome } },
+            { name: 'db.transaction.connection.release.started', attributes: {} },
+            {
+              name: 'db.transaction.connection.release.completed',
+              attributes: { 'db.transaction.outcome': 'succeeded' },
+            },
+          ])
+          const times = span.events.map(([, time]) => time)
+          for (const [eventIndex, time] of times.entries()) {
+            if (eventIndex > 0) expect(time).toBeGreaterThanOrEqual(times[eventIndex - 1])
+          }
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(PgClient.layer({ url: fixtureUrl(), ssl: false, maxConnections: 1 })),
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        Effect.provideService(Tracer.Tracer, tracer),
+      ),
+    )
+  },
+)

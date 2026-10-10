@@ -9,6 +9,7 @@ option go_package = "github.com/proompteng/lab/services/nanoagent/internal/guest
 service NanoagentService {
   rpc GetInfo(Empty) returns (GuestInfo);
   rpc OpenEditor(Empty) returns (Editor);
+  rpc OpenBrowser(Empty) returns (Browser);
   rpc ListFiles(Path) returns (FileList);
   rpc ReadFile(Path) returns (FileContent);
   rpc WriteFile(FileWrite) returns (FileWriteResult);
@@ -34,6 +35,9 @@ message GuestInfo {
   uint32 protocol_version = 2;
 }
 message Editor {
+  uint32 port = 1;
+}
+message Browser {
   uint32 port = 1;
 }
 message Path {

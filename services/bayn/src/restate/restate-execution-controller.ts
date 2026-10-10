@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 
 import * as restate from '@restatedev/restate-sdk'
-import { Result, Schema } from 'effect'
+import { Clock, Result, Schema } from 'effect'
 
 import { maximumConsistencyDelayMs } from '../execution/mutations'
 import {
@@ -471,6 +471,7 @@ export const makeBaynExecutionController = (
   config: ExecutionControllerConfig & { readonly activationAuthorizationHash: string },
   runtime: NativeExecutionRuntime,
   hooks: readonly restate.HooksProvider[] = [],
+  transportClock: Pick<Clock.Clock, 'currentTimeMillisUnsafe'> = Clock.Clock.defaultValue(),
 ) => {
   const capture = runtime.capture
   type PassReceipt = Extract<ResearchCaptureEvent, { readonly kind: 'controller-pass' }>
@@ -740,17 +741,16 @@ export const makeBaynExecutionController = (
             runtimeAttempted,
           })
           if (!runtimeAttempted) invalidateResearchCapture(capture, CaptureInvalidation.ControllerReplay)
-          scheduleTick(
-            ctx,
-            completed,
-            result.outcome.nextDelayMs,
-            0,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            capture,
-          )
+          // Transport timing must use a live clock: a journaled sample can precede a crash before the send is recorded.
+          // SDK 1.16.5 converts delay to live invoke_time; core 7.0.2 excludes that field from send replay equality.
+          // The persisted successor and its idempotency key are unchanged; this clock never authorizes execution.
+          const scheduleAt =
+            result.outcome.nextWakeAt === undefined ? undefined : transportClock.currentTimeMillisUnsafe()
+          const completionDelay =
+            completed.nextDueAt === undefined || scheduleAt === undefined
+              ? result.outcome.nextDelayMs
+              : Math.min(result.outcome.nextDelayMs, Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt))
+          scheduleTick(ctx, completed, completionDelay, 0, undefined, undefined, undefined, undefined, capture)
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
             controllerKey: ctx.key,
             epoch: completed.epoch,

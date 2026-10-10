@@ -1,5 +1,9 @@
 # Bayn GitOps rollout notes
 
+Kargo writes activation Job and pod version labels as `sha-<12-character revision>`. The prefix keeps numeric and
+exponent-looking commit prefixes as YAML strings, as Kubernetes requires for label values. The activation Job name,
+full source revision, immutable image digest and authored research lineage retain their existing contracts.
+
 ## Research storage foundation
 
 Research storage uses the standard Rook `ObjectBucketClaim` named `bayn-research-captures` in `rook-ceph`.
@@ -22,6 +26,12 @@ The Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; the ConfigM
 RGW account, additional application user, IAM policy, policy allowlist change, or bootstrap Job is required for this path.
 The existing controller-scoped RGW egress permits TCP 8080, the target of service port 80.
 
+The execution worker receives the existing reflected owner keys through `BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID`
+and `BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY`. Its bucket and region come from the reflected ConfigMap.
+The public status service and activation hook receive no research credential. This approved access change leaves
+`BAYN_RESEARCH_CAPTURE_SESSION` absent, so it starts no recorder, S3 client or capture writes. Before enabling a fixed
+session, verify the source/reflection match without printing keys and pass native integrity and representative capacity.
+
 Bayn-specific acceptance does not run as a hook of the shared Rook application. The former
 `bayn-research-storage-bootstrap` Job, code-only ConfigMap generator, and obsolete scripts are absent from desired state.
 Its earlier positive checks did not complete
@@ -41,6 +51,27 @@ The existing two-instance `bayn-db` cluster retains 100Gi per replica through `r
 primary's `pg_stat_replication`. The standby must be `streaming`, with `sync_state` of `sync` or `quorum`, and included
 in `synchronous_standby_names`. CNPG's `ANY 1` configuration uses `quorum`. Keep `synchronous_commit=on`.
 
+The disposable WAL comparison completed on 2026-10-08 at source `9bb51b5c1fc38033cacd4c1d732d81a08fd7c460`
+([PR #14855](https://github.com/proompteng/lab/pull/14855)). PostgreSQL 18.6 measured four twenty-second phases on
+isolated `rook-ceph-block` volumes on the primary host, after Kafka bootstrap completed. One transaction client
+ran alongside a bounded data writer. Both layouts retained `fsync=on`, `full_page_writes=on`,
+`synchronous_commit=on` and `wal_sync_method=fdatasync`.
+
+| Phase | Layout | Transactions | p95 (ms) | p99 (ms) | Maximum (ms) | Above 1 second |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | Shared | 975 | 88.359 | 445.288 | 1425.809 | 1 |
+| 2 | Separate | 2522 | 23.163 | 97.308 | 329.558 | 0 |
+| 3 | Separate | 2221 | 26.805 | 105.383 | 962.324 | 0 |
+| 4 | Shared | 2323 | 27.000 | 112.975 | 342.442 | 0 |
+
+All 8,041 samples, nearest-rank percentiles, settings and WAL IO records were independently verified against
+streamed logs and retained PVC files with SHA-256 manifests before cleanup. Time-aligned Ceph, host, RBD,
+PostgreSQL and CPU-throttling queries were available. The repeated shared phase was comparable to the separate
+phases, so the first shared spike does not establish a reproducible layout benefit. These short local durability
+measurements do not qualify cross-host replication, S3-plus-SQL capture capacity or profitability.
+`bayn-db` retains its existing storage layout. The canary Job, policy, script ConfigMap and two isolated claims are
+removed from desired state after archival; production database volumes and backup/replication settings are preserved.
+
 Bayn overrides CNPG's five-second WAL sender and receiver inactivity deadlines with PostgreSQL's sixty-second
 defaults. At 2026-10-06 23:11 UTC, storage stalls exceeded five seconds and caused repeated replication disconnects,
 quorum loss and recovery churn. The larger replication heartbeat window prevents that additional churn; it does
@@ -50,6 +81,14 @@ CNPG failover policy and synchronous durability stay unchanged. After GitOps rec
 on both instances, `pending_restart=false`, one streaming quorum standby, and exact financial readback.
 See [PostgreSQL replication settings](https://www.postgresql.org/docs/18/runtime-config-replication.html) and
 [CNPG configuration precedence](https://cloudnative-pg.io/docs/1.28/postgresql_conf/).
+
+Bayn sets `monitoring.metricsQueriesTTL: 1s` so the existing five-second metrics scrape obtains fresh catalog
+observations. CNPG otherwise caches query results for thirty seconds, even when the exporter is scraped more often.
+The one-second cache still coalesces closely spaced scrapes; this setting applies only to `bayn-db` and changes no
+database durability or application deadline. Verify the live Cluster field, both exporters' collection errors and
+scrape durations, and changes in the retained replication reply-age or active walsender query-age samples after
+GitOps reconciliation. A five-second scrape timestamp alone does not prove a fresh database observation.
+See [CNPG output caching](https://cloudnative-pg.io/docs/1.28/monitoring/#output-caching).
 
 Apply the reviewed `bootstrap` ApplicationSet change so Argo preserves the new Rook-managed Secret and ConfigMap
 fields. Let Rook provision its native claim and Bayn follow normal Kargo promotion. Require the common Rook sync
