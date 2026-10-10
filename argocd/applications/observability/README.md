@@ -105,7 +105,7 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
 - `observability-kube-state-metrics`: Kubernetes object state and request/limit/allocatable metrics, plus
   CloudNativePG backup and scheduled-backup timestamps.
 - `observability-cluster-metrics-alloy`: scrapes kube-state-metrics, kubelet, every CloudNativePG instance, the Ceph
-  manager, Bayn's bounded service metrics, and Tengri's bounded control-plane metrics; it applies metric allowlists,
+  manager, each shared Kafka controller and broker, Bayn's bounded service metrics, and Tengri's bounded control-plane metrics; it applies metric allowlists,
   including logical-slot WAL retention and pod-level `/dev/rbd*` I/O only, before remote-writing to Mimir.
 - `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
 - `bayn-cycle-operations-dashboard`: Grafana dashboard for current trading readiness, execution authority, cycle
@@ -117,6 +117,12 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
+The `strimzi-kafka` job discovers Kafka pods by the existing Strimzi cluster labels and scrapes their bounded JMX
+exporter every five seconds, retaining pool, pod and node identity. It keeps controller queues, heartbeat timeouts,
+Raft commits, replica health, broker request latency, log flushes and JVM pauses without topic/partition/client labels.
+HTTP availability, JMX scrape errors, scrape duration and sample counts remain visible. Per-pod missing-metrics alerts
+compare running Kubernetes pods with scrape and controller-gauge evidence; absent measurements are not healthy zeros.
+See [Kafka stall diagnostics](../kafka/README.md#stall-diagnostics) for units, correlation and shared-rollout acceptance.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
 and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn` and the `torghut-ws` container in namespace
 `torghut`. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.

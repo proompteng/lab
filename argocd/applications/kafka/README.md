@@ -29,6 +29,46 @@ This removes repeated idle work from the shared storage path. It does not repair
 storage flush. Check controller event latency, heartbeat fencing, replica health, and market-data publication
 after the managed roll. See Kafka's [configuration reference](https://kafka.apache.org/43/configuration/broker-configs/#metadata.max.idle.interval.ms).
 
+## Stall diagnostics
+
+The bounded JMX exporter configuration in [kafka-stall-metrics.yaml](kafka-stall-metrics.yaml) exposes port 9404 on
+controllers and brokers. The central [Alloy collector](../observability/cluster-metrics-alloy-config.river) discovers
+each pod and scrapes every five seconds with a four-second timeout, retaining namespace, cluster, pool, pod and node
+identity in Mimir under `job="strimzi-kafka"`. Topic, partition, client and user labels are excluded at the exporter.
+
+Controller queue/processing, broker request and log-flush duration gauges use seconds with bounded `stage`, `request`
+and `statistic` labels. Raft and broker-metadata attributes preserve Kafka's units: commit/election latency and metadata
+lag use milliseconds; offsets and epochs are integers. The agent's existing JVM collectors supply cumulative GC
+seconds, memory use and process start time without duplicate JMX rules. Queue and request percentiles are Kafka's sampled gauges,
+not Prometheus histograms or a guarantee that every individual stall was sampled.
+
+Useful queries for a Bayn reconciliation or OTLP export failure window include:
+
+```promql
+kafka_controller_event_duration_seconds{job="strimzi-kafka",statistic="99thPercentile"}
+kafka_server_raft_metrics_commit_latency_max{job="strimzi-kafka"} / 1000
+increase(kafka_controller_timedoutbrokerheartbeatcount_total{job="strimzi-kafka"}[5m])
+rate(jvm_gc_collection_seconds_sum{job="strimzi-kafka"}[5m])
+kafka_network_request_duration_seconds{job="strimzi-kafka",statistic="99thPercentile"}
+```
+
+Join on pod/node and the same UTC interval with controller logs, cAdvisor CPU/memory, Ceph device latency and CNPG
+WAL/replication waits. GC, Kafka, database and storage correlation alone does not identify which component caused a
+particular transaction delay. Missing series remain unknown: `KafkaMetricsUnavailable` checks each running pod against
+successful HTTP and JMX scrapes, while `KafkaControllerTelemetryMissing` detects a missing controller mapping even
+when an exporter endpoint responds. Existing broker availability and storage alerts remain active.
+
+Enabling the exporter requires Strimzi's managed rolling restart of the three controllers and three brokers. Perform
+this shared-cluster rollout only within its approved scope. Preserve controller quorum, topic ISR, PVCs, replication,
+durability and existing request deadlines. After the roll, require all six per-pod `up` series and zero
+`jmx_scrape_error`, controller gauges from all three controllers with exactly one active controller, Raft measurements,
+and process start-time/GC measurements in Mimir. A direct metrics response or a healthy pod is insufficient ingestion evidence.
+Verify Bayn consumer bootstrap, fresh broker observations, exact reconciliation, and a delivered native execution
+trace afterward. This telemetry change does not qualify capture capacity or repair storage latency.
+
+For recovery, revert the metrics and collector changes through reviewed GitOps. Strimzi owns any resulting roll;
+retain the existing volumes and topic assignments.
+
 ## Validation and rollout
 
 Render with Helm 3 on `PATH`, then validate the changed Kafka resource without applying it:
