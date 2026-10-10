@@ -1141,7 +1141,7 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect.poll(async () => (await dock.boundingBox())?.y ?? 900).toBeLessThan(850)
   await dock.getByRole('button', { name: 'Open Terminal' }).click()
   const terminal = page.getByRole('region', { name: 'Terminal window' })
-  await expect(terminal.getByLabel('Interactive Tengri terminal')).toHaveAttribute('data-renderer', 'canvas')
+  await expect(terminal.getByLabel('Interactive Tengri terminal')).toHaveAttribute('data-renderer', 'webgl')
   await expect(terminal.locator('.xterm canvas')).not.toHaveCount(0)
   await expect.poll(() => mock.actions.some((action) => action.action === 'create-terminal')).toBe(true)
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminal-ticket')).toBe(true)
@@ -1209,13 +1209,170 @@ test('disables terminal input while connecting and reconnecting without replayin
   expect(mock.terminalSockets).toHaveLength(2)
 })
 
+test('renders Neovim cursors and Nerd Font icons and survives GPU context loss', async ({ page }, testInfo) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+  const terminal = page.getByRole('region', { name: 'Terminal window' })
+  await expect(terminal.locator('[data-connection-state="connected"]')).toBeAttached()
+  await terminal.getByRole('textbox', { name: 'Terminal input' }).focus()
+  await terminal.getByRole('textbox', { name: 'Terminal input' }).press('ArrowRight')
+  let sequence = 0
+  const sendOutput = (text: string) => {
+    const payload = Buffer.from(text)
+    const frame = Buffer.alloc(5 + payload.length)
+    frame[0] = 1
+    frame.writeUInt32BE(++sequence, 1)
+    payload.copy(frame, 5)
+    mock.terminalSockets[0]!.send(frame)
+  }
+  const cursorSize = async () => {
+    const bounds = await terminal.locator('.xterm-screen').boundingBox()
+    if (!bounds) throw new Error('Terminal screen is missing')
+    const png = await page.screenshot({ clip: { x: bounds.x, y: bounds.y, width: 20, height: 24 } })
+    return page.evaluate(async (base64) => {
+      const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0))
+      const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }))
+      const canvas = new OffscreenCanvas(image.width, image.height)
+      const context = canvas.getContext('2d')!
+      context.drawImage(image, 0, 0)
+      const pixels = context.getImageData(0, 0, image.width, image.height).data
+      const xs = new Set<number>()
+      const ys = new Set<number>()
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] === 156 && pixels[i + 1] === 207 && pixels[i + 2] === 216) {
+          xs.add((i / 4) % image.width)
+          ys.add(Math.floor(i / 4 / image.width))
+        }
+      }
+      image.close()
+      return { width: xs.size, height: ys.size }
+    }, png.toString('base64'))
+  }
+  sendOutput('\x1b[2J\x1b[H\x1b[2 q\x1b[?25h')
+  await expect.poll(async () => (await cursorSize()).width).toBeGreaterThan(3)
+  sendOutput('\x1b[6 q')
+  await expect.poll(async () => (await cursorSize()).width).toBe(1)
+  sendOutput('\x1b[4 q')
+  await expect.poll(async () => (await cursorSize()).height).toBe(1)
+  sendOutput('\x1b[2 q')
+  await expect.poll(async () => (await cursorSize()).height).toBeGreaterThan(10)
+
+  expect(
+    await terminal.evaluate((element) => {
+      const font = getComputedStyle(element).getPropertyValue('--font-terminal').trim()
+      const canvas = new OffscreenCanvas(32, 32)
+      const context = canvas.getContext('2d')!
+      context.font = `13px ${font}`
+      const raster = (text: string) => {
+        context.clearRect(0, 0, 32, 32)
+        context.fillText(text, 0, 20)
+        return [...context.getImageData(0, 0, 32, 32).data].join(',')
+      }
+      const missing = raster('\u{10ffff}')
+      const advance = context.measureText('M').width
+      return (
+        ['\ue5ff', '\uf115', '\uf1c9', '\u{f031e}'].every(
+          (glyph) => raster(glyph) !== missing && Math.abs(context.measureText(glyph).width - advance) < 0.1,
+        ) && document.fonts.check('13px "Tengri Nerd Symbols"', '\ue5ff\uf115\u{f031e}')
+      )
+    }),
+  ).toBe(true)
+  sendOutput(
+    '\x1b[2J\x1b[H\ue5ff ~/workspace\r\n  \uf115 lab\r\n  \uf1c9 Chart.yaml\r\n  \u{f031e} main.js\r\n\x1b[2 q',
+  )
+  const screenshotPath = testInfo.outputPath('terminal-icons-and-block-cursor.png')
+  await terminal.screenshot({ path: screenshotPath })
+  await testInfo.attach('terminal-icons-and-block-cursor', { path: screenshotPath, contentType: 'image/png' })
+
+  await terminal.locator('.xterm-screen canvas:not(.xterm-link-layer)').evaluate((canvas) => {
+    if (!(canvas instanceof HTMLCanvasElement)) throw new Error('Terminal canvas is missing')
+    const extension = canvas.getContext('webgl2')?.getExtension('WEBGL_lose_context')
+    if (!extension) throw new Error('GPU context loss extension is unavailable')
+    extension.loseContext()
+  })
+  await expect(terminal.getByLabel('Interactive Tengri terminal')).toHaveAttribute('data-renderer', 'dom')
+  await expect(terminal.locator('.xterm-cursor-block')).toBeVisible()
+  sendOutput('\x1b[6 q')
+  await expect(terminal.locator('.xterm-cursor-bar')).toBeVisible()
+  await terminal.getByRole('textbox', { name: 'Terminal input' }).pressSequentially('still connected')
+  await expect.poll(() => mock.terminalInput.join('')).toMatch(/still connected$/)
+  await page.getByRole('button', { name: 'Close Terminal', exact: true }).click()
+  await expect.poll(() => mock.actions.some((action) => action.action === 'terminate-terminal')).toBe(true)
+})
+
+test('connects while the icon font is stalled and redraws icons when it arrives', async ({ page }) => {
+  const mock = await mockTengri(page)
+  let releaseFont = () => {}
+  const fontGate = new Promise<void>((resolve) => {
+    releaseFont = resolve
+  })
+  await page.route('**/SymbolsNerdFontMono-Regular.woff2', async (route) => {
+    await fontGate
+    await route.continue()
+  })
+  try {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+    const terminal = page.getByRole('region', { name: 'Terminal window' })
+    await expect(terminal.locator('[data-connection-state="connected"]')).toBeAttached()
+    await terminal.getByRole('textbox', { name: 'Terminal input' }).pressSequentially('font still loading')
+    await expect.poll(() => mock.terminalInput.join('')).toBe('font still loading')
+    const client = await page.context().newCDPSession(page)
+    const bounds = await terminal.locator('.xterm-screen').boundingBox()
+    if (!bounds) throw new Error('Terminal screen is missing')
+    const capture = async () =>
+      (await client.send('Page.captureScreenshot', { clip: { ...bounds, width: 40, height: 24, scale: 1 } })).data
+    const payload = Buffer.from('\x1b[2J\x1b[H\x1b[?25l\ue5ff\uf115\uf1c9\u{f031e}')
+    const frame = Buffer.alloc(5 + payload.length)
+    frame[0] = 1
+    frame.writeUInt32BE(1, 1)
+    payload.copy(frame, 5)
+    mock.terminalSockets[0]!.send(frame)
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    )
+    const before = await capture()
+    releaseFont()
+    await expect
+      .poll(() => page.evaluate(() => document.fonts.check('13px "Tengri Nerd Symbols"', '\ue5ff\uf115\u{f031e}')))
+      .toBe(true)
+    await expect.poll(async () => (await capture()) !== before).toBe(true)
+    await client.detach()
+  } finally {
+    releaseFont()
+  }
+})
+
+test('keeps the terminal usable when WebGL and its icon font are unavailable', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.addInitScript(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'getContext')!
+    Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+      ...descriptor,
+      value: function (this: HTMLCanvasElement, ...args: Parameters<HTMLCanvasElement['getContext']>) {
+        if (args[0] === 'webgl2') return null
+        return Reflect.apply(descriptor.value, this, args)
+      },
+    })
+  })
+  await page.route('**/SymbolsNerdFontMono-Regular.woff2', (route) => route.abort())
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+  const terminal = page.getByRole('region', { name: 'Terminal window' })
+  await expect(terminal.locator('[data-connection-state="connected"]')).toBeAttached()
+  await expect(terminal.getByLabel('Interactive Tengri terminal')).toHaveAttribute('data-renderer', 'dom')
+  await terminal.getByRole('textbox', { name: 'Terminal input' }).pressSequentially('font fallback')
+  await expect.poll(() => mock.terminalInput.join('')).toBe('font fallback')
+})
+
 test('keeps the terminal background continuous through its gutters after resizing', async ({ page }, testInfo) => {
   await mockTengri(page)
   await page.goto('/')
   await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
 
   const terminal = page.getByRole('region', { name: 'Terminal window' })
-  await expect(terminal.getByLabel('Interactive Tengri terminal')).toHaveAttribute('data-renderer', 'canvas')
+  await expect(terminal.getByLabel('Interactive Tengri terminal')).toHaveAttribute('data-renderer', 'webgl')
   await expect(terminal.getByRole('status').filter({ hasText: /^Connected$/ })).toHaveAttribute(
     'data-connection-state',
     'connected',
@@ -1898,6 +2055,56 @@ test('keeps the transcript visible when a turn finishes before its prompt echo',
   await page.getByRole('button', { name: 'New conversation', exact: true }).click()
   await expect(page.getByRole('article', { name: 'Your message' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Explore the project', exact: true })).toBeVisible()
+})
+
+test('maximizes and restores windows by double-clicking the title bar', async ({ page }, testInfo) => {
+  await mockTengri(page)
+  await page.goto('/')
+  for (const app of ['Tengri', 'Chrome']) {
+    await page.getByRole('button', { name: `Open ${app}`, exact: true }).click()
+    const frame = page.getByRole('region', { name: `${app} window` })
+    const normalBounds = await frame.boundingBox()
+    const titleBar = frame.locator(':scope > header')
+    await titleBar.dblclick({ position: { x: 140, y: 18 } })
+    await expect(frame.getByRole('button', { name: `Restore ${app}` })).toBeVisible()
+    await expect.poll(() => frame.boundingBox()).toEqual({ x: 0, y: 30, width: 1440, height: 870 })
+    if (app === 'Tengri') {
+      const path = testInfo.outputPath('tengri-titlebar-maximized.png')
+      await frame.screenshot({ path })
+      await testInfo.attach('tengri-titlebar-maximized', { path, contentType: 'image/png' })
+    }
+    await titleBar.dblclick()
+    await expect(frame.getByRole('button', { name: `Maximize ${app}` })).toBeVisible()
+    await expect.poll(() => frame.boundingBox()).toEqual(normalBounds)
+    await frame.getByRole('button', { name: `Maximize ${app}` }).click()
+    await expect(frame.getByRole('button', { name: `Restore ${app}` })).toBeVisible()
+    await frame.getByRole('button', { name: `Restore ${app}` }).click()
+    await expect.poll(() => frame.boundingBox()).toEqual(normalBounds)
+  }
+})
+
+test('keeps Code content flush with the bottom and right window edges', async ({ page }, testInfo) => {
+  await mockTengri(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Code', exact: true }).click()
+  const frame = page.getByRole('region', { name: 'Code window' })
+  await expect(frame.getByText('VS Code is unavailable in this guest.')).toBeVisible()
+  const path = testInfo.outputPath('code-window-edges.png')
+  const png = await frame.screenshot({ path })
+  const edgeBrightness = await page.evaluate(async (base64) => {
+    const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0))
+    const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }))
+    const context = new OffscreenCanvas(image.width, image.height).getContext('2d')!
+    context.drawImage(image, 0, 0)
+    const brightness = (x: number, y: number) => Math.max(...context.getImageData(x, y, 1, 1).data.slice(0, 3))
+    const right = brightness(image.width - 1, image.height / 2) - brightness(image.width - 3, image.height / 2)
+    const bottom = brightness(image.width / 2, image.height - 1) - brightness(image.width / 2, image.height - 3)
+    image.close()
+    return { right, bottom }
+  }, png.toString('base64'))
+  expect(edgeBrightness.right).toBeLessThanOrEqual(2)
+  expect(edgeBrightness.bottom).toBeLessThanOrEqual(2)
+  await testInfo.attach('code-window-edges', { path, contentType: 'image/png' })
 })
 
 test('keeps normal windows above the Dock and fills fullscreen without gaps', async ({ page }) => {
@@ -5093,7 +5300,9 @@ test('uses consistent fonts and body typography in chat, portal menus, diagrams,
     ...(window as typeof window & { __terminalFonts: Set<string> }).__terminalFonts,
   ])
   const normalize = (font: string) => font.replace(/["'\s]/g, '').toLowerCase()
-  expect(measuredFonts.map((font) => normalize(font.slice(font.indexOf('13px') + 4)))).toContain(normalize(monoFont))
+  expect(
+    measuredFonts.some((font) => normalize(font).includes(normalize(monoFont)) && font.includes('Tengri Nerd Symbols')),
+  ).toBe(true)
   await expect
     .poll(() =>
       page.evaluate(
