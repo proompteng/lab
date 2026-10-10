@@ -15,6 +15,7 @@ import type { ForwardPerformanceConfig } from './config'
 import type { HistoricalSignalSnapshotConfig } from '../config/historical-signal'
 import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
+import type { WriterFenceService } from '../execution/writer-fence'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
 import { canonicalHashV1, sha256 } from '../hash'
 import { readForwardPerformancePostgres } from './postgres'
@@ -670,7 +671,13 @@ describe('forward performance read program', () => {
     const observation: SqlObservation = { statements: [] }
     const sql = makeReadOnlySql(observation)
     let observedCashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined
+    let expenseWriterFence: WriterFenceService | undefined
+    const writerFence: WriterFenceService = { check: Effect.void, transaction: (effect) => effect }
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: (_config, _sql, _accountId, _generation, fence) => {
+        expenseWriterFence = fence
+        return Effect.succeed([])
+      },
       postgres: readForwardPerformancePostgres,
       marketVolume: () => Effect.succeed([]),
       ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
@@ -697,10 +704,13 @@ describe('forward performance read program', () => {
     )
     const report = await Effect.runPromise(
       Effect.scoped(
-        runForwardPerformanceReport(nativeConfig, readers).pipe(Effect.provideService(PgClient.PgClient, sql)),
+        runForwardPerformanceReport(nativeConfig, readers, { writerFence }).pipe(
+          Effect.provideService(PgClient.PgClient, sql),
+        ),
       ),
     )
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v1')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v2')
+    expect(expenseWriterFence).toBe(writerFence)
     expect(report.receipt).toEqual(receipt)
     expect(report.positionEpisodes.status).toBe('UNDETERMINED')
     expect(report.receipt).not.toHaveProperty('positionEpisodes')
@@ -774,6 +784,70 @@ describe('forward performance read program', () => {
       accountedCashDeltaMicros: '0',
       cashYieldMicros: '200',
     })
+  })
+
+  test('keeps performance and expense reads on one cut when new work commits between them', async () => {
+    const sql = makeReadOnlySql({ statements: [] })
+    let committedCut = 1
+    let snapshotCut: number | undefined
+    let performanceCut: number | undefined
+    let expenseCut: number | undefined
+    Object.assign(sql, {
+      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            const previous = snapshotCut
+            snapshotCut = committedCut
+            return previous
+          }),
+          () => effect,
+          (previous) =>
+            Effect.sync(() => {
+              snapshotCut = previous
+            }),
+        ),
+    })
+    const readers: ForwardPerformanceReaders = {
+      postgres: (...args) =>
+        readForwardPerformancePostgres(...args).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              performanceCut = snapshotCut ?? committedCut
+            }),
+          ),
+        ),
+      marketVolume: () =>
+        Effect.sync(() => {
+          committedCut++
+          return []
+        }),
+      inferenceExpenses: () =>
+        Effect.sync(() => {
+          expenseCut = snapshotCut ?? committedCut
+          return []
+        }),
+      ledger: () =>
+        Effect.succeed({
+          totals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: null,
+            cashYieldMicros: '0',
+          },
+          ledgerExact: true,
+          missingLedgerAccountCount: 0,
+          openPositionCount: 0,
+          cashYieldEvidenceRequired: false,
+        }),
+    }
+    await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    )
+    expect(committedCut).toBe(2)
+    expect(performanceCut).toBe(1)
+    expect(expenseCut).toBe(performanceCut)
+    expect(snapshotCut).toBeUndefined()
   })
 
   test('scopes forward-performance PostgreSQL evidence to one execution authority generation', async () => {
@@ -870,6 +944,7 @@ describe('forward performance read program', () => {
     const observation: SqlObservation = { statements: [] }
     const sql = makeReadOnlySql(observation, { extraReconciliationDiscrepancy: true })
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: () => Effect.succeed([]),
       postgres: readForwardPerformancePostgres,
       marketVolume: () => Effect.succeed([]),
       ledger: () =>
@@ -935,6 +1010,7 @@ describe('forward performance read program', () => {
     if (marketVolumeEvidence === undefined) throw new Error('market-volume fixture failed')
     let observedMarketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[] | undefined
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: () => Effect.succeed([]),
       postgres: () =>
         Effect.succeed({
           cycles: [

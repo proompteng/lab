@@ -124,9 +124,13 @@ fixture_pids="$fixture_pids $!"
   export NEXT_TELEMETRY_DISABLED=1
   export TENGRI_PUBLIC_URL=https://gateway.tengri.localhost:3443
   export TENGRI_PREVIEW_FRAME_SOURCE='https://*.tengri.localhost:3443'
-  export BETTER_AUTH_SECRET=playwright-better-auth-secret-000000000000
-  export BETTER_AUTH_URL="$TENGRI_PLAYWRIGHT_BASE_URL"
-  export GITHUB_CLIENT_ID=playwright GITHUB_CLIENT_SECRET=playwright
+  printf '%s' 'isolated-playwright-client-secret-not-production' > "$fixture_root/oidc-secret"
+  export TENGRI_DESKTOP_ORIGIN="$TENGRI_PLAYWRIGHT_BASE_URL"
+  export TENGRI_OIDC_CLIENT_SECRET_FILE="$fixture_root/oidc-secret"
+  export TENGRI_DATABASE_DSN=postgres://tengri_bff@localhost:65534/tengri_control
+  export TENGRI_DATABASE_PASSWORD_FILE="$fixture_root/oidc-secret"
+  export TENGRI_DATABASE_CA_FILE="$fixture_root/tls.crt"
+  export OFZ_GRPC_ENDPOINT=localhost:65535
   export TENGRI_GRPC_ENDPOINT=localhost:65535
   export SPIFFE_ENDPOINT_SOCKET="unix://$fixture_root/workload-api.sock"
   export SPIFFE_ID=spiffe://proompteng.ai/ns/proompteng/sa/proompteng

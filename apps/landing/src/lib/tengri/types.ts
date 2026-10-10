@@ -19,6 +19,7 @@ export type TengriCondition = {
 
 export type TengriAgent = {
   id: string
+  uid: string
   displayName: string
   phase: AgentPhase
   architecture: AgentArchitecture

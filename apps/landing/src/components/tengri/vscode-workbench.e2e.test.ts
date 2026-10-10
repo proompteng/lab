@@ -38,6 +38,7 @@ test('runs the upstream VS Code workbench against real guest files and terminals
     cpuMillis: 4000,
     memoryMib: 8192,
     workspaceGib: 32,
+    uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
     power: { idleTimeoutMinutes: 60 },
     nodeName: 'local',
     createdAt: '2026-09-08T00:00:00Z',
@@ -51,7 +52,7 @@ test('runs the upstream VS Code workbench against real guest files and terminals
   page.on('websocket', (socket) => {
     if (new URL(socket.url()).hostname.startsWith('tengri-')) editorSockets.push(socket)
   })
-  await page.route('**/api/auth/sign-out', async (route) => {
+  await page.route('**/api/auth/logout', async (route) => {
     signOutActions.push('sign-out')
     await expect.poll(() => editorSockets.every((socket) => socket.isClosed())).toBe(true)
     authenticated = false

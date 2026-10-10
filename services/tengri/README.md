@@ -185,7 +185,7 @@ relationships before deleting the guest resources and releasing the finalizer.
 Run `bash services/tengri/test-authz.sh` to test schema installation, enrollment with a Kubernetes write conflict,
 owner and foreign-user checks, namespace isolation, stream revocation, restart without re-granting, and preservation
 of another application's schema against the pinned real SpiceDB image. It creates and removes an isolated local
-Docker container and uses only a disposable test key. Both controller and image CI gates run this test.
+Docker container and uses only a disposable test key. Controller validation in the image workflow runs this test.
 
 `TENGRI_INTERNAL_HMAC_SECRET` normally contains one base64url key of at least 32 bytes. Rotate it without an
 authentication outage by sealing `new,current` into both namespace-scoped manifests in the same commit: the BFF signs
@@ -248,6 +248,8 @@ Verify that both receipts match the requested PR head and build revision, and th
 remains the same after loading the archive into a classic image store.
 CI builds these artifacts without executing the KVM fixture. It requires no SSH devbox. Device execution still
 requires the scoped approval below.
+Frontend-only PRs do not run this image workflow. Runtime PR fixture builds import the same main-only registry caches
+as the native images, including the KVM harness cache, to reuse the release compilation.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, and `TENGRI_KVM_SAMPLES` select the artifacts,
 absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. Routine main publication runs
 three real sleep/resume cycles on each architecture. Every resume must finish below one second, and publication still

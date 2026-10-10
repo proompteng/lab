@@ -49,7 +49,7 @@ The observation owner's child runtimes share the worker's configured logger and 
 across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
 observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
 
-Each poll retains the complete paginated order, fill and fee history with the existing before/after stability check,
+Each poll reads the independent order, fill and fee histories concurrently in both stability scans, retaining complete pagination and the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
 hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same
 projection. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
@@ -94,6 +94,12 @@ existing continuation qualifies. Elapsed, missing or invalid timestamps, other r
 keep their normal cadence. Every wake rechecks source readiness and the existing completed-window admission; it
 does not repeat inference on an already consumed window or change broker polling, signal history or position limits.
 
+Discretionary management is bounded by the earliest of the first-fill holding deadline, inference-validity budget,
+and broker-evidence freshness boundary. A completed or retryable management result rechecks the holding deadline
+before returning. Cancellation still waits for scoped finalizers. If finalization outlasts broker freshness, the
+result requires reconciliation instead of constructing an exit from stale evidence. The holding-deadline log records
+any overrun and the broker-evidence expiry; order authorization retains all existing risk checks.
+
 Held-position waits also retain the first-fill-based maximum-hold deadline. A future deadline caps the next wake,
 while an earlier signal boundary still wins. The absolute bound survives management work, completion persistence,
 and worker replay. If work crosses a deadline that was future when management checked it, one continuation rechecks
@@ -109,8 +115,7 @@ Market-data subscriptions have separate limits. The cache preserves response rat
 with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute
 at the default cadence. The background client's transport counts every actual attempt, including startup verification,
 pagination and transient retries. Each attempt charges at least 600 milliseconds to the next scheduled poll, targeting
-100 background calls per minute on average, or half a smaller reported account limit. Complete captures keep their
-existing concurrency; individual captures can burst. Response headers showing one-quarter or less of account quota
+100 background calls per minute on average, or half a smaller reported account limit. The three independent history endpoints run concurrently; individual captures can burst. Response headers showing one-quarter or less of account quota
 remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
 or unusable reset evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
 journals and retains the next permissible poll time in durable account state for successful, invalidated and failed
@@ -641,6 +646,13 @@ Before rolling back to such an older binary, restore all eight settings in each 
 and activation manifests, and deploy that restored configuration with the compatible binary first. Only then select
 the older binary through the existing Kargo delivery path. No database migration or evidence rewrite is involved.
 
+The forward-performance command emits `bayn.forward-performance-report.v2`. Its `inferenceExpenses` section joins
+all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
+TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
+precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v3 trading receipt
+is unchanged. `operatingCostCoverage` remains `INCOMPLETE` until invoice and other operating-cost evidence exists;
+tariff estimates cannot establish fully costed profitability.
+
 ### Private inference operating-cost report
 
 The forward-performance ledger reader verifies trading transfers and broker fees. It has no operating-expense
@@ -939,10 +951,13 @@ Without that option, the command evaluates account history, which may span retir
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
 Native-only account history does not. A native scope without completed executions remains unqualified; successful
 configuration loading is not a profitability result.
-The command emits `bayn.forward-performance-report.v1`. Its `receipt` contains the unchanged v3 financial receipt;
-`positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions, and `reportHash`
-binds both. This read-only report never changes an immutable per-generation receipt or requires mixed-version replicas
-to read a new stored field.
+The command emits `bayn.forward-performance-report.v2`. Its `receipt` contains the unchanged v3 financial receipt;
+`positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
+attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
+`INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
+change the immutable per-generation receipt schema.
+The default report reads performance and inference-expense records in one read-only repeatable-read PostgreSQL
+transaction. `--persist-receipt` inherits the existing writer-fence transaction instead.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
@@ -1282,3 +1297,8 @@ BAYN_TEST_TIGERBEETLE_ADDRESS=127.0.0.1:39701 bun test services/bayn/src/ledger/
 
 Historical development candidates are terminal, non-executable records summarized in
 [`docs/bayn/candidate-terminal-history.md`](../../docs/bayn/candidate-terminal-history.md).
+
+OTLP failure warnings include consecutive failed attempts. The exporter logs a successful request after failures,
+with the attempt count and elapsed outage time. This confirms transport recovery for that request, not completeness
+of spans during the outage. Broker projection rejection logs distinguish stale, future, account and chronology
+failures with observation age, without recording account identifiers or payloads.

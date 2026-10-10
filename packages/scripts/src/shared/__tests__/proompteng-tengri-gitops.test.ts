@@ -6,7 +6,7 @@ import YAML from 'yaml'
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readManifest = (path: string): Record<string, any> => YAML.parse(readFileSync(new URL(path, repoRoot), 'utf8'))
 
-test('Proompteng isolates public BFF rate limits by Cloudflare client IP', () => {
+test('Proompteng rate limits use connection peers without trusting supplied proxy headers', () => {
   const resources = YAML.parseAllDocuments(
     readFileSync(new URL('argocd/applications/proompteng/ingressroute.yaml', repoRoot), 'utf8'),
   ).map((document) => document.toJSON() as Record<string, any>)
@@ -16,8 +16,17 @@ test('Proompteng isolates public BFF rate limits by Cloudflare client IP', () =>
     average: 240,
     burst: 240,
     period: '1m',
-    sourceCriterion: { requestHeaderName: 'CF-Connecting-IP' },
   })
+  for (const resource of resources.filter((candidate) => candidate.kind === 'Middleware')) {
+    expect(resource.spec.rateLimit.sourceCriterion).toBeUndefined()
+  }
+})
+
+test('Proompteng withholds Kargo discovery until the coordinated Tengri cutover is ready', () => {
+  const workflow = readManifest('.github/workflows/product-nix-images.yml')
+  expect(workflow.jobs['build-proompteng'].with.publish_kargo_tag).toBe(
+    "${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY == 'true' }}",
+  )
 })
 
 test('Proompteng keeps the Next.js runtime cache writable on a read-only root filesystem', () => {

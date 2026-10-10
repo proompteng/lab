@@ -42,6 +42,7 @@ const simulate = (
     sessionDurationMs?: number
     routingLatencyMs?: number
     managedLatencyMs?: number
+    managedCleanupLatencyMs?: number
     residualShock?: boolean
     entrySize?: number
     canceledEntries?: boolean
@@ -182,7 +183,7 @@ const simulate = (
                         new Date(yield* providerClock.currentTimeMillis).toISOString(),
                         'hold',
                       )
-                    }),
+                    }).pipe(Effect.ensuring(providerClock.adjust(options.managedCleanupLatencyMs ?? 0))),
                 },
               },
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
@@ -221,10 +222,11 @@ const simulate = (
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 
-test('scheduled accounting covers management work beyond close without inventing controller evidence', async () => {
+test('scheduled accounting covers canceled management cleanup beyond close without inventing controller evidence', async () => {
   const { report } = await simulate({
     accountScheduledOpportunities: true,
-    managedLatencyMs: 8 * 60_000,
+    managedLatencyMs: fixture.protocol.inferenceValidityMs,
+    managedCleanupLatencyMs: 8 * 60_000,
     sessionDurationMs: 37 * 60_000 + 45_000,
   })
   expect(report.simulatedOpportunityAccounting).toMatchObject({
@@ -883,6 +885,13 @@ test('active-build frozen-source control runner produces reproducible hashed inc
         provider: { evaluate: () => Effect.die('A missing-signal source must never call a provider') },
       }
       const managed = yield* runControlStudy(managedInput, arrivals, receipt, management)
+      expect(managed.definition.schemaVersion).toBe('bayn.control-study-definition.v9')
+      expect(managed.runId).not.toBe(report.runId)
+      const registration = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Struct({ definition: Schema.Unknown, runId: Schema.String })),
+      )(yield* fs.readFileString(`${evidenceDirectory}/registration.json`))
+      expect(registration.definition).toEqual(managed.definition)
+      expect(registration.runId).toBe(managed.runId)
       expect(managed.sessions).toHaveLength(6)
       expect(managed.sessions.every((session) => session.modelCallCount === 0)).toBeTrue()
       for (const session of managed.sessions)

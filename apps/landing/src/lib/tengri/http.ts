@@ -3,12 +3,14 @@ import 'server-only'
 import { getTengriIdentity } from '@/lib/tengri/auth'
 import { TengriUnavailableError } from '@/lib/tengri/grpc'
 import { MAX_EDITABLE_FILE_BYTES } from '@/lib/tengri/schemas'
+import { OfzError } from './ofz'
 
 type RateWindow = { count: number; resetsAt: number }
 export type ReadTengriJsonBodyOptions = Readonly<{
   subject?: string
   totalTimeoutMs?: number
   inactivityTimeoutMs?: number
+  maxBytes?: number
 }>
 
 const RATE_WINDOW_MS = 60_000
@@ -59,6 +61,12 @@ export async function getRateLimitedTengriIdentity(request: Request) {
 }
 
 export function tengriRouteError(error: unknown) {
+  if (error instanceof OfzError) {
+    return Response.json(
+      { error: error.message, auditReceiptId: error.auditReceiptId },
+      { status: error.status, headers: noStoreHeaders() },
+    )
+  }
   if (error instanceof TengriUnavailableError) {
     return Response.json(
       { error: error.message, code: error.code },
@@ -75,6 +83,13 @@ export function tengriRouteError(error: unknown) {
 }
 
 export async function readTengriJsonBody(request: Request, options: ReadTengriJsonBodyOptions = {}): Promise<unknown> {
+  if (options.maxBytes !== undefined && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 1)) {
+    throw new TengriUnavailableError('Invalid request size configuration')
+  }
+  const maxBytes =
+    options.maxBytes === undefined
+      ? MAX_TENGRI_ACTION_BODY_BYTES
+      : Math.min(MAX_TENGRI_ACTION_BODY_BYTES, Math.max(1, options.maxBytes))
   const contentType = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
   if (contentType !== 'application/json') {
     throw new TengriUnavailableError('Tengri actions require application/json', 415)
@@ -82,7 +97,7 @@ export async function readTengriJsonBody(request: Request, options: ReadTengriJs
   const contentLength = request.headers.get('content-length')
   if (contentLength) {
     const declaredBytes = Number(contentLength)
-    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_TENGRI_ACTION_BODY_BYTES) {
+    if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
       throw new TengriUnavailableError('Tengri action body is too large', 413)
     }
   }
@@ -177,7 +192,7 @@ export async function readTengriJsonBody(request: Request, options: ReadTengriJs
       if (terminationError) throw terminationError
       if (done) break
       totalBytes += value.byteLength
-      if (totalBytes > MAX_TENGRI_ACTION_BODY_BYTES) {
+      if (totalBytes > maxBytes) {
         cancelReader('Tengri action body is too large')
         throw new TengriUnavailableError('Tengri action body is too large', 413)
       }
@@ -304,9 +319,12 @@ function exceeds(windows: Map<string, RateWindow>, key: string, limit: number, n
 }
 
 function configuredAuthOrigin() {
-  const configuredUrl = process.env.BETTER_AUTH_URL?.trim() || 'http://localhost:3000'
+  const configuredUrl = process.env.TENGRI_DESKTOP_ORIGIN?.trim() || 'https://proompteng.ai'
   try {
-    return new URL(configuredUrl).origin
+    const url = new URL(configuredUrl)
+    if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
+      throw new Error('Invalid HTTPS desktop origin')
+    return url.origin
   } catch {
     throw new TengriUnavailableError('Tengri authentication origin is not configured')
   }

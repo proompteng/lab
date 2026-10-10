@@ -101,6 +101,8 @@ message Agent {
   string idle_deadline = 13;
   repeated AgentCondition conditions = 15;
   optional uint32 idle_timeout_minutes = 17;
+  // Immutable MicroVM metadata UID, used by every Ofz workspace policy.
+  string uid = 18;
 }
 
 message UpdatePowerSettingsRequest {
