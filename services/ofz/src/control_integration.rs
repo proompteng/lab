@@ -396,6 +396,38 @@ async fn control_integration_durability_authority_and_quota() {
         context,
         ..Default::default()
     };
+    let conn = admin.pool.get().await.unwrap();
+    conn.execute(
+        "UPDATE ofz.sessions SET mfa_at_ms=0 WHERE id=$1",
+        &[&Uuid::parse_str(&owner.1).unwrap()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        service
+            .list_access(rpc(list.clone(), BFF_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied,
+        "single-factor administrators cannot read policy rosters"
+    );
+    assert_eq!(
+        service
+            .read_audit(rpc(audit.clone(), BFF_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied,
+        "single-factor administrators cannot read immutable audit"
+    );
+    conn.execute(
+        "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+        &[&Uuid::parse_str(&owner.1).unwrap()],
+    )
+    .await
+    .unwrap();
+    drop(conn);
     assert_eq!(
         service
             .list_access(rpc(list.clone(), CONTROLLER_ID))
@@ -424,6 +456,17 @@ async fn control_integration_durability_authority_and_quota() {
             .is_empty()
     );
     service.read_audit(rpc(audit, BFF_ID)).await.unwrap();
+    admin
+        .pool
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&owner.1).unwrap()],
+        )
+        .await
+        .unwrap();
     let reservation = Uuid::new_v4().to_string();
     let first = request(
         &database,
@@ -481,6 +524,50 @@ async fn control_integration_durability_authority_and_quota() {
             .code(),
         Code::Unauthenticated
     );
+    admin
+        .pool
+        .get()
+        .await
+        .unwrap()
+        .execute("UPDATE ofz.archive_state SET acknowledged_at_ms=0", &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        commands::execute(&database, &native, CONTROLLER_ID, enroll.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unavailable,
+        "archive failure fences controller enrollment as well as human grants"
+    );
+    assert!(
+        admin
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .query_opt(
+                "SELECT 1 FROM ofz.workspaces WHERE uid=$1",
+                &[&Uuid::parse_str(&uid).unwrap()]
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !native
+            .check(&[crate::native::Check::new(
+                "workspace",
+                &uid,
+                "view_metadata",
+                "human",
+                &owner.0
+            )])
+            .await
+            .unwrap()
+            .0
+    );
+    acknowledge_fixture_archive(&admin).await;
     commands::execute(&database, &native, CONTROLLER_ID, enroll)
         .await
         .unwrap();

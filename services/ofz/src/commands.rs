@@ -275,13 +275,19 @@ pub(crate) async fn prepare(
             return Err(Status::permission_denied("controller command required"));
         }
         decision::workload(native, peer, Action::WorkspaceEnroll).await?;
-        if context.deadline_unix_ms <= state.now_ms
-            || context.deadline_unix_ms > state.now_ms + 30_000
+        let current = store::state(client).await?;
+        if current.version != state.version
+            || current.recovery_generation != state.recovery_generation
+        {
+            return Err(Status::aborted("controller authority changed"));
+        }
+        if context.deadline_unix_ms <= current.now_ms
+            || context.deadline_unix_ms > current.now_ms + 30_000
         {
             return Err(Status::deadline_exceeded("invalid command deadline"));
         }
-        if state.fenced && !revoke {
-            return Err(Status::unavailable("platform fenced"));
+        if (current.fenced || !current.archive_healthy) && !revoke {
+            return Err(Status::unavailable("platform or audit archive fenced"));
         }
     } else {
         if peer != BFF_ID {

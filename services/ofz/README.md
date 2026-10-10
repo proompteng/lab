@@ -50,7 +50,8 @@ membership offboarding and grant revocation restrict SQL access in the intent tr
 changes cannot expose an uncleansed guest. Retained homes still count against quota while quarantined.
 
 Only the BFF submits human policy commands; the controller's separate workload branch admits its enrollment and stop
-commands. Human roster and audit reads also require the exact BFF identity. An approved emergency grant is projected
+commands. Human roster and audit reads also require the exact BFF identity. Privileged policy/audit reads require
+verified MFA without requiring a fresh control step-up or renewing idle activity. An approved emergency grant is projected
 into the durable workspace roster with its expiry; offboarding deletes that native relationship and quarantines any
 workspace exposed to emergency root access. Repeating an existing collaborator role never emits duplicate native updates. Initial authorized control
 activity advances the session's idle deadline without exceeding its absolute expiry; observations, denied requests and
@@ -65,7 +66,8 @@ A live runtime epoch can only be repeated or stopped before replacement, preserv
 
 Archive health requires a recent acknowledgement and no unacknowledged receipt older than sixty seconds, checked
 against both the outbox and the durable sequence checkpoint. A live exporter heartbeat cannot hide a backlog. The final decision guard rechecks archive health after the native
-permission response, including a failure that occurs while the request is in flight.
+permission response, including a failure that occurs while the request is in flight. Controller enrollment checks a
+fresh state after workload authorization and cannot install new access during archive loss; stop/release remain available.
 
 `test-control.sh` exercises real TLS PostgreSQL and SpiceDB, database role boundaries, native/SQL/response crash points,
 operation collisions, concurrent reservations, independent emergency approval, grant expiry and parent revocation,

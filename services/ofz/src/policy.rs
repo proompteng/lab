@@ -130,7 +130,10 @@ pub fn requires_mfa(action: Action) -> bool {
     requires_fresh_mfa(action)
         || matches!(
             action,
-            Action::FilesWrite
+            Action::PolicyRead
+                | Action::AuditRead
+                | Action::WorkspacePolicyRead
+                | Action::FilesWrite
                 | Action::TerminalControl
                 | Action::CodexControl
                 | Action::BrowserControl

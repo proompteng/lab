@@ -42,11 +42,13 @@ The prepared seven-resource control-plane configuration passed Kubernetes server
 from active GitOps. Real BFF/Ofz mTLS interoperability, OIDC sessions, fleet enforcement and deployment remain later gates.
 
 P2 review regressions additionally passed against local PostgreSQL 18.1 and the checksum-verified official SpiceDB
-1.56.2 Darwin ARM64 binary: 21 commands and 59 immutable receipts, including repeated roles, controller administration
+1.56.2 Darwin ARM64 binary: 21 commands and 60 immutable receipts, including repeated roles, controller administration
 and human-read denial, emergency roster visibility and removal across readmission, control-only idle extension,
 idempotent logout and establishment recovery, rejection of live runtime epoch replacement, and archive backlog
 fencing despite a fresh heartbeat or a failure during a native check. Each of the three latest behavioral regressions
-fails with its previous implementation and passes after the fix. The current policy fixture passes 587
+fails with its previous implementation and passes after the fix. Additional regressions reject single-factor privileged
+reads and controller enrollment while the archive is unhealthy, and pass with an older verified passkey for ordinary
+policy/audit reads. The current policy fixture passes 587
 assertions. The pinned PostgreSQL 18.6 container fixture remains the CI
-gate. NUC's configured 1Password SSH agent subsequently became unavailable; implementation continues locally while
-the requested agent unlock is pending.
+gate. NUC access is restored through the same existing key, whose fingerprint matches the configured SSH agent,
+without changing the account or credential identity.
