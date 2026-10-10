@@ -9,6 +9,33 @@ ROOT = Path(__file__).resolve().parents[3]
 OFZ = ROOT / "services/ofz"
 
 
+def next_methods(source):
+    source = re.sub(
+        r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|/\*[\s\S]*?\*/|//[^\n]*""",
+        lambda match: match.group(1) or " ",
+        source,
+    )
+    assert not re.search(r"\bexport\s*\*", source), (
+        "wildcard Next route exports require explicit method declarations"
+    )
+    methods = set(
+        re.findall(
+            r"\bexport\s+(?:(?:async\s+)?function|const|let|var)\s+"
+            r"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b",
+            source,
+        )
+    )
+    for exports in re.findall(r"\bexport\s*\{([^}]+)\}", source):
+        for declaration in exports.split(","):
+            declaration = declaration.strip()
+            if declaration.startswith("type "):
+                continue
+            name = re.split(r"\s+as\s+", declaration)[-1].strip().strip("\"'")
+            if name in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+                methods.add(name)
+    return methods
+
+
 def rust_routes(source):
     operations = set()
     for route in re.finditer(r'\.route\(\s*"([^"]+)"\s*,', source):
@@ -99,10 +126,7 @@ def main():
     for path in api_root.rglob("route.ts"):
         route = "/api/tengri/" + str(path.parent.relative_to(api_root))
         route = route.removesuffix("/.")
-        for method in re.findall(
-            r"export\s+(?:(?:async\s+)?function|const)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b",
-            path.read_text(),
-        ):
+        for method in next_methods(path.read_text()):
             actual["bff_http"].add(f"{method} {route}")
     guest_http = "\n".join(
         path.read_text()

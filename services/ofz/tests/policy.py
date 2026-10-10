@@ -213,16 +213,24 @@ def main():
         for permission in ["read_status", "read_logs", "read_events"]:
             check("kube_namespace", NAMESPACE, permission, HUMANS[role], False)
         check("connector_connection", CONNECTION, "read", HUMANS[role], False)
+    platform_permissions = [
+        ("admit", set(ROLES) - {"outsider"}),
+        ("create_workspace", set(ROLES) - {"outsider"}),
+        ("manage_members", {"administrator"}),
+        ("manage_quotas", {"administrator"}),
+        ("manage_targets", {"administrator"}),
+        ("read_policy", {"administrator", "auditor"}),
+        ("read_audit", {"administrator", "auditor"}),
+        ("operate", {"administrator", "operator"}),
+    ]
     for role in ROLES:
-        for permission, permitted in [
-            ("manage_members", {"administrator"}),
-            ("manage_quotas", {"administrator"}),
-            ("manage_targets", {"administrator"}),
-            ("read_policy", {"administrator", "auditor"}),
-            ("read_audit", {"administrator", "auditor"}),
-            ("operate", {"administrator", "operator"}),
-        ]:
+        for permission, permitted in platform_permissions:
             check("platform", "lab", permission, HUMANS[role], role in permitted)
+        if role != "outsider":
+            delete("platform", "lab", "member", "human", HUMANS[role])
+            for permission, _ in platform_permissions:
+                check("platform", "lab", permission, HUMANS[role], False)
+            write(relationship("platform", "lab", "member", "human", HUMANS[role]))
     workloads = {
         role: hashlib.sha256(
             f"spiffe://proompteng.ai/ns/{namespace}/sa/{account}".encode()

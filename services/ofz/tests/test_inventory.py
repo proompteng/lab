@@ -70,6 +70,32 @@ class InventoryTests(unittest.TestCase):
                     ):
                         inventory.main()
 
+    def test_reexported_next_methods_require_classification(self):
+        read_text = Path.read_text
+        for declaration in [
+            "const handler = () => new Response(); export { handler as DELETE }",
+            "export { handler as DELETE } from './handler'",
+            "export { DELETE } from './handler'",
+            "export { handler as 'DELETE' } from './handler'",
+            "export let DELETE = () => new Response()",
+            'const url = "https://example.test/*"; export { handler /* } */ as DELETE }',
+        ]:
+            with self.subTest(declaration=declaration):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("api/tengri/route.ts"):
+                        content += "\n" + declaration + "\n"
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*DELETE /api/tengri"
+                    ):
+                        inventory.main()
+        with self.assertRaisesRegex(AssertionError, "wildcard Next route exports"):
+            inventory.next_methods("export * from './handler'")
+
     def test_go_handlers_in_every_source_file_are_classified(self):
         read_text = Path.read_text
         for source in ["api.go", "browser_cua.go", "grpc.go"]:
