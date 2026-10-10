@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly INSTALLER_COMMIT='35da6871c4be7d7fdab2fd505fb7fa667926a2a5'
 readonly INSTALLER_SHA256='5f333bbe53bc490e51e7ccb1df8779b3dd6ee73a1a7379efda216edb08ccb148'
-readonly FORMULAE=(neovim tree-sitter-cli gh fd fzf lazygit gdu bottom tmux make cmake pkgconf gcc)
+readonly FORMULAE=(neovim tree-sitter-cli gh fd fzf lazygit gdu bottom kubernetes-cli tmux make cmake pkgconf gcc)
 installer=''
 
 fail() { printf 'bootstrap-developer-tools: %s\n' "$*" >&2; exit 1; }
@@ -36,7 +36,20 @@ install_tools() {
   if [[ -f "$receipt" && "$(cat "$receipt")" == "$fingerprint" ]] && tools_present "$prefix" "$config" "$c_root" "$triplet"; then
     return
   fi
+  local managed_config=false
+  if [[ -f "$receipt" && -f "$config/init.lua" && ! -e "$config/init.vim" ]] && \
+    [[ "$(sed -n '3p' "$receipt")" == "$config" ]] && \
+    [[ "$(sha256sum "$config/init.lua" | cut -d ' ' -f 1)" == "$(sed -n '2s/ .*//p' "$receipt")" ]]; then
+    managed_config=true
+  fi
   rm -f -- "$receipt"
+  mkdir -p "$config"
+  if "$managed_config" || [[ ! -e "$config/init.lua" && ! -e "$config/init.vim" ]]; then
+    local init
+    init="$(mktemp "$config/.init.XXXXXX")"
+    install -m 0644 /usr/share/nanoagent/astronvim-init.lua "$init"
+    mv -Tf "$init" "$config/init.lua"
+  fi
   if [[ ! -x "$prefix/bin/brew" ]]; then
     installer="$(mktemp "$HOME/.cache/homebrew-install.XXXXXX")"
     trap cleanup EXIT HUP INT TERM
@@ -65,6 +78,7 @@ install_tools() {
   if (( ${#missing[@]} )); then
     "$prefix/bin/brew" install --formula --force-bottle "${missing[@]}"
   fi
+  ln -sfn "$prefix/bin/gdu-go" "$HOME/.local/bin/gdu"
   local cpp_compilers=("$prefix"/opt/gcc/bin/g++-*)
   [[ "${#cpp_compilers[@]}" == 1 && -x "${cpp_compilers[0]}" ]] || fail 'Homebrew C++ compiler is unavailable or ambiguous'
   [[ -f "$c_root/sysroot/usr/include/features.h" ]] || fail 'persistent C development headers are unavailable'
@@ -74,7 +88,7 @@ install_tools() {
   chmod 0700 "$cpp_wrapper"
   mv -Tf "$cpp_wrapper" "$HOME/.local/bin/g++"
   ln -sfn "$HOME/.local/bin/g++" "$HOME/.local/bin/c++"
-  for command in nvim tree-sitter gh fd fzf lazygit gdu btm tmux make cmake pkg-config; do
+  for command in nvim tree-sitter gh fd fzf lazygit gdu-go btm kubectl tmux make cmake pkg-config; do
     [[ -x "$prefix/bin/$command" ]] || fail "developer command is missing: $command"
   done
   if ! "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
@@ -82,13 +96,6 @@ install_tools() {
     HOMEBREW_NO_ASK=1 "$prefix/bin/brew" upgrade --formula --force-bottle neovim
     "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
       '+if v:errmsg != "" | cquit 1 | endif' +qa
-  fi
-  mkdir -p "$config"
-  if [[ ! -e "$config/init.lua" && ! -e "$config/init.vim" ]]; then
-    local init
-    init="$(mktemp "$config/.init.XXXXXX")"
-    install -m 0644 /usr/share/nanoagent/astronvim-init.lua "$init"
-    mv -Tf "$init" "$config/init.lua"
   fi
   if cmp -s /usr/share/nanoagent/astronvim-init.lua "$config/init.lua"; then
     "$prefix/bin/nvim" --headless \
@@ -114,9 +121,10 @@ cpp_wrapper_contents() {
 tools_present() {
   local prefix="$1" config="$2" c_root="$3" triplet="$4" command
   [[ -x "$prefix/bin/brew" && "$(stat -c %u "$prefix")" == "$(id -u)" ]] || return 1
-  for command in nvim tree-sitter gh fd fzf lazygit gdu btm tmux make cmake pkg-config; do
+  for command in nvim tree-sitter gh fd fzf lazygit gdu-go btm kubectl tmux make cmake pkg-config; do
     [[ -x "$prefix/bin/$command" ]] || return 1
   done
+  [[ "$(readlink "$HOME/.local/bin/gdu")" == "$prefix/bin/gdu-go" ]] || return 1
   [[ -x "$HOME/.local/bin/g++" && -x "$HOME/.local/bin/c++" ]] || return 1
   local compilers=("$prefix"/opt/gcc/bin/g++-*)
   [[ "${#compilers[@]}" == 1 && -x "${compilers[0]}" ]] || return 1

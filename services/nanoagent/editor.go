@@ -110,7 +110,7 @@ func (editor *editorSupervisor) run(run *editorRun) {
 		"--socket", socketPath, "--socket-mode", "0700", "--auth", "none",
 		"--config", filepath.Join(dataRoot, "config.yaml"),
 		"--user-data-dir", filepath.Join(dataRoot, "data"), "--extensions-dir", filepath.Join(dataRoot, "extensions"),
-		"--disable-telemetry", "--disable-update-check", "--disable-getting-started-override",
+		"--disable-telemetry", "--disable-update-check", "--disable-getting-started-override", "--disable-workspace-trust",
 		editor.workspace.realRoot)
 	command.Dir = editor.workspace.realRoot
 	command.Env = childEnvironment("HOME="+editor.home, "TENGRI_WORKSPACE_ROOT="+editor.workspace.realRoot)

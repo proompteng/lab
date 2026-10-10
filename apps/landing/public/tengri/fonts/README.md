@@ -8,8 +8,9 @@ ordinary interface text and code characters use Geist.
 
 The terminal adds Symbols Nerd Font Mono from Nerd Fonts v3.5.1 for private-use icons, including AstroNvim's
 file, folder, language, and status glyphs. Its 2048/2048 em advance is scaled to 60% to match Geist Mono's
-600/1000 em cells. The terminal loads ASCII and both private-use ranges before opening xterm, so the glyph atlas
-starts with the correct fonts. The symbols do not change interface or ordinary code typography.
+600/1000 em cells. The terminal loads ASCII and both private-use ranges without delaying its connection. When the fonts
+arrive, it clears xterm's glyph atlas, fits the cells, and redraws existing output. The symbols do not change interface
+or ordinary code typography.
 
 The font is converted without subsetting from the upstream TTF with FontTools 4.60.1 and Brotli:
 

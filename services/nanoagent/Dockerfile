@@ -474,6 +474,7 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     test "$(node --version)" = v24.11.1 && \
     test "$(gcc -dumpfullversion)" = 13.3.0 && \
     gh --version && fd --version && fzf --version && lazygit --version && gdu --version && btm --version && tmux -V && \
+    kubectl version --client=true && \
     make --version && cmake --version && pkg-config --version && \
     printf '#include <iostream>\nint main(){std::cout << "cpp-ok";}\n' > /tmp/cpp-smoke.cpp && \
     test "$(g++ /tmp/cpp-smoke.cpp -o /tmp/cpp-smoke && /tmp/cpp-smoke)" = cpp-ok && \

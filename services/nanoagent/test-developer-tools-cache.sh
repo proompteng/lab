@@ -16,19 +16,39 @@ cleanup() {
     mv -- "$work/go" "$HOME/.local/go"
   fi
   local command
-  for command in brew nvim fd lazygit gdu btm; do
+  for command in brew nvim fd lazygit gdu-go btm kubectl; do
     if [[ -e "$work/$command" || -L "$work/$command" ]]; then
       rm -f -- "$prefix/bin/$command"
       mv -- "$work/$command" "$prefix/bin/$command"
     fi
   done
+  cp -- "$work/init.lua" "$HOME/.config/nvim/init.lua"
   cp -- "$work/receipt" "$receipt"
   rm -rf -- "$work"
 }
 
 test -s "$receipt"
 cp -- "$receipt" "$work/receipt"
+cp -- "$HOME/.config/nvim/init.lua" "$work/init.lua"
 trap cleanup EXIT
+
+# Upgrade untouched generated configs, while preserving edits and the plugin lockfile.
+sha256sum "$HOME/.config/nvim/lazy-lock.json" > "$work/plugins.sha256"
+sed 's/icons_enabled = true/icons_enabled = false/' "$work/init.lua" > "$HOME/.config/nvim/init.lua"
+old_init_hash="$(sha256sum "$HOME/.config/nvim/init.lua" | cut -d ' ' -f 1)"
+awk -v hash="$old_init_hash" 'NR == 2 { $1 = hash } { print }' "$work/receipt" > "$receipt"
+"$bootstrap" --install-only
+cmp -- /usr/share/nanoagent/astronvim-init.lua "$HOME/.config/nvim/init.lua"
+sha256sum --check "$work/plugins.sha256"
+
+printf '\nvim.g.user_config_preserved = true\n' >> "$HOME/.config/nvim/init.lua"
+cp -- "$HOME/.config/nvim/init.lua" "$work/custom.lua"
+sed '1s/.*/outdated installation/' "$work/receipt" > "$receipt"
+"$bootstrap" --install-only
+cmp -- "$work/custom.lua" "$HOME/.config/nvim/init.lua"
+sha256sum --check "$work/plugins.sha256"
+cp -- "$work/init.lua" "$HOME/.config/nvim/init.lua"
+
 for command in brew nvim; do
   mv -- "$prefix/bin/$command" "$work/$command"
   printf '#!/usr/bin/env bash\nexit 97\n' > "$prefix/bin/$command"
@@ -46,7 +66,7 @@ if "$bootstrap" --install-only; then
 fi
 test ! -e "$receipt"
 
-for command in fd lazygit gdu btm; do
+for command in fd lazygit gdu-go btm kubectl; do
   cp -- "$work/receipt" "$receipt"
   mv -- "$prefix/bin/$command" "$work/$command"
   if "$bootstrap" --install-only; then

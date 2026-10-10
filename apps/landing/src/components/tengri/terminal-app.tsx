@@ -558,10 +558,9 @@ export function TerminalApp({
       ])
       if (disposed || !hostRef.current) return
       const fontFamily = getComputedStyle(hostRef.current).getPropertyValue('--font-terminal').trim()
-      await document.fonts.load(`13px ${fontFamily}`, 'M\ue5ff\uf115\u{f031e}').catch((cause) => {
+      const fontsReady = document.fonts.load(`13px ${fontFamily}`, 'M\ue5ff\uf115\u{f031e}').catch((cause) => {
         console.warn('[tengri-terminal] terminal font unavailable; using monospace fallback', cause)
       })
-      if (disposed || !hostRef.current) return
       const terminal = new xterm.Terminal({
         allowProposedApi: true,
         disableStdin: true,
@@ -700,6 +699,12 @@ export function TerminalApp({
       )
 
       fit(fitAddon)
+      void fontsReady.then(() => {
+        if (disposed) return
+        terminal.clearTextureAtlas()
+        fit(fitAddon)
+        terminal.refresh(0, terminal.rows - 1)
+      })
       resizeObserver = new ResizeObserver(() => {
         if (resizeFrame !== null) return
         resizeFrame = requestAnimationFrame(() => {
