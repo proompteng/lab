@@ -13,6 +13,7 @@ import {
 } from '../db/forward-performance-receipt'
 import { makeForwardPerformanceReport } from './report'
 import type { ForwardPerformanceEvidenceInput } from './model'
+import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { measurePositionEpisodes, PositionEpisodeReason } from './position-episodes'
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
@@ -99,7 +100,7 @@ describe('position episodes', () => {
     ]
     const result = success(measurePositionEpisodes(evidence(history)))
     expect(result).toMatchObject({ status: 'MEASURED', completedCount: 1, openCount: 0, crossScopeCount: 0 })
-    const report = success(makeForwardPerformanceReport(evidence(history)))
+    const report = success(makeForwardPerformanceReport(evidence(history), []))
     expect(report.receipt.counts.completedExecutionCount).toBe(4)
     expect(report.positionEpisodes).toEqual(result)
   })
@@ -218,10 +219,35 @@ describe('position episodes', () => {
     })
   })
 
+  test('binds the declared inference expense snapshot timestamp in the report hash', () => {
+    const expense: ForwardInferenceExpenseSession = {
+      sessionDate: '2026-09-18',
+      authorityGenerationHash: 'a'.repeat(64),
+      sourceAsOf: '2026-09-18T21:01:00.000Z',
+      knownEstimatedCostPicoUsd: '420000',
+      claimedRequestCount: 1,
+      missingQuoteCount: 0,
+      unverifiedRequestCount: 0,
+      gapRequestCount: 0,
+      completeMeteredCoverage: true,
+      exactSessionLedger: true,
+      invoiceReconciled: false,
+    }
+    const report = success(makeForwardPerformanceReport(evidence(roundTrip()), [expense]))
+    const { reportHash, ...material } = report
+    expect(canonicalHashV1(material)).toBe(reportHash)
+    expect(
+      canonicalHashV1({
+        ...material,
+        inferenceExpenses: [{ ...expense, sourceAsOf: '2026-09-18T21:02:00.000Z' }],
+      }),
+    ).not.toBe(reportHash)
+  })
+
   test('keeps the strict v3 stored receipt unchanged and binds episodes in a separate versioned report', () => {
-    const report = success(makeForwardPerformanceReport(evidence(roundTrip())))
+    const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v1')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v2')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v3')
     expect(receipt).not.toHaveProperty('positionEpisodes')
     expect(canonicalHashV1({ ...reportFields, receipt })).toBe(reportHash)

@@ -1,0 +1,423 @@
+syntax = "proto3";
+
+package proompteng.authz.v1;
+
+option go_package = "github.com/proompteng/lab/gen/proompteng/authz/v1;authzv1";
+
+// Ofz is the only normal application holding the native SpiceDB credential.
+// All methods require an attested, explicitly allowed SPIFFE workload identity.
+service AuthorizationService {
+  rpc Check(CheckRequest) returns (CheckResponse);
+  rpc AuthorizeCommand(AuthorizeCommandRequest) returns (AuthorizeCommandResponse);
+  rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse);
+  rpc GetCommand(GetCommandRequest) returns (GetCommandResponse);
+  rpc ListAccess(ListAccessRequest) returns (ListAccessResponse);
+  rpc ReadAudit(ReadAuditRequest) returns (ReadAuditResponse);
+  rpc EstablishSession(EstablishSessionRequest) returns (EstablishSessionResponse);
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
+  rpc InspectSession(InspectSessionRequest) returns (InspectSessionResponse);
+  rpc GetPolicyState(GetPolicyStateRequest) returns (GetPolicyStateResponse);
+}
+
+enum Action {
+  ACTION_UNSPECIFIED = 0;
+  ACTION_PLATFORM_ADMIT = 1;
+  ACTION_WORKSPACE_CREATE = 2;
+  ACTION_MEMBERS_MANAGE = 3;
+  ACTION_QUOTAS_MANAGE = 4;
+  ACTION_TARGETS_MANAGE = 5;
+  ACTION_POLICY_READ = 6;
+  ACTION_AUDIT_READ = 7;
+  ACTION_PLATFORM_OPERATE = 8;
+  ACTION_WORKSPACE_METADATA_READ = 9;
+  ACTION_WORKSPACE_RESUME = 10;
+  ACTION_WORKSPACE_SLEEP = 11;
+  ACTION_WORKSPACE_POWER_CONFIGURE = 12;
+  ACTION_WORKSPACE_DELETE = 13;
+  ACTION_COLLABORATORS_MANAGE = 14;
+  ACTION_GRANTS_MANAGE = 15;
+  ACTION_WORKSPACE_TRANSFER = 16;
+  ACTION_FILES_OBSERVE = 17;
+  ACTION_FILES_WRITE = 18;
+  ACTION_TERMINAL_OBSERVE = 19;
+  ACTION_TERMINAL_CONTROL = 20;
+  ACTION_CODEX_OBSERVE = 21;
+  ACTION_CODEX_CONTROL = 22;
+  ACTION_BROWSER_OBSERVE = 23;
+  ACTION_BROWSER_CONTROL = 24;
+  ACTION_EDITOR_OPEN = 25;
+  ACTION_PREVIEW_OBSERVE = 26;
+  ACTION_PREVIEW_ACCESS = 27;
+  ACTION_KUBE_STATUS_READ = 28;
+  ACTION_KUBE_LOGS_READ = 29;
+  ACTION_KUBE_EVENTS_READ = 30;
+  ACTION_CONNECTOR_READ = 31;
+  ACTION_SESSION_ESTABLISH = 32;
+  ACTION_WORKSPACE_ENROLL = 33;
+  ACTION_KUBE_EXECUTE = 34;
+  ACTION_CONNECTOR_EXECUTE = 35;
+  ACTION_POLICY_CHECK = 36;
+  ACTION_POLICY_COMMAND = 37;
+  ACTION_SESSION_INSPECT = 38;
+  ACTION_WORKSPACE_POLICY_READ = 39;
+  ACTION_SESSION_REVOKE = 40;
+}
+
+enum ResourceKind {
+  RESOURCE_KIND_UNSPECIFIED = 0;
+  RESOURCE_KIND_PLATFORM = 1;
+  RESOURCE_KIND_WORKSPACE = 2;
+  RESOURCE_KIND_KUBE_NAMESPACE = 3;
+  RESOURCE_KIND_CONNECTOR_CONNECTION = 4;
+}
+
+message Resource {
+  ResourceKind kind = 1;
+  // Workspace IDs are MicroVM UIDs. Namespace IDs bind cluster and namespace UID.
+  string id = 2;
+}
+
+message Actor {
+  oneof identity {
+    // SHA-256 of the verified canonical github:<numeric ID> subject.
+    string human_id = 1;
+    string agent_id = 2;
+    string workload_id = 3;
+  }
+}
+
+message RequestContext {
+  Actor actor = 1;
+  string session_id = 2;
+  string grant_id = 3;
+  string trace_id = 4;
+  // Bound to authenticated request metadata and limited by the session/grant.
+  uint64 deadline_unix_ms = 5;
+  string workspace_uid = 6;
+  string runtime_epoch = 7;
+  string origin = 8;
+  uint32 contract_version = 9;
+}
+
+message ObservationScope {
+  repeated string file_roots = 1;
+  repeated string thread_ids = 2;
+  repeated string terminal_ids = 3;
+  bool browser_screenshot = 4;
+  uint32 max_bytes = 5;
+  uint32 max_items = 6;
+}
+
+message CheckRequest {
+  RequestContext context = 1;
+  Action action = 2;
+  Resource resource = 3;
+  // Content targets are independently checked against the grant's stored scope.
+  string target = 4;
+  string stream_receipt_id = 5;
+}
+
+message CheckResponse {
+  bool allowed = 1;
+  string revision = 2;
+  string audit_receipt_id = 3;
+  uint64 valid_until_unix_ms = 4;
+  uint64 recovery_generation = 5;
+}
+
+// Permission-only preflight before resolving external command subjects. The result
+// cannot authorize content access or a policy write; ExecuteCommand checks again.
+message AuthorizeCommandRequest {
+  RequestContext context = 1;
+  Action action = 2;
+  Resource resource = 3;
+}
+
+message AuthorizeCommandResponse {
+  bool allowed = 1;
+  string audit_receipt_id = 2;
+}
+
+enum WorkspaceRole {
+  WORKSPACE_ROLE_UNSPECIFIED = 0;
+  WORKSPACE_ROLE_OWNER = 1;
+  WORKSPACE_ROLE_DEVELOPER = 2;
+  WORKSPACE_ROLE_VIEWER = 3;
+}
+
+enum PlatformRole {
+  PLATFORM_ROLE_UNSPECIFIED = 0;
+  PLATFORM_ROLE_MEMBER = 1;
+  PLATFORM_ROLE_ADMINISTRATOR = 2;
+  PLATFORM_ROLE_AUDITOR = 3;
+  PLATFORM_ROLE_OPERATOR = 4;
+}
+
+message SetMembership {
+  string human_id = 1;
+  PlatformRole role = 2;
+  bool enabled = 3;
+  string github_id = 4;
+}
+
+message SetWorkspaceRole {
+  string workspace_uid = 1;
+  string human_id = 2;
+  WorkspaceRole role = 3;
+  bool enabled = 4;
+}
+
+message TransferWorkspace {
+  string workspace_uid = 1;
+  string next_owner_id = 2;
+}
+
+message CreateGrant {
+  string grant_id = 1;
+  string agent_id = 2;
+  Resource resource = 3;
+  repeated Action actions = 4;
+  ObservationScope scope = 5;
+  uint64 expires_at_unix_ms = 6;
+  // RFC 7638 thumbprint of the proof key. Credentials are never bearer-only.
+  string proof_key_thumbprint = 7;
+  string workspace_uid = 8;
+}
+
+message RevokeGrant {
+  string grant_id = 1;
+}
+
+message SetTargetAccess {
+  Resource resource = 1;
+  string human_id = 2;
+  Action action = 3;
+  bool enabled = 4;
+}
+
+message SetQuota {
+  string human_id = 1;
+  uint32 total_workspaces = 2;
+  uint32 active_workspaces = 3;
+  uint64 retained_bytes = 4;
+}
+
+message EnrollWorkspace {
+  string workspace_uid = 1;
+  string owner_id = 2;
+  string home_uid = 3;
+  uint64 home_bytes = 4;
+  string reservation_id = 5;
+}
+
+// Reserve capacity before allocating any Kubernetes or guest resource.
+message ReserveWorkspace {
+  string reservation_id = 1;
+  uint64 home_bytes = 2;
+}
+
+message ReleaseReservation {
+  string reservation_id = 1;
+}
+
+message SetWorkspaceRuntime {
+  string workspace_uid = 1;
+  bool running = 2;
+  string runtime_epoch = 3;
+}
+
+message RemoveWorkspace {
+  string workspace_uid = 1;
+}
+
+message EmergencyAccess {
+  string workspace_uid = 1;
+  string human_id = 2;
+  string incident_id = 3;
+  string custodian_approval_id = 4;
+  uint64 expires_at_unix_ms = 5;
+}
+
+message ExecuteCommandRequest {
+  RequestContext context = 1;
+  string operation_id = 2;
+  uint64 expected_version = 3;
+  string reason = 4;
+  // BFF hash of the validated user request, before external identity resolution.
+  // Empty for callers without that preparation boundary; otherwise exactly 32 bytes.
+  bytes client_request_hash = 19;
+  oneof command {
+    SetMembership set_membership = 5;
+    SetWorkspaceRole set_workspace_role = 6;
+    TransferWorkspace transfer_workspace = 7;
+    CreateGrant create_grant = 8;
+    RevokeGrant revoke_grant = 9;
+    SetTargetAccess set_target_access = 10;
+    SetQuota set_quota = 11;
+    EnrollWorkspace enroll_workspace = 12;
+    RemoveWorkspace remove_workspace = 13;
+    EmergencyAccess emergency_access = 14;
+    ReserveWorkspace reserve_workspace = 15;
+    ReleaseReservation release_reservation = 16;
+    SetWorkspaceRuntime set_workspace_runtime = 17;
+  }
+}
+
+enum CommandState {
+  COMMAND_STATE_UNSPECIFIED = 0;
+  COMMAND_STATE_PENDING = 1;
+  COMMAND_STATE_COMMITTED = 2;
+  COMMAND_STATE_REJECTED = 3;
+}
+
+message CommandReceipt {
+  string operation_id = 1;
+  CommandState state = 2;
+  uint64 version = 3;
+  string revision = 4;
+  string audit_receipt_id = 5;
+  // Present only on the first successful creation, never on GetCommand/replay.
+  string agent_credential = 6;
+  // True when recovery observed an applied marker after losing the original write receipt.
+  bool recovered_revision = 7;
+}
+
+message ExecuteCommandResponse {
+  CommandReceipt receipt = 1;
+}
+message GetCommandResponse {
+  CommandReceipt receipt = 1;
+}
+
+message GetCommandRequest {
+  RequestContext context = 1;
+  string operation_id = 2;
+  // When supplied, recovery must match the original validated BFF request.
+  bytes client_request_hash = 3;
+}
+
+message ListAccessRequest {
+  RequestContext context = 1;
+  Resource resource = 2;
+  string cursor = 3;
+  uint32 limit = 4;
+}
+
+message AccessEntry {
+  string subject_id = 1;
+  string role = 2;
+  string grant_id = 3;
+  repeated Action actions = 4;
+  uint64 expires_at_unix_ms = 5;
+  string github_id = 6;
+  ObservationScope scope = 7;
+  Resource resource = 8;
+}
+
+message QuotaRecord {
+  string human_id = 1;
+  uint32 total_workspaces = 2;
+  uint32 active_workspaces = 3;
+  uint64 retained_bytes = 4;
+  uint32 used_workspaces = 5;
+  uint32 used_active = 6;
+  uint64 used_bytes = 7;
+}
+
+message ListAccessResponse {
+  repeated AccessEntry entries = 1;
+  string cursor = 2;
+  uint64 version = 3;
+  repeated QuotaRecord quotas = 4;
+  string workspace_state = 5;
+}
+
+message ReadAuditRequest {
+  RequestContext context = 1;
+  string cursor = 2;
+  uint32 limit = 3;
+}
+
+message AuditReceipt {
+  string id = 1;
+  uint64 sequence = 2;
+  uint64 created_at_unix_ms = 3;
+  Actor actor = 4;
+  string workload_id = 5;
+  Resource resource = 6;
+  Action action = 7;
+  bool allowed = 8;
+  string operation_id = 9;
+  string trace_id = 10;
+  string reason = 11;
+  string session_id = 12;
+  string grant_id = 13;
+  string workspace_uid = 14;
+  string runtime_epoch = 15;
+  string origin = 16;
+  uint64 recovery_generation = 17;
+  // Typed policy data, without raw credentials, needed to reconcile independent recovery.
+  ExecuteCommandRequest policy_command = 18;
+  string revision = 19;
+}
+
+message ReadAuditResponse {
+  repeated AuditReceipt receipts = 1;
+  string cursor = 2;
+}
+
+message EstablishSessionRequest {
+  // Verified against the configured issuer, audience, signature and broker ID.
+  string identity_token = 1;
+  string nonce = 2;
+  string operation_id = 3;
+  // Browser cookie being replaced, if present. Revoked atomically with issuance.
+  string previous_credential = 4;
+  // BFF-generated 256-bit base64url credential, reused only for an exact retry.
+  // Ofz persists its hash and the request fingerprint, never this plaintext.
+  string credential = 5;
+}
+
+message Session {
+  string id = 1;
+  string human_id = 2;
+  uint64 expires_at_unix_ms = 3;
+  uint64 idle_deadline_unix_ms = 4;
+  uint64 mfa_at_unix_ms = 5;
+  uint64 recovery_generation = 6;
+  // Opaque random credential, returned only at establishment; hash stored centrally.
+  string credential = 7;
+  string github_id = 8;
+  string display_name = 9;
+  string email = 10;
+  string image_url = 11;
+}
+
+message EstablishSessionResponse {
+  Session session = 1;
+}
+message InspectSessionResponse {
+  Session session = 1;
+}
+message RevokeSessionResponse {
+  CommandReceipt receipt = 1;
+}
+
+message RevokeSessionRequest {
+  // Possession revokes only this session, including a retry after revocation.
+  string credential = 1;
+  string operation_id = 2;
+  string origin = 3;
+}
+
+message InspectSessionRequest {
+  // Opaque credential from the BFF's HttpOnly cookie, not the public session ID.
+  string session_id = 1;
+}
+
+message GetPolicyStateRequest {}
+message GetPolicyStateResponse {
+  uint64 version = 1;
+  uint64 recovery_generation = 2;
+  bool fenced = 3;
+}

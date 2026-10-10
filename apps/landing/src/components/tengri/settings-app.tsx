@@ -8,6 +8,7 @@ import type { TengriAgent, TengriCodexAccount, TengriUser } from '@/lib/tengri/t
 import { runTengriAction } from './client'
 import { DesktopAppIcon } from './desktop-app-icon'
 import { PowerSettingsForm } from './power-settings-form'
+import { AccessPanel } from './access-panel'
 import { formatAgentDate, formatAgentResources, formatAgentUptime, shouldRefreshCodexAccount } from './settings-model'
 
 type BusyAction = 'delete' | 'sign-out' | 'sleep' | null
@@ -22,6 +23,7 @@ const settingsNavigation = [
   { id: 'agent', label: 'Agent', icon: Bot, color: 'bg-[#8f79c8]/20 text-[#c4b8ff]' },
   { id: 'runtime', label: 'Runtime', icon: Cpu, color: 'bg-[#59a48c]/20 text-[#9fe2c7]' },
   { id: 'lifecycle', label: 'Lifecycle', icon: ShieldCheck, color: 'bg-[#c69a5b]/20 text-[#e7c88e]' },
+  { id: 'access', label: 'Access', icon: ShieldCheck, color: 'bg-zinc-700 text-zinc-200' },
 ] as const
 
 type SettingsSectionId = (typeof settingsNavigation)[number]['id']
@@ -63,6 +65,7 @@ export function SettingsApp({
     general: null,
     lifecycle: null,
     runtime: null,
+    access: null,
   })
   const lifecycleBusy = busyAction !== null
 
@@ -363,6 +366,18 @@ export function SettingsApp({
                   {error}
                 </p>
               ) : null}
+            </section>
+            <section
+              ref={(element) => {
+                sectionRefs.current.access = element
+              }}
+              aria-labelledby={`${instanceId}-settings-access`}
+              className="scroll-mt-5 space-y-3"
+            >
+              <h2 id={`${instanceId}-settings-access`} className="text-sm font-medium text-zinc-200">
+                Access
+              </h2>
+              <AccessPanel workspaceUid={agent.uid} active={active && selectedSection === 'access'} />
             </section>
           </div>
         </div>

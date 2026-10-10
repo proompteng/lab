@@ -49,3 +49,10 @@ export async function GET(request: Request) {
     return tengriRouteError(error)
   }
 }
+
+export function HEAD() {
+  return new Response(null, { status: 405, headers: { 'Cache-Control': 'no-store' } })
+}
+export function OPTIONS() {
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+}
