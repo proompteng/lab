@@ -13,6 +13,20 @@ const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dock
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
 
 describe('Tengri image workflow', () => {
+  it('validates Nanoagent once without losing protobuf or guest checks', () => {
+    const validation = readFileSync(imagesPath, 'utf8').match(/validate-nanoagent:\n[\s\S]*?\n  build:/)?.[0]
+
+    expect(existsSync(resolve(repositoryRoot, '.github/workflows/nanoagent.yaml'))).toBe(false)
+    expect(validation).toContain('buf lint ../tengri/proto')
+    expect(validation).toContain('buf format ../tengri/proto')
+    expect(validation).toContain('bash generate-proto.sh')
+    expect(validation).toContain('git diff --exit-code -- internal/guestpb')
+    expect(validation).toContain('bash validate-rootfs.test.sh')
+    expect(validation).toContain('bash bootstrap-codex.sh --validate-manifest')
+    expect(validation).toContain('GOWORK=off go test -race ./...')
+    expect(validation).toContain('GOWORK=off go vet ./...')
+  })
+
   it('uses three release cycles and reserves fifty cycles for explicit benchmarking', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       on: { workflow_dispatch: { inputs: { kvm_samples: { options: string[]; default: string } } } }
@@ -76,6 +90,9 @@ describe('Tengri image workflow', () => {
     )
     const prFixture = workflow.jobs.build.steps.find((step) => step.name === 'Build isolated KVM test image')
     expect(prFixture?.run).toContain('docker buildx build --load')
+    expect(prFixture?.run).toContain('--cache-from "type=registry,ref=${NANOAGENT_IMAGE}:cache-amd64"')
+    expect(prFixture?.run).toContain('--cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-amd64"')
+    expect(prFixture?.run).toContain('--cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-kvm-amd64"')
     expect(prFixture?.run).not.toContain('--builder default')
   })
 

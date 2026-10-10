@@ -3,7 +3,6 @@ name: Tengri images
 on:
   pull_request:
     paths:
-      - 'apps/landing/**'
       - 'services/tengri/**'
       - 'services/nanoagent/**'
       - '.github/workflows/tengri-images.yml'
@@ -97,6 +96,11 @@ jobs:
           go-version-file: services/nanoagent/go.mod
           cache-dependency-path: services/nanoagent/go.sum
 
+      - name: Set up Buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+
       - name: Install race detector build tools
         run: |
           sudo apt-get update
@@ -115,6 +119,10 @@ jobs:
           bash -n build-boot-artifacts.sh tengri-init.sh
           bash validate-rootfs.test.sh
           bash bootstrap-codex.sh --validate-manifest
+          buf lint ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto
+          buf format ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto --diff --exit-code
+          bash generate-proto.sh
+          git diff --exit-code -- internal/guestpb
           test -z "$(gofmt -l .)"
           GOWORK=off go test -race ./...
           GOWORK=off go vet ./...
@@ -183,9 +191,12 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx build --platform linux/amd64 --target kvm-tests \
+            --cache-from "type=registry,ref=${NANOAGENT_IMAGE}:cache-amd64" \
             --output type=local,dest=.artifacts/nanoagent-tests services/nanoagent
           docker buildx build --load --platform linux/amd64 \
             --file services/tengri/Dockerfile --target kvm-test \
+            --cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-amd64" \
+            --cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-kvm-amd64" \
             --build-context nanoagent-tests=.artifacts/nanoagent-tests \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --tag tengri-kvm-test:fixture services/tengri

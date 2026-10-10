@@ -248,6 +248,8 @@ Verify that both receipts match the requested PR head and build revision, and th
 remains the same after loading the archive into a classic image store.
 CI builds these artifacts without executing the KVM fixture. It requires no SSH devbox. Device execution still
 requires the scoped approval below.
+Frontend-only PRs do not run this image workflow. Runtime PR fixture builds import the same main-only registry caches
+as the native images, including the KVM harness cache, to reuse the release compilation.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, and `TENGRI_KVM_SAMPLES` select the artifacts,
 absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. Routine main publication runs
 three real sleep/resume cycles on each architecture. Every resume must finish below one second, and publication still
