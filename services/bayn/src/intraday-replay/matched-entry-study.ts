@@ -39,7 +39,8 @@ export enum MatchedRecommendation {
 }
 
 export const matchedEntryDefinition = {
-  schemaVersion: 'bayn.matched-entry-definition.v1',
+  schemaVersion: 'bayn.matched-entry-definition.v2',
+  sourceComparison: 'bayn.matched-model-input-material.v2',
   sessions: 5,
   minimumDifferentSelections: 20,
   budgetMicros: '10000000000',
@@ -264,6 +265,24 @@ export const summarizeMatchedPairs = (
 // Native receipt sequencing differs from a capture cursor. Compare exact selected market payloads
 // and feature source coordinates, while preserving native provenance in the original observation.
 export const matchedObservationMaterial = (snapshot: StrategyMarketSnapshot) => ({
+  context: {
+    observedAt: String(intradayInstantNanos(snapshot.manifest.observedAt)),
+    rangeStartAt: String(intradayInstantNanos(snapshot.manifest.rangeStartAt)),
+    rangeEndAt: String(intradayInstantNanos(snapshot.manifest.rangeEndAt)),
+    sessionDate: snapshot.manifest.sessionDate,
+    feed: snapshot.manifest.feed,
+    delayClass: snapshot.manifest.delayClass,
+    maximumQuoteAgeMs: snapshot.manifest.maximumQuoteAgeMs,
+    candidateSymbols: snapshot.manifest.candidateSymbols ?? [],
+    candidateEvidencePolicy: snapshot.manifest.candidateEvidencePolicy ?? null,
+    session: snapshot.manifest.calendar.sessions
+      .filter((session) => session.date === snapshot.manifest.sessionDate)
+      .map((session) => ({
+        date: session.date,
+        openAt: String(intradayInstantNanos(session.openAt)),
+        closeAt: String(intradayInstantNanos(session.closeAt)),
+      })),
+  },
   bars: snapshot.bars.map((row) => ({
     ...row,
     eventAt: String(intradayInstantNanos(row.eventAt)),
@@ -287,6 +306,18 @@ export const matchedObservationMaterial = (snapshot: StrategyMarketSnapshot) => 
     offset,
     value,
   })),
+  technical:
+    snapshot.manifest.streaming.technical === undefined
+      ? null
+      : {
+          topic: snapshot.manifest.streaming.technical.topic,
+          features: snapshot.manifest.streaming.technical.features.map(({ topic, partition, offset, value }) => ({
+            topic,
+            partition,
+            offset,
+            value,
+          })),
+        },
 })
 
 export const matchedSourceCompletenessProblems = (source: BacktestSourceManifest): string[] => {
@@ -500,7 +531,7 @@ export const runMatchedEntryStudy = (
       }
     })
     const report = {
-      schemaVersion: 'bayn.matched-entry-study.v1',
+      schemaVersion: 'bayn.matched-entry-study.v2',
       definition: matchedEntryDefinition,
       definitionHash,
       registration,

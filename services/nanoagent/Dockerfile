@@ -468,12 +468,13 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     brew config > /tmp/developer-tools-version && \
     brew list --versions >> /tmp/developer-tools-version && \
     brew doctor && \
-    nvim --headless '+lua assert(vim.o.number and vim.o.undofile); assert(require("astronvim").version() == "v6.1.0"); assert(require("astronvim").config.icons_enabled == false)' '+if v:errmsg != "" | cquit 1 | endif' +qa && \
+    nvim --headless '+lua assert(vim.o.number and vim.o.undofile); assert(require("astronvim").version() == "v6.1.0"); assert(require("astronvim").config.icons_enabled)' '+if v:errmsg != "" | cquit 1 | endif' +qa && \
     tree-sitter --version && \
     test "$EDITOR" = nvim && test "$VISUAL" = nvim && \
     test "$(node --version)" = v24.11.1 && \
     test "$(gcc -dumpfullversion)" = 13.3.0 && \
-    gh --version && fd --version && fzf --version && tmux -V && \
+    gh --version && fd --version && fzf --version && lazygit --version && gdu --version && btm --version && tmux -V && \
+    kubectl version --client=true && \
     make --version && cmake --version && pkg-config --version && \
     printf '#include <iostream>\nint main(){std::cout << "cpp-ok";}\n' > /tmp/cpp-smoke.cpp && \
     test "$(g++ /tmp/cpp-smoke.cpp -o /tmp/cpp-smoke && /tmp/cpp-smoke)" = cpp-ok && \

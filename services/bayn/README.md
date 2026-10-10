@@ -119,14 +119,20 @@ poll cadence rather than adding artificial delays inside a full history scan. Be
 activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
 and its database ticket. It also journals a single-use worker ticket and reserves one quota window beyond the latest
 allowed capture start and invocation abort bound before issuing requests. A lost or spent ticket, or one whose start
-deadline elapsed, returns unavailable without repeating broker I/O. A completed capture replaces the reservation with
+deadline elapsed, returns unavailable without repeating broker I/O. When the same worker atomically consumes a
+matching unused expired ticket, successful invalidation and the existing journaled poll result prove that capture
+never started. Only then can the owner replace speculative debt with the existing measured HTTP/quota deadline;
+it logs the reason and capture-start lateness without ticket contents. A lost result before journaling still retains
+the full reservation. A journaled result replays without another claim or a reset capture clock.
+A completed capture replaces the reservation with
 its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
 timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
 Completed, typed persistence failures inside a claimed worker also retain the measured request cost, including any
 quota-reset deadline. They return unavailable without publishing a snapshot and retry on the ordinary polling cadence.
 Failed captures dispose their broker runtime before recording failure or sampling the settled request budget, so a lazy
 client acquisition cannot continue issuing requests after recovery returns. Defects, interruption, mixed failure causes,
-and lost or expired capture tickets retain the conservative reservation.
+and missing, mismatched, already claimed or replaced-worker capture tickets retain the conservative reservation.
+Failure or interruption before the unused-ticket result is journaled also retains that reservation.
 Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
 the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
 capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
@@ -181,12 +187,14 @@ provider precision guarantee. Score answers must also fit the same distribution 
 Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
 discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
 
-Each model request commits its at-most-once claim before inference. Native single-candidate management persists the
-receipt, resolution and complete batch result in one transaction; entry candidates retain independent receipts and
-all-candidate finalization. Receipt recording and recovery lock the batch before the request. A completed batch is
-verified and reused without opening another transaction. Commit failure or interruption cannot expose a partial
-management result, and every consumer still checks the original evidence deadline after persistence. Synchronous
-commit and standby durability are unchanged.
+Each model request commits its at-most-once claim before inference. Native single-candidate management and entry
+batches with exactly one requested candidate persist the receipt, resolution and complete batch result in one
+transaction. Entry results retain every excluded candidate in plan order. Entry batches with multiple requested
+candidates retain independent receipts and all-candidate finalization. Atomic receipt recording and recovery lock
+the batch before the request. A completed batch is verified and reused without opening another transaction. A
+failure, defect or interruption during atomic persistence rolls back the receipt, resolution and result together;
+the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
+evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
 the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
@@ -340,6 +348,13 @@ original observation and expiry times, checked time and elapsed admission lag. C
 and persistence failures remain errors; recorded batches still recover against their original deadline.
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
+
+Completed batch rereads load all requested candidates' claims, receipts and resolutions together, then retrieve
+matching observations in one grouped query. Each distinct observation crosses the database boundary once and its
+canonical content hash is verified once per read, with exact cycle, generation, snapshot, symbol and time membership
+checked for every request. A batch with resolved candidate evidence uses three queries including its plan/result
+read, independent of candidate count. Single-candidate evidence reads use the same verifier. Missing or corrupt
+evidence and claims for sealed unattempted candidates still fail verification; validation is not cached across reads.
 
 The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, after binding
 or a cold durable read. Every reread still queries PostgreSQL and requires full JSONB equality with that retained

@@ -48,12 +48,12 @@ Quote size units, source timing and executable capacity need separate evidence; 
 
 `MatchedStudyInputSchema` defines `bayn.matched-entry-input.v1`:
 
-| Field | Evidence |
-| --- | --- |
-| `study` | Existing `SignalStudyInputSchema`: run ID, complete source manifest, execution assumptions, every original batch including missing results and management batches. |
-| `inventory` | One read-only database inventory per session: `sessionDate`, all `entryBatchIds`, `evidenceHash`. Zero-batch sessions need witnesses too. |
-| `costs` | Per entry `batchId`, `inference` and `sharedOperating`. Each is `null` or `{ costMicros, evidenceHash, unresolvedCount }`. |
-| `witnesses` | `[{ sha256, path }]` for each referenced witness; the command verifies its bytes. |
+| Field       | Evidence                                                                                                                                                           |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `study`     | Existing `SignalStudyInputSchema`: run ID, complete source manifest, execution assumptions, every original batch including missing results and management batches. |
+| `inventory` | One read-only database inventory per session: `sessionDate`, all `entryBatchIds`, `evidenceHash`. Zero-batch sessions need witnesses too.                          |
+| `costs`     | Per entry `batchId`, `inference` and `sharedOperating`. Each is `null` or `{ costMicros, evidenceHash, unresolvedCount }`.                                         |
+| `witnesses` | `[{ sha256, path }]` for each referenced witness; the command verifies its bytes.                                                                                  |
 
 Use the native inference-cost report with request/receipt/resolution coverage and effective-dated tariffs.
 Allocate every entry call, including abstentions, failures and unselected symbols. Missing/unpriced calls remain
@@ -63,13 +63,28 @@ These are witnessed allocation scenarios, not invoice reconciliation. Hashes est
 allocation's source joins and accounting scope independently.
 
 Every original native observation remains independently validated. Its selected bars, quotes, trades, feature
-payloads and exact source coordinates must reproduce from the frozen capture. Timestamp spellings are compared as
+payloads (including optional technical indicators), model-relevant session/window context and exact source
+coordinates must reproduce from the frozen capture. Missing technical evidence is distinct from present evidence.
+Native receipt sequence/availability provenance can differ from capture provenance, but technical topic, partition,
+offset and full producer payload must agree. Timestamp spellings are compared as
 integer nanoseconds; one-nanosecond changes still fail. Native receipt sequence and provenance are preserved.
 Reconstructed/REST sources remain development diagnostics and cannot complete the experiment because original stream
 availability is unobserved. The full source is hash/cut/order validated and consumed before writing a report.
 Both captured-Kafka and original-capture sources retain their own independently pinned receipt and arrival contracts;
 recognizing either transport does not waive source verification, session coverage or any other completeness witness.
 Candidate exclusions remain in the report; omitted entire batches fail the independent inventory gate.
+
+### Evidence-comparison version
+
+The definition and report are now `bayn.matched-entry-definition.v2` and `bayn.matched-entry-study.v2`.
+Input and registration structures remain v1; the required definition hash changes. Old registrations are rejected.
+Earlier v1 reports did not bind optional technical indicators or all model-relevant time context in their
+cross-source comparison. Treat their completeness claims as unqualified; preserve them as historical artifacts,
+and rerun their original evidence under a newly reviewed v2 registration for development only. Do not rewrite an
+old prospective timestamp or relabel an old report as v2. A new prospective window needs a new pre-open registration.
+
+The [incremental-value audit](jev-incremental-audit.md) contains executable counterexamples and the separate
+three-arm protocol needed to study inference delay.
 
 ## Run
 
