@@ -967,6 +967,68 @@ describe('native execution runtime', () => {
     )
   })
 
+  test.each([
+    [7_000, 3_000],
+    [7_000, 8_000],
+    [30_000, 2_000],
+    [31_000, 2_000],
+    [100_000, 2_000],
+  ])('preserves an absolute wake %dms ahead across %dms of work and projected replay', async (dueMs, elapsedMs) => {
+    const start = Date.parse(completedAt)
+    const nextWakeAt = new Date(start + dueMs).toISOString()
+    const delay = Math.min(30_000, dueMs)
+    let projected: ExecutionControllerStatus | null = null
+    let advances = 0
+    const store: ExecutionControllerStatusStoreShape = {
+      read: () => Effect.succeed(projected),
+      project: (candidate) =>
+        Effect.sync(() => {
+          projected = candidate
+          return { _tag: 'Applied', status: candidate }
+        }),
+    }
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.adjust(start)
+        const boundedDriver = {
+          ...windowClosedDriver,
+          advance: Effect.gen(function* () {
+            advances += 1
+            yield* TestClock.adjust(elapsedMs)
+            return { observation: windowClosedObservation, nextDelayMs: delay, nextWakeAt }
+          }),
+        }
+        const first = yield* executeNativeExecutionAdvance(command, boundedDriver, store, controllerPlanHash)
+        yield* TestClock.adjust(20_000)
+        const replayed = yield* executeNativeExecutionAdvance(command, boundedDriver, store, controllerPlanHash)
+        expect(replayed).toEqual(first)
+        return first
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(advances).toBe(1)
+    const expectedDelay = Math.min(delay, Math.max(1, dueMs - elapsedMs))
+    expect(result.outcome.nextDelayMs).toBe(expectedDelay)
+    expect(result.outcome.nextWakeAt).toBe(nextWakeAt)
+    expect(projected).toMatchObject({
+      nextDueAt: new Date(start + elapsedMs + expectedDelay).toISOString(),
+      lastPass: { nextWakeAt },
+    })
+  })
+
+  test('old persisted completions do not opt into absolute-wake journal commands', async () => {
+    const retained = status({ lastPass: windowClosedObservation })
+    const result = await Effect.runPromise(
+      executeNativeExecutionAdvance(
+        command,
+        { ...windowClosedDriver, advance: Effect.die('old completion must replay without a new pass') },
+        { read: () => Effect.succeed(retained), project: () => Effect.die('old completion must not be rewritten') },
+        controllerPlanHash,
+      ),
+    )
+    expect(result.outcome).not.toHaveProperty('nextWakeAt')
+    expect(result.outcome.nextDelayMs).toBe(30_000)
+  })
+
   test('projects active controller state before its first completion without inventing evidence', async () => {
     let projected: ExecutionControllerStatus | undefined
     await Effect.runPromise(

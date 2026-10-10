@@ -183,7 +183,7 @@ export function Spotlight({
         aria-label="Spotlight"
         aria-modal={present || undefined}
         data-tengri-modal={present || undefined}
-        className="font-system mx-auto w-[min(680px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-white/20 bg-zinc-800/90 shadow-[0_35px_120px_rgba(0,0,0,0.55)] backdrop-blur-3xl"
+        className="font-geist mx-auto w-[min(680px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-white/20 bg-zinc-800/90 shadow-[0_35px_120px_rgba(0,0,0,0.55)] backdrop-blur-3xl"
         exit={reducedMotion ? undefined : { opacity: 0, scale: 0.97, y: -12 }}
         initial={reducedMotion ? false : { opacity: 0, scale: 0.96, y: -18 }}
         onKeyDown={modalFocus.onKeyDown}

@@ -312,7 +312,7 @@ export function ReadyDesktop({
       x: 0,
       y: 0,
       width: rect?.width ?? globalThis.innerWidth,
-      height: rect?.height ?? Math.max(0, globalThis.innerHeight - 126),
+      height: rect?.height ?? Math.max(0, globalThis.innerHeight - 30),
     }
   }, [])
 
@@ -739,9 +739,9 @@ export function ReadyDesktop({
 
   if (!layoutReady) {
     return (
-      <main className="font-system relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white">
+      <main className="font-geist relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white">
         <DesktopWallpaper />
-        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-24 grid place-items-center">
+        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 grid place-items-center">
           <p className="flex items-center gap-2 text-sm text-white/62" role="status">
             <LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />
             Restoring desktop…
@@ -756,7 +756,7 @@ export function ReadyDesktop({
       <main
         aria-hidden={confirmOpen || spotlightOpen || undefined}
         inert={confirmOpen || spotlightOpen || undefined}
-        className="font-system relative isolate h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white selection:bg-[#78a9ff]/35"
+        className="font-geist relative isolate h-[100dvh] min-h-[520px] w-screen overflow-clip bg-[#142849] text-white selection:bg-[#78a9ff]/35"
       >
         <DesktopWallpaper />
         <MenuBar
@@ -778,7 +778,7 @@ export function ReadyDesktop({
           userName={user.name}
         />
 
-        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-24 overflow-visible">
+        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 overflow-visible">
           {connectionWarning ? (
             <p
               role="status"
@@ -861,8 +861,23 @@ export function ReadyDesktop({
             </DesktopWindowFrame>
           ))}
         </div>
-        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[1500] flex justify-center">
-          <DesktopDock onOpenApp={openApp} windows={windowState.windows} />
+        <div
+          className={`pointer-events-none group/dock absolute inset-x-0 bottom-0 z-[1500] flex justify-center ${
+            activeWindow?.mode === 'maximized' ? 'hover:pointer-events-auto focus-within:pointer-events-auto' : ''
+          }`}
+        >
+          {activeWindow?.mode === 'maximized' ? (
+            <div aria-hidden="true" className="pointer-events-auto absolute inset-x-0 bottom-0 h-1" />
+          ) : null}
+          <div
+            className={`pb-3 ${
+              activeWindow?.mode === 'maximized'
+                ? 'translate-y-full transition-transform group-hover/dock:translate-y-0 group-focus-within/dock:translate-y-0 motion-reduce:transition-none'
+                : ''
+            }`}
+          >
+            <DesktopDock onOpenApp={openApp} windows={windowState.windows} />
+          </div>
         </div>
       </main>
 
@@ -916,7 +931,7 @@ function LifecycleTransitionScreen({
         : 'Tengri is closing this authenticated desktop session.'
 
   return (
-    <main className="font-system relative grid h-[100dvh] min-h-[520px] w-screen place-items-center overflow-hidden bg-[#142849] px-5 text-white">
+    <main className="font-geist relative grid h-[100dvh] min-h-[520px] w-screen place-items-center overflow-hidden bg-[#142849] px-5 text-white">
       <DesktopWallpaper />
       <header className="absolute inset-x-0 top-0 z-20 flex h-[30px] items-center border-b border-white/10 bg-[rgba(16,20,31,0.5)] px-4 text-xs font-semibold text-white/90 backdrop-blur-2xl">
         <span className="mr-2">

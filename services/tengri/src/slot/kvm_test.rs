@@ -49,7 +49,10 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let samples: usize = std::env::var("TENGRI_KVM_SAMPLES")
         .context("set the explicit sample count")?
         .parse()?;
-    ensure!(samples > 0, "sample count must be positive");
+    ensure!(
+        samples >= 3,
+        "lifecycle acceptance requires at least three cycles"
+    );
     let mut authority = Authority(
         Command::new(std::env::var("NANOAGENT_RPC_FIXTURE")?)
             .args(["-test.run=^TestKVMWorkloadAPI$"])
@@ -126,7 +129,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let home_disk = directory.join("home.ext4");
     fs::File::create(&home_disk)
         .await?
-        .set_len(16 << 30)
+        .set_len(u64::from(crate::crd::WORKSPACE_GIB) << 30)
         .await?;
     let kernel = PathBuf::from("/guest/vmlinux");
     let config = SlotConfig {
@@ -347,10 +350,12 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     );
     client.lifecycle("stop", &claim).await?;
     timings.sort_by(f64::total_cmp);
-    let p95 = timings[(samples * 95).div_ceil(100) - 1];
+    let p95 = (samples >= 50).then(|| timings[(samples * 95).div_ceil(100) - 1]);
+    let resume_budget_ms = p95.unwrap_or(timings[samples - 1]);
     fs::write("/work/result.json", serde_json::to_vec_pretty(&json!({
         "boundary":"slot mTLS request through real guest file, PTY and initialized Codex RPC",
         "excludes":["BFF authentication", "Kubernetes API latency", "six concurrent guests", "fresh creation distribution", "raw PVC allocation"],
+        "validationMode":if p95.is_some() { "benchmark" } else { "smoke" },
         "createSamples":1,"createMs":create_ms,"resumeSamples":samples,
         "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
@@ -363,7 +368,10 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         create_ms < 1000.0,
         "slot prepared creation is {create_ms:.2} ms"
     );
-    ensure!(p95 < 1000.0, "slot resume p95 is {p95:.2} ms");
+    ensure!(
+        resume_budget_ms < 1000.0,
+        "slot resume acceptance latency is {resume_budget_ms:.2} ms"
+    );
     Ok(())
 }
 

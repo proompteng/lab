@@ -61,8 +61,9 @@ change skips the target. Changes to its resolved packages, integrity, shared sou
 Unsupported lockfiles and unresolved required dependencies fail the planner instead of silently skipping validation.
 
 Push events retain path-based selection because Kargo requires groups of published images at one source revision.
-Manual selection retains each workflow's existing controls. Native Tengri images watch their Go and Rust build inputs;
-they do not use the root Bun lockfile.
+Manual selection retains each workflow's existing controls. Native Tengri images watch their Go and Rust build inputs
+and the Landing desktop so the controller, guest, and desktop can be promoted from one source revision; they do not
+use the root Bun lockfile.
 
 Run the planner regressions with `bun test packages/scripts/src/ci/__tests__/affected-inputs.test.ts`.
 

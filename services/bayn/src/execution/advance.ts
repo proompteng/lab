@@ -12,6 +12,7 @@ interface AdvancePass {
   readonly observation: AutonomousCyclePassObservation
   readonly result?: CycleRunResult
   readonly nextDelayMs?: number
+  readonly nextWakeAt?: string
 }
 
 export interface AdvanceExecutionCommand {
@@ -30,7 +31,7 @@ export type ExecutionBlocker =
       readonly failure: CycleRunnerError['failure']
     }
 
-export type AdvanceOutcome =
+export type AdvanceOutcome = { readonly nextWakeAt?: string } & (
   | {
       readonly _tag: 'Completed'
       readonly receiptHash: string
@@ -51,6 +52,7 @@ export type AdvanceOutcome =
       readonly nextDelayMs: number
       readonly observation: AutonomousCyclePassObservation
     }
+)
 
 export class TransientExecutionFailure extends Data.TaggedError('TransientExecutionFailure')<{
   readonly operation: 'advance' | 'receipt-hash'
@@ -140,6 +142,7 @@ const hashOutcome = (
             ...(result.outcome === 'RECOVERED' ? { action: result.action } : {}),
           },
     nextDelayMs,
+    ...(advance.nextWakeAt === undefined ? {} : { nextWakeAt: advance.nextWakeAt }),
   }
   return Effect.fromResult(canonicalHashV1Result(material)).pipe(
     Effect.mapError(
@@ -181,7 +184,11 @@ export const advanceExecutionOnce = <R>(
               ...outcome,
               receiptHash,
               nextDelayMs,
-              observation: advance.observation,
+              ...(advance.nextWakeAt === undefined ? {} : { nextWakeAt: advance.nextWakeAt }),
+              observation:
+                advance.observation.result === 'SUCCESS' && advance.nextWakeAt !== undefined
+                  ? { ...advance.observation, nextWakeAt: advance.nextWakeAt }
+                  : advance.observation,
             }),
           ),
         )

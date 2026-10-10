@@ -1,6 +1,18 @@
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Effect, Layer, ManagedRuntime, Option, Result, Scope, ScopedRef } from 'effect'
+import {
+  Cause,
+  Effect,
+  Layer,
+  Logger,
+  ManagedRuntime,
+  Option,
+  References,
+  Result,
+  Scope,
+  ScopedRef,
+  Tracer,
+} from 'effect'
 import { HttpClient } from 'effect/http'
 
 import type { ApplicationPlanFor } from '../app'
@@ -13,6 +25,7 @@ import type { BrokerReadError } from '../broker/alpaca/failures'
 import { makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
+import { withObservedSpan } from '../telemetry'
 
 export const settleCompletedBrokerObservationPoll = <R>(
   poll: Effect.Effect<BrokerObservationPoll, BrokerReadError, R>,
@@ -40,7 +53,14 @@ export const acquireBrokerObservationRuntime = (
   Scope.Scope
 > =>
   Effect.gen(function* () {
-    const persistenceResources = PostgresClientLive(plan.config).pipe(Layer.provide(NodeServices.layer))
+    const telemetry = Layer.mergeAll(
+      Layer.succeed(Logger.CurrentLoggers, yield* Logger.CurrentLoggers),
+      Layer.succeed(Tracer.Tracer, yield* Tracer.Tracer),
+    )
+    const persistenceResources = PostgresClientLive(plan.config).pipe(
+      Layer.provide(NodeServices.layer),
+      Layer.provideMerge(telemetry),
+    )
     const managed = yield* Effect.acquireRelease(
       Effect.sync(() => ManagedRuntime.make(persistenceResources)),
       (value) => value.disposeEffect,
@@ -49,7 +69,10 @@ export const acquireBrokerObservationRuntime = (
     const pollingHttp = Layer.effect(HttpClient.HttpClient, Effect.map(HttpClient.HttpClient, budget.decorate)).pipe(
       Layer.provide(alpacaHttpLayer(plan.config.alpaca)),
     )
-    const brokerResources = brokerSessionLayer(plan.config.alpaca).pipe(Layer.provide(pollingHttp))
+    const brokerResources = brokerSessionLayer(plan.config.alpaca).pipe(
+      Layer.provide(pollingHttp),
+      Layer.provideMerge(telemetry),
+    )
     const acquireBroker = Effect.acquireRelease(
       Effect.sync(() => ManagedRuntime.make(brokerResources)),
       (value) => value.disposeEffect,
@@ -78,14 +101,30 @@ export const acquireBrokerObservationRuntime = (
         poll: (signal, reservation) =>
           managed.runPromise(
             Effect.gen(function* () {
-              if (!(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))) {
+              const claim = yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)
+              if (claim._tag !== 'Claimed') {
                 yield* Effect.flatMap(store, (value) => value.invalidate)
+                if (claim._tag === 'ExpiredUnused') {
+                  // Returning this result journals proof before the owner replaces speculative debt.
+                  // Any interruption/failure before that result, or a repeated claim, keeps the full reservation.
+                  yield* Effect.logWarning('Broker observation capture expired before starting').pipe(
+                    Effect.annotateLogs({
+                      'broker.capture_not_started_reason': 'expired_unused_ticket',
+                      'broker.capture_start_lateness_ms': claim.expiredByMs,
+                    }),
+                  )
+                  return {
+                    _tag: 'Unavailable',
+                    captureNotStarted: { reason: 'ExpiredUnusedTicket', expiredByMs: claim.expiredByMs },
+                    nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
+                  } as const
+                }
                 return {
                   _tag: 'Unavailable',
                   nextPollNotBeforeMs: Math.max(reservation.interruptedNotBeforeMs, yield* budget.nextPollNotBeforeMs),
                 } as const
               }
-              // Only a claimed worker can replace its interruption reservation with measured usage.
+              // A claimed worker can replace its interruption reservation with measured usage after completion.
               // Typed, completed persistence failures have no broker request still in flight.
               return yield* settleCompletedBrokerObservationPoll(
                 Effect.gen(function* () {
@@ -94,6 +133,8 @@ export const acquireBrokerObservationRuntime = (
                   const ticket = yield* persistence.begin
                   const capture = Effect.gen(function* () {
                     const broker = yield* ScopedRef.get(brokerRuntimes)
+                    const parent = yield* Effect.currentSpan.pipe(Effect.orDie)
+                    const annotations = yield* References.CurrentLogAnnotations
                     return yield* Effect.tryPromise({
                       try: (captureSignal) =>
                         broker.runPromise(
@@ -103,13 +144,14 @@ export const acquireBrokerObservationRuntime = (
                               ticket.startedAt,
                               captureTimeoutMs,
                             )
-                          }),
+                          }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
                           { signal: captureSignal },
                         ),
                       catch: (cause) => observationUnavailable('Verified broker observation acquisition failed', cause),
                     })
                   })
                   const result = yield* capture.pipe(
+                    withObservedSpan('bayn.broker.observation.capture'),
                     Effect.timeoutOrElse({
                       duration: captureTimeoutMs,
                       orElse: () =>
@@ -131,7 +173,9 @@ export const acquireBrokerObservationRuntime = (
                     return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs } as const
                   }
                   const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
-                  const publication = yield* persistence.publish(ticket, result.success).pipe(Effect.result)
+                  const publication = yield* persistence
+                    .publish(ticket, result.success)
+                    .pipe(withObservedSpan('bayn.broker.observation.publish'), Effect.result)
                   if (Result.isFailure(publication)) {
                     yield* persistence.failed(ticket)
                     yield* Effect.logWarning('Broker observation publication failed')
@@ -154,7 +198,13 @@ export const acquireBrokerObservationRuntime = (
                 }),
                 budget.nextPollNotBeforeMs,
               )
-            }).pipe(Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.invalidate))),
+            }).pipe(
+              Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.invalidate)),
+              withObservedSpan('bayn.broker.observation.poll', {
+                'bayn.source.revision': plan.config.build.sourceRevision,
+              }),
+              Effect.annotateLogs({ sourceRevision: plan.config.build.sourceRevision }),
+            ),
             { signal },
           ),
       },

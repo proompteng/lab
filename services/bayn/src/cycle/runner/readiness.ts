@@ -89,6 +89,10 @@ export const CycleWaitReasonSchema = Schema.Union([
 
 export type CycleWaitReason = typeof CycleWaitReasonSchema.Type
 
-export type CycleWaitingDetails =
+export type CycleWaitingDetails = {
+  readonly maximumHoldDueAt?: string
+  readonly maximumHoldEvaluatedAt?: string
+} & (
   | { readonly waitReason: CycleWaitReason; readonly readiness?: never }
   | { readonly readiness: DecisionReadiness; readonly waitReason?: never }
+)
