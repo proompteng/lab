@@ -49,6 +49,7 @@ fencing despite a fresh heartbeat or a failure during a native check. Each of th
 fails with its previous implementation and passes after the fix. Additional regressions reject single-factor privileged
 reads and controller enrollment while the archive is unhealthy, and pass with an older verified passkey for ordinary
 policy/audit reads. The current policy fixture passes 587
-assertions. The pinned PostgreSQL 18.6 container fixture remains the CI
-gate. NUC access is restored through the same existing key, whose fingerprint matches the configured SSH agent,
-without changing the account or credential identity.
+assertions. The exact pinned PostgreSQL 18.6 and SpiceDB container fixture also passed on NUC with 21 commands and
+60 immutable receipts. Operational test grants remain live throughout remote offboarding checks; expiry is tested
+separately. The in-flight archive race has a bounded barrier timeout. NUC access uses the same existing key, whose
+fingerprint matches the configured SSH agent, without changing the account or credential identity.

@@ -768,7 +768,8 @@ async fn control_integration_durability_authority_and_quota() {
         human_id: identities[3].0.clone(),
         incident_id: "INC-OFZ-QUALIFICATION".into(),
         custodian_approval_id: String::new(),
-        expires_at_unix_ms: database.state().await.unwrap().now_ms + 30_000,
+        // This grant must remain live through the offboarding sequence over a remote database.
+        expires_at_unix_ms: database.state().await.unwrap().now_ms + 600_000,
     };
     let approval = execute(
         &database,
@@ -937,7 +938,7 @@ async fn control_integration_durability_authority_and_quota() {
     }
     let grant_id = Uuid::new_v4().to_string();
     let agent_id = Uuid::new_v4().to_string();
-    let expiry = database.state().await.unwrap().now_ms + 60_000;
+    let expiry = database.state().await.unwrap().now_ms + 600_000;
     let grant_command = request(
         &database,
         owner,
@@ -1267,27 +1268,31 @@ async fn control_integration_durability_authority_and_quota() {
     let paused_native = native
         .clone()
         .with_check_barrier(checked.clone(), resume.clone());
-    let (in_flight, ()) = tokio::join!(
-        read(
-            &database,
-            &paused_native,
-            owner,
-            &uid,
-            Action::WorkspaceMetadataRead
-        ),
-        async {
-            checked.notified().await;
-            admin
-                .pool
-                .get()
-                .await
-                .unwrap()
-                .execute("UPDATE ofz.archive_state SET acknowledged_at_ms=0", &[])
-                .await
-                .unwrap();
-            resume.notify_one();
-        }
-    );
+    let (in_flight, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(
+            read(
+                &database,
+                &paused_native,
+                owner,
+                &uid,
+                Action::WorkspaceMetadataRead
+            ),
+            async {
+                checked.notified().await;
+                admin
+                    .pool
+                    .get()
+                    .await
+                    .unwrap()
+                    .execute("UPDATE ofz.archive_state SET acknowledged_at_ms=0", &[])
+                    .await
+                    .unwrap();
+                resume.notify_one();
+            }
+        )
+    })
+    .await
+    .expect("native-check race must reach and release its barrier");
     assert_eq!(
         in_flight.unwrap_err().code(),
         Code::DeadlineExceeded,
