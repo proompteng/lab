@@ -14,7 +14,6 @@ import {
 } from '../jev/batch'
 import { JevBatchExpired, JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest } from '../jev/evidence'
-import { JevEvaluationStore } from '../jev/evaluation'
 import {
   decodeJevResolution,
   makeJevResolution,
@@ -25,6 +24,7 @@ import { reproduceJevTradingSignalBatch } from '../jev/trading-signals'
 import { Sha256Schema, SymbolSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
+import { readJevEvaluationEvidence } from './jev-evaluation-read'
 
 const StoredRow = Schema.Struct({ plan: Schema.Unknown, result: Schema.NullOr(Schema.Unknown) })
 const StoredEvaluationRow = Schema.Struct({
@@ -37,7 +37,6 @@ const OneBatch = Schema.Tuple([Schema.Struct({ batch_id: Sha256Schema })])
 
 export const makeJevBatchStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
-  const evaluations = yield* JevEvaluationStore
   const persistError = (cause: unknown) =>
     operationalError({
       component: 'database',
@@ -69,9 +68,15 @@ export const makeJevBatchStore = Effect.gen(function* () {
       if (plan.batchId !== batchId) return yield* persistError('Stored Jev batch identity differs')
       if (row.result === null) return { plan, result: null } satisfies JevBatchEvidence
       const result = yield* Effect.fromResult(decodeJevBatchResult(plan, row.result))
+      const evidenceByRequestId = yield* readJevEvaluationEvidence(
+        sql,
+        result.candidates.flatMap((candidate) =>
+          candidate.status === JevCandidateResultStatus.Excluded ? [] : [candidate.requestId],
+        ),
+      )
       for (const candidate of result.candidates) {
         if (candidate.status === JevCandidateResultStatus.Excluded) continue
-        const evidence = yield* evaluations.read(candidate.requestId)
+        const evidence = evidenceByRequestId.get(candidate.requestId) ?? null
         if (candidate.status === JevCandidateResultStatus.Unattempted) {
           if (evidence !== null) return yield* persistError('A sealed unattempted candidate has a request claim')
         } else if (

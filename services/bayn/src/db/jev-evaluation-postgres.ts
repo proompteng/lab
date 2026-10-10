@@ -16,20 +16,10 @@ import { reproduceJevRequestFromVerifiedObservation } from '../jev/trading-signa
 import { decodeJevBatchPlan, decodeJevBatchResult, JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
 import { JevPurpose } from '../jev/portfolio'
 import { utcInstantFromEpochMillis } from '../time'
-import {
-  decodeJevResolution,
-  JevResolutionStatus,
-  makeJevResolution,
-  type JevEvaluationEvidence,
-  type JevResolution,
-} from '../jev/resolution'
+import { JevResolutionStatus, makeJevResolution, type JevResolution } from '../jev/resolution'
 import { Sha256Schema, strictParseOptions } from '../schemas'
+import { readJevEvaluationEvidence, requireJevCandidateObservations } from './jev-evaluation-read'
 
-const StoredRow = Schema.Struct({
-  request: Schema.Unknown,
-  receipt: Schema.NullOr(Schema.Unknown),
-  resolution: Schema.NullOr(Schema.Unknown),
-})
 const Matches = Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })])
 
 export const makeJevEvaluationStore = Effect.gen(function* () {
@@ -47,65 +37,9 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
       return yield* persistError('Jev evidence must commit independently before inference or decision use')
     }
   })
-  const requireCandidateObservation = (request: JevEvaluationRequest) =>
-    Effect.gen(function* () {
-      const rows = yield* Schema.decodeUnknownEffect(
-        Schema.Array(Schema.Struct({ content_hash: Sha256Schema, payload: Schema.Unknown })),
-        strictParseOptions,
-      )(
-        yield* sql`
-        SELECT content_hash, payload FROM intraday_candidate_observations
-        WHERE cycle_id = ${request.cycleId}
-          AND observed_at = ${request.observedAt}::timestamptz
-          AND payload->>'authorityGenerationHash' = ${request.authorityGenerationHash}
-          AND payload->>'observedAt' = ${request.observedAt}
-          AND payload->'manifest'->>'observedAt' = ${request.observedAt}
-          AND payload->'manifest'->>'snapshotId' = ${request.snapshotId}
-          AND payload->'manifest'->'candidateSymbols' ? ${request.symbol}
-          AND NOT EXISTS (
-            SELECT 1 FROM jsonb_array_elements(payload->'manifest'->'candidateExclusions') AS excluded
-            WHERE excluded->>'symbol' = ${request.symbol}
-          )
-      `,
-      )
-      if (rows.length === 0)
-        return yield* persistError(
-          'Jev request has no matching persisted candidate observation for its cycle, generation, snapshot, symbol and time',
-        )
-      for (const row of rows) {
-        if ((yield* Effect.fromResult(canonicalHashV1Result(row.payload))) !== row.content_hash)
-          return yield* persistError('Jev candidate observation content differs from its committed identity')
-      }
-      return rows
-    }).pipe(withObservedStage('bayn.jev.observation-integrity', { dependency: 'postgresql' }))
+  const requireCandidateObservation = (request: JevEvaluationRequest) => requireJevCandidateObservations(sql, [request])
   const read = (input: string) =>
-    Effect.gen(function* () {
-      const requestId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
-      const rows = yield* Schema.decodeUnknownEffect(
-        Schema.Array(StoredRow),
-        strictParseOptions,
-      )(
-        yield* sql`
-        SELECT request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution
-        FROM jev_evaluation_requests AS request
-        LEFT JOIN jev_evaluation_receipts AS receipt USING (request_id)
-        LEFT JOIN jev_evaluation_resolutions AS resolution USING (request_id)
-        WHERE request.request_id = ${requestId}
-      `,
-      )
-      const row = rows[0]
-      if (row === undefined) return null
-      const request = yield* Effect.fromResult(decodeJevEvaluationRequest(row.request))
-      if (request.requestId !== requestId) return yield* persistError('Stored Jev request identity differs')
-      yield* requireCandidateObservation(request)
-      const receipt =
-        row.receipt === null ? null : yield* Effect.fromResult(decodeJevEvaluationReceipt(request, row.receipt))
-      const resolution =
-        row.resolution === null ? null : yield* Effect.fromResult(decodeJevResolution(request, receipt, row.resolution))
-      if (receipt !== null && resolution === null)
-        return yield* persistError('A Jev receipt has no committed resolution')
-      return { request, receipt, resolution } satisfies JevEvaluationEvidence
-    }).pipe(Effect.mapError(persistError))
+    readJevEvaluationEvidence(sql, [input]).pipe(Effect.map((evidence) => evidence.get(input) ?? null))
   const lockRequest = (request: JevEvaluationRequest) =>
     sql`
       SELECT payload = ${sql.json(request)} AS matches
