@@ -8,7 +8,6 @@ import YAML from 'yaml'
 
 const repositoryRoot = resolve(import.meta.dir, '../../../..')
 const imagesPath = resolve(repositoryRoot, '.github/workflows/tengri-images.yml')
-const controllerPath = resolve(repositoryRoot, '.github/workflows/tengri-controller.yaml')
 const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dockerfile')
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
 
@@ -381,11 +380,18 @@ exit 0
     }
   })
 
-  it('keeps the controller workflow separate from image publication', () => {
-    const source = readFileSync(controllerPath, 'utf8')
+  it('validates the controller once without losing Rust, authorization, interoperability, or CRD checks', () => {
+    const validation = readFileSync(imagesPath, 'utf8').match(/validate-tengri:\n[\s\S]*?\n  validate-nanoagent:/)?.[0]
 
-    expect(source).not.toContain('docker/build-push-action')
-    expect(source).not.toContain('cosign sign')
+    expect(existsSync(resolve(repositoryRoot, '.github/workflows/tengri-controller.yaml'))).toBe(false)
+    expect(validation).toContain('cargo fmt --check')
+    expect(validation).toContain('cargo clippy --locked --all-targets -- -D warnings')
+    expect(validation).toContain('cargo test --locked --all-targets')
+    expect(validation).toContain('bash test-authz.sh')
+    expect(validation).toContain('bash test-rpc-interop.sh')
+    expect(validation).toContain('cargo run --locked --quiet --bin crdgen')
+    expect(validation).toContain('diff -u /tmp/tengri-crd.yaml crd.yaml')
+    expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
   })
 
   it.each(['save', 'config', 'portable'])('verifies the saved configuration for fixture %s', (scenario) => {

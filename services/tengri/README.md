@@ -185,7 +185,7 @@ relationships before deleting the guest resources and releasing the finalizer.
 Run `bash services/tengri/test-authz.sh` to test schema installation, enrollment with a Kubernetes write conflict,
 owner and foreign-user checks, namespace isolation, stream revocation, restart without re-granting, and preservation
 of another application's schema against the pinned real SpiceDB image. It creates and removes an isolated local
-Docker container and uses only a disposable test key. Both controller and image CI gates run this test.
+Docker container and uses only a disposable test key. Controller validation in the image workflow runs this test.
 
 `TENGRI_INTERNAL_HMAC_SECRET` normally contains one base64url key of at least 32 bytes. Rotate it without an
 authentication outage by sealing `new,current` into both namespace-scoped manifests in the same commit: the BFF signs
