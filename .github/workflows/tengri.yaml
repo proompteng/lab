@@ -56,6 +56,12 @@ jobs:
         with:
           toolchain: 1.90.0
 
+      - name: Cache editor acceptance Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: landing-editor-acceptance
+          workspaces: services/tengri -> target
+
       - name: Install browser acceptance prerequisites
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler iproute2
 

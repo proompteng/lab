@@ -129,6 +129,13 @@ jobs:
         with:
           toolchain: 1.90.0
 
+      - name: Cache editor acceptance Rust dependencies
+        if: ${{ matrix.target == 'landing' }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: landing-editor-acceptance
+          workspaces: services/tengri -> target
+
       - name: Install editor acceptance prerequisites
         if: ${{ matrix.target == 'landing' }}
         run: sudo apt-get install --yes --no-install-recommends protobuf-compiler iproute2
