@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
+fixture_mode="${1:-control}"
+case "$fixture_mode" in control|identity) ;; *) printf 'Expected control or identity fixture\n' >&2; exit 2 ;; esac
 fixture_dir="$(mktemp -d)"
 fixture_name="ofz-control-$(basename "$fixture_dir" | tr '[:upper:]' '[:lower:]')"
 fixture_database="$fixture_name-db"
@@ -72,7 +74,14 @@ export OFZ_TEST_NATIVE_KEY_FILE="$fixture_dir/native.key"
 export OFZ_TEST_NATIVE_ENDPOINT="http://127.0.0.1:$fixture_port"
 for attempt in $(seq 1 60); do
   if curl --silent --fail --max-time 1 "$OFZ_TEST_NATIVE_ENDPOINT/healthz" >/dev/null; then
-    cargo test --locked --lib control_integration -- --ignored --nocapture
+    if [[ "$fixture_mode" == control ]]; then
+      cargo test --locked --lib control_integration -- --ignored --nocapture
+    else
+      : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.7.3 distribution}"
+      cargo build --locked
+      cd ../../apps/landing
+      OFZ_IDENTITY_FIXTURE=1 bun test src/lib/tengri/identity.e2e.test.ts
+    fi
     exit 0
   fi
   if [[ "$attempt" == 60 ]]; then fixture_docker logs "$fixture_name"; exit 1; fi

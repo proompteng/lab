@@ -283,6 +283,20 @@ def main():
         route = route.removesuffix("/.")
         for method in next_methods(path.read_text()):
             actual["bff_http"].add(f"{method} {route}")
+    access = (ROOT / "apps/landing/src/app/api/tengri/access/route.ts").read_text()
+    actual["bff_access"] = set(re.findall(r"case '([^']+)':", access))
+    auth = (ROOT / "apps/landing/src/lib/tengri/auth.ts").read_text()
+    actual["bff_auth"] = set(
+        re.findall(r"case '((?:GET|POST) /api/auth/[^']+)':", auth)
+    )
+    auth_route = (ROOT / "apps/landing/src/app/api/auth/[...all]/route.ts").read_text()
+    actual["bff_auth_http"] = {
+        f"{method} /api/auth/[...all]"
+        for method in re.findall(
+            r"export\s+(?:(?:async\s+)?function|const)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b",
+            auth_route,
+        )
+    }
     guest_http = "\n".join(
         path.read_text()
         for path in (ROOT / "services/nanoagent").rglob("*.go")

@@ -75,5 +75,28 @@ stream receipt binding, audit/archive failure and transfer quarantine before rec
 `OFZ_FIXTURE_SSH=kalmyk@nuc.ide-newton.ts.net` to run its disposable containers on the authorized NUC; SSH tunnels keep
 fixture ports local. These checks exercise control behavior, not the yet-unmigrated BFF, controller or guest.
 
+The Landing BFF now uses a schema-generated Ofz client with exact SPIFFE peer verification. Its dedicated Keycloak
+realm requires GitHub brokerage and verified passkeys. Ofz verifies issuer, audience, nonce, immutable numeric GitHub
+identity, authentication time and assurance level before issuing a hash-only opaque SQL session. Reauthentication
+revokes the previous browser credential in the same transaction. Failed establishment records an immutable denial
+without storing the ID token. Platform membership remains necessary after successful identity-provider authentication.
+
+The Access UI submits typed, versioned commands through the BFF. It verifies GitHub usernames against numeric IDs,
+requires fresh MFA for changes, shows quota usage and audit receipts, and retries an uncertain command with its original
+operation ID. The independent `/access` page permits policy administration without starting a guest or opening content.
+
+Run the isolated browser qualification with Java 21, Chromium and the checksum-verified Keycloak distribution:
+
+```sh
+export KEYCLOAK_FIXTURE_BIN="$(bash services/ofz/tests/keycloak-runtime.sh /tmp/ofz-keycloak)"
+bash services/ofz/test-control.sh identity
+```
+
+This fixture uses real Keycloak, Ofz, SPIFFE mTLS, PostgreSQL and SpiceDB, with a synthetic GitHub upstream and virtual
+passkeys. It exercises duplicate-email identity separation, membership and quota changes through the actual Access UI,
+minimum-administrator protection, stale MFA and fresh step-up, downgraded assurance denial, nonmember admission denial,
+cookie replacement, logout and replay. Production custodian enrollment, runtime enforcement, HA and deployed acceptance
+remain migration gates.
+
 Prepared cutover resources live in [`argocd/applications/ofz/control-plane`](../../argocd/applications/ofz/control-plane/README.md).
 They are excluded from the active application until coordinated release, identity, archive, credential and migration gates pass.

@@ -13,6 +13,7 @@ const agent: TengriAgent = {
   cpuMillis: 2_000,
   memoryMib: 4_096,
   workspaceGib: 32,
+  uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
   power: { idleTimeoutMinutes: 60 },
   nodeName: 'ryzen',
   message: '',

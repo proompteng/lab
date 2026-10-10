@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "proompteng";
   packageName = "landing";
   depsHash = {
-    x86_64-linux = "sha256-cGAzFONycL6YyIdqW69BI0sIfxpzWAXS94OC2Q0/T+8=";
-    aarch64-linux = "sha256-AfYNDGgf0LCShBL0+8JUo21PI93V+1eyVNM8vYx8D/4=";
+    x86_64-linux = "sha256-Q2THZ2u6gYYmFFGI/22Qhb/A5EREgVp4yrgb1IUMDnQ=";
+    aarch64-linux = "sha256-qkt9yfYWf3E2/gjt0dr07GBoBE0qWHcVOtLhDUSWyHI=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -26,6 +26,7 @@ import ./bun-workspace-service.nix {
     "packages/backend"
     "packages/design"
     "services/tengri/proto"
+    "services/tengri/migrations"
   ];
   buildCommands = [
     "bun --cwd=apps/landing run prebuild"
@@ -40,6 +41,8 @@ import ./bun-workspace-service.nix {
     fi
     mkdir -p "$out/app/services/tengri/proto"
     cp -R "$TMPDIR/work/services/tengri/proto/." "$out/app/services/tengri/proto/"
+    mkdir -p "$out/app/services/tengri/migrations"
+    cp -R "$TMPDIR/work/services/tengri/migrations/." "$out/app/services/tengri/migrations/"
   '';
   command = [
     "node"

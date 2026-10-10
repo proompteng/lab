@@ -461,6 +461,28 @@ class InventoryTests(unittest.TestCase):
                     ):
                         inventory.main()
 
+    def test_new_identity_or_administration_handler_requires_classification(self):
+        read_text = Path.read_text
+        for suffix, anchor in [
+            ("api/tengri/access/route.ts", "case 'membership':"),
+            ("lib/tengri/auth.ts", "case 'POST /api/auth/login':"),
+        ]:
+            with self.subTest(suffix=suffix):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith(suffix):
+                        content = content.replace(
+                            anchor, "case 'POST /api/auth/bypass':" + anchor, 1
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*bypass"
+                    ):
+                        inventory.main()
+
 
 if __name__ == "__main__":
     unittest.main()

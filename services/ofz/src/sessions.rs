@@ -36,11 +36,11 @@ struct Claims {
     github_id: String,
     identity_provider: String,
     #[serde(default)]
-    name: String,
+    name: Option<String>,
     #[serde(default)]
-    email: String,
+    email: Option<String>,
     #[serde(default)]
-    picture: String,
+    picture: Option<String>,
 }
 
 impl Issuer {
@@ -133,9 +133,49 @@ impl Issuer {
         validation.leeway = 0;
         validation.validate_nbf = true;
         validation.set_required_spec_claims(&["exp", "iat", "iss", "aud", "sub"]);
-        let claims = decode::<Claims>(token, &key, &validation)
-            .map_err(|_| Status::unauthenticated("identity verification failed"))?
+        let claims = decode::<serde_json::Value>(token, &key, &validation)
+            .map_err(|error| {
+                use jsonwebtoken::errors::ErrorKind;
+                Status::unauthenticated(match error.kind() {
+                    ErrorKind::InvalidAudience => "identity audience rejected",
+                    ErrorKind::InvalidIssuer => "identity issuer rejected",
+                    ErrorKind::ExpiredSignature => "identity response expired",
+                    _ => "identity signature or standard claims rejected",
+                })
+            })?
             .claims;
+        for field in [
+            "sub",
+            "sid",
+            "nonce",
+            "acr",
+            "github_id",
+            "identity_provider",
+        ] {
+            if !claims.get(field).is_some_and(serde_json::Value::is_string) {
+                return Err(Status::unauthenticated(format!(
+                    "identity string claim required: {field}"
+                )));
+            }
+        }
+        for field in ["exp", "iat", "auth_time"] {
+            if claims
+                .get(field)
+                .and_then(serde_json::Value::as_u64)
+                .is_none()
+            {
+                return Err(Status::unauthenticated(format!(
+                    "identity timestamp claim required: {field}"
+                )));
+            }
+        }
+        let claims: Claims = serde_json::from_value(claims)
+            .map_err(|_| Status::unauthenticated("identity claims incomplete"))?;
+        if claims.acr != "2" {
+            return Err(Status::unauthenticated(
+                "verified passkey assurance required",
+            ));
+        }
         if claims.nonce != nonce
             || claims.identity_provider != "github"
             || !policy::canonical_uuid(&claims.sub)
@@ -146,16 +186,19 @@ impl Issuer {
             || claims.exp <= now
             || claims.auth_time > now + 30
             || claims.auth_time > claims.iat + 30
+            || claims.auth_time + 120 < now
         {
             return Err(Status::unauthenticated("identity claim binding failed"));
         }
         policy::github_human_id(&claims.github_id)?;
+        let picture = claims.picture.as_deref().unwrap_or_default();
         if [&claims.name, &claims.email]
-            .iter()
+            .into_iter()
+            .flatten()
             .any(|value| value.len() > 256 || value.chars().any(char::is_control))
-            || claims.picture.len() > 2048
-            || !claims.picture.is_empty()
-                && !reqwest::Url::parse(&claims.picture).is_ok_and(|url| {
+            || picture.len() > 2048
+            || !picture.is_empty()
+                && !reqwest::Url::parse(picture).is_ok_and(|url| {
                     url.scheme() == "https"
                         && url.host_str() == Some("avatars.githubusercontent.com")
                         && url.username().is_empty()
@@ -240,6 +283,48 @@ pub async fn establish(
     peer: &str,
     request: EstablishSessionRequest,
 ) -> Result<Session, Status> {
+    let operation_id = if policy::canonical_uuid(&request.operation_id) {
+        request.operation_id.clone()
+    } else {
+        String::new()
+    };
+    match establish_verified(database, native, issuer, peer, request).await {
+        Ok(session) => Ok(session),
+        Err(mut error) => {
+            let context = RequestContext {
+                actor: Some(Actor {
+                    identity: Some(Identity::WorkloadId(peer.into())),
+                }),
+                contract_version: crate::CONTRACT_VERSION,
+                ..Default::default()
+            };
+            let receipt = store::receipt(
+                &context,
+                peer,
+                policy::platform(),
+                Action::SessionEstablish,
+                false,
+                &operation_id,
+                error.message(),
+            );
+            let id = database.audit(&receipt, "").await?;
+            error.metadata_mut().insert(
+                "x-ofz-audit-receipt",
+                id.parse()
+                    .map_err(|_| Status::internal("invalid audit receipt"))?,
+            );
+            Err(error)
+        }
+    }
+}
+
+async fn establish_verified(
+    database: &Database,
+    native: &Native,
+    issuer: &Issuer,
+    peer: &str,
+    request: EstablishSessionRequest,
+) -> Result<Session, Status> {
     if peer != BFF_ID {
         return Err(Status::permission_denied(
             "session establishment caller denied",
@@ -257,6 +342,17 @@ pub async fn establish(
     }
     let hash = Sha256::digest(request.credential.as_bytes()).to_vec();
     let fingerprint = Sha256::digest(store::encode(&request)?.to_string().as_bytes()).to_vec();
+    if !request.previous_credential.is_empty()
+        && (request.previous_credential.len() != 43
+            || !request
+                .previous_credential
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
+    {
+        return Err(Status::invalid_argument(
+            "invalid previous session credential",
+        ));
+    }
     let state = database.state().await?;
     if state.fenced || !state.archive_healthy {
         return Err(Status::unavailable("identity audit archive unavailable"));
@@ -336,19 +432,27 @@ pub async fn establish(
         human_id: human.clone(),
         expires_at_unix_ms: state.now_ms + 28_800_000,
         idle_deadline_unix_ms: state.now_ms + 1_800_000,
-        mfa_at_unix_ms: if claims.acr == "2" {
-            claims.auth_time * 1000
-        } else {
-            0
-        },
+        mfa_at_unix_ms: claims.auth_time * 1000,
         recovery_generation: state.recovery_generation,
         credential: request.credential.clone(),
         github_id: claims.github_id.clone(),
-        display_name: claims.name.clone(),
-        email: claims.email.clone(),
-        image_url: claims.picture.clone(),
+        display_name: claims.name.unwrap_or_default(),
+        email: claims.email.unwrap_or_default(),
+        image_url: claims.picture.unwrap_or_default(),
     };
-    tx.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,display_name,email,image_url,establishment_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", &[&id,&hash,&human,&claims.sub,&claims.sid,&operation,&(session.expires_at_unix_ms as i64),&(session.idle_deadline_unix_ms as i64),&(session.mfa_at_unix_ms as i64),&(session.recovery_generation as i64),&claims.github_id,&claims.name,&claims.email,&claims.picture,&fingerprint]).await.map_err(sql_error)?;
+    tx.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,display_name,email,image_url,establishment_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", &[&id,&hash,&human,&claims.sub,&claims.sid,&operation,&(session.expires_at_unix_ms as i64),&(session.idle_deadline_unix_ms as i64),&(session.mfa_at_unix_ms as i64),&(session.recovery_generation as i64),&claims.github_id,&session.display_name,&session.email,&session.image_url,&fingerprint]).await.map_err(sql_error)?;
+    if !request.previous_credential.is_empty() {
+        let previous_hash = Sha256::digest(request.previous_credential.as_bytes()).to_vec();
+        if let Some(previous) = tx.query_opt("UPDATE ofz.sessions SET revoked=true WHERE token_hash=$1 AND NOT revoked RETURNING id,human_id", &[&previous_hash]).await.map_err(sql_error)? {
+            let context = RequestContext {
+                actor: Some(Actor { identity: Some(Identity::HumanId(previous.get(1))) }),
+                session_id: previous.get::<_,Uuid>(0).to_string(),
+                contract_version: crate::CONTRACT_VERSION,
+                ..Default::default()
+            };
+            store::record_audit(&*tx, &store::receipt(&context, peer, policy::platform(), Action::SessionInspect, true, &request.operation_id, "browser session replaced"), "").await?;
+        }
+    }
     let context = RequestContext {
         actor: Some(Actor {
             identity: Some(Identity::HumanId(human)),

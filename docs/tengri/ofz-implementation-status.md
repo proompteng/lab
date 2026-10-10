@@ -10,7 +10,7 @@ Production keeps its current authority until the coordinated hard cutover. New c
 - [x] Identify the requested independent recovery host: `nuc.ide-newton.ts.net`.
 - [x] P1: final schema, typed API, action inventory, real SpiceDB role/expiry/revocation tests.
 - [x] P2 source and isolated control proof: Ofz service, durable commands, quotas, audit and database migrations.
-- [ ] P3: Keycloak identity, shared sessions and Access UI.
+- [x] P3 source and isolated browser proof: Keycloak identity, shared sessions and Access UI.
 - [ ] P4: shared tickets, leadership and failover.
 - [ ] P5: enforce every runtime channel and add pure observers.
 - [ ] P6: proof-bound diagnostic grants, Kubernetes and connector brokers.
@@ -53,3 +53,11 @@ assertions. The exact pinned PostgreSQL 18.6 and SpiceDB container fixture also 
 60 immutable receipts. Operational test grants remain live throughout remote offboarding checks; expiry is tested
 separately. The in-flight archive race has a bounded barrier timeout. NUC access uses the same existing key, whose
 fingerprint matches the configured SSH agent, without changing the account or credential identity.
+
+P3 local evidence: Keycloak 26.7.3 with Java 21, real TLS PostgreSQL 18.1, SpiceDB 1.56.2, Ofz and the BFF passed the
+isolated Chromium fixture with a synthetic GitHub upstream and virtual user-verified passkeys. The fixture checks
+duplicate-email identity separation, admission denial with an immutable receipt, browser membership/quota changes,
+the two-administrator minimum, stale MFA rejection, fresh passkey step-up, downgraded assurance rejection, atomic
+session-cookie replacement, shared SQL inspection, logout revocation and HEAD/replay rejection. The Landing suite
+passed 295 tests, including the smaller-body-limit regression. The control fixture passed 19 commands and 54 immutable
+receipts. Exact pinned-container CI, real custodian enrollment and deployed product proof remain later gates.

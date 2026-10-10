@@ -12,7 +12,7 @@ void mock.module('@/lib/tengri/auth', () => ({
   isTengriAuthConfigured: () => authConfigured,
 }))
 
-process.env.BETTER_AUTH_URL = 'https://proompteng.ai'
+process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
 
 const [{ GET: getSnapshot }, { GET: watchCodexEvents }, { GET: watchFileEvents }] = await Promise.all([
   import('../../app/api/tengri/route'),
@@ -30,7 +30,7 @@ describe('Tengri BFF GET origin enforcement', () => {
   beforeEach(() => {
     identityLookups = 0
     authConfigured = true
-    process.env.BETTER_AUTH_URL = 'https://proompteng.ai'
+    process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
   })
 
   test.each(handlers)('rejects cross-origin %s before authenticating the request', async (_name, handler, url) => {
@@ -60,12 +60,12 @@ describe('Tengri BFF GET origin enforcement', () => {
     expect(identityLookups).toBe(1)
   })
 
-  test('preserves the unconfigured localhost snapshot when BETTER_AUTH_URL is unset', async () => {
-    delete process.env.BETTER_AUTH_URL
+  test('uses the fixed public origin for an unconfigured snapshot', async () => {
+    delete process.env.TENGRI_DESKTOP_ORIGIN
     authConfigured = false
 
     const response = await getSnapshot(
-      new Request('http://localhost:3000/api/tengri', {
+      new Request('https://proompteng.ai/api/tengri', {
         headers: { 'sec-fetch-site': 'same-origin' },
       }),
     )

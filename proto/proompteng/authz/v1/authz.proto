@@ -143,6 +143,7 @@ message SetMembership {
   string human_id = 1;
   PlatformRole role = 2;
   bool enabled = 3;
+  string github_id = 4;
 }
 
 message SetWorkspaceRole {
@@ -289,12 +290,27 @@ message AccessEntry {
   string grant_id = 3;
   repeated Action actions = 4;
   uint64 expires_at_unix_ms = 5;
+  string github_id = 6;
+  ObservationScope scope = 7;
+  Resource resource = 8;
+}
+
+message QuotaRecord {
+  string human_id = 1;
+  uint32 total_workspaces = 2;
+  uint32 active_workspaces = 3;
+  uint64 retained_bytes = 4;
+  uint32 used_workspaces = 5;
+  uint32 used_active = 6;
+  uint64 used_bytes = 7;
 }
 
 message ListAccessResponse {
   repeated AccessEntry entries = 1;
   string cursor = 2;
   uint64 version = 3;
+  repeated QuotaRecord quotas = 4;
+  string workspace_state = 5;
 }
 
 message ReadAuditRequest {
@@ -336,6 +352,8 @@ message EstablishSessionRequest {
   string identity_token = 1;
   string nonce = 2;
   string operation_id = 3;
+  // Browser cookie being replaced, if present. Revoked atomically with issuance.
+  string previous_credential = 4;
   // BFF-generated 256-bit base64url credential, reused only for an exact retry.
   // Ofz persists its hash and the request fingerprint, never this plaintext.
   string credential = 5;

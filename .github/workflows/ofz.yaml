@@ -8,7 +8,12 @@ on:
       - 'services/tengri/**'
       - 'services/nanoagent/**'
       - 'apps/landing/src/app/api/tengri/**'
-      - 'apps/landing/src/lib/tengri/schemas.ts'
+      - 'apps/landing/src/app/api/auth/**'
+      - 'apps/landing/src/lib/tengri/**'
+      - 'apps/landing/src/components/tengri/**'
+      - 'argocd/applications/keycloak/tengri/**'
+      - 'apps/landing/package.json'
+      - 'bun.lock'
       - '.github/workflows/ofz.yaml'
   push:
     branches: [main]
@@ -18,7 +23,12 @@ on:
       - 'services/tengri/**'
       - 'services/nanoagent/**'
       - 'apps/landing/src/app/api/tengri/**'
-      - 'apps/landing/src/lib/tengri/schemas.ts'
+      - 'apps/landing/src/app/api/auth/**'
+      - 'apps/landing/src/lib/tengri/**'
+      - 'apps/landing/src/components/tengri/**'
+      - 'argocd/applications/keycloak/tengri/**'
+      - 'apps/landing/package.json'
+      - 'bun.lock'
       - '.github/workflows/ofz.yaml'
   workflow_dispatch:
 
@@ -32,7 +42,7 @@ permissions:
 jobs:
   validate:
     runs-on: arc-amd64
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -63,3 +73,27 @@ jobs:
           cargo test --locked
           bash test-policy.sh
           bash test-control.sh
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install identity fixture dependencies
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
+          bunx playwright install --with-deps chromium
+          echo "KEYCLOAK_FIXTURE_BIN=$(bash services/ofz/tests/keycloak-runtime.sh "$RUNNER_TEMP/ofz-keycloak")" >> "$GITHUB_ENV"
+      - name: Verify generated authorization client
+        run: |
+          buf generate --template services/ofz/buf.gen.yaml --path proto/proompteng/authz
+          git diff --exit-code -- apps/landing/src/lib/tengri/generated
+      - name: Validate BFF identity and administration
+        run: |
+          set -euo pipefail
+          bunx tsc --noEmit --project apps/landing/tsconfig.json --pretty false
+          bun run --cwd apps/landing test
+      - name: Verify real browser identity and shared sessions
+        run: bash services/ofz/test-control.sh identity
