@@ -43,6 +43,7 @@ import {
   Stream,
 } from 'effect'
 import { strictParseOptions } from '../../schemas'
+import { makeKafkaArrivalEnvelope } from './arrival-envelope'
 import {
   featureAvailabilityMeasurement,
   partitionLagMeasurements,
@@ -343,6 +344,14 @@ export const makeKafkaMarketProjection = (
         let consumerSequence = 0
         let consumerKnownRawBytes = 0
         let consumerUnknownRawByteLengthRecords = 0
+        const arrivals = makeKafkaArrivalEnvelope()
+        yield* Effect.addFinalizer(() =>
+          Effect.logInfo('Kafka market projection arrival measurements finalized', {
+            epoch,
+            consumerSequence,
+            arrivalEnvelope: arrivals.measurement(),
+          }),
+        )
         projection = emptyStreamingProjection(epoch, universe.topics.technicalFeatures)
         ready = false
         bootstrap = undefined
@@ -592,6 +601,7 @@ export const makeKafkaMarketProjection = (
               }
               if (invalidation !== undefined && capture === undefined) return
               const availableAtMs = clock.currentTimeMillisUnsafe()
+              arrivals.observe(availableAtMs, record.tombstone === true ? 0 : record.rawByteLength)
               const previousProjection = projection
               const previousSequence = projection.sequence
               if (invalidation === undefined && record.tombstone !== true)
@@ -764,6 +774,7 @@ export const makeKafkaMarketProjection = (
               consumerSequence,
               consumerKnownRawBytes,
               consumerUnknownRawByteLengthRecords,
+              arrivalEnvelope: arrivals.measurement(),
               bootstrapComplete: ready,
               available: ready && lastFailure === undefined,
               failureOperation: lastFailure?.operation ?? null,

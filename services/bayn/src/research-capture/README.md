@@ -233,6 +233,12 @@ latency that independently exceeds the workload's retention envelope.
 Before changing storage architecture, correlate actual capture persistence, object and SQL spans for the same
 synthetic operation and measure a bounded original-arrival workload envelope. Thirty-second counters only give
 coarse rates; reconstructed producer timestamps and unrelated Jev SQL COMMIT spans cannot supply capture phase timings.
+The native consumer's existing periodic log now includes a fixed-size `arrivalEnvelope` for observed 1, 10, 100 and
+1000 ms windows. Its aligned lower bounds and adjacent-bin upper bounds measure incorporation-boundary record and
+raw-value byte bursts, including bootstrap, without enabling capture. Missing byte lengths or invalid clocks remain
+explicit. Use the bounds and their actual epoch/observation interval when selecting a diagnostic workload; zero
+records, a partial epoch, payload-only bytes or a synthetic schedule cannot qualify full-session capacity. See the
+[streaming measurement contract](../market-data/streaming/README.md#session-measurements).
 
 ## Bounded native-visible replay
 

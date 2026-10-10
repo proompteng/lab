@@ -142,6 +142,27 @@ remain unknown. Tombstones contribute zero value bytes. These cumulative counter
 Compute interval rates from counter differences within the same epoch and the actual `observedAtMs` difference.
 Thirty-second samples do not prove peak rates, continuity or original-session capture coverage. Payload lengths
 remain available with capture disabled; hashing and raw-byte retention run only when requested by the capture observer.
+
+The same periodic log includes `arrivalEnvelope` (`bayn.kafka-arrival-envelope.v1`). It reuses each record's existing
+incorporation-boundary millisecond timestamp and exact raw value length, keeping four fixed scalar accumulators for
+1, 10, 100 and 1000 ms bins. No payload, per-record log, additional clock sample or storage operation is added.
+Within the measured epoch, `maximumAlignedWindowRecords` is a lower bound on the largest count in any window of
+that width; `maximumWindowRecordsUpperBound` is the conservative upper bound from two adjacent aligned bins. The
+two values bracket the exact rolling maximum; the upper bound can overcount a boundary-spanning window. Known-byte
+lower bounds and complete raw-byte upper bounds follow the same rule. One unknown non-tombstone length makes every
+raw-byte upper bound null for that epoch. Tombstones count as one record and zero value bytes.
+`Kafka market projection arrival measurements finalized` emits the final measured prefix once when the consumer
+scope closes, including failed epochs that ended before their first periodic report. Finalization of this diagnostic
+does not assert successful consumer closure or complete source coverage.
+
+Clock regression, an invalid clock or unsafe counter arithmetic permanently invalidates the envelope and makes its
+upper bounds null, retaining only the measured prefix. The observer never changes projection or trading behavior.
+It resets with the consumer epoch, includes bootstrap and ignored/rejected records reaching the timestamp boundary,
+and does not sample records discarded before that boundary after invalidation. An empty epoch is no workload
+measurement. These observed bounds exclude keys, headers, framing, SQL metadata, replication and runtime memory;
+they neither predict future arrivals nor prove continuity, capture capacity or complete session coverage. Correlate
+them with same-operation object/SQL phase timings before choosing a bounded capacity workload.
+
 Offset lag is an exact decimal string and includes Kafka control-record positions;
 it is not a market-message count. A failed end-offset lookup produces null lag with allowlisted SDK and broker error
 codes; raw exception messages are omitted. Missing
