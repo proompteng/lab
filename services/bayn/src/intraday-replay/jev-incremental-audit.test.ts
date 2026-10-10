@@ -28,7 +28,7 @@ import {
 } from './matched-entry-study'
 
 // Independently valid snapshots, identical prices, different optional model inputs.
-const technicalSnapshots = (ema = '123450000', offset = '0') => {
+const technicalSnapshots = (ema = '123450000', offset = '0', availabilityDelayMs = 0) => {
   const { snapshot, cut, query, protocol } = streamingFixture()
   const rolling = snapshot.manifest.streaming.features.find((entry) => entry.value.material.symbol === 'AAPL')
   const first = snapshot.bars.find((bar) => bar.symbol === 'AAPL')
@@ -84,7 +84,7 @@ const technicalSnapshots = (ema = '123450000', offset = '0') => {
       symbols: protocol.universe,
       topics: { ...protocol.sourceTopics, features: rolling.topic, technicalFeatures: topic },
     },
-    Date.parse(query.observedAt),
+    Date.parse(query.observedAt) + availabilityDelayMs,
   )
   const withTechnical = Result.getOrThrow(
     constructStreamingSnapshot(
@@ -131,27 +131,12 @@ test('matched reproduction binds changed technical values and their exact source
     )
 })
 
-test('future technical availability is rejected before a request can be reproduced', () => {
-  const snapshot = technicalSnapshots().withTechnical
-  const technical = snapshot.manifest.streaming.technical
-  if (technical === undefined) throw new Error('Missing technical fixture')
-  const future = {
-    ...snapshot,
-    manifest: {
-      ...snapshot.manifest,
-      streaming: {
-        ...snapshot.manifest.streaming,
-        technical: {
-          ...technical,
-          features: technical.features.map((feature) => ({
-            ...feature,
-            availableAtMs: Date.parse(snapshot.manifest.observedAt) + 1,
-          })),
-        },
-      },
-    },
-  }
-  expect(Result.isFailure(makeJevTradingSignalRequest(future, 'AAPL', 'SPY'))).toBeTrue()
+test('future technical availability is excluded by real snapshot construction before model input', () => {
+  const { withTechnical: future, withoutTechnical } = technicalSnapshots('123450000', '0', 1)
+  expect(future.manifest.streaming.technical?.features).toHaveLength(0)
+  const request = Result.getOrThrow(makeJevTradingSignalRequest(future, 'AAPL', 'SPY'))
+  const absent = Result.getOrThrow(makeJevTradingSignalRequest(withoutTechnical, 'AAPL', 'SPY'))
+  expect(request.requestHash).toBe(absent.requestHash)
 })
 
 test('matched reproduction binds the context that determines model quote ages and session timing', () => {
