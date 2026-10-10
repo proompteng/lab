@@ -283,10 +283,10 @@ describe('broker observation HTTP budget', () => {
         const replacement = yield* makeBrokerObservationBudget
         const source = transport()
         const token = yield* first.prepareCapture
-        expect(yield* first.claimCapture(token, 30_000)).toBe(true)
+        expect(yield* first.claimCapture(token, 30_000)).toEqual({ _tag: 'Claimed' })
         yield* first.decorate(source.client).get(url)
-        expect(yield* first.claimCapture(token, 30_000)).toBe(false)
-        expect(yield* replacement.claimCapture(token, 30_000)).toBe(false)
+        expect(yield* first.claimCapture(token, 30_000)).toEqual({ _tag: 'Unavailable' })
+        expect(yield* replacement.claimCapture(token, 30_000)).toEqual({ _tag: 'Unavailable' })
         expect(source.starts).toEqual([0])
       }),
     )
@@ -298,12 +298,54 @@ describe('broker observation HTTP budget', () => {
         const source = transport()
         const expired = yield* budget.prepareCapture
         yield* TestClock.adjust(30_001)
-        expect(yield* budget.claimCapture(expired, 30_000)).toBe(false)
+        expect(yield* budget.claimCapture(expired, 30_000)).toEqual({ _tag: 'ExpiredUnused', expiredByMs: 1 })
+        expect(yield* budget.claimCapture(expired, 60_000)).toEqual({ _tag: 'Unavailable' })
         expect(source.starts).toEqual([])
         const current = yield* budget.prepareCapture
-        expect(yield* budget.claimCapture(current, 60_000)).toBe(true)
+        expect(yield* budget.claimCapture(current, 60_000)).toEqual({ _tag: 'Claimed' })
         yield* budget.decorate(source.client).get(url)
         expect(source.starts).toEqual([30_001])
+      }),
+    )
+  })
+  test.each([false, true])(
+    'an expired unused claim preserves 52-call cost and quota (depleted=%s)',
+    async (depleted) => {
+      await run(
+        Effect.gen(function* () {
+          const budget = yield* makeBrokerObservationBudget
+          const source = transport((attempt) => ({
+            headers: {
+              'x-ratelimit-limit': '100',
+              ...(depleted && attempt === 52 ? { 'x-ratelimit-remaining': '25', 'x-ratelimit-reset': '90' } : {}),
+            },
+          }))
+          const client = budget.decorate(source.client)
+          yield* Effect.all(
+            Array.from({ length: 52 }, () => client.get(url)),
+            { concurrency: 2 },
+          )
+          const token = yield* budget.prepareCapture
+          yield* TestClock.adjust(47_000)
+          expect(yield* budget.claimCapture(token, 30_000)).toEqual({ _tag: 'ExpiredUnused', expiredByMs: 17_000 })
+          expect(yield* budget.nextPollNotBeforeMs).toBe(depleted ? 90_000 : 62_400)
+          expect(source.starts).toHaveLength(52)
+        }),
+      )
+    },
+  )
+  test('a mismatched expired ticket cannot consume a newer pending ticket', async () => {
+    await run(
+      Effect.gen(function* () {
+        const budget = yield* makeBrokerObservationBudget
+        const obsolete = yield* budget.prepareCapture
+        const current = yield* budget.prepareCapture
+        yield* TestClock.adjust(47_000)
+        expect(yield* budget.claimCapture(obsolete, 30_000)).toEqual({ _tag: 'Unavailable' })
+        const claims = yield* Effect.all([budget.claimCapture(current, 30_000), budget.claimCapture(current, 30_000)], {
+          concurrency: 2,
+        })
+        expect(claims).toEqual([{ _tag: 'ExpiredUnused', expiredByMs: 17_000 }, { _tag: 'Unavailable' }])
       }),
     )
   })

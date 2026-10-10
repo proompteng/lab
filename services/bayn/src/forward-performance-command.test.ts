@@ -13,6 +13,16 @@ describe('forward-performance command arguments', () => {
     }
   })
 
+  test('requires explicit persistence opt-in alongside an exact authority generation', () => {
+    const authorityGenerationHash = 'a'.repeat(64)
+    expect(
+      Result.getOrThrow(
+        parseForwardPerformanceCommandArgs(['--authority-generation', authorityGenerationHash, '--persist-receipt']),
+      ),
+    ).toEqual({ _tag: 'Run', options: { authorityGenerationHash, persistReceipt: true } })
+    expect(Result.isFailure(parseForwardPerformanceCommandArgs(['--persist-receipt']))).toBe(true)
+  })
+
   test('preserves explicit help and the existing account-history invocation', () => {
     expect(Result.getOrThrow(parseForwardPerformanceCommandArgs(['--help']))).toEqual({ _tag: 'Help' })
     expect(Result.getOrThrow(parseForwardPerformanceCommandArgs([]))).toEqual({ _tag: 'Run', options: {} })

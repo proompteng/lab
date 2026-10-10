@@ -260,7 +260,7 @@ func (browser *browserSupervisor) paste(ctx context.Context, text string) error 
 }
 
 func (browser *browserSupervisor) screenshot(ctx context.Context) (map[string]any, error) {
-	file, err := os.CreateTemp(filepath.Join(browser.home, ".tengri", "browser"), "screen-*.png")
+	file, err := os.CreateTemp("", "tengri-screen-*.png")
 	if err != nil {
 		return nil, err
 	}

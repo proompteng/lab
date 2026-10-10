@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub const CPU_MILLIS: u32 = 4_000;
 pub const MEMORY_MIB: u32 = 8_192;
-pub const WORKSPACE_GIB: u32 = 16;
+pub const WORKSPACE_GIB: u32 = 32;
 pub const IDLE_MINUTES: i64 = 60;
 
 #[derive(CustomResource, Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -162,7 +162,7 @@ mod tests {
     fn v1_resource_profile_is_fixed() {
         assert_eq!(MicroVMResources::default().cpu_millis, 4_000);
         assert_eq!(MicroVMResources::default().memory_mib, 8_192);
-        assert_eq!(MicroVMResources::default().workspace_gib, 16);
+        assert_eq!(MicroVMResources::default().workspace_gib, 32);
     }
 
     #[test]

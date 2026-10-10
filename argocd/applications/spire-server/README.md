@@ -29,29 +29,24 @@ The server authenticates agents with Kubernetes projected service account tokens
 root, and `SYS_PTRACE`, and query the secure kubelet endpoint. The SPIFFE CSI driver mounts the node's Workload API socket
 into the registered application Pods.
 
-Existing Kata Firecracker guests use their own rootless agent under `galactic-guests`. Only `tengri:nanoagent` PSATs for
-audience `spire-server` are accepted, and the agent ID contains its attested Pod UID. Tengri creates a `ClusterStaticEntry`
-whose parent is that agent and whose selector is `unix:uid:1000`; a Kubernetes admission policy prevents unrelated or
-privileged registrations. A host `ClusterSPIFFEID` cannot describe this VM-local Unix process, because that controller
-adds a host Kubernetes Pod selector to every registration.
-
 Prepared Tengri slots authenticate their host supervisor with a Pod-UID-specific `ClusterSPIFFEID`. Their Nanoagent
-uses a private slot credential over vsock. Keep the existing `galactic-guests` attestation, bundle publisher, ConfigMap,
-and RBAC through the separately authorized cutover; remove them only after the last old guest has stopped.
+uses a private slot credential over vsock. Guest processes do not receive a Kubernetes API token or a SPIRE agent.
+The old `galactic-guests` PSAT profile, guest bundle publisher and ConfigMap, token/registration RBAC, and static-entry
+admission resources were retired after the approved old guests and their storage writers were fenced. Host `galactic`
+attestation and `spire-system/spire-bundle` publication remain configured.
 
 The Kubernetes Service exposes SPIRE gRPC only on port 443 and forwards it to the Pod listener on 8081.
-Guest clients use Service port 443. The temporary listener-port alias has been removed.
+The temporary listener-port alias has been removed.
 
 Tengri's gRPC port requires mesh mTLS and admits only the Proompteng service-account principal. The applications also
 verify exact SPIFFE peers and retain owner-bound request authorization. Public health/bootstrap and preview ports
 remain outside mesh mTLS for the existing Traefik routes and retain their application authentication and network
-policies. Firecracker guests use their VM-local SPIRE agent and direct application mTLS; they do not receive host
-Istio sidecars or a shared service-account identity in place of their Pod-specific identity.
+policies. The slot supervisor verifies the controller's exact SPIFFE identity and the owner-bound slot claim before
+forwarding an operation over its private guest connection. Guest execution does not share the supervisor's Workload
+API mount or private key.
 
-This Application pre-creates `tengri/spire-guest-bundle` and name-restricted publisher RBAC at sync wave -1. The server's
-built-in bundle publisher preserves `spire-system/spire-bundle` and also writes public PEM authorities to the guest
-ConfigMap. ApplicationSet ignores only the generated `/data` field; namespace creation remains owned by the Tengri
-Application. No signing keys or workload private keys enter these ConfigMaps.
+The server's built-in bundle publisher writes the host trust bundle to `spire-system/spire-bundle`. No signing keys or
+workload private keys enter that ConfigMap. Namespace creation remains owned by the platform ApplicationSet.
 
 ## Talos configuration
 

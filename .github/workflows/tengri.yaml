@@ -56,8 +56,8 @@ jobs:
         with:
           toolchain: 1.90.0
 
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler
+      - name: Install browser acceptance prerequisites
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler iproute2
 
       - name: Run Tengri desktop browser suite
         run: bun run --cwd apps/landing test:e2e
