@@ -61,7 +61,11 @@ mod tests {
     }
 
     #[test]
-    fn audit_reads_require_the_auditor_permission() {
+    fn policy_and_audit_reads_require_human_permissions() {
+        assert_eq!(
+            operation_action("ofz", "ListAccess").unwrap(),
+            Some(Action::PolicyRead)
+        );
         assert_eq!(
             operation_action("ofz", "ReadAudit").unwrap(),
             Some(Action::AuditRead)

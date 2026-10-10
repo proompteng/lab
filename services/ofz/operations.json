@@ -633,7 +633,7 @@
     "surface": "ofz",
     "operation": "ListAccess",
     "internal_only": true,
-    "action": "ACTION_POLICY_CHECK"
+    "action": "ACTION_POLICY_READ"
   },
   {
     "surface": "ofz",

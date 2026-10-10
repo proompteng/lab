@@ -15,7 +15,9 @@ Observation and control are separate actions. HTTP application proxies and edito
 The inventory gate accepts explicit route registrations and literal operation switches. It checks JavaScript and
 TypeScript Next routes, rejects unsupported Axum composition and fallback changes, and rejects operation handling
 outside the classified switch. The Codex allowlist must use its exhaustive switch with an explicit deny default.
-Changing these dispatch forms requires updating the inventory contract and its bypass regressions in the same review.
+It scans all gateway router construction and comment-normalized protobuf declarations, and checks that BFF schema
+actions match its classified handlers. Computed access to the parsed discriminator requires review. Changing these
+dispatch forms requires updating the inventory contract and its bypass regressions in the same review.
 
 ```sh
 cd services/ofz

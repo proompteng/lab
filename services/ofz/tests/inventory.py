@@ -142,6 +142,12 @@ def operation_cases(source, selector=None, default=None):
             outside = re.sub(
                 r"\bconst\s+action\s*=\s*parsed\.data\b", "", outside, count=1
             )
+            outside = re.sub(r"\bconst\s+parsed\s*=", "", outside, count=1)
+            outside = re.sub(r"\bparsed\.success\b", "", outside, count=1)
+            outside = re.sub(r"\bparsed\.error\.issues\b", "", outside, count=1)
+            assert not re.search(r"\bparsed\b", outside), (
+                "parsed discriminator access requires inventory review"
+            )
         elif selector == "request.Method":
             outside = re.sub(
                 r"\bvar\s+request\s+struct\s*\{[^}]*\}", "", outside, count=1
@@ -173,6 +179,20 @@ def operation_cases(source, selector=None, default=None):
         )
         methods.update(match[1:-1] for match in re.findall(literal, clause))
     return methods
+
+
+def literal_schema_actions(source):
+    source = without_comments(source)
+    labels = list(re.finditer(r"\baction\s*:", source))
+    actions = set()
+    for label in labels:
+        literal = re.match(
+            r"\s*z\.literal\(\s*(['\"])([^'\"\\]+)\1\s*\)", source[label.end() :]
+        )
+        assert literal, "schema actions require explicit literals"
+        assert literal[2] not in actions, "duplicate schema action"
+        actions.add(literal[2])
+    return actions
 
 
 def codex_cases(source):
@@ -214,14 +234,19 @@ def main():
         ("guest", "services/tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto"),
     ]:
         actual[surface] = set(
-            re.findall(r"\brpc\s+(\w+)\s*\(", (ROOT / proto).read_text())
+            re.findall(
+                r"\brpc\s+(\w+)\s*\(", without_comments((ROOT / proto).read_text())
+            )
         )
     bff = (ROOT / "apps/landing/src/app/api/tengri/route.ts").read_text()
     actual["bff"] = operation_cases(bff, "action.action")
+    schema_actions = literal_schema_actions(
+        (ROOT / "apps/landing/src/lib/tengri/schemas.ts").read_text()
+    )
+    assert schema_actions == actual["bff"], (
+        "BFF schema and handler classification disagree"
+    )
     gateway = (ROOT / "services/tengri/src/gateway.rs").read_text()
-    gateway = gateway[
-        gateway.index("pub fn control_router") : gateway.index("async fn readiness")
-    ]
     actual["gateway"] = rust_routes(gateway, "preview_host_proxy")
     actual["gateway"].add("* {*preview_host_proxy}")
     codex = (ROOT / "services/nanoagent/codex.go").read_text()

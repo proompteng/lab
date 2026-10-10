@@ -1,5 +1,6 @@
 import contextlib
 import io
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -26,6 +27,105 @@ class InventoryTests(unittest.TestCase):
                 AssertionError, "unclassified=.*ExportCredentials"
             ):
                 inventory.main()
+
+    def test_commented_rpc_declarations_are_classified_on_every_surface(self):
+        read_text = Path.read_text
+        for filename in ["microvm.proto", "nanoagent.proto", "authz.proto"]:
+            with self.subTest(filename=filename):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith(filename):
+                        content = re.sub(
+                            r"\brpc\b",
+                            "rpc /* inventory comment */ ExportCredentials(Empty) returns (Empty);\n  rpc",
+                            content,
+                            count=1,
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*ExportCredentials"
+                    ):
+                        inventory.main()
+
+    def test_gateway_helper_routes_are_classified(self):
+        read_text = Path.read_text
+        for placement in ["before", "after"]:
+            with self.subTest(placement=placement):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("src/gateway.rs"):
+                        helper = 'fn base_router() -> Router { Router::new().route("/secret", get(secret)) }\n'
+                        content = content.replace(
+                            "pub fn control_router(state: GatewayState) -> Router {\n    Router::new()",
+                            "pub fn control_router(state: GatewayState) -> Router {\n    base_router()",
+                            1,
+                        )
+                        content = (
+                            helper + content
+                            if placement == "before"
+                            else content + helper
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*GET /secret"
+                    ):
+                        inventory.main()
+
+    def test_computed_discriminator_access_fails_closed(self):
+        read_text = Path.read_text
+        for expression in [
+            "parsed.data['action']",
+            "parsed['data'].action",
+            "parsed['data']['action']",
+        ]:
+            with self.subTest(expression=expression):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("api/tengri/route.ts"):
+                        content = content.replace(
+                            "switch (action.action)",
+                            f"if ({expression} === 'export-secrets') return new Response(); switch (action.action)",
+                            1,
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "discriminator.*review"
+                    ):
+                        inventory.main()
+
+    def test_schema_actions_cannot_bypass_handler_inventory(self):
+        read_text = Path.read_text
+
+        def inject(path, *args, **kwargs):
+            content = read_text(path, *args, **kwargs)
+            if str(path).endswith("lib/tengri/schemas.ts"):
+                content = content.replace(
+                    "z.discriminatedUnion('action', [",
+                    "z.discriminatedUnion('action', [z.strictObject({ action: z.literal('export-secrets') }),",
+                    1,
+                )
+            return content
+
+        with patch.object(Path, "read_text", inject):
+            with self.assertRaisesRegex(
+                AssertionError, "schema and handler classification disagree"
+            ):
+                inventory.main()
+        with self.assertRaisesRegex(
+            AssertionError, "schema actions require explicit literals"
+        ):
+            inventory.literal_schema_actions(
+                "z.strictObject({action: z.literal(newAction)})"
+            )
 
     def test_new_http_method_fails_before_it_can_be_shipped(self):
         read_text = Path.read_text
