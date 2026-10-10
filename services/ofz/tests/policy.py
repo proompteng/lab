@@ -199,7 +199,13 @@ def main():
         "sleep",
         "configure_power",
     ]
-    administration = ["delete", "manage_collaborators", "manage_grants", "transfer"]
+    administration = [
+        "delete",
+        "manage_collaborators",
+        "read_access",
+        "manage_grants",
+        "transfer",
+    ]
     for role in ROLES:
         for permission in observation + control + administration:
             expected = (

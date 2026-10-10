@@ -15,6 +15,7 @@ service AuthorizationService {
   rpc EstablishSession(EstablishSessionRequest) returns (EstablishSessionResponse);
   rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
   rpc InspectSession(InspectSessionRequest) returns (InspectSessionResponse);
+  rpc GetPolicyState(GetPolicyStateRequest) returns (GetPolicyStateResponse);
 }
 
 enum Action {
@@ -57,6 +58,7 @@ enum Action {
   ACTION_POLICY_CHECK = 36;
   ACTION_POLICY_COMMAND = 37;
   ACTION_SESSION_INSPECT = 38;
+  ACTION_WORKSPACE_POLICY_READ = 39;
 }
 
 enum ResourceKind {
@@ -89,6 +91,10 @@ message RequestContext {
   string trace_id = 4;
   // Bound to authenticated request metadata and limited by the session/grant.
   uint64 deadline_unix_ms = 5;
+  string workspace_uid = 6;
+  string runtime_epoch = 7;
+  string origin = 8;
+  uint32 contract_version = 9;
 }
 
 message ObservationScope {
@@ -185,6 +191,23 @@ message EnrollWorkspace {
   string owner_id = 2;
   string home_uid = 3;
   uint64 home_bytes = 4;
+  string reservation_id = 5;
+}
+
+// Reserve capacity before allocating any Kubernetes or guest resource.
+message ReserveWorkspace {
+  string reservation_id = 1;
+  uint64 home_bytes = 2;
+}
+
+message ReleaseReservation {
+  string reservation_id = 1;
+}
+
+message SetWorkspaceRuntime {
+  string workspace_uid = 1;
+  bool running = 2;
+  string runtime_epoch = 3;
 }
 
 message RemoveWorkspace {
@@ -215,6 +238,9 @@ message ExecuteCommandRequest {
     EnrollWorkspace enroll_workspace = 12;
     RemoveWorkspace remove_workspace = 13;
     EmergencyAccess emergency_access = 14;
+    ReserveWorkspace reserve_workspace = 15;
+    ReleaseReservation release_reservation = 16;
+    SetWorkspaceRuntime set_workspace_runtime = 17;
   }
 }
 
@@ -233,6 +259,8 @@ message CommandReceipt {
   string audit_receipt_id = 5;
   // Present only on the first successful creation, never on GetCommand/replay.
   string agent_credential = 6;
+  // True when recovery observed an applied marker after losing the original write receipt.
+  bool recovered_revision = 7;
 }
 
 message ExecuteCommandResponse {
@@ -286,6 +314,15 @@ message AuditReceipt {
   string operation_id = 9;
   string trace_id = 10;
   string reason = 11;
+  string session_id = 12;
+  string grant_id = 13;
+  string workspace_uid = 14;
+  string runtime_epoch = 15;
+  string origin = 16;
+  uint64 recovery_generation = 17;
+  // Typed policy data, without raw credentials, needed to reconcile independent recovery.
+  ExecuteCommandRequest policy_command = 18;
+  string revision = 19;
 }
 
 message ReadAuditResponse {
@@ -307,6 +344,8 @@ message Session {
   uint64 idle_deadline_unix_ms = 4;
   uint64 mfa_at_unix_ms = 5;
   uint64 recovery_generation = 6;
+  // Opaque random credential, returned only at establishment; hash stored centrally.
+  string credential = 7;
 }
 
 message EstablishSessionResponse {
@@ -326,5 +365,13 @@ message RevokeSessionRequest {
 }
 
 message InspectSessionRequest {
+  // Opaque credential from the BFF's HttpOnly cookie, not the public session ID.
   string session_id = 1;
+}
+
+message GetPolicyStateRequest {}
+message GetPolicyStateResponse {
+  uint64 version = 1;
+  uint64 recovery_generation = 2;
+  bool fenced = 3;
 }

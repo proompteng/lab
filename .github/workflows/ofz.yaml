@@ -62,3 +62,4 @@ jobs:
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
           bash test-policy.sh
+          bash test-control.sh

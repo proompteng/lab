@@ -9,7 +9,7 @@ Production keeps its current authority until the coordinated hard cutover. New c
 - [x] Verify the second administrator/custodian: `tuslagch`, GitHub numeric ID `241203724`.
 - [x] Identify the requested independent recovery host: `nuc.ide-newton.ts.net`.
 - [x] P1: final schema, typed API, action inventory, real SpiceDB role/expiry/revocation tests.
-- [ ] P2: Ofz service, durable commands, quotas, audit and database migrations.
+- [x] P2 source and isolated control proof: Ofz service, durable commands, quotas, audit and database migrations.
 - [ ] P3: Keycloak identity, shared sessions and Access UI.
 - [ ] P4: shared tickets, leadership and failover.
 - [ ] P5: enforce every runtime channel and add pure observers.
@@ -31,3 +31,12 @@ workspace, including wrong-workspace replay and missing-binding denial. HTTP inv
 APIs across every guest source file. This is contract proof, with runtime enforcement
 and production qualification still pending. Native dispatch caching failed the expiration probe and remains disabled
 in the qualification fixture; the release must preserve that setting.
+
+P2 local evidence: the nine-RPC Rust service and TLS-only control database passed Clippy and the unit/contract suite.
+The isolated PostgreSQL/SpiceDB control fixture passed with 16 committed commands and 41 immutable audit receipts.
+It exercises crash recovery before native writes, after native writes and after SQL receipts; lost responses; version and
+operation conflicts; concurrent quota reservations; minimum-administrator protection; independent emergency approvals;
+hash-only show-once grants; expiry and issuer revocation; exact stream context; native/journal/archive failure; and
+ownership quarantine before native transfer and before receipt recovery. The policy fixture now checks 509 assertions.
+The prepared seven-resource control-plane configuration passed Kubernetes server-side dry run and remains excluded
+from active GitOps. Real BFF/Ofz mTLS interoperability, OIDC sessions, fleet enforcement and deployment remain later gates.

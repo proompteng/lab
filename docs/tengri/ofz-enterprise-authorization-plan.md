@@ -30,8 +30,9 @@ conversations, drafts, and approved ownership. Plan creation does not start impl
 4. Keep the existing SPIFFE identities, mTLS boundaries, and signed BFF request transport. Extend authenticated context
    with actor kind, subject, session or grant ID, action, workspace UID, runtime epoch, request hash, and deadline.
 5. Add `ofz_control` and `tengri_control` databases to the existing Ofz CNPG cluster with separate application roles.
-   The former holds policy commands, credential hashes, quota reservations, and the audit outbox. The latter holds BFF
-   sessions, tickets, preview sessions, and replay state. Do not query or modify SpiceDB's internal tables.
+   The former holds policy commands, verified identity sessions, credential hashes, quota reservations, and the audit
+   outbox. The latter holds BFF OAuth attempts, tickets, preview sessions, controller state, and transport replay state.
+   Ofz is the sole session authority. Do not query or modify SpiceDB's internal tables.
 6. Keep one diagnostic implementation behind typed HTTP and MCP adapters. Do not add Redis, another policy engine,
    a generic policy language, or a new AI execution service.
 7. Use current, fully consistent checks for the first release. No owner-label fallback, cached positive decision, or
@@ -66,7 +67,7 @@ destructive actions, membership changes, and emergency access. Require WebAuthn 
 access. Emergency content access requires two custodians, a reason and incident ID, and an expiry of at most 30 minutes.
 
 Preserve canonical human identities derived from numeric GitHub IDs. Map Keycloak subjects through verified broker
-identities. Never link accounts by email, login name, or user-editable attributes. Use database-backed BFF sessions with
+identities. Never link accounts by email, login name, or user-editable attributes. Use Ofz-backed BFF sessions with
 an eight-hour maximum and a 30-minute idle timeout. Remove the direct GitHub provider and stateless session cache at
 cutover. A current Ofz membership check remains mandatory on every protected operation.
 
