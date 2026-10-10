@@ -152,6 +152,48 @@ class InventoryTests(unittest.TestCase):
                     ):
                         inventory.main()
 
+    def test_go_handler_comments_cannot_hide_registration(self):
+        read_text = Path.read_text
+
+        def inject(path, *args, **kwargs):
+            content = read_text(path, *args, **kwargs)
+            if str(path).endswith("nanoagent/api.go"):
+                content += (
+                    '\nmux.HandleFunc /* registration */ ("GET /secret", secret)\n'
+                )
+            return content
+
+        with patch.object(Path, "read_text", inject):
+            with self.assertRaisesRegex(AssertionError, "unclassified=.*GET /secret"):
+                inventory.main()
+
+    def test_operation_object_aliases_fail_closed(self):
+        read_text = Path.read_text
+
+        def inject(path, *args, **kwargs):
+            content = read_text(path, *args, **kwargs)
+            if str(path).endswith("api/tengri/route.ts"):
+                content = content.replace(
+                    "switch (action.action)",
+                    "const operation = action as { action: string }; if (operation.action === 'export-secrets') return new Response(); switch (action.action)",
+                    1,
+                )
+            return content
+
+        with patch.object(Path, "read_text", inject):
+            with self.assertRaisesRegex(
+                AssertionError, "discriminator aliases require"
+            ):
+                inventory.main()
+        for selector in ["action.Action", "request.Method"]:
+            with self.assertRaisesRegex(
+                AssertionError, "discriminator aliases require"
+            ):
+                inventory.operation_cases(
+                    f'const operation = {selector.split(".")[0]}; if (operation.secret) return; switch ({selector}) {{case "known": return;}}',
+                    selector,
+                )
+
     def test_every_codex_method_literal_requires_classification(self):
         read_text = Path.read_text
         for method in ["thread/foo2", "thread/foo_bar", "thread/foo-bar", "ping"]:

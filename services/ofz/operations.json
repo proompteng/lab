@@ -639,7 +639,7 @@
     "surface": "ofz",
     "operation": "ReadAudit",
     "internal_only": true,
-    "action": "ACTION_POLICY_CHECK"
+    "action": "ACTION_AUDIT_READ"
   },
   {
     "surface": "ofz",

@@ -61,6 +61,14 @@ mod tests {
     }
 
     #[test]
+    fn audit_reads_require_the_auditor_permission() {
+        assert_eq!(
+            operation_action("ofz", "ReadAudit").unwrap(),
+            Some(Action::AuditRead)
+        );
+    }
+
+    #[test]
     fn interactive_gets_and_restore_are_privileged() {
         for (surface, operation) in [
             ("gateway", "* {*preview_host_proxy}"),

@@ -95,7 +95,8 @@ def rust_routes(source, fallback=None):
 
 
 def go_routes(source):
-    assert not re.search(r"\.Handle(?:Func)?\b(?!\s*\()", without_comments(source)), (
+    source = without_comments(source)
+    assert not re.search(r"\.Handle(?:Func)?\b(?!\s*\()", source), (
         "Go handler aliases require explicit inventory support"
     )
     routes = set()
@@ -135,6 +136,25 @@ def operation_cases(source, selector=None, default=None):
         outside = re.sub(r"\bfunc\s+\w+\s*\([^)]*\)[^{]*\{", "", outside, count=1)
         assert not re.search(r"\b" + re.escape(selector) + r"\b", outside), (
             "operation logic outside the classified switch"
+        )
+        root = selector.split(".")[0]
+        if selector == "action.action":
+            outside = re.sub(
+                r"\bconst\s+action\s*=\s*parsed\.data\b", "", outside, count=1
+            )
+        elif selector == "request.Method":
+            outside = re.sub(
+                r"\bvar\s+request\s+struct\s*\{[^}]*\}", "", outside, count=1
+            )
+            outside = re.sub(
+                r"\bjson\.Unmarshal\(scanner\.Bytes\(\),\s*&request\)",
+                "",
+                outside,
+                count=1,
+            )
+            outside = re.sub(r"\brequest\.ID\b", "", outside)
+        assert not re.search(r"\b" + re.escape(root) + r"\b", outside), (
+            "operation discriminator aliases require inventory review"
         )
         source = source[start:end]
         branch = re.search(r"\bdefault\s*:", masked[start:end])
