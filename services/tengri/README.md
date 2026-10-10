@@ -54,7 +54,7 @@ only unused slots; claimed guests retain their runtime through ordinary sleep/re
 ## Host and guest boundaries
 
 The slot runs under the normal OCI runtime with separate container PID namespaces, no host networking/mounts,
-and no Kubernetes API token. The supervisor mounts only the SPIFFE CSI socket and private control sockets. The runner
+and no Kubernetes API token. The supervisor mounts the SPIFFE CSI socket, private control sockets and its restricted database credential. The runner
 mounts only its boot artifacts, disks, token, and sockets.
 
 The short-lived TAP init container receives NET_ADMIN inside the Pod network namespace. It creates `tengri0`, private
@@ -172,6 +172,11 @@ old owner-header or multi-key protocol. Cutover rotates both peers together whil
 Only Ofz's `migrate-runtime` command runs the checksum-bound schema migration as `tengri_migrator`. Applications
 verify that schema before serving. SQL stores hashed replay receipts, hashed one-use tickets and preview sessions;
 plaintext credentials are returned only to their caller. Limits and atomic redemption apply across replicas.
+
+Generated slot Pods mount the `tengri-supervisor-db` Secret's `password` and the `ofz-database-ca` Secret's `ca.crt`
+only into the supervisor. Its fixed database authority is `ofz-db-rw.ofz.svc.cluster.local`, database `tengri_control`,
+role `tengri_supervisor`. The runner and guest receive neither credential. Provision both reviewed Secrets before
+enabling slot creation during cutover.
 
 The controller combines the Kubernetes leader Lease with a database generation and lease deadline. Its work futures
 are cancelled before releasing leadership, every mutation checks the current local guard, and each supervisor checks

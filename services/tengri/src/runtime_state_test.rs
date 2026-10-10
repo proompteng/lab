@@ -57,14 +57,19 @@ async fn runtime_shared_state_backend_reconnection_does_not_forget_an_accepted_n
     assert!(killed);
     assert!(victim.query_one("SELECT 1", &[]).await.is_err());
     drop(victim);
-    assert_eq!(
-        database
-            .consume_nonce(&nonce, deadline)
-            .await
-            .unwrap_err()
-            .code(),
-        Code::Unauthenticated
-    );
+    let reconnect_started = tokio::time::Instant::now();
+    loop {
+        match database.consume_nonce(&nonce, deadline).await {
+            Err(error) if error.code() == Code::Unauthenticated => break,
+            Err(error)
+                if error.code() == Code::Unavailable
+                    && reconnect_started.elapsed() < Duration::from_secs(2) =>
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            outcome => panic!("replay must remain denied across bounded reconnection: {outcome:?}"),
+        }
+    }
     let fresh = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
     database
         .consume_nonce(&fresh, (crate::ofz::now_ms().unwrap() + 5000) as i64)
@@ -253,7 +258,11 @@ async fn runtime_shared_state_capacity_expiry_and_workspace_cleanup_are_global()
         .await;
         assert!(
             results.iter().all(Result::is_ok),
-            "ticket issuance failed: {results:?}"
+            "ticket issuance failed: {:?}",
+            results
+                .iter()
+                .filter_map(|outcome| outcome.as_ref().err())
+                .collect::<Vec<_>>()
         );
     }
     assert_eq!(b.stats().await.unwrap().pending, 128);

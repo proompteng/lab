@@ -23,6 +23,17 @@ be qualified against actual retained data and available space.
 
 Evidence and decisions are recorded in [the implementation trail](ofz-implementation-decisions.tsv).
 
+The runtime checkpoint's review regressions now exercise signed controller calls against the real passkey-backed Ofz
+session and PostgreSQL/SpiceDB fixture. Workspace listing returns only the registered, authorized workspace and skips
+an unavailable UID. Creation completes after a 5.1-second delay by checking the current session under a fresh two-second
+metadata decision; submitting the original expired request again remains denied. Each regression fails against its
+prior implementation. The full pinned-container identity fixture passes all 54 browser assertions and its controller
+wire checks. The isolated shared-state fixture passes all 19 tests, including bounded reconnection after terminating a
+database backend, with the accepted nonce denied throughout. A concurrent fixture run hit the configured database
+connection timeout; production deadlines were retained and the complete isolated rerun passed. Generated slot Pods
+now mount the supervisor's restricted SQL password and CA only into that container. Nix source evaluation also verifies
+that the shared request-signature vector reaches the Proompteng build unchanged. Remote CI for these fixes is pending.
+
 P1 local evidence: 492 permission assertions against pinned SpiceDB and PostgreSQL; five Rust contract tests; five
 inventory tests including deliberately unclassified RPC and HTTP changes; Buf lint; Clippy; Rust/Python/shell checks.
 The catalog covers 163 current operations across eleven surfaces, including each HTTP method and Axum's implicit HEAD.

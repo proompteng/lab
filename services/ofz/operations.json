@@ -7,7 +7,7 @@
   {
     "surface": "controller",
     "operation": "ListAgents",
-    "action": "ACTION_PLATFORM_ADMIT"
+    "action": "ACTION_WORKSPACE_METADATA_READ"
   },
   {
     "surface": "controller",

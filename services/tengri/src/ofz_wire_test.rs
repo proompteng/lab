@@ -34,6 +34,145 @@ async fn human_command(
         .unwrap()
 }
 
+async fn controller_metadata_roundtrip(
+    authorization: WorkspaceAuthorization,
+    identity: WorkloadIdentity,
+    principal: &Principal,
+    reservation_id: &str,
+    uid: &str,
+) {
+    use crate::{
+        activity::ActivityTracker,
+        auth::{Authenticator, deterministic_agent_id, signed_fixture_request},
+        crd::{MicroVM, MicroVMArchitecture, MicroVMDesiredState, MicroVMResources, MicroVMSpec},
+        gateway::PreviewOrigin,
+        grpc::{
+            ControlPlane, ControlPlaneConfig,
+            proto::{
+                CreateAgentRequest, ListAgentsRequest,
+                micro_vm_control_plane_server::MicroVmControlPlane,
+            },
+        },
+    };
+    use kube::client::Body;
+    use std::sync::Arc;
+
+    let database = Arc::new(crate::control::Database::shared_fixture().await);
+    let (service, mut kube) = tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+    let client = kube::Client::new(service, "tengri");
+    let control = ControlPlane::new(
+        client.clone(),
+        ControlPlaneConfig {
+            identity,
+            authorization,
+            namespace: "tengri".into(),
+            default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+            architecture: MicroVMArchitecture::Amd64,
+            database: database.clone(),
+            auth: Authenticator::fixture(database, "https://proompteng.ai".into()),
+            public_url: "https://tengri.proompteng.ai".into(),
+            preview_origin: PreviewOrigin::parse(
+                "https://tengri-{session}.proompteng.ai".into(),
+                "https://tengri.proompteng.ai".into(),
+            )
+            .unwrap(),
+        },
+        ActivityTracker::new(client, "tengri".into()),
+    )
+    .unwrap();
+    let id = deterministic_agent_id(&principal.owner_hash, reservation_id);
+    let mut agent = MicroVM::new(
+        &id,
+        MicroVMSpec {
+            reservation_id: reservation_id.into(),
+            runtime_epoch: String::new(),
+            policy_version: 0,
+            display_name: "Wire workspace".into(),
+            owner_hash: principal.owner_hash.clone(),
+            desired_state: MicroVMDesiredState::Sleeping,
+            image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+            architecture: MicroVMArchitecture::Amd64,
+            resources: MicroVMResources::default(),
+            power: Default::default(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            idle_deadline: chrono::Utc::now().to_rfc3339(),
+            slot: None,
+        },
+    );
+    agent.metadata.uid = Some(uid.into());
+    let mut inaccessible = agent.clone();
+    inaccessible.metadata.name = Some("unregistered-workspace".into());
+    inaccessible.metadata.uid = Some(uuid::Uuid::new_v4().to_string());
+    let mut submission = principal.clone();
+    submission.context.workspace_uid.clear();
+    submission.context.runtime_epoch.clear();
+    submission.context.deadline_unix_ms = now_ms().unwrap() + 5000;
+    let request = signed_fixture_request(
+        ListAgentsRequest {},
+        &submission,
+        "/proompteng.runtime.v1.MicroVMControlPlane/ListAgents",
+    );
+    let listing = tokio::spawn({
+        let control = control.clone();
+        async move { control.list_agents(request).await }
+    });
+    let (request, response) = kube.next_request().await.unwrap();
+    assert_eq!(request.method(), http::Method::GET);
+    response.send_response(
+        http::Response::builder()
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "apiVersion": "runtime.proompteng.ai/v1alpha1", "kind": "MicroVMList",
+                    "metadata": {}, "items": [inaccessible, agent.clone()]
+                }))
+                .unwrap(),
+            ))
+            .unwrap(),
+    );
+    let listed = listing.await.unwrap().unwrap().into_inner();
+    assert_eq!(listed.agents.len(), 1);
+    assert_eq!(listed.agents[0].id, id);
+
+    submission.context.deadline_unix_ms = now_ms().unwrap() + 5000;
+    let create = CreateAgentRequest {
+        display_name: agent.spec.display_name.clone(),
+        reservation_id: reservation_id.into(),
+    };
+    let request = signed_fixture_request(
+        create.clone(),
+        &submission,
+        "/proompteng.runtime.v1.MicroVMControlPlane/CreateAgent",
+    );
+    let creation = tokio::spawn({
+        let control = control.clone();
+        async move { control.create_agent(request).await }
+    });
+    let (request, response) = kube.next_request().await.unwrap();
+    assert!(request.uri().path().ends_with(&id));
+    tokio::time::sleep(Duration::from_millis(5100)).await;
+    assert!(submission.context.deadline_unix_ms < now_ms().unwrap());
+    let agent_response = || {
+        http::Response::builder()
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&agent).unwrap()))
+            .unwrap()
+    };
+    response.send_response(agent_response());
+    let (_, response) = kube.next_request().await.unwrap();
+    response.send_response(agent_response());
+    assert_eq!(creation.await.unwrap().unwrap().into_inner().id, id);
+    let expired = signed_fixture_request(
+        create,
+        &submission,
+        "/proompteng.runtime.v1.MicroVMControlPlane/CreateAgent",
+    );
+    assert_eq!(
+        control.create_agent(expired).await.unwrap_err().code(),
+        tonic::Code::Unauthenticated,
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires real Ofz, PostgreSQL, SpiceDB, SPIFFE and a passkey session; run Ofz identity fixture"]
 async fn ofz_wire_runtime_lifecycle_and_authority() {
@@ -140,6 +279,14 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
         .unwrap();
     assert_eq!(reserved.state, "enrolled");
     assert_eq!(reserved.workspace_uid, uid);
+    Box::pin(controller_metadata_roundtrip(
+        WorkspaceAuthorization::new(controller.clone()),
+        identity.clone(),
+        &principal,
+        &reservation_id,
+        &uid,
+    ))
+    .await;
     let epoch = uuid::Uuid::new_v4().to_string();
     context.workspace_uid = uid.clone();
     context.runtime_epoch = epoch.clone();
