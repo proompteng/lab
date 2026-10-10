@@ -1,0 +1,466 @@
+import contextlib
+from fnmatch import fnmatchcase
+import io
+import re
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import inventory
+
+
+class InventoryTests(unittest.TestCase):
+    def test_current_services_are_completely_classified(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            inventory.main()
+
+    def test_browser_prevalidation_actions_are_classified(self):
+        read_text = Path.read_text
+        for branch in [
+            'if action.Action == "export_secrets" { return nil, nil }',
+            'alias := action; if alias.Action == "export_secrets" { return nil, nil }',
+            "if action.Action == newAction { return nil, nil }",
+        ]:
+            with self.subTest(branch=branch):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("nanoagent/browser_cua.go"):
+                        content = content.replace(
+                            'if action.Action == "status" {',
+                            branch + '\n if action.Action == "status" {',
+                            1,
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaises(AssertionError):
+                        inventory.main()
+
+    def test_every_go_handler_selector_is_parsed_or_rejected(self):
+        for registration in [
+            '(mux).HandleFunc("GET /secret", secret)',
+            '(*http.ServeMux).HandleFunc(mux, "GET /secret", secret)',
+            "mux . HandleFunc(secretPath, secret)",
+            'http.ServeMux.HandleFunc(mux, "GET /secret", secret)',
+        ]:
+            with self.subTest(registration=registration):
+                with self.assertRaisesRegex(AssertionError, "handler (receiver|path)"):
+                    inventory.go_routes(registration)
+        self.assertEqual(
+            inventory.go_routes('mux . HandleFunc("GET /secret", secret)'),
+            {"GET /secret"},
+        )
+
+    def test_schema_only_changes_trigger_inventory_for_prs_and_main(self):
+        workflow = (inventory.ROOT / ".github/workflows/ofz.yaml").read_text()
+        sections = re.findall(
+            r"(?ms)^  (?:pull_request|push):\n(.*?)(?=^  \w+:)", workflow
+        )
+        self.assertEqual(len(sections), 2)
+        for section in sections:
+            paths = re.findall(r"^      - '([^']+)'$", section, re.M)
+            self.assertTrue(
+                any(
+                    fnmatchcase("apps/landing/src/lib/tengri/schemas.ts", pattern)
+                    for pattern in paths
+                ),
+                "inventory schema dependency must trigger Ofz validation",
+            )
+
+    def test_new_rpc_fails_before_it_can_be_shipped(self):
+        read_text = Path.read_text
+
+        def inject(path, *args, **kwargs):
+            content = read_text(path, *args, **kwargs)
+            if str(path).endswith("microvm.proto"):
+                content += "\nrpc ExportCredentials(Empty) returns (Empty);\n"
+            return content
+
+        with patch.object(Path, "read_text", inject):
+            with self.assertRaisesRegex(
+                AssertionError, "unclassified=.*ExportCredentials"
+            ):
+                inventory.main()
+
+    def test_commented_rpc_declarations_are_classified_on_every_surface(self):
+        read_text = Path.read_text
+        for filename in ["microvm.proto", "nanoagent.proto", "authz.proto"]:
+            with self.subTest(filename=filename):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith(filename):
+                        content = re.sub(
+                            r"\brpc\b",
+                            "rpc /* inventory comment */ ExportCredentials(Empty) returns (Empty);\n  rpc",
+                            content,
+                            count=1,
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*ExportCredentials"
+                    ):
+                        inventory.main()
+
+    def test_gateway_helper_routes_are_classified(self):
+        read_text = Path.read_text
+        for placement in ["before", "after"]:
+            with self.subTest(placement=placement):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("src/gateway.rs"):
+                        helper = 'fn base_router() -> Router { Router::new().route("/secret", get(secret)) }\n'
+                        content = content.replace(
+                            "pub fn control_router(state: GatewayState) -> Router {\n    Router::new()",
+                            "pub fn control_router(state: GatewayState) -> Router {\n    base_router()",
+                            1,
+                        )
+                        content = (
+                            helper + content
+                            if placement == "before"
+                            else content + helper
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*GET /secret"
+                    ):
+                        inventory.main()
+
+    def test_computed_discriminator_access_fails_closed(self):
+        read_text = Path.read_text
+        for expression in [
+            "parsed.data['action']",
+            "parsed['data'].action",
+            "parsed['data']['action']",
+        ]:
+            with self.subTest(expression=expression):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("api/tengri/route.ts"):
+                        content = content.replace(
+                            "switch (action.action)",
+                            f"if ({expression} === 'export-secrets') return new Response(); switch (action.action)",
+                            1,
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "discriminator.*review"
+                    ):
+                        inventory.main()
+
+    def test_schema_actions_cannot_bypass_handler_inventory(self):
+        read_text = Path.read_text
+
+        def inject(path, *args, **kwargs):
+            content = read_text(path, *args, **kwargs)
+            if str(path).endswith("lib/tengri/schemas.ts"):
+                content = content.replace(
+                    "z.discriminatedUnion('action', [",
+                    "z.discriminatedUnion('action', [z.strictObject({ action: z.literal('export-secrets') }),",
+                    1,
+                )
+            return content
+
+        with patch.object(Path, "read_text", inject):
+            with self.assertRaisesRegex(
+                AssertionError, "schema and handler classification disagree"
+            ):
+                inventory.main()
+        with self.assertRaisesRegex(
+            AssertionError, "schema actions require explicit literals"
+        ):
+            inventory.literal_schema_actions(
+                "z.strictObject({action: z.literal(newAction)})"
+            )
+
+    def test_new_http_method_fails_before_it_can_be_shipped(self):
+        read_text = Path.read_text
+
+        def inject(path, *args, **kwargs):
+            content = read_text(path, *args, **kwargs)
+            if str(path).endswith("api/tengri/route.ts"):
+                content += "\nexport const DELETE = () => new Response();\n"
+            return content
+
+        for method in ["DELETE", "HEAD", "OPTIONS"]:
+            with self.subTest(method=method):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("api/tengri/route.ts"):
+                        content += f"\nexport const {method} = () => new Response();\n"
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, f"unclassified=.*{method} /api/tengri"
+                    ):
+                        inventory.main()
+
+    def test_new_gateway_or_supervisor_method_requires_classification(self):
+        read_text = Path.read_text
+        for source in ["gateway.rs", "slot/supervisor.rs"]:
+            with self.subTest(source=source):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith(f"tengri/src/{source}"):
+                        content = content.replace(
+                            '.route("/livez", get(', '.route("/livez", post(', 1
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*POST /livez"
+                    ):
+                        inventory.main()
+
+    def test_reexported_next_methods_require_classification(self):
+        read_text = Path.read_text
+        for declaration in [
+            "const handler = () => new Response(); export { handler as DELETE }",
+            "export { handler as DELETE } from './handler'",
+            "export { DELETE } from './handler'",
+            "export { handler as 'DELETE' } from './handler'",
+            "export let DELETE = () => new Response()",
+            'const url = "https://example.test/*"; export { handler /* } */ as DELETE }',
+        ]:
+            with self.subTest(declaration=declaration):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("api/tengri/route.ts"):
+                        content += "\n" + declaration + "\n"
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*DELETE /api/tengri"
+                    ):
+                        inventory.main()
+        with self.assertRaisesRegex(AssertionError, "wildcard Next route exports"):
+            inventory.next_methods("export * from './handler'")
+
+    def test_nonliteral_axum_paths_fail_closed(self):
+        read_text = Path.read_text
+        for source in ["gateway.rs", "slot/supervisor.rs"]:
+            with self.subTest(source=source):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith(f"tengri/src/{source}"):
+                        content = content.replace(
+                            '.route("/livez", get(', ".route(SECRET_PATH, get(", 1
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "Axum route path must be an explicit string literal",
+                    ):
+                        inventory.main()
+
+    def test_go_handlers_in_every_source_file_are_classified(self):
+        read_text = Path.read_text
+        for source in ["api.go", "browser_cua.go", "grpc.go"]:
+            for handler in ["Handle", "HandleFunc"]:
+                with self.subTest(source=source, handler=handler):
+
+                    def inject(path, *args, **kwargs):
+                        content = read_text(path, *args, **kwargs)
+                        if str(path).endswith(f"nanoagent/{source}"):
+                            content += f'\nmux.{handler}("GET /secret", secret)\n'
+                        return content
+
+                    with patch.object(Path, "read_text", inject):
+                        with self.assertRaisesRegex(
+                            AssertionError, "unclassified=.*GET /secret"
+                        ):
+                            inventory.main()
+
+    def test_nonliteral_go_handlers_fail_closed(self):
+        read_text = Path.read_text
+        for handler in ["Handle", "HandleFunc"]:
+            with self.subTest(handler=handler):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("nanoagent/api.go"):
+                        content += f"\nmux.{handler}(secretPath, secret)\n"
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "Go handler path must be an explicit string literal",
+                    ):
+                        inventory.main()
+
+    def test_go_handler_comments_cannot_hide_registration(self):
+        read_text = Path.read_text
+
+        def inject(path, *args, **kwargs):
+            content = read_text(path, *args, **kwargs)
+            if str(path).endswith("nanoagent/api.go"):
+                content += (
+                    '\nmux.HandleFunc /* registration */ ("GET /secret", secret)\n'
+                )
+            return content
+
+        with patch.object(Path, "read_text", inject):
+            with self.assertRaisesRegex(AssertionError, "unclassified=.*GET /secret"):
+                inventory.main()
+
+    def test_operation_object_aliases_fail_closed(self):
+        read_text = Path.read_text
+
+        def inject(path, *args, **kwargs):
+            content = read_text(path, *args, **kwargs)
+            if str(path).endswith("api/tengri/route.ts"):
+                content = content.replace(
+                    "switch (action.action)",
+                    "const operation = action as { action: string }; if (operation.action === 'export-secrets') return new Response(); switch (action.action)",
+                    1,
+                )
+            return content
+
+        with patch.object(Path, "read_text", inject):
+            with self.assertRaisesRegex(
+                AssertionError, "discriminator aliases require"
+            ):
+                inventory.main()
+        for selector in ["action.Action", "request.Method"]:
+            with self.assertRaisesRegex(
+                AssertionError, "discriminator aliases require"
+            ):
+                inventory.operation_cases(
+                    f'const operation = {selector.split(".")[0]}; if (operation.secret) return; switch ({selector}) {{case "known": return;}}',
+                    selector,
+                )
+
+    def test_every_codex_method_literal_requires_classification(self):
+        read_text = Path.read_text
+        for method in ["thread/foo2", "thread/foo_bar", "thread/foo-bar", "ping"]:
+            with self.subTest(method=method):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("nanoagent/codex.go"):
+                        start = content.index("func allowedCodexMethod")
+                        content = content[:start] + content[start:].replace(
+                            'case "account/read",',
+                            f'case "{method}", "account/read",',
+                            1,
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(AssertionError, "codex: unclassified="):
+                        inventory.main()
+        with self.assertRaisesRegex(AssertionError, "explicit string literals"):
+            inventory.operation_cases("case dynamicMethod: return true")
+
+    def test_codex_early_allow_and_default_allow_fail_closed(self):
+        read_text = Path.read_text
+        for change in ["early", "default"]:
+            with self.subTest(change=change):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("nanoagent/codex.go"):
+                        start = content.index("func allowedCodexMethod")
+                        body = content[start:]
+                        if change == "early":
+                            body = body.replace(
+                                "switch method {",
+                                'if method == "thread/export" { return true }; switch method {',
+                                1,
+                            )
+                        else:
+                            body = body.replace("return false", "return true", 1)
+                        content = content[:start] + body
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "exhaustive literal switch"
+                    ):
+                        inventory.main()
+        for selector in ["action.action", "request.Method", "action.Action"]:
+            with self.subTest(selector=selector):
+                with self.assertRaisesRegex(
+                    AssertionError, "outside the classified switch"
+                ):
+                    inventory.operation_cases(
+                        f'if ({selector} === "secret") return true; switch ({selector}) {{ case "known": return true; }}',
+                        selector,
+                    )
+
+    def test_axum_composition_and_fallback_replacement_fail_closed(self):
+        for method in [
+            "route_service",
+            "nest",
+            "nest_service",
+            "merge",
+            "fallback_service",
+            "method_not_allowed_fallback",
+        ]:
+            with self.subTest(method=method):
+                with self.assertRaisesRegex(AssertionError, "composition requires"):
+                    inventory.rust_routes(f'Router::new().{method}("/secret", service)')
+        with self.assertRaisesRegex(AssertionError, "composition requires"):
+            inventory.rust_routes('Router::route(router, "/secret", get(secret))')
+        with self.assertRaisesRegex(AssertionError, "fallback requires"):
+            inventory.rust_routes(
+                "Router::new().fallback(preview_host_proxy).fallback(secret)",
+                "preview_host_proxy",
+            )
+        with self.assertRaisesRegex(AssertionError, "aliases require"):
+            inventory.go_routes('handler := mux.HandleFunc; handler("/secret", secret)')
+
+    def test_next_route_extensions_are_all_classified(self):
+        read_text, rglob = Path.read_text, Path.rglob
+        for extension in ["js", "jsx", "ts", "tsx"]:
+            path = (
+                inventory.ROOT
+                / f"apps/landing/src/app/api/tengri/secret/route.{extension}"
+            )
+            with self.subTest(extension=extension):
+
+                def files(directory, pattern):
+                    yield from rglob(directory, pattern)
+                    if str(directory).endswith("app/api/tengri") and path.match(
+                        pattern
+                    ):
+                        yield path
+
+                def contents(source, *args, **kwargs):
+                    return (
+                        "export const DELETE = () => new Response()"
+                        if source == path
+                        else read_text(source, *args, **kwargs)
+                    )
+
+                with (
+                    patch.object(Path, "rglob", files),
+                    patch.object(Path, "read_text", contents),
+                ):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*DELETE /api/tengri/secret"
+                    ):
+                        inventory.main()
+
+
+if __name__ == "__main__":
+    unittest.main()

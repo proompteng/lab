@@ -1,0 +1,64 @@
+name: Ofz authorization
+
+on:
+  pull_request:
+    paths:
+      - 'services/ofz/**'
+      - 'proto/proompteng/authz/**'
+      - 'services/tengri/**'
+      - 'services/nanoagent/**'
+      - 'apps/landing/src/app/api/tengri/**'
+      - 'apps/landing/src/lib/tengri/schemas.ts'
+      - '.github/workflows/ofz.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'services/ofz/**'
+      - 'proto/proompteng/authz/**'
+      - 'services/tengri/**'
+      - 'services/nanoagent/**'
+      - 'apps/landing/src/app/api/tengri/**'
+      - 'apps/landing/src/lib/tengri/schemas.ts'
+      - '.github/workflows/ofz.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: ofz-authorization-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: arc-amd64
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+          components: clippy,rustfmt
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler python3
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: 1.59.0
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate typed contract and inventory
+        run: |
+          set -euo pipefail
+          buf lint --path proto/proompteng/authz/v1/authz.proto
+          buf format --path proto/proompteng/authz/v1/authz.proto --diff --exit-code
+          python3 services/ofz/tests/inventory.py
+          python3 -m unittest discover -s services/ofz/tests -p 'test_*.py'
+      - name: Validate Ofz
+        working-directory: services/ofz
+        run: |
+          set -euo pipefail
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          bash test-policy.sh
