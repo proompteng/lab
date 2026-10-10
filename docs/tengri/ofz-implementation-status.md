@@ -59,10 +59,13 @@ isolated Chromium fixture with a synthetic GitHub upstream and virtual user-veri
 duplicate-email identity separation, admission denial with an immutable receipt, browser membership/quota changes,
 the two-administrator minimum, stale MFA rejection, fresh passkey step-up, downgraded assurance rejection, atomic
 session-cookie replacement, shared SQL inspection, logout revocation and HEAD/replay rejection. The Landing suite
-passed 296 tests. The current control fixture passed 26 commands and 76 immutable receipts. The expanded browser fixture
+passed 296 tests. The current control fixture passed 26 commands and 79 immutable receipts. The expanded browser fixture
 passes 44 assertions under pinned Bun 1.4.2, including permission checks before external identity resolution and real
 GitHub/BFF credential rotation without replacing users or passkeys. A simulated lost response after real session
 establishment recovers the same credential with one session and one successful audit receipt; disabling BFF recovery
 fails the actual browser flow. Command preflight remains available for revocation
-under archive loss and never renews idle activity. Exact pinned-container CI, real custodian enrollment and deployed
-product proof remain later gates.
+under archive loss and never renews idle activity. Both the 26-command control fixture and the 44-assertion browser
+fixture also passed against the exact PostgreSQL 18.6 and SpiceDB containers on NUC. Twenty-two inventory regressions,
+TypeScript, type-aware lint, generated-client verification and strict prepared-manifest validation passed after
+restacking onto current main. Recalculated Bun dependency hashes require native Linux CI validation. Real custodian
+enrollment and deployed product proof remain later gates.
