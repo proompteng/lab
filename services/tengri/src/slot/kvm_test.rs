@@ -153,9 +153,36 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     };
     let runner_task = tokio::spawn(runner::serve(config));
     let tls = slot_identity.slot_server_tls("tengri")?;
+    let database = std::sync::Arc::new(crate::control::Database::shared_fixture().await);
+    let supervisor_database = std::sync::Arc::new(
+        crate::control::Database::connect(
+            &std::env::var("TENGRI_DATABASE_DSN")?
+                .replace("user=tengri_controller", "user=tengri_supervisor"),
+            std::path::Path::new(&std::env::var("TENGRI_DATABASE_PASSWORD_FILE")?),
+            std::path::Path::new(&std::env::var("TENGRI_DATABASE_CA_FILE")?),
+            "tengri_supervisor",
+        )
+        .await?,
+    );
+    supervisor_database.verify_schema().await?;
+    let fence = database
+        .acquire(uuid::Uuid::new_v4())
+        .await?
+        .context("fixture leadership unavailable")?;
+    let renew_database = database.clone();
+    let renew_task = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            assert!(
+                renew_database.renew(fence).await.unwrap(),
+                "fixture leader expired"
+            );
+        }
+    });
     let supervisor_task = tokio::spawn(supervisor::serve(
         TcpListener::bind("127.0.0.1:8443").await?,
         tls,
+        supervisor_database,
     ));
     let pod: Pod = serde_json::from_value(
         json!({"metadata":{"uid":"interop-agent"},"status":{"podIP":"127.0.0.1"}}),
@@ -200,7 +227,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             started.elapsed().as_secs_f64() * 1000.0
         );
     };
-    client.lifecycle("restore", &claim).await?;
+    client.lifecycle("restore", &claim, fence).await?;
     stage("restore");
     let rpc = guest(&identity, &claim, &token)?;
     rpc.verify_identity("interop-agent").await?;
@@ -242,7 +269,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     );
     for action in ["sleep", "stop"] {
         ensure!(
-            client.lifecycle(action, &foreign).await.is_err(),
+            client.lifecycle(action, &foreign, fence).await.is_err(),
             "foreign owner changed the guest lifecycle"
         );
         ensure!(
@@ -273,7 +300,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         let awake_memory = cgroup_memory().await?;
         let vmm_rss = firecracker_rss().await?.context("awake guest has no VMM")?;
         let save_started = Instant::now();
-        let sleeping = client.lifecycle("sleep", &claim).await?;
+        let sleeping = client.lifecycle("sleep", &claim, fence).await?;
         let sleep_ms = save_started.elapsed().as_secs_f64() * 1000.0;
         ensure!(
             matches!(sleeping.state, SlotState::Sleeping { .. }),
@@ -288,7 +315,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         let mut wrong = claim.clone();
         wrong.epoch += 1;
         ensure!(
-            client.lifecycle("restore", &wrong).await.is_err(),
+            client.lifecycle("restore", &wrong, fence).await.is_err(),
             "wrong epoch restored the guest"
         );
         if index == 0 {
@@ -307,7 +334,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
                 started.elapsed().as_secs_f64() * 1000.0
             );
         };
-        client.lifecycle("restore", &claim).await?;
+        client.lifecycle("restore", &claim, fence).await?;
         stage("restore");
         let rpc = guest(&identity, &claim, &token)?;
         rpc.verify_identity("interop-agent").await?;
@@ -348,7 +375,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             })),
         "real guest Codex did not install its browser computer tool"
     );
-    client.lifecycle("stop", &claim).await?;
+    client.lifecycle("stop", &claim, fence).await?;
     timings.sort_by(f64::total_cmp);
     let p95 = (samples >= 50).then(|| timings[(samples * 95).div_ceil(100) - 1]);
     let resume_budget_ms = p95.unwrap_or(timings[samples - 1]);
@@ -364,6 +391,8 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     }))?).await?;
     runner_task.abort();
     supervisor_task.abort();
+    renew_task.abort();
+    database.release(fence).await?;
     ensure!(
         create_ms < 1000.0,
         "slot prepared creation is {create_ms:.2} ms"

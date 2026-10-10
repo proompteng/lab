@@ -1,84 +1,144 @@
 use std::{
-    collections::BTreeMap,
+    path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-#[cfg(test)]
-use std::{collections::HashMap, sync::Mutex};
-
+use anyhow::ensure;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, Mac};
-use k8s_openapi::api::core::v1::ConfigMap;
-use kube::{Api, Client, api::PostParams};
 use prost::Message;
 use sha2::{Digest, Sha256};
-use tokio::sync::Mutex as AsyncMutex;
 use tonic::{Request, Status};
 
-const SUBJECT_HEADER: &str = "x-tengri-subject";
-const TIMESTAMP_HEADER: &str = "x-tengri-timestamp";
-const NONCE_HEADER: &str = "x-tengri-nonce";
-const SIGNATURE_HEADER: &str = "x-tengri-signature";
-const PREVIOUS_SIGNATURE_HEADER: &str = "x-tengri-signature-previous";
-const MAX_CLOCK_SKEW: Duration = Duration::from_secs(300);
-pub const AUTH_NONCE_CONFIG_MAP: &str = "tengri-auth-nonces";
-const MAX_ACTIVE_NONCES: usize = 8_192;
-const NONCE_UPDATE_RETRIES: usize = 8;
-const NONCE_RETRY_BASE_DELAY: Duration = Duration::from_millis(5);
+use crate::{
+    control::Database,
+    ofz::{
+        self,
+        proto::{Action, RequestContext, actor::Identity},
+    },
+};
 
-type HmacSha256 = Hmac<Sha256>;
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Principal {
     pub owner_hash: String,
+    pub context: RequestContext,
+    pub recovery_generation: u64,
+    pub action: Action,
+}
+
+#[cfg(test)]
+impl Principal {
+    pub(crate) fn fixture(owner_hash: &str, workspace_uid: &str, action: Action) -> Self {
+        Self {
+            owner_hash: owner_hash.into(),
+            recovery_generation: 1,
+            action,
+            context: RequestContext {
+                actor: Some(ofz::proto::Actor {
+                    identity: Some(Identity::HumanId(owner_hash.into())),
+                }),
+                session_id: "11111111-1111-4111-8111-111111111111".into(),
+                trace_id: uuid::Uuid::new_v4().to_string(),
+                contract_version: 1,
+                workspace_uid: workspace_uid.into(),
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
+                origin: "https://proompteng.ai".into(),
+                deadline_unix_ms: ofz::now_ms().unwrap() + 5000,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn signed_fixture_request<T: Message>(
+    message: T,
+    principal: &Principal,
+    rpc_path: &str,
+) -> Request<T> {
+    let mut request = Request::new(message);
+    let bytes = principal.context.encode_to_vec();
+    let nonce = URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>());
+    let mut mac = Hmac::<Sha256>::new_from_slice(&[0x68; 32]).unwrap();
+    mac.update(
+        signing_payload(
+            rpc_path,
+            &request.get_ref().encode_to_vec(),
+            &nonce,
+            &bytes,
+            principal.recovery_generation,
+        )
+        .as_bytes(),
+    );
+    request.metadata_mut().insert_bin(
+        "x-tengri-context-bin",
+        tonic::metadata::MetadataValue::from_bytes(&bytes),
+    );
+    request
+        .metadata_mut()
+        .insert("x-tengri-nonce", nonce.parse().unwrap());
+    request.metadata_mut().insert(
+        "x-tengri-recovery-generation",
+        principal.recovery_generation.to_string().parse().unwrap(),
+    );
+    request.metadata_mut().insert(
+        "x-tengri-signature",
+        format!("{:x}", mac.finalize().into_bytes())
+            .parse()
+            .unwrap(),
+    );
+    request
 }
 
 #[derive(Clone)]
 pub struct Authenticator {
-    secrets: Arc<[Vec<u8>]>,
-    nonces: NonceStore,
+    key: SigningKey,
+    database: Arc<Database>,
+    origin: Arc<str>,
 }
 
 #[derive(Clone)]
-enum NonceStore {
-    Kubernetes {
-        client: Client,
-        namespace: Arc<str>,
-        update_lock: Arc<AsyncMutex<()>>,
-    },
+enum SigningKey {
+    Mounted(Arc<PathBuf>),
     #[cfg(test)]
-    Memory(Arc<Mutex<HashMap<String, u64>>>),
+    Fixture([u8; 32]),
+}
+
+fn parse_key(key: &str) -> anyhow::Result<[u8; 32]> {
+    decode_hex(key.trim_end())
+        .and_then(|key| key.try_into().ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!("BFF request key must be 32 bytes encoded as lowercase hexadecimal")
+        })
 }
 
 impl Authenticator {
-    pub fn new(client: Client, namespace: String, secret_bundle: String) -> anyhow::Result<Self> {
-        Self::with_store(
-            secret_bundle,
-            NonceStore::Kubernetes {
-                client,
-                namespace: namespace.into(),
-                update_lock: Arc::new(AsyncMutex::new(())),
-            },
-        )
-    }
-
-    fn with_store(secret_bundle: String, nonces: NonceStore) -> anyhow::Result<Self> {
-        let secrets = secret_bundle
-            .split(',')
-            .map(str::trim)
-            .map(str::as_bytes)
-            .map(Vec::from)
-            .collect::<Vec<_>>();
-        anyhow::ensure!(
-            !secrets.is_empty()
-                && secrets.len() <= 2
-                && secrets.iter().all(|secret| secret.len() >= 32),
-            "TENGRI_INTERNAL_HMAC_SECRET must contain one key or a current,previous key pair of at least 32 bytes each"
+    pub fn new(database: Arc<Database>, key_file: &Path, origin: String) -> anyhow::Result<Self> {
+        let key = std::fs::read_to_string(key_file)?;
+        parse_key(&key)?;
+        let url = reqwest::Url::parse(&origin)?;
+        ensure!(
+            url.scheme() == "https"
+                && url.origin().ascii_serialization() == origin
+                && url.username().is_empty()
+                && url.password().is_none(),
+            "canonical HTTPS desktop origin required"
         );
         Ok(Self {
-            secrets: Arc::from(secrets),
-            nonces,
+            key: SigningKey::Mounted(Arc::new(key_file.to_owned())),
+            database,
+            origin: origin.into(),
         })
+    }
+
+    #[cfg(test)]
+    pub fn fixture(database: Arc<Database>, origin: String) -> Self {
+        Self {
+            key: SigningKey::Fixture([0x68; 32]),
+            database,
+            origin: origin.into(),
+        }
     }
 
     pub async fn authorize<T: Message>(
@@ -86,565 +146,224 @@ impl Authenticator {
         request: &Request<T>,
         rpc_path: &str,
     ) -> Result<Principal, Status> {
-        let subject = metadata(request, SUBJECT_HEADER)?;
-        let timestamp = metadata(request, TIMESTAMP_HEADER)?;
-        let nonce = metadata(request, NONCE_HEADER)?;
-        let mut signatures = vec![metadata(request, SIGNATURE_HEADER)?];
-        if let Some(previous) = optional_metadata(request, PREVIOUS_SIGNATURE_HEADER) {
-            signatures.push(previous);
+        let metadata = request.metadata();
+        if metadata.get_all_bin("x-tengri-context-bin").iter().count() != 1 {
+            return Err(Status::unauthenticated("one signed context required"));
         }
-        validate_subject(&subject)?;
-        validate_nonce(&nonce)?;
-
-        let timestamp_seconds = timestamp
-            .parse::<u64>()
-            .map_err(|_| Status::unauthenticated("invalid authentication timestamp"))?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| Status::internal("system clock is unavailable"))?
-            .as_secs();
-        if now.abs_diff(timestamp_seconds) > MAX_CLOCK_SKEW.as_secs() {
-            return Err(Status::unauthenticated("authentication timestamp expired"));
+        let bytes = metadata
+            .get_bin("x-tengri-context-bin")
+            .and_then(|v| v.to_bytes().ok())
+            .filter(|v| v.len() <= 2048)
+            .ok_or_else(|| Status::unauthenticated("bounded signed context required"))?;
+        let context = RequestContext::decode(bytes.clone())
+            .map_err(|_| Status::unauthenticated("invalid signed context"))?;
+        if context.encode_to_vec() != bytes {
+            return Err(Status::unauthenticated("noncanonical signed context"));
         }
-
-        let signatures = signatures
-            .iter()
-            .map(|signature| decode_hex(signature))
-            .collect::<Option<Vec<_>>>()
+        let nonce = header(request, "x-tengri-nonce")?;
+        if !URL_SAFE_NO_PAD
+            .decode(&nonce)
+            .is_ok_and(|bytes| bytes.len() == 32 && URL_SAFE_NO_PAD.encode(bytes) == nonce)
+        {
+            return Err(Status::unauthenticated("invalid nonce"));
+        }
+        let generation = header(request, "x-tengri-recovery-generation")?;
+        let recovery_generation: u64 = generation
+            .parse()
+            .ok()
+            .filter(|v| *v > 0)
+            .ok_or_else(|| Status::unauthenticated("recovery generation required"))?;
+        if recovery_generation.to_string() != generation {
+            return Err(Status::unauthenticated("noncanonical recovery generation"));
+        }
+        let signature = header(request, "x-tengri-signature")?;
+        let signature = decode_hex(&signature)
+            .filter(|v| v.len() == 32)
             .ok_or_else(|| Status::unauthenticated("invalid request signature"))?;
-        let body_hash = encode_hex(&Sha256::digest(request.get_ref().encode_to_vec()));
-        let payload = signing_payload(&subject, &timestamp, &nonce, rpc_path, &body_hash);
-        let mut valid = false;
-        for secret in self.secrets.iter() {
-            for signature in &signatures {
-                let mut mac = HmacSha256::new_from_slice(secret)
-                    .map_err(|_| Status::internal("invalid authentication configuration"))?;
-                mac.update(payload.as_bytes());
-                valid |= mac.verify_slice(signature).is_ok();
-            }
+        let payload = signing_payload(
+            rpc_path,
+            &request.get_ref().encode_to_vec(),
+            &nonce,
+            &bytes,
+            recovery_generation,
+        );
+        let key = match &self.key {
+            SigningKey::Mounted(path) => parse_key(
+                &tokio::fs::read_to_string(path.as_ref())
+                    .await
+                    .map_err(|_| Status::unavailable("request key unavailable"))?,
+            )
+            .map_err(|_| Status::unavailable("request key unavailable"))?,
+            #[cfg(test)]
+            SigningKey::Fixture(key) => *key,
+        };
+        let mut mac = Hmac::<Sha256>::new_from_slice(&key)
+            .map_err(|_| Status::internal("invalid request key"))?;
+        mac.update(payload.as_bytes());
+        mac.verify_slice(&signature)
+            .map_err(|_| Status::unauthenticated("invalid request signature"))?;
+        let now = ofz::now_ms()?;
+        let human = match context.actor.as_ref().and_then(|a| a.identity.as_ref()) {
+            Some(Identity::HumanId(human)) if ofz::canonical_human(human) => human.clone(),
+            _ => return Err(Status::unauthenticated("verified human context required")),
+        };
+        if context.contract_version != 1
+            || !ofz::canonical_uuid(&context.session_id)
+            || !context.grant_id.is_empty()
+            || !ofz::canonical_uuid(&context.trace_id)
+            || context.origin != self.origin.as_ref()
+            || context.deadline_unix_ms <= now
+            || context.deadline_unix_ms > now + 5000
+            || !context.workspace_uid.is_empty() && !ofz::canonical_uuid(&context.workspace_uid)
+            || !context.runtime_epoch.is_empty() && !ofz::canonical_uuid(&context.runtime_epoch)
+        {
+            return Err(Status::unauthenticated(
+                "signed identity, runtime, origin or deadline binding rejected",
+            ));
         }
-        if !valid {
-            return Err(Status::unauthenticated("invalid request signature"));
-        }
-
-        let replay_key = encode_hex(&Sha256::digest(format!("{subject}:{nonce}").as_bytes()));
-        let expires_at = nonce_expiry(timestamp_seconds);
-        self.nonces.consume(&replay_key, expires_at, now).await?;
-
+        let method = rpc_path
+            .strip_prefix("/proompteng.runtime.v1.MicroVMControlPlane/")
+            .ok_or_else(|| Status::permission_denied("unknown RPC contract"))?;
+        let action = ofz::action("controller", method)?;
+        let replay_key = Sha256::digest(format!("{}\n{nonce}", context.session_id)).to_vec();
+        self.database
+            .consume_nonce(&replay_key, context.deadline_unix_ms as i64)
+            .await?;
         Ok(Principal {
-            owner_hash: owner_hash(&subject),
+            owner_hash: human,
+            context,
+            recovery_generation,
+            action,
         })
     }
+}
 
-    #[cfg(test)]
-    fn new_for_tests(secret_bundle: String) -> anyhow::Result<Self> {
-        Self::with_store(
-            secret_bundle,
-            NonceStore::Memory(Arc::new(Mutex::new(HashMap::new()))),
-        )
+fn header<T>(request: &Request<T>, name: &'static str) -> Result<String, Status> {
+    if request.metadata().get_all(name).iter().count() != 1 {
+        return Err(Status::unauthenticated("one signed header required"));
     }
-}
-
-impl NonceStore {
-    async fn consume(&self, key: &str, expires_at: u64, now: u64) -> Result<(), Status> {
-        match self {
-            Self::Kubernetes {
-                client,
-                namespace,
-                update_lock,
-            } => {
-                let _update_guard = update_lock.lock().await;
-                consume_kubernetes_nonce(client, namespace, key, expires_at, now).await
-            }
-            #[cfg(test)]
-            Self::Memory(nonces) => {
-                let mut nonces = nonces
-                    .lock()
-                    .map_err(|_| Status::internal("authentication state is unavailable"))?;
-                retain_live_nonces(&mut nonces, now);
-                if nonces.contains_key(key) {
-                    return Err(nonce_replayed());
-                }
-                if nonces.len() >= MAX_ACTIVE_NONCES {
-                    return Err(nonce_store_full());
-                }
-                nonces.insert(key.to_owned(), expires_at);
-                Ok(())
-            }
-        }
-    }
-}
-
-async fn consume_kubernetes_nonce(
-    client: &Client,
-    namespace: &str,
-    key: &str,
-    expires_at: u64,
-    now: u64,
-) -> Result<(), Status> {
-    let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
-    for attempt in 0..NONCE_UPDATE_RETRIES {
-        let mut state = config_maps
-            .get(AUTH_NONCE_CONFIG_MAP)
-            .await
-            .map_err(map_nonce_store_error)?;
-        let entries = state.data.get_or_insert_with(BTreeMap::new);
-        entries.retain(|_, value| {
-            value
-                .parse::<u64>()
-                .is_ok_and(|stored_expiry| stored_expiry >= now)
-        });
-        if entries.contains_key(key) {
-            return Err(nonce_replayed());
-        }
-        if entries.len() >= MAX_ACTIVE_NONCES {
-            return Err(nonce_store_full());
-        }
-        entries.insert(key.to_owned(), expires_at.to_string());
-
-        match config_maps
-            .replace(AUTH_NONCE_CONFIG_MAP, &PostParams::default(), &state)
-            .await
-        {
-            Ok(_) => return Ok(()),
-            Err(kube::Error::Api(response))
-                if response.code == 409 && attempt + 1 < NONCE_UPDATE_RETRIES =>
-            {
-                tokio::time::sleep(nonce_retry_delay(attempt)).await;
-            }
-            Err(kube::Error::Api(response)) if response.code == 409 => break,
-            Err(error) => return Err(map_nonce_store_error(error)),
-        }
-    }
-    Err(Status::unavailable(
-        "authentication replay state changed concurrently; retry the request",
-    ))
-}
-
-fn nonce_retry_delay(attempt: usize) -> Duration {
-    NONCE_RETRY_BASE_DELAY.saturating_mul(1_u32 << attempt.min(5))
-}
-
-fn map_nonce_store_error(error: kube::Error) -> Status {
-    if let kube::Error::Api(response) = &error
-        && response.code == 404
-    {
-        return Status::unavailable("authentication replay state is not provisioned");
-    }
-    Status::unavailable("authentication replay state is unavailable")
-}
-
-fn nonce_replayed() -> Status {
-    Status::unauthenticated("request nonce was already used")
-}
-
-fn nonce_store_full() -> Status {
-    Status::resource_exhausted("authentication replay state capacity is exhausted")
-}
-
-pub fn owner_hash(subject: &str) -> String {
-    encode_hex(&Sha256::digest(subject.as_bytes()))
-}
-
-pub fn deterministic_agent_id(owner_hash: &str) -> String {
-    format!("agent-{}", &owner_hash[..owner_hash.len().min(32)])
-}
-
-fn metadata<T>(request: &Request<T>, name: &'static str) -> Result<String, Status> {
     request
         .metadata()
         .get(name)
-        .and_then(|value| value.to_str().ok())
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| v.len() <= 128)
         .map(str::to_owned)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| Status::unauthenticated(format!("missing {name}")))
+        .ok_or_else(|| Status::unauthenticated("invalid signed header"))
 }
 
-fn optional_metadata<T>(request: &Request<T>, name: &'static str) -> Option<String> {
-    request
-        .metadata()
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned)
-        .filter(|value| !value.is_empty())
-}
-
-fn validate_subject(subject: &str) -> Result<(), Status> {
-    let github_id = subject.strip_prefix("github:").unwrap_or_default();
-    if subject.len() > 256
-        || github_id.is_empty()
-        || !github_id.bytes().all(|value| value.is_ascii_digit())
-    {
-        return Err(Status::unauthenticated("invalid GitHub subject"));
-    }
-    Ok(())
-}
-
-fn validate_nonce(nonce: &str) -> Result<(), Status> {
-    if nonce.len() < 16
-        || nonce.len() > 128
-        || !nonce
-            .bytes()
-            .all(|value| value.is_ascii_alphanumeric() || value == b'-' || value == b'_')
-    {
-        return Err(Status::unauthenticated("invalid request nonce"));
-    }
-    Ok(())
-}
-
-fn signing_payload(
-    subject: &str,
-    timestamp: &str,
-    nonce: &str,
+pub fn signing_payload(
     rpc_path: &str,
-    body_hash: &str,
+    body: &[u8],
+    nonce: &str,
+    context: &[u8],
+    generation: u64,
 ) -> String {
-    format!("{subject}\n{timestamp}\n{nonce}\n{rpc_path}\n{body_hash}")
-}
-
-fn nonce_expiry(timestamp_seconds: u64) -> u64 {
-    timestamp_seconds.saturating_add(MAX_CLOCK_SKEW.as_secs())
-}
-
-#[cfg(test)]
-fn retain_live_nonces(nonces: &mut HashMap<String, u64>, now: u64) {
-    nonces.retain(|_, expires_at| *expires_at >= now);
-}
-
-fn encode_hex(value: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut result = String::with_capacity(value.len() * 2);
-    for byte in value {
-        result.push(HEX[(byte >> 4) as usize] as char);
-        result.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    result
+    format!(
+        "tengri.ofz.v1\n{rpc_path}\n{:x}\n{nonce}\n{}\n{generation}",
+        Sha256::digest(body),
+        URL_SAFE_NO_PAD.encode(context)
+    )
 }
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
-    if !value.len().is_multiple_of(2) {
+    if !value.len().is_multiple_of(2)
+        || !value
+            .bytes()
+            .all(|v| v.is_ascii_digit() || (b'a'..=b'f').contains(&v))
+    {
         return None;
     }
     value
         .as_bytes()
         .chunks_exact(2)
-        .map(|pair| {
-            let high = (pair[0] as char).to_digit(16)?;
-            let low = (pair[1] as char).to_digit(16)?;
-            Some(((high << 4) | low) as u8)
-        })
+        .map(|part| u8::from_str_radix(std::str::from_utf8(part).ok()?, 16).ok())
         .collect()
+}
+
+pub fn deterministic_agent_id(owner_hash: &str, reservation_id: &str) -> String {
+    format!(
+        "agent-{:x}",
+        Sha256::digest(format!("ofz.workspace.v1\n{owner_hash}\n{reservation_id}"))
+    )[..38]
+        .to_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kube::client::Body as KubeBody;
 
-    #[derive(Clone, PartialEq, Message)]
-    struct TestRequest {
-        #[prost(string, tag = "1")]
-        id: String,
+    #[test]
+    fn bff_protobuf_and_independent_hmac_vector_match_rust() {
+        let vector: serde_json::Value =
+            serde_json::from_str(include_str!("../fixtures/ofz-request-v1.json")).unwrap();
+        let field = |name: &str| vector[name].as_str().unwrap();
+        let context = base64::engine::general_purpose::STANDARD
+            .decode(field("contextBase64"))
+            .unwrap();
+        let decoded = RequestContext::decode(context.as_slice()).unwrap();
+        assert_eq!(decoded.encode_to_vec(), context);
+        assert_eq!(
+            decoded.workspace_uid,
+            "33333333-3333-4333-8333-333333333333"
+        );
+        let payload = signing_payload(
+            field("rpcPath"),
+            &decode_hex(field("bodyHex")).unwrap(),
+            field("nonce"),
+            &context,
+            7,
+        );
+        let mut mac = Hmac::<Sha256>::new_from_slice(&parse_key(field("keyHex")).unwrap()).unwrap();
+        mac.update(payload.as_bytes());
+        mac.verify_slice(&decode_hex(field("signature")).unwrap())
+            .unwrap();
     }
 
     #[test]
-    fn identity_produces_stable_dns_safe_agent_name() {
-        let owner = owner_hash("github:123456");
-        assert_eq!(owner.len(), 64);
-        assert_eq!(
-            deterministic_agent_id(&owner),
-            deterministic_agent_id(&owner)
+    fn signed_contract_binds_every_field_and_has_no_key_bundle() {
+        let payload = signing_payload(
+            "/rpc",
+            b"body",
+            "nonce",
+            b"actor/session/uid/epoch/origin/deadline",
+            7,
         );
-        assert!(deterministic_agent_id(&owner).starts_with("agent-"));
-    }
-
-    #[tokio::test]
-    async fn accepts_explicit_rpc_identity_without_tonic_extensions() {
-        let secret = "s".repeat(32);
-        let auth = Authenticator::new_for_tests(secret.clone()).expect("authenticator");
-        let request = signed_request(&secret, None, "nonce-explicit-rpc");
-
-        assert!(request.extensions().is_empty());
-        assert!(
-            auth.authorize(
-                &request,
-                "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent",
-            )
-            .await
-            .is_ok()
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_replayed_signed_request_across_authenticator_instances() {
-        let secret = "s".repeat(32);
-        let nonces = NonceStore::Memory(Arc::new(Mutex::new(HashMap::new())));
-        let auth =
-            Authenticator::with_store(secret.clone(), nonces.clone()).expect("authenticator");
-        let replacement = Authenticator::with_store(secret.clone(), nonces).expect("replacement");
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_secs()
-            .to_string();
-        let nonce = "nonce-1234567890";
-        let subject = "github:42";
-        let rpc_path = "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent";
-        let body = TestRequest {
-            id: "agent-1".to_owned(),
-        };
-        let body_hash = encode_hex(&Sha256::digest(body.encode_to_vec()));
-        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac");
-        mac.update(signing_payload(subject, &timestamp, nonce, rpc_path, &body_hash).as_bytes());
-        let signature = encode_hex(&mac.finalize().into_bytes());
-        let request = || {
-            let mut request = Request::new(body.clone());
-            request
-                .metadata_mut()
-                .insert(SUBJECT_HEADER, subject.parse().expect("subject"));
-            request
-                .metadata_mut()
-                .insert(TIMESTAMP_HEADER, timestamp.parse().expect("timestamp"));
-            request
-                .metadata_mut()
-                .insert(NONCE_HEADER, nonce.parse().expect("nonce"));
-            request
-                .metadata_mut()
-                .insert(SIGNATURE_HEADER, signature.parse().expect("signature"));
-            request
-        };
-        assert!(auth.authorize(&request(), rpc_path).await.is_ok());
-        assert_eq!(
-            replacement
-                .authorize(&request(), rpc_path)
-                .await
-                .expect_err("replay")
-                .code(),
-            tonic::Code::Unauthenticated
-        );
-    }
-
-    #[tokio::test]
-    async fn serializes_kubernetes_nonce_updates_across_clones() {
-        let (service, mut handle) =
-            tower_test::mock::pair::<http::Request<KubeBody>, http::Response<KubeBody>>();
-        let store = NonceStore::Kubernetes {
-            client: Client::new(service, "tengri"),
-            namespace: Arc::from("tengri"),
-            update_lock: Arc::new(AsyncMutex::new(())),
-        };
-
-        let first_store = store.clone();
-        let first = tokio::spawn(async move { first_store.consume("first", 20_000, 10_000).await });
-        let (first_get, first_get_response) =
-            handle.next_request().await.expect("first ConfigMap read");
-        assert_eq!(first_get.method(), http::Method::GET);
-        first_get_response.send_response(config_map_response("1", "{}"));
-        let (first_put, first_put_response) =
-            handle.next_request().await.expect("first ConfigMap update");
-        assert_eq!(first_put.method(), http::Method::PUT);
-
-        let second_store = store.clone();
-        let second =
-            tokio::spawn(async move { second_store.consume("second", 20_000, 10_000).await });
-        assert!(
-            tokio::time::timeout(Duration::from_millis(100), handle.next_request())
-                .await
-                .is_err(),
-            "a clone must not read stale replay state while the first update is in flight",
-        );
-
-        first_put_response.send_response(config_map_response("2", r#"{"first":"20000"}"#));
-        first.await.expect("first task").expect("first nonce");
-
-        let (second_get, second_get_response) =
-            handle.next_request().await.expect("second ConfigMap read");
-        assert_eq!(second_get.method(), http::Method::GET);
-        second_get_response.send_response(config_map_response("2", r#"{"first":"20000"}"#));
-        let (second_put, second_put_response) = handle
-            .next_request()
-            .await
-            .expect("second ConfigMap update");
-        assert_eq!(second_put.method(), http::Method::PUT);
-        second_put_response.send_response(config_map_response(
-            "3",
-            r#"{"first":"20000","second":"20000"}"#,
-        ));
-        second.await.expect("second task").expect("second nonce");
-    }
-
-    fn config_map_response(resource_version: &str, data: &str) -> http::Response<KubeBody> {
-        http::Response::builder()
-            .status(http::StatusCode::OK)
-            .header(http::header::CONTENT_TYPE, "application/json")
-            .body(KubeBody::from(
-                format!(
-                    r#"{{"apiVersion":"v1","kind":"ConfigMap","metadata":{{"name":"{AUTH_NONCE_CONFIG_MAP}","namespace":"tengri","resourceVersion":"{resource_version}"}},"data":{data}}}"#,
-                )
-                .into_bytes(),
-            ))
-            .expect("ConfigMap response")
-    }
-
-    #[test]
-    fn retains_future_dated_nonce_for_its_full_signature_lifetime() {
-        let now = 10_000;
-        let signed_at = now + MAX_CLOCK_SKEW.as_secs();
-        let expires_at = nonce_expiry(signed_at);
-        let mut nonces = HashMap::from([("github:42:nonce".to_owned(), expires_at)]);
-
-        // A receipt-time TTL would incorrectly evict this nonce at now + skew,
-        // while the signed request is still accepted through signed_at + skew.
-        retain_live_nonces(&mut nonces, now + MAX_CLOCK_SKEW.as_secs() + 1);
-        assert!(nonces.contains_key("github:42:nonce"));
-        retain_live_nonces(&mut nonces, expires_at + 1);
-        assert!(nonces.is_empty());
-    }
-
-    #[tokio::test]
-    async fn rejects_signatures_replayed_for_another_rpc_or_body() {
-        let secret = "s".repeat(32);
-        let auth = Authenticator::new_for_tests(secret.clone()).expect("authenticator");
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_secs()
-            .to_string();
-        let nonce = "nonce-1234567890";
-        let subject = "github:42";
-        let signed_path = "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent";
-        let body = TestRequest {
-            id: "agent-1".to_owned(),
-        };
-        let body_hash = encode_hex(&Sha256::digest(body.encode_to_vec()));
-        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac");
-        mac.update(signing_payload(subject, &timestamp, nonce, signed_path, &body_hash).as_bytes());
-        let signature = encode_hex(&mac.finalize().into_bytes());
-        let request = |body: TestRequest| {
-            let mut request = Request::new(body);
-            request
-                .metadata_mut()
-                .insert(SUBJECT_HEADER, subject.parse().expect("subject"));
-            request
-                .metadata_mut()
-                .insert(TIMESTAMP_HEADER, timestamp.parse().expect("timestamp"));
-            request
-                .metadata_mut()
-                .insert(NONCE_HEADER, nonce.parse().expect("nonce"));
-            request
-                .metadata_mut()
-                .insert(SIGNATURE_HEADER, signature.parse().expect("signature"));
-            request
-        };
-
-        assert_eq!(
-            auth.authorize(
-                &request(body.clone()),
-                "/proompteng.runtime.v1.MicroVMControlPlane/DeleteAgent",
-            )
-            .await
-            .expect_err("method substitution")
-            .code(),
-            tonic::Code::Unauthenticated,
-        );
-        assert_eq!(
-            auth.authorize(
-                &request(TestRequest {
-                    id: "agent-2".to_owned(),
-                }),
-                signed_path,
-            )
-            .await
-            .expect_err("body substitution")
-            .code(),
-            tonic::Code::Unauthenticated,
-        );
-        assert!(auth.authorize(&request(body), signed_path).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn accepts_both_sides_of_a_bounded_key_rotation() {
-        let current = "n".repeat(32);
-        let previous = "o".repeat(32);
-        let old_verifier = Authenticator::new_for_tests(previous.clone()).expect("old verifier");
-        let rotating_verifier = Authenticator::new_for_tests(format!("{current},{previous}"))
-            .expect("rotating verifier");
-
-        let request_from_new_signer =
-            signed_request(&current, Some(&previous), "nonce-new-1234567");
-        assert!(
-            old_verifier
-                .authorize(
-                    &request_from_new_signer,
-                    "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent",
-                )
-                .await
-                .is_ok()
-        );
-
-        let request_from_old_signer = signed_request(&previous, None, "nonce-old-1234567");
-        assert!(
-            rotating_verifier
-                .authorize(
-                    &request_from_old_signer,
-                    "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent",
-                )
-                .await
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn rejects_empty_or_non_numeric_github_subjects() {
-        for subject in ["github:", "github:user", "email:42", ""] {
-            assert_eq!(
-                validate_subject(subject)
-                    .expect_err("invalid subject")
-                    .code(),
-                tonic::Code::Unauthenticated,
-            );
+        for changed in [
+            signing_payload(
+                "/other",
+                b"body",
+                "nonce",
+                b"actor/session/uid/epoch/origin/deadline",
+                7,
+            ),
+            signing_payload(
+                "/rpc",
+                b"changed",
+                "nonce",
+                b"actor/session/uid/epoch/origin/deadline",
+                7,
+            ),
+            signing_payload(
+                "/rpc",
+                b"body",
+                "replay",
+                b"actor/session/uid/epoch/origin/deadline",
+                7,
+            ),
+            signing_payload("/rpc", b"body", "nonce", b"different-context", 7),
+            signing_payload(
+                "/rpc",
+                b"body",
+                "nonce",
+                b"actor/session/uid/epoch/origin/deadline",
+                8,
+            ),
+        ] {
+            assert_ne!(payload, changed);
         }
-        assert!(validate_subject("github:42").is_ok());
-    }
-
-    fn signed_request(primary: &str, previous: Option<&str>, nonce: &str) -> Request<TestRequest> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_secs()
-            .to_string();
-        let subject = "github:42";
-        let rpc_path = "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent";
-        let body = TestRequest {
-            id: "agent-1".to_owned(),
-        };
-        let body_hash = encode_hex(&Sha256::digest(body.encode_to_vec()));
-        let payload = signing_payload(subject, &timestamp, nonce, rpc_path, &body_hash);
-        let sign = |secret: &str| {
-            let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac");
-            mac.update(payload.as_bytes());
-            encode_hex(&mac.finalize().into_bytes())
-        };
-
-        let mut request = Request::new(body);
-        request
-            .metadata_mut()
-            .insert(SUBJECT_HEADER, subject.parse().expect("subject"));
-        request
-            .metadata_mut()
-            .insert(TIMESTAMP_HEADER, timestamp.parse().expect("timestamp"));
-        request
-            .metadata_mut()
-            .insert(NONCE_HEADER, nonce.parse().expect("nonce"));
-        request
-            .metadata_mut()
-            .insert(SIGNATURE_HEADER, sign(primary).parse().expect("signature"));
-        if let Some(previous) = previous {
-            request.metadata_mut().insert(
-                PREVIOUS_SIGNATURE_HEADER,
-                sign(previous).parse().expect("previous signature"),
-            );
+        assert!(decode_hex(&"a".repeat(64)).is_some());
+        for value in ["aa,bb", "AA", "abc", "ab\n"] {
+            assert!(decode_hex(value).is_none());
         }
-        request
     }
 }

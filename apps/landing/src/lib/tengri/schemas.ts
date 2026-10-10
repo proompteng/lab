@@ -107,10 +107,14 @@ const previewFragment = z
   )
 
 export const tengriActionSchema = z.discriminatedUnion('action', [
-  z.strictObject({ action: z.literal('create-agent'), displayName: z.string().trim().min(1).max(64) }),
-  z.strictObject({ action: z.literal('delete-agent'), agentId }),
-  z.strictObject({ action: z.literal('sleep-agent'), agentId }),
-  z.strictObject({ action: z.literal('resume-agent'), agentId }),
+  z.strictObject({
+    action: z.literal('create-agent'),
+    operationId: z.uuid(),
+    displayName: z.string().trim().min(1).max(64),
+  }),
+  z.strictObject({ action: z.literal('delete-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
+  z.strictObject({ action: z.literal('sleep-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
+  z.strictObject({ action: z.literal('resume-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
   z.strictObject({ action: z.literal('update-power-settings'), agentId, power: tengriPowerSettingsSchema }),
   z.strictObject({ action: z.literal('list-files'), agentId, path: filePath }),
   z.strictObject({ action: z.literal('read-file'), agentId, path: filePath }),
@@ -206,6 +210,6 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     action: z.literal('revoke-preview-session'),
     agentId,
     sessionId: previewSessionId,
-    revocationToken: z.string().max(256).optional(),
+    revocationToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   }),
 ])

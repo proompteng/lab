@@ -8,6 +8,7 @@ export type TengriErrorCode =
   | 'file_conflict'
   | 'capacity_full'
   | 'model_selection_unavailable'
+  | 'lifecycle_superseded'
 
 export type TengriCondition = {
   type: string
@@ -20,6 +21,8 @@ export type TengriCondition = {
 export type TengriAgent = {
   id: string
   uid: string
+  runtimeEpoch: string
+  policyVersion: string
   displayName: string
   phase: AgentPhase
   architecture: AgentArchitecture
@@ -151,9 +154,9 @@ export type TengriPreviewSession = {
 
 export type TengriAction =
   | { action: 'create-agent'; displayName: string }
-  | { action: 'delete-agent'; agentId: string }
-  | { action: 'sleep-agent'; agentId: string }
-  | { action: 'resume-agent'; agentId: string }
+  | { action: 'delete-agent'; agentId: string; workspaceUid: string }
+  | { action: 'sleep-agent'; agentId: string; workspaceUid: string }
+  | { action: 'resume-agent'; agentId: string; workspaceUid: string }
   | { action: 'update-power-settings'; agentId: string; power: TengriPowerSettings }
   | { action: 'list-files'; agentId: string; path: string }
   | { action: 'read-file'; agentId: string; path: string }
@@ -203,4 +206,4 @@ export type TengriAction =
   | { action: 'editor-session'; agentId: string; windowId: string }
   | { action: 'browser-session'; agentId: string }
   | { action: 'revoke-editor-sessions' }
-  | { action: 'revoke-preview-session'; agentId: string; sessionId: string; revocationToken?: string }
+  | { action: 'revoke-preview-session'; agentId: string; sessionId: string; revocationToken: string }

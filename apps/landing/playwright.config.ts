@@ -6,6 +6,7 @@ import path from 'node:path'
 const fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'tengri-playwright-config-'))
 const fixtureSecret = path.join(fixtureDirectory, 'oidc-secret')
 writeFileSync(fixtureSecret, 'isolated-playwright-client-secret-not-production', { mode: 0o600 })
+writeFileSync(path.join(fixtureDirectory, 'TENGRI_INTERNAL_HMAC_SECRET'), '68'.repeat(32), { mode: 0o600 })
 process.once('exit', () => rmSync(fixtureDirectory, { recursive: true, force: true }))
 
 const port = Number.parseInt(process.env.TENGRI_PLAYWRIGHT_PORT ?? '3000', 10)
@@ -62,7 +63,7 @@ export default defineConfig({
             SPIFFE_ENDPOINT_SOCKET: 'unix:///tmp/tengri-playwright-workload-api.sock',
             SPIFFE_ID: 'spiffe://proompteng.ai/ns/proompteng/sa/proompteng',
             TENGRI_SPIFFE_ID: 'spiffe://proompteng.ai/ns/tengri/sa/tengri',
-            TENGRI_INTERNAL_HMAC_SECRET: 'playwright-tengri-hmac-secret-0000000000',
+            TENGRI_BFF_SECRET_DIR: fixtureDirectory,
           },
           reuseExistingServer: !process.env.CI,
           timeout: 120_000,

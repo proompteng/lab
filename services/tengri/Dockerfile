@@ -16,6 +16,11 @@ RUN apt-get update -o Acquire::Retries=3 && \
 WORKDIR /src
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
+COPY migrations ./migrations
+COPY fixtures ./fixtures
+COPY --from=ofz-proto / /ofz/proto/
+COPY --from=ofz-catalog /operations.json /ofz/operations.json
+ENV OFZ_PROTO_ROOT=/ofz/proto OFZ_CATALOG_PATH=/ofz/operations.json
 COPY src ./src
 RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && \
     (CARGO_BUILD_JOBS=2 cargo test --locked --release --all-targets > /tmp/tengri-build.log 2>&1 || \

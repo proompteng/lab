@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterAll, beforeEach, afterEach, describe, expect, test } from 'bun:test'
 
 import {
   beginTengriLifecycleTransition,
@@ -9,6 +9,28 @@ import {
 } from './client'
 
 const originalFetch = globalThis.fetch
+const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
+const values = new Map<string, string>()
+const storage: Storage = {
+  get length() {
+    return values.size
+  },
+  clear: () => values.clear(),
+  getItem: (key) => values.get(key) ?? null,
+  setItem: (key, value) => {
+    values.set(key, value)
+  },
+  removeItem: (key) => {
+    values.delete(key)
+  },
+  key: (index) => [...values.keys()][index] ?? null,
+}
+Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: storage })
+beforeEach(() => storage.clear())
+afterAll(() => {
+  if (originalStorage) Object.defineProperty(globalThis, 'sessionStorage', originalStorage)
+  else Reflect.deleteProperty(globalThis, 'sessionStorage')
+})
 
 afterEach(() => {
   globalThis.fetch = originalFetch
@@ -87,7 +109,16 @@ describe('Tengri guest operation coordination', () => {
     expect((blocked as Error).message).toBe('Agent lifecycle transition is in progress')
     expect(actions).toHaveLength(callsBeforeBlockedRequest)
 
-    expect(await runTengriAction<{ phase: string }>({ action: 'sleep-agent', agentId })).toEqual({ phase: 'sleeping' })
+    expect(
+      await runTengriAction<{ phase: string }>(
+        {
+          action: 'sleep-agent',
+          agentId,
+          workspaceUid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        },
+        { principalId: 'fixture-human' },
+      ),
+    ).toEqual({ phase: 'sleeping' })
     expect(actions.at(-1)).toBe('sleep-agent')
 
     releaseTransition()
@@ -125,3 +156,88 @@ function waitForAbort(signal: AbortSignal | null | undefined) {
     else signal?.addEventListener('abort', () => resolve(), { once: true })
   })
 }
+
+test('reuses the persisted lifecycle operation after an uncertain response and allocates a new ID only after success', async () => {
+  const requests: Array<{ action: string; operationId: string }> = []
+  globalThis.fetch = (async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)))
+    return requests.length === 1
+      ? Response.json({ error: 'Unavailable' }, { status: 503 })
+      : Response.json({ result: { id: 'agent-test' } })
+  }) as typeof fetch
+  const action = { action: 'create-agent' as const, displayName: 'Retained workspace' }
+  const options = { principalId: 'fixture-human' }
+  await expect(runTengriAction(action, options)).rejects.toMatchObject({ status: 503 })
+  expect(storage.getItem('tengri.pending-lifecycle.v2/fixture-human')).toContain(requests[0].operationId)
+  await runTengriAction(action, options)
+  expect(requests[1].operationId).toBe(requests[0].operationId)
+  expect(storage.getItem('tengri.pending-lifecycle.v2/fixture-human')).toBe('[]')
+  await runTengriAction(action, options)
+  expect(requests[2].operationId).not.toBe(requests[0].operationId)
+})
+
+test('retains the exact creation request until its uncertain outcome is resolved', async () => {
+  let calls = 0
+  globalThis.fetch = (async () => {
+    calls += 1
+    throw new TypeError('connection lost')
+  }) as unknown as typeof fetch
+  const options = { principalId: 'fixture-human' }
+  await expect(runTengriAction({ action: 'create-agent', displayName: 'Original' }, options)).rejects.toThrow(
+    'connection lost',
+  )
+  await expect(runTengriAction({ action: 'create-agent', displayName: 'Changed' }, options)).rejects.toThrow(
+    'still pending',
+  )
+  expect(calls).toBe(1)
+})
+
+test.each(['Original', 'Different'])(
+  'scopes uncertain creates to each signed-in principal: %s',
+  async (displayName) => {
+    const requests: Array<{ operationId: string }> = []
+    globalThis.fetch = (async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)))
+      return requests.length === 1
+        ? Response.json({ error: 'Unavailable' }, { status: 503 })
+        : Response.json({ result: { id: 'agent-test' } })
+    }) as typeof fetch
+    const original = { action: 'create-agent' as const, displayName: 'Original' }
+    await expect(runTengriAction(original, { principalId: 'first-human' })).rejects.toMatchObject({ status: 503 })
+    await runTengriAction({ action: 'create-agent', displayName }, { principalId: 'second-human' })
+    expect(requests[1].operationId).not.toBe(requests[0].operationId)
+    await runTengriAction(original, { principalId: 'first-human' })
+    expect(requests[2].operationId).toBe(requests[0].operationId)
+  },
+)
+
+test('clears a superseded lifecycle operation before a fresh retry without acknowledging it', async () => {
+  const requests: Array<{ operationId: string }> = []
+  globalThis.fetch = (async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)))
+    return requests.length === 1
+      ? Response.json({ error: 'Superseded', code: 'lifecycle_superseded' }, { status: 409 })
+      : Response.json({ result: {} })
+  }) as typeof fetch
+  const action = { action: 'sleep-agent' as const, agentId: 'agent-test', workspaceUid: crypto.randomUUID() }
+  const options = { principalId: 'first-human' }
+  await expect(runTengriAction(action, options)).rejects.toMatchObject({ status: 409, code: 'lifecycle_superseded' })
+  await runTengriAction(action, options)
+  expect(requests[1].operationId).not.toBe(requests[0].operationId)
+})
+
+test('requires a signed-in principal before allocating or sending a lifecycle operation', async () => {
+  let called = false
+  globalThis.fetch = Object.assign(
+    async () => {
+      called = true
+      return Response.json({ result: {} })
+    },
+    { preconnect: originalFetch.preconnect },
+  )
+  await expect(runTengriAction({ action: 'create-agent', displayName: 'Original' })).rejects.toThrow(
+    'signed-in session',
+  )
+  expect(called).toBe(false)
+  expect(storage.length).toBe(0)
+})

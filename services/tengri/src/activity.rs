@@ -148,6 +148,9 @@ mod tests {
         MicroVM::new(
             "agent",
             MicroVMSpec {
+                policy_version: 0,
+                reservation_id: "33333333-3333-4333-8333-333333333333".into(),
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
                 display_name: "Agent".to_owned(),
                 owner_hash: "owner".to_owned(),
                 desired_state: MicroVMDesiredState::Running,

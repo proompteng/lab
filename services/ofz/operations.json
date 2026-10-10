@@ -7,7 +7,7 @@
   {
     "surface": "controller",
     "operation": "ListAgents",
-    "action": "ACTION_PLATFORM_ADMIT"
+    "action": "ACTION_WORKSPACE_METADATA_READ"
   },
   {
     "surface": "controller",
@@ -21,23 +21,8 @@
   },
   {
     "surface": "controller",
-    "operation": "SleepAgent",
-    "action": "ACTION_WORKSPACE_SLEEP"
-  },
-  {
-    "surface": "controller",
-    "operation": "ResumeAgent",
-    "action": "ACTION_WORKSPACE_RESUME"
-  },
-  {
-    "surface": "controller",
     "operation": "UpdatePowerSettings",
     "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
-  },
-  {
-    "surface": "controller",
-    "operation": "DeleteAgent",
-    "action": "ACTION_WORKSPACE_DELETE"
   },
   {
     "surface": "controller",
@@ -613,6 +598,18 @@
   },
   {
     "surface": "ofz",
+    "operation": "GetWorkspaceState",
+    "action": "ACTION_WORKSPACE_ENROLL",
+    "internal_only": true
+  },
+  {
+    "surface": "ofz",
+    "operation": "GetWorkspaceReservation",
+    "action": "ACTION_WORKSPACE_CREATE",
+    "internal_only": true
+  },
+  {
+    "surface": "ofz",
     "operation": "AuthorizeCommand",
     "action": "ACTION_POLICY_CHECK"
   },
@@ -752,6 +749,12 @@
   {
     "surface": "supervisor",
     "operation": "HEAD /slot/status",
+    "internal_only": true,
+    "action": "ACTION_WORKSPACE_ENROLL"
+  },
+  {
+    "surface": "supervisor",
+    "operation": "POST /slot/fence",
     "internal_only": true,
     "action": "ACTION_WORKSPACE_ENROLL"
   },

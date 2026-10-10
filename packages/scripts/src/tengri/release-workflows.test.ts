@@ -109,6 +109,10 @@ describe('Tengri image workflow', () => {
             CALLS: calls,
             TENGRI_KVM_TEST_IMAGE: 'private-fixture',
             TENGRI_KVM_GUEST_IMAGE: 'private-guest',
+            TENGRI_KVM_NETWORK: 'disposable-fixture-network',
+            TENGRI_KVM_DATABASE_HOST: 'disposable-fixture-database',
+            TENGRI_DATABASE_CA_FILE: resolve(fixture, 'ca.crt'),
+            TENGRI_DATABASE_PASSWORD_FILE: resolve(fixture, 'runtime.password'),
             TENGRI_KVM_OUTPUT: fixture,
             TENGRI_KVM_SAMPLES: samples,
           },
@@ -126,6 +130,8 @@ describe('Tengri image workflow', () => {
     (receipt) => {
       const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-receipt-'))
       try {
+        writeFileSync(resolve(fixture, 'ca.crt'), 'disposable-ca')
+        writeFileSync(resolve(fixture, 'runtime.password'), 'disposable-password')
         writeFileSync(resolve(fixture, 'ip'), '#!/bin/sh\nprintf "1.1.1.1 dev fixture0\\n"\n', { mode: 0o755 })
         writeFileSync(resolve(fixture, 'cat'), '#!/bin/sh\nprintf "1500\\n"\n', { mode: 0o755 })
         writeFileSync(
@@ -150,6 +156,10 @@ exit 0
             RECEIPT: receipt,
             TENGRI_KVM_TEST_IMAGE: 'private-fixture',
             TENGRI_KVM_GUEST_IMAGE: 'private-guest',
+            TENGRI_KVM_NETWORK: 'disposable-fixture-network',
+            TENGRI_KVM_DATABASE_HOST: 'disposable-fixture-database',
+            TENGRI_DATABASE_CA_FILE: resolve(fixture, 'ca.crt'),
+            TENGRI_DATABASE_PASSWORD_FILE: resolve(fixture, 'runtime.password'),
             TENGRI_KVM_OUTPUT: fixture,
             TENGRI_KVM_SAMPLES: '3',
           },
@@ -248,7 +258,9 @@ exit 0
     expect(controllerValidation).toContain('cargo fmt --check')
     expect(controllerValidation).toContain('cargo clippy --locked --all-targets -- -D warnings')
     expect(controllerValidation).toContain('cargo test --locked --all-targets')
-    expect(controllerValidation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
+    expect(controllerValidation).toContain(
+      'diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml',
+    )
     expect(guestValidation).toContain('GOWORK=off go test -race ./...')
     expect(guestValidation).toContain('GOWORK=off go vet ./...')
     expect(guestValidation).toContain('bash validate-rootfs.test.sh')
@@ -387,11 +399,11 @@ exit 0
     expect(validation).toContain('cargo fmt --check')
     expect(validation).toContain('cargo clippy --locked --all-targets -- -D warnings')
     expect(validation).toContain('cargo test --locked --all-targets')
-    expect(validation).toContain('bash test-authz.sh')
+    expect(validation).toContain('bash test-runtime.sh')
     expect(validation).toContain('bash test-rpc-interop.sh')
     expect(validation).toContain('cargo run --locked --quiet --bin crdgen')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml crd.yaml')
-    expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
+    expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml')
   })
 
   it.each(['save', 'config', 'portable'])('verifies the saved configuration for fixture %s', (scenario) => {

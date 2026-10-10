@@ -23,6 +23,27 @@ be qualified against actual retained data and available space.
 
 Evidence and decisions are recorded in [the implementation trail](ofz-implementation-decisions.tsv).
 
+The runtime checkpoint's review regressions now exercise signed controller calls against the real passkey-backed Ofz
+session and PostgreSQL/SpiceDB fixture. Workspace listing returns only the registered, authorized workspace and skips
+an unavailable UID. Creation completes after a 5.1-second delay by checking the current session under a fresh two-second
+metadata decision; submitting the original expired request again remains denied. Each regression fails against its
+prior implementation. The full pinned-container identity fixture passes all 54 browser assertions and its controller
+wire checks. The isolated shared-state fixture passes all 19 tests, including bounded reconnection after terminating a
+database backend, with the accepted nonce denied throughout. A concurrent fixture run hit the configured database
+connection timeout; production deadlines were retained and the complete isolated rerun passed. Generated slot Pods
+now mount the supervisor's restricted SQL password and CA only into that container. Nix source evaluation also verifies
+that the shared request-signature vector reaches the Proompteng build unchanged. Remote CI for these fixes is pending.
+
+The next runtime review regressions reject a sleep or resume receipt when a newer observed phase or runtime epoch
+has superseded it. A newer policy version with the same requested epoch and phase still succeeds. Supersession returns
+an explicit 409; the browser clears that completed operation without marking its transition committed and allocates a
+fresh ID on retry. Pending lifecycle operations are scoped to the signed-in GitHub principal, preserving an uncertain
+request for its original account while allowing another account to create in the same tab. Five regressions fail against
+the prior source. The corrected source passes 309 Landing tests, TypeScript, type-aware lint with zero errors, 22 inventory
+regressions and five focused Chromium scenarios. The browser fixture now mounts the required 32-byte hexadecimal
+request key. Its previous noncanonical key disabled the desktop and made CI wait for unavailable controls; that obsolete
+CI run was cancelled before pushing the correction. These are isolated checks; the deployed migration remains pending.
+
 P1 local evidence: 492 permission assertions against pinned SpiceDB and PostgreSQL; five Rust contract tests; five
 inventory tests including deliberately unclassified RPC and HTTP changes; Buf lint; Clippy; Rust/Python/shell checks.
 The catalog covers 163 current operations across eleven surfaces, including each HTTP method and Axum's implicit HEAD.
@@ -90,3 +111,25 @@ and returned HTTP 429 on the seventh request under the corrected configuration. 
 production ingress acceptance remains part of P8. Fifty-seven focused inventory, rollout and ingress checks pass.
 The enabled-app inventory follows declared nested Kustomize inputs, excluding prepared directories until referenced;
 only Ofz's classification changed in the current repository inventory.
+
+P4 source is in progress. The real PostgreSQL 18.6 / SpiceDB fixture passes 19 shared-runtime tests, including
+atomic one-use redemption across replicas, bounded pool failure, hash-only storage, preview/session/owner/epoch
+isolation, global capacity and expiry, signed body/replay rejection, database leader CAS/expiry, supervisor role
+restrictions, replay protection after a database backend dies, and cleanup that preserves replaced homes or unproven
+writers. The Rust unit suite passes 120 tests with 23 explicit integration/native fixtures excluded. Two real Go/Rust
+RPC interoperability fixtures also pass. The Landing suite passes 303 tests and TypeScript; 24 release-workflow and
+22 inventory regressions pass. The real control fixture passes 29 commands with 91 immutable receipts.
+
+The Chromium/Keycloak/Ofz fixture passes 54 assertions, including the real controller SPIFFE connection, an immutable
+runtime receipt after a later stop, bounded stream revocation, and recovery of the same passkey session after the serving
+Ofz process is killed. Its TCP proxy models endpoint removal; this does not establish Kubernetes or database failover.
+The current patch removes the direct-SpiceDB client/schema and ConfigMap nonce path, uses stable lifecycle operation IDs
+with a separate original-request hash, and waits for the controller's observed policy version before acknowledging a
+transition. It projects Ofz's current owner while preserving the retained-home binding. Breaking CRD changes remain
+prepared for the coordinated cutover. P4 has not been merged or deployed; replica/database deployment,
+Keycloak HA and native KVM qualification remain open.
+
+P3 merged as PR #14906 at `75b75987f047edaf1a6403a0556d5189af667065` on 2026-10-10. All required checks,
+including native image builds on both architectures, passed on its reviewed head. This is source/CI evidence; the
+release hold and live identity/custodian gates remain. P4's breaking CRD is staged under Tengri's unreferenced
+`prepared/` directory, so merging source cannot invalidate the current controller's production API before cutover.

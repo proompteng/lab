@@ -63,15 +63,45 @@ impl SlotClient {
         self.decode(response).await
     }
 
-    pub async fn lifecycle(&self, action: &str, claim: &Claim) -> anyhow::Result<SlotStatus> {
+    pub async fn install_fence(&self, fence: crate::control::Fence) -> anyhow::Result<()> {
+        fence.validate()?;
+        let response = self
+            .http
+            .post(format!("{}/slot/fence", self.url))
+            .timeout(Duration::from_secs(2))
+            .json(&fence)
+            .send()
+            .await?;
+        ensure!(
+            response.status().is_success(),
+            "supervisor rejected controller fencing generation"
+        );
+        Ok(())
+    }
+
+    pub async fn lifecycle(
+        &self,
+        action: &str,
+        claim: &Claim,
+        fence: crate::control::Fence,
+    ) -> anyhow::Result<SlotStatus> {
         ensure!(
             ["restore", "sleep", "stop"].contains(&action),
             "invalid slot command"
         );
         claim.validate()?;
+        self.install_fence(fence).await?;
         let response = self
             .http
             .post(format!("{}/slot/{action}", self.url))
+            .header(
+                super::supervisor::LEADER_OWNER_HEADER,
+                fence.owner.to_string(),
+            )
+            .header(
+                super::supervisor::LEADER_GENERATION_HEADER,
+                fence.generation.to_string(),
+            )
             .json(claim)
             .send()
             .await?;

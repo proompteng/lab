@@ -227,7 +227,7 @@ Resolve actionable findings before merge. Implement phases in order, using nativ
 | P7. Operations                  | Offboarding/quarantine workflows, independent audit/backups, alerts, and recovery runbooks                                 | Privileged offboarding and isolated restore pass, including copied-credential checkpoints, missing journal intervals, and revoked-after-backup grants. |
 | P8. Hard cutover                | One-shot migrator, version/epoch handshake, legacy removal, credential rotation, GitOps wiring, and qualification evidence | Two staging migration rehearsals, complete browser acceptance, failure probes, and a 24-hour mixed-workload soak pass on the exact release.            |
 
-Relevant existing checks include Tengri Rust tests, `services/tengri/test-authz.sh`, Landing tests and focused browser
+Relevant existing checks include Tengri Rust tests, `services/tengri/test-runtime.sh`, Landing tests and focused browser
 E2E, generated-protocol checks, affected formatting/lint, and manifest rendering/validation. Add new Ofz integration and
 failure probes as owned implementation work. A blocked environment check is not a pass.
 
@@ -292,7 +292,7 @@ BFF, Ofz, controller, supervisor, guest, and brokers without recording private c
 ## Source and operating references
 
 - [Tengri implementation and host boundary](../../services/tengri/README.md)
-- [Current authorization code](../../services/tengri/src/authz.rs), [schema](../../services/tengri/src/authz.zed),
+- [Current authorization code](../../services/tengri/src/authz.rs), [central schema](../../services/ofz/schema.zed),
   [ticket state](../../services/tengri/src/tickets.rs), and [BFF authentication](../../apps/landing/src/lib/tengri/auth.ts)
 - [Ofz datastore and backup configuration](../../argocd/applications/ofz/README.md)
 - [Keycloak desired state](../../argocd/applications/keycloak/keycloak.yaml)

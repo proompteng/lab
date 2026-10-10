@@ -133,6 +133,7 @@ fn command_target(command: &Command) -> Result<(Action, Resource, bool), Status>
         Command::EmergencyAccess(_) => (Action::MembersManage, policy::platform(), false),
         Command::ReserveWorkspace(_) => (Action::WorkspaceCreate, policy::platform(), false),
         Command::ReleaseReservation(_) => (Action::WorkspaceEnroll, policy::platform(), true),
+        Command::CompleteWorkspaceRemoval(_) => (Action::WorkspaceEnroll, policy::platform(), true),
         Command::SetWorkspaceRuntime(c) => (
             if c.running {
                 Action::WorkspaceResume
@@ -269,10 +270,13 @@ pub(crate) async fn prepare(
     } else {
         command_target(command)?
     };
-    let controller_command = matches!(
-        command,
-        Command::EnrollWorkspace(_) | Command::ReleaseReservation(_)
-    ) || matches!(command, Command::SetWorkspaceRuntime(c) if !c.running);
+    let controller_command = peer == CONTROLLER_ID
+        && (matches!(
+            command,
+            Command::EnrollWorkspace(_)
+                | Command::ReleaseReservation(_)
+                | Command::CompleteWorkspaceRemoval(_)
+        ) || matches!(command, Command::SetWorkspaceRuntime(c) if !c.running));
     if controller_command {
         if peer != CONTROLLER_ID || context.actor != Some(decision::workload_actor(peer)) {
             return Err(Status::permission_denied("controller command required"));
@@ -712,6 +716,25 @@ pub(crate) async fn prepare(
             if row.get::<_, String>(0) != "reserved" {
                 return Err(Status::failed_precondition(
                     "enrolled capacity requires confirmed home removal",
+                ));
+            }
+        }
+        Command::CompleteWorkspaceRemoval(c) => {
+            let row = client
+                .query_opt(
+                    "SELECT home_uid,reservation_id,state,running FROM ofz.workspaces WHERE uid=$1",
+                    &[&parse_uuid(&c.workspace_uid)?],
+                )
+                .await
+                .map_err(sql_error)?
+                .ok_or_else(|| Status::not_found("workspace not found"))?;
+            if row.get::<_, Uuid>(0) != parse_uuid(&c.home_uid)?
+                || row.get::<_, Uuid>(1) != parse_uuid(&c.reservation_id)?
+                || row.get::<_, String>(2) != "removing"
+                || row.get::<_, bool>(3)
+            {
+                return Err(Status::failed_precondition(
+                    "approved stopped workspace and exact removed home required",
                 ));
             }
         }
@@ -1224,7 +1247,7 @@ pub(crate) async fn finalize(
         }
         Command::RemoveWorkspace(c) => {
             tx.execute(
-                "UPDATE ofz.workspaces SET state='quarantined' WHERE uid=$1",
+                "UPDATE ofz.workspaces SET state='removing' WHERE uid=$1",
                 &[&parse_uuid(&c.workspace_uid)?],
             )
             .await
@@ -1236,6 +1259,20 @@ pub(crate) async fn finalize(
             .await
             .map_err(sql_error)?;
             // Retained homes continue counting against quota until separately confirmed destroyed.
+        }
+        Command::CompleteWorkspaceRemoval(c) => {
+            tx.execute(
+                "UPDATE ofz.workspaces SET state='removed' WHERE uid=$1",
+                &[&parse_uuid(&c.workspace_uid)?],
+            )
+            .await
+            .map_err(sql_error)?;
+            tx.execute(
+                "UPDATE ofz.reservations SET state='released' WHERE id=$1",
+                &[&parse_uuid(&c.reservation_id)?],
+            )
+            .await
+            .map_err(sql_error)?;
         }
         Command::EmergencyAccess(c) => {
             if prepared.emergency_activated {
@@ -1286,6 +1323,10 @@ pub(crate) async fn finalize(
         audit_receipt_id: audit.id,
         agent_credential: String::new(),
         recovered_revision,
+        runtime_intent: match prepared.request.command.as_ref() {
+            Some(Command::SetWorkspaceRuntime(intent)) => Some(intent.clone()),
+            _ => None,
+        },
     };
     let value = store::encode(&receipt)?;
     let updated = tx

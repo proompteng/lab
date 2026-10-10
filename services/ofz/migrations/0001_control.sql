@@ -47,7 +47,7 @@ CREATE TABLE ofz.workspaces (
     home_bytes bigint NOT NULL CHECK (home_bytes = 34359738368),
     running boolean NOT NULL DEFAULT false,
     runtime_epoch uuid,
-    state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'quarantined', 'removed'))
+    state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'quarantined', 'removing', 'removed'))
 );
 CREATE TABLE ofz.collaborators (
     workspace_uid uuid NOT NULL REFERENCES ofz.workspaces(uid),

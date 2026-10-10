@@ -589,6 +589,7 @@ pub async fn revoke(
         audit_receipt_id: audit.id,
         agent_credential: String::new(),
         recovered_revision: false,
+        runtime_intent: None,
     };
     tx.execute("INSERT INTO ofz.session_revocations(operation_id,credential_hash,origin,receipt) VALUES($1,$2,$3,$4)", &[&operation,&hash,&request.origin,&store::encode(&receipt)?]).await.map_err(sql_error)?;
     tx.commit().await.map_err(sql_error)?;

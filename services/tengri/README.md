@@ -54,7 +54,7 @@ only unused slots; claimed guests retain their runtime through ordinary sleep/re
 ## Host and guest boundaries
 
 The slot runs under the normal OCI runtime with separate container PID namespaces, no host networking/mounts,
-and no Kubernetes API token. The supervisor mounts only the SPIFFE CSI socket and private control sockets. The runner
+and no Kubernetes API token. The supervisor mounts the SPIFFE CSI socket, private control sockets and its restricted database credential. The runner
 mounts only its boot artifacts, disks, token, and sockets.
 
 The short-lived TAP init container receives NET_ADMIN inside the Pod network namespace. It creates `tengri0`, private
@@ -150,59 +150,59 @@ can reach only the control listener. A guest application may therefore own paths
 without those requests reaching Tengri's own handlers.
 
 `/livez` reports process liveness. `/readyz` and the compatibility `/healthz` alias report success only while the
-Kubernetes control path, SpiceDB permission API, and in-process ticket state are usable; deployment probes do not advertise an isolated process
+Kubernetes control path, Ofz authority, and shared SQL state are usable; deployment probes do not advertise an isolated process
 as ready to accept agent operations.
 
 ## Workspace authorization
 
-The Rust controller uses the shared [Ofz SpiceDB service](../../argocd/applications/ofz/README.md).
-[`src/authz.zed`](src/authz.zed) defines `tengri_user`, `tengri_workspace`, an `owner` relationship, and
-`access = owner`. The user ID is the existing SHA-256 GitHub subject hash; the workspace ID is
-`<namespace>/<MicroVM name>`. Each workspace operation checks `access` with fully consistent reads. Local CR owner
-fields and labels supply initial enrollment metadata; they do not authorize a request.
+Ofz owns authorization for the controller and BFF. Tengri calls the canonical
+[AuthorizationService](../../proto/proompteng/authz/v1/authz.proto) over exact-peer SPIFFE mutual TLS; it never
+receives a SpiceDB administrative key, installs schema, or creates owner tuples directly. The canonical
+[operation catalog](../ofz/operations.json) maps each runtime RPC to an explicit action. Local Kubernetes labels,
+names and owner fields locate resources; Ofz checks the actual MicroVM UID and current runtime epoch.
 
-`TENGRI_AUTHZ_ENDPOINT` and `TENGRI_AUTHZ_KEY_FILE` are required. The deployment connects to
-`http://ofz.ofz.svc.cluster.local:8443` and mounts `tengri-spicedb-key` only in the controller. Requests read the
-projected key file each time so Secret rotation takes effect without a restart. The key permits the whole SpiceDB API;
-the browser, BFF, and guest never receive it. NetworkPolicy permits only the controller to reach Ofz's SpiceDB pods.
+The BFF carries the human ID, opaque session ID, trace ID, workspace UID, runtime epoch, origin, contract version and
+recovery generation. One mounted 32-byte key encoded as lowercase hexadecimal signs the canonical protobuf body,
+RPC path, full context and fresh nonce. Tengri reads `TENGRI_INTERNAL_HMAC_KEY_FILE` for each request. There is no
+old owner-header or multi-key protocol. Cutover rotates both peers together while traffic is fenced.
+`OFZ_GRPC_ENDPOINT` is a fixed DNS authority and must present `spiffe://proompteng.ai/ns/ofz/sa/ofz-api`.
 
-Before serving, startup installs the embedded schema only when SpiceDB reports no schema. An existing schema is
-preserved and must already contain the Tengri definitions; a missing or incompatible permission contract stops startup.
-Future changes to the shared schema require an explicit reviewed migration. Startup enrolls existing non-deleting
-MicroVMs using their recorded owners. Creation enrolls new workspaces before returning success. Enrollment records
-`runtime.proompteng.ai/spicedb-enrolled: v1` on each CR after writing the relationship. Kubernetes status/finalizer write
-conflicts retry the annotation patch without repeating the grant. Interrupted enrollment is retried before the
-workspace is returned successfully.
+`TENGRI_DATABASE_DSN`, `TENGRI_DATABASE_PASSWORD_FILE` and `TENGRI_DATABASE_CA_FILE` select the TLS-only
+`tengri_control` database. Controller and supervisor use separate `tengri_controller` and `tengri_supervisor` roles.
+Only Ofz's `migrate-runtime` command runs the checksum-bound schema migration as `tengri_migrator`. Applications
+verify that schema before serving. SQL stores hashed replay receipts, hashed one-use tickets and preview sessions;
+plaintext credentials are returned only to their caller. Limits and atomic redemption apply across replicas.
 
-The marker prevents subsequent startup or repeated creation from restoring a revoked owner relationship. Keep the
-annotation when managing grants. To revoke a workspace, delete its `owner` relationship through the private SpiceDB
-API. Grant changes take effect on the next request. Open file/Codex streams and terminal/preview WebSockets recheck
-access every second and close on denial or authority failure; streaming preview response bodies use the same guard.
-Permission requests have a two-second deadline. Denial returns `PERMISSION_DENIED`; outages or invalid responses return
-`UNAVAILABLE`. There is no local authorization fallback or positive permission cache. Deletion removes all workspace
-relationships before deleting the guest resources and releasing the finalizer.
+Generated slot Pods mount the `tengri-supervisor-db` Secret's `password` and the `ofz-database-ca` Secret's `ca.crt`
+only into the supervisor. Its fixed database authority is `ofz-db-rw.ofz.svc.cluster.local`, database `tengri_control`,
+role `tengri_supervisor`. The runner and guest receive neither credential. Provision both reviewed Secrets before
+enabling slot creation during cutover.
 
-Run `bash services/tengri/test-authz.sh` to test schema installation, enrollment with a Kubernetes write conflict,
-owner and foreign-user checks, namespace isolation, stream revocation, restart without re-granting, and preservation
-of another application's schema against the pinned real SpiceDB image. It creates and removes an isolated local
-Docker container and uses only a disposable test key. Controller validation in the image workflow runs this test.
+The controller combines the Kubernetes leader Lease with a database generation and lease deadline. Its work futures
+are cancelled before releasing leadership, every mutation checks the current local guard, and each supervisor checks
+the installed database fence before and after lifecycle or guest forwarding. SQL failure or expired leadership rejects
+protected requests. Leadership alone is not proof of a guest execution permit; the complete execution fencing and
+revocation qualification remains part of the [migration plan](../../docs/tengri/ofz-enterprise-authorization-plan.md).
 
-`TENGRI_INTERNAL_HMAC_SECRET` normally contains one base64url key of at least 32 bytes. Rotate it without an
-authentication outage by sealing `new,current` into both namespace-scoped manifests in the same commit: the BFF signs
-with both keys and the controller accepts either while the two SealedSecrets reconcile independently. After both
-workloads observe the bundle, reseal both manifests with only the new key. More than two keys are rejected.
+Ofz reserves 32 GiB before creation. The controller enrolls the exact retained home, reservation and MicroVM UID once;
+later reconciliation reads Ofz's owner, runtime epoch and intent instead of regranting the original owner. Human
+resume and sleep commands commit in Ofz before the controller projects them. The BFF preserves the operation ID and
+payload across retries. Removal denies access immediately but keeps quota until the controller proves the bound home
+is absent and commits `CompleteWorkspaceRemoval` with the exact home UID and reservation.
 
-The Deployment also mounts `tengri-runtime` as a projected Secret. Tengri compares those files with the values loaded
-into its environment and, without logging either value, deletes only its own control-plane Pod when the SealedSecrets
-controller updates the generated Secret. The Deployment then creates a replacement Pod with the refreshed environment;
-no manual restart or cluster-wide reloader is required.
+Checks have a two-second deadline and no positive permission cache. Open streams and preview/terminal WebSockets
+recheck every second and close on denial or authority failure. Observer operations do not renew idle activity.
+`/readyz` requires Kubernetes, Ofz's unfenced and archive-healthy state, and shared SQL availability.
 
-Every valid signed request atomically consumes a hashed replay receipt in the pre-provisioned
-`tengri-auth-nonces` ConfigMap. Kubernetes `resourceVersion` compare-and-swap makes replay rejection consistent across
-controller restarts. The singleton serializes nonce updates before entering the Kubernetes compare-and-swap loop, and
-bounded exponential retry absorbs an external write conflict without rejecting an ordinary burst of valid requests.
-Only live receipts are retained and the bounded store fails closed. The deployment RBAC grants only `get` and `update`
-on that named ConfigMap.
+Run `bash services/tengri/test-runtime.sh` for real TLS PostgreSQL 18.6 and SpiceDB 1.56.2 fixtures. It exercises
+replica-wide redemption/replay, preview binding and rotation, capacity/expiry, leadership CAS and lease expiry,
+supervisor SQL restrictions and protected cleanup. `bash services/ofz/test-control.sh` additionally proves typed
+reservation/runtime reads and the two-stage removal contract. For native KVM acceptance, set the documented image,
+output and sample variables and run `bash services/ofz/test-control.sh kvm`; this provisions the real shared SQL
+fixture and invokes `test-kvm.sh`. Unit fixtures do not establish production authority or fleet acceptance.
+
+These source contracts are held behind `TENGRI_PREPARED_SLOT_CUTOVER_READY=false` until the coordinated release.
+See [implementation status](../../docs/tengri/ofz-implementation-status.md) for the remaining production gates.
 
 ## Lifecycle settings and delivery
 
@@ -210,14 +210,10 @@ System Settings → Lifecycle controls `spec.power.idleTimeoutMinutes`. The defa
 are accepted, and zero disables automatic sleep. Manual sleep always releases resident guest RAM. Changing the timeout
 starts a new idle interval; authenticated activity extends it. Retained homes have no expiry or automatic deletion deadline.
 
-The authorization cutover requires the Ofz service, its existing API key, the controller-only NetworkPolicy rule,
-and `tengri-spicedb-key` before the new controller starts. The committed strict-scope SealedSecret is generated with
-`nix develop -c python3 scripts/seal-tengri-authz.py --context galactic-tailscale`; the helper reads the existing Ofz key
-and writes ciphertext without applying resources. Rotate this copy whenever the shared Ofz key changes. Validate the
-sealed manifest, render the Tengri application, and publish/promote the reviewed controller image through Kargo.
-Verify exact deployed revisions, enrollment annotations, allowed and denied workspace operations, and open-session
-revocation after an authorized rollout. Preserve SpiceDB's PostgreSQL data and the enrollment annotations during
-recovery; do not clear them to recover an intentionally revoked grant.
+The authorization cutover requires the reviewed Ofz API, shared TLS control database, separate workload roles,
+exact-peer SPIFFE registrations and coordinated BFF signing-key rotation. Preserve every retained home UID and fence
+all old writers before activating the new images. Runtime readiness, a healthy Argo Application, and unit tests do not
+replace live allow/deny, stream revocation, recovery, history and fleet qualification.
 
 Normal delivery uses the paired image publisher, Kargo, and Argo. Native AMD64/ARM64 guest artifacts contain the
 checksummed kernel/root disk. The controller image also supplies the host runner, supervisor, TAP script, and pinned
@@ -234,7 +230,7 @@ cargo test --manifest-path services/tengri/Cargo.toml --locked --all-targets
 bash services/tengri/test-rpc-interop.sh
 cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
 diff -u /tmp/tengri-crd.yaml services/tengri/crd.yaml
-diff -u /tmp/tengri-crd.yaml argocd/applications/tengri/crd.yaml
+diff -u /tmp/tengri-crd.yaml argocd/applications/tengri/prepared/crd.yaml
 shellcheck services/tengri/network.sh services/tengri/test-kvm*.sh
 ```
 

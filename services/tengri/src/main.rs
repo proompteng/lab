@@ -1,15 +1,19 @@
 mod activity;
 mod auth;
 mod authz;
+mod control;
 mod controller;
 mod crd;
 mod gateway;
 mod grpc;
 mod guest;
 mod identity;
+mod leadership;
 mod metrics;
+mod ofz;
 mod pod;
-mod runtime_secret;
+#[cfg(test)]
+mod runtime_state_test;
 mod slot;
 mod tickets;
 
@@ -23,8 +27,7 @@ use grpc::{
     ControlPlane, ControlPlaneConfig,
     proto::micro_vm_control_plane_server::MicroVmControlPlaneServer,
 };
-use kube::Client;
-use runtime_secret::RuntimeSecretSnapshot;
+use kube::{Client, ResourceExt};
 use tokio::{
     net::TcpListener,
     signal,
@@ -41,7 +44,6 @@ const DEFAULT_GATEWAY_ADDRESS: &str = "0.0.0.0:8080";
 const DEFAULT_PREVIEW_ADDRESS: &str = "0.0.0.0:8081";
 const DEFAULT_ARCHITECTURE: &str = "amd64";
 const MAX_GRPC_MESSAGE_BYTES: usize = 16 << 20;
-const RUNTIME_SECRET_POLL_INTERVAL: Duration = Duration::from_secs(15);
 const STARTUP_KUBERNETES_RETRY_ATTEMPTS: usize = 8;
 const STARTUP_KUBERNETES_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 const STARTUP_KUBERNETES_MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -64,6 +66,9 @@ async fn main() -> anyhow::Result<()> {
         None => {}
     }
 
+    let database =
+        std::sync::Arc::new(control::Database::from_environment("tengri_controller").await?);
+    database.verify_schema().await?;
     let namespace = env_value("TENGRI_NAMESPACE").unwrap_or_else(|| DEFAULT_NAMESPACE.to_owned());
     let listen_address = env_value("TENGRI_LISTEN_ADDRESS")
         .unwrap_or_else(|| DEFAULT_LISTEN_ADDRESS.to_owned())
@@ -82,19 +87,10 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let default_image = required_env("TENGRI_DEFAULT_IMAGE")?;
     let controller_guest_image = default_image.clone();
-    let internal_hmac_secret = required_env("TENGRI_INTERNAL_HMAC_SECRET")?;
-    let ticket_signing_secret = required_env("TENGRI_TICKET_SIGNING_SECRET")?;
-    let runtime_secret_directory = env_value("TENGRI_RUNTIME_SECRET_DIRECTORY").map(PathBuf::from);
-    let runtime_secret_pod_name = runtime_secret_directory
-        .as_ref()
-        .map(|_| required_env("TENGRI_POD_NAME"))
-        .transpose()?;
-    let runtime_secret_snapshot =
-        RuntimeSecretSnapshot::new(&internal_hmac_secret, &ticket_signing_secret);
     let public_url = required_env("TENGRI_PUBLIC_URL")?;
     let preview_url_template = required_env("TENGRI_PREVIEW_URL_TEMPLATE")?;
     let desktop_origin = required_env("TENGRI_DESKTOP_ORIGIN")?;
-    let preview_origin = PreviewOrigin::parse(preview_url_template, desktop_origin)?;
+    let preview_origin = PreviewOrigin::parse(preview_url_template, desktop_origin.clone())?;
     let client = Client::try_default()
         .await
         .context("create Kubernetes client")?;
@@ -115,21 +111,24 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|spec| spec.containers.iter().find(|c| c.name == "tengri"))
         .and_then(|container| container.image.clone())
         .context("controller Pod has no Tengri image")?;
-    let authorization = authz::WorkspaceAuthorization::new(
-        &required_env("TENGRI_AUTHZ_ENDPOINT")?,
-        PathBuf::from(required_env("TENGRI_AUTHZ_KEY_FILE")?),
-    )?;
-    authorization
-        .initialize(client.clone(), &namespace)
-        .await
-        .context("initialize Tengri authorization")?;
     let workload_identity = identity::WorkloadIdentity::from_environment(&namespace).await?;
+    let authorization = authz::WorkspaceAuthorization::new(ofz::Client::new(
+        &required_env("OFZ_GRPC_ENDPOINT")?,
+        &workload_identity,
+    )?);
+    authorization
+        .ready()
+        .await
+        .context("Ofz authority is unavailable")?;
+    let auth = auth::Authenticator::new(
+        database.clone(),
+        &PathBuf::from(required_env("TENGRI_INTERNAL_HMAC_KEY_FILE")?),
+        desktop_origin,
+    )?;
     let grpc_tls = workload_identity.server_tls()?;
     let grpc_listener = TcpListener::bind(listen_address)
         .await
         .context("bind SPIFFE gRPC control plane")?;
-    let runtime_secret_client = client.clone();
-    let runtime_secret_namespace = namespace.clone();
     let activity = ActivityTracker::new(client.clone(), namespace.clone());
     let service = ControlPlane::new(
         client.clone(),
@@ -139,8 +138,8 @@ async fn main() -> anyhow::Result<()> {
             namespace: namespace.clone(),
             default_image,
             architecture,
-            internal_hmac_secret,
-            ticket_signing_secret,
+            database: database.clone(),
+            auth,
             public_url,
             preview_origin: preview_origin.clone(),
         },
@@ -174,18 +173,29 @@ async fn main() -> anyhow::Result<()> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let controller_client = client.clone();
     let controller_namespace = namespace.clone();
+    let election = leadership::Election::new(
+        client.clone(),
+        namespace.clone(),
+        own_pod
+            .uid()
+            .context("controller Pod UID required")?
+            .parse()?,
+        database.clone(),
+    )?;
     let mut controller_task = tokio::spawn(async move {
-        controller::run(controller::ControllerContext {
-            client: controller_client,
-            namespace: controller_namespace,
-            tickets,
-            guest_image: controller_guest_image.into(),
-            runtime_image: runtime_image.into(),
-            architecture,
-            identity: workload_identity,
-            authorization,
-        })
-        .await;
+        election
+            .run(controller::ControllerContext {
+                client: controller_client,
+                namespace: controller_namespace,
+                tickets,
+                guest_image: controller_guest_image.into(),
+                runtime_image: runtime_image.into(),
+                architecture,
+                identity: workload_identity,
+                authorization,
+                leadership: None,
+            })
+            .await;
         Ok::<(), anyhow::Error>(())
     });
 
@@ -222,27 +232,6 @@ async fn main() -> anyhow::Result<()> {
             .context("serve preview gateway")
     });
 
-    let mut runtime_secret_task = tokio::spawn(async move {
-        match (runtime_secret_directory, runtime_secret_pod_name) {
-            (Some(directory), Some(pod_name)) => {
-                runtime_secret::watch(
-                    directory,
-                    runtime_secret_snapshot,
-                    RUNTIME_SECRET_POLL_INTERVAL,
-                )
-                .await;
-                runtime_secret::replace_pod(
-                    runtime_secret_client,
-                    &runtime_secret_namespace,
-                    &pod_name,
-                )
-                .await?;
-                anyhow::bail!("runtime secret changed; Pod replacement requested")
-            }
-            _ => std::future::pending::<anyhow::Result<()>>().await,
-        }
-    });
-
     info!(%listen_address, %gateway_address, %preview_address, %namespace, ?architecture, "Tengri control plane ready");
     let result = tokio::select! {
         () = shutdown_signal() => Ok(()),
@@ -250,12 +239,10 @@ async fn main() -> anyhow::Result<()> {
         result = &mut grpc_task => task_result("gRPC server", result),
         result = &mut gateway_task => task_result("HTTP gateway", result),
         result = &mut preview_task => task_result("preview gateway", result),
-        result = &mut runtime_secret_task => task_result("runtime secret watcher", result),
     };
 
     let _ = shutdown_tx.send(true);
     controller_task.abort();
-    runtime_secret_task.abort();
     let _ = timeout(Duration::from_secs(5), async {
         if !grpc_task.is_finished() {
             let _ = grpc_task.await;

@@ -156,14 +156,19 @@ pub fn build_slot_pod(
         "containers": [
             {"name": "supervisor", "image": runtime_image, "args": ["slot-supervisor"],
                 "env": [env[0], env[1], {"name": "SPIFFE_ENDPOINT_SOCKET", "value": "unix:///spiffe-workload-api/spire-agent.sock"},
-                    {"name": "SPIFFE_TRUST_DOMAIN", "value": "proompteng.ai"}],
+                    {"name": "SPIFFE_TRUST_DOMAIN", "value": "proompteng.ai"},
+                    {"name": "TENGRI_DATABASE_DSN", "value": "host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=tengri_control user=tengri_supervisor sslmode=require"},
+                    {"name": "TENGRI_DATABASE_PASSWORD_FILE", "value": "/var/run/tengri/database/password"},
+                    {"name": "TENGRI_DATABASE_CA_FILE", "value": "/var/run/tengri/database-ca/ca.crt"}],
                 "ports": [{"name": "guest-api", "containerPort": 8443}, {"name": "health", "containerPort": 8080}],
                 "securityContext": restricted,
                 "resources": {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"cpu": "250m", "memory": "128Mi"}},
                 "readinessProbe": {"httpGet": {"path": "/readyz", "port": "health"}, "periodSeconds": 1, "timeoutSeconds": 1, "failureThreshold": 3},
                 "livenessProbe": {"httpGet": {"path": "/livez", "port": "health"}, "periodSeconds": 5, "timeoutSeconds": 1, "failureThreshold": 3},
                 "volumeMounts": [{"name": "sockets", "mountPath": "/run/tengri"},
-                    {"name": "workload-api", "mountPath": "/spiffe-workload-api", "readOnly": true}]},
+                    {"name": "workload-api", "mountPath": "/spiffe-workload-api", "readOnly": true},
+                    {"name": "runtime-database", "mountPath": "/var/run/tengri/database", "readOnly": true},
+                    {"name": "database-ca", "mountPath": "/var/run/tengri/database-ca", "readOnly": true}]},
             {"name": "runner", "image": runtime_image, "args": ["slot-runner"], "env": env,
                 "securityContext": runner,
                 "resources": {"requests": {"cpu": "4", "memory": "9Gi", "ephemeral-storage": "26Gi"},
@@ -177,6 +182,8 @@ pub fn build_slot_pod(
             {"name": "snapshots", "emptyDir": {"sizeLimit": "24Gi"}}, {"name": "sockets", "emptyDir": {"sizeLimit": "1Mi"}},
             {"name": "artifacts", "emptyDir": {"sizeLimit": "2Gi"}},
             {"name": "bootstrap", "secret": {"secretName": bootstrap_secret_name(name), "defaultMode": 288}},
+            {"name": "runtime-database", "secret": {"secretName": "tengri-supervisor-db", "defaultMode": 288}},
+            {"name": "database-ca", "secret": {"secretName": "ofz-database-ca", "defaultMode": 288}},
             {"name": "workload-api", "csi": {"driver": "csi.spiffe.io", "readOnly": true}}
         ]
     }})).expect("valid fixed slot Pod")
@@ -278,6 +285,66 @@ mod tests {
         );
         let supervisor = &spec.containers[0];
         let runner = &spec.containers[1];
+        let database_dsn = supervisor
+            .env
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|entry| entry.name == "TENGRI_DATABASE_DSN");
+        assert_eq!(
+            database_dsn.and_then(|entry| entry.value.as_deref()),
+            Some(
+                "host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=tengri_control user=tengri_supervisor sslmode=require"
+            )
+        );
+        for (variable, path, volume) in [
+            (
+                "TENGRI_DATABASE_PASSWORD_FILE",
+                "/var/run/tengri/database/password",
+                "runtime-database",
+            ),
+            (
+                "TENGRI_DATABASE_CA_FILE",
+                "/var/run/tengri/database-ca/ca.crt",
+                "database-ca",
+            ),
+        ] {
+            assert_eq!(
+                supervisor
+                    .env
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .find(|entry| entry.name == variable)
+                    .and_then(|entry| entry.value.as_deref()),
+                Some(path)
+            );
+            assert!(
+                supervisor
+                    .volume_mounts
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|mount| mount.name == volume
+                        && mount.read_only == Some(true)
+                        && path.starts_with(&mount.mount_path))
+            );
+            assert!(
+                !runner
+                    .volume_mounts
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|mount| mount.name == volume)
+            );
+            assert!(
+                spec.volumes
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|mounted| mounted.name == volume && mounted.secret.is_some())
+            );
+        }
         assert!(
             !supervisor
                 .volume_mounts

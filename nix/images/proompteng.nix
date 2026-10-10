@@ -27,6 +27,7 @@ import ./bun-workspace-service.nix {
     "packages/design"
     "services/tengri/proto"
     "services/tengri/migrations"
+    "services/tengri/fixtures"
   ];
   buildCommands = [
     "bun --cwd=apps/landing run prebuild"

@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 fixture_mode="${1:-control}"
-case "$fixture_mode" in control|identity) ;; *) printf 'Expected control or identity fixture\n' >&2; exit 2 ;; esac
+case "$fixture_mode" in control|identity|runtime|kvm) ;; *) printf 'Expected control, identity, runtime or kvm fixture\n' >&2; exit 2 ;; esac
 fixture_dir="$(mktemp -d)"
 fixture_name="ofz-control-$(basename "$fixture_dir" | tr '[:upper:]' '[:lower:]')"
 fixture_database="$fixture_name-db"
@@ -24,7 +24,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 -subj '/CN=Ofz disposa
   -keyout "$fixture_dir/ca.key" -out "$fixture_dir/ca.crt" >/dev/null 2>&1
 openssl req -new -newkey rsa:2048 -nodes -subj '/CN=localhost' \
   -keyout "$fixture_dir/server.key" -out "$fixture_dir/server.csr" >/dev/null 2>&1
-printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' > "$fixture_dir/server.ext"
+printf 'subjectAltName=DNS:localhost,DNS:%s,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' "$fixture_database" > "$fixture_dir/server.ext"
 openssl x509 -req -in "$fixture_dir/server.csr" -CA "$fixture_dir/ca.crt" -CAkey "$fixture_dir/ca.key" \
   -CAcreateserial -days 1 -sha256 -extfile "$fixture_dir/server.ext" -out "$fixture_dir/server.crt" >/dev/null 2>&1
 printf 'ofz-policy-fixture' > "$fixture_dir/native.key"
@@ -76,6 +76,30 @@ for attempt in $(seq 1 60); do
   if curl --silent --fail --max-time 1 "$OFZ_TEST_NATIVE_ENDPOINT/healthz" >/dev/null; then
     if [[ "$fixture_mode" == control ]]; then
       cargo test --locked --lib control_integration -- --ignored --nocapture
+    elif [[ "$fixture_mode" == runtime || "$fixture_mode" == kvm ]]; then
+      fixture_docker exec -i "$fixture_database" psql -U postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+CREATE ROLE tengri_migrator LOGIN PASSWORD 'runtime-fixture';
+CREATE ROLE tengri_bff LOGIN PASSWORD 'runtime-fixture';
+CREATE ROLE tengri_controller LOGIN PASSWORD 'runtime-fixture';
+CREATE ROLE tengri_supervisor LOGIN PASSWORD 'runtime-fixture';
+CREATE DATABASE tengri_control OWNER tengri_migrator;
+SQL
+      printf 'runtime-fixture' > "$fixture_dir/runtime.password"
+      cargo build --locked
+      OFZ_DATABASE_DSN="host=localhost port=$fixture_pg_port dbname=tengri_control user=tengri_migrator sslmode=require" \
+        OFZ_DATABASE_PASSWORD_FILE="$fixture_dir/runtime.password" OFZ_DATABASE_CA_FILE="$fixture_dir/ca.crt" \
+        target/debug/ofz migrate-runtime
+      export TENGRI_DATABASE_DSN="host=localhost port=$fixture_pg_port dbname=tengri_control user=tengri_controller sslmode=require"
+      export TENGRI_DATABASE_PASSWORD_FILE="$fixture_dir/runtime.password"
+      export TENGRI_DATABASE_CA_FILE="$fixture_dir/ca.crt"
+      export TENGRI_RUNTIME_STATE_FIXTURE=1
+      if [[ "$fixture_mode" == runtime ]]; then
+        cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri runtime_shared_state -- --ignored --nocapture --test-threads=1
+      else
+        export TENGRI_KVM_NETWORK="$fixture_network"
+        export TENGRI_KVM_DATABASE_HOST="$fixture_database"
+        bash ../tengri/test-kvm.sh
+      fi
     else
       : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.7.3 distribution}"
       cargo build --locked

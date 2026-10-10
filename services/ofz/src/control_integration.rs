@@ -239,6 +239,268 @@ async fn request(
     }
 }
 
+async fn verify_runtime_reads(
+    service: &Service,
+    database: &Database,
+    owner: &(String, String),
+    next_owner: &(String, String),
+    uid: &str,
+    home: &str,
+    reservation_id: &str,
+) {
+    let projection = runtime_state(service, database, owner, uid).await;
+    assert_eq!(projection.home_uid, home);
+    assert_eq!(projection.reservation_id, reservation_id);
+    assert_eq!(projection.owner_id, owner.0);
+    assert!(!projection.running && !projection.runtime_allowed);
+    assert_eq!(projection.state, "active");
+    let reservation_context = request(
+        database,
+        owner,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context;
+    let reservation_read = GetWorkspaceReservationRequest {
+        context: reservation_context.clone(),
+        reservation_id: reservation_id.into(),
+        recovery_generation: projection.recovery_generation,
+    };
+    assert_eq!(
+        service
+            .get_workspace_reservation(rpc_as(reservation_read.clone(), BFF_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    let reservation = service
+        .get_workspace_reservation(rpc_as(reservation_read.clone(), CONTROLLER_ID))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(reservation.workspace_uid, uid);
+    assert_eq!(reservation.state, "enrolled");
+    let mut wrong_owner = reservation_read.clone();
+    wrong_owner.context = request(
+        database,
+        next_owner,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context;
+    assert_eq!(
+        service
+            .get_workspace_reservation(rpc_as(wrong_owner, CONTROLLER_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    let mut old_generation = reservation_read;
+    old_generation.recovery_generation += 1;
+    assert_eq!(
+        service
+            .get_workspace_reservation(rpc_as(old_generation, CONTROLLER_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    let mut workload_context = controller_request(
+        database,
+        owner,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    workload_context.workspace_uid = uid.to_string();
+    let runtime_read = GetWorkspaceStateRequest {
+        context: Some(workload_context.clone()),
+        workspace_uid: uid.to_string(),
+    };
+    assert_eq!(
+        service
+            .get_workspace_state(rpc_as(runtime_read.clone(), BFF_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    let mut wrong_workspace = runtime_read;
+    wrong_workspace.workspace_uid = Uuid::new_v4().to_string();
+    assert_eq!(
+        service
+            .get_workspace_state(rpc_as(wrong_workspace, CONTROLLER_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+}
+
+async fn verify_runtime_removal(
+    service: &Service,
+    admin: &Database,
+    database: &Database,
+    native: &Native,
+    owner: &(String, String),
+    next_owner: &(String, String),
+    binding: (&str, &str, &str, &str),
+) {
+    let (uid, runtime_epoch, home, reservation_id) = binding;
+    // Removal keeps retained-home quota until the exact controller completion receipt.
+    acknowledge_fixture_archive(admin).await;
+    let transferred = runtime_state(service, database, owner, uid).await;
+    assert_eq!(transferred.owner_id, next_owner.0);
+    assert_eq!(transferred.state, "quarantined");
+    assert!(!transferred.runtime_allowed);
+    let stop = controller_request(
+        database,
+        owner,
+        Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
+            workspace_uid: uid.into(),
+            runtime_epoch: runtime_epoch.into(),
+            running: false,
+        }),
+    )
+    .await;
+    commands::execute(database, native, CONTROLLER_ID, stop)
+        .await
+        .unwrap();
+    execute(
+        database,
+        native,
+        next_owner,
+        Command::RemoveWorkspace(RemoveWorkspace {
+            workspace_uid: uid.into(),
+        }),
+    )
+    .await;
+    let removing = runtime_state(service, database, owner, uid).await;
+    assert_eq!(removing.state, "removing");
+    assert!(!removing.running && !removing.runtime_allowed);
+    assert_eq!(
+        admin
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "SELECT state FROM ofz.reservations WHERE id=$1",
+                &[&Uuid::parse_str(reservation_id).unwrap()]
+            )
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "enrolled"
+    );
+    let complete = CompleteWorkspaceRemoval {
+        workspace_uid: uid.into(),
+        home_uid: home.into(),
+        reservation_id: reservation_id.into(),
+    };
+    let mut wrong_home = complete.clone();
+    wrong_home.home_uid = Uuid::new_v4().to_string();
+    let wrong_home = controller_request(
+        database,
+        owner,
+        Command::CompleteWorkspaceRemoval(wrong_home),
+    )
+    .await;
+    assert_eq!(
+        commands::execute(database, native, CONTROLLER_ID, wrong_home)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::FailedPrecondition
+    );
+    let human_completion = request(
+        database,
+        next_owner,
+        Command::CompleteWorkspaceRemoval(complete.clone()),
+    )
+    .await;
+    assert_eq!(
+        commands::execute(database, native, BFF_ID, human_completion)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    let complete =
+        controller_request(database, owner, Command::CompleteWorkspaceRemoval(complete)).await;
+    let completion = commands::execute(database, native, CONTROLLER_ID, complete.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        commands::execute(database, native, CONTROLLER_ID, complete)
+            .await
+            .unwrap(),
+        completion
+    );
+    assert_eq!(
+        runtime_state(service, database, owner, uid).await.state,
+        "removed"
+    );
+    assert_eq!(
+        admin
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "SELECT state FROM ofz.reservations WHERE id=$1",
+                &[&Uuid::parse_str(reservation_id).unwrap()]
+            )
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "released"
+    );
+}
+
+async fn controller_request(
+    database: &Database,
+    identity: &(String, String),
+    command: Command,
+) -> ExecuteCommandRequest {
+    let mut message = request(database, identity, command).await;
+    let context = message.context.as_mut().unwrap();
+    context.actor = Some(decision::workload_actor(CONTROLLER_ID));
+    context.session_id.clear();
+    message
+}
+
+async fn runtime_state(
+    service: &Service,
+    database: &Database,
+    identity: &(String, String),
+    uid: &str,
+) -> GetWorkspaceStateResponse {
+    let mut context = controller_request(
+        database,
+        identity,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    context.workspace_uid = uid.into();
+    service
+        .get_workspace_state(rpc_as(
+            GetWorkspaceStateRequest {
+                context: Some(context),
+                workspace_uid: uid.into(),
+            },
+            CONTROLLER_ID,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+}
+
 async fn execute(
     database: &Database,
     native: &Native,
@@ -297,11 +559,24 @@ async fn read(
     .await
 }
 
+struct ControlFixture {
+    admin: Database,
+    database: Database,
+    native: Native,
+    identities: Vec<(String, String)>,
+    service: Service,
+}
+
+struct WorkspaceFixture {
+    uid: String,
+    home: String,
+    reservation_id: String,
+}
+
 #[tokio::test]
 #[ignore = "requires the disposable TLS PostgreSQL and SpiceDB from test-control.sh"]
 async fn control_integration_durability_authority_and_quota() {
     let (admin, database, native, identities) = setup().await;
-    let owner = &identities[0];
     let service = Service::new(
         database.clone(),
         native.clone(),
@@ -311,6 +586,62 @@ async fn control_integration_durability_authority_and_quota() {
         )
         .unwrap(),
     );
+    let fixture = ControlFixture {
+        admin,
+        database,
+        native,
+        identities,
+        service,
+    };
+    Box::pin(verify_session_bootstrap(&fixture)).await;
+    let workspace = Box::pin(verify_workspace_enrollment(&fixture)).await;
+    Box::pin(verify_runtime_reads(
+        &fixture.service,
+        &fixture.database,
+        &fixture.identities[0],
+        &fixture.identities[1],
+        &workspace.uid,
+        &workspace.home,
+        &workspace.reservation_id,
+    ))
+    .await;
+    Box::pin(verify_access_rosters(&fixture, &workspace)).await;
+    Box::pin(verify_concurrent_quota(&fixture)).await;
+    Box::pin(verify_emergency_crash_recovery(&fixture, &workspace)).await;
+    let grant_id = Box::pin(verify_delegation_and_journal_integrity(
+        &fixture, &workspace,
+    ))
+    .await;
+    Box::pin(verify_archive_fencing(&fixture, &workspace, grant_id)).await;
+    let runtime_epoch = Box::pin(verify_runtime_transfer(&fixture, &workspace)).await;
+    Box::pin(verify_offboarding(&fixture, &workspace)).await;
+    Box::pin(verify_runtime_removal(
+        &fixture.service,
+        &fixture.admin,
+        &fixture.database,
+        &fixture.native,
+        &fixture.identities[0],
+        &fixture.identities[1],
+        (
+            &workspace.uid,
+            &runtime_epoch,
+            &workspace.home,
+            &workspace.reservation_id,
+        ),
+    ))
+    .await;
+    Box::pin(verify_journal_loss(&fixture, &workspace)).await;
+}
+
+async fn verify_session_bootstrap(fixture: &ControlFixture) {
+    let ControlFixture {
+        admin,
+        database,
+        native,
+        service,
+        ..
+    } = fixture;
+    let owner = &fixture.identities[0];
     let retry_credential = URL_SAFE_NO_PAD.encode(Sha256::digest(Uuid::new_v4().as_bytes()));
     let retry_id = Uuid::new_v4();
     let retry_operation = Uuid::new_v4();
@@ -340,7 +671,7 @@ async fn control_integration_durability_authority_and_quota() {
         "tengri-bff".into(),
     )
     .unwrap();
-    let recovered = sessions::establish(&database, &native, &issuer, BFF_ID, retry_request.clone())
+    let recovered = sessions::establish(database, native, &issuer, BFF_ID, retry_request.clone())
         .await
         .unwrap();
     assert_eq!(recovered.id, retry_id.to_string());
@@ -356,7 +687,7 @@ async fn control_integration_durability_authority_and_quota() {
     let mut collision = retry_request.clone();
     collision.nonce.push('A');
     assert_eq!(
-        sessions::establish(&database, &native, &issuer, BFF_ID, collision)
+        sessions::establish(database, native, &issuer, BFF_ID, collision)
             .await
             .unwrap_err()
             .code(),
@@ -365,7 +696,7 @@ async fn control_integration_durability_authority_and_quota() {
     let mut collision = retry_request.clone();
     collision.credential = URL_SAFE_NO_PAD.encode([9_u8; 32]);
     assert_eq!(
-        sessions::establish(&database, &native, &issuer, BFF_ID, collision)
+        sessions::establish(database, native, &issuer, BFF_ID, collision)
             .await
             .unwrap_err()
             .code(),
@@ -378,7 +709,7 @@ async fn control_integration_durability_authority_and_quota() {
     .await
     .unwrap();
     assert_eq!(
-        sessions::establish(&database, &native, &issuer, BFF_ID, retry_request)
+        sessions::establish(database, native, &issuer, BFF_ID, retry_request)
             .await
             .unwrap_err()
             .code(),
@@ -393,7 +724,7 @@ async fn control_integration_durability_authority_and_quota() {
     );
     drop(conn);
     let context = request(
-        &database,
+        database,
         owner,
         Command::ReserveWorkspace(ReserveWorkspace::default()),
     )
@@ -481,7 +812,7 @@ async fn control_integration_durability_authority_and_quota() {
         .unwrap();
     let preflight = AuthorizeCommandRequest {
         context: request(
-            &database,
+            database,
             owner,
             Command::ReserveWorkspace(ReserveWorkspace::default()),
         )
@@ -510,9 +841,19 @@ async fn control_integration_durability_authority_and_quota() {
         Code::InvalidArgument,
         "preflight cannot authorize runtime content"
     );
+}
+
+async fn verify_workspace_enrollment(fixture: &ControlFixture) -> WorkspaceFixture {
+    let ControlFixture {
+        admin,
+        database,
+        native,
+        ..
+    } = fixture;
+    let owner = &fixture.identities[0];
     let reservation = Uuid::new_v4().to_string();
     let first = request(
-        &database,
+        database,
         owner,
         Command::ReserveWorkspace(ReserveWorkspace {
             reservation_id: reservation.clone(),
@@ -520,17 +861,17 @@ async fn control_integration_durability_authority_and_quota() {
         }),
     )
     .await;
-    let receipt = commands::execute(&database, &native, BFF_ID, first.clone())
+    let receipt = commands::execute(database, native, BFF_ID, first.clone())
         .await
         .unwrap();
-    let replay = commands::execute(&database, &native, BFF_ID, first.clone())
+    let replay = commands::execute(database, native, BFF_ID, first.clone())
         .await
         .unwrap();
     assert_eq!(receipt, replay);
     let mut conflict = first.clone();
     conflict.reason = "different command under same operation ID".into();
     assert_eq!(
-        commands::execute(&database, &native, BFF_ID, conflict)
+        commands::execute(database, native, BFF_ID, conflict)
             .await
             .unwrap_err()
             .code(),
@@ -539,7 +880,7 @@ async fn control_integration_durability_authority_and_quota() {
     let mut stale = first.clone();
     stale.operation_id = Uuid::new_v4().to_string();
     assert_eq!(
-        commands::execute(&database, &native, BFF_ID, stale)
+        commands::execute(database, native, BFF_ID, stale)
             .await
             .unwrap_err()
             .code(),
@@ -547,7 +888,7 @@ async fn control_integration_durability_authority_and_quota() {
     );
     let uid = Uuid::new_v4().to_string();
     let mut enroll = request(
-        &database,
+        database,
         owner,
         Command::EnrollWorkspace(EnrollWorkspace {
             workspace_uid: uid.clone(),
@@ -561,7 +902,7 @@ async fn control_integration_durability_authority_and_quota() {
     enroll.context.as_mut().unwrap().actor = Some(decision::workload_actor(CONTROLLER_ID));
     enroll.context.as_mut().unwrap().session_id.clear();
     assert_eq!(
-        commands::execute(&database, &native, BFF_ID, enroll.clone())
+        commands::execute(database, native, BFF_ID, enroll.clone())
             .await
             .unwrap_err()
             .code(),
@@ -576,7 +917,7 @@ async fn control_integration_durability_authority_and_quota() {
         .await
         .unwrap();
     assert_eq!(
-        commands::execute(&database, &native, CONTROLLER_ID, enroll.clone())
+        commands::execute(database, native, CONTROLLER_ID, enroll.clone())
             .await
             .unwrap_err()
             .code(),
@@ -610,26 +951,45 @@ async fn control_integration_durability_authority_and_quota() {
             .unwrap()
             .0
     );
-    acknowledge_fixture_archive(&admin).await;
-    commands::execute(&database, &native, CONTROLLER_ID, enroll)
+    acknowledge_fixture_archive(admin).await;
+    let enrolled_home = match enroll.command.as_ref().unwrap() {
+        Command::EnrollWorkspace(command) => command.home_uid.clone(),
+        _ => unreachable!(),
+    };
+    let enrolled_reservation = match enroll.command.as_ref().unwrap() {
+        Command::EnrollWorkspace(command) => command.reservation_id.clone(),
+        _ => unreachable!(),
+    };
+    commands::execute(database, native, CONTROLLER_ID, enroll)
         .await
         .unwrap();
+    WorkspaceFixture {
+        uid,
+        home: enrolled_home,
+        reservation_id: enrolled_reservation,
+    }
+}
+
+async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFixture) {
+    let ControlFixture {
+        database,
+        native,
+        identities,
+        service,
+        ..
+    } = fixture;
+    let owner = &fixture.identities[0];
+    let uid = workspace.uid.clone();
     assert!(
-        read(
-            &database,
-            &native,
-            owner,
-            &uid,
-            Action::WorkspaceMetadataRead
-        )
-        .await
-        .unwrap()
-        .allowed
+        read(database, native, owner, &uid, Action::WorkspaceMetadataRead)
+            .await
+            .unwrap()
+            .allowed
     );
     assert!(
         !read(
-            &database,
-            &native,
+            database,
+            native,
             &identities[1],
             &uid,
             Action::WorkspaceMetadataRead
@@ -639,17 +999,11 @@ async fn control_integration_durability_authority_and_quota() {
         .allowed,
         "platform administration grants no content access"
     );
-    let open = read(
-        &database,
-        &native,
-        owner,
-        &uid,
-        Action::WorkspaceMetadataRead,
-    )
-    .await
-    .unwrap();
+    let open = read(database, native, owner, &uid, Action::WorkspaceMetadataRead)
+        .await
+        .unwrap();
     let mut stream_context = request(
-        &database,
+        database,
         owner,
         Command::ReserveWorkspace(ReserveWorkspace::default()),
     )
@@ -665,7 +1019,7 @@ async fn control_integration_durability_authority_and_quota() {
         stream_receipt_id: open.audit_receipt_id,
     };
     assert!(
-        decision::check(&database, &native, BFF_ID, stream.clone())
+        decision::check(database, native, BFF_ID, stream.clone())
             .await
             .unwrap()
             .allowed
@@ -673,7 +1027,7 @@ async fn control_integration_durability_authority_and_quota() {
     let mut wrong_origin = stream.clone();
     wrong_origin.context.as_mut().unwrap().origin = "https://other.example".into();
     assert_eq!(
-        decision::check(&database, &native, BFF_ID, wrong_origin)
+        decision::check(database, native, BFF_ID, wrong_origin)
             .await
             .unwrap_err()
             .code(),
@@ -682,15 +1036,15 @@ async fn control_integration_durability_authority_and_quota() {
     let mut wrong_epoch = stream.clone();
     wrong_epoch.context.as_mut().unwrap().runtime_epoch = Uuid::new_v4().to_string();
     assert_eq!(
-        decision::check(&database, &native, BFF_ID, wrong_epoch)
+        decision::check(database, native, BFF_ID, wrong_epoch)
             .await
             .unwrap_err()
             .code(),
         Code::PermissionDenied
     );
     execute(
-        &database,
-        &native,
+        database,
+        native,
         owner,
         Command::SetWorkspaceRole(SetWorkspaceRole {
             workspace_uid: uid.clone(),
@@ -702,8 +1056,8 @@ async fn control_integration_durability_authority_and_quota() {
     .await;
     assert!(
         read(
-            &database,
-            &native,
+            database,
+            native,
             &identities[2],
             &uid,
             Action::WorkspaceMetadataRead
@@ -713,19 +1067,10 @@ async fn control_integration_durability_authority_and_quota() {
         .allowed
     );
     assert!(
-        !read(&database, &native, &identities[2], &uid, Action::FilesWrite)
+        !read(database, native, &identities[2], &uid, Action::FilesWrite)
             .await
             .unwrap()
             .allowed
-    );
-    let service = Service::new(
-        database.clone(),
-        native.clone(),
-        Issuer::new(
-            "https://auth.fixture.invalid/realms/tengri".into(),
-            "tengri-bff".into(),
-        )
-        .unwrap(),
     );
     let roster_context = |identity: &(String, String)| {
         let mut context = stream.context.clone().unwrap();
@@ -806,8 +1151,8 @@ async fn control_integration_durability_authority_and_quota() {
     );
     assert!(denied.metadata().contains_key("x-ofz-audit-receipt"));
     execute(
-        &database,
-        &native,
+        database,
+        native,
         owner,
         Command::SetMembership(SetMembership {
             human_id: identities[1].0.clone(),
@@ -836,8 +1181,8 @@ async fn control_integration_durability_authority_and_quota() {
     for audit_read in [false, true] {
         let auditor = &identities[2];
         execute(
-            &database,
-            &native,
+            database,
+            native,
             owner,
             Command::SetMembership(SetMembership {
                 human_id: auditor.0.clone(),
@@ -853,7 +1198,7 @@ async fn control_integration_durability_authority_and_quota() {
             .clone()
             .with_read_barrier(entered.clone(), resume.clone());
         let context = request(
-            &database,
+            database,
             auditor,
             Command::ReserveWorkspace(ReserveWorkspace::default()),
         )
@@ -883,8 +1228,8 @@ async fn control_integration_durability_authority_and_quota() {
             .await
             .unwrap();
         execute(
-            &database,
-            &native,
+            database,
+            native,
             owner,
             Command::SetMembership(SetMembership {
                 human_id: auditor.0.clone(),
@@ -902,7 +1247,7 @@ async fn control_integration_durability_authority_and_quota() {
         );
     }
     let mismatch = request(
-        &database,
+        database,
         owner,
         Command::SetMembership(SetMembership {
             human_id: identities[1].0.clone(),
@@ -913,7 +1258,7 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     assert_eq!(
-        commands::execute(&database, &native, BFF_ID, mismatch)
+        commands::execute(database, native, BFF_ID, mismatch)
             .await
             .unwrap_err()
             .code(),
@@ -921,7 +1266,7 @@ async fn control_integration_durability_authority_and_quota() {
         "a numeric GitHub identity cannot be rebound to another human hash"
     );
     let revoke_admin = request(
-        &database,
+        database,
         owner,
         Command::SetMembership(SetMembership {
             human_id: identities[1].0.clone(),
@@ -932,12 +1277,22 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     assert_eq!(
-        commands::execute(&database, &native, BFF_ID, revoke_admin)
+        commands::execute(database, native, BFF_ID, revoke_admin)
             .await
             .unwrap_err()
             .code(),
         Code::FailedPrecondition
     );
+}
+
+async fn verify_concurrent_quota(fixture: &ControlFixture) {
+    let ControlFixture {
+        admin,
+        database,
+        native,
+        ..
+    } = fixture;
+    let owner = &fixture.identities[0];
     let owner_session = Uuid::parse_str(&owner.1).unwrap();
     let client = admin.pool.get().await.unwrap();
     let creation_idle: i64 = client
@@ -950,7 +1305,7 @@ async fn control_integration_durability_authority_and_quota() {
         .get(0);
     drop(client);
     let a = request(
-        &database,
+        database,
         owner,
         Command::ReserveWorkspace(ReserveWorkspace {
             reservation_id: Uuid::new_v4().to_string(),
@@ -959,7 +1314,7 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     let b = request(
-        &database,
+        database,
         owner,
         Command::ReserveWorkspace(ReserveWorkspace {
             reservation_id: Uuid::new_v4().to_string(),
@@ -968,8 +1323,8 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     let (a, b) = tokio::join!(
-        commands::execute(&database, &native, BFF_ID, a),
-        commands::execute(&database, &native, BFF_ID, b)
+        commands::execute(database, native, BFF_ID, a),
+        commands::execute(database, native, BFF_ID, b)
     );
     assert_eq!(
         usize::from(a.is_ok()) + usize::from(b.is_ok()),
@@ -993,7 +1348,7 @@ async fn control_integration_durability_authority_and_quota() {
         "accepted workspace reservation renews idle time without an MFA requirement"
     );
     let over = request(
-        &database,
+        database,
         owner,
         Command::ReserveWorkspace(ReserveWorkspace {
             reservation_id: Uuid::new_v4().to_string(),
@@ -1002,12 +1357,25 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     assert_eq!(
-        commands::execute(&database, &native, BFF_ID, over)
+        commands::execute(database, native, BFF_ID, over)
             .await
             .unwrap_err()
             .code(),
         Code::ResourceExhausted
     );
+}
+
+async fn verify_emergency_crash_recovery(fixture: &ControlFixture, workspace: &WorkspaceFixture) {
+    let ControlFixture {
+        admin,
+        database,
+        native,
+        identities,
+        service,
+        ..
+    } = fixture;
+    let owner = &fixture.identities[0];
+    let uid = workspace.uid.clone();
     // Crash before native write, after native commit, and after SQL finalize/lost response.
     let mut emergency = EmergencyAccess {
         workspace_uid: uid.clone(),
@@ -1018,16 +1386,16 @@ async fn control_integration_durability_authority_and_quota() {
         expires_at_unix_ms: database.state().await.unwrap().now_ms + 600_000,
     };
     let approval = execute(
-        &database,
-        &native,
+        database,
+        native,
         owner,
         Command::EmergencyAccess(emergency.clone()),
     )
     .await;
     assert!(
         !read(
-            &database,
-            &native,
+            database,
+            native,
             &identities[3],
             &uid,
             Action::WorkspaceMetadataRead
@@ -1038,33 +1406,28 @@ async fn control_integration_durability_authority_and_quota() {
         "first custodian cannot activate emergency access alone"
     );
     assert!(
-        !workspace_roster(&service, &database, owner, &uid)
+        !workspace_roster(service, database, owner, &uid)
             .await
             .iter()
             .any(|entry| entry.role == "emergency")
     );
     emergency.custodian_approval_id = approval.operation_id;
-    let same = request(
-        &database,
-        owner,
-        Command::EmergencyAccess(emergency.clone()),
-    )
-    .await;
+    let same = request(database, owner, Command::EmergencyAccess(emergency.clone())).await;
     assert_eq!(
-        commands::execute(&database, &native, BFF_ID, same)
+        commands::execute(database, native, BFF_ID, same)
             .await
             .unwrap_err()
             .code(),
         Code::PermissionDenied
     );
     execute(
-        &database,
-        &native,
+        database,
+        native,
         &identities[1],
         Command::EmergencyAccess(emergency.clone()),
     )
     .await;
-    let entries = workspace_roster(&service, &database, owner, &uid).await;
+    let entries = workspace_roster(service, database, owner, &uid).await;
     let active = entries
         .iter()
         .find(|entry| entry.role == "emergency")
@@ -1073,8 +1436,8 @@ async fn control_integration_durability_authority_and_quota() {
     assert_eq!(active.expires_at_unix_ms, emergency.expires_at_unix_ms);
     assert!(
         read(
-            &database,
-            &native,
+            database,
+            native,
             &identities[3],
             &uid,
             Action::WorkspaceMetadataRead
@@ -1084,13 +1447,13 @@ async fn control_integration_durability_authority_and_quota() {
         .allowed
     );
     let consumed = request(
-        &database,
+        database,
         &identities[1],
         Command::EmergencyAccess(emergency),
     )
     .await;
     assert_eq!(
-        commands::execute(&database, &native, BFF_ID, consumed)
+        commands::execute(database, native, BFF_ID, consumed)
             .await
             .unwrap_err()
             .code(),
@@ -1102,10 +1465,10 @@ async fn control_integration_durability_authority_and_quota() {
         role: WorkspaceRole::Viewer as i32,
         enabled: true,
     });
-    execute(&database, &native, owner, repeat_role.clone()).await;
-    execute(&database, &native, owner, repeat_role).await;
+    execute(database, native, owner, repeat_role.clone()).await;
+    execute(database, native, owner, repeat_role).await;
     let controller_administration = request(
-        &database,
+        database,
         owner,
         Command::SetMembership(SetMembership {
             human_id: identities[3].0.clone(),
@@ -1116,7 +1479,7 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     assert_eq!(
-        commands::execute(&database, &native, CONTROLLER_ID, controller_administration)
+        commands::execute(database, native, CONTROLLER_ID, controller_administration)
             .await
             .unwrap_err()
             .code(),
@@ -1130,14 +1493,14 @@ async fn control_integration_durability_authority_and_quota() {
             role: WorkspaceRole::Viewer as i32,
             enabled: boundary % 2 == 0,
         });
-        let pending = request(&database, owner, command).await;
+        let pending = request(database, owner, command).await;
         let operation = pending.operation_id.clone();
         let expected = pending.expected_version;
         let mut connection = database.command_connection().await.unwrap();
         let state = database.state().await.unwrap();
         let (prepared, _) = prepare(
-            &database,
-            &native,
+            database,
+            native,
             &connection.client,
             BFF_ID,
             pending.clone(),
@@ -1166,7 +1529,7 @@ async fn control_integration_durability_authority_and_quota() {
                 .unwrap();
         }
         drop(connection); // drops the actual SQL connection and its advisory lock
-        let recovered = commands::execute(&database, &native, BFF_ID, pending)
+        let recovered = commands::execute(database, native, BFF_ID, pending)
             .await
             .unwrap();
         assert_eq!(recovered.version, expected + 1);
@@ -1183,11 +1546,26 @@ async fn control_integration_durability_authority_and_quota() {
             .get(0);
         assert_eq!(count, 1, "one durable audit receipt per recovered command");
     }
+}
+
+async fn verify_delegation_and_journal_integrity(
+    fixture: &ControlFixture,
+    workspace: &WorkspaceFixture,
+) -> String {
+    let ControlFixture {
+        admin,
+        database,
+        native,
+        identities,
+        ..
+    } = fixture;
+    let owner = &fixture.identities[0];
+    let uid = workspace.uid.clone();
     let grant_id = Uuid::new_v4().to_string();
     let agent_id = Uuid::new_v4().to_string();
     let expiry = database.state().await.unwrap().now_ms + 600_000;
     let grant_command = request(
-        &database,
+        database,
         owner,
         Command::CreateGrant(CreateGrant {
             grant_id: grant_id.clone(),
@@ -1205,7 +1583,7 @@ async fn control_integration_durability_authority_and_quota() {
         }),
     )
     .await;
-    let grant_receipt = commands::execute(&database, &native, BFF_ID, grant_command.clone())
+    let grant_receipt = commands::execute(database, native, BFF_ID, grant_command.clone())
         .await
         .unwrap();
     assert_eq!(grant_receipt.agent_credential.len(), 43);
@@ -1226,7 +1604,7 @@ async fn control_integration_durability_authority_and_quota() {
     );
     drop(conn);
     assert!(
-        commands::execute(&database, &native, BFF_ID, grant_command)
+        commands::execute(database, native, BFF_ID, grant_command)
             .await
             .unwrap()
             .agent_credential
@@ -1253,7 +1631,7 @@ async fn control_integration_durability_authority_and_quota() {
         stream_receipt_id: String::new(),
     };
     assert!(
-        decision::check(&database, &native, BFF_ID, delegated.clone())
+        decision::check(database, native, BFF_ID, delegated.clone())
             .await
             .unwrap()
             .allowed
@@ -1270,7 +1648,7 @@ async fn control_integration_durability_authority_and_quota() {
         .await
         .unwrap();
     assert_eq!(
-        decision::check(&database, &native, BFF_ID, delegated.clone())
+        decision::check(database, native, BFF_ID, delegated.clone())
             .await
             .unwrap_err()
             .code(),
@@ -1289,8 +1667,8 @@ async fn control_integration_durability_authority_and_quota() {
         .await
         .unwrap();
     execute(
-        &database,
-        &native,
+        database,
+        native,
         owner,
         Command::RevokeGrant(RevokeGrant {
             grant_id: grant_id.clone(),
@@ -1298,7 +1676,7 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     assert_eq!(
-        decision::check(&database, &native, BFF_ID, delegated.clone())
+        decision::check(database, native, BFF_ID, delegated.clone())
             .await
             .unwrap_err()
             .code(),
@@ -1306,11 +1684,11 @@ async fn control_integration_durability_authority_and_quota() {
     );
     // A recovered earlier grant command must not resurrect after its successor revocation.
     let mut connection = database.command_connection().await.unwrap();
-    reconcile(&database, &native, &mut connection.client)
+    reconcile(database, native, &mut connection.client)
         .await
         .unwrap();
     drop(connection);
-    assert!(decision::grant(&database, &grant_id).await.unwrap().revoked);
+    assert!(decision::grant(database, &grant_id).await.unwrap().revoked);
     // Native binding loss fails even if the central grant row is otherwise valid.
     let second = Uuid::new_v4().to_string();
     let c = Command::CreateGrant(CreateGrant {
@@ -1340,10 +1718,10 @@ async fn control_integration_durability_authority_and_quota() {
         expires_at_unix_ms: expiry,
         proof_key_thumbprint: "q".repeat(43),
     });
-    execute(&database, &native, owner, c).await;
+    execute(database, native, owner, c).await;
     delegated.context.as_mut().unwrap().grant_id = second.clone();
     assert!(
-        decision::check(&database, &native, BFF_ID, delegated.clone())
+        decision::check(database, native, BFF_ID, delegated.clone())
             .await
             .unwrap()
             .allowed
@@ -1372,15 +1750,15 @@ async fn control_integration_durability_authority_and_quota() {
         .await
         .unwrap();
     assert!(
-        !decision::check(&database, &native, BFF_ID, delegated.clone())
+        !decision::check(database, native, BFF_ID, delegated.clone())
             .await
             .unwrap()
             .allowed
     );
     // Current parent membership revocation invalidates both human and delegated access.
     execute(
-        &database,
-        &native,
+        database,
+        native,
         &identities[1],
         Command::SetMembership(SetMembership {
             human_id: identities[2].0.clone(),
@@ -1392,8 +1770,8 @@ async fn control_integration_durability_authority_and_quota() {
     .await;
     assert_eq!(
         read(
-            &database,
-            &native,
+            database,
+            native,
             &identities[2],
             &uid,
             Action::WorkspaceMetadataRead
@@ -1436,10 +1814,27 @@ async fn control_integration_durability_authority_and_quota() {
         "42501"
     );
     drop(client);
+    second
+}
+
+async fn verify_archive_fencing(
+    fixture: &ControlFixture,
+    workspace: &WorkspaceFixture,
+    second: String,
+) {
+    let ControlFixture {
+        admin,
+        database,
+        native,
+        service,
+        ..
+    } = fixture;
+    let owner = &fixture.identities[0];
+    let uid = workspace.uid.clone();
     // A live exporter cannot hide an old pending row or a stale durable checkpoint.
-    acknowledge_fixture_archive(&admin).await;
+    acknowledge_fixture_archive(admin).await;
     let context = request(
-        &database,
+        database,
         owner,
         Command::ReserveWorkspace(ReserveWorkspace::default()),
     )
@@ -1468,16 +1863,10 @@ async fn control_integration_durability_authority_and_quota() {
         "fresh exporter heartbeat does not acknowledge an old outbox row"
     );
     assert_eq!(
-        read(
-            &database,
-            &native,
-            owner,
-            &uid,
-            Action::WorkspaceMetadataRead
-        )
-        .await
-        .unwrap_err()
-        .code(),
+        read(database, native, owner, &uid, Action::WorkspaceMetadataRead)
+            .await
+            .unwrap_err()
+            .code(),
         Code::Unavailable
     );
     conn.execute(
@@ -1498,19 +1887,13 @@ async fn control_integration_durability_authority_and_quota() {
     .unwrap();
     assert!(database.state().await.unwrap().archive_healthy);
     assert!(
-        read(
-            &database,
-            &native,
-            owner,
-            &uid,
-            Action::WorkspaceMetadataRead
-        )
-        .await
-        .unwrap()
-        .allowed
+        read(database, native, owner, &uid, Action::WorkspaceMetadataRead)
+            .await
+            .unwrap()
+            .allowed
     );
     drop(conn);
-    acknowledge_fixture_archive(&admin).await;
+    acknowledge_fixture_archive(admin).await;
     let checked = std::sync::Arc::new(tokio::sync::Notify::new());
     let resume = std::sync::Arc::new(tokio::sync::Notify::new());
     let paused_native = native
@@ -1519,7 +1902,7 @@ async fn control_integration_durability_authority_and_quota() {
     let (in_flight, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         tokio::join!(
             read(
-                &database,
+                database,
                 &paused_native,
                 owner,
                 &uid,
@@ -1546,7 +1929,7 @@ async fn control_integration_durability_authority_and_quota() {
         Code::DeadlineExceeded,
         "archive loss during a native check cannot return an allowed disclosure"
     );
-    acknowledge_fixture_archive(&admin).await;
+    acknowledge_fixture_archive(admin).await;
     // Archive loss fences new data access; durable revocation remains available.
     admin
         .pool
@@ -1561,7 +1944,7 @@ async fn control_integration_durability_authority_and_quota() {
     let preflight = service
         .authorize_command(rpc(AuthorizeCommandRequest {
             context: request(
-                &database,
+                database,
                 owner,
                 Command::ReserveWorkspace(ReserveWorkspace::default()),
             )
@@ -1591,28 +1974,22 @@ async fn control_integration_durability_authority_and_quota() {
     );
     drop(conn);
     assert_eq!(
-        read(
-            &database,
-            &native,
-            owner,
-            &uid,
-            Action::WorkspaceMetadataRead
-        )
-        .await
-        .unwrap_err()
-        .code(),
+        read(database, native, owner, &uid, Action::WorkspaceMetadataRead)
+            .await
+            .unwrap_err()
+            .code(),
         Code::Unavailable
     );
     execute(
-        &database,
-        &native,
+        database,
+        native,
         owner,
         Command::RevokeGrant(RevokeGrant { grant_id: second }),
     )
     .await;
     assert_eq!(
         decision::workload(
-            &native,
+            native,
             "spiffe://proompteng.ai/ns/tengri/sa/nanoagent",
             Action::PolicyCheck
         )
@@ -1622,7 +1999,7 @@ async fn control_integration_durability_authority_and_quota() {
         Code::Unauthenticated
     );
     assert_eq!(
-        decision::workload(&native, OFZ_ID, Action::PolicyCheck)
+        decision::workload(native, OFZ_ID, Action::PolicyCheck)
             .await
             .unwrap_err()
             .code(),
@@ -1649,7 +2026,7 @@ async fn control_integration_durability_authority_and_quota() {
     .unwrap();
     assert_eq!(
         read(
-            &database,
+            database,
             &absent,
             owner,
             &uid,
@@ -1661,10 +2038,23 @@ async fn control_integration_durability_authority_and_quota() {
         Code::Unavailable,
         "native loss never reuses an allowed decision"
     );
+}
+
+async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &WorkspaceFixture) -> String {
+    let ControlFixture {
+        admin,
+        database,
+        native,
+        identities,
+        service,
+        ..
+    } = fixture;
+    let owner = &fixture.identities[0];
+    let uid = workspace.uid.clone();
     let runtime_epoch = Uuid::new_v4().to_string();
     execute(
-        &database,
-        &native,
+        database,
+        native,
         owner,
         Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
             workspace_uid: uid.clone(),
@@ -1674,7 +2064,7 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     let rotation = request(
-        &database,
+        database,
         owner,
         Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
             workspace_uid: uid.clone(),
@@ -1684,7 +2074,7 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     assert_eq!(
-        commands::execute(&database, &native, BFF_ID, rotation)
+        commands::execute(database, native, BFF_ID, rotation)
             .await
             .unwrap_err()
             .code(),
@@ -1708,8 +2098,8 @@ async fn control_integration_durability_authority_and_quota() {
         runtime_epoch
     );
     execute(
-        &database,
-        &native,
+        database,
+        native,
         owner,
         Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
             workspace_uid: uid.clone(),
@@ -1719,17 +2109,20 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     assert!(
-        read(&database, &native, owner, &uid, Action::FilesObserve)
+        read(database, native, owner, &uid, Action::FilesObserve)
             .await
             .unwrap()
             .allowed,
         "live owner can observe files before transfer"
     );
+    let live_projection = runtime_state(service, database, owner, &uid).await;
+    assert!(live_projection.running && live_projection.runtime_allowed);
+    assert_eq!(live_projection.runtime_epoch, runtime_epoch);
     let client = admin.pool.get().await.unwrap();
     let owner_session = Uuid::parse_str(&owner.1).unwrap();
     let short_idle:i64 = client.query_one("UPDATE ofz.sessions SET idle_deadline_ms=ofz.now_ms()+60000 WHERE id=$1 RETURNING idle_deadline_ms", &[&owner_session]).await.unwrap().get(0);
     assert!(
-        read(&database, &native, owner, &uid, Action::FilesObserve)
+        read(database, native, owner, &uid, Action::FilesObserve)
             .await
             .unwrap()
             .allowed
@@ -1746,7 +2139,7 @@ async fn control_integration_durability_authority_and_quota() {
         short_idle,
         "observation never extends idle timeout"
     );
-    let control = read(&database, &native, owner, &uid, Action::FilesWrite)
+    let control = read(database, native, owner, &uid, Action::FilesWrite)
         .await
         .unwrap();
     assert!(control.allowed);
@@ -1764,7 +2157,7 @@ async fn control_integration_durability_authority_and_quota() {
     );
     let short_idle:i64 = client.query_one("UPDATE ofz.sessions SET idle_deadline_ms=ofz.now_ms()+60000 WHERE id=$1 RETURNING idle_deadline_ms", &[&owner_session]).await.unwrap().get(0);
     let mut context = request(
-        &database,
+        database,
         owner,
         Command::ReserveWorkspace(ReserveWorkspace::default()),
     )
@@ -1783,8 +2176,8 @@ async fn control_integration_durability_authority_and_quota() {
         .to_string();
     assert!(
         decision::check(
-            &database,
-            &native,
+            database,
+            native,
             BFF_ID,
             CheckRequest {
                 context: Some(context),
@@ -1812,7 +2205,7 @@ async fn control_integration_durability_authority_and_quota() {
     );
     drop(client);
     let mut transfer = request(
-        &database,
+        database,
         owner,
         Command::TransferWorkspace(TransferWorkspace {
             workspace_uid: uid.clone(),
@@ -1825,8 +2218,8 @@ async fn control_integration_durability_authority_and_quota() {
     let transfer_operation = transfer.operation_id.clone();
     let mut connection = database.command_connection().await.unwrap();
     let (prepared, _) = prepare(
-        &database,
-        &native,
+        database,
+        native,
         &connection.client,
         BFF_ID,
         transfer.clone(),
@@ -1843,7 +2236,7 @@ async fn control_integration_durability_authority_and_quota() {
     .await
     .unwrap();
     assert!(
-        !read(&database, &native, owner, &uid, Action::FilesObserve)
+        !read(database, native, owner, &uid, Action::FilesObserve)
             .await
             .unwrap()
             .allowed,
@@ -1859,20 +2252,14 @@ async fn control_integration_durability_authority_and_quota() {
         .unwrap();
     drop(connection);
     assert!(
-        !read(
-            &database,
-            &native,
-            &identities[1],
-            &uid,
-            Action::FilesObserve
-        )
-        .await
-        .unwrap()
-        .allowed,
+        !read(database, native, &identities[1], &uid, Action::FilesObserve)
+            .await
+            .unwrap()
+            .allowed,
         "new owner cannot access retained content after native write and before SQL recovery"
     );
-    commands::recover(&database, &native).await.unwrap();
-    let recovered = commands::execute(&database, &native, BFF_ID, transfer)
+    commands::recover(database, native).await.unwrap();
+    let recovered = commands::execute(database, native, BFF_ID, transfer)
         .await
         .unwrap();
     assert!(recovered.recovered_revision);
@@ -1884,14 +2271,14 @@ async fn control_integration_durability_authority_and_quota() {
     replay.context.as_mut().unwrap().deadline_unix_ms =
         database.state().await.unwrap().now_ms + 2000;
     assert_eq!(
-        commands::get(&database, &native, BFF_ID, replay.clone())
+        commands::get(database, native, BFF_ID, replay.clone())
             .await
             .unwrap(),
         recovered
     );
     replay.client_request_hash = vec![0x49; 32];
     assert_eq!(
-        commands::get(&database, &native, BFF_ID, replay)
+        commands::get(database, native, BFF_ID, replay)
             .await
             .unwrap_err()
             .code(),
@@ -1899,21 +2286,15 @@ async fn control_integration_durability_authority_and_quota() {
     );
 
     assert!(
-        !read(
-            &database,
-            &native,
-            owner,
-            &uid,
-            Action::WorkspaceMetadataRead
-        )
-        .await
-        .unwrap()
-        .allowed
+        !read(database, native, owner, &uid, Action::WorkspaceMetadataRead)
+            .await
+            .unwrap()
+            .allowed
     );
     assert!(
         read(
-            &database,
-            &native,
+            database,
+            native,
             &identities[1],
             &uid,
             Action::WorkspaceMetadataRead
@@ -1923,18 +2304,24 @@ async fn control_integration_durability_authority_and_quota() {
         .allowed
     );
     assert!(
-        !read(
-            &database,
-            &native,
-            &identities[1],
-            &uid,
-            Action::FilesObserve
-        )
-        .await
-        .unwrap()
-        .allowed,
+        !read(database, native, &identities[1], &uid, Action::FilesObserve)
+            .await
+            .unwrap()
+            .allowed,
         "transfer quarantines retained content until clean recovery"
     );
+    runtime_epoch
+}
+
+async fn verify_offboarding(fixture: &ControlFixture, workspace: &WorkspaceFixture) {
+    let ControlFixture {
+        admin,
+        database,
+        native,
+        identities,
+        ..
+    } = fixture;
+    let uid = workspace.uid.clone();
     let revoked = &identities[3];
     let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(
         Uuid::parse_str(&revoked.1).unwrap().as_bytes(),
@@ -1944,7 +2331,7 @@ async fn control_integration_durability_authority_and_quota() {
         operation_id: Uuid::new_v4().to_string(),
         origin: "https://proompteng.ai".into(),
     };
-    let original = crate::sessions::revoke(&database, &native, BFF_ID, revoke.clone())
+    let original = crate::sessions::revoke(database, native, BFF_ID, revoke.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -1963,7 +2350,7 @@ async fn control_integration_durability_authority_and_quota() {
         Action::SessionRevoke as i32,
         "logout receipt uses the catalogued revocation action"
     );
-    let retried = crate::sessions::revoke(&database, &native, BFF_ID, revoke.clone())
+    let retried = crate::sessions::revoke(database, native, BFF_ID, revoke.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -1972,8 +2359,8 @@ async fn control_integration_durability_authority_and_quota() {
     );
     assert_eq!(
         crate::sessions::inspect(
-            &database,
-            &native,
+            database,
+            native,
             BFF_ID,
             InspectSessionRequest {
                 session_id: credential
@@ -1989,8 +2376,8 @@ async fn control_integration_durability_authority_and_quota() {
     ));
     assert_eq!(
         crate::sessions::revoke(
-            &database,
-            &native,
+            database,
+            native,
             BFF_ID,
             RevokeSessionRequest {
                 credential: other,
@@ -2018,8 +2405,8 @@ async fn control_integration_durability_authority_and_quota() {
         "the emergency relationship is still effective before offboarding"
     );
     execute(
-        &database,
-        &native,
+        database,
+        native,
         &identities[1],
         Command::SetMembership(SetMembership {
             human_id: identities[3].0.clone(),
@@ -2046,8 +2433,8 @@ async fn control_integration_durability_authority_and_quota() {
         "offboarding removes emergency authority from the durable projection"
     );
     execute(
-        &database,
-        &native,
+        database,
+        native,
         &identities[1],
         Command::SetMembership(SetMembership {
             human_id: identities[3].0.clone(),
@@ -2071,6 +2458,17 @@ async fn control_integration_durability_authority_and_quota() {
             .0,
         "readmission must not restore the old emergency relationship"
     );
+}
+
+async fn verify_journal_loss(fixture: &ControlFixture, workspace: &WorkspaceFixture) {
+    let ControlFixture {
+        admin,
+        database,
+        native,
+        identities,
+        ..
+    } = fixture;
+    let uid = workspace.uid.clone();
     let conn = admin.pool.get().await.unwrap();
     let counts=conn.query_one("SELECT (SELECT count(*) FROM ofz.commands),(SELECT count(*) FROM ofz.audit),(SELECT count(*) FROM ofz.audit_outbox)", &[]).await.map_err(sql_error).unwrap();
     assert_eq!(counts.get::<_, i64>(1), counts.get::<_, i64>(2));
@@ -2094,7 +2492,7 @@ async fn control_integration_durability_authority_and_quota() {
         "database CA verification cannot be bypassed"
     );
     let mut lost_journal = request(
-        &database,
+        database,
         &identities[1],
         Command::ReserveWorkspace(ReserveWorkspace::default()),
     )
@@ -2105,8 +2503,8 @@ async fn control_integration_durability_authority_and_quota() {
     database.pool.close();
     assert_eq!(
         decision::check(
-            &database,
-            &native,
+            database,
+            native,
             BFF_ID,
             CheckRequest {
                 context: Some(lost_journal),
