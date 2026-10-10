@@ -15,6 +15,9 @@ Keep the combined SpiceDB, Ofz, BFF, controller, exporter and migration budget b
 
 Run the initial migration as its short-lived owner with `ofz migrate`. Rerunning the same migration is idempotent;
 a checksum mismatch fails. The API verifies the schema checksum at startup and begins with the platform fenced.
+Run `ofz migrate-runtime` separately using the existing `OFZ_DATABASE_*` mounted TLS credential settings for
+`dbname=tengri_control user=tengri_migrator`. This commits the runtime schema and version checksum atomically;
+repeat the command before admission to verify idempotency. Application roles cannot run this migration.
 Only the API and reviewed migration jobs may mount the native SpiceDB key after cutover.
 
 Render this directory separately during preparation; it contains no Namespace. NetworkPolicy limits the API to its

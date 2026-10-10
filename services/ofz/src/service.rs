@@ -18,6 +18,8 @@ pub struct Service {
     native: Native,
     issuer: Issuer,
     capacity: Arc<Semaphore>,
+    #[cfg(test)]
+    read_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 
 impl Service {
@@ -27,7 +29,18 @@ impl Service {
             native,
             issuer,
             capacity: Arc::new(Semaphore::new(128)),
+            #[cfg(test)]
+            read_barrier: None,
         }
+    }
+    #[cfg(test)]
+    pub(crate) fn with_read_barrier(
+        mut self,
+        entered: Arc<tokio::sync::Notify>,
+        resume: Arc<tokio::sync::Notify>,
+    ) -> Self {
+        self.read_barrier = Some((entered, resume));
+        self
     }
     fn acquire(&self) -> Result<OwnedSemaphorePermit, Status> {
         self.capacity
@@ -66,6 +79,11 @@ impl Service {
             );
             return Err(error);
         }
+        #[cfg(test)]
+        if let Some((entered, resume)) = &self.read_barrier {
+            entered.notify_one();
+            resume.notified().await;
+        }
         Ok(result)
     }
 
@@ -83,6 +101,9 @@ impl Service {
             || state.fenced
         {
             return Err(Status::deadline_exceeded("authorization decision expired"));
+        }
+        if !state.archive_healthy {
+            return Err(Status::unavailable("protected access fenced"));
         }
         Ok(())
     }
@@ -205,10 +226,10 @@ impl AuthorizationService for Service {
             Ok(proto::ResourceKind::Workspace) => Action::WorkspacePolicyRead,
             _ => return Err(Status::invalid_argument("unsupported access roster")),
         };
+        let state = self.database.state().await?;
         let decision = self
             .require_access(&peer, context, action, resource.clone())
             .await?;
-        let state = self.database.state().await?;
         let cursor = if request.cursor.is_empty() {
             String::new()
         } else {
@@ -312,10 +333,10 @@ impl AuthorizationService for Service {
         }
         let request = request.into_inner();
         let context = context(request.context)?;
+        let state = self.database.state().await?;
         let decision = self
             .require_access(&peer, context, Action::AuditRead, policy::platform())
             .await?;
-        let state = self.database.state().await?;
         let cursor: i64 = if request.cursor.is_empty() {
             0
         } else {

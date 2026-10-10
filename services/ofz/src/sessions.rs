@@ -450,7 +450,7 @@ async fn establish_verified(
                 contract_version: crate::CONTRACT_VERSION,
                 ..Default::default()
             };
-            store::record_audit(&*tx, &store::receipt(&context, peer, policy::platform(), Action::SessionInspect, true, &request.operation_id, "browser session replaced"), "").await?;
+            store::record_audit(&*tx, &store::receipt(&context, peer, policy::platform(), Action::SessionRevoke, true, &request.operation_id, "browser session replaced"), "").await?;
         }
     }
     let context = RequestContext {

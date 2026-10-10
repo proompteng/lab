@@ -40,6 +40,9 @@ grant's database-clock deadline in Ofz. Re-enabling caching requires a fresh exp
 
 The Rust API uses exact SPIFFE mTLS caller identities and contract version 1. `ofz migrate` creates the checksum-bound
 control schema as its separate owner; `ofz serve` verifies it and reconciles unfinished commands before listening.
+`ofz migrate-runtime` initializes `tengri_control` as `tengri_migrator`, with the packaged Tengri migration and its
+SHA-256 checksum committed in one transaction. It serializes concurrent attempts and rejects a different owner,
+database or existing checksum. The BFF and controller only verify the result; they cannot initialize their own schema.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
 

@@ -798,6 +798,74 @@ async fn control_integration_durability_authority_and_quota() {
             .windows(2)
             .all(|pair| pair[0].sequence < pair[1].sequence)
     );
+    for audit_read in [false, true] {
+        let auditor = &identities[2];
+        execute(
+            &database,
+            &native,
+            owner,
+            Command::SetMembership(SetMembership {
+                human_id: auditor.0.clone(),
+                github_id: "3".into(),
+                role: PlatformRole::Auditor as i32,
+                enabled: true,
+            }),
+        )
+        .await;
+        let entered = std::sync::Arc::new(tokio::sync::Notify::new());
+        let resume = std::sync::Arc::new(tokio::sync::Notify::new());
+        let paused = service
+            .clone()
+            .with_read_barrier(entered.clone(), resume.clone());
+        let context = request(
+            &database,
+            auditor,
+            Command::ReserveWorkspace(ReserveWorkspace::default()),
+        )
+        .await
+        .context;
+        let read = tokio::spawn(async move {
+            if audit_read {
+                paused
+                    .read_audit(rpc(ReadAuditRequest {
+                        context,
+                        ..Default::default()
+                    }))
+                    .await
+                    .map(|_| ())
+            } else {
+                paused
+                    .list_access(rpc(ListAccessRequest {
+                        context,
+                        resource: Some(policy::platform()),
+                        ..Default::default()
+                    }))
+                    .await
+                    .map(|_| ())
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        execute(
+            &database,
+            &native,
+            owner,
+            Command::SetMembership(SetMembership {
+                human_id: auditor.0.clone(),
+                github_id: "3".into(),
+                role: PlatformRole::Auditor as i32,
+                enabled: false,
+            }),
+        )
+        .await;
+        resume.notify_one();
+        assert_eq!(
+            read.await.unwrap().unwrap_err().code(),
+            Code::Aborted,
+            "roster and audit reads cannot adopt a policy version sampled after authorization"
+        );
+    }
     let mismatch = request(
         &database,
         owner,

@@ -26,8 +26,12 @@ async fn main() -> anyhow::Result<()> {
             database.migrate().await?;
             return Ok(());
         }
+        Some("migrate-runtime") => {
+            database.migrate_runtime().await?;
+            return Ok(());
+        }
         Some("serve") | None => {}
-        _ => bail!("expected serve or migrate"),
+        _ => bail!("expected serve, migrate or migrate-runtime"),
     }
     database.verify_schema().await?;
     tracing::debug!("control database schema verified");
