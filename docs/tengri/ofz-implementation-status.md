@@ -67,8 +67,9 @@ fails the actual browser flow. Command preflight remains available for revocatio
 under archive loss and never renews idle activity. Both the 26-command control fixture and the 44-assertion browser
 fixture also passed against the exact PostgreSQL 18.6 and SpiceDB containers on NUC. Twenty-two inventory regressions,
 TypeScript, type-aware lint, generated-client verification and strict prepared-manifest validation passed after
-restacking onto current main. Native Linux builds supplied the dependency hashes for both architectures; corrected
-hashes still require successful image builds. Real custodian
+restacking onto current main. The corrected dependency hashes passed native Linux image builds on both architectures
+at commit `371f53f7a2`; all required CI checks passed there. The emergency-access catalog classification was then aligned
+with the enforced administrator permission and covered by the Rust contract suite. Real custodian
 enrollment and deployed product proof remain later gates.
 
 The coordinated cutover gate also covers the Proompteng image: Kargo discovery remains withheld while

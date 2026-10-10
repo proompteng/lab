@@ -954,7 +954,7 @@
   {
     "surface": "bff_access",
     "operation": "emergency",
-    "action": "ACTION_PLATFORM_OPERATE"
+    "action": "ACTION_MEMBERS_MANAGE"
   },
   {
     "surface": "bff_auth",
