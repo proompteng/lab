@@ -268,6 +268,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v2')
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.momentum)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')
@@ -290,6 +291,18 @@ test('offline command reproduces native observations, prices shared lifecycle on
         dataRole: MatchedDataRole.Prospective,
         registeredAt: '2026-09-04T13:30:00.000Z',
       }
+      const { sourceComparison: _sourceComparison, ...currentDefinition } = matchedEntryDefinition
+      const oldDefinitionHash = canonicalHashV1({
+        ...currentDefinition,
+        schemaVersion: 'bayn.matched-entry-definition.v1',
+      })
+      const oldRegistration = { ...data.registration, definitionHash: oldDefinitionHash }
+      const oldResult = yield* runMatchedEntryStudy(data.input, oldRegistration, arrivals, data.receipt).pipe(
+        Effect.result,
+      )
+      expect(Result.isFailure(oldResult)).toBeTrue()
+      if (Result.isFailure(oldResult))
+        expect(String(oldResult.failure)).toContain('Frozen definition or routing assumptions differ')
       expect(
         Result.isFailure(yield* runMatchedEntryStudy(data.input, late, arrivals, data.receipt).pipe(Effect.result)),
       ).toBeTrue()

@@ -36,10 +36,16 @@ function configureNetwork(mtu: string) {
 function configureFixture(mtu: string) {
   const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-fixture-mtu-'))
   try {
+    writeFileSync(
+      resolve(fixture, 'kvm-test'),
+      '#!/bin/sh\nprintf "%s\\n" "slot::kvm_test::real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages: test"\n',
+      { mode: 0o755 },
+    )
     writeFileSync(resolve(fixture, 'ip'), '#!/bin/sh\nprintf "%s\\n" "$*" > "$FIXTURE_DIRECTORY/links"\nexit 42\n', {
       mode: 0o755,
     })
-    const result = Bun.spawnSync(['sh', entry], {
+    const script = readFileSync(entry, 'utf8').replaceAll('/fixture/kvm-test', resolve(fixture, 'kvm-test'))
+    const result = Bun.spawnSync(['sh', '-c', script], {
       env: {
         ...process.env,
         PATH: `${fixture}:${process.env.PATH}`,

@@ -63,7 +63,7 @@ boundary around guest administration.
 
 The root filesystem has 1 GiB capacity. Snapshot sleep/resume preserves root changes and guest processes while releasing
 resident guest RAM. A fenced cold replacement resets the root from the image. Home and `/workspace` use the retained
-16 GiB PVC, including Codex credentials, threads, and installed tools. Ordinary sleep keeps the claimed runtime image.
+32 GiB PVC, including Codex credentials, threads, and installed tools. Ordinary sleep keeps the claimed runtime image.
 
 ## API path
 
@@ -118,7 +118,8 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
 - A reconnecting browser restores the active device-login snapshot from the same app-server generation. Nanoagent
   rejects a stale snapshot after the app server restarts, and Tengri preserves the attempt's original expiry.
 - The UI caps retained events and rendered text. It does not render remote Markdown images or raw unbounded app-server
-  payloads.
+  payloads. Nanoagent projects tool-result images to `[Image output]` before the replay byte limit, retaining the
+  tool's identity, status, text, and structured output. Codex receives the original image payload.
 
 Closing and reopening Chrome does not terminate Codex. Nanoagent supervises one long-lived `codex app-server` process;
 browser reconnects restore the persisted thread and event state from the same microVM.

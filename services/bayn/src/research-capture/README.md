@@ -185,6 +185,20 @@ events separate PUT start and acknowledgement, GET start and response headers, a
 request has no acknowledgement or verification event. HTTP 412 retains its status before the required readback. Hashes
 remain trace attributes, never metric labels; bucket names, keys, endpoints, credentials and raw bytes are excluded.
 
+`bayn.capture.persistence` spans correlate each existing claim, chunk and seal operation with its object phases and
+`bayn.capture.sql` child. The SQL child's existing driver spans identify the actual backend and BEGIN/COMMIT/ROLLBACK
+duration without an extra query. Capture spans retain only operation kind, metadata SHA-256, byte count, ordinal and
+configured write timeout. The claim's remaining admission window can shorten that timeout. Raw adapter errors and
+capture identities are not included. Tracing does not change metadata, frame bytes, write order or qualification.
+
+The persistence start, deadline-expired and cleanup-finished events distinguish the one-second validity boundary from
+later cancellation cleanup. An uninterruptible COMMIT can become durable during cleanup, but the pending interruption
+reports a failed-or-unknown SQL outcome: neither `sql.acknowledged` nor `persistence.io_completed` is emitted. Inspect
+the existing driver COMMIT span and `cleanup_finished` event for that late outcome; neither advances the invalidated
+capture frontier. Correlate object PUT/GET events with actual SQL COMMIT spans before attributing a slow operation.
+COMMIT duration alone does not distinguish local WAL synchronization from synchronous-standby waiting. These spans
+add no storage operation, retry, collector or capacity qualification.
+
 The existing at-most-one-second write deadline contains the complete export-and-SQL operation, and finalization is
 cached once. It is not a production throughput claim. A timeout, readback failure, SQL failure, restart or missing seal
 leaves incomplete evidence and cannot change execution, retries, liquidation or capital authority.
@@ -194,6 +208,31 @@ production acquisition, qualification must prove every source frontier and contr
 full controller lifecycle joins, restart/replay ambiguity handling, measured storage capacity, and bounded overhead.
 Kafka retention alone cannot recover an earlier consumer's original timing. Object-store capacity and connectivity
 alone do not satisfy these gates.
+
+### Offline service-envelope check
+
+Run `bun test services/bayn/src/research-capture/latency-envelope.test.ts` from the repository root. It exercises the
+actual recorder with in-memory stores and a deterministic clock; it makes no network requests or production writes.
+The fixture caps each scenario at 5,500 market receipts, 450 raw bytes per receipt, 8 MiB attempted object payload and
+4 MiB attempted SQL payload. The existing 1,024 retained receipts, 4 MiB reservation and one-second deadline are unchanged.
+These logical payload bounds do not describe total JavaScript memory or production replication costs.
+
+The original 4,439-receipt/50 ms budget-test burst is synthetic. Its 256-record yield cadence matches the consumer;
+its arrival timestamps are not a measured native arrival schedule. Constant object-verification plus SQL latency of
+5 ms fits that fixture, while 6 ms overflows at 19 ms. A separate uniform 1,100-record/second, five-second comparison
+fits at 450 ms and overflows at 500 ms. Neither result is a production qualification or a full-session tail guarantee.
+The uniform comparison does not bound native millisecond peaks, variable payloads or bootstrap bursts.
+
+Both queued and in-flight raw receipts consume the retained-count budget. Once batches approach steady state, a
+uniform arrival rate can retain approximately two batches: the batch being written and arrivals during that write.
+For count-limited payloads this gives a useful necessary planning check near `2 * arrivalRate * writeLatency <= 1024`;
+it is not sufficient under bursts, variable payloads, deadline tails or callback scheduling. A one-second deadline alone
+therefore does not establish enough service capacity. Moving SQL off the per-frame path cannot fix an object PUT/GET
+latency that independently exceeds the workload's retention envelope.
+
+Before changing storage architecture, correlate actual capture persistence, object and SQL spans for the same
+synthetic operation and measure a bounded original-arrival workload envelope. Thirty-second counters only give
+coarse rates; reconstructed producer timestamps and unrelated Jev SQL COMMIT spans cannot supply capture phase timings.
 
 ## Bounded native-visible replay
 
