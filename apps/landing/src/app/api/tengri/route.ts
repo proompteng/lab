@@ -253,3 +253,10 @@ function snapshot(input: { authConfigured: boolean; controlPlaneConfigured: bool
     { headers: noStoreHeaders() },
   )
 }
+
+export function HEAD() {
+  return new Response(null, { status: 405, headers: { 'Cache-Control': 'no-store' } })
+}
+export function OPTIONS() {
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+}

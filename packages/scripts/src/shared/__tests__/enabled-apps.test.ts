@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
@@ -158,6 +160,41 @@ const entry = (name: string) => {
 }
 
 describe('enabled app inventory', () => {
+  it('excludes unreferenced prepared directories and includes declared Kustomize inputs', () => {
+    const root = mkdtempSync(join(tmpdir(), 'enabled-app-inputs-'))
+    const app = join(root, 'argocd/applications/example')
+    try {
+      mkdirSync(join(root, 'argocd/applicationsets'), { recursive: true })
+      for (const name of ['active', 'prepared', 'patches', 'values']) mkdirSync(join(app, name), { recursive: true })
+      writeFileSync(
+        join(root, 'argocd/applicationsets/test.yaml'),
+        YAML.stringify({
+          spec: { generators: [{ list: { elements: [{ name: 'example', path: 'argocd/applications/example' }] } }] },
+        }),
+      )
+      const manifest = (name: string) => YAML.stringify({ image: `registry.ide-newton.ts.net/lab/${name}` })
+      writeFileSync(join(app, 'active/deployment.yaml'), manifest('active'))
+      writeFileSync(join(app, 'prepared/deployment.yaml'), manifest('prepared'))
+      writeFileSync(join(app, 'patches/image.yaml'), manifest('patch'))
+      writeFileSync(join(app, 'values/chart.yaml'), manifest('chart'))
+      const input = {
+        resources: ['active'],
+        patches: [{ path: 'patches/image.yaml' }],
+        helmCharts: [{ valuesFile: 'values/chart.yaml' }],
+      }
+      writeFileSync(join(app, 'kustomization.yaml'), YAML.stringify(input))
+      expect(loadEnabledAppInventory(root).entries[0]?.repoImages).toEqual([
+        'registry.ide-newton.ts.net/lab/active',
+        'registry.ide-newton.ts.net/lab/chart',
+        'registry.ide-newton.ts.net/lab/patch',
+      ])
+      writeFileSync(join(app, 'kustomization.yaml'), YAML.stringify({ ...input, resources: ['active', 'prepared'] }))
+      expect(loadEnabledAppInventory(root).entries[0]?.repoImages).toContain('registry.ide-newton.ts.net/lab/prepared')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('recognizes the inert devbox promotion template without accepting arbitrary mutable images', () => {
     const template = {
       name: 'devbox',

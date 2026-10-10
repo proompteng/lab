@@ -46,29 +46,48 @@ export const makeControlJevManagement = (
           Effect.gen(function* () {
             const prepared = yield* Effect.fromResult(makeControlManagementBatch(input))
             const { observation } = prepared
-            const evidence = yield* evaluateJevObservation({
-              cycleId: observation.cycleId,
-              authorityGenerationHash: observation.authorityGenerationHash,
-              protocol: observation.protocol,
-              portfolio: observation.portfolio,
-              snapshot: input.snapshot,
-            })
-            const decidedAt = yield* timing.currentUtcInstant
-            if (decidedAt >= prepared.batch.expiresAt)
-              return { status: 'UNAVAILABLE' as const, cause: 'Management evidence expired during persistence' }
-            const decision = yield* Effect.fromResult(decideJevManagement({ ...evidence, decidedAt }))
-            const committedAtMs = Date.parse(yield* timing.currentUtcInstant)
-            if (committedAtMs >= Date.parse(prepared.batch.expiresAt))
-              return { status: 'UNAVAILABLE' as const, cause: 'Management decision expired before commitment' }
-            const applied = yield* Effect.fromResult(
-              applyControlManagementDecision({
-                portfolio,
-                expectedBatchId: prepared.batch.batchId,
-                decision,
-                committedAtMs,
-              }),
+            const deadlineMs = Math.min(
+              Date.parse(prepared.batch.expiresAt),
+              Date.parse(prepared.entryOutcome.fill.observedAt) + observation.protocol.maximumHoldingMinutes * 60_000,
             )
-            return { status: 'DECIDED' as const, applied, committedAtMs }
+            const budgetMs = Math.max(0, deadlineMs - Date.parse(yield* timing.currentUtcInstant))
+            if (budgetMs === 0)
+              return { status: 'UNAVAILABLE' as const, cause: 'Management deadline elapsed before evaluation' }
+            return yield* Effect.gen(function* () {
+              const evidence = yield* evaluateJevObservation({
+                cycleId: observation.cycleId,
+                authorityGenerationHash: observation.authorityGenerationHash,
+                protocol: observation.protocol,
+                portfolio: observation.portfolio,
+                snapshot: input.snapshot,
+              })
+              const decidedAt = yield* timing.currentUtcInstant
+              if (Date.parse(decidedAt) >= deadlineMs)
+                return { status: 'UNAVAILABLE' as const, cause: 'Management evidence expired during persistence' }
+              const decision = yield* Effect.fromResult(decideJevManagement({ ...evidence, decidedAt }))
+              const committedAtMs = Date.parse(yield* timing.currentUtcInstant)
+              if (committedAtMs >= deadlineMs)
+                return { status: 'UNAVAILABLE' as const, cause: 'Management decision expired before commitment' }
+              const applied = yield* Effect.fromResult(
+                applyControlManagementDecision({
+                  portfolio,
+                  expectedBatchId: prepared.batch.batchId,
+                  decision,
+                  committedAtMs,
+                }),
+              )
+              return { status: 'DECIDED' as const, applied, committedAtMs }
+            }).pipe(
+              Effect.raceFirst(
+                Effect.sleep(budgetMs).pipe(
+                  Effect.provideService(Clock.Clock, binding.providerClock),
+                  Effect.as({
+                    status: 'UNAVAILABLE' as const,
+                    cause: 'Management exhausted its validity or holding deadline',
+                  }),
+                ),
+              ),
+            )
           }).pipe(
             Effect.provideService(CandidateObservationStore, binding.journal.observations),
             Effect.provideService(JevBatchStore, binding.journal.batches),
