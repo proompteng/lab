@@ -340,6 +340,24 @@ pub(crate) async fn prepare(
             prepared
                 .changes
                 .push(relation("platform", "lab", role, &c.human_id, c.enabled));
+            if !c.enabled && c.role == PlatformRole::Member as i32 {
+                for row in client
+                    .query(
+                        "SELECT workspace_uid FROM ofz.emergency_access WHERE human_id=$1",
+                        &[&c.human_id],
+                    )
+                    .await
+                    .map_err(sql_error)?
+                {
+                    prepared.changes.push(relation(
+                        "workspace",
+                        &row.get::<_, Uuid>(0).to_string(),
+                        "emergency",
+                        &c.human_id,
+                        false,
+                    ));
+                }
+            }
         }
         Command::SetWorkspaceRole(c) => {
             let current = owner(client, &c.workspace_uid).await?;
@@ -752,6 +770,22 @@ pub(crate) async fn prepare(
                 "platform",
                 "lab",
             )));
+            for row in client
+                .query(
+                    "SELECT human_id FROM ofz.emergency_access WHERE workspace_uid=$1",
+                    &[&uid],
+                )
+                .await
+                .map_err(sql_error)?
+            {
+                prepared.changes.push(relation(
+                    "workspace",
+                    &c.workspace_uid,
+                    "emergency",
+                    &row.get::<_, String>(0),
+                    false,
+                ));
+            }
         }
         Command::EmergencyAccess(c) => {
             owner(client, &c.workspace_uid).await?;
@@ -922,8 +956,14 @@ pub(crate) async fn persist(
             )
             .await
             .map_err(sql_error)?;
-            tx.execute("UPDATE ofz.workspaces SET state='quarantined' WHERE state<>'removed' AND (owner_id=$1 OR uid IN (SELECT workspace_uid FROM ofz.collaborators WHERE human_id=$1 AND role=2))", &[&c.human_id]).await.map_err(sql_error)?;
+            tx.execute("UPDATE ofz.workspaces SET state='quarantined' WHERE state<>'removed' AND (owner_id=$1 OR uid IN (SELECT workspace_uid FROM ofz.collaborators WHERE human_id=$1 AND role=2) OR uid IN (SELECT workspace_uid FROM ofz.emergency_access WHERE human_id=$1 AND expires_at_ms>ofz.now_ms()))", &[&c.human_id]).await.map_err(sql_error)?;
             tx.execute("UPDATE ofz.grants SET revoked=true WHERE workspace_uid IN (SELECT uid FROM ofz.workspaces WHERE state='quarantined')", &[]).await.map_err(sql_error)?;
+            tx.execute(
+                "DELETE FROM ofz.emergency_access WHERE human_id=$1",
+                &[&c.human_id],
+            )
+            .await
+            .map_err(sql_error)?;
         }
         Some(Command::RevokeGrant(c)) => {
             tx.execute(
@@ -1052,7 +1092,7 @@ pub(crate) async fn finalize(
                 )
                 .await
                 .map_err(sql_error)?;
-                tx.execute("UPDATE ofz.workspaces SET state='quarantined' WHERE state<>'removed' AND (owner_id=$1 OR uid IN (SELECT workspace_uid FROM ofz.collaborators WHERE human_id=$1 AND role=2))", &[&c.human_id]).await.map_err(sql_error)?;
+                tx.execute("UPDATE ofz.workspaces SET state='quarantined' WHERE state<>'removed' AND (owner_id=$1 OR uid IN (SELECT workspace_uid FROM ofz.collaborators WHERE human_id=$1 AND role=2) OR uid IN (SELECT workspace_uid FROM ofz.emergency_access WHERE human_id=$1 AND expires_at_ms>ofz.now_ms()))", &[&c.human_id]).await.map_err(sql_error)?;
             }
         }
         Command::SetWorkspaceRole(c) => {
@@ -1180,6 +1220,7 @@ pub(crate) async fn finalize(
                         "custodian approval already consumed",
                     ));
                 }
+                tx.execute("INSERT INTO ofz.emergency_access(workspace_uid,human_id,expires_at_ms,operation_id) VALUES($1,$2,$3,$4) ON CONFLICT (workspace_uid,human_id) DO UPDATE SET expires_at_ms=EXCLUDED.expires_at_ms,operation_id=EXCLUDED.operation_id", &[&parse_uuid(&c.workspace_uid)?,&c.human_id,&(c.expires_at_unix_ms as i64),&parse_uuid(&prepared.request.operation_id)?]).await.map_err(sql_error)?;
             } else {
                 tx.execute("INSERT INTO ofz.emergency_approvals(operation_id,human_id,request,expires_at_ms) VALUES($1,$2,$3,$4)", &[&parse_uuid(&prepared.request.operation_id)?,&decision::human(context)?,&store::encode(&prepared.request)?,&(c.expires_at_unix_ms as i64)]).await.map_err(sql_error)?;
             }

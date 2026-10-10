@@ -5,7 +5,7 @@ use rustls::{ClientConfig, RootCertStore};
 use sha2::{Digest, Sha256};
 use tokio_postgres::Config;
 use tokio_postgres_rustls::MakeRustlsConnect;
-use tonic::Code;
+use tonic::{Code, Request};
 use uuid::Uuid;
 
 use crate::{
@@ -13,9 +13,59 @@ use crate::{
     decision,
     native::{Native, Relationship, Update},
     policy::{self, BFF_ID, CONTROLLER_ID, OFZ_ID},
-    proto::{actor::Identity, execute_command_request::Command, *},
-    store::{Database, sql_error},
+    proto::{
+        actor::Identity, authorization_service_server::AuthorizationService,
+        execute_command_request::Command, *,
+    },
+    service::Service,
+    sessions::Issuer,
+    store::{self, Database, sql_error},
+    transport::Peer,
 };
+
+fn rpc<T>(message: T, peer: &str) -> Request<T> {
+    let mut request = Request::new(message);
+    request
+        .metadata_mut()
+        .insert("x-ofz-contract-version", "1".parse().unwrap());
+    request.extensions_mut().insert(Peer(peer.into()));
+    request
+}
+
+async fn roster(
+    service: &Service,
+    database: &Database,
+    identity: &(String, String),
+    uid: &str,
+) -> Vec<AccessEntry> {
+    let mut context = request(
+        database,
+        identity,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    context.workspace_uid = uid.into();
+    service
+        .list_access(rpc(
+            ListAccessRequest {
+                context: Some(context),
+                resource: Some(policy::workspace(uid)),
+                ..Default::default()
+            },
+            BFF_ID,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .entries
+}
+
+async fn acknowledge_fixture_archive(admin: &Database) {
+    // Synthetic acknowledgement for control tests; independent archive durability is a separate gate.
+    admin.pool.get().await.unwrap().batch_execute("BEGIN; UPDATE ofz.audit_outbox SET acknowledged_at_ms=ofz.now_ms(),archive_receipt='control-fixture-only'; UPDATE ofz.archive_state SET acknowledged_sequence=coalesce((SELECT max(sequence) FROM ofz.audit),0),acknowledged_at_ms=ofz.now_ms(); COMMIT;").await.unwrap();
+}
 
 async fn setup() -> (Database, Database, Native, Vec<(String, String)>) {
     rustls::crypto::aws_lc_rs::default_provider()
@@ -241,6 +291,59 @@ async fn read(
 async fn control_integration_durability_authority_and_quota() {
     let (admin, database, native, identities) = setup().await;
     let owner = &identities[0];
+    let service = Service::new(
+        database.clone(),
+        native.clone(),
+        Issuer::new(
+            "https://identity.invalid/realms/tengri".into(),
+            "tengri-bff".into(),
+        )
+        .unwrap(),
+    );
+    let context = request(
+        &database,
+        owner,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context;
+    let list = ListAccessRequest {
+        context: context.clone(),
+        resource: Some(policy::platform()),
+        ..Default::default()
+    };
+    let audit = ReadAuditRequest {
+        context,
+        ..Default::default()
+    };
+    assert_eq!(
+        service
+            .list_access(rpc(list.clone(), CONTROLLER_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied,
+        "a controller cannot forge a human policy reader"
+    );
+    assert_eq!(
+        service
+            .read_audit(rpc(audit.clone(), CONTROLLER_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied,
+        "a controller cannot forge a human audit reader"
+    );
+    assert!(
+        !service
+            .list_access(rpc(list, BFF_ID))
+            .await
+            .unwrap()
+            .into_inner()
+            .entries
+            .is_empty()
+    );
+    service.read_audit(rpc(audit, BFF_ID)).await.unwrap();
     let reservation = Uuid::new_v4().to_string();
     let first = request(
         &database,
@@ -520,6 +623,12 @@ async fn control_integration_durability_authority_and_quota() {
         .allowed,
         "first custodian cannot activate emergency access alone"
     );
+    assert!(
+        !roster(&service, &database, owner, &uid)
+            .await
+            .iter()
+            .any(|entry| entry.role == "emergency")
+    );
     emergency.custodian_approval_id = approval.operation_id;
     let same = request(
         &database,
@@ -541,6 +650,13 @@ async fn control_integration_durability_authority_and_quota() {
         Command::EmergencyAccess(emergency.clone()),
     )
     .await;
+    let entries = roster(&service, &database, owner, &uid).await;
+    let active = entries
+        .iter()
+        .find(|entry| entry.role == "emergency")
+        .expect("the effective emergency grant must be visible to its owner");
+    assert_eq!(active.subject_id, identities[3].0);
+    assert_eq!(active.expires_at_unix_ms, emergency.expires_at_unix_ms);
     assert!(
         read(
             &database,
@@ -904,6 +1020,81 @@ async fn control_integration_durability_authority_and_quota() {
         "42501"
     );
     drop(client);
+    // A live exporter cannot hide an old pending row or a stale durable checkpoint.
+    acknowledge_fixture_archive(&admin).await;
+    let context = request(
+        &database,
+        owner,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    let receipt = store::receipt(
+        &context,
+        BFF_ID,
+        policy::platform(),
+        Action::AuditRead,
+        true,
+        "",
+        "archive backlog fixture",
+    );
+    let conn = admin.pool.get().await.unwrap();
+    let sequence: i64 = conn.query_one("INSERT INTO ofz.audit(id,receipt,target_hash,created_at_ms) VALUES($1,$2,$3,ofz.now_ms()-61000) RETURNING sequence", &[&Uuid::parse_str(&receipt.id).unwrap(),&store::encode(&receipt).unwrap(),&Sha256::digest(b"").to_vec()]).await.unwrap().get(0);
+    conn.execute(
+        "INSERT INTO ofz.audit_outbox(audit_sequence) VALUES($1)",
+        &[&sequence],
+    )
+    .await
+    .unwrap();
+    assert!(
+        !database.state().await.unwrap().archive_healthy,
+        "fresh exporter heartbeat does not acknowledge an old outbox row"
+    );
+    assert_eq!(
+        read(
+            &database,
+            &native,
+            owner,
+            &uid,
+            Action::WorkspaceMetadataRead
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::Unavailable
+    );
+    conn.execute(
+        "UPDATE ofz.audit_outbox SET acknowledged_at_ms=ofz.now_ms() WHERE audit_sequence=$1",
+        &[&sequence],
+    )
+    .await
+    .unwrap();
+    assert!(
+        !database.state().await.unwrap().archive_healthy,
+        "row acknowledgement cannot replace the archive checkpoint"
+    );
+    conn.execute(
+        "UPDATE ofz.archive_state SET acknowledged_sequence=$1,acknowledged_at_ms=ofz.now_ms()",
+        &[&sequence],
+    )
+    .await
+    .unwrap();
+    assert!(database.state().await.unwrap().archive_healthy);
+    assert!(
+        read(
+            &database,
+            &native,
+            owner,
+            &uid,
+            Action::WorkspaceMetadataRead
+        )
+        .await
+        .unwrap()
+        .allowed
+    );
+    drop(conn);
+    acknowledge_fixture_archive(&admin).await;
     // Archive loss fences new data access; durable revocation remains available.
     admin
         .pool
@@ -1255,6 +1446,72 @@ async fn control_integration_durability_authority_and_quota() {
         .code(),
         Code::AlreadyExists,
         "logout operation ID cannot be reused for another session"
+    );
+    assert!(
+        native
+            .check(&[crate::native::Check::new(
+                "workspace",
+                &uid,
+                "control_guest",
+                "human",
+                &identities[3].0
+            )])
+            .await
+            .unwrap()
+            .0,
+        "the emergency relationship is still effective before offboarding"
+    );
+    execute(
+        &database,
+        &native,
+        &identities[1],
+        Command::SetMembership(SetMembership {
+            human_id: identities[3].0.clone(),
+            role: PlatformRole::Member as i32,
+            enabled: false,
+        }),
+    )
+    .await;
+    assert_eq!(
+        admin
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "SELECT count(*) FROM ofz.emergency_access WHERE human_id=$1",
+                &[&identities[3].0]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0,
+        "offboarding removes emergency authority from the durable projection"
+    );
+    execute(
+        &database,
+        &native,
+        &identities[1],
+        Command::SetMembership(SetMembership {
+            human_id: identities[3].0.clone(),
+            role: PlatformRole::Member as i32,
+            enabled: true,
+        }),
+    )
+    .await;
+    assert!(
+        !native
+            .check(&[crate::native::Check::new(
+                "workspace",
+                &uid,
+                "control_guest",
+                "human",
+                &identities[3].0
+            )])
+            .await
+            .unwrap()
+            .0,
+        "readmission must not restore the old emergency relationship"
     );
     let conn = admin.pool.get().await.unwrap();
     let counts=conn.query_one("SELECT (SELECT count(*) FROM ofz.commands),(SELECT count(*) FROM ofz.audit),(SELECT count(*) FROM ofz.audit_outbox)", &[]).await.map_err(sql_error).unwrap();

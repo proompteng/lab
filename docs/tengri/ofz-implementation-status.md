@@ -1,7 +1,7 @@
 # Ofz implementation status
 
 The goal is the complete migration and deployed acceptance described in
-[the authorization plan](ofz-enterprise-authorization-plan.md). Work proceeds on one branch, without subagents.
+[the authorization plan](ofz-enterprise-authorization-plan.md). Work proceeds through dependent PRs, without subagents.
 Production keeps its current authority until the coordinated hard cutover. New code has no legacy authorization fallback.
 
 - [x] Read repository instructions and Poteto principles; refresh source and runtime baseline.
@@ -42,7 +42,9 @@ The prepared seven-resource control-plane configuration passed Kubernetes server
 from active GitOps. Real BFF/Ofz mTLS interoperability, OIDC sessions, fleet enforcement and deployment remain later gates.
 
 P2 review regressions additionally passed against local PostgreSQL 18.1 and the checksum-verified official SpiceDB
-1.56.2 Darwin ARM64 binary: 18 commands and 47 immutable receipts, including repeated roles, controller administration
-denial, control-only idle extension and idempotent logout. The pinned PostgreSQL 18.6 container fixture remains the CI
+1.56.2 Darwin ARM64 binary: 20 commands and 56 immutable receipts, including repeated roles, controller administration
+and human-read denial, emergency roster visibility and removal across readmission, control-only idle extension,
+idempotent logout, and archive backlog fencing despite a fresh heartbeat. The current policy fixture passes 587
+assertions. The pinned PostgreSQL 18.6 container fixture remains the CI
 gate. NUC's configured 1Password SSH agent subsequently became unavailable; implementation continues locally while
 the requested agent unlock is pending.

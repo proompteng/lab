@@ -109,6 +109,13 @@ CREATE TABLE ofz.commands (
     receipt jsonb,
     created_at_ms bigint NOT NULL DEFAULT ofz.now_ms()
 );
+CREATE TABLE ofz.emergency_access (
+    workspace_uid uuid NOT NULL REFERENCES ofz.workspaces(uid),
+    human_id text NOT NULL CHECK (human_id ~ '^[0-9a-f]{64}$'),
+    expires_at_ms bigint NOT NULL,
+    operation_id uuid UNIQUE NOT NULL REFERENCES ofz.commands(operation_id),
+    PRIMARY KEY (workspace_uid, human_id)
+);
 CREATE TABLE ofz.audit (
     sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     id uuid UNIQUE NOT NULL,
@@ -121,6 +128,7 @@ CREATE TABLE ofz.audit_outbox (
     acknowledged_at_ms bigint,
     archive_receipt text
 );
+CREATE INDEX audit_outbox_unacknowledged ON ofz.audit_outbox(audit_sequence) WHERE acknowledged_at_ms IS NULL;
 CREATE TABLE ofz.archive_state (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     acknowledged_sequence bigint NOT NULL DEFAULT 0,
@@ -141,7 +149,7 @@ GRANT USAGE ON SCHEMA ofz TO ofz_api, ofz_archiver;
 GRANT EXECUTE ON FUNCTION ofz.now_ms() TO ofz_api, ofz_archiver;
 GRANT SELECT ON ALL TABLES IN SCHEMA ofz TO ofz_api;
 GRANT INSERT, UPDATE, DELETE ON ofz.memberships, ofz.quotas, ofz.collaborators,
-    ofz.sessions, ofz.replay TO ofz_api;
+    ofz.sessions, ofz.replay, ofz.emergency_access TO ofz_api;
 GRANT INSERT, UPDATE ON ofz.reservations, ofz.workspaces, ofz.grants, ofz.emergency_approvals TO ofz_api;
 GRANT UPDATE ON ofz.platform_state TO ofz_api;
 GRANT INSERT ON ofz.commands, ofz.audit, ofz.audit_outbox TO ofz_api;

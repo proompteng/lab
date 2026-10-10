@@ -254,7 +254,18 @@ pub struct State {
 }
 
 pub async fn state<C: GenericClient + Sync>(client: &C) -> Result<State, Status> {
-    let row = client.query_one("SELECT p.version,p.recovery_generation,p.fenced,ofz.now_ms(), a.acknowledged_at_ms >= ofz.now_ms()-60000 FROM ofz.platform_state p CROSS JOIN ofz.archive_state a", &[]).await.map_err(sql_error)?;
+    let row = client.query_one(r#"
+        SELECT p.version,p.recovery_generation,p.fenced,ofz.now_ms(),
+            a.acknowledged_at_ms BETWEEN ofz.now_ms()-60000 AND ofz.now_ms()
+            AND NOT EXISTS (
+                SELECT 1 FROM ofz.audit oldest WHERE oldest.created_at_ms < ofz.now_ms()-60000
+                AND oldest.sequence=LEAST(
+                    (SELECT min(audit_sequence) FROM ofz.audit_outbox WHERE acknowledged_at_ms IS NULL),
+                    (SELECT min(sequence) FROM ofz.audit WHERE sequence>a.acknowledged_sequence)
+                )
+            )
+        FROM ofz.platform_state p CROSS JOIN ofz.archive_state a
+    "#, &[]).await.map_err(sql_error)?;
     Ok(State {
         version: row.get::<_, i64>(0) as u64,
         recovery_generation: row.get::<_, i64>(1) as u64,

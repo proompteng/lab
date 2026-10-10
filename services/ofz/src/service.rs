@@ -139,6 +139,11 @@ impl AuthorizationService for Service {
     ) -> Result<Response<proto::ListAccessResponse>, Status> {
         let _capacity = self.acquire()?;
         let peer = transport::peer(&request)?;
+        if peer != policy::BFF_ID {
+            return Err(Status::permission_denied(
+                "human policy reads require the BFF",
+            ));
+        }
         decision::workload(&self.native, &peer, Action::PolicyCheck).await?;
         let request = request.into_inner();
         let context = context(request.context)?;
@@ -189,7 +194,7 @@ impl AuthorizationService for Service {
             client.query("SELECT human_id AS subject_id,role::text AS role,'' AS grant_id,ARRAY[]::integer[] AS actions,0::bigint AS expires_at_ms,human_id||'/'||role AS cursor FROM ofz.memberships WHERE human_id||'/'||role>$1 ORDER BY cursor LIMIT $2", &[&cursor,&(limit+1)]).await.map_err(sql_error)?
         } else {
             let uid = decision::parse_uuid(&resource.id)?;
-            client.query("SELECT subject_id,role,grant_id,actions,expires_at_ms,cursor FROM (SELECT owner_id AS subject_id,'owner' AS role,'' AS grant_id,ARRAY[]::integer[] AS actions,0::bigint AS expires_at_ms,'human/'||owner_id AS cursor FROM ofz.workspaces WHERE uid=$1 UNION ALL SELECT human_id, CASE role WHEN 2 THEN 'developer' ELSE 'viewer' END,'',ARRAY[]::integer[],0,'human/'||human_id FROM ofz.collaborators WHERE workspace_uid=$1 UNION ALL SELECT agent_id::text,'diagnostic',id::text,actions,expires_at_ms,'grant/'||id::text FROM ofz.grants WHERE workspace_uid=$1 AND NOT revoked AND expires_at_ms>ofz.now_ms()) roster WHERE cursor>$2 ORDER BY cursor LIMIT $3", &[&uid,&cursor,&(limit+1)]).await.map_err(sql_error)?
+            client.query("SELECT subject_id,role,grant_id,actions,expires_at_ms,cursor FROM (SELECT owner_id AS subject_id,'owner' AS role,'' AS grant_id,ARRAY[]::integer[] AS actions,0::bigint AS expires_at_ms,'human/'||owner_id AS cursor FROM ofz.workspaces WHERE uid=$1 UNION ALL SELECT human_id, CASE role WHEN 2 THEN 'developer' ELSE 'viewer' END,'',ARRAY[]::integer[],0,'human/'||human_id FROM ofz.collaborators WHERE workspace_uid=$1 UNION ALL SELECT agent_id::text,'diagnostic',id::text,actions,expires_at_ms,'grant/'||id::text FROM ofz.grants WHERE workspace_uid=$1 AND NOT revoked AND expires_at_ms>ofz.now_ms() UNION ALL SELECT e.human_id,'emergency','',ARRAY[]::integer[],e.expires_at_ms,'emergency/'||e.human_id FROM ofz.emergency_access e WHERE e.workspace_uid=$1 AND e.expires_at_ms>ofz.now_ms() AND EXISTS (SELECT 1 FROM ofz.memberships m WHERE m.human_id=e.human_id AND m.role=1)) roster WHERE cursor>$2 ORDER BY cursor LIMIT $3", &[&uid,&cursor,&(limit+1)]).await.map_err(sql_error)?
         };
         let next = if rows.len() > limit as usize {
             rows[limit as usize - 1].get(5)
@@ -234,6 +239,11 @@ impl AuthorizationService for Service {
     ) -> Result<Response<proto::ReadAuditResponse>, Status> {
         let _capacity = self.acquire()?;
         let peer = transport::peer(&request)?;
+        if peer != policy::BFF_ID {
+            return Err(Status::permission_denied(
+                "human audit reads require the BFF",
+            ));
+        }
         decision::workload(&self.native, &peer, Action::PolicyCheck).await?;
         let request = request.into_inner();
         let context = context(request.context)?;
