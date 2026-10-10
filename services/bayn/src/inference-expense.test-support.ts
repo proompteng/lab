@@ -26,6 +26,7 @@ export const expenseRateFixture = {
 export const expenseSourceFixture = (
   options: {
     key?: string
+    authorityGenerationHash?: string
     accountId?: string
     inputTokens?: number
     missing?: boolean
@@ -34,7 +35,13 @@ export const expenseSourceFixture = (
   } = {},
 ): InferenceExpenseSource => {
   const { requestId: _id, ...material } = evaluationRequestFixture()
-  const request = Result.getOrThrow(makeJevEvaluationRequest({ ...material, cycleId: (options.key ?? 'a').repeat(64) }))
+  const request = Result.getOrThrow(
+    makeJevEvaluationRequest({
+      ...material,
+      authorityGenerationHash: options.authorityGenerationHash ?? material.authorityGenerationHash,
+      cycleId: (options.key ?? 'a').repeat(64),
+    }),
+  )
   const response = { ...responseFixture(), usage: { input_tokens: options.inputTokens ?? 1, output_tokens: 80 } }
   const receipt = options.missing
     ? null

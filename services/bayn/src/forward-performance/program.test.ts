@@ -671,6 +671,7 @@ describe('forward performance read program', () => {
     const sql = makeReadOnlySql(observation)
     let observedCashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: () => Effect.succeed([]),
       postgres: readForwardPerformancePostgres,
       marketVolume: () => Effect.succeed([]),
       ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
@@ -700,7 +701,7 @@ describe('forward performance read program', () => {
         runForwardPerformanceReport(nativeConfig, readers).pipe(Effect.provideService(PgClient.PgClient, sql)),
       ),
     )
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v1')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v2')
     expect(report.receipt).toEqual(receipt)
     expect(report.positionEpisodes.status).toBe('UNDETERMINED')
     expect(report.receipt).not.toHaveProperty('positionEpisodes')
@@ -870,6 +871,7 @@ describe('forward performance read program', () => {
     const observation: SqlObservation = { statements: [] }
     const sql = makeReadOnlySql(observation, { extraReconciliationDiscrepancy: true })
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: () => Effect.succeed([]),
       postgres: readForwardPerformancePostgres,
       marketVolume: () => Effect.succeed([]),
       ledger: () =>
@@ -935,6 +937,7 @@ describe('forward performance read program', () => {
     if (marketVolumeEvidence === undefined) throw new Error('market-volume fixture failed')
     let observedMarketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[] | undefined
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: () => Effect.succeed([]),
       postgres: () =>
         Effect.succeed({
           cycles: [

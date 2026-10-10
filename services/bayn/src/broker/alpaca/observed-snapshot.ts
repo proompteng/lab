@@ -208,17 +208,28 @@ export const validateObservedBrokerSnapshot = (
       ...value.recentOrders.value.map((row) => row.accountId),
       ...value.recentFills.value.items.map((row) => row.accountId),
     ]
-    if (
+    const ageMs = current - Math.min(...times)
+    const reason =
       !Number.isFinite(current) ||
       !Number.isFinite(maximumAgeMs) ||
       maximumAgeMs <= 0 ||
-      times.some((at) => !Number.isFinite(at) || at > current) ||
-      current - Math.min(...times) >= maximumAgeMs ||
-      Date.parse(value.completedAt) < Date.parse(value.startedAt) ||
-      Date.parse(value.observedAt) !== Math.min(...times) ||
-      accounts.some((id) => id !== accountId)
-    )
-      return Effect.fail(observationUnavailable('Broker observation is stale, premature or belongs to another account'))
+      times.some((at) => !Number.isFinite(at))
+        ? 'invalid-clock'
+        : accounts.some((id) => id !== accountId)
+          ? 'account-mismatch'
+          : times.some((at) => at > current)
+            ? 'future-observation'
+            : Date.parse(value.completedAt) < Date.parse(value.startedAt) ||
+                Date.parse(value.observedAt) !== Math.min(...times)
+              ? 'invalid-chronology'
+              : ageMs >= maximumAgeMs
+                ? 'stale-observation'
+                : undefined
+    if (reason !== undefined)
+      return Effect.logWarning('Broker observation rejected').pipe(
+        Effect.annotateLogs({ reason, observedAt: value.observedAt, checkedAt: now, ageMs, maximumAgeMs }),
+        Effect.andThen(Effect.fail(observationUnavailable(`Broker observation rejected: ${reason}`))),
+      )
     return Effect.succeed(value)
   })
 

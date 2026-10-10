@@ -37,6 +37,8 @@ import type {
   ForwardPerformanceReceipt,
   ForwardPerformanceEvidenceInput,
 } from './model'
+import { readForwardInferenceExpenses } from './inference-expenses'
+import type { InferenceCostError } from '../inference-costs'
 import { Pipeable } from '../pipeable'
 import {
   intradayPerformanceDecisionRequest,
@@ -50,6 +52,7 @@ import { verifyIntradayArchiveWatermarks } from '../market-data/intraday/verific
 import { verifyBrokerFeeRecord, type BrokerFeeEvidenceError } from '../accounting/broker-fees'
 
 export type ForwardPerformanceProgramCause =
+  | InferenceCostError
   | CanonicalJsonFailure
   | ForwardPerformanceDomainFailure
   | ForwardPerformanceLedgerError
@@ -75,6 +78,7 @@ type BoundForwardPerformanceConfig = ForwardPerformanceConfig & {
 }
 
 export interface ForwardPerformanceReaders {
+  readonly inferenceExpenses: typeof readForwardInferenceExpenses
   readonly postgres: (
     sql: PgClient.PgClient,
     accountId: string,
@@ -95,6 +99,7 @@ export interface ForwardPerformanceReaders {
 }
 
 export const liveForwardPerformanceReaders: ForwardPerformanceReaders = {
+  inferenceExpenses: readForwardInferenceExpenses,
   postgres: readForwardPerformancePostgres,
   ledger: (config, accountId, accountPlans, cashYieldEvidence, generationPlans) =>
     readForwardPerformanceLedger(config, accountId, accountPlans, cashYieldEvidence, undefined, generationPlans),
@@ -706,15 +711,24 @@ export const runForwardPerformanceReport = (
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
   options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
 ): Effect.Effect<ForwardPerformanceReport, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
-  readForwardPerformanceInput(loadedConfig, readers, options).pipe(
-    Effect.flatMap((input) =>
-      Effect.fromResult(makeForwardPerformanceReport(input)).pipe(
-        Effect.mapError((cause) =>
-          programError('construct-receipt', 'forward-performance report construction failed', cause),
-        ),
+  Effect.gen(function* () {
+    const input = yield* readForwardPerformanceInput(loadedConfig, readers, options)
+    const sql = yield* PgClient.PgClient
+    const identity = yield* requireBrokerIdentity(loadedConfig)
+    const expenses = yield* readers
+      .inferenceExpenses(
+        loadedConfig,
+        sql,
+        identity.execution.brokerIdentity.accountId,
+        options.authorityGenerationHash,
+      )
+      .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
+    return yield* Effect.fromResult(makeForwardPerformanceReport(input, expenses)).pipe(
+      Effect.mapError((cause) =>
+        programError('construct-receipt', 'forward-performance report construction failed', cause),
       ),
-    ),
-  )
+    )
+  })
 
 export const runForwardPerformance = Pipeable.by<
   (

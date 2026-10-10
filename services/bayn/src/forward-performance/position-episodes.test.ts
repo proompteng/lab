@@ -99,7 +99,7 @@ describe('position episodes', () => {
     ]
     const result = success(measurePositionEpisodes(evidence(history)))
     expect(result).toMatchObject({ status: 'MEASURED', completedCount: 1, openCount: 0, crossScopeCount: 0 })
-    const report = success(makeForwardPerformanceReport(evidence(history)))
+    const report = success(makeForwardPerformanceReport(evidence(history), []))
     expect(report.receipt.counts.completedExecutionCount).toBe(4)
     expect(report.positionEpisodes).toEqual(result)
   })
@@ -219,9 +219,9 @@ describe('position episodes', () => {
   })
 
   test('keeps the strict v3 stored receipt unchanged and binds episodes in a separate versioned report', () => {
-    const report = success(makeForwardPerformanceReport(evidence(roundTrip())))
+    const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v1')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v2')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v3')
     expect(receipt).not.toHaveProperty('positionEpisodes')
     expect(canonicalHashV1({ ...reportFields, receipt })).toBe(reportHash)

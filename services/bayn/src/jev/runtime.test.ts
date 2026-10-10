@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Logger, Option, References, Result } from 'effect'
+import { Clock, Effect, Fiber, Logger, Option, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { NodeServices } from '@effect/platform-node'
 
@@ -33,6 +33,7 @@ const scenario = (
     readonly snapshotPending?: boolean
     readonly completedHold?: boolean
     readonly inferenceDelayMs?: number
+    readonly stalledInference?: boolean
     readonly expiredObservation?: boolean
   } = {},
 ) => {
@@ -57,6 +58,7 @@ const scenario = (
     updatedAt: fixture.observation.payload.observedAt,
   }
   const calls = { pricing: 0, signal: 0, pending: 0, finish: 0, window: 0 }
+  let inferenceInterrupted = 0
   const databaseFailure = operationalError({ component: 'database', operation: 'window', message: 'test failure' })
   const marketData: IntradayMarketDataService = {
     check: Effect.void,
@@ -155,6 +157,14 @@ const scenario = (
       begin: (plan) =>
         options.completedHold
           ? Effect.gen(function* () {
+              if (options.stalledInference)
+                return yield* Effect.never.pipe(
+                  Effect.onInterrupt(() =>
+                    Effect.sync(() => {
+                      inferenceInterrupted++
+                    }),
+                  ),
+                )
               const result = nativeJevBatchResult(plan, fixture.observation.payload.observedAt, () => 'hold')
               if (options.inferenceDelayMs !== undefined) yield* TestClock.adjust(options.inferenceDelayMs)
               return { plan, result }
@@ -186,12 +196,20 @@ const scenario = (
   const run = () =>
     Effect.runPromise(
       TestClock.setTime(Date.parse(fixture.observation.payload.observedAt)).pipe(
-        Effect.andThen(program),
+        Effect.andThen(
+          options.stalledInference
+            ? Effect.gen(function* () {
+                const run = yield* program.pipe(Effect.forkChild({ startImmediately: true }))
+                yield* TestClock.adjust(7_000)
+                return yield* Fiber.join(run)
+              })
+            : program,
+        ),
         Effect.provide(TestClock.layer()),
         Effect.provide(NodeServices.layer),
       ),
     )
-  return { calls, run }
+  return { calls, run, inferenceInterruptions: () => inferenceInterrupted }
 }
 
 describe('Jev management observation admission', () => {
@@ -252,7 +270,7 @@ describe('Jev management observation admission', () => {
     expect(check.calls).toEqual({ pricing: 1, signal: 1, pending: 1, finish: 0, window: 1 })
   })
 
-  test('a slow inference wait retains the time the hold guard ran before its deadline', async () => {
+  test('a slow inference wait exits when it crosses the holding deadline', async () => {
     const check = scenario({
       consumed: false,
       completedHold: true,
@@ -261,13 +279,26 @@ describe('Jev management observation admission', () => {
       laterFillAt: '2026-09-04T14:27:32.000Z',
     })
     expect(await check.run()).toMatchObject({
-      _tag: 'Wait',
-      details: {
-        maximumHoldDueAt: '2026-09-04T14:30:39.000Z',
-        maximumHoldEvaluatedAt: '2026-09-04T14:30:32.000Z',
-        readiness: { reason: 'INFERENCE_UNAVAILABLE' },
+      _tag: 'Exit',
+      target: { reason: JevExitReason.MaximumHold },
+    })
+  })
+
+  test('the holding deadline cancels stalled inference exactly once and exits', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      stalledInference: true,
+      firstFillAt: '2026-09-04T14:15:39.000Z',
+    })
+    expect(await check.run()).toMatchObject({
+      _tag: 'Exit',
+      target: {
+        reason: JevExitReason.MaximumHold,
+        observedAt: '2026-09-04T14:30:39.000Z',
       },
     })
+    expect(check.inferenceInterruptions()).toBe(1)
   })
 
   test.each(['2026-09-04T14:30:39.000Z', '2026-09-04T14:30:40.000Z'])(
