@@ -38,8 +38,8 @@ functions:
 
 - Independently valid snapshots with identical prices but different optional technical inputs must not compare
   equal. The original comparison failed this regression despite different Jev request hashes.
-- Technical value changes and source-coordinate changes must bind separately; future technical availability
-  cannot form a valid request. Changing observation time changes quote ages and model session context and must bind.
+- Technical value changes and source-coordinate changes must bind separately; future technical values cannot
+  enter the model request. Changing observation time changes quote ages and model session context and must bind.
 - A synthetic path makes Jev outperform delayed momentum after inference cost, while immediate momentum beats
   Jev. The existing matched study can correctly recommend a further portfolio test on its narrower estimand.
 - A missing post-entry stop observation keeps the complete-case headline unavailable.
