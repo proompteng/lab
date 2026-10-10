@@ -39,6 +39,17 @@ export const requireJevCandidateObservations = (sql: PgClient.PgClient, requests
       snapshot_id: request.snapshotId,
       symbol: request.symbol,
     }))
+    const scopes = [
+      ...new Map(requests.map((request) => [`${request.cycleId}/${request.observedAt}`, request])).values(),
+    ]
+    // Expose the exact indexed scopes independently of recordset estimates so
+    // PostgreSQL can bound the source lookup before checking request membership.
+    const scope = sql.or(
+      scopes.map(
+        (request) => sql`observation.cycle_id = ${request.cycleId}
+          AND observation.observed_at = ${request.observedAt}::timestamptz`,
+      ),
+    )
     // Bind the decoded request identities rather than rereading mutable query
     // inputs. Group by the observation's primary key so shared source bytes cross
     // the database boundary once, with their exact matching requests retained.
@@ -65,6 +76,7 @@ export const requireJevCandidateObservations = (sql: PgClient.PgClient, requests
             SELECT 1 FROM jsonb_array_elements(observation.payload->'manifest'->'candidateExclusions') AS excluded
             WHERE excluded->>'symbol' = requested.symbol
           )
+        WHERE ${scope}
         GROUP BY observation.content_hash
         ORDER BY observation.content_hash COLLATE "C"
       `,

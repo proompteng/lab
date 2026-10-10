@@ -70,6 +70,45 @@ const successful: typeof JevClient.Service = {
 }
 const atObservation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   TestClock.setTime(observed).pipe(Effect.andThen(effect), Effect.provide(TestClock.layer()))
+const seedObservationHistory = (sql: PgClient.PgClient) => sql`
+  INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
+  SELECT md5(n::text) || md5('history-' || n::text), ${plan.cycleId}, history.observed_at,
+    jsonb_build_object(
+      'schemaVersion', 'bayn.jev-observation.v1',
+      'cycleId', ${plan.cycleId}::text,
+      'authorityGenerationHash', ${plan.authorityGenerationHash}::text,
+      'observedAt', to_char(history.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'manifest', jsonb_build_object(
+        'observedAt', to_char(history.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+        'snapshotId', ${plan.snapshotId}::text,
+        'candidateSymbols', jsonb_build_array(${first.symbol}::text),
+        'candidateExclusions', '[]'::jsonb
+      )
+    )
+  FROM generate_series(1, 4096) AS n
+  CROSS JOIN LATERAL (SELECT ${plan.observedAt}::timestamptz - n * INTERVAL '1 minute' AS observed_at) AS history
+`
+const expectIndexedObservationLookup = (
+  sql: PgClient.PgClient,
+  statement: Statement<Record<string, unknown>>,
+  expectedRows: number,
+) =>
+  Effect.gen(function* () {
+    const [query, parameters] = statement.compile()
+    const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+    const plans = yield* Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
+        }),
+      ),
+    )(explanation)
+    const root = plans[0]?.['QUERY PLAN'][0]?.Plan
+    if (root === undefined) throw new Error('PostgreSQL did not return the observation query plan')
+    expect(JSON.stringify(root)).toMatch(/"Index Cond":"[^"]*observed_at/)
+    expect(root['Actual Rows']).toBe(expectedRows)
+    expect(Number(root['Rows Removed by Filter'] ?? 0)).toBeLessThanOrEqual(2)
+  })
 const makeRuntime = () =>
   ManagedRuntime.make(
     Layer.mergeAll(CycleStoreLive, CandidateObservationStoreLive, JevBatchStoreLive).pipe(
@@ -150,6 +189,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           apply(target, receiver, argumentsList) {
             const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
             const [query] = statement.compile()
+            // Preserve composable predicate fragments; only complete reads execute.
+            if (!query.trimStart().startsWith('SELECT')) return statement
             return statement.pipe(
               Effect.tap((rows) =>
                 Effect.sync(() => {
@@ -246,13 +287,25 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* (yield* CandidateObservationStore).record(foreignObservation)
         const stored = yield* evaluateJevBatch(plan)
         const foreign = yield* evaluateJevBatch(foreignPlan)
-        const evidence = yield* readJevEvaluationEvidence(sql, [
+        yield* seedObservationHistory(sql)
+        yield* sql`ANALYZE intraday_candidate_observations`
+        let lookup: Statement<Record<string, unknown>> | undefined
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            if (statement.compile()[0].includes('AS matching_request_ids')) lookup = statement
+            return statement
+          },
+        })
+        const evidence = yield* readJevEvaluationEvidence(monitored, [
           first.request.requestId,
           foreignFirst.request.requestId,
         ])
         expect(evidence.size).toBe(2)
         expect(evidence.get(first.request.requestId)?.request).toEqual(first.request)
         expect(evidence.get(foreignFirst.request.requestId)?.request).toEqual(foreignFirst.request)
+        if (lookup === undefined) throw new Error('Combined read did not verify candidate observations')
+        yield* expectIndexedObservationLookup(sql, lookup, 2)
         expect(yield* batches.read(plan.batchId)).toEqual(stored)
         expect(yield* batches.read(foreignPlan.batchId)).toEqual(foreign)
         yield* sql.withTransaction(
@@ -463,24 +516,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         })
         const batches = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, monitored))
         yield* batches.begin(plan)
-        yield* sql`
-          INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
-          SELECT md5(n::text) || md5('history-' || n::text), ${plan.cycleId}, history.observed_at,
-            jsonb_build_object(
-              'schemaVersion', 'bayn.jev-observation.v1',
-              'cycleId', ${plan.cycleId}::text,
-              'authorityGenerationHash', ${plan.authorityGenerationHash}::text,
-              'observedAt', to_char(history.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-              'manifest', jsonb_build_object(
-                'observedAt', to_char(history.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-                'snapshotId', ${plan.snapshotId}::text,
-                'candidateSymbols', jsonb_build_array(${first.symbol}::text),
-                'candidateExclusions', '[]'::jsonb
-              )
-            )
-          FROM generate_series(1, 4096) AS n
-          CROSS JOIN LATERAL (SELECT ${plan.observedAt}::timestamptz - n * INTERVAL '1 minute' AS observed_at) AS history
-        `
+        yield* seedObservationHistory(sql)
         // These timestamps have the same SQL instant, but are not the exact canonical source text.
         // Forged identities must remain irrelevant rather than broadening the evidence set.
         for (const [index, timestamp] of [
@@ -504,20 +540,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(yield* batches.read(plan.batchId)).toEqual(stored)
         if (readLookup === undefined) throw new Error('Complete read did not verify candidate observations')
         for (const statement of [lookup, readLookup]) {
-          const [query, parameters] = statement.compile()
-          const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
-          const plans = yield* Schema.decodeUnknownEffect(
-            Schema.Array(
-              Schema.Struct({
-                'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
-              }),
-            ),
-          )(explanation)
-          const root = plans[0]?.['QUERY PLAN'][0]?.Plan
-          if (root === undefined) throw new Error('PostgreSQL did not return the observation query plan')
-          expect(JSON.stringify(root)).toMatch(/"Index Cond":"[^"]*observed_at/)
-          expect(root['Actual Rows']).toBe(1)
-          expect(Number(root['Rows Removed by Filter'] ?? 0)).toBeLessThanOrEqual(2)
+          yield* expectIndexedObservationLookup(sql, statement, 1)
         }
       }).pipe(Effect.provideService(JevClient, successful), atObservation),
     )
