@@ -16,6 +16,7 @@ import { readInferenceExpenseLedger } from './inference-expense-journal'
 import { makeTigerBeetleRequestClient } from './tigerbeetle-client'
 import { readForwardInferenceExpenses } from './forward-performance/inference-expenses'
 import { readInferenceExpenseSession } from './inference-cost-command'
+import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_expense_test'
@@ -229,15 +230,24 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
               Effect.provide(NodeServices.layer),
             )
             const sql = yield* PgClient.PgClient
-            const forwardExpenses = yield* readForwardInferenceExpenses(
-              {
-                operationTimeoutMs: 30_000,
-                tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7001 },
-              },
-              sql,
-              source.accountId,
-              source.authorityGenerationHash,
-            )
+            const forwardExpenses = yield* Effect.gen(function* () {
+              const fence = yield* WriterFence
+              return yield* fence.transaction(
+                Effect.gen(function* () {
+                  yield* sql`SELECT 1`
+                  return yield* readForwardInferenceExpenses(
+                    {
+                      operationTimeoutMs: 30_000,
+                      tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7001 },
+                    },
+                    sql,
+                    source.accountId,
+                    source.authorityGenerationHash,
+                    fence,
+                  )
+                }),
+              )
+            }).pipe(Effect.provide(WriterFenceLive))
             const foreignExpenses = yield* readForwardInferenceExpenses(
               {
                 operationTimeoutMs: 30_000,

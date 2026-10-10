@@ -15,6 +15,7 @@ import type { ForwardPerformanceConfig } from './config'
 import type { HistoricalSignalSnapshotConfig } from '../config/historical-signal'
 import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
+import type { WriterFenceService } from '../execution/writer-fence'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
 import { canonicalHashV1, sha256 } from '../hash'
 import { readForwardPerformancePostgres } from './postgres'
@@ -670,8 +671,13 @@ describe('forward performance read program', () => {
     const observation: SqlObservation = { statements: [] }
     const sql = makeReadOnlySql(observation)
     let observedCashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined
+    let expenseWriterFence: WriterFenceService | undefined
+    const writerFence: WriterFenceService = { check: Effect.void, transaction: (effect) => effect }
     const readers: ForwardPerformanceReaders = {
-      inferenceExpenses: () => Effect.succeed([]),
+      inferenceExpenses: (_config, _sql, _accountId, _generation, fence) => {
+        expenseWriterFence = fence
+        return Effect.succeed([])
+      },
       postgres: readForwardPerformancePostgres,
       marketVolume: () => Effect.succeed([]),
       ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
@@ -698,10 +704,13 @@ describe('forward performance read program', () => {
     )
     const report = await Effect.runPromise(
       Effect.scoped(
-        runForwardPerformanceReport(nativeConfig, readers).pipe(Effect.provideService(PgClient.PgClient, sql)),
+        runForwardPerformanceReport(nativeConfig, readers, { writerFence }).pipe(
+          Effect.provideService(PgClient.PgClient, sql),
+        ),
       ),
     )
     expect(report.schemaVersion).toBe('bayn.forward-performance-report.v2')
+    expect(expenseWriterFence).toBe(writerFence)
     expect(report.receipt).toEqual(receipt)
     expect(report.positionEpisodes.status).toBe('UNDETERMINED')
     expect(report.receipt).not.toHaveProperty('positionEpisodes')

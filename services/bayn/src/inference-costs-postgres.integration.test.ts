@@ -6,6 +6,7 @@ import { readInferenceCostEvidence } from './inference-costs-postgres'
 import { makeInferenceCostReport } from './inference-costs'
 import { evaluationRequestFixture } from './jev/test-support'
 import { baynTestPostgresUrl } from './test-environment.test-support'
+import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_inference_test'
@@ -91,6 +92,24 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     )
     expect(report.unknownUsageCount).toBe(1)
     expect(report.estimatedTotalCostMicros).toBeNull()
+  })
+
+  test('inherits a queried writer transaction without changing its isolation or read-only mode', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        return yield* fence.transaction(
+          Effect.gen(function* () {
+            yield* sql`SELECT 1`
+            const evidence = yield* readInferenceCostEvidence(sql, 'fixture-account', '1970-01-01', fence)
+            yield* sql`INSERT INTO autonomous_cycles VALUES ('writer-append', 'fixture-account', '1970-01-01', 'NO_TRADE')`
+            return evidence
+          }),
+        )
+      }).pipe(Effect.provide(WriterFenceLive)),
+    )
+    expect(result.requests).toHaveLength(2)
   })
 
   test('fails instead of silently truncating a large session', async () => {

@@ -721,6 +721,7 @@ export const runForwardPerformanceReport = (
         sql,
         identity.execution.brokerIdentity.accountId,
         options.authorityGenerationHash,
+        options.writerFence,
       )
       .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
     return yield* Effect.fromResult(makeForwardPerformanceReport(input, expenses)).pipe(

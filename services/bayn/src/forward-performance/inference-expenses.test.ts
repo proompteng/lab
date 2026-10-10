@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import type { PgClient } from '@effect/sql-pg'
+import { Effect, Result } from 'effect'
 
 import { makeInferenceExpenseQuote } from '../inference-expense'
 import { expenseRateFixture, expenseSourceFixture } from '../inference-expense.test-support'
-import { summarizeForwardInferenceExpenses } from './inference-expenses'
+import { readForwardInferenceExpenses, summarizeForwardInferenceExpenses } from './inference-expenses'
 
 const first = expenseSourceFixture({ authorityGenerationHash: '1'.repeat(64), inputTokens: 3 })
 const second = expenseSourceFixture({ key: 'b', authorityGenerationHash: '2'.repeat(64), inputTokens: 7 })
@@ -73,4 +74,26 @@ test('rejects foreign account and conflicting coverage instead of summing it', (
   expect(Result.isFailure(summarizeForwardInferenceExpenses(evidence, first.accountId, [...frozen, ...frozen]))).toBe(
     true,
   )
+})
+
+test('retains the original expense read failure for diagnostics', async () => {
+  const cause = new Error('synthetic database unavailable')
+  const sql = (() => Effect.fail(cause)) as unknown as PgClient.PgClient
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      readForwardInferenceExpenses(
+        {
+          operationTimeoutMs: 1000,
+          tigerBeetle: { clusterId: 1n, replicaAddresses: ['127.0.0.1:3000'], ledger: 7001 },
+        },
+        sql,
+        first.accountId,
+      ).pipe(Effect.result),
+    ),
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result)) {
+    expect(result.failure._tag).toBe('InferenceCostError')
+    expect(result.failure.cause).toBe(cause)
+  }
 })

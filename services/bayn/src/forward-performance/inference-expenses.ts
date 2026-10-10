@@ -9,6 +9,7 @@ import { makeInferenceExpenseStore } from '../inference-expense-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
+import type { WriterFenceService } from '../execution/writer-fence'
 
 export interface ForwardInferenceExpenseSession {
   readonly sessionDate: string
@@ -64,6 +65,7 @@ export const readForwardInferenceExpenses = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
+  writerFence?: WriterFenceService,
 ) =>
   Effect.gen(function* () {
     const sessions = yield* sql`
@@ -86,7 +88,7 @@ export const readForwardInferenceExpenses = (
     const store = makeInferenceExpenseStore(sql, accountId)
     return yield* Effect.forEach(sessions, ({ sessionDate }) =>
       Effect.gen(function* () {
-        const evidence = yield* readInferenceCostEvidence(sql, accountId, sessionDate)
+        const evidence = yield* readInferenceCostEvidence(sql, accountId, sessionDate, writerFence)
         const frozen = yield* store.session(sessionDate)
         yield* Effect.fromResult(verifyInferenceExpenseCoverage(evidence, accountId, frozen))
         yield* readInferenceExpenseLedger(
@@ -107,6 +109,6 @@ export const readForwardInferenceExpenses = (
     Effect.mapError((cause) =>
       cause instanceof InferenceCostError
         ? cause
-        : new InferenceCostError({ message: 'Forward inference expense read failed' }),
+        : new InferenceCostError({ message: 'Forward inference expense read failed', cause }),
     ),
   )

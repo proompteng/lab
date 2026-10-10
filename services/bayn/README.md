@@ -950,10 +950,11 @@ Without that option, the command evaluates account history, which may span retir
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
 Native-only account history does not. A native scope without completed executions remains unqualified; successful
 configuration loading is not a profitability result.
-The command emits `bayn.forward-performance-report.v1`. Its `receipt` contains the unchanged v3 financial receipt;
-`positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions, and `reportHash`
-binds both. This read-only report never changes an immutable per-generation receipt or requires mixed-version replicas
-to read a new stored field.
+The command emits `bayn.forward-performance-report.v2`. Its `receipt` contains the unchanged v3 financial receipt;
+`positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
+attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
+`INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
+change the immutable per-generation receipt schema.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
