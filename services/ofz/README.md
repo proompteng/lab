@@ -25,6 +25,7 @@ cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 bash test-policy.sh
+bash test-control.sh
 ```
 
 The policy fixture starts a disposable, loopback-only SpiceDB and an isolated PostgreSQL using the same pinned images as the cluster.
@@ -36,3 +37,43 @@ The pinned SpiceDB release retained an allowed expiration result with both dispa
 consistent checks against PostgreSQL. The fixture disables both dispatch caches and verifies the stored expiration
 before checking it. The coordinated production release must carry the same cache settings and also enforce each
 grant's database-clock deadline in Ofz. Re-enabling caching requires a fresh expiration and revocation qualification.
+
+The Rust API uses exact SPIFFE mTLS caller identities and contract version 1. `ofz migrate` creates the checksum-bound
+control schema as its separate owner; `ofz serve` verifies it and reconciles unfinished commands before listening.
+The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
+DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
+
+Commands serialize under a dedicated PostgreSQL connection and advisory lock. Durable SQL intent precedes the atomic
+native version/command-marker write; SQL effects, immutable audit, outbox and receipt commit before acknowledgement.
+Retries return the original receipt without returning an agent credential again. Ownership transfer, Developer removal,
+membership offboarding and grant revocation restrict SQL access in the intent transaction, so a crash after native policy
+changes cannot expose an uncleansed guest. Retained homes still count against quota while quarantined.
+
+Only the BFF submits human policy commands; the controller's separate workload branch admits its enrollment and stop
+commands. Human roster and audit reads also require the exact BFF identity. Privileged policy/audit reads require
+verified MFA without requiring a fresh control step-up or renewing idle activity. An approved emergency grant is projected
+into the durable workspace roster with its expiry; offboarding deletes that native relationship and quarantines any
+workspace exposed to emergency root access. Repeating an existing collaborator role never emits duplicate native updates. Initial authorized control
+activity advances the session's idle deadline without exceeding its absolute expiry; observations, denied requests and
+stream rechecks do not. Logout binds its operation ID and original receipt to the opaque session credential and origin,
+so a lost response can be retried without producing another effect or revoking another session.
+
+The BFF supplies a fresh 256-bit credential when establishing a session and reuses the exact request for uncertain
+RPC retries. Ofz binds its operation ID to the credential hash and full request fingerprint. A committed retry returns
+the same still-active credential without consuming another OIDC nonce, creating a session, extending idle time, or
+writing another successful establishment receipt. Changed payloads collide; expired and revoked sessions stay denied.
+A live runtime epoch can only be repeated or stopped before replacement, preserving the controller's stop authority.
+
+Archive health requires a recent acknowledgement and no unacknowledged receipt older than sixty seconds, checked
+against both the outbox and the durable sequence checkpoint. A live exporter heartbeat cannot hide a backlog. The final decision guard rechecks archive health after the native
+permission response, including a failure that occurs while the request is in flight. Controller enrollment checks a
+fresh state after workload authorization and cannot install new access during archive loss; stop/release remain available.
+
+`test-control.sh` exercises real TLS PostgreSQL and SpiceDB, database role boundaries, native/SQL/response crash points,
+operation collisions, concurrent reservations, independent emergency approval, grant expiry and parent revocation,
+stream receipt binding, audit/archive failure and transfer quarantine before receipt recovery. Set
+`OFZ_FIXTURE_SSH=kalmyk@nuc.ide-newton.ts.net` to run its disposable containers on the authorized NUC; SSH tunnels keep
+fixture ports local. These checks exercise control behavior, not the yet-unmigrated BFF, controller or guest.
+
+Prepared cutover resources live in [`argocd/applications/ofz/control-plane`](../../argocd/applications/ofz/control-plane/README.md).
+They are excluded from the active application until coordinated release, identity, archive, credential and migration gates pass.

@@ -1,5 +1,15 @@
 pub mod catalog;
+pub mod commands;
+pub mod decision;
+pub mod native;
 pub mod policy;
+pub mod service;
+pub mod sessions;
+pub mod store;
+pub mod transport;
+
+#[cfg(test)]
+mod control_integration;
 
 pub mod proto {
     tonic::include_proto!("proompteng.authz.v1");

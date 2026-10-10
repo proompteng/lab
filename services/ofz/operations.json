@@ -613,6 +613,11 @@
   },
   {
     "surface": "ofz",
+    "operation": "GetPolicyState",
+    "action": "ACTION_POLICY_CHECK"
+  },
+  {
+    "surface": "ofz",
     "operation": "Check",
     "internal_only": true,
     "action": "ACTION_POLICY_CHECK"
@@ -657,7 +662,7 @@
     "surface": "ofz",
     "operation": "RevokeSession",
     "internal_only": true,
-    "action": "ACTION_SESSION_ESTABLISH"
+    "action": "ACTION_SESSION_REVOKE"
   },
   {
     "surface": "bff_http",

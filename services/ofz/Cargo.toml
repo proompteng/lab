@@ -6,13 +6,32 @@ rust-version = "1.90"
 publish = false
 
 [dependencies]
+anyhow = "1.0.100"
+async-stream = "0.3.6"
+base64 = "0.22.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+deadpool-postgres = "0.14.1"
+futures = "0.3.31"
+jsonwebtoken = { version = "10.3.0", default-features = false, features = ["aws_lc_rs"] }
 prost = "0.14.4"
+rand = "0.9.2"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
+rustls = { version = "0.23.43", default-features = false, features = ["aws_lc_rs", "std"] }
+rustls-pemfile = "2.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"
+spiffe = { version = "0.16.1", features = ["x509-source"] }
+spiffe-rustls = { version = "0.8.0", default-features = false, features = ["aws-lc-rs"] }
+tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-postgres = { version = "0.7.15", features = ["with-serde_json-1", "with-uuid-1", "with-chrono-0_4"] }
+tokio-postgres-rustls = "0.13.0"
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["aws-lc-rs"] }
 tonic = "0.14.6"
 tonic-prost = "0.14.6"
-uuid = { version = "1.18.1", features = ["v4"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+uuid = { version = "1.18.1", features = ["serde", "v4"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14.6"

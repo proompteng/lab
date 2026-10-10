@@ -28,6 +28,7 @@ impl Action {
             AuditRead => (Platform, "read_audit", false),
             PlatformOperate => (Platform, "operate", false),
             WorkspaceMetadataRead => (Workspace, "view_metadata", true),
+            WorkspacePolicyRead => (Workspace, "read_access", false),
             WorkspaceResume => (Workspace, "resume", false),
             WorkspaceSleep => (Workspace, "sleep", false),
             WorkspacePowerConfigure => (Workspace, "configure_power", false),
@@ -57,6 +58,7 @@ impl Action {
             PolicyCheck => (Platform, "check", false),
             PolicyCommand => (Platform, "command", false),
             SessionInspect => (Platform, "inspect_session", false),
+            SessionRevoke => (Platform, "revoke_session", false),
         };
         Ok(Permission {
             resource_kind,
@@ -107,6 +109,77 @@ impl Actor {
             }
             _ => Err(Status::unauthenticated("invalid actor identity")),
         }
+    }
+}
+
+pub fn requires_fresh_mfa(action: Action) -> bool {
+    matches!(
+        action,
+        Action::MembersManage
+            | Action::QuotasManage
+            | Action::TargetsManage
+            | Action::CollaboratorsManage
+            | Action::GrantsManage
+            | Action::WorkspaceTransfer
+            | Action::WorkspaceDelete
+            | Action::PlatformOperate
+    )
+}
+
+pub fn requires_mfa(action: Action) -> bool {
+    requires_fresh_mfa(action)
+        || matches!(
+            action,
+            Action::PolicyRead
+                | Action::AuditRead
+                | Action::WorkspacePolicyRead
+                | Action::FilesWrite
+                | Action::TerminalControl
+                | Action::CodexControl
+                | Action::BrowserControl
+                | Action::EditorOpen
+                | Action::PreviewAccess
+                | Action::WorkspaceResume
+                | Action::WorkspaceSleep
+                | Action::WorkspacePowerConfigure
+        )
+}
+
+pub fn renews_session(action: Action) -> bool {
+    matches!(
+        action,
+        Action::WorkspaceCreate
+            | Action::MembersManage
+            | Action::QuotasManage
+            | Action::TargetsManage
+            | Action::CollaboratorsManage
+            | Action::GrantsManage
+            | Action::WorkspaceTransfer
+            | Action::WorkspaceDelete
+            | Action::PlatformOperate
+            | Action::FilesWrite
+            | Action::TerminalControl
+            | Action::CodexControl
+            | Action::BrowserControl
+            | Action::EditorOpen
+            | Action::PreviewAccess
+            | Action::WorkspaceResume
+            | Action::WorkspaceSleep
+            | Action::WorkspacePowerConfigure
+    )
+}
+
+pub fn platform() -> Resource {
+    Resource {
+        kind: ResourceKind::Platform.into(),
+        id: "lab".into(),
+    }
+}
+
+pub fn workspace(uid: &str) -> Resource {
+    Resource {
+        kind: ResourceKind::Workspace.into(),
+        id: uid.into(),
     }
 }
 

@@ -199,7 +199,13 @@ def main():
         "sleep",
         "configure_power",
     ]
-    administration = ["delete", "manage_collaborators", "manage_grants", "transfer"]
+    administration = [
+        "delete",
+        "manage_collaborators",
+        "read_access",
+        "manage_grants",
+        "transfer",
+    ]
     for role in ROLES:
         for permission in observation + control + administration:
             expected = (
@@ -259,6 +265,7 @@ def main():
             ("check", {"bff", "controller", "kube_broker", "connector_broker"}),
             ("command", {"bff", "controller"}),
             ("inspect_session", {"bff", "controller"}),
+            ("revoke_session", {"bff"}),
         ]:
             check("platform", "lab", permission, subject, role in permitted, "workload")
         for permission in ["view_metadata", "write_files"]:
