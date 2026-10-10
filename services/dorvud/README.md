@@ -107,6 +107,12 @@ Checkpoint compatibility and actual source-to-consumer behavior are separate acc
 
 ## Producer stall diagnostics
 
+Deduplication uses one bounded insertion-ordered store per cache. Expired keys are removed from that store;
+duplicate hits neither extend their first-seen TTL nor move them to the back of the eviction order. Kafka delivery
+callbacks retain only delivery metadata and an optional bar identity, not the decoded envelope. These bounds keep
+normal TTL turnover and stalled broker acknowledgements from retaining obsolete keys or a second payload copy.
+They do not make late records fresh or replace Kafka acknowledgement and source-provenance checks.
+
 The websocket process binds Micrometer JVM memory, buffer, GC, and thread meters once at startup. Its GC observer
 closes on shutdown, normal completion, and startup failure. Heap and thread gauges are sampled by the existing
 `/metrics` scrape; GC pause counters and maxima come from JVM notifications. No new per-record timing or observer

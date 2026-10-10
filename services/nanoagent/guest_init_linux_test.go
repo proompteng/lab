@@ -88,6 +88,7 @@ func TestResizeRetainedHomePreservesFilesAndFilesystemIdentity(t *testing.T) {
 	if err := disk.Truncate(32 << 30); err != nil {
 		t.Fatal(err)
 	}
+	run("/usr/sbin/debugfs", "-w", "-R", "feature needs_recovery", path)
 	for range 2 {
 		if err := resizeGuestHome(path); err != nil {
 			t.Fatal(err)

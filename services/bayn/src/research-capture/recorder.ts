@@ -33,6 +33,12 @@ export interface ResearchCaptureStore {
   readonly seal: (seal: ResearchCaptureBytes) => Effect.Effect<void, ResearchCaptureFailure>
 }
 
+enum CaptureWriteOperation {
+  Claim = 'CLAIM',
+  Chunk = 'CHUNK',
+  Seal = 'SEAL',
+}
+
 const RecorderOptionsSchema = Schema.Struct({
   captureId: Schema.optionalKey(ResearchCaptureIdSchema),
   sourceRevision: GitSourceRevisionSchema,
@@ -137,7 +143,31 @@ export const makeResearchCaptureRecorder = (
               charge('object', object.payload.byteLength).pipe(Effect.andThen(() => objectStore.putVerified(object))),
           }
     const writeSql = (operation: 'append' | 'seal', bytes: ResearchCaptureBytes) =>
-      charge('sql', Buffer.byteLength(bytes.payload, 'utf8')).pipe(Effect.andThen(() => store[operation](bytes)))
+      Effect.suspend(() => {
+        let outcome: Exit.Exit<void, ResearchCaptureFailure> = Exit.succeed(undefined)
+        return Effect.gen(function* () {
+          const span = yield* Effect.currentSpan.pipe(Effect.orDie)
+          const event = (name: string) => {
+            Result.try(() => span.event(name, clock.currentTimeNanosUnsafe()))
+          }
+          event('bayn.capture.sql.started')
+          // Keep raw adapter failures out of capture spans, then restore the exact exit outside the span.
+          outcome = yield* Effect.exit(
+            charge('sql', Buffer.byteLength(bytes.payload, 'utf8')).pipe(Effect.andThen(() => store[operation](bytes))),
+          )
+          if (Exit.isSuccess(outcome)) event('bayn.capture.sql.acknowledged')
+          else event('bayn.capture.sql.failed_or_unknown')
+        }).pipe(
+          Effect.withSpan('bayn.capture.sql', {
+            attributes: {
+              'bayn.capture.sql.operation': operation,
+              'bayn.capture.metadata.sha256': bytes.contentHash,
+              'bayn.capture.metadata.bytes': Buffer.byteLength(bytes.payload, 'utf8'),
+            },
+          }),
+          Effect.flatMap(() => (Exit.isFailure(outcome) ? Effect.failCause(outcome.cause) : Effect.void)),
+        )
+      })
     const record = (event: ResearchCaptureEvent, observedAtMs?: number, rawValue?: Uint8Array | null): void => {
       if (!accepting) return
       observedReceipts++
@@ -214,8 +244,18 @@ export const makeResearchCaptureRecorder = (
       if (Result.isFailure(result)) invalidate(CaptureInvalidation.InvalidEvent)
     }
     let claiming = false
-    const boundedWrite = (write: () => Effect.Effect<void, ResearchCaptureFailure>) =>
-      Effect.suspend(() => {
+    const boundedWrite = (
+      operation: CaptureWriteOperation,
+      metadata: () => ResearchCaptureBytes,
+      ordinal: number,
+      write: (bytes: ResearchCaptureBytes) => Effect.Effect<void, ResearchCaptureFailure>,
+    ) =>
+      Effect.gen(function* () {
+        const span = yield* Effect.currentSpan.pipe(Effect.orDie)
+        const event = (name: string) => {
+          Result.try(() => span.event(name, clock.currentTimeNanosUnsafe()))
+        }
+        event('bayn.capture.persistence.started')
         const remaining =
           claiming && options.session !== undefined
             ? options.session.bootstrapDeadlineMs - clock.currentTimeMillisUnsafe()
@@ -223,19 +263,34 @@ export const makeResearchCaptureRecorder = (
         const expired = () => {
           invalidate(CaptureInvalidation.Persistence)
           if (remaining <= options.writeTimeoutMs) invalidate(CaptureInvalidation.MissedBootstrap)
+          event('bayn.capture.persistence.deadline_expired')
           return Effect.fail(new ResearchCaptureFailure({ message: 'Capture write outcome is unknown' }))
         }
-        if (remaining <= 0) return expired()
-        return Effect.raceFirst(
-          Effect.suspend(write),
+        if (remaining <= 0) return yield* expired()
+        return yield* Effect.raceFirst(
+          Effect.suspend(() => {
+            const bytes = metadata()
+            Result.try(() => {
+              span.attribute('bayn.capture.metadata.sha256', bytes.contentHash)
+              span.attribute('bayn.capture.metadata.bytes', Buffer.byteLength(bytes.payload, 'utf8'))
+            })
+            return write(bytes)
+          }).pipe(Effect.tap(() => Effect.sync(() => event('bayn.capture.persistence.io_completed')))),
           Effect.sleep(Math.min(options.writeTimeoutMs, remaining)).pipe(Effect.andThen(expired)),
-        )
+        ).pipe(Effect.ensuring(Effect.sync(() => event('bayn.capture.persistence.cleanup_finished'))))
       }).pipe(
         Effect.catchCause(() =>
           Effect.sync(() => {
             invalidate(CaptureInvalidation.Persistence)
           }),
         ),
+        Effect.withSpan('bayn.capture.persistence', {
+          attributes: {
+            'bayn.capture.persistence.operation': operation,
+            'bayn.capture.chunk.ordinal': ordinal,
+            'bayn.capture.persistence.deadline_ms': options.writeTimeoutMs,
+          },
+        }),
       )
     const drain = Effect.gen(function* () {
       const entries = yield* Queue.clear(queue)
@@ -283,16 +338,20 @@ export const makeResearchCaptureRecorder = (
           }
           const bytes = encodeResearchCapture(completeChunk)
           let verifiedChunkHash = previousChunkHash
-          yield* boundedWrite(() =>
-            Effect.gen(function* () {
-              if (claiming) yield* writeSql('append', bytes)
-              if (boundedObjects !== undefined) {
-                const object = buildResearchCaptureExportChunk(bytes, entries.slice(start, end), previousChunkHash)
-                yield* boundedObjects.putVerified(object)
-                verifiedChunkHash = object.contentHash
-              }
-              if (!claiming) yield* writeSql('append', bytes)
-            }),
+          yield* boundedWrite(
+            claiming ? CaptureWriteOperation.Claim : CaptureWriteOperation.Chunk,
+            () => bytes,
+            persistedChunks,
+            () =>
+              Effect.gen(function* () {
+                if (claiming) yield* writeSql('append', bytes)
+                if (boundedObjects !== undefined) {
+                  const object = buildResearchCaptureExportChunk(bytes, entries.slice(start, end), previousChunkHash)
+                  yield* boundedObjects.putVerified(object)
+                  verifiedChunkHash = object.contentHash
+                }
+                if (!claiming) yield* writeSql('append', bytes)
+              }),
           )
           if (invalidations.has(CaptureInvalidation.Persistence)) return
           previousChunkHash = verifiedChunkHash
@@ -363,14 +422,17 @@ export const makeResearchCaptureRecorder = (
           }
           let verifiedManifestHash: string | null = null
           let sealAcknowledged = false
-          yield* boundedWrite(() =>
-            Effect.gen(function* () {
-              const bytes = encodeResearchCapture(seal)
-              if (boundedObjects !== undefined)
-                verifiedManifestHash = yield* persistResearchCaptureExportSeal(boundedObjects, bytes)
-              yield* writeSql('seal', bytes)
-              sealAcknowledged = true
-            }),
+          yield* boundedWrite(
+            CaptureWriteOperation.Seal,
+            () => encodeResearchCapture(seal),
+            persistedChunks,
+            (bytes) =>
+              Effect.gen(function* () {
+                if (boundedObjects !== undefined)
+                  verifiedManifestHash = yield* persistResearchCaptureExportSeal(boundedObjects, bytes)
+                yield* writeSql('seal', bytes)
+                sealAcknowledged = true
+              }),
           )
           if (sealAcknowledged) exportManifestHash = verifiedManifestHash
           finished = { ...seal, invalidations: [...invalidations] }

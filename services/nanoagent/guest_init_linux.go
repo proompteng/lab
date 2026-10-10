@@ -151,11 +151,11 @@ func mountGuestHome(initialize bool) error {
 	} else if string(bytes.TrimSpace(typeBytes)) != "ext4" {
 		return errors.New("retained home must be ext4; refusing to modify it")
 	}
-	if err := unix.Mount("/dev/vdb", "/home/nanoagent", "ext4", unix.MS_NODEV|unix.MS_NOSUID, ""); err != nil {
-		return fmt.Errorf("mount private home: %w", err)
-	}
 	if err := resizeGuestHome("/dev/vdb"); err != nil {
 		return err
+	}
+	if err := unix.Mount("/dev/vdb", "/home/nanoagent", "ext4", unix.MS_NODEV|unix.MS_NOSUID, ""); err != nil {
+		return fmt.Errorf("mount private home: %w", err)
 	}
 	if err := os.Chown("/home/nanoagent", 1000, 1000); err != nil {
 		return err
@@ -171,6 +171,11 @@ func mountGuestHome(initialize bool) error {
 }
 
 func resizeGuestHome(device string) error {
+	output, err := exec.Command("/usr/sbin/e2fsck", "-p", "-f", device).CombinedOutput()
+	var exit *exec.ExitError
+	if err != nil && (!errors.As(err, &exit) || exit.ExitCode() != 1) {
+		return fmt.Errorf("grow private home filesystem: check ext4: %w: %s", err, output)
+	}
 	if output, err := exec.Command("/usr/sbin/resize2fs", device).CombinedOutput(); err != nil {
 		return fmt.Errorf("grow private home filesystem: %w: %s", err, output)
 	}

@@ -101,14 +101,30 @@ export const acquireBrokerObservationRuntime = (
         poll: (signal, reservation) =>
           managed.runPromise(
             Effect.gen(function* () {
-              if (!(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))) {
+              const claim = yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)
+              if (claim._tag !== 'Claimed') {
                 yield* Effect.flatMap(store, (value) => value.invalidate)
+                if (claim._tag === 'ExpiredUnused') {
+                  // Returning this result journals proof before the owner replaces speculative debt.
+                  // Any interruption/failure before that result, or a repeated claim, keeps the full reservation.
+                  yield* Effect.logWarning('Broker observation capture expired before starting').pipe(
+                    Effect.annotateLogs({
+                      'broker.capture_not_started_reason': 'expired_unused_ticket',
+                      'broker.capture_start_lateness_ms': claim.expiredByMs,
+                    }),
+                  )
+                  return {
+                    _tag: 'Unavailable',
+                    captureNotStarted: { reason: 'ExpiredUnusedTicket', expiredByMs: claim.expiredByMs },
+                    nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
+                  } as const
+                }
                 return {
                   _tag: 'Unavailable',
                   nextPollNotBeforeMs: Math.max(reservation.interruptedNotBeforeMs, yield* budget.nextPollNotBeforeMs),
                 } as const
               }
-              // Only a claimed worker can replace its interruption reservation with measured usage.
+              // A claimed worker can replace its interruption reservation with measured usage after completion.
               // Typed, completed persistence failures have no broker request still in flight.
               return yield* settleCompletedBrokerObservationPoll(
                 Effect.gen(function* () {
