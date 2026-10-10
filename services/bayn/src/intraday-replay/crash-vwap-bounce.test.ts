@@ -7,12 +7,11 @@ import {
   evaluateHybridCrashVwapShadow,
   hybridCrashVwapParams,
   hybridCrashVwapSessionBarsSchemaVersion,
-  HybridCrashVwapMode,
   sessionVwapSeries,
   type HybridBar,
-} from './hybrid-crash-vwap-gate'
+} from './crash-vwap-bounce'
 
-const open = hybridCrashVwapParams.rthOpenMinutes
+const open = hybridCrashVwapParams.rthOpenMinute
 const source = {
   provider: 'alpaca',
   feed: 'iex',
@@ -57,7 +56,7 @@ const sessionText = (barsBySymbol: Record<string, readonly HybridBar[]>, session
     barsBySymbol,
   })
 
-describe('hybrid-crash-vwap-gate', () => {
+describe('crash-VWAP bounce scan', () => {
   test('declared universe and watermark expose missing symbols and trailing coverage', () => {
     const input = JSON.parse(sessionText({ CRDO: crashSession([bar(open + 36, 99.2), bar(open + 37, 99.3)]) }))
     input.source.universe.push('SNDK')
@@ -66,8 +65,6 @@ describe('hybrid-crash-vwap-gate', () => {
     if (Result.isFailure(decoded)) throw decoded.failure
     const record = evaluateHybridCrashVwapShadow({ session: decoded.success, evaluatedAt: '2026-10-07T20:00:00.000Z' })
     expect(record).toMatchObject({
-      acceptanceEligible: false,
-      historicalEvidence: 'UNVERIFIED_GENERATOR_AND_CORPUS_UNAVAILABLE_NO_RERUN',
       exclusions: [
         { symbol: 'CRDO', reason: 'INCOMPLETE_RTH_MINUTE_COVERAGE' },
         { symbol: 'SNDK', reason: 'INCOMPLETE_RTH_MINUTE_COVERAGE' },
@@ -124,7 +121,7 @@ describe('hybrid-crash-vwap-gate', () => {
     expect(sessionVwapSeries([bar(open - 1, 1000), bar(open, 100)])[1]).toBe(100)
   })
 
-  test('late and gapped histories are explicitly unqualified, never session VWAP candidates', () => {
+  test('late and gapped histories are excluded, never session VWAP candidates', () => {
     const complete = crashSession([bar(open + 36, 99.2), bar(open + 37, 99.3)])
     for (const bars of [complete.slice(34), complete.filter((entry) => entry.minuteOfDay !== open + 10)]) {
       const decoded = decodeHybridCrashVwapSessionBars(sessionText({ CRDO: bars }))
@@ -134,7 +131,6 @@ describe('hybrid-crash-vwap-gate', () => {
       ).toMatchObject({
         candidates: [],
         exclusions: [{ symbol: 'CRDO', reason: 'INCOMPLETE_RTH_MINUTE_COVERAGE' }],
-        qualification: 'UNQUALIFIED_SOURCE_DECLARATION_NOT_INDEPENDENTLY_VERIFIED',
       })
     }
   })
@@ -252,11 +248,9 @@ describe('hybrid-crash-vwap-gate', () => {
     const record = evaluateHybridCrashVwapShadow(input)
     expect(evaluateHybridCrashVwapShadow(input)).toEqual(record)
     expect(record).toMatchObject({
-      schemaVersion: 'bayn.hybrid-crash-vwap.shadow.v2',
-      mode: HybridCrashVwapMode.Shadow,
+      schemaVersion: 'bayn.hybrid-crash-vwap.shadow.v3',
       sessionDate: '2026-10-07',
       evaluatedAt: '2026-10-07T20:00:00.000Z',
-      note: 'RESEARCH_ONLY_no_live_fills',
     })
     expect(record.candidates.map(({ symbol }) => symbol)).toEqual(['CRDO', 'SNDK'])
   })
