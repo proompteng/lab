@@ -234,6 +234,7 @@ async fn request(
         operation_id: Uuid::new_v4().to_string(),
         expected_version: state.version,
         reason: "integration qualification".into(),
+        client_request_hash: vec![],
         command: Some(command),
     }
 }
@@ -1810,7 +1811,7 @@ async fn control_integration_durability_authority_and_quota() {
         "stream rechecks never extend idle timeout"
     );
     drop(client);
-    let transfer = request(
+    let mut transfer = request(
         &database,
         owner,
         Command::TransferWorkspace(TransferWorkspace {
@@ -1819,6 +1820,9 @@ async fn control_integration_durability_authority_and_quota() {
         }),
     )
     .await;
+    transfer.client_request_hash = vec![0x48; 32];
+    let transfer_context = transfer.context.clone();
+    let transfer_operation = transfer.operation_id.clone();
     let mut connection = database.command_connection().await.unwrap();
     let (prepared, _) = prepare(
         &database,
@@ -1872,6 +1876,28 @@ async fn control_integration_durability_authority_and_quota() {
         .await
         .unwrap();
     assert!(recovered.recovered_revision);
+    let mut replay = crate::proto::GetCommandRequest {
+        context: transfer_context,
+        operation_id: transfer_operation,
+        client_request_hash: vec![0x48; 32],
+    };
+    replay.context.as_mut().unwrap().deadline_unix_ms =
+        database.state().await.unwrap().now_ms + 2000;
+    assert_eq!(
+        commands::get(&database, &native, BFF_ID, replay.clone())
+            .await
+            .unwrap(),
+        recovered
+    );
+    replay.client_request_hash = vec![0x49; 32];
+    assert_eq!(
+        commands::get(&database, &native, BFF_ID, replay)
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::AlreadyExists
+    );
+
     assert!(
         !read(
             &database,

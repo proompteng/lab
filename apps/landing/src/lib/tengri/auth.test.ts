@@ -58,6 +58,18 @@ describe('Ofz-backed browser authentication boundary', () => {
     expect(response.status).toBe(400)
     expect(response.headers.get('cache-control')).toContain('no-store')
   })
+  test('cancelled OIDC callbacks clear the attempt cookie without requiring an authorization code', async () => {
+    const response = await handleTengriAuth(
+      new Request(`https://proompteng.ai/api/auth/callback?error=access_denied&state=${'a'.repeat(43)}`, {
+        headers: { cookie: `__Host-tengri-oauth=${'b'.repeat(43)}` },
+      }),
+    )
+    expect(response.status).toBe(401)
+    expect(response.headers.getSetCookie()).toContain(
+      '__Host-tengri-oauth=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0',
+    )
+    expect(response.headers.get('cache-control')).toContain('no-store')
+  })
   test('old direct-provider and stateless-session endpoints have been removed', async () => {
     const response = await handleTengriAuth(
       new Request('https://proompteng.ai/api/auth/sign-in/social', {

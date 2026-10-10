@@ -151,10 +151,14 @@ export async function handleTengriAuth(request: Request) {
         return Response.json({ url: authorize.href }, { headers: responseHeaders })
       }
       case 'GET /api/auth/callback': {
+        if (url.searchParams.has('error')) {
+          responseHeaders.append('Set-Cookie', setCookie(OAUTH_COOKIE, '', 0))
+          throw new OfzError(401)
+        }
         const state = opaque.parse(url.searchParams.get('state'))
         const code = z.string().min(1).max(4096).parse(url.searchParams.get('code'))
         const binding = cookie(request.headers, OAUTH_COOKIE)
-        if (!binding || url.searchParams.has('error')) throw new OfzError(401)
+        if (!binding) throw new OfzError(401)
         const result = await (
           await controlDatabase()
         ).query<{ verifier: unknown; nonce: unknown; operation_id: unknown }>(

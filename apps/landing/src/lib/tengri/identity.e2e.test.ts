@@ -301,6 +301,7 @@ identityTest(
     // The HTTPS adapter executes the actual route functions. Only HTML and GitHub are fixtures.
     const { ofzCall: realOfzCall, OfzError, isOfzConfigured } = await import('./ofz')
     let loseEstablishmentReply = true
+    let loseCommandReply = false
     const establishmentAttempts: string[] = []
     const withReplyLoss: typeof realOfzCall = async (method, input, signal) => {
       if (method.localName === 'establishSession') {
@@ -311,6 +312,10 @@ identityTest(
         )
       }
       const result = await realOfzCall(method, input, signal)
+      if (method.localName === 'executeCommand' && loseCommandReply) {
+        loseCommandReply = false
+        throw new OfzError(503)
+      }
       if (method.localName === 'establishSession' && loseEstablishmentReply) {
         loseEstablishmentReply = false
         throw new OfzError(503)
@@ -863,6 +868,58 @@ identityTest(
     await page.goto(base)
     await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
 
+    const postAccess = (command: Record<string, unknown>) =>
+      page.evaluate(async (input) => {
+        const response = await fetch('/api/tengri/access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        })
+        return { status: response.status, body: await response.json() }
+      }, command)
+    const promote = await postAccess({
+      action: 'membership',
+      operationId: randomUUID(),
+      expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+      reason: 'Retain two administrators during self-demotion recovery',
+      login: 'fixture-3',
+      role: 'administrator',
+      enabled: true,
+    })
+    expect(promote.status).toBe(200)
+    const selfDemotion = {
+      action: 'membership',
+      operationId: randomUUID(),
+      expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+      reason: 'Recover a committed self-demotion after a lost response',
+      login: 'fixture-1',
+      role: 'administrator',
+      enabled: false,
+    }
+    loseCommandReply = true
+    expect((await postAccess(selfDemotion)).status).toBe(503)
+    expect(
+      (await control.query('SELECT count(*) FROM ofz.memberships WHERE human_id=$1 AND role=2', [humans[0]?.humanId]))
+        .rows[0]?.count,
+    ).toBe('0')
+    const lookupsAfterCommit = identityLookups
+    const committed = await postAccess(selfDemotion)
+    expect(committed.status).toBe(200)
+    const committedReceipt = z
+      .object({ receipt: z.object({ operationId: z.uuid(), auditReceiptId: z.uuid() }) })
+      .parse(committed.body).receipt
+    expect(committedReceipt.operationId).toBe(selfDemotion.operationId)
+    expect(identityLookups).toBe(lookupsAfterCommit)
+    expect((await postAccess({ ...selfDemotion, login: 'fixture-2' })).status).toBe(409)
+    expect(
+      (
+        await control.query(
+          "SELECT count(*) FROM ofz.audit WHERE receipt->>'operation_id'=$1 AND (receipt->>'allowed')::boolean",
+          [selfDemotion.operationId],
+        )
+      ).rows[0]?.count,
+    ).toBe('1')
+
     const attemptsBefore = (await bffAdmin.query('SELECT count(*) FROM tengri.oauth_attempts')).rows[0]?.count
     expect(
       await page.evaluate(async () => fetch('/api/auth/login', { method: 'HEAD' }).then((response) => response.status)),
@@ -884,7 +941,7 @@ identityTest(
       ).rows[0]?.count,
     ).toBe('4')
     console.log(
-      'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment lost-reply recovery, logout and HEAD/replay denial',
+      'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment and self-demotion lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
     )
   },
   180_000,

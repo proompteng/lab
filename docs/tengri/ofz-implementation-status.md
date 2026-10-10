@@ -74,6 +74,13 @@ session-revocation action. The pinned identity fixture passed all 44 assertions 
 deferred WebAuthn module before clicking its registration and authentication buttons. Real custodian enrollment and
 deployed product proof remain later gates.
 
+The follow-up command-recovery fixture passed 52 browser assertions and 297 Landing tests. It commits a self-demotion,
+loses the successful response, and recovers the original receipt after administrator authority is gone without another
+GitHub lookup. A changed request with that operation ID returns 409. Ofz binds this recovery to the original validated
+BFF request hash; the real 26-command / 79-receipt control fixture also verifies recovery after ownership transfer and
+hash collision rejection. Cancelled OIDC callbacks clear their attempt cookie; that regression returns 400 against the
+prior source and the required 401 with the fix. Eight Rust units, Clippy, TypeScript and 22 inventory regressions pass.
+
 The coordinated cutover gate also covers the Proompteng image: Kargo discovery remains withheld while
 `TENGRI_PREPARED_SLOT_CUTOVER_READY` is false. This was verified against the repository variable and workflow input;
 the production BFF remains on its previous image. Rate limits use the connection peer, so clients reaching the

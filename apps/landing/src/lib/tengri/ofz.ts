@@ -117,17 +117,19 @@ export async function ofzCall<I extends DescMessage, O extends DescMessage>(
                 ? 401
                 : error.code === grpc.status.PERMISSION_DENIED
                   ? 403
-                  : [grpc.status.ABORTED, grpc.status.ALREADY_EXISTS].includes(error.code)
-                    ? 409
-                    : error.code === grpc.status.FAILED_PRECONDITION && error.details.includes('MFA')
-                      ? 428
-                      : error.code === grpc.status.FAILED_PRECONDITION
-                        ? 422
-                        : error.code === grpc.status.INVALID_ARGUMENT
-                          ? 400
-                          : error.code === grpc.status.RESOURCE_EXHAUSTED
-                            ? 429
-                            : 503
+                  : error.code === grpc.status.NOT_FOUND
+                    ? 404
+                    : [grpc.status.ABORTED, grpc.status.ALREADY_EXISTS].includes(error.code)
+                      ? 409
+                      : error.code === grpc.status.FAILED_PRECONDITION && error.details.includes('MFA')
+                        ? 428
+                        : error.code === grpc.status.FAILED_PRECONDITION
+                          ? 422
+                          : error.code === grpc.status.INVALID_ARGUMENT
+                            ? 400
+                            : error.code === grpc.status.RESOURCE_EXHAUSTED
+                              ? 429
+                              : 503
           const receipt = error.metadata.get('x-ofz-audit-receipt')[0]
           reject(new OfzError(status, typeof receipt === 'string' ? receipt : '', error))
         } else if (value) resolve(value)

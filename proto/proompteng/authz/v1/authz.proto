@@ -243,6 +243,9 @@ message ExecuteCommandRequest {
   string operation_id = 2;
   uint64 expected_version = 3;
   string reason = 4;
+  // BFF hash of the validated user request, before external identity resolution.
+  // Empty for callers without that preparation boundary; otherwise exactly 32 bytes.
+  bytes client_request_hash = 19;
   oneof command {
     SetMembership set_membership = 5;
     SetWorkspaceRole set_workspace_role = 6;
@@ -289,6 +292,8 @@ message GetCommandResponse {
 message GetCommandRequest {
   RequestContext context = 1;
   string operation_id = 2;
+  // When supplied, recovery must match the original validated BFF request.
+  bytes client_request_hash = 3;
 }
 
 message ListAccessRequest {

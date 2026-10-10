@@ -1,4 +1,5 @@
-import { toJson, type MessageInitShape } from '@bufbuild/protobuf'
+import { createHash } from 'node:crypto'
+import { create, toJson, type MessageInitShape } from '@bufbuild/protobuf'
 import { z } from 'zod'
 import {
   accessCommandSchema,
@@ -113,6 +114,22 @@ export async function POST(request: Request) {
       operationId: parsed.operationId,
       expectedVersion: BigInt(parsed.expectedVersion),
       reason: parsed.reason,
+      clientRequestHash: createHash('sha256').update(JSON.stringify(parsed)).digest(),
+    }
+    const recovered = await ofzCall(
+      AuthorizationService.method.getCommand,
+      { context: input.context, operationId: parsed.operationId, clientRequestHash: input.clientRequestHash },
+      request.signal,
+    ).catch((error) => {
+      if (error instanceof OfzError && error.status === 404) return undefined
+      throw error
+    })
+    if (recovered) {
+      if (!recovered.receipt) throw new OfzError(503)
+      return Response.json(
+        toJson(ExecuteCommandResponseSchema, create(ExecuteCommandResponseSchema, { receipt: recovered.receipt })),
+        { headers: noStoreHeaders() },
+      )
     }
     if ('login' in parsed) {
       const permission = {

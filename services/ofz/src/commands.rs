@@ -168,6 +168,9 @@ pub async fn execute(
     peer: &str,
     request: ExecuteCommandRequest,
 ) -> Result<CommandReceipt, Status> {
+    if !matches!(request.client_request_hash.len(), 0 | 32) {
+        return Err(Status::invalid_argument("invalid client request hash"));
+    }
     decision::workload(native, peer, Action::PolicyCommand).await?;
     let operation = parse_uuid(&request.operation_id)?;
     let context = request
@@ -1314,6 +1317,9 @@ pub async fn get(
     peer: &str,
     request: crate::proto::GetCommandRequest,
 ) -> Result<CommandReceipt, Status> {
+    if !matches!(request.client_request_hash.len(), 0 | 32) {
+        return Err(Status::invalid_argument("invalid client request hash"));
+    }
     decision::workload(native, peer, Action::PolicyCommand).await?;
     let context = request
         .context
@@ -1325,7 +1331,7 @@ pub async fn get(
     let row = connection
         .client
         .query_opt(
-            "SELECT actor_id,workload_id,receipt FROM ofz.commands WHERE operation_id=$1",
+            "SELECT actor_id,workload_id,receipt,prepared FROM ofz.commands WHERE operation_id=$1",
             &[&parse_uuid(&request.operation_id)?],
         )
         .await
@@ -1335,6 +1341,14 @@ pub async fn get(
         return Err(Status::permission_denied(
             "operation belongs to another actor",
         ));
+    }
+    if !request.client_request_hash.is_empty() {
+        let prepared: Prepared = store::decode(row.get(3))?;
+        if prepared.request.client_request_hash != request.client_request_hash {
+            return Err(Status::already_exists(
+                "operation ID bound to a different client request",
+            ));
+        }
     }
     let state = database.state().await?;
     decision::validate_context(context, peer, &state)?;

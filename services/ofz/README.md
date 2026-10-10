@@ -91,6 +91,11 @@ without storing the ID token. Platform membership remains necessary after succes
 The Access UI submits typed, versioned commands through the BFF. It verifies GitHub usernames against numeric IDs,
 requires fresh MFA for changes, shows quota usage and audit receipts, and retries an uncertain command with its original
 operation ID. The independent `/access` page permits policy administration without starting a guest or opening content.
+Before preparing a command again, the BFF checks for its committed receipt under the active platform session. Ofz
+matches the hash of the original validated request, so transfers and self-demotions can recover a lost reply after
+the caller loses the original permission without resolving a GitHub username again. A changed payload with the same
+operation ID is rejected. Cancelled or rejected OIDC callbacks clear the OAuth binding cookie and return the controlled
+authentication failure without requiring an authorization code.
 
 Run the isolated browser qualification with Java 21, Chromium and the checksum-verified Keycloak distribution:
 
