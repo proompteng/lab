@@ -182,6 +182,72 @@ prometheus.scrape "ceph_storage" {
 	forward_to      = [prometheus.relabel.ceph_storage_metrics.receiver]
 }
 
+discovery.kubernetes "kafka_pods" {
+	role = "pod"
+
+	namespaces {
+		names = ["kafka"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "strimzi.io/cluster=kafka,strimzi.io/name=kafka-kafka"
+	}
+}
+
+discovery.relabel "kafka_metrics" {
+	targets = discovery.kubernetes.kafka_pods.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_port_name"]
+		regex         = "tcp-prometheus"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_node_name"]
+		target_label  = "node"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_label_strimzi_io_cluster"]
+		target_label  = "cluster"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_label_strimzi_io_pool_name"]
+		target_label  = "pool"
+	}
+}
+
+prometheus.relabel "kafka_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|scrape_duration_seconds|scrape_samples_scraped|scrape_samples_post_metric_relabeling|jmx_scrape_(duration_seconds|error)|kafka_(controller|server|network|log)_.*|jvm_gc_collection_seconds_(count|sum)|jvm_memory_used_bytes|process_(start_time_seconds|cpu_seconds_total)"
+	}
+}
+
+prometheus.scrape "kafka" {
+	job_name        = "strimzi-kafka"
+	targets         = discovery.relabel.kafka_metrics.output
+	scrape_interval = "5s"
+	scrape_timeout  = "4s"
+	forward_to      = [prometheus.relabel.kafka_metrics.receiver]
+}
+
 discovery.kubernetes "bayn_pods" {
 	role = "pod"
 

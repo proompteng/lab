@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-stall-metrics
+  namespace: kafka
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  metrics.yaml: |
+    lowercaseOutputName: true
+    includeObjectNames:
+      - "kafka.controller:type=KafkaController,name=*"
+      - "kafka.controller:type=ControllerEventManager,name=*"
+      - "kafka.server:type=raft-metrics"
+      - "kafka.server:type=broker-metadata-metrics"
+      - "kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions"
+      - "kafka.server:type=ReplicaManager,name=UnderMinIsrPartitionCount"
+      - "kafka.server:type=ReplicaManager,name=OfflineReplicaCount"
+      - "kafka.server:type=ReplicaManager,name=IsrShrinksPerSec"
+      - "kafka.server:type=ReplicaManager,name=IsrExpandsPerSec"
+      - "kafka.log:type=LogFlushStats,name=LogFlushRateAndTimeMs"
+      - "kafka.network:type=RequestMetrics,name=TotalTimeMs,request=Produce"
+      - "kafka.network:type=RequestMetrics,name=RequestQueueTimeMs,request=Produce"
+      - "kafka.network:type=RequestMetrics,name=TotalTimeMs,request=FetchConsumer"
+      - "kafka.network:type=RequestMetrics,name=RequestQueueTimeMs,request=FetchConsumer"
+      - "kafka.network:type=RequestMetrics,name=TotalTimeMs,request=FetchFollower"
+      - "kafka.network:type=RequestMetrics,name=RequestQueueTimeMs,request=FetchFollower"
+      - "kafka.network:type=RequestMetrics,name=TotalTimeMs,request=BrokerHeartbeat"
+      - "kafka.network:type=RequestMetrics,name=RequestQueueTimeMs,request=BrokerHeartbeat"
+    rules:
+      - pattern: 'kafka.controller<type=KafkaController, name=(TimedOutBrokerHeartbeatCount|EventQueueOperationsStartedCount|EventQueueOperationsTimedOutCount|NewActiveControllersCount)><>Value'
+        name: kafka_controller_$1_total
+        type: COUNTER
+      - pattern: 'kafka.controller<type=KafkaController, name=(ActiveControllerCount|FencedBrokerCount|ActiveBrokerCount|OfflinePartitionsCount|LastAppliedRecordLagMs|LastAppliedRecordOffset|LastCommittedRecordOffset)><>Value'
+        name: kafka_controller_$1
+        type: GAUGE
+      - pattern: 'kafka.controller<type=ControllerEventManager, name=(EventQueueTimeMs|EventQueueProcessingTimeMs)><>(Mean|Max|95thPercentile|99thPercentile)'
+        name: kafka_controller_event_duration_seconds
+        type: GAUGE
+        valueFactor: 0.001
+        labels:
+          stage: "$1"
+          statistic: "$2"
+      - pattern: 'kafka.server<type=(raft-metrics|broker-metadata-metrics)><>(current-leader|current-epoch|high-watermark|log-end-offset|commit-latency-avg|commit-latency-max|election-latency-avg|election-latency-max|poll-idle-ratio-avg|last-applied-record-offset|last-applied-record-timestamp|last-applied-record-lag-ms|metadata-load-error-count|metadata-apply-error-count)'
+        name: kafka_server_$1_$2
+        type: GAUGE
+      - pattern: 'kafka.server<type=ReplicaManager, name=(UnderReplicatedPartitions|UnderMinIsrPartitionCount|OfflineReplicaCount)><>Value'
+        name: kafka_server_$1
+        type: GAUGE
+      - pattern: 'kafka.server<type=ReplicaManager, name=(IsrShrinksPerSec|IsrExpandsPerSec)><>Count'
+        name: kafka_server_$1_total
+        type: COUNTER
+      - pattern: 'kafka.log<type=LogFlushStats, name=LogFlushRateAndTimeMs><>(Mean|Max|95thPercentile|99thPercentile)'
+        name: kafka_log_flush_duration_seconds
+        type: GAUGE
+        valueFactor: 0.001
+        labels:
+          statistic: "$1"
+      - pattern: 'kafka.network<type=RequestMetrics, name=(TotalTimeMs|RequestQueueTimeMs), request=(Produce|FetchConsumer|FetchFollower|BrokerHeartbeat)><>(Mean|Max|95thPercentile|99thPercentile)'
+        name: kafka_network_request_duration_seconds
+        type: GAUGE
+        valueFactor: 0.001
+        labels:
+          stage: "$1"
+          request: "$2"
+          statistic: "$3"

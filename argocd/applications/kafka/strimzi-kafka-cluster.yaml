@@ -11,6 +11,12 @@ spec:
   kafka:
     version: 4.3.1
     metadataVersion: "4.3-IV0"
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-stall-metrics
+          key: metrics.yaml
     listeners:
       - name: plain
         port: 9092

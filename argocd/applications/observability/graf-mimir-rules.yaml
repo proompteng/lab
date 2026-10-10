@@ -3281,6 +3281,52 @@ data:
               runbook_url: docs/runbooks/bayn-cycle-operations.md
       - name: kafka-critical-service.rules
         rules:
+          - alert: KafkaMetricsUnavailable
+            expr: |
+              (
+                kube_pod_status_phase{
+                  namespace="kafka",
+                  pod=~"kafka-pool-[ab]-[0-9]+",
+                  phase="Running"
+                } == 1
+              )
+              unless on (namespace, pod)
+              (
+                up{job="strimzi-kafka", namespace="kafka", cluster="kafka"} == 1
+                and on (namespace, pod)
+                jmx_scrape_error{job="strimzi-kafka", namespace="kafka", cluster="kafka"} == 0
+              )
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: kafka
+            annotations:
+              summary: Kafka pod metrics are unavailable
+              description: A running Kafka controller or broker has no successful JMX scrape. Missing stall measurements remain unknown.
+              runbook_url: argocd/applications/kafka/README.md
+          - alert: KafkaControllerTelemetryMissing
+            expr: |
+              (
+                kube_pod_status_phase{
+                  namespace="kafka",
+                  pod=~"kafka-pool-a-[0-9]+",
+                  phase="Running"
+                } == 1
+              )
+              unless on (namespace, pod)
+              kafka_controller_activecontrollercount{
+                job="strimzi-kafka", namespace="kafka", cluster="kafka"
+              }
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: kafka
+            annotations:
+              summary: Kafka controller metrics are missing
+              description: A running controller has no active-controller gauge. Verify exporter mapping and ingestion before interpreting controller latency or quorum health.
+              runbook_url: argocd/applications/kafka/README.md
           - alert: KafkaBrokerUnavailable
             expr: |
               sum(
