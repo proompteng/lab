@@ -49,7 +49,7 @@ The observation owner's child runtimes share the worker's configured logger and 
 across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
 observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
 
-Each poll retains the complete paginated order, fill and fee history with the existing before/after stability check,
+Each poll reads the independent order, fill and fee histories concurrently in both stability scans, retaining complete pagination and the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
 hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same
 projection. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
@@ -94,6 +94,12 @@ existing continuation qualifies. Elapsed, missing or invalid timestamps, other r
 keep their normal cadence. Every wake rechecks source readiness and the existing completed-window admission; it
 does not repeat inference on an already consumed window or change broker polling, signal history or position limits.
 
+Discretionary management is bounded by the earliest of the first-fill holding deadline, inference-validity budget,
+and broker-evidence freshness boundary. A completed or retryable management result rechecks the holding deadline
+before returning. Cancellation still waits for scoped finalizers. If finalization outlasts broker freshness, the
+result requires reconciliation instead of constructing an exit from stale evidence. The holding-deadline log records
+any overrun and the broker-evidence expiry; order authorization retains all existing risk checks.
+
 Held-position waits also retain the first-fill-based maximum-hold deadline. A future deadline caps the next wake,
 while an earlier signal boundary still wins. The absolute bound survives management work, completion persistence,
 and worker replay. If work crosses a deadline that was future when management checked it, one continuation rechecks
@@ -109,8 +115,7 @@ Market-data subscriptions have separate limits. The cache preserves response rat
 with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute
 at the default cadence. The background client's transport counts every actual attempt, including startup verification,
 pagination and transient retries. Each attempt charges at least 600 milliseconds to the next scheduled poll, targeting
-100 background calls per minute on average, or half a smaller reported account limit. Complete captures keep their
-existing concurrency; individual captures can burst. Response headers showing one-quarter or less of account quota
+100 background calls per minute on average, or half a smaller reported account limit. The three independent history endpoints run concurrently; individual captures can burst. Response headers showing one-quarter or less of account quota
 remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
 or unusable reset evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
 journals and retains the next permissible poll time in durable account state for successful, invalidated and failed
@@ -119,14 +124,20 @@ poll cadence rather than adding artificial delays inside a full history scan. Be
 activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
 and its database ticket. It also journals a single-use worker ticket and reserves one quota window beyond the latest
 allowed capture start and invocation abort bound before issuing requests. A lost or spent ticket, or one whose start
-deadline elapsed, returns unavailable without repeating broker I/O. A completed capture replaces the reservation with
+deadline elapsed, returns unavailable without repeating broker I/O. When the same worker atomically consumes a
+matching unused expired ticket, successful invalidation and the existing journaled poll result prove that capture
+never started. Only then can the owner replace speculative debt with the existing measured HTTP/quota deadline;
+it logs the reason and capture-start lateness without ticket contents. A lost result before journaling still retains
+the full reservation. A journaled result replays without another claim or a reset capture clock.
+A completed capture replaces the reservation with
 its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
 timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
 Completed, typed persistence failures inside a claimed worker also retain the measured request cost, including any
 quota-reset deadline. They return unavailable without publishing a snapshot and retry on the ordinary polling cadence.
 Failed captures dispose their broker runtime before recording failure or sampling the settled request budget, so a lazy
 client acquisition cannot continue issuing requests after recovery returns. Defects, interruption, mixed failure causes,
-and lost or expired capture tickets retain the conservative reservation.
+and missing, mismatched, already claimed or replaced-worker capture tickets retain the conservative reservation.
+Failure or interruption before the unused-ticket result is journaled also retains that reservation.
 Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
 the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
 capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
@@ -181,12 +192,14 @@ provider precision guarantee. Score answers must also fit the same distribution 
 Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
 discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
 
-Each model request commits its at-most-once claim before inference. Native single-candidate management persists the
-receipt, resolution and complete batch result in one transaction; entry candidates retain independent receipts and
-all-candidate finalization. Receipt recording and recovery lock the batch before the request. A completed batch is
-verified and reused without opening another transaction. Commit failure or interruption cannot expose a partial
-management result, and every consumer still checks the original evidence deadline after persistence. Synchronous
-commit and standby durability are unchanged.
+Each model request commits its at-most-once claim before inference. Native single-candidate management and entry
+batches with exactly one requested candidate persist the receipt, resolution and complete batch result in one
+transaction. Entry results retain every excluded candidate in plan order. Entry batches with multiple requested
+candidates retain independent receipts and all-candidate finalization. Atomic receipt recording and recovery lock
+the batch before the request. A completed batch is verified and reused without opening another transaction. A
+failure, defect or interruption during atomic persistence rolls back the receipt, resolution and result together;
+the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
+evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
 the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
@@ -340,6 +353,13 @@ original observation and expiry times, checked time and elapsed admission lag. C
 and persistence failures remain errors; recorded batches still recover against their original deadline.
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
+
+Completed batch rereads load all requested candidates' claims, receipts and resolutions together, then retrieve
+matching observations in one grouped query. Each distinct observation crosses the database boundary once and its
+canonical content hash is verified once per read, with exact cycle, generation, snapshot, symbol and time membership
+checked for every request. A batch with resolved candidate evidence uses three queries including its plan/result
+read, independent of candidate count. Single-candidate evidence reads use the same verifier. Missing or corrupt
+evidence and claims for sealed unattempted candidates still fail verification; validation is not cached across reads.
 
 The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, after binding
 or a cold durable read. Every reread still queries PostgreSQL and requires full JSONB equality with that retained
@@ -625,6 +645,13 @@ requires daily snapshot settings at live startup, publish and select the new bin
 Before rolling back to such an older binary, restore all eight settings in each of the service, execution-controller
 and activation manifests, and deploy that restored configuration with the compatible binary first. Only then select
 the older binary through the existing Kargo delivery path. No database migration or evidence rewrite is involved.
+
+The forward-performance command emits `bayn.forward-performance-report.v2`. Its `inferenceExpenses` section joins
+all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
+TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
+precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v3 trading receipt
+is unchanged. `operatingCostCoverage` remains `INCOMPLETE` until invoice and other operating-cost evidence exists;
+tariff estimates cannot establish fully costed profitability.
 
 ### Private inference operating-cost report
 
@@ -924,10 +951,13 @@ Without that option, the command evaluates account history, which may span retir
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
 Native-only account history does not. A native scope without completed executions remains unqualified; successful
 configuration loading is not a profitability result.
-The command emits `bayn.forward-performance-report.v1`. Its `receipt` contains the unchanged v3 financial receipt;
-`positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions, and `reportHash`
-binds both. This read-only report never changes an immutable per-generation receipt or requires mixed-version replicas
-to read a new stored field.
+The command emits `bayn.forward-performance-report.v2`. Its `receipt` contains the unchanged v3 financial receipt;
+`positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
+attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
+`INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
+change the immutable per-generation receipt schema.
+The default report reads performance and inference-expense records in one read-only repeatable-read PostgreSQL
+transaction. `--persist-receipt` inherits the existing writer-fence transaction instead.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
@@ -1267,3 +1297,8 @@ BAYN_TEST_TIGERBEETLE_ADDRESS=127.0.0.1:39701 bun test services/bayn/src/ledger/
 
 Historical development candidates are terminal, non-executable records summarized in
 [`docs/bayn/candidate-terminal-history.md`](../../docs/bayn/candidate-terminal-history.md).
+
+OTLP failure warnings include consecutive failed attempts. The exporter logs a successful request after failures,
+with the attempt count and elapsed outage time. This confirms transport recovery for that request, not completeness
+of spans during the outage. Broker projection rejection logs distinguish stale, future, account and chronology
+failures with observation age, without recording account identifiers or payloads.

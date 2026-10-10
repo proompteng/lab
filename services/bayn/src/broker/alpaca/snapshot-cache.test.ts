@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { ConfigProvider, Deferred, Effect, Fiber, Logger, Result } from 'effect'
+import { Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Result } from 'effect'
 import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBrokerSnapshot } from './observed-snapshot'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1 } from '../../hash'
+import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
 import { unusedAssetBySymbol, unusedMarketCalendar } from '../alpaca-test-support'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
@@ -161,6 +162,32 @@ describe('durable broker observations', () => {
       }),
     )
   })
+  test('independent history endpoints complete in one wave per stability scan', async () => {
+    const source = fixture()
+    const delayed: BrokerReadShape = {
+      ...source.read,
+      account: Effect.sleep(100).pipe(Effect.andThen(source.read.account)),
+      positions: Effect.sleep(100).pipe(Effect.andThen(source.read.positions)),
+      orders: (query) => Effect.sleep(100).pipe(Effect.andThen(source.read.orders(query))),
+      fillActivities: (query) => Effect.sleep(100).pipe(Effect.andThen(source.read.fillActivities(query))),
+      feeActivities: (query) => Effect.sleep(100).pipe(Effect.andThen(source.read.feeActivities(query))),
+    }
+    const elapsed = await run(
+      Effect.gen(function* () {
+        const start = yield* Clock.currentTimeMillis
+        const task = yield* readStableBrokerSnapshot(delayed, currentUtcInstant).pipe(
+          Effect.andThen(Clock.currentTimeMillis),
+          Effect.forkChild({ startImmediately: true }),
+        )
+        for (let step = 0; step < 6; step++) yield* TestClock.adjust(100)
+        return (yield* Fiber.join(task)) - start
+      }),
+    )
+    expect(elapsed).toBe(300)
+    expect(source.calls.filter((call) => call === 'fees')).toHaveLength(2)
+    expect(source.calls.filter((call) => call.startsWith('fills:'))).toHaveLength(2)
+  })
+
   test('captures complete stable history with its original poll start and validates durable bytes', async () => {
     const source = fixture()
     const value = await run(

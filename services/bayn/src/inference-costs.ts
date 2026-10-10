@@ -19,6 +19,7 @@ import { decodeJevResolution } from './jev/resolution'
 
 export class InferenceCostError extends Data.TaggedError('InferenceCostError')<{
   readonly message: string
+  readonly cause?: unknown
 }> {}
 
 export enum InferenceUsageStatus {

@@ -106,11 +106,12 @@ C, and CGO projects therefore build from the persistent home toolchain without i
 `bootstrap-developer-tools` then installs Homebrew using a pinned, SHA-256-verified upstream installer. It uses
 the PVC-backed `/home/nanoagent/.linuxbrew` prefix as the guest user, without sudo. This 26-byte prefix meets
 [Homebrew's supported custom-prefix requirements](https://docs.brew.sh/Support-Tiers#custom-prefixes) on Ubuntu 24.04
-for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, tmux, GNU Make,
+for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, lazygit, gdu, bottom, kubectl, tmux, GNU Make,
 CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
 Successful installation writes a receipt tied to the bootstrap script, bundled Neovim configuration, XDG paths,
 and resolved C toolchain root. A toolchain upgrade invalidates it so the C++ wrappers use the new headers and startup objects.
-The cache also verifies that the C++ wrapper targets the active Homebrew compiler and sysroot.
+The cache also verifies that the C++ wrapper targets the active Homebrew compiler and sysroot. Homebrew's `gdu-go`
+executable is linked as `gdu` on the guest PATH for AstroNvim.
 Subsequent boots check that receipt and the supplied executables without starting Homebrew or Neovim. A missing
 executable, changed configuration path, or new bootstrap invalidates the receipt and runs installation again.
 The installer checks all baseline formulae in one Homebrew invocation. Neovim is upgraded when it is below
@@ -122,9 +123,12 @@ Nanoagent puts the pinned toolchain ahead of Homebrew in child-process PATH. Log
 and Neovim configuration are preserved. The profile exports the fixed Homebrew prefix and paths directly, so opening
 a terminal does not start Homebrew. `EDITOR` and `VISUAL` default to `nvim` unless already configured. A new Neovim
 configuration uses [AstroNvim's documented Lazy plugin setup](https://docs.astronvim.com/) with stable AstroNvim 6.1.0
-and a pinned Lazy bootstrap. Its plugins are installed before Nanoagent becomes ready. Text icons work with the web
-terminal's system monospace font. Run `nvim` to open the editor, `:AstroVersion` to inspect its version, and `:LspInstall`
-or `:TSInstall` to add language support. Existing configurations remain user-owned. The default plugin setup runs when
+and a pinned Lazy bootstrap. Its plugins are installed before Nanoagent becomes ready. The web terminal serves Nerd
+Font symbols alongside Geist Mono and renders Neovim's block, bar, and underline mode cursors with xterm's WebGL renderer.
+The font loads in the browser, so guest font installation is unnecessary. Run `nvim` to open the editor, `:AstroVersion` to inspect its version, and `:LspInstall`
+or `:TSInstall` to add language support. On an image update, the installer replaces an unchanged generated configuration
+only when its hash and location match the previous installation receipt. User-edited configurations remain intact.
+The default plugin setup runs when
 the installation receipt is invalid, without upgrading installed plugins. Homebrew's Cellar, cache, and Neovim
 configuration, plugin lockfile, plugin data, and undo files survive sleep/resume; none of these packages enters the 1 GiB rootfs.
 Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and a repeated
@@ -192,8 +196,8 @@ go test -race ./...
 Use the wire interoperability test for local RPC validation. The production guest requires Linux vsock and the private
 boot configuration injected by the slot runner. It has no alternate TCP development transport.
 
-The Nanoagent workflow runs the focused Go validation. Tengri's image workflow then builds native `linux/amd64` and
-`linux/arm64` Nanoagent images alongside the controller, publishes and keylessly signs
+Tengri's image workflow owns Nanoagent's protobuf generation, Go race tests, vet, rootfs, and bootstrap validation in
+one job. It builds native `linux/amd64` and `linux/arm64` Nanoagent images alongside the controller, publishes and keylessly signs
 `registry.ide-newton.ts.net/lab/nanoagent` by immutable digest. CI publishes matching `kargo-sha-<source>` tags for the
 controller and guest; the automatic Tengri Warehouse and Stage promote only the matched pair and pin both digests on
 `kargo/tengri` for Argo reconciliation.
@@ -215,7 +219,9 @@ password login is disabled behind that boundary.
 
 Initial settings use Dark Modern, explicit saves, native hot-exit backups, and guest execution for TypeScript language
 features. The upstream `remote.extensionKind` override includes `-web` to exclude the browser host, whose TypeScript
-bundle is absent from the standalone release. Existing user settings are preserved. Workspace trust remains enabled.
+bundle is absent from the standalone release. Existing user settings are preserved. Each editor process starts with
+the upstream `--disable-workspace-trust` switch, so opening folders does not prompt for trust or restrict terminals,
+tasks, debugging, or workspace extensions inside the guest.
 The upstream optional `vsda` browser assets are absent from this open-source distribution; their 404s do not disable the
 workbench. Acceptance tests exercise TypeScript diagnostics to detect actual language-extension failures.
 

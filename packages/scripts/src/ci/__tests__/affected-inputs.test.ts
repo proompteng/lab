@@ -200,13 +200,20 @@ test('Tengri runtime repairs publish the desktop from the same source', () => {
   }
 })
 
-test('Tengri desktop repairs publish both native images from the same source', () => {
+test('Tengri frontend PRs skip native images while main publishes coordinated releases', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/tengri-images.yml', 'utf8'))
   const source = 'apps/landing/src/components/tengri/desktop-dock.tsx'
   for (const event of ['pull_request', 'push']) {
     const paths = property(property(property(workflow, 'on'), event), 'paths')
     if (!Array.isArray(paths)) throw new Error('Missing native image trigger paths')
-    expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(true)
+    expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(event === 'push')
+    for (const runtimeSource of [
+      'services/tengri/src/slot/vmm.rs',
+      'services/nanoagent/internal/service/service.go',
+      '.github/workflows/tengri-images.yml',
+    ]) {
+      expect(paths.some((pattern) => matchesGlob(runtimeSource, text(pattern)))).toBe(true)
+    }
   }
 })
 
