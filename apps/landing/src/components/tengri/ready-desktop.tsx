@@ -621,7 +621,7 @@ export function ReadyDesktop({
         }
         await commitDesktopLifecycleAction({
           action,
-          request: () => runTengriAction<TengriAgent | null>({ action, agentId: agent.id }),
+          request: () => runTengriAction<TengriAgent | null>({ action, agentId: agent.id, workspaceUid: agent.uid }),
           onCommitted: (committedAction) => {
             committed = true
             setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')

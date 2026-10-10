@@ -15,6 +15,8 @@ const agent: TengriAgent = {
   memoryMib: 4_096,
   workspaceGib: 32,
   uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  runtimeEpoch: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+  policyVersion: '1',
   power: { idleTimeoutMinutes: 60 },
   nodeName: 'ryzen',
   message: '',

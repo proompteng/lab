@@ -58,7 +58,7 @@ export async function GET(request: Request) {
     if (!authConfigured) return snapshot({ authConfigured, controlPlaneConfigured, previewGatewayOrigin })
     const identity = await getRateLimitedTengriIdentity(request)
     if (!identity) return snapshot({ authConfigured, controlPlaneConfigured, previewGatewayOrigin })
-    const agents = controlPlaneConfigured ? await listAgents(identity.subject) : []
+    const agents = controlPlaneConfigured ? await listAgents(identity) : []
     return Response.json(
       {
         authConfigured,
@@ -93,30 +93,30 @@ export async function POST(request: Request) {
     let result: unknown
     switch (action.action) {
       case 'create-agent':
-        result = await createAgent(identity.subject, action.displayName)
+        result = await createAgent(identity, action.displayName, action.operationId)
         break
       case 'delete-agent':
-        await deleteAgent(identity.subject, action.agentId)
+        await deleteAgent(identity, action.agentId, action.workspaceUid, action.operationId)
         result = null
         break
       case 'sleep-agent':
-        result = await sleepAgent(identity.subject, action.agentId)
+        result = await sleepAgent(identity, action.agentId, action.workspaceUid, action.operationId)
         break
       case 'resume-agent':
-        result = await resumeAgent(identity.subject, action.agentId)
+        result = await resumeAgent(identity, action.agentId, action.workspaceUid, action.operationId)
         break
       case 'update-power-settings':
-        result = await updatePowerSettings(identity.subject, action.agentId, action.power)
+        result = await updatePowerSettings(identity, action.agentId, action.power)
         break
       case 'list-files':
-        result = await listFiles(identity.subject, action.agentId, action.path)
+        result = await listFiles(identity, action.agentId, action.path)
         break
       case 'read-file':
-        result = await readFile(identity.subject, action.agentId, action.path)
+        result = await readFile(identity, action.agentId, action.path)
         break
       case 'write-file':
         result = await writeFile(
-          identity.subject,
+          identity,
           action.agentId,
           action.path,
           action.content,
@@ -125,24 +125,24 @@ export async function POST(request: Request) {
         )
         break
       case 'create-directory':
-        result = await createDirectory(identity.subject, action.agentId, action.path)
+        result = await createDirectory(identity, action.agentId, action.path)
         break
       case 'move-file':
-        result = await moveFile(identity.subject, action.agentId, action.sourcePath, action.destinationPath)
+        result = await moveFile(identity, action.agentId, action.sourcePath, action.destinationPath)
         break
       case 'delete-file':
-        await deleteFile(identity.subject, action.agentId, action.path, action.recursive)
+        await deleteFile(identity, action.agentId, action.path, action.recursive)
         result = null
         break
       case 'search-files':
-        result = await searchFiles(identity.subject, action.agentId, action.path, action.query)
+        result = await searchFiles(identity, action.agentId, action.path, action.query)
         break
       case 'list-terminals':
-        result = await listTerminals(identity.subject, action.agentId)
+        result = await listTerminals(identity, action.agentId)
         break
       case 'create-terminal':
         result = await createTerminal(
-          identity.subject,
+          identity,
           action.agentId,
           action.creationId,
           action.cwd,
@@ -152,33 +152,33 @@ export async function POST(request: Request) {
         )
         break
       case 'terminate-terminal':
-        await terminateTerminal(identity.subject, action.agentId, action.terminalId)
+        await terminateTerminal(identity, action.agentId, action.terminalId)
         result = null
         break
       case 'terminal-ticket':
-        result = await issueTerminalTicket(identity.subject, action.agentId, action.terminalId)
+        result = await issueTerminalTicket(identity, action.agentId, action.terminalId)
         break
       case 'codex-account':
-        result = await getCodexAccount(identity.subject, action.agentId, request.signal)
+        result = await getCodexAccount(identity, action.agentId, request.signal)
         break
       case 'codex-login-status':
-        result = await getCodexLogin(identity.subject, action.agentId, request.signal)
+        result = await getCodexLogin(identity, action.agentId, request.signal)
         break
       case 'codex-login':
-        result = await startCodexLogin(identity.subject, action.agentId)
+        result = await startCodexLogin(identity, action.agentId)
         break
       case 'codex-models':
-        result = await listCodexModels(identity.subject, action.agentId, action.cursor)
+        result = await listCodexModels(identity, action.agentId, action.cursor)
         break
       case 'create-thread':
-        result = await createCodexThread(identity.subject, action.agentId, {
+        result = await createCodexThread(identity, action.agentId, {
           model: action.model,
           reasoningEffort: action.reasoningEffort,
         })
         break
       case 'resume-thread':
         return await resumeCodexThread(
-          identity.subject,
+          identity,
           action.agentId,
           action.threadId,
           {
@@ -189,7 +189,7 @@ export async function POST(request: Request) {
         )
       case 'send-turn':
         result = await sendCodexTurn(
-          identity.subject,
+          identity,
           action.agentId,
           action.threadId,
           action.text,
@@ -202,7 +202,7 @@ export async function POST(request: Request) {
         break
       case 'steer-turn':
         result = await steerCodexTurn(
-          identity.subject,
+          identity,
           action.agentId,
           action.threadId,
           action.turnId,
@@ -211,28 +211,28 @@ export async function POST(request: Request) {
         )
         break
       case 'interrupt-turn':
-        await interruptCodexTurn(identity.subject, action.agentId, action.threadId, action.turnId)
+        await interruptCodexTurn(identity, action.agentId, action.threadId, action.turnId)
         result = null
         break
       case 'resolve-approval':
-        await resolveCodexApproval(identity.subject, action.agentId, action.approvalId, action.decision)
+        await resolveCodexApproval(identity, action.agentId, action.approvalId, action.decision)
         result = null
         break
       case 'preview-session':
-        result = await issuePreviewSession(identity.subject, action.agentId, action.port, action.path, action.fragment)
+        result = await issuePreviewSession(identity, action.agentId, action.port, action.path, action.fragment)
         break
       case 'editor-session':
-        result = await issueEditorSession(identity.subject, action.agentId, action.windowId)
+        result = await issueEditorSession(identity, action.agentId, action.windowId)
         break
       case 'browser-session':
-        result = await issueBrowserSession(identity.subject, action.agentId)
+        result = await issueBrowserSession(identity, action.agentId)
         break
       case 'revoke-editor-sessions':
-        await revokeDesktopPreviews(identity.subject)
+        await revokeDesktopPreviews(identity)
         result = null
         break
       case 'revoke-preview-session':
-        await revokePreviewSession(identity.subject, action.agentId, action.sessionId, action.revocationToken)
+        await revokePreviewSession(identity, action.agentId, action.sessionId, action.revocationToken)
         result = null
         break
     }

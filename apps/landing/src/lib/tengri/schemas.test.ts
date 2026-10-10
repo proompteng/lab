@@ -66,17 +66,36 @@ describe('Tengri BFF action schema', () => {
     }
   })
 
-  test('CreateAgent accepts only a display name and rejects resource escalation fields', () => {
-    expect(tengriActionSchema.safeParse({ action: 'create-agent', displayName: 'Tengri' }).success).toBe(true)
+  test('CreateAgent requires a stable operation ID, accepts a display name and rejects resource escalation fields', () => {
     expect(
       tengriActionSchema.safeParse({
         action: 'create-agent',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        displayName: 'Tengri',
+      }).success,
+    ).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'create-agent',
+        operationId: '11111111-1111-4111-8111-111111111111',
         displayName: 'Tengri',
         resources: { cpuMillis: 64_000, memoryMib: 262_144 },
       }).success,
     ).toBe(false)
-    expect(tengriActionSchema.safeParse({ action: 'create-agent', displayName: 'a'.repeat(64) }).success).toBe(true)
-    expect(tengriActionSchema.safeParse({ action: 'create-agent', displayName: 'a'.repeat(65) }).success).toBe(false)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'create-agent',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        displayName: 'a'.repeat(64),
+      }).success,
+    ).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'create-agent',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        displayName: 'a'.repeat(65),
+      }).success,
+    ).toBe(false)
   })
 
   test('constrains terminal geometry, approval decisions, and preview ports', () => {
@@ -201,6 +220,7 @@ describe('Tengri BFF action schema', () => {
         action: 'revoke-preview-session',
         agentId: 'agent-123',
         sessionId: 'abc123abc123abc123abc123',
+        revocationToken: 'a'.repeat(43),
       }).success,
     ).toBe(true)
     expect(

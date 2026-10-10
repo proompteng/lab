@@ -115,6 +115,150 @@ fn context<T>(value: Option<T>) -> Result<T, Status> {
 
 #[tonic::async_trait]
 impl AuthorizationService for Service {
+    async fn get_workspace_reservation(
+        &self,
+        request: Request<proto::GetWorkspaceReservationRequest>,
+    ) -> Result<Response<proto::GetWorkspaceReservationResponse>, Status> {
+        let _capacity = self.acquire()?;
+        let peer = transport::peer(&request)?;
+        if peer != policy::CONTROLLER_ID {
+            return Err(Status::permission_denied(
+                "controller reservation read required",
+            ));
+        }
+        let request = request.into_inner();
+        let context = context(request.context)?;
+        let human = decision::human(&context)?;
+        let reservation_id = decision::parse_uuid(&request.reservation_id)?;
+        let before = self.database.state().await?;
+        if request.recovery_generation != before.recovery_generation {
+            return Err(Status::unauthenticated("recovery generation changed"));
+        }
+        let access = self
+            .require_access(
+                &peer,
+                context.clone(),
+                Action::WorkspaceCreate,
+                policy::platform(),
+            )
+            .await?;
+        let client = self
+            .database
+            .pool
+            .get()
+            .await
+            .map_err(|_| Status::unavailable("control database pool unavailable"))?;
+        let row = client.query_opt(
+            "SELECT r.owner_id,r.home_bytes,r.state,w.uid FROM ofz.reservations r LEFT JOIN ofz.workspaces w ON w.reservation_id=r.id WHERE r.id=$1 AND r.owner_id=$2 AND r.state IN ('reserved','enrolled')",
+            &[&reservation_id, &human],
+        ).await.map_err(sql_error)?.ok_or_else(|| Status::permission_denied("capacity reservation unavailable"))?;
+        drop(client);
+        self.finish_read(&access, before.version).await?;
+        Ok(Response::new(proto::GetWorkspaceReservationResponse {
+            reservation_id: request.reservation_id,
+            owner_id: row.get(0),
+            home_bytes: row.get::<_, i64>(1) as u64,
+            state: row.get(2),
+            workspace_uid: row
+                .get::<_, Option<uuid::Uuid>>(3)
+                .map(|id| id.to_string())
+                .unwrap_or_default(),
+            recovery_generation: access.recovery_generation,
+            valid_until_unix_ms: access.valid_until_unix_ms,
+            audit_receipt_id: access.audit_receipt_id,
+        }))
+    }
+
+    async fn get_workspace_state(
+        &self,
+        request: Request<proto::GetWorkspaceStateRequest>,
+    ) -> Result<Response<proto::GetWorkspaceStateResponse>, Status> {
+        let _capacity = self.acquire()?;
+        let peer = transport::peer(&request)?;
+        if peer != policy::CONTROLLER_ID {
+            return Err(Status::permission_denied(
+                "controller runtime state required",
+            ));
+        }
+        let request = request.into_inner();
+        let context = context(request.context)?;
+        let before = self.database.state().await?;
+        decision::validate_context(&context, &peer, &before)?;
+        if context.actor != Some(decision::workload_actor(&peer))
+            || context.workspace_uid != request.workspace_uid
+        {
+            return Err(Status::permission_denied(
+                "controller workspace context required",
+            ));
+        }
+        let uid = decision::parse_uuid(&request.workspace_uid)?;
+        let revision = decision::workload(&self.native, &peer, Action::WorkspaceEnroll).await?;
+        let client = self
+            .database
+            .pool
+            .get()
+            .await
+            .map_err(|_| Status::unavailable("control database pool unavailable"))?;
+        let row = client.query_opt(
+            "SELECT w.owner_id,w.home_uid,w.reservation_id,w.home_bytes,w.runtime_epoch,w.running,w.state,EXISTS(SELECT 1 FROM ofz.memberships m WHERE m.human_id=w.owner_id AND m.role=1) FROM ofz.workspaces w WHERE w.uid=$1",
+            &[&uid],
+        ).await.map_err(sql_error)?.ok_or_else(|| Status::not_found("workspace state unavailable"))?;
+        drop(client);
+        let after = self.database.state().await?;
+        let valid_until = (before.now_ms + 2000).min(context.deadline_unix_ms);
+        if before.version != after.version
+            || before.recovery_generation != after.recovery_generation
+            || after.now_ms >= valid_until
+        {
+            return Err(Status::aborted("runtime authority changed while reading"));
+        }
+        let running: bool = row.get(5);
+        let workspace_state: String = row.get(6);
+        let runtime_allowed = running
+            && workspace_state == "active"
+            && row.get::<_, bool>(7)
+            && !after.fenced
+            && after.archive_healthy;
+        let mut receipt = store::receipt(
+            &context,
+            &peer,
+            policy::platform(),
+            Action::WorkspaceEnroll,
+            true,
+            "",
+            "controller runtime state",
+        );
+        receipt.revision = revision;
+        receipt.recovery_generation = after.recovery_generation;
+        let audit_receipt_id = self.database.audit(&receipt, "").await?;
+        let finished = self.database.state().await?;
+        if finished.version != after.version
+            || finished.recovery_generation != after.recovery_generation
+            || finished.now_ms >= valid_until
+        {
+            return Err(Status::aborted(
+                "runtime authority changed before disclosure",
+            ));
+        }
+        Ok(Response::new(proto::GetWorkspaceStateResponse {
+            workspace_uid: request.workspace_uid,
+            owner_id: row.get(0),
+            home_uid: row.get::<_, uuid::Uuid>(1).to_string(),
+            reservation_id: row.get::<_, uuid::Uuid>(2).to_string(),
+            home_bytes: row.get::<_, i64>(3) as u64,
+            runtime_epoch: row
+                .get::<_, Option<uuid::Uuid>>(4)
+                .map(|id| id.to_string())
+                .unwrap_or_default(),
+            running,
+            state: workspace_state,
+            runtime_allowed: runtime_allowed && !finished.fenced && finished.archive_healthy,
+            recovery_generation: finished.recovery_generation,
+            valid_until_unix_ms: valid_until,
+            audit_receipt_id,
+            policy_version: finished.version,
+        }))
+    }
     async fn authorize_command(
         &self,
         request: Request<proto::AuthorizeCommandRequest>,
@@ -283,6 +427,7 @@ impl AuthorizationService for Service {
             version: state.version,
             recovery_generation: state.recovery_generation,
             fenced: state.fenced,
+            archive_healthy: state.archive_healthy,
         }))
     }
     async fn list_access(

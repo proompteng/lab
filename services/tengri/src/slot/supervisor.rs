@@ -5,7 +5,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::State,
-    http::{Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode},
     response::Response,
     routing::{get, post},
 };
@@ -28,14 +28,54 @@ use super::{
 
 pub const CLAIM_UID_HEADER: &str = "x-tengri-microvm-uid";
 pub const CLAIM_EPOCH_HEADER: &str = "x-tengri-claim-epoch";
+pub const LEADER_OWNER_HEADER: &str = "x-tengri-leader-owner";
+pub const LEADER_GENERATION_HEADER: &str = "x-tengri-leader-generation";
 
 #[derive(Clone)]
 struct Supervisor {
     state: watch::Sender<SlotState>,
     gate: Arc<Mutex<()>>,
+    database: Arc<crate::control::Database>,
+    leadership: watch::Sender<Option<crate::control::Fence>>,
 }
 
 impl Supervisor {
+    async fn wait_for_leadership_loss(&self, fence: crate::control::Fence) {
+        let mut changes = self.leadership.subscribe();
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => { if self.require_leadership(Some(fence)).await.is_err() { return; } }
+                result = changes.changed() => { if result.is_err() || *changes.borrow() != Some(fence) { return; } }
+            }
+        }
+    }
+
+    async fn require_leadership(
+        &self,
+        expected: Option<crate::control::Fence>,
+    ) -> Result<crate::control::Fence, (StatusCode, String)> {
+        let fence = (*self.leadership.borrow()).ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "controller fence not installed".into(),
+            )
+        })?;
+        if expected.is_some_and(|expected| expected != fence) {
+            return Err((
+                StatusCode::CONFLICT,
+                "controller fencing generation changed".into(),
+            ));
+        }
+        self.database.require_fence(fence).await.map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "controller leadership unavailable".into(),
+            )
+        })?;
+        Ok(fence)
+    }
+
     fn fence(
         &self,
         current: &SlotState,
@@ -83,6 +123,8 @@ pub async fn run() -> anyhow::Result<()> {
     let pod_uid = env::var("TENGRI_POD_UID")?;
     let identity = crate::identity::WorkloadIdentity::for_slot(&namespace, &pod_uid).await?;
     let tls = identity.slot_server_tls(&namespace)?;
+    let database = Arc::new(crate::control::Database::from_environment("tengri_supervisor").await?);
+    database.verify_schema().await?;
     let health = Router::new()
         .route("/livez", get(|| async { StatusCode::OK }))
         .route(
@@ -107,7 +149,7 @@ pub async fn run() -> anyhow::Result<()> {
     let health_task = tokio::spawn(async move { axum::serve(health_listener, health).await });
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     tokio::select! {
-        result = serve(listener, tls) => result,
+        result = serve(listener, tls, database) => result,
         result = health_task => { result??; anyhow::bail!("supervisor health listener stopped") },
     }
 }
@@ -115,14 +157,18 @@ pub async fn run() -> anyhow::Result<()> {
 pub(super) async fn serve(
     listener: TcpListener,
     tls: Arc<rustls::ServerConfig>,
+    database: Arc<crate::control::Database>,
 ) -> anyhow::Result<()> {
     let (state, _) = watch::channel(SlotState::Preparing);
     let supervisor = Supervisor {
         state,
         gate: Arc::new(Mutex::new(())),
+        database,
+        leadership: watch::channel(None).0,
     };
     let router = Router::new()
         .route("/slot/status", get(status))
+        .route("/slot/fence", post(install_fence))
         .route("/slot/restore", post(restore))
         .route("/slot/sleep", post(sleep))
         .route("/slot/stop", post(stop))
@@ -146,6 +192,61 @@ pub(super) async fn serve(
     Ok(())
 }
 
+async fn install_fence(
+    State(supervisor): State<Supervisor>,
+    Json(fence): Json<crate::control::Fence>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    supervisor
+        .database
+        .require_fence(fence)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::CONFLICT,
+                "controller fencing generation rejected".into(),
+            )
+        })?;
+    let _guard = supervisor.gate.lock().await;
+    if supervisor.leadership.borrow().is_some_and(|installed| {
+        installed.generation > fence.generation
+            || installed.generation == fence.generation && installed.owner != fence.owner
+    }) {
+        return Err((
+            StatusCode::CONFLICT,
+            "controller fencing generation regressed".into(),
+        ));
+    }
+    supervisor.leadership.send_replace(Some(fence));
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn request_fence(headers: &HeaderMap) -> Result<crate::control::Fence, (StatusCode, String)> {
+    let invalid = || {
+        (
+            StatusCode::UNAUTHORIZED,
+            "controller fencing headers required".into(),
+        )
+    };
+    if headers.get_all(LEADER_OWNER_HEADER).iter().count() != 1
+        || headers.get_all(LEADER_GENERATION_HEADER).iter().count() != 1
+    {
+        return Err(invalid());
+    }
+    let owner = headers
+        .get(LEADER_OWNER_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(invalid)?;
+    let generation = headers
+        .get(LEADER_GENERATION_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(invalid)?;
+    crate::control::Fence { owner, generation }
+        .validate()
+        .map_err(|_| invalid())
+}
+
 async fn status(
     State(supervisor): State<Supervisor>,
 ) -> Result<Json<SlotStatus>, (StatusCode, String)> {
@@ -159,30 +260,50 @@ async fn status(
 
 async fn restore(
     State(supervisor): State<Supervisor>,
+    headers: HeaderMap,
     Json(claim): Json<Claim>,
 ) -> Result<Json<SlotStatus>, (StatusCode, String)> {
-    lifecycle(&supervisor, &CommandRequest::Restore { claim }).await
+    lifecycle(
+        &supervisor,
+        request_fence(&headers)?,
+        &CommandRequest::Restore { claim },
+    )
+    .await
 }
 
 async fn sleep(
     State(supervisor): State<Supervisor>,
+    headers: HeaderMap,
     Json(claim): Json<Claim>,
 ) -> Result<Json<SlotStatus>, (StatusCode, String)> {
-    lifecycle(&supervisor, &CommandRequest::Sleep { claim }).await
+    lifecycle(
+        &supervisor,
+        request_fence(&headers)?,
+        &CommandRequest::Sleep { claim },
+    )
+    .await
 }
 
 async fn stop(
     State(supervisor): State<Supervisor>,
+    headers: HeaderMap,
     Json(claim): Json<Claim>,
 ) -> Result<Json<SlotStatus>, (StatusCode, String)> {
-    lifecycle(&supervisor, &CommandRequest::Stop { claim }).await
+    lifecycle(
+        &supervisor,
+        request_fence(&headers)?,
+        &CommandRequest::Stop { claim },
+    )
+    .await
 }
 
 async fn lifecycle(
     supervisor: &Supervisor,
+    leadership: crate::control::Fence,
     request: &CommandRequest,
 ) -> Result<Json<SlotStatus>, (StatusCode, String)> {
     let _guard = supervisor.gate.lock().await;
+    supervisor.require_leadership(Some(leadership)).await?;
     if matches!(
         request,
         CommandRequest::Sleep { .. } | CommandRequest::Stop { .. }
@@ -192,7 +313,10 @@ async fn lifecycle(
             .map_err(lifecycle_error)?;
         supervisor.fence(&current.state, request)?;
     }
+    drop(_guard);
     let result = runner::command(request).await;
+    let _guard = supervisor.gate.lock().await;
+    supervisor.require_leadership(Some(leadership)).await?;
     let status = match result {
         Ok(status) => status,
         Err(error) => {
@@ -222,6 +346,7 @@ async fn forward(
     let started = std::time::Instant::now();
     // The status read and transport admission cannot overlap a sleep fence.
     let guard = supervisor.gate.lock().await;
+    let leadership = supervisor.require_leadership(None).await?;
     let status = runner::command(&CommandRequest::Status)
         .await
         .map_err(lifecycle_error)?;
@@ -286,11 +411,13 @@ async fn forward(
             "real KVM proxy HTTP/2: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
+        let authority = supervisor.clone();
         tokio::spawn(async move {
             tokio::pin!(connection);
             tokio::select! {
                 _ = &mut connection => {},
                 _ = state.wait_for(|state| !state.serves(&expected)) => {},
+                _ = authority.wait_for_leadership_loss(leadership) => {},
             }
         });
         let response = sender
@@ -308,12 +435,14 @@ async fn forward(
         let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
             .map_err(|error| lifecycle_error(error.into()))?;
+        let authority = supervisor.clone();
         tokio::spawn(async move {
             let connection = connection.with_upgrades();
             tokio::pin!(connection);
             tokio::select! {
                 _ = &mut connection => {},
                 _ = state.wait_for(|state| !state.serves(&expected)) => {},
+                _ = authority.wait_for_leadership_loss(leadership) => {},
             }
         });
         let mut response = sender
@@ -323,6 +452,7 @@ async fn forward(
         if response.status() == StatusCode::SWITCHING_PROTOCOLS {
             let upstream_upgrade = hyper::upgrade::on(&mut response);
             let mut state = supervisor.state.subscribe();
+            let authority = supervisor.clone();
             tokio::spawn(async move {
                 if let (Ok(downstream), Ok(upstream)) =
                     tokio::join!(downstream_upgrade, upstream_upgrade)
@@ -332,6 +462,7 @@ async fn forward(
                     tokio::select! {
                         _ = tokio::io::copy_bidirectional(&mut downstream, &mut upstream) => {},
                         _ = state.wait_for(|state| !state.serves(&claim)) => {},
+                        _ = authority.wait_for_leadership_loss(leadership) => {},
                     }
                 }
             });
@@ -364,6 +495,8 @@ mod tests {
         let supervisor = Supervisor {
             state,
             gate: gate.clone(),
+            database: Arc::new(crate::control::Database::unconnected_fixture()),
+            leadership: watch::channel(None).0,
         };
         let response = forward(State(supervisor), request);
         futures::pin_mut!(response);
@@ -384,6 +517,8 @@ mod tests {
         let supervisor = Supervisor {
             state,
             gate: Arc::new(Mutex::new(())),
+            database: Arc::new(crate::control::Database::unconnected_fixture()),
+            leadership: watch::channel(None).0,
         };
         for claim in [
             Claim {
@@ -421,6 +556,8 @@ mod tests {
         let supervisor = Supervisor {
             state,
             gate: Arc::new(Mutex::new(())),
+            database: Arc::new(crate::control::Database::unconnected_fixture()),
+            leadership: watch::channel(None).0,
         };
         for wrong in [
             Claim {

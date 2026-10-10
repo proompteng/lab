@@ -1,97 +1,103 @@
-import { createHash, createHmac } from 'node:crypto'
+import { create, fromBinary } from '@bufbuild/protobuf'
 import { describe, expect, test } from 'bun:test'
-import { parseTengriSigningSecrets, signTengriMetadata, signingPayload } from './internal-auth'
+import vector from '../../../../../services/tengri/fixtures/ofz-request-v1.json'
+import { ActorSchema, RequestContextSchema } from './generated/proompteng/authz/v1/authz_pb'
+import { signTengriMetadata } from './internal-auth'
 
-describe('Tengri internal request authentication', () => {
-  test('signs the exact subject, timestamp, and nonce accepted by the Rust control plane', () => {
-    const secret = 's'.repeat(32)
-    const metadata = signTengriMetadata('github:42', secret, {
-      rpcPath: '/proompteng.runtime.v1.MicroVMControlPlane/GetAgent',
-      body: new Uint8Array([10, 7, 97, 103, 101, 110, 116, 45, 49]),
-      timestamp: 1_700_000_000,
-      nonce: 'nonce-1234567890',
-    })
-    const bodyHash = createHash('sha256')
-      .update(new Uint8Array([10, 7, 97, 103, 101, 110, 116, 45, 49]))
-      .digest('hex')
-    const expected = createHmac('sha256', secret)
-      .update(
-        signingPayload(
-          metadata.subject,
-          metadata.timestamp,
-          metadata.nonce,
-          '/proompteng.runtime.v1.MicroVMControlPlane/GetAgent',
-          bodyHash,
-        ),
-      )
-      .digest('hex')
-    expect(metadata).toEqual({
-      subject: 'github:42',
-      timestamp: '1700000000',
-      nonce: 'nonce-1234567890',
-      signature: expected,
-    })
+const context = () => fromBinary(RequestContextSchema, Buffer.from(vector.contextBase64, 'base64'))
+const request = {
+  rpcPath: vector.rpcPath,
+  body: Buffer.from(vector.bodyHex, 'hex'),
+  nonce: vector.nonce,
+  nowUnixMs: vector.nowUnixMs,
+}
+const generation = BigInt(vector.recoveryGeneration)
+
+describe('Tengri signed Ofz context', () => {
+  test('matches the independent HMAC vector also verified by Rust', () => {
+    const signed = signTengriMetadata(context(), generation, vector.keyHex, request)
+    expect(signed.signature).toBe(vector.signature)
+    expect(Buffer.from(signed.context).toString('base64')).toBe(vector.contextBase64)
+    expect(signed.recoveryGeneration).toBe(vector.recoveryGeneration)
+    expect(signed).not.toHaveProperty('subject')
+    expect(signed).not.toHaveProperty('previousSignature')
   })
 
-  test('rejects caller-controlled identities, weak secrets, and malformed nonces', () => {
-    const request = {
-      rpcPath: '/proompteng.runtime.v1.MicroVMControlPlane/GetAgent',
-      body: new Uint8Array(),
+  test('binds the body, RPC, actor, session, UID, epoch, origin, deadline and recovery generation', () => {
+    const original = signTengriMetadata(context(), generation, vector.keyHex, request).signature
+    for (const changed of [
+      { actor: create(ActorSchema, { identity: { case: 'humanId', value: 'b'.repeat(64) } }) },
+      { sessionId: '55555555-5555-4555-8555-555555555555' },
+      { workspaceUid: '55555555-5555-4555-8555-555555555555' },
+      { runtimeEpoch: '55555555-5555-4555-8555-555555555555' },
+      { origin: 'https://other.example' },
+      { deadlineUnixMs: BigInt(vector.nowUnixMs + 4000) },
+    ]) {
+      expect(
+        signTengriMetadata(
+          create(RequestContextSchema, { ...context(), ...changed }),
+          generation,
+          vector.keyHex,
+          request,
+        ).signature,
+      ).not.toBe(original)
     }
-    expect(() => signTengriMetadata('email:user@example.com', 's'.repeat(32), request)).toThrow('identity')
-    expect(() => signTengriMetadata('github:42', 'short', request)).toThrow('secret')
-    expect(() =>
-      signTengriMetadata('github:42', 's'.repeat(32), {
+    expect(signTengriMetadata(context(), generation + BigInt(1), vector.keyHex, request).signature).not.toBe(original)
+    expect(
+      signTengriMetadata(context(), generation, vector.keyHex, { ...request, body: new Uint8Array([1]) }).signature,
+    ).not.toBe(original)
+    expect(
+      signTengriMetadata(context(), generation, vector.keyHex, {
         ...request,
-        nonce: 'bad nonce',
-        timestamp: 1_700_000_000,
-      }),
-    ).toThrow('nonce')
+        rpcPath: '/proompteng.runtime.v1.MicroVMControlPlane/ListAgents',
+      }).signature,
+    ).not.toBe(original)
+  })
+
+  test('rejects incomplete context, noncanonical credentials, old key bundles and expired decisions', () => {
+    for (const changed of [
+      {
+        actor: create(ActorSchema, { identity: { case: 'workloadId', value: 'spiffe://untrusted.example/workload' } }),
+      },
+      { actor: create(ActorSchema, { identity: { case: 'humanId', value: 'github:42' } }) },
+      { sessionId: '' },
+      { sessionId: '00000000-0000-0000-0000-000000000000' },
+      { traceId: '' },
+      { grantId: '55555555-5555-4555-8555-555555555555' },
+      { workspaceUid: 'tengri/agent' },
+      { runtimeEpoch: '1' },
+      { contractVersion: 0 },
+      { origin: 'http://proompteng.ai' },
+      { origin: 'https://proompteng.ai/' },
+      { deadlineUnixMs: BigInt(vector.nowUnixMs) },
+      { deadlineUnixMs: BigInt(vector.nowUnixMs + 5001) },
+    ]) {
+      expect(() =>
+        signTengriMetadata(
+          create(RequestContextSchema, { ...context(), ...changed }),
+          generation,
+          vector.keyHex,
+          request,
+        ),
+      ).toThrow()
+    }
+    for (const key of ['short', '68'.repeat(31), 'A'.repeat(64), `${vector.keyHex},${vector.keyHex}`]) {
+      expect(() => signTengriMetadata(context(), generation, key, request)).toThrow('key')
+    }
+    for (const nonce of ['short', `${vector.nonce}=`, `${vector.nonce.slice(0, -1)}9`, 'a'.repeat(44)]) {
+      expect(() => signTengriMetadata(context(), generation, vector.keyHex, { ...request, nonce })).toThrow('nonce')
+    }
+    expect(() => signTengriMetadata(context(), BigInt(0), vector.keyHex, request)).toThrow()
     expect(() =>
-      signTengriMetadata('github:42', 's'.repeat(32), {
-        ...request,
-        rpcPath: '/untrusted/DeleteAgent',
-      }),
+      signTengriMetadata(context(), generation, vector.keyHex, { ...request, rpcPath: '/untrusted/GetAgent' }),
     ).toThrow('RPC')
   })
 
-  test('binds signatures to both the RPC and serialized request body', () => {
-    const secret = 's'.repeat(32)
-    const base = {
-      rpcPath: '/proompteng.runtime.v1.MicroVMControlPlane/GetAgent',
-      body: new Uint8Array([10, 1, 97]),
-      timestamp: 1_700_000_000,
-      nonce: 'nonce-1234567890',
-    }
-
-    const original = signTengriMetadata('github:42', secret, base)
-    const changedMethod = signTengriMetadata('github:42', secret, {
-      ...base,
-      rpcPath: '/proompteng.runtime.v1.MicroVMControlPlane/DeleteAgent',
-    })
-    const changedBody = signTengriMetadata('github:42', secret, {
-      ...base,
-      body: new Uint8Array([10, 1, 98]),
-    })
-
-    expect(changedMethod.signature).not.toBe(original.signature)
-    expect(changedBody.signature).not.toBe(original.signature)
-  })
-
-  test('signs with both keys during a bounded HMAC rotation', () => {
-    const current = 'n'.repeat(32)
-    const previous = 'o'.repeat(32)
-    const options = {
-      rpcPath: '/proompteng.runtime.v1.MicroVMControlPlane/GetAgent',
-      body: new Uint8Array([10, 1, 97]),
-      timestamp: 1_700_000_000,
-      nonce: 'nonce-1234567890',
-    }
-    const dual = signTengriMetadata('github:42', [current, previous], options)
-
-    expect(dual.signature).toBe(signTengriMetadata('github:42', current, options).signature)
-    expect(dual.previousSignature).toBe(signTengriMetadata('github:42', previous, options).signature)
-    expect(parseTengriSigningSecrets(`${current},${previous}`)).toEqual([current, previous])
-    expect(parseTengriSigningSecrets(`${current},${previous},${'x'.repeat(32)}`)).toBeNull()
+  test('allocates a canonical independent 256-bit nonce for each request', () => {
+    const first = signTengriMetadata(context(), generation, vector.keyHex, { ...request, nonce: undefined })
+    const next = signTengriMetadata(context(), generation, vector.keyHex, { ...request, nonce: undefined })
+    expect(first.nonce).toHaveLength(43)
+    expect(first.nonce).not.toBe(next.nonce)
+    expect(first.signature).not.toBe(next.signature)
   })
 })

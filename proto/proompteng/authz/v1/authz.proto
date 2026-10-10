@@ -17,6 +17,10 @@ service AuthorizationService {
   rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
   rpc InspectSession(InspectSessionRequest) returns (InspectSessionResponse);
   rpc GetPolicyState(GetPolicyStateRequest) returns (GetPolicyStateResponse);
+  // Exact controller identity only. Denied runtime state remains visible so it can be fenced.
+  rpc GetWorkspaceState(GetWorkspaceStateRequest) returns (GetWorkspaceStateResponse);
+  // Exact controller identity only, with the initiating human session checked by Ofz.
+  rpc GetWorkspaceReservation(GetWorkspaceReservationRequest) returns (GetWorkspaceReservationResponse);
 }
 
 enum Action {
@@ -216,6 +220,23 @@ message ReserveWorkspace {
   uint64 home_bytes = 2;
 }
 
+message GetWorkspaceReservationRequest {
+  RequestContext context = 1;
+  string reservation_id = 2;
+  uint64 recovery_generation = 3;
+}
+
+message GetWorkspaceReservationResponse {
+  string reservation_id = 1;
+  string owner_id = 2;
+  uint64 home_bytes = 3;
+  string state = 4;
+  string workspace_uid = 5;
+  uint64 recovery_generation = 6;
+  uint64 valid_until_unix_ms = 7;
+  string audit_receipt_id = 8;
+}
+
 message ReleaseReservation {
   string reservation_id = 1;
 }
@@ -228,6 +249,12 @@ message SetWorkspaceRuntime {
 
 message RemoveWorkspace {
   string workspace_uid = 1;
+}
+
+message CompleteWorkspaceRemoval {
+  string workspace_uid = 1;
+  string home_uid = 2;
+  string reservation_id = 3;
 }
 
 message EmergencyAccess {
@@ -260,6 +287,7 @@ message ExecuteCommandRequest {
     ReserveWorkspace reserve_workspace = 15;
     ReleaseReservation release_reservation = 16;
     SetWorkspaceRuntime set_workspace_runtime = 17;
+    CompleteWorkspaceRemoval complete_workspace_removal = 18;
   }
 }
 
@@ -280,6 +308,8 @@ message CommandReceipt {
   string agent_credential = 6;
   // True when recovery observed an applied marker after losing the original write receipt.
   bool recovered_revision = 7;
+  // Original committed runtime intent, preserved across retries and later transitions.
+  SetWorkspaceRuntime runtime_intent = 8;
 }
 
 message ExecuteCommandResponse {
@@ -420,4 +450,27 @@ message GetPolicyStateResponse {
   uint64 version = 1;
   uint64 recovery_generation = 2;
   bool fenced = 3;
+  bool archive_healthy = 4;
+}
+
+message GetWorkspaceStateRequest {
+  RequestContext context = 1;
+  string workspace_uid = 2;
+}
+
+message GetWorkspaceStateResponse {
+  string workspace_uid = 1;
+  string owner_id = 2;
+  string home_uid = 3;
+  string reservation_id = 4;
+  uint64 home_bytes = 5;
+  string runtime_epoch = 6;
+  bool running = 7;
+  string state = 8;
+  // Requires healthy current authority, active owner membership and running, non-quarantined state.
+  bool runtime_allowed = 9;
+  uint64 recovery_generation = 10;
+  uint64 valid_until_unix_ms = 11;
+  string audit_receipt_id = 12;
+  uint64 policy_version = 13;
 }

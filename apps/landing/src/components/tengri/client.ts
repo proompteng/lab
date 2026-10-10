@@ -1,5 +1,6 @@
 import type { TengriAction, TengriDesktopSnapshot, TengriErrorCode } from '@/lib/tengri/types'
 import { readCodexHistory } from '@/lib/tengri/codex-history'
+import { z } from 'zod'
 
 export class TengriRequestError extends Error {
   readonly status: number
@@ -92,9 +93,10 @@ export async function runTengriAction<Result>(
 }
 
 async function postTengriAction<Result>(action: TengriAction, options?: TengriActionOptions) {
+  const pending = prepareLifecycleRequest(action)
   const response = await fetch('/api/tengri', {
     method: 'POST',
-    body: JSON.stringify(action),
+    body: JSON.stringify(pending.action),
     cache: 'no-store',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -110,7 +112,48 @@ async function postTengriAction<Result>(action: TengriAction, options?: TengriAc
     )) as Result
   }
   const payload = await decodeResponse<{ result: Result }>(response)
+  pending.complete()
   return payload.result
+}
+
+const pendingLifecycleKey = 'tengri.pending-lifecycle.v1'
+const pendingLifecycleSchema = z
+  .array(
+    z.strictObject({
+      key: z.string().max(200),
+      payload: z.string().max(1024),
+      operationId: z.uuid(),
+    }),
+  )
+  .max(16)
+
+function prepareLifecycleRequest(action: TengriAction) {
+  if (!['create-agent', 'sleep-agent', 'resume-agent', 'delete-agent'].includes(action.action)) {
+    return { action, complete: () => {} }
+  }
+  const key =
+    action.action === 'create-agent'
+      ? action.action
+      : `${action.action}/${'workspaceUid' in action ? action.workspaceUid : ''}`
+  const payload = JSON.stringify(action)
+  const read = () => pendingLifecycleSchema.parse(JSON.parse(sessionStorage.getItem(pendingLifecycleKey) ?? '[]'))
+  const entries = read()
+  const existing = entries.find((entry) => entry.key === key)
+  if (existing && existing.payload !== payload) {
+    throw new Error('A workspace change is still pending. Retry it with the same name before starting another.')
+  }
+  const pending = existing ?? { key, payload, operationId: crypto.randomUUID() }
+  if (!existing) {
+    if (entries.length >= 16) throw new Error('Retry your pending workspace changes before starting another.')
+    sessionStorage.setItem(pendingLifecycleKey, JSON.stringify([...entries, pending]))
+  }
+  return {
+    action: { ...action, operationId: pending.operationId },
+    complete: () => {
+      const current = read().filter((entry) => entry.key !== key || entry.operationId !== pending.operationId)
+      sessionStorage.setItem(pendingLifecycleKey, JSON.stringify(current))
+    },
+  }
 }
 
 function guestActionAgentId(action: TengriAction) {

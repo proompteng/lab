@@ -129,7 +129,7 @@ impl Metrics {
                 "# HELP tengri_guest_failures_total Guest API or readiness failures.\n",
                 "# TYPE tengri_guest_failures_total counter\n",
                 "tengri_guest_failures_total {guest_failures}\n",
-                "# HELP tengri_quota_rejections_total Requests rejected by the global MicroVM quota.\n",
+                "# HELP tengri_quota_rejections_total Requests rejected by Ofz reservations or the Kubernetes quota.\n",
                 "# TYPE tengri_quota_rejections_total counter\n",
                 "tengri_quota_rejections_total {quota}\n",
                 "# HELP tengri_pty_sessions_active PTY sessions believed active by this control-plane process.\n",

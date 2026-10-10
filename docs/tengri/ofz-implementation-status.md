@@ -90,3 +90,25 @@ and returned HTTP 429 on the seventh request under the corrected configuration. 
 production ingress acceptance remains part of P8. Fifty-seven focused inventory, rollout and ingress checks pass.
 The enabled-app inventory follows declared nested Kustomize inputs, excluding prepared directories until referenced;
 only Ofz's classification changed in the current repository inventory.
+
+P4 source is in progress. The real PostgreSQL 18.6 / SpiceDB fixture passes 19 shared-runtime tests, including
+atomic one-use redemption across replicas, bounded pool failure, hash-only storage, preview/session/owner/epoch
+isolation, global capacity and expiry, signed body/replay rejection, database leader CAS/expiry, supervisor role
+restrictions, replay protection after a database backend dies, and cleanup that preserves replaced homes or unproven
+writers. The Rust unit suite passes 120 tests with 23 explicit integration/native fixtures excluded. Two real Go/Rust
+RPC interoperability fixtures also pass. The Landing suite passes 303 tests and TypeScript; 24 release-workflow and
+22 inventory regressions pass. The real control fixture passes 29 commands with 91 immutable receipts.
+
+The Chromium/Keycloak/Ofz fixture passes 54 assertions, including the real controller SPIFFE connection, an immutable
+runtime receipt after a later stop, bounded stream revocation, and recovery of the same passkey session after the serving
+Ofz process is killed. Its TCP proxy models endpoint removal; this does not establish Kubernetes or database failover.
+The current patch removes the direct-SpiceDB client/schema and ConfigMap nonce path, uses stable lifecycle operation IDs
+with a separate original-request hash, and waits for the controller's observed policy version before acknowledging a
+transition. It projects Ofz's current owner while preserving the retained-home binding. Breaking CRD changes remain
+prepared for the coordinated cutover. P4 has not been merged or deployed; replica/database deployment,
+Keycloak HA and native KVM qualification remain open.
+
+P3 merged as PR #14906 at `75b75987f047edaf1a6403a0556d5189af667065` on 2026-10-10. All required checks,
+including native image builds on both architectures, passed on its reviewed head. This is source/CI evidence; the
+release hold and live identity/custodian gates remain. P4's breaking CRD is staged under Tengri's unreferenced
+`prepared/` directory, so merging source cannot invalidate the current controller's production API before cutover.

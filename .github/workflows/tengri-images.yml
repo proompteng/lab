@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'services/tengri/**'
+      - 'services/ofz/**'
+      - 'proto/proompteng/authz/**'
       - 'services/nanoagent/**'
       - '.github/workflows/tengri-images.yml'
       - 'argocd/applications/tengri/**'
@@ -16,6 +18,8 @@ on:
     paths:
       - 'apps/landing/**'
       - 'services/tengri/**'
+      - 'services/ofz/**'
+      - 'proto/proompteng/authz/**'
       - 'services/nanoagent/**'
       - '.github/workflows/tengri-images.yml'
       - 'argocd/applications/tengri/**'
@@ -76,11 +80,11 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked --all-targets
-          bash test-authz.sh
+          bash test-runtime.sh
           bash test-rpc-interop.sh
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
           diff -u /tmp/tengri-crd.yaml crd.yaml
-          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
+          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml
 
   validate-nanoagent:
     name: Validate Nanoagent
@@ -168,6 +172,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          build-contexts: |
+            ofz-proto=proto
+            ofz-catalog=services/ofz
           platforms: linux/${{ matrix.architecture }}
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           load: ${{ github.event_name == 'pull_request' && (matrix.service == 'nanoagent' || matrix.architecture == 'amd64') }}
@@ -197,6 +204,8 @@ jobs:
             --file services/tengri/Dockerfile --target kvm-test \
             --cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-amd64" \
             --cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-kvm-amd64" \
+            --build-context ofz-proto=proto \
+            --build-context ofz-catalog=services/ofz \
             --build-context nanoagent-tests=.artifacts/nanoagent-tests \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --tag tengri-kvm-test:fixture services/tengri
@@ -261,8 +270,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install execution network tools
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends iproute2
+      - name: Set up Rust for the owning Ofz migrator
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+
+      - name: Install execution network and fixture build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends iproute2 build-essential protobuf-compiler openssl
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -297,6 +311,8 @@ jobs:
           load: true
           tags: tengri-kvm-test:validation
           build-contexts: |
+            ofz-proto=proto
+            ofz-catalog=services/ofz
             nanoagent-tests=docker-image://${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: |
             type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}
@@ -309,7 +325,7 @@ jobs:
           TENGRI_KVM_GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           TENGRI_KVM_OUTPUT: ${{ github.workspace }}/.artifacts/kvm
           TENGRI_KVM_SAMPLES: ${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}
-        run: bash services/tengri/test-kvm.sh
+        run: bash services/ofz/test-control.sh kvm
 
       - name: Retain KVM diagnostics
         if: always()

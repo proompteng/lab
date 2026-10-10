@@ -88,12 +88,12 @@ pub fn actor_id(context: &RequestContext) -> Result<String, Status> {
     actor.subject().map(|(_, id)| id)
 }
 
-pub async fn workload(native: &Native, peer: &str, action: Action) -> Result<(), Status> {
+pub async fn workload(native: &Native, peer: &str, action: Action) -> Result<String, Status> {
     if !policy::allowed_workload(peer) {
         return Err(Status::unauthenticated("unattested workload"));
     }
     let permission = action.permission()?;
-    let (allowed, _) = native
+    let (allowed, revision) = native
         .check(&[Check::new(
             "platform",
             "lab",
@@ -105,7 +105,7 @@ pub async fn workload(native: &Native, peer: &str, action: Action) -> Result<(),
     if !allowed {
         return Err(Status::permission_denied("workload action denied"));
     }
-    Ok(())
+    Ok(revision)
 }
 
 pub async fn session(

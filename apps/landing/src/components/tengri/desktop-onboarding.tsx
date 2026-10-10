@@ -351,7 +351,7 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
     setBusy(true)
     setError('')
     try {
-      await runTengriAction<TengriAgent>({ action: 'resume-agent', agentId: agent.id })
+      await runTengriAction<TengriAgent>({ action: 'resume-agent', agentId: agent.id, workspaceUid: agent.uid })
       await onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Agent could not be resumed')
@@ -391,7 +391,7 @@ function FailedAgentWindow({
     setDeleteBusy(true)
     setError('')
     try {
-      await runTengriAction<null>({ action: 'delete-agent', agentId: agent.id })
+      await runTengriAction<null>({ action: 'delete-agent', agentId: agent.id, workspaceUid: agent.uid })
       onDeleted(agent)
       publishDeletedDesktopState(agent.id)
       setConfirmOpen(false)

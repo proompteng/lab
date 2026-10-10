@@ -1,49 +1,69 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto'
+import { toBinary } from '@bufbuild/protobuf'
+import { RequestContextSchema, type RequestContext } from './generated/proompteng/authz/v1/authz_pb'
+
+const uuid = /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export type SignedTengriMetadata = {
-  subject: string
-  timestamp: string
+  context: Uint8Array
+  recoveryGeneration: string
   nonce: string
   signature: string
-  previousSignature?: string
 }
 
 export function signTengriMetadata(
-  subject: string,
-  secret: string | readonly string[],
-  options: { rpcPath: string; body: Uint8Array; timestamp?: number; nonce?: string },
+  context: RequestContext,
+  recoveryGeneration: bigint,
+  key: string,
+  options: { rpcPath: string; body: Uint8Array; nonce?: string; nowUnixMs?: number },
 ): SignedTengriMetadata {
-  if (!/^github:\d+$/.test(subject)) throw new Error('Tengri identity is invalid')
-  const secrets = typeof secret === 'string' ? [secret] : [...secret]
-  if (secrets.length === 0 || secrets.length > 2 || secrets.some((value) => value.trim().length < 32)) {
-    throw new Error('Tengri signing secret is not configured')
-  }
-  const timestamp = Math.floor(options.timestamp ?? Date.now() / 1_000).toString()
-  const nonce = options.nonce ?? randomBytes(24).toString('base64url')
-  if (!/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) throw new Error('Tengri request nonce is invalid')
+  if (!/^[a-f0-9]{64}$/.test(key)) throw new Error('Tengri signing key must be one lowercase hexadecimal key')
+  const now = BigInt(options.nowUnixMs ?? Date.now())
+  const origin = new URL(context.origin)
+  if (
+    context.actor?.identity.case !== 'humanId' ||
+    !/^[a-f0-9]{64}$/.test(context.actor.identity.value) ||
+    !uuid.test(context.sessionId) ||
+    !uuid.test(context.traceId) ||
+    context.contractVersion !== 1 ||
+    context.grantId !== '' ||
+    (context.workspaceUid !== '' && !uuid.test(context.workspaceUid)) ||
+    (context.runtimeEpoch !== '' && !uuid.test(context.runtimeEpoch)) ||
+    context.deadlineUnixMs <= now ||
+    context.deadlineUnixMs > now + BigInt(5000) ||
+    origin.protocol !== 'https:' ||
+    origin.origin !== context.origin ||
+    origin.username !== '' ||
+    origin.password !== '' ||
+    recoveryGeneration <= BigInt(0) ||
+    recoveryGeneration > BigInt('18446744073709551615')
+  )
+    throw new Error('Tengri signed identity, runtime, origin or deadline is invalid')
   if (!/^\/proompteng\.runtime\.v1\.MicroVMControlPlane\/[A-Z][A-Za-z0-9]+$/.test(options.rpcPath)) {
     throw new Error('Tengri RPC identity is invalid')
   }
-  const bodyHash = createHash('sha256').update(options.body).digest('hex')
-  const payload = signingPayload(subject, timestamp, nonce, options.rpcPath, bodyHash)
-  const signatures = secrets.map((value) => createHmac('sha256', value.trim()).update(payload).digest('hex'))
+  const nonce = options.nonce ?? randomBytes(32).toString('base64url')
+  const nonceBytes = Buffer.from(nonce, 'base64url')
+  if (nonceBytes.length !== 32 || nonceBytes.toString('base64url') !== nonce) {
+    throw new Error('Tengri request nonce is invalid')
+  }
+  const bytes = toBinary(RequestContextSchema, context)
+  if (bytes.length > 2048) throw new Error('Tengri request context exceeds its bound')
+  const payload = signingPayload(options.rpcPath, options.body, nonce, bytes, recoveryGeneration)
   return {
-    subject,
-    timestamp,
+    context: bytes,
+    recoveryGeneration: recoveryGeneration.toString(),
     nonce,
-    signature: signatures[0],
-    ...(signatures[1] ? { previousSignature: signatures[1] } : {}),
+    signature: createHmac('sha256', Buffer.from(key, 'hex')).update(payload).digest('hex'),
   }
 }
 
-export function parseTengriSigningSecrets(bundle: string) {
-  const secrets = bundle
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean)
-  return secrets.length > 0 && secrets.length <= 2 && secrets.every((value) => value.length >= 32) ? secrets : null
-}
-
-export function signingPayload(subject: string, timestamp: string, nonce: string, rpcPath: string, bodyHash: string) {
-  return `${subject}\n${timestamp}\n${nonce}\n${rpcPath}\n${bodyHash}`
+export function signingPayload(
+  rpcPath: string,
+  body: Uint8Array,
+  nonce: string,
+  context: Uint8Array,
+  recoveryGeneration: bigint,
+) {
+  return `tengri.ofz.v1\n${rpcPath}\n${createHash('sha256').update(body).digest('hex')}\n${nonce}\n${Buffer.from(context).toString('base64url')}\n${recoveryGeneration}`
 }

@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer as httpServer } from 'node:http'
 import { createServer as httpsServer } from 'node:https'
 import path from 'node:path'
+import { createConnection, createServer as tcpServer, type Socket } from 'node:net'
 import { afterAll, expect, mock, test } from 'bun:test'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { chromium, expect as browserExpect } from '@playwright/test'
@@ -18,23 +19,20 @@ const root = path.resolve(import.meta.dir, '../../../../..')
 const processes: ReturnType<typeof spawn>[] = []
 const cleanups: (() => unknown)[] = []
 afterAll(async () => {
-  for (const child of processes) child.kill('SIGTERM')
   await Promise.all(
     processes.map(async (child) => {
-      if (child.exitCode !== null) return
-      await Promise.race([
-        once(child, 'exit'),
-        new Promise((resolve) =>
-          setTimeout(() => {
-            child.kill('SIGKILL')
-            resolve(undefined)
-          }, 5000),
-        ),
-      ])
+      if (child.exitCode !== null || child.signalCode !== null) return
+      child.kill('SIGTERM')
+      const deadline = setTimeout(() => child.kill('SIGKILL'), 5000)
+      try {
+        await once(child, 'exit')
+      } finally {
+        clearTimeout(deadline)
+      }
     }),
   )
   for (const cleanup of cleanups.reverse()) await cleanup()
-})
+}, 15_000)
 
 identityTest(
   'real browser, GitHub broker, passkey, BFF, SPIFFE Ofz and shared SQL sessions',
@@ -42,7 +40,7 @@ identityTest(
     const fixture = await createSpiffeFixture()
     cleanups.push(() => fixture.close())
     const ofz = fixture.certificate('ofz', 'spiffe://proompteng.ai/ns/ofz/sa/ofz-api')
-    fixture.include(ofz.svid)
+    fixture.include(ofz.svid, fixture.peer.svid)
     const settings = { ...process.env }
     cleanups.push(() => {
       for (const key of Object.keys(process.env)) if (!(key in settings)) delete process.env[key]
@@ -66,7 +64,7 @@ identityTest(
     })
     cleanups.push(() => admin.end())
     await admin.query(
-      "CREATE ROLE ofz_api LOGIN PASSWORD 'fixture-api'; CREATE ROLE ofz_archiver NOLOGIN; CREATE ROLE tengri_bff LOGIN PASSWORD 'fixture-bff'; CREATE ROLE tengri_controller NOLOGIN; CREATE ROLE tengri_migrator LOGIN PASSWORD 'fixture-migrator';",
+      "CREATE ROLE ofz_api LOGIN PASSWORD 'fixture-api'; CREATE ROLE ofz_archiver NOLOGIN; CREATE ROLE tengri_bff LOGIN PASSWORD 'fixture-bff'; CREATE ROLE tengri_controller LOGIN PASSWORD 'fixture-controller'; CREATE ROLE tengri_supervisor NOLOGIN; CREATE ROLE tengri_migrator LOGIN PASSWORD 'fixture-migrator';",
     )
     await admin.query('CREATE DATABASE tengri_control OWNER tengri_migrator')
     await admin.query('CREATE DATABASE keycloak')
@@ -520,35 +518,68 @@ identityTest(
       redirectUris: [base + '/api/auth/callback'],
       webOrigins: [base],
     })
-    const api = spawn(binary, ['serve'], {
-      env: {
-        ...common,
-        RUST_LOG: 'ofz=debug',
-        OFZ_DATABASE_DSN: `host=localhost port=${port} dbname=ofz_control user=ofz_api sslmode=require`,
-        OFZ_DATABASE_PASSWORD_FILE: apiPassword,
-        OFZ_SPICEDB_ENDPOINT: native,
-        OFZ_SPICEDB_KEY_FILE: process.env.OFZ_TEST_NATIVE_KEY_FILE,
-        OFZ_OIDC_ISSUER: issuer,
-        OFZ_OIDC_CLIENT_ID: 'tengri-bff',
-        OFZ_OIDC_CONNECT_IP: '127.0.0.1',
-        OFZ_OIDC_CA_FILE: path.join(fixture.directory, 'ca.pem'),
-        OFZ_LISTEN: `127.0.0.1:${ofzPort}`,
-        SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    processes.push(api)
     let apiLogs = ''
-    api.stdout?.on('data', (chunk) => {
-      apiLogs += String(chunk)
-    })
-    api.stderr?.on('data', (chunk) => {
-      apiLogs += String(chunk)
-    })
-    for (let attempt = 0; !apiLogs.includes('Ofz authorization API listening'); attempt++) {
-      if (api.exitCode !== null || attempt > 350) throw new Error('Fixture Ofz startup failed: ' + apiLogs.slice(-2000))
-      await new Promise((resolve) => setTimeout(resolve, 100))
+    const startApi = async (listenPort: number) => {
+      const api = spawn(binary, ['serve'], {
+        env: {
+          ...common,
+          RUST_LOG: 'ofz=debug',
+          OFZ_DATABASE_DSN: `host=localhost port=${port} dbname=ofz_control user=ofz_api sslmode=require`,
+          OFZ_DATABASE_PASSWORD_FILE: apiPassword,
+          OFZ_SPICEDB_ENDPOINT: native,
+          OFZ_SPICEDB_KEY_FILE: process.env.OFZ_TEST_NATIVE_KEY_FILE,
+          OFZ_OIDC_ISSUER: issuer,
+          OFZ_OIDC_CLIENT_ID: 'tengri-bff',
+          OFZ_OIDC_CONNECT_IP: '127.0.0.1',
+          OFZ_OIDC_CA_FILE: path.join(fixture.directory, 'ca.pem'),
+          OFZ_LISTEN: `127.0.0.1:${listenPort}`,
+          SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      processes.push(api)
+      let replicaLogs = ''
+      api.stdout?.on('data', (chunk) => {
+        replicaLogs = (replicaLogs + String(chunk)).slice(-16000)
+        apiLogs = (apiLogs + String(chunk)).slice(-16000)
+      })
+      api.stderr?.on('data', (chunk) => {
+        replicaLogs = (replicaLogs + String(chunk)).slice(-16000)
+        apiLogs = (apiLogs + String(chunk)).slice(-16000)
+      })
+      for (let attempt = 0; !replicaLogs.includes('Ofz authorization API listening'); attempt++) {
+        if (api.exitCode !== null || attempt > 350)
+          throw new Error('Fixture Ofz startup failed: ' + apiLogs.slice(-2000))
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      return api
     }
+    const firstApiPort = await freePort()
+    const secondApiPort = await freePort()
+    const firstApi = await startApi(firstApiPort)
+    await startApi(secondApiPort)
+    let activeApiPort = firstApiPort
+    const connections = new Set<Socket>()
+    const service = tcpServer((incoming) => {
+      const upstream = createConnection(activeApiPort, '127.0.0.1')
+      for (const socket of [incoming, upstream]) {
+        connections.add(socket)
+        socket.once('close', () => connections.delete(socket))
+        socket.on('error', () => {
+          incoming.destroy()
+          upstream.destroy()
+        })
+      }
+      incoming.once('close', () => upstream.destroy())
+      upstream.once('close', () => incoming.destroy())
+      incoming.pipe(upstream).pipe(incoming)
+    })
+    service.listen(ofzPort, '127.0.0.1')
+    await once(service, 'listening')
+    cleanups.push(() => {
+      for (const socket of connections) socket.destroy()
+      return new Promise<void>((resolve) => service.close(() => resolve()))
+    })
     const { ofzCall } = await import('./ofz')
     const { AuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
     await ofzCall(AuthorizationService.method.getPolicyState, {}).catch((error) => {
@@ -635,6 +666,83 @@ identityTest(
     const inspected = await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
     expect(inspected?.session.githubId).toBe('1')
 
+    if (!inspected) throw new Error('Verified fixture session missing')
+    await new Promise<void>((resolve, reject) => {
+      const runtime = spawn(
+        'cargo',
+        [
+          'test',
+          '--manifest-path',
+          path.join(root, 'services/tengri/Cargo.toml'),
+          '--locked',
+          '--bin',
+          'tengri',
+          'ofz_wire_runtime_lifecycle_and_authority',
+          '--',
+          '--ignored',
+          '--nocapture',
+        ],
+        {
+          env: {
+            ...process.env,
+            TENGRI_OFZ_WIRE_FIXTURE: '1',
+            TENGRI_OFZ_FIXTURE_HUMAN: inspected.session.humanId,
+            TENGRI_OFZ_FIXTURE_SESSION: inspected.session.id,
+            TENGRI_RUNTIME_STATE_FIXTURE: '1',
+            TENGRI_DATABASE_DSN: `host=localhost port=${port} dbname=tengri_control user=tengri_controller sslmode=require`,
+            TENGRI_DATABASE_PASSWORD_FILE: secret('controller-password', 'fixture-controller'),
+            TENGRI_DATABASE_CA_FILE: process.env.OFZ_TEST_CA_FILE || '',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      )
+      processes.push(runtime)
+      let output = ''
+      const retain = (bytes: Buffer) => {
+        output = (output + bytes.toString()).slice(-16000)
+      }
+      runtime.stdout?.on('data', retain)
+      runtime.stderr?.on('data', retain)
+      runtime.once('error', reject)
+      runtime.once('exit', (code) => {
+        if (code !== 0 || !output.includes('test result: ok. 1 passed; 0 failed')) {
+          reject(new Error(`Runtime Ofz wire fixture failed: ${output}`))
+          return
+        }
+        console.log(output.split('\n').find((line) => line.startsWith('PASS: real controller Ofz mTLS')))
+        resolve()
+      })
+    })
+
+    // Routing removes the failed backend; the unchanged gRPC target must reconnect to the surviving process.
+    const failoverStarted = Date.now()
+    activeApiPort = secondApiPort
+    firstApi.kill('SIGKILL')
+    await once(firstApi, 'exit')
+    for (const socket of connections) socket.destroy()
+    let survivingIdentity: Awaited<ReturnType<typeof getTengriIdentity>> | undefined
+    let failoverError: unknown
+    while (Date.now() - failoverStarted < 30_000) {
+      try {
+        survivingIdentity = await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
+        break
+      } catch (error) {
+        failoverError = error
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    }
+    if (!survivingIdentity)
+      throw new Error('Surviving Ofz replica did not recover the shared browser session within 30 seconds', {
+        cause: failoverError,
+      })
+    expect(survivingIdentity.session.id).toBe(inspected.session.id)
+    expect(Date.now() - failoverStarted).toBeLessThan(30_000)
+    await page.reload()
+    await browserExpect(page.getByRole('button', { name: 'Apply change', exact: true })).toBeVisible()
+    console.log(
+      'PASS: two real Ofz processes share SQL authority; unchanged client target recovers the same passkey session after SIGKILL of the serving replica',
+    )
+
     // Repeated bootstrap must rotate both credentials while retaining enrolled users/passkeys.
     const usersBefore = z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())
     const firstUser = usersBefore[0]
@@ -690,6 +798,9 @@ identityTest(
       )
     }
 
+    const administrationVersion = BigInt(
+      (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+    )
     const applyChange = async (status: number) => {
       const result = page.waitForResponse(
         (response) => response.url() === base + '/api/tengri/access' && response.request().method() === 'POST',
@@ -705,7 +816,9 @@ identityTest(
     await page.getByLabel('Reason', { exact: true }).fill('Isolated quota qualification')
     await applyChange(200)
     expect(identityLookups).toBeGreaterThan(0)
-    await browserExpect(page.getByText('Policy version 2', { exact: true })).toBeVisible()
+    await browserExpect(
+      page.getByText(`Policy version ${administrationVersion + BigInt(1)}`, { exact: true }),
+    ).toBeVisible()
     expect(
       (
         await control.query(
@@ -729,7 +842,9 @@ identityTest(
     await page.getByLabel('Enable this access', { exact: true }).check()
     await page.getByLabel('Reason', { exact: true }).fill('Admit an isolated member through the browser')
     await applyChange(200)
-    await browserExpect(page.getByText('Policy version 3', { exact: true })).toBeVisible()
+    await browserExpect(
+      page.getByText(`Policy version ${administrationVersion + BigInt(2)}`, { exact: true }),
+    ).toBeVisible()
     await browserExpect(page.getByText('GitHub #3', { exact: true })).toBeVisible()
 
     await control.query('UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-300001 WHERE id=$1', [inspected?.session.id])

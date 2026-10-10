@@ -86,7 +86,7 @@ impl Database {
             config.clone(),
             tls.clone(),
             ManagerConfig {
-                recycling_method: RecyclingMethod::Verified,
+                recycling_method: RecyclingMethod::Fast,
             },
         );
         let pool = Pool::builder(manager)

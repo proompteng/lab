@@ -7,10 +7,7 @@ service MicroVMControlPlane {
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc GetAgent(GetAgentRequest) returns (Agent);
   rpc WatchAgent(WatchAgentRequest) returns (stream Agent);
-  rpc SleepAgent(SleepAgentRequest) returns (Agent);
-  rpc ResumeAgent(ResumeAgentRequest) returns (Agent);
   rpc UpdatePowerSettings(UpdatePowerSettingsRequest) returns (Agent);
-  rpc DeleteAgent(DeleteAgentRequest) returns (Empty);
 
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
   rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
@@ -103,6 +100,9 @@ message Agent {
   optional uint32 idle_timeout_minutes = 17;
   // Immutable MicroVM metadata UID, used by every Ofz workspace policy.
   string uid = 18;
+  string runtime_epoch = 19;
+  // Ofz policy version whose runtime intent the controller has actually reconciled.
+  uint64 policy_version = 20;
 }
 
 message UpdatePowerSettingsRequest {
@@ -110,14 +110,11 @@ message UpdatePowerSettingsRequest {
   optional uint32 idle_timeout_minutes = 2;
 }
 
-message CreateAgentRequest { string display_name = 1; }
+message CreateAgentRequest { string display_name = 1; string reservation_id = 2; }
 message ListAgentsRequest {}
 message ListAgentsResponse { repeated Agent agents = 1; }
 message GetAgentRequest { string id = 1; }
 message WatchAgentRequest { string id = 1; }
-message SleepAgentRequest { string id = 1; }
-message ResumeAgentRequest { string id = 1; }
-message DeleteAgentRequest { string id = 1; }
 
 message FileEntry {
   string name = 1;

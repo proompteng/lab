@@ -110,5 +110,11 @@ minimum-administrator protection, stale MFA and fresh step-up, downgraded assura
 cookie replacement, logout and replay. Production custodian enrollment, runtime enforcement, HA and deployed acceptance
 remain migration gates.
 
+The shared-runtime checkpoint additionally exercises the real Rust controller client against Ofz over SPIFFE mTLS,
+versioned lifecycle intent and receipt recovery, exact retained-home removal completion, and a stream closed after a
+committed stop. Two real Ofz processes share the same control database; killing the serving process and routing new
+connections to its peer preserves the original opaque passkey session. This fixture models service endpoint removal;
+Kubernetes, synchronous database and Keycloak failover require the separate HA qualification.
+
 Prepared cutover resources live in [`argocd/applications/ofz/control-plane`](../../argocd/applications/ofz/control-plane/README.md).
 They are excluded from the active application until coordinated release, identity, archive, credential and migration gates pass.
