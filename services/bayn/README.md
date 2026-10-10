@@ -347,6 +347,13 @@ and persistence failures remain errors; recorded batches still recover against t
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
 
+Completed batch rereads load all requested candidates' claims, receipts and resolutions together, then retrieve
+matching observations in one grouped query. Each distinct observation crosses the database boundary once and its
+canonical content hash is verified once per read, with exact cycle, generation, snapshot, symbol and time membership
+checked for every request. A batch with resolved candidate evidence uses three queries including its plan/result
+read, independent of candidate count. Single-candidate evidence reads use the same verifier. Missing or corrupt
+evidence and claims for sealed unattempted candidates still fail verification; validation is not cached across reads.
+
 The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, after binding
 or a cold durable read. Every reread still queries PostgreSQL and requires full JSONB equality with that retained
 body. A match returns fresh completion and generation evidence without returning or decoding the full document body;

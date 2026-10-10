@@ -82,6 +82,14 @@ on both instances, `pending_restart=false`, one streaming quorum standby, and ex
 See [PostgreSQL replication settings](https://www.postgresql.org/docs/18/runtime-config-replication.html) and
 [CNPG configuration precedence](https://cloudnative-pg.io/docs/1.28/postgresql_conf/).
 
+Bayn sets `monitoring.metricsQueriesTTL: 1s` so the existing five-second metrics scrape obtains fresh catalog
+observations. CNPG otherwise caches query results for thirty seconds, even when the exporter is scraped more often.
+The one-second cache still coalesces closely spaced scrapes; this setting applies only to `bayn-db` and changes no
+database durability or application deadline. Verify the live Cluster field, both exporters' collection errors and
+scrape durations, and changes in the retained replication reply-age or active walsender query-age samples after
+GitOps reconciliation. A five-second scrape timestamp alone does not prove a fresh database observation.
+See [CNPG output caching](https://cloudnative-pg.io/docs/1.28/monitoring/#output-caching).
+
 Apply the reviewed `bootstrap` ApplicationSet change so Argo preserves the new Rook-managed Secret and ConfigMap
 fields. Let Rook provision its native claim and Bayn follow normal Kargo promotion. Require the common Rook sync
 operation to succeed. Report any pre-existing Ceph deep-scrub health warning separately. Preserve all retained storage

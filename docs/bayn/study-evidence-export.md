@@ -17,6 +17,19 @@ one observation at a time. Each query has a five-second server deadline. The com
 The new directory uses mode `0700`; its files use `0600`. It contains private broker-state and trading observations.
 Do not commit, publish, or paste the data file into logs. The command prints only the receipt.
 
+## Execution and storage
+
+Run the export in a separate research process with the existing database read access and a private output filesystem.
+Do not run full session exports inside Bayn API or execution-controller pods. Their `/tmp` volume is shared with
+the running service and limited to 256 MiB, while one admitted export can reach 512 MiB. A read-only database
+transaction still writes local files; exceeding the pod's temporary-storage limit can evict the trading worker.
+
+Before starting, verify both filesystem headroom and any container or volume quota. Reserve the full 512 MiB file
+bound plus receipt and operational headroom for each concurrent export, counting all retained complete and partial
+attempts on the same volume. A filesystem free-space check alone does not establish the pod's volume allowance.
+After a failed export, account for its partial directory before another attempt. Keep incomplete evidence on the
+research filesystem and use a new destination; do not accumulate retries on a service pod.
+
 ## Contents and integrity
 
 `batches.ndjson` begins with a `bayn.jev-study-session.v1` header containing the account binding hash, session date,
