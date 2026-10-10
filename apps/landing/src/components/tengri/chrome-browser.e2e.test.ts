@@ -34,7 +34,7 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
     if (socket.url().includes('/websockify')) sockets.push(socket)
   })
   const probeBrowser = () => context.request.get(browserOrigin, { ignoreHTTPSErrors: true })
-  await page.route('**/api/auth/sign-out', async (route) => {
+  await page.route('**/api/auth/logout', async (route) => {
     signOutActions.push('sign-out')
     await expect.poll(() => sockets.every((socket) => socket.isClosed())).toBe(true)
     expect((await probeBrowser()).status()).toBe(401)
@@ -62,6 +62,7 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
                   cpuMillis: 4000,
                   memoryMib: 8192,
                   workspaceGib: 32,
+                  uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
                   power: { idleTimeoutMinutes: 60 },
                   createdAt: '2026-09-08T00:00:00Z',
                   conditions: [],

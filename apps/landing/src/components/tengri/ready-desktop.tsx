@@ -14,7 +14,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 
-import { tengriAuthClient } from '@/lib/tengri/auth-client'
+import { signOutTengri } from '@/lib/tengri/auth-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
 import {
   APP_TITLES,
@@ -674,8 +674,7 @@ export function ReadyDesktop({
         if (!(await guard(false))) throw new Error('Save or close every edited Code tab before signing out.')
       }
       await runTengriAction<null>({ action: 'revoke-editor-sessions' })
-      const result = await tengriAuthClient.signOut()
-      if (result.error) throw new Error(result.error.message || 'Tengri could not sign out')
+      await signOutTengri()
       committed = true
       setCommittedTransition('sign-out')
       await onChanged()
