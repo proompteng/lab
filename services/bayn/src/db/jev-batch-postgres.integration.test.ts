@@ -43,7 +43,8 @@ import { candidateObservationFixture } from '../testing/candidate-observation-fi
 import { utcInstantFromEpochMillis } from '../time'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { JevBatchStoreLive, makeJevBatchStore } from './jev-batch-postgres'
-import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
+import { JevEvaluationStoreLive, makeJevEvaluationStore } from './jev-evaluation-postgres'
+import { readJevEvaluationEvidence } from './jev-evaluation-read'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 
@@ -135,6 +136,157 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         }),
         atObservation,
       ),
+    )
+  })
+
+  test('reads complete candidate evidence in three queries and transfers its shared observation once', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const stored = yield* evaluateJevBatch(plan)
+        const sql = yield* PgClient.PgClient
+        const queries: string[] = []
+        const observations: unknown[] = []
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            const [query] = statement.compile()
+            return statement.pipe(
+              Effect.tap((rows) =>
+                Effect.sync(() => {
+                  queries.push(query)
+                  if (query.includes('intraday_candidate_observations')) observations.push(...rows)
+                }),
+              ),
+            )
+          },
+        })
+        const evaluations = yield* makeJevEvaluationStore.pipe(Effect.provideService(PgClient.PgClient, monitored))
+        const batches = yield* makeJevBatchStore.pipe(
+          Effect.provideService(PgClient.PgClient, monitored),
+          Effect.provideService(JevEvaluationStore, evaluations),
+        )
+        expect(requested.length).toBeGreaterThan(1)
+        expect(yield* batches.read(plan.batchId)).toEqual(stored)
+        expect(queries).toHaveLength(3)
+        expect(observations).toHaveLength(1)
+      }).pipe(Effect.provideService(JevClient, successful), atObservation),
+    )
+  })
+
+  for (const table of [
+    'jev_evaluation_requests',
+    'jev_evaluation_receipts',
+    'jev_evaluation_resolutions',
+    'intraday_candidate_observations',
+  ]) {
+    test(`complete reads reject tampered independently committed ${table}`, async () => {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const stored = yield* evaluateJevBatch(plan)
+          const batches = yield* JevBatchStore
+          const sql = yield* PgClient.PgClient
+          expect(yield* batches.read(plan.batchId)).toEqual(stored)
+          const isObservation = table === 'intraday_candidate_observations'
+          const key = isObservation ? 'content_hash' : 'request_id'
+          const identity = isObservation ? fixture.observation.contentHash : first.request.requestId
+          // The fixture owns a local _test database. Bypass its immutable trigger
+          // only to verify the read boundary independently rejects corrupted bytes.
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`ALTER TABLE ${sql(table)} DISABLE TRIGGER ${sql(table + '_immutable')}`
+              yield* sql`UPDATE ${sql(table)} SET payload = payload || '{"unexpected":true}'::jsonb
+                WHERE ${sql(key)} = ${identity}`
+              yield* sql`ALTER TABLE ${sql(table)} ENABLE TRIGGER ${sql(table + '_immutable')}`
+            }),
+          )
+          expect(Result.isFailure(yield* batches.read(plan.batchId).pipe(Effect.result))).toBe(true)
+        }).pipe(Effect.provideService(JevClient, successful), atObservation),
+      )
+    })
+  }
+
+  test('complete reads require each request source from its exact cycle even when another account shares its snapshot', async () => {
+    const session = fixture.snapshot.manifest.calendar.sessions[0]
+    if (session === undefined) throw new Error('Missing fixture session')
+    const executionPolicy = fixture.draft.identity.executionPolicy
+    if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
+      throw new Error('Fixture requires its original intraday policy')
+    const foreignDraft = Result.getOrThrow(
+      makeIntradayCycleDraft(
+        {
+          cycleBindingId: 'a'.repeat(64),
+          strategyName: 'intraday-momentum',
+          strategyProtocolHash: fixture.draft.identity.strategyProtocolHash,
+          accountId: 'another-jev-evidence-account',
+          executionPolicy,
+        },
+        fixture.snapshot.manifest.calendar,
+        session,
+      ),
+    )
+    const foreignObservation = Result.getOrThrow(
+      makeCandidateObservation({ ...fixture.input, cycleId: foreignDraft.identity.cycleId }),
+    )
+    const foreignPlan = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation: foreignObservation.payload,
+        expiresAt: plan.expiresAt,
+        planVersion: JevBatchPlanVersion.V1,
+      }),
+    )
+    const foreignFirst = foreignPlan.candidates.find(
+      (candidate) => candidate.status === JevCandidatePlanStatus.Requested,
+    )
+    if (foreignFirst?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing foreign candidate')
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const batches = yield* JevBatchStore
+        yield* (yield* CycleStore).acquire(foreignDraft, fixture.cycle.createdAt)
+        yield* (yield* CandidateObservationStore).record(foreignObservation)
+        const stored = yield* evaluateJevBatch(plan)
+        const foreign = yield* evaluateJevBatch(foreignPlan)
+        const evidence = yield* readJevEvaluationEvidence(sql, [
+          first.request.requestId,
+          foreignFirst.request.requestId,
+        ])
+        expect(evidence.size).toBe(2)
+        expect(evidence.get(first.request.requestId)?.request).toEqual(first.request)
+        expect(evidence.get(foreignFirst.request.requestId)?.request).toEqual(foreignFirst.request)
+        expect(yield* batches.read(plan.batchId)).toEqual(stored)
+        expect(yield* batches.read(foreignPlan.batchId)).toEqual(foreign)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`ALTER TABLE intraday_candidate_observations DISABLE TRIGGER intraday_candidate_observations_immutable`
+            yield* sql`UPDATE intraday_candidate_observations
+              SET payload = jsonb_set(payload, '{authorityGenerationHash}', to_jsonb(${'c'.repeat(64)}::text))
+              WHERE content_hash = ${fixture.observation.contentHash}`
+            yield* sql`ALTER TABLE intraday_candidate_observations ENABLE TRIGGER intraday_candidate_observations_immutable`
+          }),
+        )
+        expect(Result.isFailure(yield* batches.read(plan.batchId).pipe(Effect.result))).toBe(true)
+        expect(yield* batches.read(foreignPlan.batchId)).toEqual(foreign)
+      }).pipe(Effect.provideService(JevClient, successful), atObservation),
+    )
+  })
+
+  test('complete reads reject a request claim for a sealed unattempted candidate', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* batches.begin(plan)
+        yield* TestClock.adjust('5 seconds')
+        const stored = yield* batches.finish(plan.batchId)
+        expect(
+          stored.result?.candidates.filter((candidate) => candidate.status === JevCandidateResultStatus.Unattempted),
+        ).toHaveLength(requested.length)
+        expect(yield* batches.read(plan.batchId)).toEqual(stored)
+        yield* sql`INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
+          VALUES (${first.request.requestId}, ${first.request.cycleId},
+            ${first.request.authorityGenerationHash}, ${sql.json(first.request)})`
+        expect(Result.isFailure(yield* batches.read(plan.batchId).pipe(Effect.result))).toBe(true)
+      }).pipe(atObservation),
     )
   })
 
@@ -295,15 +447,17 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
-  test('finalization restricts observation scan work to the indexed cycle and exact observation time', async () => {
+  test('finalization and complete reads restrict observations to the indexed cycle and exact observation time', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         let lookup: Statement<Record<string, unknown>> | undefined
+        let readLookup: Statement<Record<string, unknown>> | undefined
         const monitored = new Proxy(sql, {
           apply(target, receiver, argumentsList) {
             const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
             if (statement.compile()[0].includes('AS matching_symbols')) lookup = statement
+            if (statement.compile()[0].includes('AS matching_request_ids')) readLookup = statement
             return statement
           },
         })
@@ -346,21 +500,26 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* sql`ANALYZE intraday_candidate_observations`
         expect((yield* batches.finish(plan.batchId)).result).toBeNull()
         if (lookup === undefined) throw new Error('Finalization did not read candidate observations')
-        const [query, parameters] = lookup.compile()
-        const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
-        const plans = yield* Schema.decodeUnknownEffect(
-          Schema.Array(
-            Schema.Struct({
-              'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
-            }),
-          ),
-        )(explanation)
-        const root = plans[0]?.['QUERY PLAN'][0]?.Plan
-        if (root === undefined) throw new Error('PostgreSQL did not return the observation query plan')
-        expect(JSON.stringify(root)).toMatch(/"Index Cond":"[^"]*observed_at/)
-        expect(root['Actual Rows']).toBe(1)
-        expect(Number(root['Rows Removed by Filter'] ?? 0)).toBeLessThanOrEqual(2)
-      }).pipe(atObservation),
+        const stored = yield* evaluateJevBatch(plan)
+        expect(yield* batches.read(plan.batchId)).toEqual(stored)
+        if (readLookup === undefined) throw new Error('Complete read did not verify candidate observations')
+        for (const statement of [lookup, readLookup]) {
+          const [query, parameters] = statement.compile()
+          const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+          const plans = yield* Schema.decodeUnknownEffect(
+            Schema.Array(
+              Schema.Struct({
+                'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
+              }),
+            ),
+          )(explanation)
+          const root = plans[0]?.['QUERY PLAN'][0]?.Plan
+          if (root === undefined) throw new Error('PostgreSQL did not return the observation query plan')
+          expect(JSON.stringify(root)).toMatch(/"Index Cond":"[^"]*observed_at/)
+          expect(root['Actual Rows']).toBe(1)
+          expect(Number(root['Rows Removed by Filter'] ?? 0)).toBeLessThanOrEqual(2)
+        }
+      }).pipe(Effect.provideService(JevClient, successful), atObservation),
     )
   })
 
