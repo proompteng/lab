@@ -38,8 +38,10 @@ def next_methods(source):
 
 def rust_routes(source):
     operations = set()
-    for route in re.finditer(r'\.route\(\s*"([^"]+)"\s*,', source):
-        start = route.end()
+    for call in re.finditer(r"\.route\s*\(", source):
+        route = re.match(r'\s*"([^"\\]+)"\s*,', source[call.end() :])
+        assert route, "Axum route path must be an explicit string literal"
+        start = call.end() + route.end()
         depth = 1
         quoted = escaped = False
         end = start

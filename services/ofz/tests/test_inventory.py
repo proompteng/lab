@@ -96,6 +96,26 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "wildcard Next route exports"):
             inventory.next_methods("export * from './handler'")
 
+    def test_nonliteral_axum_paths_fail_closed(self):
+        read_text = Path.read_text
+        for source in ["gateway.rs", "slot/supervisor.rs"]:
+            with self.subTest(source=source):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith(f"tengri/src/{source}"):
+                        content = content.replace(
+                            '.route("/livez", get(', ".route(SECRET_PATH, get(", 1
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "Axum route path must be an explicit string literal",
+                    ):
+                        inventory.main()
+
     def test_go_handlers_in_every_source_file_are_classified(self):
         read_text = Path.read_text
         for source in ["api.go", "browser_cua.go", "grpc.go"]:
