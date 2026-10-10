@@ -717,6 +717,20 @@ describe('Kafka bootstrap and scoped consumption', () => {
             consumerSequence: 5,
             consumerKnownRawBytes: 2,
             consumerUnknownRawByteLengthRecords: 2,
+            arrivalEnvelope: expect.objectContaining({
+              schemaVersion: 'bayn.kafka-arrival-envelope.v1',
+              valid: true,
+              observedRecordCount: 5,
+              knownRawBytes: 2,
+              unknownRawByteLengthRecords: 2,
+              windows: [1, 10, 100, 1000].map((windowMs) => ({
+                windowMs,
+                maximumAlignedWindowRecords: 5,
+                maximumWindowRecordsUpperBound: 5,
+                maximumAlignedWindowKnownRawBytes: 2,
+                maximumWindowRawBytesUpperBound: null,
+              })),
+            }),
           }),
         ])
         first.invalidated?.(new Error('assignment changed'))
@@ -732,12 +746,89 @@ describe('Kafka bootstrap and scoped consumption', () => {
             consumerSequence: 0,
             consumerKnownRawBytes: 0,
             consumerUnknownRawByteLengthRecords: 0,
+            arrivalEnvelope: expect.objectContaining({
+              valid: true,
+              firstObservedAtMs: null,
+              lastObservedAtMs: null,
+              observedRecordCount: 0,
+              knownRawBytes: 0,
+              unknownRawByteLengthRecords: 0,
+              windows: [1, 10, 100, 1000].map((windowMs) => ({
+                windowMs,
+                maximumAlignedWindowRecords: 0,
+                maximumWindowRecordsUpperBound: 0,
+                maximumAlignedWindowKnownRawBytes: 0,
+                maximumWindowRawBytesUpperBound: 0,
+              })),
+            }),
           }),
         ])
       }).pipe(Effect.provide(Logger.layer([logger]))),
     )
     expect(transports).toHaveLength(2)
     expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
+  })
+
+  test('an epoch failing before its first periodic report still finalizes its observed arrival burst', async () => {
+    const logs: unknown[] = []
+    const logger = Logger.make(({ message }) => logs.push(message))
+    const transports: FakeTransport[] = []
+    await program(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
+        const market = yield* makeKafkaMarketProjection(config, universe, () => {
+          const transport = new FakeTransport()
+          transports.push(transport)
+          return transport
+        })
+        yield* TestClock.adjust('2 seconds')
+        const first = transports[0]
+        if (first === undefined) throw new Error('first transport missing')
+        const epoch = (yield* market.read).projection.epoch
+        for (let index = 0; index < 3; index++)
+          first.send({
+            topic: 'quotes',
+            partition: 0,
+            offset: String(index),
+            value: 'invalid-json',
+            rawByteLength: 12,
+            timestampMs: 0,
+            leaderEpoch: 1,
+          })
+        yield* TestClock.adjust('1 second')
+        first.invalidated?.(new Error('assignment changed'))
+        yield* TestClock.adjust('3 seconds')
+        expect(logs.some((entry) => Array.isArray(entry) && entry[0] === 'Kafka market projection measurements')).toBe(
+          false,
+        )
+        expect(logs).toContainEqual([
+          'Kafka market projection arrival measurements finalized',
+          expect.objectContaining({
+            epoch,
+            consumerSequence: 3,
+            arrivalEnvelope: expect.objectContaining({
+              valid: true,
+              observedRecordCount: 3,
+              knownRawBytes: 36,
+              unknownRawByteLengthRecords: 0,
+              windows: [1, 10, 100, 1000].map((windowMs) => ({
+                windowMs,
+                maximumAlignedWindowRecords: 3,
+                maximumWindowRecordsUpperBound: 3,
+                maximumAlignedWindowKnownRawBytes: 36,
+                maximumWindowRawBytesUpperBound: 36,
+              })),
+            }),
+          }),
+        ])
+      }).pipe(Effect.provide(Logger.layer([logger]))),
+    )
+    expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
+    expect(
+      logs.filter(
+        (entry) => Array.isArray(entry) && entry[0] === 'Kafka market projection arrival measurements finalized',
+      ),
+    ).toHaveLength(transports.length)
   })
 
   test.each(['rolling', 'technical'] as const)(
