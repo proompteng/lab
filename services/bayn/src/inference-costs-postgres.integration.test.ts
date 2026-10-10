@@ -7,6 +7,7 @@ import { makeInferenceCostReport } from './inference-costs'
 import { evaluationRequestFixture } from './jev/test-support'
 import { baynTestPostgresUrl } from './test-environment.test-support'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
+import { forwardPerformanceSnapshot } from './forward-performance/postgres/snapshot'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_inference_test'
@@ -92,6 +93,50 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     )
     expect(report.unknownUsageCount).toBe(1)
     expect(report.estimatedTotalCostMicros).toBeNull()
+  })
+
+  test('inherits the report snapshot while a separate connection commits a request deletion', async () => {
+    const parsed = new URL(testUrl)
+    parsed.searchParams.set('options', `-c search_path=${ownedSchema}`)
+    const writer = ManagedRuntime.make(
+      PgClient.layer({ url: Redacted.make(parsed.toString()), maxConnections: 1, transformJson: false }),
+    )
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`DELETE FROM jev_evaluation_requests WHERE request_id = ${'e'.repeat(64)}`
+          return yield* forwardPerformanceSnapshot(sql).withTransaction(
+            Effect.gen(function* () {
+              const before =
+                yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`
+              yield* Effect.promise(() =>
+                writer.runPromise(
+                  Effect.gen(function* () {
+                    const writeSql = yield* PgClient.PgClient
+                    yield* writeSql`DELETE FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`
+                  }),
+                ),
+              )
+              const costs = yield* readInferenceCostEvidence(sql, 'fixture-account', '1970-01-01')
+              return { before, costs }
+            }),
+          )
+        }),
+      )
+      expect(result.before[0]?.['count']).toBe(1)
+      expect(result.costs.requests.map((row) => row.requestId)).toEqual([request.requestId])
+      const after = await writer.runPromise(
+        Effect.flatMap(
+          PgClient.PgClient,
+          (sql) =>
+            sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`,
+        ),
+      )
+      expect(after[0]?.['count']).toBe(0)
+    } finally {
+      await writer.dispose()
+    }
   })
 
   test('inherits a queried writer transaction without changing its isolation or read-only mode', async () => {

@@ -956,6 +956,8 @@ The command emits `bayn.forward-performance-report.v2`. Its `receipt` contains t
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
 `INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
 change the immutable per-generation receipt schema.
+The default report reads performance and inference-expense records in one read-only repeatable-read PostgreSQL
+transaction. `--persist-receipt` inherits the existing writer-fence transaction instead.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.

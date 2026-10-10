@@ -39,6 +39,8 @@ import type {
 } from './model'
 import { readForwardInferenceExpenses } from './inference-expenses'
 import type { InferenceCostError } from '../inference-costs'
+import { forwardPerformanceSnapshot } from './postgres/snapshot'
+import { postgresError } from './postgres/model'
 import { Pipeable } from '../pipeable'
 import {
   intradayPerformanceDecisionRequest,
@@ -712,23 +714,35 @@ export const runForwardPerformanceReport = (
   options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
 ): Effect.Effect<ForwardPerformanceReport, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
   Effect.gen(function* () {
-    const input = yield* readForwardPerformanceInput(loadedConfig, readers, options)
-    const sql = yield* PgClient.PgClient
     const identity = yield* requireBrokerIdentity(loadedConfig)
-    const expenses = yield* readers
-      .inferenceExpenses(
-        loadedConfig,
-        sql,
-        identity.execution.brokerIdentity.accountId,
-        options.authorityGenerationHash,
-        options.writerFence,
+    const sql = yield* PgClient.PgClient
+    return yield* forwardPerformanceSnapshot(sql, options.writerFence)
+      .withTransaction(
+        Effect.gen(function* () {
+          const input = yield* readForwardPerformanceInput(loadedConfig, readers, options)
+          const expenses = yield* readers
+            .inferenceExpenses(
+              loadedConfig,
+              sql,
+              identity.execution.brokerIdentity.accountId,
+              options.authorityGenerationHash,
+              options.writerFence,
+            )
+            .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
+          return yield* Effect.fromResult(makeForwardPerformanceReport(input, expenses)).pipe(
+            Effect.mapError((cause) =>
+              programError('construct-receipt', 'forward-performance report construction failed', cause),
+            ),
+          )
+        }),
       )
-      .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
-    return yield* Effect.fromResult(makeForwardPerformanceReport(input, expenses)).pipe(
-      Effect.mapError((cause) =>
-        programError('construct-receipt', 'forward-performance report construction failed', cause),
-      ),
-    )
+      .pipe(
+        Effect.mapError((cause) =>
+          cause instanceof ForwardPerformanceProgramError
+            ? cause
+            : programError('postgres-read', 'forward-performance report snapshot failed', postgresError(cause)),
+        ),
+      )
   })
 
 export const runForwardPerformance = Pipeable.by<

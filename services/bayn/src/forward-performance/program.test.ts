@@ -786,6 +786,70 @@ describe('forward performance read program', () => {
     })
   })
 
+  test('keeps performance and expense reads on one cut when new work commits between them', async () => {
+    const sql = makeReadOnlySql({ statements: [] })
+    let committedCut = 1
+    let snapshotCut: number | undefined
+    let performanceCut: number | undefined
+    let expenseCut: number | undefined
+    Object.assign(sql, {
+      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            const previous = snapshotCut
+            snapshotCut = committedCut
+            return previous
+          }),
+          () => effect,
+          (previous) =>
+            Effect.sync(() => {
+              snapshotCut = previous
+            }),
+        ),
+    })
+    const readers: ForwardPerformanceReaders = {
+      postgres: (...args) =>
+        readForwardPerformancePostgres(...args).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              performanceCut = snapshotCut ?? committedCut
+            }),
+          ),
+        ),
+      marketVolume: () =>
+        Effect.sync(() => {
+          committedCut++
+          return []
+        }),
+      inferenceExpenses: () =>
+        Effect.sync(() => {
+          expenseCut = snapshotCut ?? committedCut
+          return []
+        }),
+      ledger: () =>
+        Effect.succeed({
+          totals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: null,
+            cashYieldMicros: '0',
+          },
+          ledgerExact: true,
+          missingLedgerAccountCount: 0,
+          openPositionCount: 0,
+          cashYieldEvidenceRequired: false,
+        }),
+    }
+    await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    )
+    expect(committedCut).toBe(2)
+    expect(performanceCut).toBe(1)
+    expect(expenseCut).toBe(performanceCut)
+    expect(snapshotCut).toBeUndefined()
+  })
+
   test('scopes forward-performance PostgreSQL evidence to one execution authority generation', async () => {
     const observation: SqlObservation = { statements: [] }
     const evidence = await Effect.runPromise(
