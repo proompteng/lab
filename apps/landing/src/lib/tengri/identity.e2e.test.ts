@@ -589,11 +589,8 @@ identityTest(
         )
       })
     page.on('dialog', (dialog) => void dialog.accept('Isolated virtual passkey'))
+    await page.waitForLoadState('domcontentloaded')
     await page.getByRole('button', { name: /Register/ }).click()
-    const label = page.getByLabel(/Label/)
-    if (await label.count()) await label.fill('Isolated virtual passkey')
-    const submit = page.getByRole('button', { name: /Submit|Done|Save/ })
-    if (await submit.count()) await submit.click()
     await page.waitForURL((url) => url.origin === base, { timeout: 20_000 })
     if (new URL(page.url()).pathname !== '/') {
       const denied = await control.query(
@@ -738,6 +735,8 @@ identityTest(
     await browserExpect(page.getByRole('alert').filter({ hasText: 'Verify with your passkey' })).toBeVisible()
     await page.getByRole('button', { name: 'Verify passkey', exact: true }).click()
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
+    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await page.waitForLoadState('domcontentloaded')
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
     await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
@@ -765,6 +764,8 @@ identityTest(
       await secondPage.goto(base)
       await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
       await secondPage.getByRole('link', { name: `GitHub fixture ${id}`, exact: true }).click()
+      await browserExpect(secondPage.getByRole('heading', { name: /Passkey Registration/ })).toBeVisible()
+      await secondPage.waitForLoadState('domcontentloaded')
       await secondPage.getByRole('button', { name: /Register/ }).click()
       await secondPage
         .waitForURL((url) => url.origin === base, { timeout: 10_000 })

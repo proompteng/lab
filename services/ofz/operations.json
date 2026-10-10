@@ -977,7 +977,7 @@
   {
     "surface": "bff_auth",
     "operation": "POST /api/auth/logout",
-    "action": "ACTION_SESSION_INSPECT"
+    "action": "ACTION_SESSION_REVOKE"
   },
   {
     "surface": "bff_auth_http",

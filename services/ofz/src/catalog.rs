@@ -74,6 +74,10 @@ mod tests {
             operation_action("bff_access", "emergency").unwrap(),
             Some(Action::MembersManage)
         );
+        assert_eq!(
+            operation_action("bff_auth", "POST /api/auth/logout").unwrap(),
+            Some(Action::SessionRevoke)
+        );
     }
 
     #[test]

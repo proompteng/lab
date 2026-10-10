@@ -69,8 +69,10 @@ fixture also passed against the exact PostgreSQL 18.6 and SpiceDB containers on 
 TypeScript, type-aware lint, generated-client verification and strict prepared-manifest validation passed after
 restacking onto current main. The corrected dependency hashes passed native Linux image builds on both architectures
 at commit `371f53f7a2`; all required CI checks passed there. The emergency-access catalog classification was then aligned
-with the enforced administrator permission and covered by the Rust contract suite. Real custodian
-enrollment and deployed product proof remain later gates.
+with the enforced administrator permission and covered by the Rust contract suite. Logout now classifies its actual
+session-revocation action. The pinned identity fixture passed all 44 assertions again after waiting for Keycloak's
+deferred WebAuthn module before clicking its registration and authentication buttons. Real custodian enrollment and
+deployed product proof remain later gates.
 
 The coordinated cutover gate also covers the Proompteng image: Kargo discovery remains withheld while
 `TENGRI_PREPARED_SLOT_CUTOVER_READY` is false. This was verified against the repository variable and workflow input;
