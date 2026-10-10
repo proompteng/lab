@@ -62,9 +62,14 @@ def main():
             path.read_text(),
         ):
             actual["bff_http"].add(f"{method} {route}")
-    guest_http = (ROOT / "services/nanoagent/main.go").read_text()
-    guest_http += (ROOT / "services/nanoagent/api.go").read_text()
-    actual["guest_http"] = set(re.findall(r'mux\.HandleFunc\("([^"]+)"', guest_http))
+    guest_http = "\n".join(
+        path.read_text()
+        for path in (ROOT / "services/nanoagent").rglob("*.go")
+        if not path.name.endswith("_test.go")
+    )
+    actual["guest_http"] = set(
+        re.findall(r'\b\w+\.Handle(?:Func)?\(\s*"([^"]+)"', guest_http)
+    )
     supervisor = (ROOT / "services/tengri/src/slot/supervisor.rs").read_text()
     actual["supervisor"] = set(re.findall(r'\.route\(\s*"([^"]+)"', supervisor))
     assert ".fallback(forward)" in supervisor, "review changed supervisor dispatch"

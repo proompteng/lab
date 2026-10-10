@@ -623,6 +623,18 @@
   },
   {
     "surface": "guest_http",
+    "operation": "/",
+    "public": true,
+    "dispatch": "guest health routes; other paths return 404"
+  },
+  {
+    "surface": "guest_http",
+    "operation": "/v1/",
+    "action": "ACTION_PREVIEW_ACCESS",
+    "dispatch": "guest preview routes"
+  },
+  {
+    "surface": "guest_http",
     "operation": "GET /livez",
     "public": true
   },

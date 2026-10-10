@@ -6,6 +6,7 @@ Production keeps its current authority until the coordinated hard cutover. New c
 
 - [x] Read repository instructions and Poteto principles; refresh source and runtime baseline.
 - [x] Verify the requested administrator: `gregkonush`, GitHub numeric ID `12027037`.
+- [x] Verify the second administrator/custodian: `tuslagch`, GitHub numeric ID `241203724`.
 - [x] Identify the requested independent recovery host: `nuc.ide-newton.ts.net`.
 - [x] P1: final schema, typed API, action inventory, real SpiceDB role/expiry/revocation tests.
 - [ ] P2: Ofz service, durable commands, quotas, audit and database migrations.
@@ -16,14 +17,16 @@ Production keeps its current authority until the coordinated hard cutover. New c
 - [ ] P7: offboarding, independent archive/backups and isolated restore.
 - [ ] P8: migration rehearsals, reviewed release, hard cutover and full product acceptance.
 
-Two custodians are required by the release plan; only one has been named. NUC has approximately 63 GiB free at the
+Both required custodians are named and their numeric identities verified. NUC has approximately 63 GiB free at the
 initial readback, below the 192 GiB uncompressed home-storage ceiling. Database recovery and home recovery must each
-be qualified against actual retained data and available space. Neither open input blocks local contract implementation.
+be qualified against actual retained data and available space.
 
 Evidence and decisions are recorded in [the implementation trail](ofz-implementation-decisions.tsv).
 
-P1 local evidence: 486 permission assertions against pinned SpiceDB and PostgreSQL; five Rust contract tests; three
+P1 local evidence: 492 permission assertions against pinned SpiceDB and PostgreSQL; five Rust contract tests; four
 inventory tests including deliberately unclassified RPC and HTTP changes; Buf lint; Clippy; Rust/Python/shell checks.
-The catalog covers 146 current operations across eleven surfaces. This is contract proof, with runtime enforcement
+The catalog covers 148 current operations across eleven surfaces. Delegation checks bind the recorded issuer and
+workspace, including wrong-workspace replay and missing-binding denial. HTTP inventory covers both Go registration
+APIs across every guest source file. This is contract proof, with runtime enforcement
 and production qualification still pending. Native dispatch caching failed the expiration probe and remains disabled
 in the qualification fixture; the release must preserve that setting.

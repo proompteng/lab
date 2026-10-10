@@ -42,6 +42,24 @@ class InventoryTests(unittest.TestCase):
             ):
                 inventory.main()
 
+    def test_go_handlers_in_every_source_file_are_classified(self):
+        read_text = Path.read_text
+        for source in ["api.go", "browser_cua.go", "grpc.go"]:
+            for handler in ["Handle", "HandleFunc"]:
+                with self.subTest(source=source, handler=handler):
+
+                    def inject(path, *args, **kwargs):
+                        content = read_text(path, *args, **kwargs)
+                        if str(path).endswith(f"nanoagent/{source}"):
+                            content += f'\nmux.{handler}("GET /secret", secret)\n'
+                        return content
+
+                    with patch.object(Path, "read_text", inject):
+                        with self.assertRaisesRegex(
+                            AssertionError, "unclassified=.*GET /secret"
+                        ):
+                            inventory.main()
+
 
 if __name__ == "__main__":
     unittest.main()

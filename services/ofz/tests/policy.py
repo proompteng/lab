@@ -108,8 +108,9 @@ def delete(kind, resource, relation, subject_kind, subject):
     )
 
 
-def delegated(expected):
+def delegated(expected, workspace=WORKSPACE, issuer=None):
     global CHECKS
+    issuer = issuer or HUMANS["owner"]
     result = api(
         "/v1/permissions/checkbulk",
         {
@@ -121,14 +122,29 @@ def delegated(expected):
                     "subject": {"object": obj("agent", AGENT)},
                 },
                 {
-                    "resource": obj("workspace", WORKSPACE),
+                    "resource": obj("agent_grant", GRANT),
+                    "permission": "issuer",
+                    "subject": {"object": obj("human", issuer)},
+                },
+                {
+                    "resource": obj("agent_grant", GRANT),
+                    "permission": "workspace",
+                    "subject": {"object": obj("workspace", workspace)},
+                },
+                {
+                    "resource": obj("workspace", workspace),
+                    "permission": "manage_grants",
+                    "subject": {"object": obj("human", issuer)},
+                },
+                {
+                    "resource": obj("workspace", workspace),
                     "permission": "observe_files",
-                    "subject": {"object": obj("human", HUMANS["owner"])},
+                    "subject": {"object": obj("human", issuer)},
                 },
             ],
         },
     )
-    assert len(result["pairs"]) == 2, result
+    assert len(result["pairs"]) == 5, result
     allowed = all(
         pair.get("item", {}).get("permissionship") == "PERMISSIONSHIP_HAS_PERMISSION"
         for pair in result["pairs"]
@@ -253,7 +269,11 @@ def main():
     )
     check("connector_connection", CONNECTION, "read", HUMANS["viewer"], True)
     expires = datetime.now(timezone.utc) + timedelta(seconds=60)
-    write(relationship("agent_grant", GRANT, "subject", "agent", AGENT, expires))
+    write(
+        relationship("agent_grant", GRANT, "subject", "agent", AGENT, expires),
+        relationship("agent_grant", GRANT, "issuer", "human", HUMANS["owner"]),
+        relationship("agent_grant", GRANT, "workspace", "workspace", WORKSPACE),
+    )
     stored = api(
         "/v1/relationships/read",
         {
@@ -261,6 +281,7 @@ def main():
             "relationshipFilter": {
                 "resourceType": "agent_grant",
                 "optionalResourceId": GRANT,
+                "optionalRelation": "subject",
             },
         },
     )["result"]["relationship"]
@@ -268,6 +289,21 @@ def main():
         stored
     )
     delegated(True)
+    # The same issuer can own another workspace; it still cannot replay this grant there.
+    write(relationship("workspace", OTHER_WORKSPACE, "owner", "human", HUMANS["owner"]))
+    delegated(False, workspace=OTHER_WORKSPACE)
+    # An unrelated Owner with the same permission cannot substitute for the recorded issuer.
+    write(relationship("workspace", WORKSPACE, "owner", "human", HUMANS["developer"]))
+    delegated(False, issuer=HUMANS["developer"])
+    delete("workspace", WORKSPACE, "owner", "human", HUMANS["developer"])
+    for relation, kind, subject in [
+        ("issuer", "human", HUMANS["owner"]),
+        ("workspace", "workspace", WORKSPACE),
+    ]:
+        delete("agent_grant", GRANT, relation, kind, subject)
+        delegated(False)
+        write(relationship("agent_grant", GRANT, relation, kind, subject))
+        delegated(True)
     delete("workspace", WORKSPACE, "owner", "human", HUMANS["owner"])
     delegated(False)
     write(relationship("workspace", WORKSPACE, "owner", "human", HUMANS["owner"]))
