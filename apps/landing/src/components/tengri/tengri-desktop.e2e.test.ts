@@ -133,11 +133,13 @@ type TerminalStore = { sessions: Record<string, unknown>[] }
 type MockOptions = {
   activeCodexLogin?: boolean
   authenticated?: boolean
+  userId?: string
   agent?: typeof readyAgent | null
   blockDraftStorage?: boolean
   codexAuthenticated?: boolean
   codexModels?: typeof codexModelFixtures
   failCodexModels?: boolean
+  failCreateOnce?: boolean
   failSendTurnOnce?: boolean
   legacyCodexModels?: boolean
   paginateCodexModels?: boolean
@@ -160,6 +162,7 @@ type MockOptions = {
   searchTruncated?: boolean
   preserveDraftStorageOnReload?: boolean
   terminalStore?: TerminalStore
+  supersedeSleepOnce?: boolean
 }
 
 async function mockTengri(page: Page, options: MockOptions = {}) {
@@ -167,6 +170,8 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let snapshotFailuresRemaining = 0
   let snapshotRequests = 0
   let authenticated = options.authenticated ?? true
+  let failCreate = options.failCreateOnce ?? false
+  let supersedeSleep = options.supersedeSleepOnce ?? false
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
   let resumeThreadResponses = 0
@@ -457,7 +462,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           controlPlaneConfigured: true,
           previewGatewayOrigin,
           authenticated,
-          user: authenticated ? user : null,
+          user: authenticated ? { ...user, id: options.userId ?? user.id } : null,
           agents: authenticated && agent ? [agent] : [],
         }),
       })
@@ -466,6 +471,19 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
     const action = request.postDataJSON() as Record<string, unknown>
     actions.push(action)
+    if (action.action === 'create-agent' && failCreate) {
+      failCreate = false
+      await route.fulfill({ status: 503, json: { error: 'Creation response is uncertain' } })
+      return
+    }
+    if (action.action === 'sleep-agent' && supersedeSleep) {
+      supersedeSleep = false
+      await route.fulfill({
+        status: 409,
+        json: { error: 'A newer workspace transition replaced this request.', code: 'lifecycle_superseded' },
+      })
+      return
+    }
     let result: unknown = null
     switch (action.action) {
       case 'create-agent':
@@ -2402,6 +2420,23 @@ test('does not refresh the guest account after sleep starts', async ({ page }) =
   await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
 })
 
+test('keeps the desktop active after superseded sleep and allocates a fresh operation on retry', async ({ page }) => {
+  const mock = await mockTengri(page, { supersedeSleepOnce: true })
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(page.getByText('A newer workspace transition replaced this request.')).toBeVisible()
+  await expect(dock).toBeVisible()
+  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
+  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+  const sleeps = mock.actions.filter((action) => action.action === 'sleep-agent')
+  expect(sleeps).toHaveLength(2)
+  expect(sleeps[1].operationId).not.toBe(sleeps[0].operationId)
+})
+
 test('keeps a committed delete transition gated when snapshot refresh fails', async ({ page }) => {
   await mockTengri(page, { failSnapshotAfterAction: 'delete-agent' })
   await page.goto('/')
@@ -3538,6 +3573,27 @@ test('shows native-feeling unauthenticated and create-agent states', async ({ pa
   await create.getByLabel('Agent name').fill('Ada')
   await create.getByRole('button', { name: 'Create Agent' }).click()
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+})
+
+test('creates after an uncertain request from a previous account in the same tab', async ({ page }) => {
+  const first = await mockTengri(page, { agent: null, failCreateOnce: true })
+  await page.goto('/')
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await create.getByLabel('Agent name').fill('Original')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByText('Creation response is uncertain')).toBeVisible()
+  const originalId = first.actions.find((action) => action.action === 'create-agent')?.operationId
+  expect(originalId).toBeTruthy()
+
+  await page.unrouteAll({ behavior: 'wait' })
+  const second = await mockTengri(page, { agent: null, userId: 'second-human' })
+  await page.reload()
+  await create.getByLabel('Agent name').fill('Different')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const replacementId = second.actions.find((action) => action.action === 'create-agent')?.operationId
+  expect(replacementId).toBeTruthy()
+  expect(replacementId).not.toBe(originalId)
 })
 
 test('has no serious or critical Axe violations', async ({ page }) => {

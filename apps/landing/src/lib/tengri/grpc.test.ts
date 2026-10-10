@@ -23,6 +23,7 @@ let delayedRuntimeReads = 0
 let agentReads = 0
 let removedAgent = false
 let loseCommandResponse = false
+let supersedeRuntimeCommand = false
 const identity: TengriIdentity = {
   subject: 'github:42',
   user: { id: '42', name: 'Fixture', email: '', image: null },
@@ -155,6 +156,12 @@ beforeAll(async () => {
         runtimeEpoch = runtime.runtimeEpoch
         runtimePhase = runtime.running ? 'AGENT_PHASE_READY' : 'AGENT_PHASE_SLEEPING'
         runtimePolicyVersion = lifecycleVersion
+        if (supersedeRuntimeCommand) {
+          supersedeRuntimeCommand = false
+          runtimeEpoch = randomUUID()
+          runtimePhase = 'AGENT_PHASE_READY'
+          runtimePolicyVersion = ++lifecycleVersion
+        }
       }
       if (call.request.removeWorkspace) removedAgent = true
       if (loseCommandResponse) {
@@ -775,7 +782,7 @@ describe('Tengri gRPC BFF transport', () => {
     expect(agent.policyVersion).toBe(String(lifecycleVersion))
   })
 
-  test('recovers an old resume receipt after a later sleep and new epoch without executing it again', async () => {
+  test('rejects a superseded resume receipt after a later sleep and new epoch without executing it again', async () => {
     const { resumeAgent, sleepAgent } = await import('./grpc')
     const originalId = randomUUID()
     const original = await resumeAgent(identity, 'agent-test', workspaceUid, originalId)
@@ -783,9 +790,31 @@ describe('Tengri gRPC BFF transport', () => {
     const next = await resumeAgent(identity, 'agent-test', workspaceUid, randomUUID())
     expect(next.runtimeEpoch).not.toBe(original.runtimeEpoch)
     const count = lifecycleReceipts.size
-    const recovered = await resumeAgent(identity, 'agent-test', workspaceUid, originalId)
-    expect(recovered.runtimeEpoch).toBe(next.runtimeEpoch)
+    expect(await rejection(resumeAgent(identity, 'agent-test', workspaceUid, originalId))).toMatchObject({
+      status: 409,
+      code: 'lifecycle_superseded',
+    })
     expect(lifecycleReceipts.size).toBe(count)
+  })
+
+  test('does not acknowledge sleep when reconciliation has already observed a newer resume', async () => {
+    const { sleepAgent } = await import('./grpc')
+    supersedeRuntimeCommand = true
+    expect(await rejection(sleepAgent(identity, 'agent-test', workspaceUid, randomUUID()))).toMatchObject({
+      status: 409,
+      code: 'lifecycle_superseded',
+    })
+    expect(runtimePhase).toBe('AGENT_PHASE_READY')
+  })
+
+  test('accepts a newer observed version when the requested epoch and phase still match', async () => {
+    const { resumeAgent } = await import('./grpc')
+    const operationId = randomUUID()
+    const original = await resumeAgent(identity, 'agent-test', workspaceUid, operationId)
+    runtimePolicyVersion = ++lifecycleVersion
+    const recovered = await resumeAgent(identity, 'agent-test', workspaceUid, operationId)
+    expect(recovered.runtimeEpoch).toBe(original.runtimeEpoch)
+    expect(recovered.phase).toBe('ready')
   })
 
   test('recovers a committed runtime command after the reply is lost and rejects a changed external payload', async () => {

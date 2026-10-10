@@ -8,6 +8,7 @@ export type TengriErrorCode =
   | 'file_conflict'
   | 'capacity_full'
   | 'model_selection_unavailable'
+  | 'lifecycle_superseded'
 
 export type TengriCondition = {
   type: string

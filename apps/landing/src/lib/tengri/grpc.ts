@@ -203,11 +203,14 @@ async function waitForAgent(identity: TengriIdentity, id: string, receipt: Comma
       throw new TengriUnavailableError('The workspace lifecycle failed. Retry to recover its current state.', 503)
     const version = BigInt(agent.policyVersion)
     if (version >= receipt.version && (agent.phase === 'ready' || agent.phase === 'sleeping')) {
-      if (
-        version > receipt.version ||
-        (agent.runtimeEpoch === intent.runtimeEpoch && agent.phase === (intent.running ? 'ready' : 'sleeping'))
-      )
+      if (agent.runtimeEpoch === intent.runtimeEpoch && agent.phase === (intent.running ? 'ready' : 'sleeping'))
         return agent
+      if (version > receipt.version)
+        throw new TengriUnavailableError(
+          'A newer workspace transition replaced this request. Refresh before continuing.',
+          409,
+          'lifecycle_superseded',
+        )
     }
     await new Promise((resolve) => setTimeout(resolve, 250))
   } while (Date.now() < deadline)

@@ -21,6 +21,7 @@ export async function getDesktopSnapshot(signal?: AbortSignal): Promise<TengriDe
 
 type TengriActionOptions = {
   keepalive?: boolean
+  principalId?: string
   signal?: AbortSignal
 }
 
@@ -93,7 +94,7 @@ export async function runTengriAction<Result>(
 }
 
 async function postTengriAction<Result>(action: TengriAction, options?: TengriActionOptions) {
-  const pending = prepareLifecycleRequest(action)
+  const pending = prepareLifecycleRequest(action, options?.principalId)
   const response = await fetch('/api/tengri', {
     method: 'POST',
     body: JSON.stringify(pending.action),
@@ -111,12 +112,16 @@ async function postTengriAction<Result>(action: TengriAction, options?: TengriAc
       ),
     )) as Result
   }
-  const payload = await decodeResponse<{ result: Result }>(response)
-  pending.complete()
-  return payload.result
+  try {
+    const payload = await decodeResponse<{ result: Result }>(response)
+    pending.complete()
+    return payload.result
+  } catch (error) {
+    if (error instanceof TengriRequestError && error.code === 'lifecycle_superseded') pending.complete()
+    throw error
+  }
 }
 
-const pendingLifecycleKey = 'tengri.pending-lifecycle.v1'
 const pendingLifecycleSchema = z
   .array(
     z.strictObject({
@@ -127,10 +132,15 @@ const pendingLifecycleSchema = z
   )
   .max(16)
 
-function prepareLifecycleRequest(action: TengriAction) {
+function prepareLifecycleRequest(action: TengriAction, principalId?: string) {
   if (!['create-agent', 'sleep-agent', 'resume-agent', 'delete-agent'].includes(action.action)) {
     return { action, complete: () => {} }
   }
+  const principal = z.string().min(1).max(200).safeParse(principalId)
+  if (!principal.success) {
+    throw new Error('Refresh your signed-in session before changing the workspace lifecycle.')
+  }
+  const pendingLifecycleKey = `tengri.pending-lifecycle.v2/${encodeURIComponent(principal.data)}`
   const key =
     action.action === 'create-agent'
       ? action.action
@@ -205,6 +215,7 @@ function requestFailure(payload: unknown, status: number) {
     'code' in record &&
     ((status === 404 && record.code === 'conversation_not_found') ||
       (status === 409 && record.code === 'file_conflict') ||
+      (status === 409 && record.code === 'lifecycle_superseded') ||
       (status === 412 && record.code === 'model_selection_unavailable') ||
       (status === 429 && record.code === 'capacity_full'))
       ? record.code

@@ -34,6 +34,16 @@ connection timeout; production deadlines were retained and the complete isolated
 now mount the supervisor's restricted SQL password and CA only into that container. Nix source evaluation also verifies
 that the shared request-signature vector reaches the Proompteng build unchanged. Remote CI for these fixes is pending.
 
+The next runtime review regressions reject a sleep or resume receipt when a newer observed phase or runtime epoch
+has superseded it. A newer policy version with the same requested epoch and phase still succeeds. Supersession returns
+an explicit 409; the browser clears that completed operation without marking its transition committed and allocates a
+fresh ID on retry. Pending lifecycle operations are scoped to the signed-in GitHub principal, preserving an uncertain
+request for its original account while allowing another account to create in the same tab. Five regressions fail against
+the prior source. The corrected source passes 309 Landing tests, TypeScript, type-aware lint with zero errors, 22 inventory
+regressions and five focused Chromium scenarios. The browser fixture now mounts the required 32-byte hexadecimal
+request key. Its previous noncanonical key disabled the desktop and made CI wait for unavailable controls; that obsolete
+CI run was cancelled before pushing the correction. These are isolated checks; the deployed migration remains pending.
+
 P1 local evidence: 492 permission assertions against pinned SpiceDB and PostgreSQL; five Rust contract tests; five
 inventory tests including deliberately unclassified RPC and HTTP changes; Buf lint; Clippy; Rust/Python/shell checks.
 The catalog covers 163 current operations across eleven surfaces, including each HTTP method and Axum's implicit HEAD.

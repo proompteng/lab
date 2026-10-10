@@ -110,11 +110,14 @@ describe('Tengri guest operation coordination', () => {
     expect(actions).toHaveLength(callsBeforeBlockedRequest)
 
     expect(
-      await runTengriAction<{ phase: string }>({
-        action: 'sleep-agent',
-        agentId,
-        workspaceUid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-      }),
+      await runTengriAction<{ phase: string }>(
+        {
+          action: 'sleep-agent',
+          agentId,
+          workspaceUid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        },
+        { principalId: 'fixture-human' },
+      ),
     ).toEqual({ phase: 'sleeping' })
     expect(actions.at(-1)).toBe('sleep-agent')
 
@@ -163,12 +166,13 @@ test('reuses the persisted lifecycle operation after an uncertain response and a
       : Response.json({ result: { id: 'agent-test' } })
   }) as typeof fetch
   const action = { action: 'create-agent' as const, displayName: 'Retained workspace' }
-  await expect(runTengriAction(action)).rejects.toMatchObject({ status: 503 })
-  expect(storage.getItem('tengri.pending-lifecycle.v1')).toContain(requests[0].operationId)
-  await runTengriAction(action)
+  const options = { principalId: 'fixture-human' }
+  await expect(runTengriAction(action, options)).rejects.toMatchObject({ status: 503 })
+  expect(storage.getItem('tengri.pending-lifecycle.v2/fixture-human')).toContain(requests[0].operationId)
+  await runTengriAction(action, options)
   expect(requests[1].operationId).toBe(requests[0].operationId)
-  expect(storage.getItem('tengri.pending-lifecycle.v1')).toBe('[]')
-  await runTengriAction(action)
+  expect(storage.getItem('tengri.pending-lifecycle.v2/fixture-human')).toBe('[]')
+  await runTengriAction(action, options)
   expect(requests[2].operationId).not.toBe(requests[0].operationId)
 })
 
@@ -178,7 +182,62 @@ test('retains the exact creation request until its uncertain outcome is resolved
     calls += 1
     throw new TypeError('connection lost')
   }) as unknown as typeof fetch
-  await expect(runTengriAction({ action: 'create-agent', displayName: 'Original' })).rejects.toThrow('connection lost')
-  await expect(runTengriAction({ action: 'create-agent', displayName: 'Changed' })).rejects.toThrow('still pending')
+  const options = { principalId: 'fixture-human' }
+  await expect(runTengriAction({ action: 'create-agent', displayName: 'Original' }, options)).rejects.toThrow(
+    'connection lost',
+  )
+  await expect(runTengriAction({ action: 'create-agent', displayName: 'Changed' }, options)).rejects.toThrow(
+    'still pending',
+  )
   expect(calls).toBe(1)
+})
+
+test.each(['Original', 'Different'])(
+  'scopes uncertain creates to each signed-in principal: %s',
+  async (displayName) => {
+    const requests: Array<{ operationId: string }> = []
+    globalThis.fetch = (async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)))
+      return requests.length === 1
+        ? Response.json({ error: 'Unavailable' }, { status: 503 })
+        : Response.json({ result: { id: 'agent-test' } })
+    }) as typeof fetch
+    const original = { action: 'create-agent' as const, displayName: 'Original' }
+    await expect(runTengriAction(original, { principalId: 'first-human' })).rejects.toMatchObject({ status: 503 })
+    await runTengriAction({ action: 'create-agent', displayName }, { principalId: 'second-human' })
+    expect(requests[1].operationId).not.toBe(requests[0].operationId)
+    await runTengriAction(original, { principalId: 'first-human' })
+    expect(requests[2].operationId).toBe(requests[0].operationId)
+  },
+)
+
+test('clears a superseded lifecycle operation before a fresh retry without acknowledging it', async () => {
+  const requests: Array<{ operationId: string }> = []
+  globalThis.fetch = (async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)))
+    return requests.length === 1
+      ? Response.json({ error: 'Superseded', code: 'lifecycle_superseded' }, { status: 409 })
+      : Response.json({ result: {} })
+  }) as typeof fetch
+  const action = { action: 'sleep-agent' as const, agentId: 'agent-test', workspaceUid: crypto.randomUUID() }
+  const options = { principalId: 'first-human' }
+  await expect(runTengriAction(action, options)).rejects.toMatchObject({ status: 409, code: 'lifecycle_superseded' })
+  await runTengriAction(action, options)
+  expect(requests[1].operationId).not.toBe(requests[0].operationId)
+})
+
+test('requires a signed-in principal before allocating or sending a lifecycle operation', async () => {
+  let called = false
+  globalThis.fetch = Object.assign(
+    async () => {
+      called = true
+      return Response.json({ result: {} })
+    },
+    { preconnect: originalFetch.preconnect },
+  )
+  await expect(runTengriAction({ action: 'create-agent', displayName: 'Original' })).rejects.toThrow(
+    'signed-in session',
+  )
+  expect(called).toBe(false)
+  expect(storage.length).toBe(0)
 })

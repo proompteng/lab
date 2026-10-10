@@ -146,7 +146,13 @@ export default function DesktopOnboarding() {
         </header>
         <div className="relative z-10 grid min-h-[100svh] place-items-center px-5 pt-12 pb-8">
           <AnimatePresence mode="wait">
-            <DesktopGate key={gate.kind} gate={gate} onAgentDeleted={beginAgentDeletion} onRefresh={refresh} />
+            <DesktopGate
+              key={`${snapshot?.user?.id}/${gate.kind}`}
+              gate={gate}
+              principalId={snapshot?.user?.id}
+              onAgentDeleted={beginAgentDeletion}
+              onRefresh={refresh}
+            />
           </AnimatePresence>
         </div>
       </main>
@@ -156,10 +162,12 @@ export default function DesktopOnboarding() {
 
 function DesktopGate({
   gate,
+  principalId,
   onAgentDeleted,
   onRefresh,
 }: {
   gate: DesktopGateState
+  principalId?: string
   onAgentDeleted: (agent: TengriAgent) => void
   onRefresh: () => Promise<void>
 }) {
@@ -203,7 +211,7 @@ function DesktopGate({
       />
     )
   }
-  if (gate.kind === 'create') return <CreateAgentWindow onCreated={onRefresh} />
+  if (gate.kind === 'create') return <CreateAgentWindow principalId={principalId} onCreated={onRefresh} />
   if (gate.kind === 'ready') {
     return (
       <ActionWindow
@@ -215,9 +223,17 @@ function DesktopGate({
       />
     )
   }
-  if (gate.kind === 'sleeping') return <SleepingAgentWindow agent={gate.agent} onChanged={onRefresh} />
+  if (gate.kind === 'sleeping')
+    return <SleepingAgentWindow principalId={principalId} agent={gate.agent} onChanged={onRefresh} />
   if (gate.kind === 'failed') {
-    return <FailedAgentWindow agent={gate.agent} onChanged={onRefresh} onDeleted={onAgentDeleted} />
+    return (
+      <FailedAgentWindow
+        principalId={principalId}
+        agent={gate.agent}
+        onChanged={onRefresh}
+        onDeleted={onAgentDeleted}
+      />
+    )
   }
   if (gate.kind === 'unknown') {
     return (
@@ -267,7 +283,7 @@ function SignInWindow() {
   )
 }
 
-function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
+function CreateAgentWindow({ principalId, onCreated }: { principalId?: string; onCreated: () => Promise<void> }) {
   const {
     formState: { errors, isSubmitting },
     handleSubmit,
@@ -281,7 +297,7 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
 
   const createAgent = handleSubmit(async ({ displayName }) => {
     try {
-      await runTengriAction<TengriAgent>({ action: 'create-agent', displayName })
+      await runTengriAction<TengriAgent>({ action: 'create-agent', displayName }, { principalId })
       await onCreated()
     } catch (cause) {
       setError('root.server', { message: cause instanceof Error ? cause.message : 'Agent could not be created' })
@@ -343,7 +359,15 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
   )
 }
 
-function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChanged: () => Promise<void> }) {
+function SleepingAgentWindow({
+  principalId,
+  agent,
+  onChanged,
+}: {
+  principalId?: string
+  agent: TengriAgent
+  onChanged: () => Promise<void>
+}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -351,7 +375,10 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
     setBusy(true)
     setError('')
     try {
-      await runTengriAction<TengriAgent>({ action: 'resume-agent', agentId: agent.id, workspaceUid: agent.uid })
+      await runTengriAction<TengriAgent>(
+        { action: 'resume-agent', agentId: agent.id, workspaceUid: agent.uid },
+        { principalId },
+      )
       await onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Agent could not be resumed')
@@ -376,10 +403,12 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
 
 function FailedAgentWindow({
   agent,
+  principalId,
   onChanged,
   onDeleted,
 }: {
   agent: TengriAgent
+  principalId?: string
   onChanged: () => Promise<void>
   onDeleted: (agent: TengriAgent) => void
 }) {
@@ -391,7 +420,10 @@ function FailedAgentWindow({
     setDeleteBusy(true)
     setError('')
     try {
-      await runTengriAction<null>({ action: 'delete-agent', agentId: agent.id, workspaceUid: agent.uid })
+      await runTengriAction<null>(
+        { action: 'delete-agent', agentId: agent.id, workspaceUid: agent.uid },
+        { principalId },
+      )
       onDeleted(agent)
       publishDeletedDesktopState(agent.id)
       setConfirmOpen(false)
