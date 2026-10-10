@@ -56,6 +56,10 @@ CREATE TABLE ofz.sessions (
     token_hash bytea UNIQUE NOT NULL CHECK (octet_length(token_hash) = 32),
     human_id text NOT NULL CHECK (human_id ~ '^[0-9a-f]{64}$'),
     identity_subject text NOT NULL,
+    github_id text NOT NULL CHECK (github_id ~ '^[1-9][0-9]{0,19}$'),
+    display_name text NOT NULL DEFAULT '' CHECK (length(display_name) <= 256),
+    email text NOT NULL DEFAULT '' CHECK (length(email) <= 256),
+    image_url text NOT NULL DEFAULT '' CHECK (length(image_url) <= 2048),
     identity_session text NOT NULL,
     operation_id uuid UNIQUE NOT NULL,
     expires_at_ms bigint NOT NULL,
@@ -65,6 +69,12 @@ CREATE TABLE ofz.sessions (
     revoked boolean NOT NULL DEFAULT false
 );
 CREATE INDEX sessions_identity ON ofz.sessions(identity_session, identity_subject);
+CREATE TABLE ofz.session_revocations (
+    operation_id uuid PRIMARY KEY,
+    credential_hash bytea NOT NULL CHECK (octet_length(credential_hash) = 32),
+    origin text NOT NULL,
+    receipt jsonb NOT NULL
+);
 CREATE TABLE ofz.grants (
     id uuid PRIMARY KEY,
     agent_id uuid NOT NULL,
@@ -135,6 +145,7 @@ GRANT INSERT, UPDATE, DELETE ON ofz.memberships, ofz.quotas, ofz.collaborators,
 GRANT INSERT, UPDATE ON ofz.reservations, ofz.workspaces, ofz.grants, ofz.emergency_approvals TO ofz_api;
 GRANT UPDATE ON ofz.platform_state TO ofz_api;
 GRANT INSERT ON ofz.commands, ofz.audit, ofz.audit_outbox TO ofz_api;
+GRANT INSERT ON ofz.session_revocations TO ofz_api;
 GRANT UPDATE (state, receipt) ON ofz.commands TO ofz_api;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA ofz TO ofz_api;
 GRANT SELECT ON ofz.audit, ofz.audit_outbox, ofz.archive_state TO ofz_archiver;

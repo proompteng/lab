@@ -40,3 +40,9 @@ hash-only show-once grants; expiry and issuer revocation; exact stream context; 
 ownership quarantine before native transfer and before receipt recovery. The policy fixture now checks 509 assertions.
 The prepared seven-resource control-plane configuration passed Kubernetes server-side dry run and remains excluded
 from active GitOps. Real BFF/Ofz mTLS interoperability, OIDC sessions, fleet enforcement and deployment remain later gates.
+
+P2 review regressions additionally passed against local PostgreSQL 18.1 and the checksum-verified official SpiceDB
+1.56.2 Darwin ARM64 binary: 18 commands and 47 immutable receipts, including repeated roles, controller administration
+denial, control-only idle extension and idempotent logout. The pinned PostgreSQL 18.6 container fixture remains the CI
+gate. NUC's configured 1Password SSH agent subsequently became unavailable; implementation continues locally while
+the requested agent unlock is pending.

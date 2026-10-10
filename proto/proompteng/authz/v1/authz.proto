@@ -346,6 +346,10 @@ message Session {
   uint64 recovery_generation = 6;
   // Opaque random credential, returned only at establishment; hash stored centrally.
   string credential = 7;
+  string github_id = 8;
+  string display_name = 9;
+  string email = 10;
+  string image_url = 11;
 }
 
 message EstablishSessionResponse {
@@ -359,9 +363,10 @@ message RevokeSessionResponse {
 }
 
 message RevokeSessionRequest {
-  RequestContext context = 1;
-  string session_id = 2;
-  string operation_id = 3;
+  // Possession revokes only this session, including a retry after revocation.
+  string credential = 1;
+  string operation_id = 2;
+  string origin = 3;
 }
 
 message InspectSessionRequest {

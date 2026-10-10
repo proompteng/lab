@@ -284,7 +284,7 @@ pub(crate) async fn prepare(
             return Err(Status::unavailable("platform fenced"));
         }
     } else {
-        if !matches!(peer, BFF_ID | CONTROLLER_ID) {
+        if peer != BFF_ID {
             return Err(Status::permission_denied("policy caller denied"));
         }
         decision::human(context)?;
@@ -362,6 +362,9 @@ pub(crate) async fn prepare(
                 .map_err(sql_error)?
             {
                 let previous: i32 = row.get(0);
+                if c.enabled && previous == c.role {
+                    return Ok((prepared, None));
+                }
                 prepared.changes.push(relation(
                     "workspace",
                     &c.workspace_uid,
@@ -1206,6 +1209,9 @@ pub(crate) async fn finalize(
     audit.policy_command = Some(prepared.request.clone());
     audit.revision = revision.into();
     store::record_audit(&tx, &audit, "").await?;
+    // Recovery commits an already authorized intent even after its actor's
+    // session expires; activity never revives that session.
+    store::record_activity(&tx, &audit).await?;
     let receipt = CommandReceipt {
         operation_id: prepared.request.operation_id.clone(),
         state: CommandState::Committed as i32,

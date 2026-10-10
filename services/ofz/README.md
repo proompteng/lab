@@ -49,6 +49,12 @@ Retries return the original receipt without returning an agent credential again.
 membership offboarding and grant revocation restrict SQL access in the intent transaction, so a crash after native policy
 changes cannot expose an uncleansed guest. Retained homes still count against quota while quarantined.
 
+Only the BFF submits human policy commands; the controller's separate workload branch admits its enrollment and stop
+commands. Repeating an existing collaborator role never emits duplicate native updates. Initial authorized control
+activity advances the session's idle deadline without exceeding its absolute expiry; observations, denied requests and
+stream rechecks do not. Logout binds its operation ID and original receipt to the opaque session credential and origin,
+so a lost response can be retried without producing another effect or revoking another session.
+
 `test-control.sh` exercises real TLS PostgreSQL and SpiceDB, database role boundaries, native/SQL/response crash points,
 operation collisions, concurrent reservations, independent emergency approval, grant expiry and parent revocation,
 stream receipt binding, audit/archive failure and transfer quarantine before receipt recovery. Set

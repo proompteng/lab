@@ -36,6 +36,12 @@ struct Claims {
     acr: String,
     github_id: String,
     identity_provider: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    email: String,
+    #[serde(default)]
+    picture: String,
 }
 
 impl Issuer {
@@ -62,6 +68,12 @@ impl Issuer {
                     .ok_or_else(|| anyhow::anyhow!("OIDC issuer hostname required"))?,
                 std::net::SocketAddr::new(address, parsed.port_or_known_default().unwrap_or(443)),
             );
+        }
+        if let Ok(path) = std::env::var("OFZ_OIDC_CA_FILE") {
+            let bytes = std::fs::read(path)?;
+            for cert in reqwest::Certificate::from_pem_bundle(&bytes)? {
+                builder = builder.add_root_certificate(cert);
+            }
         }
         let client = builder.build()?;
         Ok(Self {
@@ -139,6 +151,21 @@ impl Issuer {
             return Err(Status::unauthenticated("identity claim binding failed"));
         }
         policy::github_human_id(&claims.github_id)?;
+        if [&claims.name, &claims.email]
+            .iter()
+            .any(|value| value.len() > 256 || value.chars().any(char::is_control))
+            || claims.picture.len() > 2048
+            || !claims.picture.is_empty()
+                && !reqwest::Url::parse(&claims.picture).is_ok_and(|url| {
+                    url.scheme() == "https"
+                        && url.host_str() == Some("avatars.githubusercontent.com")
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && url.port().is_none()
+                })
+        {
+            return Err(Status::unauthenticated("invalid identity display metadata"));
+        }
         Ok(claims)
     }
 }
@@ -158,7 +185,7 @@ pub async fn establish(
     decision::workload(native, peer, Action::SessionEstablish).await?;
     let operation = decision::parse_uuid(&request.operation_id)?;
     let state = database.state().await?;
-    if !state.archive_healthy {
+    if state.fenced || !state.archive_healthy {
         return Err(Status::unavailable("identity audit archive unavailable"));
     }
     let claims = issuer
@@ -208,8 +235,12 @@ pub async fn establish(
         },
         recovery_generation: state.recovery_generation,
         credential,
+        github_id: claims.github_id.clone(),
+        display_name: claims.name.clone(),
+        email: claims.email.clone(),
+        image_url: claims.picture.clone(),
     };
-    tx.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", &[&id,&hash,&human,&claims.sub,&claims.sid,&operation,&(session.expires_at_unix_ms as i64),&(session.idle_deadline_unix_ms as i64),&(session.mfa_at_unix_ms as i64),&(session.recovery_generation as i64)]).await.map_err(sql_error)?;
+    tx.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,display_name,email,image_url) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)", &[&id,&hash,&human,&claims.sub,&claims.sid,&operation,&(session.expires_at_unix_ms as i64),&(session.idle_deadline_unix_ms as i64),&(session.mfa_at_unix_ms as i64),&(session.recovery_generation as i64),&claims.github_id,&claims.name,&claims.email,&claims.picture]).await.map_err(sql_error)?;
     let context = RequestContext {
         actor: Some(Actor {
             identity: Some(Identity::HumanId(human)),
@@ -255,7 +286,7 @@ pub async fn inspect(
         .get()
         .await
         .map_err(|_| Status::unavailable("control database pool unavailable"))?;
-    let row = client.query_opt("SELECT s.id,s.human_id,s.expires_at_ms,s.idle_deadline_ms,s.mfa_at_ms,s.recovery_generation FROM ofz.sessions s JOIN ofz.memberships m ON m.human_id=s.human_id AND m.role=1 CROSS JOIN ofz.platform_state p WHERE token_hash=$1 AND NOT revoked AND s.expires_at_ms>ofz.now_ms() AND s.idle_deadline_ms>ofz.now_ms() AND s.recovery_generation=p.recovery_generation", &[&hash]).await.map_err(sql_error)?.ok_or_else(|| Status::unauthenticated("session expired or revoked"))?;
+    let row = client.query_opt("SELECT s.id,s.human_id,s.expires_at_ms,s.idle_deadline_ms,s.mfa_at_ms,s.recovery_generation,s.github_id,s.display_name,s.email,s.image_url FROM ofz.sessions s JOIN ofz.memberships m ON m.human_id=s.human_id AND m.role=1 CROSS JOIN ofz.platform_state p WHERE token_hash=$1 AND NOT revoked AND s.expires_at_ms>ofz.now_ms() AND s.idle_deadline_ms>ofz.now_ms() AND s.recovery_generation=p.recovery_generation", &[&hash]).await.map_err(sql_error)?.ok_or_else(|| Status::unauthenticated("session expired or revoked"))?;
     let human: String = row.get(1);
     if !native
         .check(&[Check::new("platform", "lab", "admit", "human", &human)])
@@ -273,6 +304,10 @@ pub async fn inspect(
         mfa_at_unix_ms: row.get::<_, i64>(4) as u64,
         recovery_generation: row.get::<_, i64>(5) as u64,
         credential: String::new(),
+        github_id: row.get(6),
+        display_name: row.get(7),
+        email: row.get(8),
+        image_url: row.get(9),
     })
 }
 
@@ -282,37 +317,50 @@ pub async fn revoke(
     peer: &str,
     request: RevokeSessionRequest,
 ) -> Result<CommandReceipt, Status> {
+    if peer != BFF_ID || request.credential.len() != 43 {
+        return Err(Status::unauthenticated("BFF session credential required"));
+    }
     decision::workload(native, peer, Action::PolicyCommand).await?;
-    let context = request
-        .context
-        .as_ref()
-        .ok_or_else(|| Status::unauthenticated("context required"))?;
-    let human = decision::human(context)?;
-    let id = decision::parse_uuid(&request.session_id)?;
     let operation = decision::parse_uuid(&request.operation_id)?;
     let state = database.state().await?;
-    decision::session(database, context, Action::PlatformAdmit, &state).await?;
-    decision::validate_context(context, peer, &state)?;
+    let hash = Sha256::digest(request.credential.as_bytes()).to_vec();
     let mut client = database
         .pool
         .get()
         .await
         .map_err(|_| Status::unavailable("control database pool unavailable"))?;
     let tx = client.transaction().await.map_err(sql_error)?;
-    let updated = tx
-        .execute(
-            "UPDATE ofz.sessions SET revoked=true WHERE id=$1 AND human_id=$2",
-            &[&id, &human],
+    let session = tx
+        .query_opt(
+            "SELECT id,human_id FROM ofz.sessions WHERE token_hash=$1 FOR UPDATE",
+            &[&hash],
         )
         .await
-        .map_err(sql_error)?;
-    if updated != 1 {
-        return Err(Status::permission_denied(
-            "session belongs to another actor",
-        ));
+        .map_err(sql_error)?
+        .ok_or_else(|| Status::unauthenticated("unknown session credential"))?;
+    let id: Uuid = session.get(0);
+    let context = RequestContext {
+        actor: Some(Actor {
+            identity: Some(Identity::HumanId(session.get(1))),
+        }),
+        session_id: id.to_string(),
+        deadline_unix_ms: state.now_ms + 2000,
+        contract_version: crate::CONTRACT_VERSION,
+        origin: request.origin.clone(),
+        ..Default::default()
+    };
+    decision::validate_context(&context, peer, &state)?;
+    if let Some(row) = tx.query_opt("SELECT credential_hash,origin,receipt FROM ofz.session_revocations WHERE operation_id=$1", &[&operation]).await.map_err(sql_error)? {
+        if row.get::<_,Vec<u8>>(0) != hash || row.get::<_,String>(1) != request.origin {
+            return Err(Status::already_exists("session operation ID collision"));
+        }
+        return store::decode(row.get(2));
     }
+    tx.execute("UPDATE ofz.sessions SET revoked=true WHERE id=$1", &[&id])
+        .await
+        .map_err(sql_error)?;
     let audit = store::receipt(
-        context,
+        &context,
         peer,
         policy::platform(),
         Action::SessionInspect,
@@ -321,8 +369,7 @@ pub async fn revoke(
         "session revoked",
     );
     store::record_audit(&*tx, &audit, "").await?;
-    tx.commit().await.map_err(sql_error)?;
-    Ok(CommandReceipt {
+    let receipt = CommandReceipt {
         operation_id: operation.to_string(),
         state: CommandState::Committed as i32,
         version: state.version,
@@ -330,5 +377,8 @@ pub async fn revoke(
         audit_receipt_id: audit.id,
         agent_credential: String::new(),
         recovered_revision: false,
-    })
+    };
+    tx.execute("INSERT INTO ofz.session_revocations(operation_id,credential_hash,origin,receipt) VALUES($1,$2,$3,$4)", &[&operation,&hash,&request.origin,&store::encode(&receipt)?]).await.map_err(sql_error)?;
+    tx.commit().await.map_err(sql_error)?;
+    Ok(receipt)
 }

@@ -14,7 +14,10 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use tonic::Status;
 use uuid::Uuid;
 
-use crate::proto::{AuditReceipt, RequestContext};
+use crate::{
+    policy,
+    proto::{Action, AuditReceipt, RequestContext, actor::Identity},
+};
 
 #[derive(Clone)]
 pub struct Database {
@@ -212,9 +215,33 @@ impl Database {
             .map_err(|_| Status::unavailable("control database pool unavailable"))?;
         let tx = client.transaction().await.map_err(sql_error)?;
         record_audit(&*tx, receipt, target).await?;
+        if !record_activity(&*tx, receipt).await? {
+            return Err(Status::unauthenticated("session expired or revoked"));
+        }
         tx.commit().await.map_err(sql_error)?;
         Ok(receipt.id.clone())
     }
+}
+
+pub async fn record_activity<C: GenericClient + Sync>(
+    client: &C,
+    receipt: &AuditReceipt,
+) -> Result<bool, Status> {
+    let action =
+        Action::try_from(receipt.action).map_err(|_| Status::internal("invalid audit action"))?;
+    let Some(Identity::HumanId(human)) = receipt
+        .actor
+        .as_ref()
+        .and_then(|actor| actor.identity.as_ref())
+    else {
+        return Ok(true);
+    };
+    if !receipt.allowed || !policy::requires_mfa(action) {
+        return Ok(true);
+    }
+    let id =
+        Uuid::parse_str(&receipt.session_id).map_err(|_| Status::internal("invalid session ID"))?;
+    Ok(client.execute("UPDATE ofz.sessions SET idle_deadline_ms=LEAST(expires_at_ms,GREATEST(idle_deadline_ms,ofz.now_ms()+1800000)) WHERE id=$1 AND human_id=$2 AND NOT revoked AND expires_at_ms>ofz.now_ms() AND idle_deadline_ms>ofz.now_ms() AND recovery_generation=(SELECT recovery_generation FROM ofz.platform_state)", &[&id,human]).await.map_err(sql_error)? == 1)
 }
 
 #[derive(Clone, Debug)]

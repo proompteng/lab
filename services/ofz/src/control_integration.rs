@@ -1,3 +1,4 @@
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use std::env;
 
 use rustls::{ClientConfig, RootCertStore};
@@ -100,7 +101,8 @@ async fn setup() -> (Database, Database, Native, Vec<(String, String)>) {
                 &human,
             )));
         }
-        conn.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1)", &[&session,&Sha256::digest(session.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&((now+3_600_000) as i64),&(now as i64)]).await.unwrap();
+        let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
+        conn.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,$8)", &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&((now+3_600_000) as i64),&(now as i64),&number.to_string()]).await.unwrap();
         identities.push((human, session.to_string()));
     }
     for (role, id) in [
@@ -202,7 +204,7 @@ async fn read(
     )
     .await;
     request.context.as_mut().unwrap().workspace_uid = uid.into();
-    if action == Action::FilesObserve {
+    if matches!(action, Action::FilesObserve | Action::FilesWrite) {
         let row = database
             .pool
             .get()
@@ -536,6 +538,32 @@ async fn control_integration_durability_authority_and_quota() {
             .unwrap_err()
             .code(),
         Code::PermissionDenied
+    );
+    let repeat_role = Command::SetWorkspaceRole(SetWorkspaceRole {
+        workspace_uid: uid.clone(),
+        human_id: identities[2].0.clone(),
+        role: WorkspaceRole::Viewer as i32,
+        enabled: true,
+    });
+    execute(&database, &native, owner, repeat_role.clone()).await;
+    execute(&database, &native, owner, repeat_role).await;
+    let controller_administration = request(
+        &database,
+        owner,
+        Command::SetMembership(SetMembership {
+            human_id: identities[3].0.clone(),
+            role: PlatformRole::Operator as i32,
+            enabled: true,
+        }),
+    )
+    .await;
+    assert_eq!(
+        commands::execute(&database, &native, CONTROLLER_ID, controller_administration)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied,
+        "propagated human context cannot make the controller an administrator"
     );
     for boundary in 0..3 {
         let command = Command::SetWorkspaceRole(SetWorkspaceRole {
@@ -948,6 +976,92 @@ async fn control_integration_durability_authority_and_quota() {
             .allowed,
         "live owner can observe files before transfer"
     );
+    let client = admin.pool.get().await.unwrap();
+    let owner_session = Uuid::parse_str(&owner.1).unwrap();
+    let short_idle:i64 = client.query_one("UPDATE ofz.sessions SET idle_deadline_ms=ofz.now_ms()+60000 WHERE id=$1 RETURNING idle_deadline_ms", &[&owner_session]).await.unwrap().get(0);
+    assert!(
+        read(&database, &native, owner, &uid, Action::FilesObserve)
+            .await
+            .unwrap()
+            .allowed
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT idle_deadline_ms FROM ofz.sessions WHERE id=$1",
+                &[&owner_session]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        short_idle,
+        "observation never extends idle timeout"
+    );
+    let control = read(&database, &native, owner, &uid, Action::FilesWrite)
+        .await
+        .unwrap();
+    assert!(control.allowed);
+    assert!(
+        client
+            .query_one(
+                "SELECT idle_deadline_ms FROM ofz.sessions WHERE id=$1",
+                &[&owner_session]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0)
+            > short_idle + 1_000_000,
+        "qualifying control extends idle timeout"
+    );
+    let short_idle:i64 = client.query_one("UPDATE ofz.sessions SET idle_deadline_ms=ofz.now_ms()+60000 WHERE id=$1 RETURNING idle_deadline_ms", &[&owner_session]).await.unwrap().get(0);
+    let mut context = request(
+        &database,
+        owner,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    context.workspace_uid = uid.clone();
+    context.runtime_epoch = client
+        .query_one(
+            "SELECT runtime_epoch FROM ofz.workspaces WHERE uid=$1",
+            &[&Uuid::parse_str(&uid).unwrap()],
+        )
+        .await
+        .unwrap()
+        .get::<_, Uuid>(0)
+        .to_string();
+    assert!(
+        decision::check(
+            &database,
+            &native,
+            BFF_ID,
+            CheckRequest {
+                context: Some(context),
+                action: Action::FilesWrite as i32,
+                resource: Some(policy::workspace(&uid)),
+                target: String::new(),
+                stream_receipt_id: control.audit_receipt_id,
+            }
+        )
+        .await
+        .unwrap()
+        .allowed
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT idle_deadline_ms FROM ofz.sessions WHERE id=$1",
+                &[&owner_session]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        short_idle,
+        "stream rechecks never extend idle timeout"
+    );
+    drop(client);
     let transfer = request(
         &database,
         owner,
@@ -1046,6 +1160,58 @@ async fn control_integration_durability_authority_and_quota() {
         .unwrap()
         .allowed,
         "transfer quarantines retained content until clean recovery"
+    );
+    let revoked = &identities[3];
+    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(
+        Uuid::parse_str(&revoked.1).unwrap().as_bytes(),
+    ));
+    let revoke = RevokeSessionRequest {
+        credential: credential.clone(),
+        operation_id: Uuid::new_v4().to_string(),
+        origin: "https://proompteng.ai".into(),
+    };
+    let original = crate::sessions::revoke(&database, &native, BFF_ID, revoke.clone())
+        .await
+        .unwrap();
+    let retried = crate::sessions::revoke(&database, &native, BFF_ID, revoke.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        original, retried,
+        "lost logout response has one immutable receipt"
+    );
+    assert_eq!(
+        crate::sessions::inspect(
+            &database,
+            &native,
+            BFF_ID,
+            InspectSessionRequest {
+                session_id: credential
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::Unauthenticated
+    );
+    let other = URL_SAFE_NO_PAD.encode(Sha256::digest(
+        Uuid::parse_str(&identities[1].1).unwrap().as_bytes(),
+    ));
+    assert_eq!(
+        crate::sessions::revoke(
+            &database,
+            &native,
+            BFF_ID,
+            RevokeSessionRequest {
+                credential: other,
+                ..revoke
+            }
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::AlreadyExists,
+        "logout operation ID cannot be reused for another session"
     );
     let conn = admin.pool.get().await.unwrap();
     let counts=conn.query_one("SELECT (SELECT count(*) FROM ofz.commands),(SELECT count(*) FROM ofz.audit),(SELECT count(*) FROM ofz.audit_outbox)", &[]).await.map_err(sql_error).unwrap();
