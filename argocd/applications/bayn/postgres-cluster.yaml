@@ -61,6 +61,7 @@ spec:
       wal_sender_timeout: 60s
       wal_receiver_timeout: 60s
   monitoring:
+    metricsQueriesTTL: 1s
     customQueriesConfigMap:
       - name: cnpg-default-monitoring
         key: queries

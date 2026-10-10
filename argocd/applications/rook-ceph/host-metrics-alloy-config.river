@@ -12,7 +12,7 @@ prometheus.exporter.unix "storage" {
 	set_collectors = ["cpu", "diskstats", "meminfo", "netclass", "netdev", "pressure"]
 
 	disk {
-		device_include = "^(sd[a-z]+|nvme[0-9]+n[0-9]+)$"
+		device_include = "^(sd[a-z]+|nvme[0-9]+n[0-9]+|rbd[0-9]+)$"
 	}
 
 	netdev {

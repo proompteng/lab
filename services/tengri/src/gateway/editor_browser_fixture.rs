@@ -17,7 +17,7 @@ async fn editor_browser_acceptance_fixture() {
         } else {
             json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"editor-fixture-incarnation","generation":1},"spec":{
                 "displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
-                "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":16},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z",
+                "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z",
                 "slot":{"name":"editor-fixture","podUid":"editor-fixture","pvcName":"editor-fixture-home","pvcUid":"editor-fixture-home-incarnation","epoch":1}
             },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1","podUid":"editor-fixture"}})
         };
@@ -89,6 +89,34 @@ async fn editor_browser_acceptance_fixture() {
             )
         }
     });
+    let browser_state = state.clone();
+    let browser = get(move || {
+        let state = browser_state.clone();
+        async move {
+            let guest = GuestClient::for_agent(
+                state.client.clone(),
+                "tengri",
+                "editor-fixture",
+                &crate::identity::WorkloadIdentity::Fixture(8080),
+            )
+            .await
+            .unwrap();
+            guest.open_browser().await.unwrap();
+            let ticket = state
+                .tickets
+                .issue_preview(
+                    &"a".repeat(64),
+                    "editor-fixture",
+                    crate::guest::BROWSER_PORT,
+                    "/",
+                    "",
+                )
+                .unwrap();
+            axum::Json(
+                json!({"id":ticket.id,"launchUrl":ticket.url,"expiresAt":ticket.expires_at,"previewOrigin":state.preview_origin.origin(&ticket.id)}),
+            )
+        }
+    });
     let files_state = state.clone();
     let files = get(move |Query(query): Query<HashMap<String, String>>| {
         let state = files_state.clone();
@@ -121,20 +149,24 @@ async fn editor_browser_acceptance_fixture() {
             StatusCode::NO_CONTENT
         }
     });
-    let revoke_editors_state = state.clone();
-    let revoke_editors = post(move || {
-        let state = revoke_editors_state.clone();
+    let revoke_desktop_previews_state = state.clone();
+    let revoke_desktop_previews = post(move || {
+        let state = revoke_desktop_previews_state.clone();
         async move {
-            state.tickets.revoke_editors(&"a".repeat(64)).unwrap();
+            state
+                .tickets
+                .revoke_desktop_previews(&"a".repeat(64))
+                .unwrap();
             StatusCode::NO_CONTENT
         }
     });
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let control = control_router(state.clone())
         .route("/_test/editor", issue)
+        .route("/_test/browser", browser)
         .route("/_test/files", files)
         .route("/_test/revoke", revoke)
-        .route("/_test/revoke-editors", revoke_editors)
+        .route("/_test/revoke-desktop-previews", revoke_desktop_previews)
         .route(
             "/_test/shutdown",
             post(move || {

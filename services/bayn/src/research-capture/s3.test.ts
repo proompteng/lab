@@ -1,11 +1,14 @@
 import { expect, test } from 'bun:test'
 import { Readable } from 'node:stream'
 import type { S3ClientConfig, S3ClientResolvedConfig } from '@aws-sdk/client-s3'
-import { Deferred, Effect, Exit, Fiber, Redacted, Tracer } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Option, Redacted, Result, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
-import { researchCaptureObject } from './export'
+import { captureKafkaTransport } from './capture'
+import { captureEvent, marketEvent, recoverCaptureFromStoredObjects } from './capture.test-support'
+import { researchCaptureObject, researchCaptureObjectKey, type ResearchCaptureObject } from './export'
+import { makeResearchCaptureRecorder, type ResearchCaptureStore } from './recorder'
 import { makeS3ResearchCaptureObjectStore } from './s3'
 
 const options = {
@@ -31,7 +34,7 @@ type Fault =
   | 'wrong-length'
   | 'stream-error'
 const captureSpans = () => {
-  const spans: Tracer.Span[] = []
+  const spans: Tracer.NativeSpan[] = []
   const tracer = Tracer.make({
     span: (options) => {
       const span = new Tracer.NativeSpan(options)
@@ -108,6 +111,109 @@ const fixture = (fault: Fault = 'none') => {
   }
 }
 
+test('the recorder verifies one binary frame with two S3 requests before SQL and verifies both terminal objects', async () => {
+  const { spans, tracer } = captureSpans()
+  const objects = new Map<string, ResearchCaptureObject>()
+  const requests: string[] = []
+  const writes: string[] = []
+  const chunks: Parameters<ResearchCaptureStore['append']>[0][] = []
+  const seals: Parameters<ResearchCaptureStore['seal']>[0][] = []
+  let destroys = 0
+  const handler: S3ClientConfig['requestHandler'] = {
+    handle: async (request: Request) => {
+      requests.push(request.method)
+      const key = request.path.slice('/synthetic-captures/'.length)
+      if (request.method === 'PUT') {
+        if (request.headers['if-none-match'] !== '*' || !(request.body instanceof Uint8Array))
+          throw new Error('Expected one conditional binary write')
+        const object = researchCaptureObject(Buffer.from(request.body))
+        if (researchCaptureObjectKey(object.contentHash) !== key) throw new Error('Wrong content address')
+        objects.set(key, object)
+        writes.push('put')
+        return { response: { statusCode: 200, headers: {}, body: Readable.from([]) } }
+      }
+      const object = objects.get(key)
+      if (object === undefined) throw new Error('Readback omitted a preceding write')
+      writes.push('get')
+      return {
+        response: {
+          statusCode: 200,
+          headers: { 'content-length': String(object.payload.byteLength) },
+          body: Readable.from([object.payload]),
+        },
+      }
+    },
+    destroy: () => {
+      destroys++
+    },
+  }
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(100)
+        const objectStore = yield* makeS3ResearchCaptureObjectStore(options, handler)
+        const recorder = yield* makeResearchCaptureRecorder(
+          {
+            append: (bytes) =>
+              Effect.sync(() => {
+                writes.push('sql-chunk')
+                chunks.push(bytes)
+              }),
+            seal: (bytes) =>
+              Effect.sync(() => {
+                writes.push('sql-seal')
+                seals.push(bytes)
+              }),
+          },
+          {
+            captureId: 'native-s3-fixture',
+            sourceRevision: 'a'.repeat(40),
+            maximumQueuedReceipts: 32,
+            maximumQueuedBytes: 256 * 1024,
+            maximumReceiptBytes: 4096,
+            flushIntervalMs: 10,
+            writeTimeoutMs: 100,
+          },
+          objectStore,
+        )
+        recorder.record(captureEvent('STARTED'), 100)
+        recorder.record({ ...marketEvent, originalTransport: captureKafkaTransport(100) }, 100, Buffer.from('é'))
+        recorder.record(captureEvent('STOPPED'), 100)
+        yield* recorder.finish
+        expect((yield* recorder.status).invalidations).toEqual([])
+      }),
+    ).pipe(provideTestLayer(TestClock.layer()), Effect.provideService(Tracer.Tracer, tracer)),
+  )
+  expect(requests.filter((method) => method === 'PUT')).toHaveLength(3)
+  expect(requests.filter((method) => method === 'GET')).toHaveLength(3)
+  expect(writes.slice(0, 3)).toEqual(['put', 'get', 'sql-chunk'])
+  expect(writes.at(-1)).toBe('sql-seal')
+  expect(objects.size).toBe(3)
+  expect(destroys).toBe(1)
+  const operations = spans.filter((span) => span.name === 'bayn.capture.persistence')
+  expect(operations).toHaveLength(2)
+  for (const [index, operation] of operations.entries()) {
+    const children = spans.filter((span) => Option.getOrUndefined(span.parent)?.spanId === operation.spanId)
+    const sql = children.filter((span) => span.name === 'bayn.capture.sql')
+    const objectSpans = children.filter((span) => span.name === 'bayn.capture.object.put_verified')
+    expect(sql).toHaveLength(1)
+    expect(objectSpans).toHaveLength(index === 0 ? 1 : 2)
+    for (const objectSpan of objectSpans) {
+      expect(objectSpan.traceId).toBe(operation.traceId)
+      expect(objectSpan.events.map(([name]) => name)).toEqual([
+        'bayn.capture.object.put.started',
+        'bayn.capture.object.put.acknowledged',
+        'bayn.capture.object.readback.started',
+        'bayn.capture.object.readback.headers_received',
+        'bayn.capture.object.verified',
+      ])
+    }
+  }
+  const verified = Result.getOrThrow(recoverCaptureFromStoredObjects(chunks, seals[0], (key) => objects.get(key)))
+  expect(verified.structurallyClosed).toBe(true)
+  expect(verified.complete).toBe(false)
+})
+
 test.each(['none', 'existing'] as const)(
   'S3 %s path uses one conditional put then exact full readback',
   async (fault) => {
@@ -134,7 +240,20 @@ test.each(['none', 'existing'] as const)(
       'bayn.operation': 'PUT_VERIFIED',
       'bayn.capture.object.bytes': object.payload.byteLength,
       'bayn.capture.object.phase': 'VERIFIED',
+      'bayn.capture.object.sha256': object.contentHash,
     })
+    expect(server.spans[0]?.events.map(([name, , attributes]) => ({ name, attributes }))).toEqual([
+      { name: 'bayn.capture.object.put.started', attributes: {} },
+      {
+        name: 'bayn.capture.object.put.acknowledged',
+        attributes: { 'http.response.status_code': fault === 'existing' ? 412 : 200 },
+      },
+      { name: 'bayn.capture.object.readback.started', attributes: {} },
+      { name: 'bayn.capture.object.readback.headers_received', attributes: {} },
+      { name: 'bayn.capture.object.verified', attributes: {} },
+    ])
+    const times = server.spans[0]?.events.map(([, time]) => time) ?? []
+    expect(times.every((time, index) => index === 0 || time >= (times[index - 1] ?? time))).toBe(true)
     expect(server.spans[0]?.status).toMatchObject({ _tag: 'Ended', exit: { _tag: 'Success' } })
   },
 )
@@ -219,7 +338,11 @@ test.each([
         : 'VERIFY_BYTES',
   )
   expect(server.spans[0]?.status).toMatchObject({ _tag: 'Ended', exit: { _tag: 'Failure' } })
-  const serializedSpans = JSON.stringify(server.spans.map((span) => Object.fromEntries(span.attributes)))
+  expect(server.spans[0]?.events.map(([name]) => name)).not.toContain('bayn.capture.object.verified')
+  const serializedSpans = JSON.stringify(
+    server.spans.map((span) => ({ attributes: Object.fromEntries(span.attributes), events: span.events })),
+    (_key, value) => (typeof value === 'bigint' ? String(value) : value),
+  )
   expect(serializedSpans).not.toContain('synthetic-access')
   expect(serializedSpans).not.toContain('synthetic-secret')
   expect(serializedSpans).not.toContain('fixture payload')
@@ -276,8 +399,37 @@ test.each([
       blockedMethod === 'PUT' ? 'CONDITIONAL_PUT' : 'READBACK',
     )
     expect(spans[0]?.status._tag).toBe('Ended')
+    expect(spans[0]?.events.map(([name]) => name)).toEqual(
+      blockedMethod === 'PUT'
+        ? ['bayn.capture.object.put.started']
+        : [
+            'bayn.capture.object.put.started',
+            'bayn.capture.object.put.acknowledged',
+            'bayn.capture.object.readback.started',
+          ],
+    )
   },
 )
+
+test('S3 rejects an unvalidated object identity before tracing it or sending requests', async () => {
+  const server = fixture()
+  const object = { ...researchCaptureObject('fixture payload'), contentHash: 'unvalidated-private-identity' }
+  const exit = await Effect.runPromiseExit(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const store = yield* makeS3ResearchCaptureObjectStore(options, server.handler)
+        yield* store.putVerified(object)
+      }),
+    ).pipe(Effect.provideService(Tracer.Tracer, server.tracer)),
+  )
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(server.requests).toHaveLength(0)
+  expect(server.spans[0]?.attributes.has('bayn.capture.object.sha256')).toBe(false)
+  expect(server.spans[0]?.events).toEqual([])
+  expect(JSON.stringify(server.spans.map((span) => Object.fromEntries(span.attributes)))).not.toContain(
+    object.contentHash,
+  )
+})
 
 test('S3 timeout destroys a stalled response stream after successful headers', async () => {
   let responseBody: Readable | undefined
@@ -309,6 +461,12 @@ test('S3 timeout destroys a stalled response stream after successful headers', a
   expect(spans).toHaveLength(1)
   expect(spans[0]?.attributes.get('bayn.capture.object.phase')).toBe('VERIFY_BYTES')
   expect(spans[0]?.status._tag).toBe('Ended')
+  expect(spans[0]?.events.map(([name]) => name)).toEqual([
+    'bayn.capture.object.put.started',
+    'bayn.capture.object.put.acknowledged',
+    'bayn.capture.object.readback.started',
+    'bayn.capture.object.readback.headers_received',
+  ])
 })
 
 test.each([

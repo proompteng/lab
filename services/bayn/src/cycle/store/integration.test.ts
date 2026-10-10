@@ -23,6 +23,10 @@ import {
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
+import {
+  executionActivationExpiredRestrictionReason,
+  legacyExecutionActivationExpiredRestrictionReason,
+} from '../../execution/mandate'
 import { BlockedCycleIntentStore } from '../../execution/intents/blocked-cycle'
 import { BlockedCycleIntentStoreLive } from '../../execution/intents/blocked-cycle-postgres'
 import { canonicalHashV1 } from '../../hash'
@@ -1022,11 +1026,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`ALTER TABLE intents ADD state_version integer DEFAULT 1`
             yield* sql`CREATE TEMP TABLE authority_generations (
               generation_hash text, account_id text, maximum text, activation_schema_version text,
-              qualification_run_id text, research_plan_hash text, strategy_protocol_hash text
+              qualification_run_id text, research_plan_hash text, strategy_protocol_hash text,
+              broker_environment text DEFAULT 'sandbox'
             ) ON COMMIT DROP`
             yield* sql`INSERT INTO authority_generations VALUES (
               ${generationHash}, 'account', 'PAPER', 'bayn.paper-authority-generation.v3',
-              NULL, ${researchPlanHash}, 'protocol'
+              NULL, ${researchPlanHash}, 'protocol', 'sandbox'
             )`
             yield* sql`CREATE TEMP TABLE authority_state (
               singleton boolean, generation_hash text, maximum text, effective text, kill_state text,
@@ -1094,8 +1099,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               ADD activated_at timestamptz,
               ADD broker_identity_schema_version text DEFAULT 'bayn.broker-identity.v2',
               ADD broker_identity_hash text DEFAULT 'identity',
-              ADD broker_provider text DEFAULT 'alpaca',
-              ADD broker_environment text DEFAULT 'sandbox'`
+              ADD broker_provider text DEFAULT 'alpaca'`
             yield* sql`UPDATE authority_generations SET proof_plan_hash = ${researchPlanHash}`
             yield* sql`INSERT INTO authority_generations (
               generation_hash, previous_generation_hash, maximum, authority_version, activated_at, account_id
@@ -1142,6 +1146,76 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             expect(yield* rearmEligible).toBe(false)
             yield* sql`UPDATE mutation_events SET event_type = 'RECOVERY_FOUND' WHERE sequence = 350`
             yield* sql`UPDATE authority_state SET reason = 'operator kill switch'`
+            expect(yield* rearmEligible).toBe(false)
+
+            // Expiry with zero executions has no qualified performance receipt. The real migrated
+            // rearm predicate must accept a settled empty/NO_TRADE mandate, without weakening
+            // account settlement or treating the missing performance as profitable.
+            yield* sql`CREATE TEMP TABLE accounting_transactions (intent_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_forward_performance_receipts (
+              authority_generation_hash text
+            ) ON COMMIT DROP`
+            yield* sql`DELETE FROM fills`
+            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`UPDATE autonomous_cycles SET qualification_run_id = ${researchPlanHash},
+              strategy_protocol_hash = 'protocol'`
+            for (const expiry of [
+              executionActivationExpiredRestrictionReason,
+              legacyExecutionActivationExpiredRestrictionReason,
+            ]) {
+              yield* sql`UPDATE authority_state SET reason = ${expiry}`
+              expect(yield* rearmEligible).toBe(true)
+              yield* sql`UPDATE autonomous_cycles SET state = 'NO_TRADE'`
+              expect(yield* rearmEligible).toBe(true)
+            }
+            const expiredState = yield* sql`SELECT * FROM authority_state`
+            yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id) VALUES ('account','broker-order','intent')`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`DELETE FROM fills`
+            yield* sql`UPDATE orders SET filled_quantity_micros = 1`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`INSERT INTO accounting_transactions VALUES ('intent')`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`DELETE FROM accounting_transactions`
+            yield* sql`UPDATE intents SET state = 'SUBMITTING'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE intents SET state = 'TERMINAL'`
+            yield* sql`UPDATE mutation_events SET event_type = 'SUBMIT_STARTED' WHERE sequence = 350`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE mutation_events SET event_type = 'RECOVERY_FOUND' WHERE sequence = 350`
+            yield* sql`UPDATE autonomous_cycles SET state = 'ACTIVE'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE autonomous_cycles SET state = 'NO_TRADE'`
+            yield* sql`UPDATE orders SET status = 'NEW'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE orders SET status = 'CANCELED', intent_id = NULL`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE orders SET intent_id = 'intent'`
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:04:00Z'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:02:00Z'`
+            yield* sql`UPDATE position_snapshots SET position_count = 1 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(true)
+            expect(yield* sql`SELECT * FROM authority_state`).toEqual(expiredState)
+            expect(yield* sql`SELECT * FROM autonomous_forward_performance_receipts`).toHaveLength(0)
+
+            // A mandate that expired before creating any cycle/intent must also be able to retire.
+            yield* sql`DELETE FROM autonomous_cycle_shadow_decisions`
+            yield* sql`DELETE FROM autonomous_cycles`
+            yield* sql`DELETE FROM mutation_events`
+            yield* sql`DELETE FROM orders`
+            yield* sql`DELETE FROM broker_events`
+            yield* sql`DELETE FROM intents`
+            expect(yield* rearmEligible).toBe(true)
+            yield* sql`UPDATE position_snapshots SET position_count = 1 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0 WHERE snapshot_id = 'z-tied'`
+            yield* sql`UPDATE authority_state SET updated_at = '2026-09-08T17:04:00Z'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE authority_state SET updated_at = '2026-09-08T17:01:30Z', reason = 'operator kill switch'`
             expect(yield* rearmEligible).toBe(false)
           }),
         )

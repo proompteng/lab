@@ -1,6 +1,6 @@
 # Original receipt capture
 
-Production capture is **disabled by default**. All deployment manifests leave it disabled and grant no new access.
+Production capture is **disabled by default**. Deployment manifests leave the fixed-session setting absent.
 The native execution worker has optional, fixed-session wiring through `BAYN_RESEARCH_CAPTURE_SESSION`. An absent or
 invalid setting acquires no capture recorder, S3 client, or capture database operation. Live activation, credentials,
 and capacity qualification require separate review and approval.
@@ -27,13 +27,15 @@ capture failure, or deadline without an actual cut ends the attempt without sele
 The worker uses its existing PostgreSQL client and capture tables. Explicit S3 configuration uses
 `BAYN_RESEARCH_CAPTURE_S3_ENDPOINT`, `BAYN_RESEARCH_CAPTURE_S3_BUCKET`, `BAYN_RESEARCH_CAPTURE_S3_REGION`,
 `BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID`, and `BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY`.
-Use the native OBC's actual `BUCKET_NAME`, not the claim name or the legacy research bucket. No manifest mounts these
-credentials as part of this implementation. Mounting credentials or granting access requires separate approval.
+Use the native OBC's actual `BUCKET_NAME`, not the claim name or the legacy research bucket. The approved execution-worker
+manifest references the existing `bayn-research-captures` owner Secret and connection ConfigMap. The public status
+service and activation hook receive no research credential. Access alone does not start capture or qualify capacity.
 
 Before any object write or consumer observation, the recorder writes an ordinal-zero `session-attempt` chunk to SQL.
 It contains the frozen declaration and a fresh attempt nonce. This sole control receipt claims the fixed capture ID.
-It is the only chunk whose SQL write precedes object export. SQL must acknowledge the claim before its empty raw object,
-metadata, and index can be exported, and all must acknowledge before raw admission begins. The marker participates in
+It is the only chunk whose SQL write precedes object export. SQL must acknowledge the claim before its single v2 frame
+can be exported. That frame contains the exact claim metadata and no raw values; its verified PUT/GET acknowledgement
+must arrive before raw admission begins. The marker participates in
 the ordinary hash and export chains but represents no consumer start or market delivery. Readers reject a marker in
 any other position. Normal data chunks retain object-readback-before-SQL ordering.
 The claim's complete SQL-and-export operation uses the smaller of the one-second write timeout and the remaining
@@ -46,7 +48,7 @@ process never retries the claim, selects a new ID, or repairs it. Every process 
 start and bootstrap-deadline window. A failed claim or its export leaves no qualified seal and does not change native work.
 
 The configured `maximumObjectBytes` and `maximumSqlBytes` are cumulative logical-payload ceilings. They must not exceed
-24 GiB and 10 GiB respectively. Every attempted raw, metadata, index, seal, and manifest object is charged before its
+24 GiB and 10 GiB respectively. Every attempted frame, seal, and manifest object is charged before its
 write. SQL charges each chunk and seal's UTF8 payload before its write. Failed or unknown writes keep their charge.
 The recorder uses two counters, not a per-event history. It refuses a write that would exceed its ceiling and invalidates
 capture. A limit may prevent the final seal, leaving an unknown tail. These are failure ceilings, not evidence of
@@ -121,43 +123,51 @@ zero have explicit tags so JSON cannot turn them into null or silently omit them
 replay must reproduce their rejection instead of inferring a timestamp from the payload. Metadata-only receipts omit this
 block. No leader-epoch qualification or offset-gap rule is added.
 
-Raw admission reserves `4 * receipt UTF8 bytes + 3 * raw bytes + 512` bytes per entry and 64 KiB for envelopes and bounded SDK responses. The
-reservation covers owned bytes, binary assembly, metadata/index serialization and bounded readback payloads. It remains
+Raw admission reserves `4 * receipt UTF8 bytes + 3 * raw bytes` bytes per entry and 64 KiB for envelopes and bounded SDK responses. The
+reservation covers owned bytes, binary assembly, exact metadata serialization and bounded readback payloads. It remains
 charged through in-flight writes, as does the receipt-count limit. It bounds application-owned payloads, not total
 JavaScript or SDK RSS. A raw recorder needs a buffer larger than the envelope reserve; the existing 4 MiB maximum still
 applies. Overflow rejects admission synchronously and invalidates only capture. There is no queue wait in execution.
 
-Each drained chunk writes a content-addressed binary object, the exact metadata JSON, and a hash-linked range index.
-Indexes bind receipt sequence to binary offset/length; the metadata binds original arrival, consumer epoch/sequence,
-topic/partition/offset, disposition and hash. All three objects must pass readback before the SQL append, and that append
-must acknowledge before the recorder advances its frontier. An immutable export manifest binds the last index and exact
-metadata seal. Every index, manifest and seal is `UNQUALIFIED`, including stored objects whose acknowledgements are lost.
-The verifier checks the existing metadata chain plus every binary range and always reports `complete: false`.
+Each drained chunk writes one content-addressed binary frame. Its fixed 45-byte header contains the eight ASCII bytes
+`BAYNCAP2`, the unsigned four-byte big-endian metadata length, a one-byte previous-frame-hash presence flag and 32 hash
+bytes. The flag is zero with 32 zero bytes for the first frame, otherwise one with the preceding full-frame SHA-256.
+The exact UTF8 SQL metadata follows the header, then original raw values in market-receipt order. The receipt's
+`rawByteLength` delimits each value and its `rawValueSha256` verifies that slice. Tombstones consume no bytes and remain
+null; zero-length values remain distinct. The decoder rejects unsupported versions, noncanonical flags/hashes,
+truncated or malformed UTF8 metadata, changed values and unreferenced tails. Header, metadata and raw values together
+must fit the existing 4 MiB bound, enforced before frame allocation and before decode.
 
-Raw-mode SQL seals also retain `bayn.research-capture-export-root.v1`, binding the last verified index hash and chunk
-count to the immutable metadata frontier. The manifest references the exact seal bytes; the seal does not reference its
-own manifest hash. `deriveResearchCaptureExportManifest` is the single writer/reader representation. Given the exact
-durably read SQL seal, it derives the expected manifest bytes and content address. Derivation alone does not prove the
-object exists. A reader must Get that object from the known bucket, traverse the index chain by content-addressed keys,
-and verify every referenced raw/metadata object against the durable SQL chunks. No List or recorder status is needed.
+The metadata still binds original arrival, consumer epoch/sequence, topic/partition/offset, disposition and hash.
+The complete frame must pass exact readback before the SQL append, and that append must acknowledge before the recorder
+advances either frontier. The whole-frame content hash binds both metadata and raw values. The separate raw/metadata
+objects and byte-range index are removed. This hard migration has one live v2 writer and reader; stored v1 objects are
+retained without rewriting, deleting or qualifying them. Metadata-only captures retain their existing wire formats.
+
+Raw-mode SQL seals retain `bayn.research-capture-export-root.v2`, binding `lastChunkHash` and the chunk count to the
+immutable metadata frontier. The `bayn.research-capture-export.v2` manifest references the exact seal bytes; the seal
+does not reference its own manifest hash. `deriveResearchCaptureExportManifest` is the single writer/reader
+representation. Given the exact durably read SQL seal, it derives the expected manifest bytes and content address.
+Derivation alone does not prove the object exists. A reader must Get that manifest and exact seal, traverse the frame
+chain by content-addressed keys, and compare each embedded metadata payload byte-for-byte with the bounded SQL chunk.
+No List or recorder status is needed. Verification checks both hash chains and every original value. Every export
+remains `UNQUALIFIED` and always reports `complete: false`.
 
 A committed SQL seal remains recoverable if its acknowledgement or process state is lost. Reconstruction does not prove
-that acknowledgement arrived and never upgrades `UNQUALIFIED`. A failed or unknown manifest write prevents the SQL seal;
+that acknowledgement arrived and never upgrades `UNQUALIFIED`. A failed or unknown object write prevents the SQL seal;
 orphan objects without that seal have an unknown crash tail. Missing objects, mismatched roots or corrupt bytes cannot
-establish a verified export. Metadata-only seal bytes and hashes remain unchanged.
+establish a verified export. The existing whole-worker verifier still requires genuine consumer closure. A sealed
+prefix does not fabricate `STOPPED`, prove a complete session, or authorize an original-arrival replay source.
 
-The existing whole-worker verifier still requires genuine consumer closure. Deriving a manifest from an UNQUALIFIED
-sealed prefix does not fabricate `STOPPED`, prove a complete session, or authorize an original-arrival replay source.
-
-Each chunk verifies its raw, metadata and immutable index objects concurrently, with at most three object operations
-in flight. The index binds content hashes computed before these writes; an early index acknowledgement does not advance
-the SQL or export frontier. All three verifications must succeed before the SQL chunk append, and that append must
-acknowledge before the frontier advances. A failed write interrupts both siblings; orphan objects remain `UNQUALIFIED`.
-The one-second aggregate write deadline, byte reservations and receipt admission bounds are unchanged. The existing
-64 KiB envelope covers three bounded 8 KiB SDK response collectors; concurrency does not qualify storage capacity.
+Data chunks use one conditional PUT and one full GET instead of three of each. Finalization verifies the exact metadata
+seal and immutable manifest concurrently, with at most two object operations in flight. Their content references are
+computed before either write. Both verifications must succeed before the SQL seal; a failed write interrupts its
+sibling and cleanup remains owned and awaited. The existing 64 KiB envelope retains its conservative reservation for
+payload assembly and bounded 8 KiB SDK response collectors. Fewer requests do not qualify storage capacity.
+The one-second aggregate write deadline, receipt admission bounds and cumulative byte ceilings are unchanged.
 The deadline invalidates admission immediately, before waiting for write interruption or transaction cleanup.
 An uninterruptible COMMIT may finish later; that outcome cannot acknowledge a chunk or advance the recorder's frontier.
-Cleanup remains owned and awaited, and later receipts are counted as observed without retaining their payloads.
+Later receipts are counted as observed without retaining their payloads.
 
 The scoped S3 adapter accepts explicit bucket, endpoint, region and redacted credentials. It has no environment reader,
 ambient credential provider. Session wiring must use the verified native OBC's actual `BUCKET_NAME`,
@@ -170,6 +180,25 @@ Before SDK deserialization, response streams are bound to that abort signal. The
 for error and discarded response bodies, including PUT responses. Remote error codes and transport error names are
 not retained. Oversized or stalled error bodies fail capture and their streams close.
 
+Object client spans retain the validated content SHA-256 for direct joins to sanitized gateway receipts. Timestamped
+events separate PUT start and acknowledgement, GET start and response headers, and exact-byte verification. A cancelled
+request has no acknowledgement or verification event. HTTP 412 retains its status before the required readback. Hashes
+remain trace attributes, never metric labels; bucket names, keys, endpoints, credentials and raw bytes are excluded.
+
+`bayn.capture.persistence` spans correlate each existing claim, chunk and seal operation with its object phases and
+`bayn.capture.sql` child. The SQL child's existing driver spans identify the actual backend and BEGIN/COMMIT/ROLLBACK
+duration without an extra query. Capture spans retain only operation kind, metadata SHA-256, byte count, ordinal and
+configured write timeout. The claim's remaining admission window can shorten that timeout. Raw adapter errors and
+capture identities are not included. Tracing does not change metadata, frame bytes, write order or qualification.
+
+The persistence start, deadline-expired and cleanup-finished events distinguish the one-second validity boundary from
+later cancellation cleanup. An uninterruptible COMMIT can become durable during cleanup, but the pending interruption
+reports a failed-or-unknown SQL outcome: neither `sql.acknowledged` nor `persistence.io_completed` is emitted. Inspect
+the existing driver COMMIT span and `cleanup_finished` event for that late outcome; neither advances the invalidated
+capture frontier. Correlate object PUT/GET events with actual SQL COMMIT spans before attributing a slow operation.
+COMMIT duration alone does not distinguish local WAL synchronization from synchronous-standby waiting. These spans
+add no storage operation, retry, collector or capacity qualification.
+
 The existing at-most-one-second write deadline contains the complete export-and-SQL operation, and finalization is
 cached once. It is not a production throughput claim. A timeout, readback failure, SQL failure, restart or missing seal
 leaves incomplete evidence and cannot change execution, retries, liquidation or capital authority.
@@ -179,6 +208,31 @@ production acquisition, qualification must prove every source frontier and contr
 full controller lifecycle joins, restart/replay ambiguity handling, measured storage capacity, and bounded overhead.
 Kafka retention alone cannot recover an earlier consumer's original timing. Object-store capacity and connectivity
 alone do not satisfy these gates.
+
+### Offline service-envelope check
+
+Run `bun test services/bayn/src/research-capture/latency-envelope.test.ts` from the repository root. It exercises the
+actual recorder with in-memory stores and a deterministic clock; it makes no network requests or production writes.
+The fixture caps each scenario at 5,500 market receipts, 450 raw bytes per receipt, 8 MiB attempted object payload and
+4 MiB attempted SQL payload. The existing 1,024 retained receipts, 4 MiB reservation and one-second deadline are unchanged.
+These logical payload bounds do not describe total JavaScript memory or production replication costs.
+
+The original 4,439-receipt/50 ms budget-test burst is synthetic. Its 256-record yield cadence matches the consumer;
+its arrival timestamps are not a measured native arrival schedule. Constant object-verification plus SQL latency of
+5 ms fits that fixture, while 6 ms overflows at 19 ms. A separate uniform 1,100-record/second, five-second comparison
+fits at 450 ms and overflows at 500 ms. Neither result is a production qualification or a full-session tail guarantee.
+The uniform comparison does not bound native millisecond peaks, variable payloads or bootstrap bursts.
+
+Both queued and in-flight raw receipts consume the retained-count budget. Once batches approach steady state, a
+uniform arrival rate can retain approximately two batches: the batch being written and arrivals during that write.
+For count-limited payloads this gives a useful necessary planning check near `2 * arrivalRate * writeLatency <= 1024`;
+it is not sufficient under bursts, variable payloads, deadline tails or callback scheduling. A one-second deadline alone
+therefore does not establish enough service capacity. Moving SQL off the per-frame path cannot fix an object PUT/GET
+latency that independently exceeds the workload's retention envelope.
+
+Before changing storage architecture, correlate actual capture persistence, object and SQL spans for the same
+synthetic operation and measure a bounded original-arrival workload envelope. Thirty-second counters only give
+coarse rates; reconstructed producer timestamps and unrelated Jev SQL COMMIT spans cannot supply capture phase timings.
 
 ## Bounded native-visible replay
 
@@ -209,7 +263,7 @@ original bytes, transport timestamps, and reproduced reducer dispositions. A sea
 an interval proof. Any recorded capture invalidation conservatively prevents import.
 
 The reader derives the sole manifest address from the exact durable SQL seal, fetches that object and its referenced
-seal, and walks the index chain. Each exported metadata chunk must equal its SQL counterpart. The aggregate input-byte
+seal, and walks the frame chain. Each frame's embedded metadata must equal its SQL counterpart. The aggregate input-byte
 budget charges the supplied SQL seal, object reads, and SQL metadata reads. The metadata callback receives the smaller
 of the remaining budget, the 4 MiB object limit, and the exact exported metadata length. Each callback must enforce its
 limit before materializing the payload. This bound covers input bytes, not total JavaScript memory.
@@ -226,7 +280,7 @@ snapshot, and control-study code performs replay. Legacy delivery, regeneration,
 cannot be mixed. Tombstones retain their original evidence but fail the native epoch, so an interval spanning one
 cannot become a valid replay source. A valid input interval does not imply sufficient decision evidence, complete
 controller execution, or profitable strategy behavior. Controller receipts remain unchanged and their coverage is
-`UNKNOWN`. Every capture seal, index, and export manifest remains `UNQUALIFIED`.
+`UNKNOWN`. Every capture seal, frame, and export manifest remains `UNQUALIFIED`.
 
 The native fixture derives topic counts from committed KafkaTopic configuration and the execution controller's
 technical topic. It exercises the current 25-partition profile with committed, aborted, and open transactions,

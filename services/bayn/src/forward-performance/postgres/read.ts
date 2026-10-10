@@ -1,5 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
+import type { WriterFenceService } from '../../execution/writer-fence'
+import { forwardPerformanceSnapshot } from './snapshot'
 import { StoredFeeSchema } from '../../accounting/broker-fees'
 import { decodeAccountingReceipt } from '../../execution/contracts'
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../../db/accounting-rows'
@@ -187,12 +189,11 @@ export const readForwardPerformancePostgresDataFirst = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
+  writerFence?: WriterFenceService,
 ): Effect.Effect<ForwardPerformancePostgresEvidence, ForwardPerformancePostgresError> =>
-  sql
+  forwardPerformanceSnapshot(sql, writerFence)
     .withTransaction(
       Effect.gen(function* () {
-        yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`
-
         const cycleRows = yield* sql<Record<string, unknown>>`
           SELECT
             cycle_id,
@@ -941,6 +942,7 @@ export const readForwardPerformancePostgres = Pipeable.by<
   (
     accountId: string,
     authorityGenerationHash?: string,
+    writerFence?: WriterFenceService,
   ) => (sql: PgClient.PgClient) => ReturnType<typeof readForwardPerformancePostgresDataFirst>,
   typeof readForwardPerformancePostgresDataFirst
 >((arguments_) => typeof arguments_[0] !== 'string', readForwardPerformancePostgresDataFirst)

@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from '@proompteng/design/ui'
 import { ArrowDown, ArrowUp, Command, ExternalLink, LoaderCircle, PanelLeft, Plus, Square, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   codexOptionsForSelection,
   codexReasoningLabels,
@@ -39,6 +39,7 @@ import { cn } from '@/lib/utils'
 import {
   conversationTitleFromRegistry,
   markStoredConversationUnavailable,
+  mergePersistedConversationRegistry,
   promoteAcceptedConversationTitle,
   readStoredConversations,
   resolveConversationTitle,
@@ -50,12 +51,15 @@ import {
 import { CodexEventCard } from './codex-event-card'
 import { CodexCopyButton } from './codex-copy-button'
 import {
+  appendCodexEvent,
   appendCodexEventAfterRestore,
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
-  codexCanStartNewConversation,
+  codexApprovalTitle,
   codexEventDisplayText,
+  codexEventIsIndependentOfThreadSnapshot,
+  codexEventKey,
   codexEventMatchesThread,
   codexEventShouldRender,
   codexEventSupersedesRestoredItem,
@@ -63,13 +67,16 @@ import {
   codexLoginCompletionIsUncorrelated,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
+  codexResolvedApprovalId,
   codexResumeCommitIsCurrent,
   codexTranscriptFromThread,
   parseCodexEvent,
   reconcileCodexEventsWithRestoredHistory,
+  reconcileSubmittedPrompts,
   type CodexApprovalDecision,
   type CodexBufferedEvent,
   type CodexTranscriptItem,
+  type SubmittedPrompt,
 } from './codex-events'
 import { runTengriAction, TengriRequestError } from './client'
 import { useModalFocus } from './modal-focus'
@@ -79,7 +86,6 @@ type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 type DraftImage = { id: string; name: string; size: number; input: TengriCodexImage | null }
 
 export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
-  const composerHelpId = useId()
   const [account, setAccount] = useState<TengriCodexAccount | null>(null)
   const [login, setLogin] = useState<TengriCodexLogin | null>(null)
   const [models, setModels] = useState<TengriCodexModel[] | null>(null)
@@ -94,9 +100,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
+  const retainedEvents = useRef<CodexBufferedEvent[]>([])
+  const [submittedPrompts, setSubmittedPrompts] = useState<SubmittedPrompt[]>([])
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
+  const draftsRef = useRef(new Map<string, { text: string; images: DraftImage[] }>())
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
   const [interrupting, setInterrupting] = useState(false)
@@ -112,8 +121,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [sidebarWide, setSidebarWide] = useState(true)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const conversationRef = useRef<HTMLDivElement | null>(null)
+  const lastScrollTop = useRef(0)
+  const conversationContentRef = useRef<HTMLDivElement | null>(null)
   const promptRef = useRef<HTMLTextAreaElement | null>(null)
-  const focusComposerAfterDrawerClose = useRef(false)
+  const focusComposerRequested = useRef(false)
   const compactDrawerOpen = Boolean(account?.authenticated) && !sidebarWide && sidebarOpen
   const drawerFocus = useModalFocus<HTMLElement>(compactDrawerOpen)
   const accountRefreshGeneration = useRef(0)
@@ -136,12 +147,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const accountChecked = account !== null
   const showStopAction = Boolean(activeTurnId) && !prompt.trim() && images.length === 0
   const readingImages = images.some((image) => image.input === null)
-  const canStartNewConversation = codexCanStartNewConversation({
-    activeTurnId,
-    recovering: replayRecovering,
-    submitting,
-    threadReady,
-  })
+  const canChangeConversation = !submitting && !interrupting && !readingImages && resolvingApprovals.size === 0
 
   const setCurrentActiveTurnId = useCallback((turnId: string) => {
     activeTurnIdRef.current = turnId
@@ -260,6 +266,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setHistoryItems([])
     setRestoredHistorySequence(0)
     setEvents([])
+    retainedEvents.current = []
+    setSubmittedPrompts([])
+    draftsRef.current.clear()
+    lastScrollTop.current = 0
     setPrompt('')
     setFollowingConversation(true)
     setReplayRecovering(false)
@@ -303,11 +313,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [account?.authenticated])
 
   useEffect(() => {
-    if (!focusComposerAfterDrawerClose.current) return
-    if (!sidebarWide && sidebarOpen) return
-    focusComposerAfterDrawerClose.current = false
+    if (!focusComposerRequested.current || !active || compactDrawerOpen || promptRef.current?.disabled) return
+    focusComposerRequested.current = false
     requestAnimationFrame(() => promptRef.current?.focus())
-  }, [sidebarOpen, sidebarWide])
+  }, [active, compactDrawerOpen, replayRecovering, submitting, threadId, threadReady])
 
   useEffect(() => {
     if (!active) return
@@ -380,11 +389,16 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       const activeTurnId = commitActiveTurn ? restoredActiveTurnId : activeTurnIdRef.current
       if (commitActiveTurn) setCurrentActiveTurnId(activeTurnId)
       setConversations((current) => {
+        const registry = mergePersistedConversationRegistry(current, readStoredConversations(agentId))
         const title = resolveConversationTitle(
-          conversationTitleFromRegistry(current, thread.id),
+          conversationTitleFromRegistry(registry, thread.id),
           titleFromTranscript(restored.historyItems),
         )
-        return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt: Date.now() }, current)
+        const existing = registry.find((conversation) => conversation.id === thread.id)
+        const updatedAt = existing?.unavailable
+          ? Math.max(Date.now(), existing.updatedAt + 1)
+          : (existing?.updatedAt ?? Date.now())
+        return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt }, registry)
       })
       return { ...restored, activeTurnId }
     },
@@ -475,14 +489,50 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const source = new EventSource(
       `/api/tengri/events?agentId=${encodeURIComponent(agentId)}&after=${lastEventSequence.current}`,
     )
+    let pending: TengriCodexEvent[] = []
+    let frame = 0
+    const flush = () => {
+      cancelAnimationFrame(frame)
+      frame = 0
+      if (!pending.length) return
+      const batch = pending
+      pending = []
+      const retainedKeys = new Set(retainedEvents.current.map(codexEventKey))
+      setEvents((current) =>
+        batch.reduce(
+          (next, event) =>
+            event.threadId === threadIdRef.current &&
+            (!codexEventIsIndependentOfThreadSnapshot(event) || retainedKeys.has(codexEventKey(event)))
+              ? appendCodexEventAfterRestore(
+                  next,
+                  event,
+                  restoredHistoryRef.current,
+                  restoredHistorySequenceRef.current,
+                  restoredItemSequencesRef.current,
+                )
+              : next,
+          current.filter((event) => event.kind !== 'approval' || retainedKeys.has(codexEventKey(event))),
+        ),
+      )
+    }
     source.onmessage = (message) => {
-      const event = parseCodexEvent(message.data)
-      if (!event) {
+      const parsed = parseCodexEvent(message.data)
+      if (!parsed) {
         setError('Agent returned an invalid event')
         return
       }
-      lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
       const currentThread = threadIdRef.current
+      const event = { ...parsed, threadId: parsed.threadId || currentThread }
+      lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
+      if (
+        codexEventIsIndependentOfThreadSnapshot(event) ||
+        codexResolvedApprovalId(event) ||
+        event.method === 'turn/completed'
+      ) {
+        retainedEvents.current = appendCodexEvent(retainedEvents.current, event).filter(
+          codexEventIsIndependentOfThreadSnapshot,
+        )
+      }
       if (!codexEventMatchesThread(event, currentThread)) return
       const eventMethod = event.method.toLowerCase()
       if (eventMethod === 'account/login/completed') {
@@ -493,15 +543,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         }
         if (!codexLoginCompletionMatches(event, activeLoginId)) return
       }
-      setEvents((current) =>
-        appendCodexEventAfterRestore(
-          current,
-          event,
-          restoredHistoryRef.current,
-          restoredHistorySequenceRef.current,
-          restoredItemSequencesRef.current,
-        ),
-      )
+      pending.push(event)
+      if (pending.length >= 100) flush()
+      else if (!frame) frame = requestAnimationFrame(flush)
       if (eventMethod === 'account/login/completed') {
         const completionError = codexLoginCompletionError(event)
         loginIdRef.current = ''
@@ -523,21 +567,34 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     }
     source.onopen = () => setEventStreamState('connected')
     source.onerror = () => setEventStreamState('reconnecting')
-    return () => source.close()
+    return () => {
+      source.close()
+      flush()
+    }
   }, [accountChecked, active, agentId, recoverThreadState, refreshAccount, setCurrentActiveTurnId])
 
   useEffect(() => {
     if (!active || !followingConversation) return
     const conversation = conversationRef.current
-    if (!conversation) return
+    const content = conversationContentRef.current
+    if (!conversation || !content) return
+    let frame = 0
     const follow = () => {
-      conversation.scrollTop = conversation.scrollHeight
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        conversation.scrollTop = conversation.scrollHeight
+        lastScrollTop.current = conversation.scrollTop
+      })
     }
     follow()
     const observer = new ResizeObserver(follow)
     observer.observe(conversation)
-    return () => observer.disconnect()
-  }, [active, events, followingConversation, historyItems])
+    observer.observe(content)
+    return () => {
+      observer.disconnect()
+      cancelAnimationFrame(frame)
+    }
+  }, [account?.authenticated, active, followingConversation])
 
   const resizePrompt = useCallback(() => {
     const textarea = promptRef.current
@@ -592,14 +649,72 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     [historyById, renderedEvents, restoredHistorySequence],
   )
 
+  const transcriptCards = [
+    ...historyItems.map((item) => {
+      const update = restoredItemUpdates.get(item.id)
+      return {
+        id: item.id,
+        kind: item.kind,
+        text: update?.text ?? item.text,
+        card: update ? (
+          renderEvent(update)
+        ) : (
+          <CodexEventCard key={`wrap-${threadId}-${item.id}-${item.kind}`} kind={item.kind} text={item.text} />
+        ),
+      }
+    }),
+    ...renderedEvents
+      .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
+      .map((update) => ({
+        id: update.event.itemId || codexEventWrapperKey(update.event),
+        kind: update.event.kind,
+        text: update.text,
+        card: renderEvent(update),
+      })),
+  ]
+  const {
+    acknowledged,
+    matchedItemIds,
+    pending: pendingPrompts,
+  } = reconcileSubmittedPrompts(
+    transcriptCards,
+    submittedPrompts.filter((prompt) => prompt.threadId === threadId),
+  )
+  useEffect(() => {
+    if (acknowledged.size) {
+      setSubmittedPrompts((current) =>
+        current
+          .filter((prompt) => !acknowledged.has(prompt.id))
+          .map((prompt) =>
+            prompt.threadId === threadId
+              ? {
+                  ...prompt,
+                  previousItemIds: new Set([...prompt.previousItemIds, ...matchedItemIds]),
+                }
+              : prompt,
+          ),
+      )
+    }
+  }, [acknowledged, matchedItemIds, threadId])
+  for (const { prompt, beforeItemId } of pendingPrompts) {
+    const index = transcriptCards.findIndex((item) => item.id === beforeItemId)
+    transcriptCards.splice(index < 0 ? transcriptCards.length : index, 0, {
+      id: prompt.id,
+      kind: 'user-message',
+      text: prompt.text,
+      card: <CodexEventCard key={prompt.id} kind="user-message" text={prompt.text} />,
+    })
+  }
+
   function renderEvent({ event, text }: (typeof renderedEvents)[number]) {
     return (
       <CodexEventCard
         key={codexEventWrapperKey(event)}
-        approvalDecisions={codexApprovalDecisions(event)}
+        approvalDecisions={event.kind === 'approval' ? codexApprovalDecisions(event) : undefined}
+        approvalTitle={codexApprovalTitle(event)}
         approvalId={event.approvalId}
         kind={event.kind}
-        onResolveApproval={(decision) => void resolveApproval(event, decision)}
+        onResolveApproval={event.kind === 'approval' ? (decision) => void resolveApproval(event, decision) : undefined}
         resolvingApproval={resolvingApprovals.has(event.approvalId)}
         text={text}
       />
@@ -662,8 +777,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setSubmitting(true)
     setFollowingConversation(true)
     setError('')
-    setPrompt('')
-    commitImages([])
+    const previousItemIds = new Set(transcriptCards.map((item) => item.id))
     try {
       const currentThread = await ensureThread()
       if (currentThread.activeTurnId) {
@@ -686,6 +800,18 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         })
         if (!completedTurns.current.has(turn.id)) setCurrentActiveTurnId(turn.id)
       }
+      setSubmittedPrompts((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          threadId: currentThread.id,
+          text: [text, ...inputImages.map(() => '[Image]')].filter(Boolean).join('\n'),
+          previousItemIds,
+        },
+      ])
+      setPrompt('')
+      commitImages([])
+      draftsRef.current.delete(currentThread.id)
       // The turn was accepted, so its prompt can now title a still-untitled conversation.
       if (text) {
         setConversations((current) => promoteAcceptedConversationTitle(agentId, currentThread.id, text, current))
@@ -708,6 +834,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const thread = threadId
       ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId, ...optionsRef.current })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
+    if (!threadId) {
+      draftsRef.current.delete('')
+      const assignThread = (event: CodexBufferedEvent) => (event.threadId ? event : { ...event, threadId: thread.id })
+      retainedEvents.current = retainedEvents.current.map(assignThread)
+      const retained = retainedEvents.current.filter((event) => event.threadId === thread.id)
+      setEvents((current) => retained.reduce((next, event) => appendCodexEvent(next, event), current.map(assignThread)))
+    }
     const state = commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
     setThreadReady(true)
     return { id: thread.id, activeTurnId: state.activeTurnId }
@@ -719,6 +852,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setError('')
     try {
       await runTengriAction({ action: 'resolve-approval', agentId, approvalId: event.approvalId, decision })
+      retainedEvents.current = retainedEvents.current.filter((candidate) => candidate.approvalId !== event.approvalId)
       setEvents((current) => current.filter((candidate) => candidate.approvalId !== event.approvalId))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Approval could not be resolved')
@@ -759,60 +893,60 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   function resetTranscriptUi(nextThreadId: string) {
+    if (!nextThreadId) retainedEvents.current = retainedEvents.current.filter((event) => event.threadId)
+    if (!threadIdRef.current && !nextThreadId) {
+      draftsRef.current.delete('')
+    } else {
+      draftsRef.current.set(threadIdRef.current, { text: prompt, images: imagesRef.current })
+    }
+    const draft = draftsRef.current.get(nextThreadId)
+    setPrompt(draft?.text ?? '')
+    commitImages(draft?.images ?? [])
     threadIdRef.current = nextThreadId
     restoredHistoryRef.current = new Map()
     restoredItemSequencesRef.current = new Map()
     restoredHistorySequenceRef.current = 0
+    lastScrollTop.current = 0
     threadResumeGeneration.current += 1
     setThreadId(nextThreadId)
     setThreadReady(false)
     setCurrentActiveTurnId('')
     setHistoryItems([])
     setRestoredHistorySequence(0)
-    setEvents([])
+    setEvents(retainedEvents.current.filter((event) => event.threadId === nextThreadId))
     setFollowingConversation(true)
     setReplayRecovering(false)
+    replayRecoveryRef.current = false
     setError('')
     completedTurns.current.clear()
   }
 
   function focusComposerAfterConversationChange() {
+    focusComposerRequested.current = true
     // Compact overlay unmounts on the next paint after sidebarOpen flips; wait for that
     // before focusing so keyboard input is not trapped behind the drawer backdrop.
     if (!sidebarWide && sidebarOpen) {
-      focusComposerAfterDrawerClose.current = true
       setSidebarOpen(false)
       return
     }
-    requestAnimationFrame(() => promptRef.current?.focus())
+    requestAnimationFrame(() => {
+      if (promptRef.current?.disabled) return
+      focusComposerRequested.current = false
+      promptRef.current?.focus()
+    })
   }
 
   function newConversation() {
-    if (
-      !codexCanStartNewConversation({
-        activeTurnId,
-        recovering: replayRecovering || replayRecoveryRef.current,
-        submitting,
-        threadReady,
-      })
-    ) {
-      return
-    }
+    if (!canChangeConversation) return
     removeStoredThread(agentId)
     resetTranscriptUi('')
     focusComposerAfterConversationChange()
   }
 
   function switchConversation(nextThreadId: string) {
-    if (nextThreadId === threadIdRef.current) return
-    if (
-      !codexCanStartNewConversation({
-        activeTurnId,
-        recovering: replayRecovering || replayRecoveryRef.current,
-        submitting,
-        threadReady,
-      })
-    ) {
+    if (!canChangeConversation) return
+    if (nextThreadId === threadIdRef.current) {
+      focusComposerAfterConversationChange()
       return
     }
     writeStoredThread(agentId, nextThreadId)
@@ -836,19 +970,19 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       <div className="grid h-full place-items-center bg-zinc-950 p-8">
         {error ? (
           <div className="max-w-sm text-center">
-            <p className="text-sm leading-6 text-red-200" role="alert">
+            <p className="text-copy-14 text-red-200" role="alert">
               {errorMessage}
             </p>
             <button
               type="button"
-              className="mt-4 rounded-xl bg-white/9 px-4 py-2 text-xs text-white/76 outline-none transition-colors hover:bg-white/13 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
+              className="mt-4 rounded-xl bg-white/9 px-4 py-2 text-label-12 text-white/76 outline-none transition-colors hover:bg-white/13 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
               onClick={() => void refreshAccountAndRecoverLogin()}
             >
               Retry
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2 text-sm text-zinc-400" role="status">
+          <div className="flex items-center gap-2 text-label-14 text-zinc-400" role="status">
             <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Checking
             Codex login…
           </div>
@@ -916,13 +1050,11 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           sidebarWide ? 'relative shrink-0' : 'absolute inset-y-0 left-0',
         )}
       >
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/[0.08] px-3">
-          <span className="min-w-0 flex-1 truncate text-[11px] font-medium tracking-wide text-zinc-400 uppercase">
-            Conversations
-          </span>
+        <div className="flex h-11 shrink-0 items-center gap-2 px-3">
+          <span className="min-w-0 flex-1 truncate text-label-12 text-zinc-400 uppercase">Conversations</span>
           <button
             type="button"
-            disabled={!canStartNewConversation}
+            disabled={!canChangeConversation}
             onClick={newConversation}
             className="inline-flex size-7 items-center justify-center rounded-md text-zinc-400 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
             aria-label="New conversation"
@@ -932,7 +1064,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         </div>
         <nav aria-label="Conversations" className="min-h-0 flex-1 overflow-auto py-1 [scrollbar-gutter:stable]">
           {sortedConversations.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-zinc-400">No conversations yet</p>
+            <p className="px-3 py-2 text-label-12 text-zinc-400">No conversations yet</p>
           ) : (
             <ul className="px-1.5">
               {sortedConversations.map((conversation) => {
@@ -942,7 +1074,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                     <button
                       type="button"
                       data-conversation-id={conversation.id}
-                      disabled={!active && !canStartNewConversation}
+                      disabled={!canChangeConversation}
                       aria-current={active ? 'true' : undefined}
                       onClick={() => switchConversation(conversation.id)}
                       className={cn(
@@ -952,9 +1084,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                           : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200',
                       )}
                     >
-                      <span className="truncate text-xs font-medium">{conversation.title}</span>
+                      <span className="truncate text-label-14">{conversation.title}</span>
                       {conversation.unavailable ? (
-                        <span className="mt-0.5 text-[10px] text-zinc-400">Unavailable</span>
+                        <span className="mt-0.5 text-label-12 text-zinc-400">Unavailable</span>
                       ) : null}
                     </button>
                   </li>
@@ -966,7 +1098,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       </aside>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" inert={compactDrawerOpen || undefined}>
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/[0.08] px-3">
+        <div className="flex h-11 shrink-0 items-center gap-2 px-3">
           <button
             type="button"
             aria-pressed={sidebarOpen}
@@ -976,17 +1108,17 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           >
             <PanelLeft className="size-3.5" aria-hidden="true" />
           </button>
-          <span className="text-sm font-medium tracking-tight text-zinc-200">Codex</span>
-          <span className="min-w-0 truncate text-[11px] text-zinc-400" aria-label="Agent status">
+          <span className="text-heading-14 text-zinc-200">Codex</span>
+          <span className="min-w-0 truncate text-label-12 text-zinc-400" aria-label="Agent status">
             {agentStatus}
           </span>
           {!sidebarOpen ? (
             <button
               type="button"
-              disabled={!canStartNewConversation}
+              disabled={!canChangeConversation}
               onClick={newConversation}
               aria-label="New conversation"
-              className="ml-auto inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-zinc-500 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
+              className="ml-auto inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md px-2 text-label-12 text-zinc-500 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
             >
               <Plus className="size-3.5" aria-hidden="true" />
               <span className="hidden @[420px]/agent:inline" aria-hidden="true">
@@ -1005,12 +1137,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             className="h-full overflow-auto px-4 pt-5 pb-10 [scrollbar-gutter:stable] scroll-pb-8 @[540px]/agent:px-6"
             onScroll={(event) => {
               const conversation = event.currentTarget
-              setFollowingConversation(
-                conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 64,
-              )
+              const atBottom = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 64
+              if (atBottom) setFollowingConversation(true)
+              else if (conversation.scrollTop < lastScrollTop.current) setFollowingConversation(false)
+              lastScrollTop.current = conversation.scrollTop
             }}
           >
-            {historyItems.length === 0 && renderedEvents.length === 0 && !activeTurnId && !submitting ? (
+            {transcriptCards.length === 0 && !activeTurnId && !submitting ? (
               <EmptyConversation
                 onSelectPrompt={(text) => {
                   setPrompt(text)
@@ -1023,31 +1156,16 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               />
             ) : null}
             <div
+              ref={conversationContentRef}
               className="mx-auto w-full max-w-3xl space-y-4"
               role="log"
               aria-label="Conversation"
               aria-live="polite"
               aria-relevant="additions text"
             >
-              {[
-                ...historyItems.map((item) => {
-                  const update = restoredItemUpdates.get(item.id)
-                  return update ? (
-                    renderEvent(update)
-                  ) : (
-                    <CodexEventCard
-                      key={`wrap-${threadId}-${item.id}-${item.kind}`}
-                      kind={item.kind}
-                      text={item.text}
-                    />
-                  )
-                }),
-                ...renderedEvents
-                  .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
-                  .map(renderEvent),
-              ]}
+              {transcriptCards.map((item) => item.card)}
               {activeTurnId && !approvalPending ? (
-                <div className="text-sm leading-6 text-zinc-400" role="status" aria-label="Agent activity">
+                <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                   <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                 </div>
               ) : null}
@@ -1057,7 +1175,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
               <button
                 type="button"
-                className="pointer-events-auto inline-flex min-h-7 items-center gap-1.5 rounded-full border border-white/[0.08] bg-zinc-950/95 px-2.5 text-[11px] text-zinc-300 outline-none transition-colors hover:bg-zinc-900 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+                className="pointer-events-auto inline-flex min-h-7 items-center gap-1.5 rounded-full border border-white/[0.08] bg-zinc-950/95 px-2.5 text-label-12 text-zinc-300 outline-none transition-colors hover:bg-zinc-900 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
                 onClick={() => setFollowingConversation(true)}
               >
                 <ArrowDown className="size-3" aria-hidden="true" />
@@ -1067,20 +1185,20 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           ) : null}
         </div>
 
-        <div className="shrink-0 border-t border-white/[0.08] px-3 pt-3 pb-3 @[540px]/agent:px-6">
+        <div className="shrink-0 px-3 pt-2 pb-3 @[540px]/agent:px-6">
           <div className="mx-auto w-full max-w-3xl">
             {selectionWarning ? (
-              <p role="status" className="mb-2 text-xs text-amber-200/80">
+              <p role="status" className="mb-2 text-label-12 text-amber-200/80">
                 {selectionWarning}
               </p>
             ) : null}
             <StreamStatus error={errorMessage} state={eventStreamState} />
             {replayRecovering ? (
-              <p className="mx-auto mb-2 w-full text-xs text-zinc-400" role="status">
+              <p className="mx-auto mb-2 w-full text-label-12 text-zinc-400" role="status">
                 Recovering the active conversation…
               </p>
             ) : threadId && !threadReady ? (
-              <div className="mx-auto mb-3 w-full text-xs">
+              <div className="mx-auto mb-3 w-full text-label-12">
                 {conversationMissing ? (
                   <p className="mb-2 text-zinc-400">
                     This saved conversation is no longer available. Start a new conversation to continue in this
@@ -1098,7 +1216,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                   {conversationMissing ? (
                     <button
                       type="button"
-                      disabled={!canStartNewConversation}
+                      disabled={!canChangeConversation}
                       className="rounded-md border border-white/[0.08] px-2.5 py-1.5 text-zinc-300 outline-none hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35"
                       onClick={newConversation}
                     >
@@ -1111,7 +1229,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             <form
               aria-label="Message composer"
               aria-busy={replayRecovering}
-              className="w-full rounded-xl border border-white/[0.08] bg-zinc-950 transition-[border-color] focus-within:border-white/[0.16] motion-reduce:transition-none"
+              className="w-full rounded-2xl bg-zinc-900/60 transition-colors focus-within:bg-zinc-900/80 motion-reduce:transition-none"
               onSubmit={(event) => {
                 event.preventDefault()
                 void send()
@@ -1122,7 +1240,6 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                   ref={promptRef}
                   data-window-default-focus
                   aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
-                  aria-describedby={composerHelpId}
                   disabled={submitting || replayRecovering || Boolean(threadId && !threadReady)}
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
@@ -1157,7 +1274,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                         ? 'Steer the current turn…'
                         : 'Message your agent…'
                   }
-                  className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
+                  className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-copy-14 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
                 />
                 {images.length ? (
                   <ul aria-label="Image attachments" className="flex flex-wrap gap-2 pt-2 pb-1">
@@ -1233,11 +1350,6 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 </button>
               </div>
             </form>
-            <p id={composerHelpId} className="mt-2 text-center text-[11px] leading-4 text-zinc-400">
-              {activeTurnId
-                ? 'Enter to steer · Stop ends the response'
-                : 'Enter to send · Shift + Enter for a new line · Paste images to attach'}
-            </p>
           </div>
         </div>
       </div>
@@ -1265,23 +1377,21 @@ export function CodexLogin({
         <div className="mb-5 inline-flex size-9 items-center justify-center rounded-lg border border-white/[0.08] bg-zinc-900/60">
           <Command className="size-4 text-zinc-300" aria-hidden="true" />
         </div>
-        <h2 className="text-lg font-medium tracking-tight text-zinc-100">Connect Codex</h2>
-        <p className="mt-2 text-sm leading-6 text-zinc-400">
+        <h2 className="text-heading-20 text-zinc-100">Connect Codex</h2>
+        <p className="mt-2 text-copy-14 text-zinc-400">
           Sign in with your ChatGPT account. Your login stays in this workspace.
         </p>
         {login ? (
           <div className="mt-6 space-y-4">
-            <p className="text-[11px] font-medium tracking-wide text-zinc-400 uppercase">1. Copy your device code</p>
+            <p className="text-label-12 text-zinc-400 uppercase">1. Copy your device code</p>
             <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.08] bg-zinc-950 px-3.5 py-2.5">
               <code className="font-mono text-lg tracking-widest text-zinc-100">{login.userCode}</code>
               <CodexCopyButton key={login.loginId} label="Copy code" value={login.userCode} />
             </div>
-            <p className="pt-1 text-[11px] font-medium tracking-wide text-zinc-400 uppercase">
-              2. Authorize Codex in your browser
-            </p>
+            <p className="pt-1 text-label-12 text-zinc-400 uppercase">2. Authorize Codex in your browser</p>
             {verificationUrl ? (
               <a
-                className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-blue-600 px-3.5 text-sm font-medium text-white outline-none transition-colors hover:bg-blue-500 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+                className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-blue-600 px-3.5 text-button-14 text-white outline-none transition-colors hover:bg-blue-500 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
                 href={verificationUrl}
                 target="_blank"
                 rel="noreferrer noopener"
@@ -1289,11 +1399,11 @@ export function CodexLogin({
                 Open verification <ExternalLink className="size-3.5" aria-hidden="true" />
               </a>
             ) : (
-              <p role="alert" className="text-xs text-amber-200">
+              <p role="alert" className="text-label-12 text-amber-200">
                 The verification link is unavailable. Restart device login to try again.
               </p>
             )}
-            <p className="flex items-center gap-2 text-xs text-zinc-400" role="status">
+            <p className="flex items-center gap-2 text-label-12 text-zinc-400" role="status">
               <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
               Waiting for device authorization…
             </p>
@@ -1301,7 +1411,7 @@ export function CodexLogin({
               type="button"
               disabled={busy}
               onClick={onStart}
-              className="inline-flex min-h-7 items-center gap-1.5 rounded-md text-xs text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40"
+              className="inline-flex min-h-7 items-center gap-1.5 rounded-md text-label-12 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40"
             >
               {busy ? (
                 <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
@@ -1314,7 +1424,7 @@ export function CodexLogin({
             type="button"
             disabled={busy}
             onClick={onStart}
-            className="mt-6 inline-flex min-h-9 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white outline-none transition-colors hover:bg-blue-500 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-45 motion-reduce:transition-none"
+            className="mt-6 inline-flex min-h-9 items-center gap-2 rounded-lg bg-blue-600 px-4 text-button-14 text-white outline-none transition-colors hover:bg-blue-500 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-45 motion-reduce:transition-none"
           >
             {busy ? (
               <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
@@ -1326,14 +1436,14 @@ export function CodexLogin({
           type="button"
           onClick={onRefresh}
           disabled={busy}
-          className="mt-3 block min-h-7 rounded-md text-xs text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40"
+          className="mt-3 block min-h-7 rounded-md text-label-12 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40"
         >
           I’ve completed login
         </button>
         {error ? (
           <p
             role="alert"
-            className="mt-3 rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-200"
+            className="mt-3 rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-label-12 text-red-200"
           >
             {error}
           </p>
@@ -1358,14 +1468,14 @@ function EmptyConversation({ onSelectPrompt }: { onSelectPrompt: (text: string) 
   ]
   return (
     <div className="mx-auto flex min-h-full w-full max-w-xl flex-col justify-center py-10">
-      <p className="text-sm text-zinc-400">Ask Codex to explore, change, or run something in this workspace.</p>
+      <p className="text-label-14 text-zinc-400">Ask Codex to explore, change, or run something in this workspace.</p>
       <ul className="mt-4 space-y-1.5">
         {suggestions.map((suggestion) => (
           <li key={suggestion.label}>
             <button
               type="button"
               onClick={() => onSelectPrompt(suggestion.text)}
-              className="rounded text-left text-sm text-zinc-400 outline-none transition-colors hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+              className="rounded text-left text-label-14 text-zinc-400 outline-none transition-colors hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
             >
               {suggestion.label}
             </button>
@@ -1394,11 +1504,11 @@ function CodexModelPicker({
   const model = models?.find((model) => model.model === selection.model)
   const validSelection = models && codexOptionsForSelection(selection, models)
   const triggerClass =
-    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-xs text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
   const menuClass =
-    'font-system w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
+    'font-geist w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
   const itemClass =
-    'min-h-10 rounded-lg px-3 py-2 pr-8 text-sm focus:bg-white/8 focus:text-zinc-100 data-highlighted:bg-white/8 data-highlighted:text-zinc-100'
+    'min-h-10 rounded-lg px-3 py-2 pr-8 text-label-14 focus:bg-white/8 focus:text-zinc-100 data-highlighted:bg-white/8 data-highlighted:text-zinc-100'
   const reasoningLabel =
     selection.reasoningEffort === 'default'
       ? model
@@ -1438,7 +1548,7 @@ function CodexModelPicker({
           </SelectTrigger>
           <SelectContent side="top" align="end" sideOffset={8} alignItemWithTrigger={false} className={menuClass}>
             <SelectGroup>
-              <SelectLabel className="px-3 pt-2 pb-1.5 text-[11px] font-medium text-zinc-400">Model</SelectLabel>
+              <SelectLabel className="px-3 pt-2 pb-1.5 text-label-12 text-zinc-400">Model</SelectLabel>
               {models?.map((model) => (
                 <SelectItem key={model.model} value={model.model} className={itemClass} title={model.description}>
                   {model.displayName}
@@ -1473,9 +1583,7 @@ function CodexModelPicker({
             className={`${menuClass} w-60`}
           >
             <SelectGroup>
-              <SelectLabel className="px-3 pt-2 pb-1.5 text-[11px] font-medium text-zinc-400">
-                Reasoning effort
-              </SelectLabel>
+              <SelectLabel className="px-3 pt-2 pb-1.5 text-label-12 text-zinc-400">Reasoning effort</SelectLabel>
               <SelectItem value="default" className={itemClass}>
                 {model ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})` : 'Default'}
               </SelectItem>
@@ -1494,7 +1602,7 @@ function CodexModelPicker({
         </Select>
       </div>
       {error ? (
-        <p className="text-xs text-amber-200/80" role="alert">
+        <p className="text-label-12 text-amber-200/80" role="alert">
           {error}{' '}
           <button
             type="button"
@@ -1505,7 +1613,7 @@ function CodexModelPicker({
           </button>
         </p>
       ) : models && !validSelection ? (
-        <p className="text-xs text-amber-200/80" role="alert">
+        <p className="text-label-12 text-amber-200/80" role="alert">
           {model
             ? 'Choose a supported reasoning effort.'
             : 'This model is unavailable for your Codex account. Choose another model or refresh.'}{' '}
@@ -1572,12 +1680,12 @@ function StreamStatus({ error, state }: { error: string; state: EventStreamState
             : 'Agent event stream reconnecting'}
       </span>
       {state === 'reconnecting' ? (
-        <p role="status" className="mx-auto mb-2 w-full text-xs text-amber-200/80">
+        <p role="status" className="mx-auto mb-2 w-full text-label-12 text-amber-200/80">
           Agent event stream is reconnecting
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="mx-auto mb-2 w-full text-xs text-amber-200/80">
+        <p role="alert" className="mx-auto mb-2 w-full text-label-12 text-amber-200/80">
           {error}
         </p>
       ) : null}

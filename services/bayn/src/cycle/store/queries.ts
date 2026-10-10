@@ -10,6 +10,7 @@ import {
 } from '../../shadow-decision-contract'
 import { strictParseOptions } from '../../schemas'
 import { canonicalJsonV1Result } from '../../hash'
+import { withObservedStage } from '../../telemetry'
 import { CycleState, type AutonomousCycle } from '../model'
 import { attachCycleDecisionStoreEvidence } from './decision-contract'
 import {
@@ -27,7 +28,7 @@ import {
 } from './rows'
 
 export interface CycleQueries {
-  /** Accepts only the complete document already validated by the binding program. */
+  /** Accepts only a complete document validated by binding or a durable read. */
   readonly retainValidatedDecision: (document: CycleDecisionDocument) => Effect.Effect<void, CycleStoreInternalError>
   readonly selectCycle: (
     cycleId: string,
@@ -60,15 +61,18 @@ export const makeCycleQueries = (
 ): CycleQueries => {
   // This is a pure decoding receipt, never proof that a decision committed. Every
   // reuse still needs a fresh row and PostgreSQL equality against its whole JSON.
-  let retainedDocument: CycleDecisionDocument | undefined
+  let retainedDecision:
+    | { readonly document: CycleDecisionDocument; readonly json: string; readonly bytes: number }
+    | undefined
   const retainValidatedDecision: CycleQueries['retainValidatedDecision'] = (document) =>
     Effect.gen(function* () {
       const json = yield* Effect.fromResult(canonicalJsonV1Result(document))
       yield* Effect.try(() => {
         // Retain one bounded wire document, detached from all caller-owned objects.
         // JSON round-tripping matches PostgreSQL's wire values (including -0).
-        retainedDocument =
-          Buffer.byteLength(json, 'utf8') <= 8 * 1024 * 1024 ? (JSON.parse(json) as CycleDecisionDocument) : undefined
+        const bytes = Buffer.byteLength(json, 'utf8')
+        retainedDecision =
+          bytes <= 8 * 1024 * 1024 ? { document: JSON.parse(json) as CycleDecisionDocument, json, bytes } : undefined
       })
     }).pipe(
       Effect.mapError((cause) =>
@@ -171,36 +175,55 @@ export const makeCycleQueries = (
   const selectDecisionDocuments: CycleQueries['selectDecisionDocuments'] = (cycleId) =>
     Effect.gen(function* () {
       // Capture once: another fiber may replace the slot while this query waits.
-      const retained = retainedDocument
+      const retained = retainedDecision
+      yield* Effect.annotateCurrentSpan({
+        'bayn.cycle.decision-read.retained_available': retained !== undefined,
+        'bayn.cycle.decision-read.retained_wire_bytes': retained?.bytes ?? 0,
+      })
       const rows = yield* sql<Record<string, unknown>>`
+      WITH decision_read AS MATERIALIZED (
+        SELECT
+          document,
+          COALESCE(document = ${retained?.json ?? null}::jsonb, false) AS matches_retained_document,
+          paper_cycle_completion_evidence_matches(
+            cycle_id,
+            decision_hash,
+            ${clock.now}
+          ) AS execution_completion_evidence_matches,
+          paper_cycle_generation_is_superseded(
+            cycle_id,
+            decision_hash
+          ) AS execution_generation_is_superseded
+        FROM autonomous_cycle_shadow_decisions
+        WHERE cycle_id = ${cycleId}
+      )
       SELECT
-        document,
-        COALESCE(document = ${sql.json(retained ?? null)}::jsonb, false) AS matches_retained_document,
-        paper_cycle_completion_evidence_matches(
-          cycle_id,
-          decision_hash,
-          ${clock.now}
-        ) AS execution_completion_evidence_matches,
-        paper_cycle_generation_is_superseded(
-          cycle_id,
-          decision_hash
-        ) AS execution_generation_is_superseded
-      FROM autonomous_cycle_shadow_decisions
-      WHERE cycle_id = ${cycleId}
+        CASE WHEN matches_retained_document THEN NULL ELSE document END AS document,
+        matches_retained_document,
+        execution_completion_evidence_matches,
+        execution_generation_is_superseded
+      FROM decision_read
       `.pipe(Effect.flatMap(decodeStoredDecisionDocumentRows))
+      yield* Effect.annotateCurrentSpan({
+        'bayn.cycle.decision-read.matched_rows': rows.filter((row) => row.matches_retained_document).length,
+        'bayn.cycle.decision-read.body_rows': rows.filter((row) => !row.matches_retained_document).length,
+      })
       return yield* Effect.forEach(rows, (row) =>
         Effect.gen(function* () {
           const document =
             retained !== undefined && row.matches_retained_document
-              ? structuredClone(retained)
+              ? structuredClone(retained.document)
               : yield* Schema.decodeUnknownEffect(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
+          if (!row.matches_retained_document) yield* retainValidatedDecision(document)
           return attachCycleDecisionStoreEvidence(document, {
             executionCompletionEvidenceMatches: row.execution_completion_evidence_matches,
             executionGenerationIsSuperseded: row.execution_generation_is_superseded,
           })
         }),
       )
-    })
+    }).pipe(
+      withObservedStage('bayn.cycle.decision-read', { dependency: 'postgresql', operation: 'read-decision-document' }),
+    )
 
   const selectOldestUnfinishedCycle: CycleQueries['selectOldestUnfinishedCycle'] = (scope) =>
     sql<Record<string, unknown>>`

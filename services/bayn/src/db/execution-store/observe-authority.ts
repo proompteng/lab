@@ -256,10 +256,13 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   ${legacyV1CompletedRestrictionReason},
                   ${legacyExecutionActivationExpiredRestrictionReason}
                 )
-                AND EXISTS (
-                  SELECT 1
-                  FROM autonomous_forward_performance_receipts AS receipt
-                  WHERE receipt.authority_generation_hash = state.generation_hash
+                AND (
+                  EXISTS (
+                    SELECT 1
+                    FROM autonomous_forward_performance_receipts AS receipt
+                    WHERE receipt.authority_generation_hash = state.generation_hash
+                  )
+                  OR research_paper_expired_zero_execution_settled(state.generation_hash)
                 )
               )
             )
@@ -384,10 +387,13 @@ const makeObserveAuthorityInterpreterDataFirst = (
                       ${legacyV1CompletedRestrictionReason},
                       ${legacyExecutionActivationExpiredRestrictionReason}
                     )
-                    AND EXISTS (
-                      SELECT 1
-                      FROM autonomous_forward_performance_receipts AS receipt
-                      WHERE receipt.authority_generation_hash = state.generation_hash
+                    AND (
+                      EXISTS (
+                        SELECT 1
+                        FROM autonomous_forward_performance_receipts AS receipt
+                        WHERE receipt.authority_generation_hash = state.generation_hash
+                      )
+                      OR research_paper_expired_zero_execution_settled(state.generation_hash)
                     )
                   )
                 )

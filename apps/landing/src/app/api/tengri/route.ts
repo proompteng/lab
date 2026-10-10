@@ -12,6 +12,7 @@ import {
   isTengriControlPlaneConfigured,
   issuePreviewSession,
   issueEditorSession,
+  issueBrowserSession,
   issueTerminalTicket,
   listAgents,
   listCodexModels,
@@ -20,7 +21,7 @@ import {
   moveFile,
   readFile,
   resolveCodexApproval,
-  revokeEditorSessions,
+  revokeDesktopPreviews,
   revokePreviewSession,
   resumeAgent,
   resumeCodexThread,
@@ -223,8 +224,11 @@ export async function POST(request: Request) {
       case 'editor-session':
         result = await issueEditorSession(identity.subject, action.agentId, action.windowId)
         break
+      case 'browser-session':
+        result = await issueBrowserSession(identity.subject, action.agentId)
+        break
       case 'revoke-editor-sessions':
-        await revokeEditorSessions(identity.subject)
+        await revokeDesktopPreviews(identity.subject)
         result = null
         break
       case 'revoke-preview-session':

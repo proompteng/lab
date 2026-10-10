@@ -1184,6 +1184,10 @@ const interpretBoundExecutionCycleOutcome = (
         observedAt: outcome.observedAt,
         cycle,
         ...(outcome.readiness === undefined ? { waitReason: outcome.waitReason } : { readiness: outcome.readiness }),
+        ...(outcome.maximumHoldDueAt === undefined ? {} : { maximumHoldDueAt: outcome.maximumHoldDueAt }),
+        ...(outcome.maximumHoldEvaluatedAt === undefined
+          ? {}
+          : { maximumHoldEvaluatedAt: outcome.maximumHoldEvaluatedAt }),
       })
     case 'Block':
       return input.blockedCycleIntentStore === undefined

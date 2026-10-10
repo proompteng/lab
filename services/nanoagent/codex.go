@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,6 +91,7 @@ type codexProcessGeneration struct {
 
 type codexSupervisor struct {
 	binary          string
+	browserMCP      bool
 	cwd             string
 	closed          atomic.Bool
 	requestID       atomic.Uint64
@@ -185,13 +188,25 @@ func (supervisor *codexSupervisor) run() {
 }
 
 func (supervisor *codexSupervisor) runProcess() error {
-	command := exec.Command(
-		supervisor.binary,
+	arguments := []string{
 		"--model", "gpt-6.1-sol",
 		"--sandbox", "danger-full-access",
 		"--ask-for-approval", "on-request",
-		"app-server",
-	)
+	}
+	if supervisor.browserMCP {
+		binary, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("locate browser MCP executable: %w", err)
+		}
+		arguments = append(arguments,
+			"-c", "mcp_servers.tengri_browser.command="+strconv.Quote(binary),
+			"-c", `mcp_servers.tengri_browser.args=["browser-mcp"]`,
+			"-c", "mcp_servers.tengri_browser.tool_timeout_sec=300",
+			"-c", "mcp_servers.tengri_browser.required=true",
+		)
+	}
+	arguments = append(arguments, "app-server")
+	command := exec.Command(supervisor.binary, arguments...)
 	command.Dir = supervisor.cwd
 	command.Env = childEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -1141,6 +1156,9 @@ func (supervisor *codexSupervisor) publish(method, approvalID string, value any)
 	if direct, ok := value.(json.RawMessage); ok {
 		raw = append([]byte(nil), direct...)
 	}
+	if method == "item/started" || method == "item/completed" {
+		raw = codexReplayMessage(raw)
+	}
 	if len(raw) > codexEventMaxBytes {
 		raw = codexOversizedEvent(method, len(raw))
 		method = "tengri/eventOmitted"
@@ -1163,6 +1181,57 @@ func (supervisor *codexSupervisor) publish(method, approvalID string, value any)
 			close(subscription.channel)
 		}
 	}
+}
+
+func codexReplayMessage(raw json.RawMessage) json.RawMessage {
+	var message map[string]json.RawMessage
+	var params, item map[string]json.RawMessage
+	if json.Unmarshal(raw, &message) != nil || json.Unmarshal(message["params"], &params) != nil ||
+		json.Unmarshal(params["item"], &item) != nil {
+		return raw
+	}
+	if string(item["type"]) != `"mcpToolCall"` && string(item["type"]) != `"dynamicToolCall"` {
+		return raw
+	}
+	changed := false
+	projectImages := func(container map[string]json.RawMessage, field string) {
+		var content []json.RawMessage
+		if json.Unmarshal(container[field], &content) != nil {
+			return
+		}
+		replacement := json.RawMessage(`{"type":"text","text":"[Image output]"}`)
+		if field == "contentItems" {
+			replacement = json.RawMessage(`{"type":"inputText","text":"[Image output]"}`)
+		}
+		projected := false
+		for index, block := range content {
+			var image struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(block, &image) == nil && (image.Type == "image" || image.Type == "inputImage") {
+				content[index] = replacement
+				projected = true
+			}
+		}
+		if projected {
+			container[field], _ = json.Marshal(content)
+			changed = true
+		}
+	}
+	projectImages(item, "contentItems")
+	var result map[string]json.RawMessage
+	if json.Unmarshal(item["result"], &result) == nil && result != nil {
+		projectImages(result, "content")
+		item["result"], _ = json.Marshal(result)
+	}
+	if !changed {
+		return raw
+	}
+	params["item"], _ = json.Marshal(item)
+	message["params"], _ = json.Marshal(params)
+	message["rawOmitted"] = json.RawMessage("true")
+	projected, _ := json.Marshal(message)
+	return projected
 }
 
 func (supervisor *codexSupervisor) subscribe(after uint64) (uint64, <-chan codexEvent, error) {
@@ -1332,7 +1401,7 @@ func codexResumeThreadID(params json.RawMessage) (string, bool) {
 
 func allowedCodexMethod(method string) bool {
 	switch method {
-	case "account/read", "account/login/start", "model/list", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt":
+	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt":
 		return true
 	default:
 		return false

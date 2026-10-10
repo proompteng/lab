@@ -9,8 +9,6 @@ resources:
   - service-account.yaml
   - auth-nonces.yaml
   - rbac.yaml
-  - spire-admission.yaml
-  - slot-admission.yaml
   - deployment.yaml
   - services.yaml
   - ingressroute.yaml
