@@ -4,7 +4,11 @@ import { Effect, Result } from 'effect'
 
 import { makeInferenceExpenseQuote } from '../inference-expense'
 import { expenseRateFixture, expenseSourceFixture } from '../inference-expense.test-support'
-import { readForwardInferenceExpenses, summarizeForwardInferenceExpenses } from './inference-expenses'
+import {
+  readForwardInferenceExpenses,
+  summarizeForwardInferenceExpenses,
+  type ForwardInferenceExpenseSession,
+} from './inference-expenses'
 
 const first = expenseSourceFixture({ authorityGenerationHash: '1'.repeat(64), inputTokens: 3 })
 const second = expenseSourceFixture({ key: 'b', authorityGenerationHash: '2'.repeat(64), inputTokens: 7 })
@@ -30,9 +34,10 @@ const evidence = {
 }
 
 test('attributes verified inference estimates only to the requested generation and retains unknown usage', () => {
-  const result = Result.getOrThrow(
+  const result: Omit<ForwardInferenceExpenseSession, 'exactSessionLedger'> = Result.getOrThrow(
     summarizeForwardInferenceExpenses(evidence, first.accountId, frozen, first.authorityGenerationHash),
   )
+  expect(result.sourceAsOf).toBe(evidence.asOf)
   expect(result).toMatchObject({
     claimedRequestCount: 2,
     knownEstimatedCostPicoUsd: '126000',

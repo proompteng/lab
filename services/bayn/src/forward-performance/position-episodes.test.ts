@@ -13,6 +13,7 @@ import {
 } from '../db/forward-performance-receipt'
 import { makeForwardPerformanceReport } from './report'
 import type { ForwardPerformanceEvidenceInput } from './model'
+import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { measurePositionEpisodes, PositionEpisodeReason } from './position-episodes'
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
@@ -216,6 +217,31 @@ describe('position episodes', () => {
       status: 'UNDETERMINED',
       reason: PositionEpisodeReason.ReconciliationGap,
     })
+  })
+
+  test('binds the declared inference expense snapshot timestamp in the report hash', () => {
+    const expense: ForwardInferenceExpenseSession = {
+      sessionDate: '2026-09-18',
+      authorityGenerationHash: 'a'.repeat(64),
+      sourceAsOf: '2026-09-18T21:01:00.000Z',
+      knownEstimatedCostPicoUsd: '420000',
+      claimedRequestCount: 1,
+      missingQuoteCount: 0,
+      unverifiedRequestCount: 0,
+      gapRequestCount: 0,
+      completeMeteredCoverage: true,
+      exactSessionLedger: true,
+      invoiceReconciled: false,
+    }
+    const report = success(makeForwardPerformanceReport(evidence(roundTrip()), [expense]))
+    const { reportHash, ...material } = report
+    expect(canonicalHashV1(material)).toBe(reportHash)
+    expect(
+      canonicalHashV1({
+        ...material,
+        inferenceExpenses: [{ ...expense, sourceAsOf: '2026-09-18T21:02:00.000Z' }],
+      }),
+    ).not.toBe(reportHash)
   })
 
   test('keeps the strict v3 stored receipt unchanged and binds episodes in a separate versioned report', () => {

@@ -14,6 +14,7 @@ import type { WriterFenceService } from '../execution/writer-fence'
 export interface ForwardInferenceExpenseSession {
   readonly sessionDate: string
   readonly authorityGenerationHash: string | null
+  readonly sourceAsOf: string
   readonly knownEstimatedCostPicoUsd: string
   readonly claimedRequestCount: number
   readonly missingQuoteCount: number
