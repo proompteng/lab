@@ -17,8 +17,12 @@ CREATE TABLE ofz.platform_state (
     fleet_bytes bigint NOT NULL DEFAULT 206158430208 CHECK (fleet_bytes > 0)
 );
 INSERT INTO ofz.platform_state DEFAULT VALUES;
+CREATE TABLE ofz.humans (
+    id text PRIMARY KEY CHECK (id ~ '^[0-9a-f]{64}$'),
+    github_id text UNIQUE NOT NULL CHECK (github_id ~ '^[1-9][0-9]{0,19}$')
+);
 CREATE TABLE ofz.memberships (
-    human_id text NOT NULL CHECK (human_id ~ '^[0-9a-f]{64}$'),
+    human_id text NOT NULL REFERENCES ofz.humans(id),
     role integer NOT NULL CHECK (role BETWEEN 1 AND 4),
     PRIMARY KEY (human_id, role)
 );
@@ -51,6 +55,11 @@ CREATE TABLE ofz.collaborators (
     role integer NOT NULL CHECK (role BETWEEN 2 AND 3),
     PRIMARY KEY (workspace_uid, human_id)
 );
+CREATE VIEW ofz.quota_usage AS
+SELECT owner_id,count(*)::bigint AS used_workspaces,sum(running::integer)::bigint AS used_active,sum(home_bytes)::bigint AS used_bytes
+FROM (SELECT owner_id,false AS running,home_bytes FROM ofz.reservations WHERE state='reserved'
+      UNION ALL SELECT owner_id,running,home_bytes FROM ofz.workspaces WHERE state<>'removed') retained
+GROUP BY owner_id;
 CREATE TABLE ofz.sessions (
     id uuid PRIMARY KEY,
     token_hash bytea UNIQUE NOT NULL CHECK (octet_length(token_hash) = 32),
@@ -155,6 +164,7 @@ GRANT INSERT, UPDATE ON ofz.reservations, ofz.workspaces, ofz.grants, ofz.emerge
 GRANT UPDATE ON ofz.platform_state TO ofz_api;
 GRANT INSERT ON ofz.commands, ofz.audit, ofz.audit_outbox TO ofz_api;
 GRANT INSERT ON ofz.session_revocations TO ofz_api;
+GRANT INSERT ON ofz.humans TO ofz_api;
 GRANT UPDATE (state, receipt) ON ofz.commands TO ofz_api;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA ofz TO ofz_api;
 GRANT SELECT ON ofz.audit, ofz.audit_outbox, ofz.archive_state TO ofz_archiver;

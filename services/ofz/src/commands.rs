@@ -168,6 +168,9 @@ pub async fn execute(
     peer: &str,
     request: ExecuteCommandRequest,
 ) -> Result<CommandReceipt, Status> {
+    if !matches!(request.client_request_hash.len(), 0 | 32) {
+        return Err(Status::invalid_argument("invalid client request hash"));
+    }
     decision::workload(native, peer, Action::PolicyCommand).await?;
     let operation = parse_uuid(&request.operation_id)?;
     let context = request
@@ -326,6 +329,9 @@ pub(crate) async fn prepare(
     match command {
         Command::SetMembership(c) => {
             valid_human(&c.human_id)?;
+            if policy::github_human_id(&c.github_id)? != c.human_id {
+                return Err(Status::invalid_argument("GitHub identity binding mismatch"));
+            }
             let role = member_role(c.role)?;
             if c.enabled && c.role != PlatformRole::Member as i32 {
                 active_member(client, &c.human_id).await?;
@@ -877,7 +883,7 @@ async fn usage<C: GenericClient + Sync>(
     client: &C,
     human: Option<&str>,
 ) -> Result<(i64, i64, i64), Status> {
-    let row = client.query_one("SELECT (SELECT count(*) FROM ofz.workspaces WHERE state<>'removed' AND ($1::text IS NULL OR owner_id=$1))+(SELECT count(*) FROM ofz.reservations WHERE state='reserved' AND ($1::text IS NULL OR owner_id=$1)), (SELECT count(*) FROM ofz.workspaces WHERE running AND state<>'removed' AND ($1::text IS NULL OR owner_id=$1)), coalesce((SELECT sum(home_bytes) FROM ofz.workspaces WHERE state<>'removed' AND ($1::text IS NULL OR owner_id=$1)),0)::bigint+coalesce((SELECT sum(home_bytes) FROM ofz.reservations WHERE state='reserved' AND ($1::text IS NULL OR owner_id=$1)),0)::bigint", &[&human]).await.map_err(sql_error)?;
+    let row = client.query_one("SELECT coalesce(sum(used_workspaces),0)::bigint,coalesce(sum(used_active),0)::bigint,coalesce(sum(used_bytes),0)::bigint FROM ofz.quota_usage WHERE $1::text IS NULL OR owner_id=$1", &[&human]).await.map_err(sql_error)?;
     Ok((row.get(0), row.get(1), row.get(2)))
 }
 
@@ -1083,6 +1089,12 @@ pub(crate) async fn finalize(
     match command {
         Command::SetMembership(c) => {
             if c.enabled {
+                tx.execute(
+                    "INSERT INTO ofz.humans(id,github_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+                    &[&c.human_id, &c.github_id],
+                )
+                .await
+                .map_err(sql_error)?;
                 tx.execute("INSERT INTO ofz.memberships(human_id,role) VALUES($1,$2) ON CONFLICT DO NOTHING", &[&c.human_id,&c.role]).await.map_err(sql_error)?;
             } else {
                 tx.execute(
@@ -1305,6 +1317,9 @@ pub async fn get(
     peer: &str,
     request: crate::proto::GetCommandRequest,
 ) -> Result<CommandReceipt, Status> {
+    if !matches!(request.client_request_hash.len(), 0 | 32) {
+        return Err(Status::invalid_argument("invalid client request hash"));
+    }
     decision::workload(native, peer, Action::PolicyCommand).await?;
     let context = request
         .context
@@ -1316,7 +1331,7 @@ pub async fn get(
     let row = connection
         .client
         .query_opt(
-            "SELECT actor_id,workload_id,receipt FROM ofz.commands WHERE operation_id=$1",
+            "SELECT actor_id,workload_id,receipt,prepared FROM ofz.commands WHERE operation_id=$1",
             &[&parse_uuid(&request.operation_id)?],
         )
         .await
@@ -1326,6 +1341,14 @@ pub async fn get(
         return Err(Status::permission_denied(
             "operation belongs to another actor",
         ));
+    }
+    if !request.client_request_hash.is_empty() {
+        let prepared: Prepared = store::decode(row.get(3))?;
+        if prepared.request.client_request_hash != request.client_request_hash {
+            return Err(Status::already_exists(
+                "operation ID bound to a different client request",
+            ));
+        }
     }
     let state = database.state().await?;
     decision::validate_context(context, peer, &state)?;

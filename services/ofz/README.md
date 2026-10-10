@@ -40,6 +40,9 @@ grant's database-clock deadline in Ofz. Re-enabling caching requires a fresh exp
 
 The Rust API uses exact SPIFFE mTLS caller identities and contract version 1. `ofz migrate` creates the checksum-bound
 control schema as its separate owner; `ofz serve` verifies it and reconciles unfinished commands before listening.
+`ofz migrate-runtime` initializes `tengri_control` as `tengri_migrator`, with the packaged Tengri migration and its
+SHA-256 checksum committed in one transaction. It serializes concurrent attempts and rejects a different owner,
+database or existing checksum. The BFF and controller only verify the result; they cannot initialize their own schema.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
 
@@ -64,6 +67,10 @@ the same still-active credential without consuming another OIDC nonce, creating 
 writing another successful establishment receipt. Changed payloads collide; expired and revoked sessions stay denied.
 A live runtime epoch can only be repeated or stopped before replacement, preserving the controller's stop authority.
 
+`AuthorizeCommand` checks human command permission before the BFF resolves an external subject. It produces an audit
+receipt without changing policy, returning content or renewing idle activity. This preflight remains available during
+archive loss for revocation; `ExecuteCommand` independently checks the final actor, command and current version.
+
 Archive health requires a recent acknowledgement and no unacknowledged receipt older than sixty seconds, checked
 against both the outbox and the durable sequence checkpoint. A live exporter heartbeat cannot hide a backlog. The final decision guard rechecks archive health after the native
 permission response, including a failure that occurs while the request is in flight. Controller enrollment checks a
@@ -74,6 +81,34 @@ operation collisions, concurrent reservations, independent emergency approval, g
 stream receipt binding, audit/archive failure and transfer quarantine before receipt recovery. Set
 `OFZ_FIXTURE_SSH=kalmyk@nuc.ide-newton.ts.net` to run its disposable containers on the authorized NUC; SSH tunnels keep
 fixture ports local. These checks exercise control behavior, not the yet-unmigrated BFF, controller or guest.
+
+The Landing BFF now uses a schema-generated Ofz client with exact SPIFFE peer verification. Its dedicated Keycloak
+realm requires GitHub brokerage and verified passkeys. Ofz verifies issuer, audience, nonce, immutable numeric GitHub
+identity, authentication time and assurance level before issuing a hash-only opaque SQL session. Reauthentication
+revokes the previous browser credential in the same transaction. Failed establishment records an immutable denial
+without storing the ID token. Platform membership remains necessary after successful identity-provider authentication.
+
+The Access UI submits typed, versioned commands through the BFF. It verifies GitHub usernames against numeric IDs,
+requires fresh MFA for changes, shows quota usage and audit receipts, and retries an uncertain command with its original
+operation ID. The independent `/access` page permits policy administration without starting a guest or opening content.
+Before preparing a command again, the BFF checks for its committed receipt under the active platform session. Ofz
+matches the hash of the original validated request, so transfers and self-demotions can recover a lost reply after
+the caller loses the original permission without resolving a GitHub username again. A changed payload with the same
+operation ID is rejected. Cancelled or rejected OIDC callbacks clear the OAuth binding cookie and return the controlled
+authentication failure without requiring an authorization code.
+
+Run the isolated browser qualification with Java 21, Chromium and the checksum-verified Keycloak distribution:
+
+```sh
+export KEYCLOAK_FIXTURE_BIN="$(bash services/ofz/tests/keycloak-runtime.sh /tmp/ofz-keycloak)"
+bash services/ofz/test-control.sh identity
+```
+
+This fixture uses real Keycloak, Ofz, SPIFFE mTLS, PostgreSQL and SpiceDB, with a synthetic GitHub upstream and virtual
+passkeys. It exercises duplicate-email identity separation, membership and quota changes through the actual Access UI,
+minimum-administrator protection, stale MFA and fresh step-up, downgraded assurance denial, nonmember admission denial,
+cookie replacement, logout and replay. Production custodian enrollment, runtime enforcement, HA and deployed acceptance
+remain migration gates.
 
 Prepared cutover resources live in [`argocd/applications/ofz/control-plane`](../../argocd/applications/ofz/control-plane/README.md).
 They are excluded from the active application until coordinated release, identity, archive, credential and migration gates pass.

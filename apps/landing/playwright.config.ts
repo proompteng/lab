@@ -1,4 +1,12 @@
 import { defineConfig } from '@playwright/test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+const fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'tengri-playwright-config-'))
+const fixtureSecret = path.join(fixtureDirectory, 'oidc-secret')
+writeFileSync(fixtureSecret, 'isolated-playwright-client-secret-not-production', { mode: 0o600 })
+process.once('exit', () => rmSync(fixtureDirectory, { recursive: true, force: true }))
 
 const port = Number.parseInt(process.env.TENGRI_PLAYWRIGHT_PORT ?? '3000', 10)
 const baseURL = process.env.TENGRI_PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`
@@ -43,10 +51,12 @@ export default defineConfig({
           cwd: __dirname,
           env: {
             ...process.env,
-            BETTER_AUTH_SECRET: 'playwright-better-auth-secret-000000000000',
-            BETTER_AUTH_URL: baseURL,
-            GITHUB_CLIENT_ID: 'playwright',
-            GITHUB_CLIENT_SECRET: 'playwright',
+            TENGRI_DESKTOP_ORIGIN: 'https://proompteng.ai',
+            TENGRI_OIDC_CLIENT_SECRET_FILE: fixtureSecret,
+            TENGRI_DATABASE_DSN: 'postgres://tengri_bff@localhost:65534/tengri_control',
+            TENGRI_DATABASE_PASSWORD_FILE: fixtureSecret,
+            TENGRI_DATABASE_CA_FILE: fixtureSecret,
+            OFZ_GRPC_ENDPOINT: 'localhost:65535',
             NEXT_TELEMETRY_DISABLED: '1',
             TENGRI_GRPC_ENDPOINT: 'localhost:65535',
             SPIFFE_ENDPOINT_SOCKET: 'unix:///tmp/tengri-playwright-workload-api.sock',

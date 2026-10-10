@@ -1280,6 +1280,7 @@ fn agent_from_microvm(microvm: &MicroVM) -> Agent {
     let resources = &microvm.spec.resources;
     Agent {
         id: microvm.name_any(),
+        uid: microvm.uid().unwrap_or_default(),
         display_name: microvm.spec.display_name.clone(),
         phase: phase_to_proto(agent_phase(microvm)) as i32,
         architecture: architecture_to_proto(microvm.spec.architecture) as i32,

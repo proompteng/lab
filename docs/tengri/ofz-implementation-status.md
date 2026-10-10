@@ -10,7 +10,7 @@ Production keeps its current authority until the coordinated hard cutover. New c
 - [x] Identify the requested independent recovery host: `nuc.ide-newton.ts.net`.
 - [x] P1: final schema, typed API, action inventory, real SpiceDB role/expiry/revocation tests.
 - [x] P2 source and isolated control proof: Ofz service, durable commands, quotas, audit and database migrations.
-- [ ] P3: Keycloak identity, shared sessions and Access UI.
+- [x] P3 source and isolated browser proof: Keycloak identity, shared sessions and Access UI.
 - [ ] P4: shared tickets, leadership and failover.
 - [ ] P5: enforce every runtime channel and add pure observers.
 - [ ] P6: proof-bound diagnostic grants, Kubernetes and connector brokers.
@@ -53,3 +53,40 @@ assertions. The exact pinned PostgreSQL 18.6 and SpiceDB container fixture also 
 60 immutable receipts. Operational test grants remain live throughout remote offboarding checks; expiry is tested
 separately. The in-flight archive race has a bounded barrier timeout. NUC access uses the same existing key, whose
 fingerprint matches the configured SSH agent, without changing the account or credential identity.
+
+P3 local evidence: Keycloak 26.7.3 with Java 21, real TLS PostgreSQL 18.1, SpiceDB 1.56.2, Ofz and the BFF passed the
+isolated Chromium fixture with a synthetic GitHub upstream and virtual user-verified passkeys. The fixture checks
+duplicate-email identity separation, admission denial with an immutable receipt, browser membership/quota changes,
+the two-administrator minimum, stale MFA rejection, fresh passkey step-up, downgraded assurance rejection, atomic
+session-cookie replacement, shared SQL inspection, logout revocation and HEAD/replay rejection. The Landing suite
+passed 296 tests. The current control fixture passed 26 commands and 79 immutable receipts. The expanded browser fixture
+passes 44 assertions under pinned Bun 1.4.2, including permission checks before external identity resolution and real
+GitHub/BFF credential rotation without replacing users or passkeys. A simulated lost response after real session
+establishment recovers the same credential with one session and one successful audit receipt; disabling BFF recovery
+fails the actual browser flow. Command preflight remains available for revocation
+under archive loss and never renews idle activity. Both the 26-command control fixture and the 44-assertion browser
+fixture also passed against the exact PostgreSQL 18.6 and SpiceDB containers on NUC. Twenty-two inventory regressions,
+TypeScript, type-aware lint, generated-client verification and strict prepared-manifest validation passed after
+restacking onto current main. The corrected dependency hashes passed native Linux image builds on both architectures
+at commit `371f53f7a2`; all required CI checks passed there. The emergency-access catalog classification was then aligned
+with the enforced administrator permission and covered by the Rust contract suite. Logout now classifies its actual
+session-revocation action. The pinned identity fixture passed all 44 assertions again after waiting for Keycloak's
+deferred WebAuthn module before clicking its registration and authentication buttons. Real custodian enrollment and
+deployed product proof remain later gates.
+
+The follow-up command-recovery fixture passed 52 browser assertions and 297 Landing tests. It commits a self-demotion,
+loses the successful response, and recovers the original receipt after administrator authority is gone without another
+GitHub lookup. A changed request with that operation ID returns 409. Ofz binds this recovery to the original validated
+BFF request hash; the real 26-command / 79-receipt control fixture also verifies recovery after ownership transfer and
+hash collision rejection. Cancelled OIDC callbacks clear their attempt cookie; that regression returns 400 against the
+prior source and the required 401 with the fix. Eight Rust units, Clippy, TypeScript and 22 inventory regressions pass.
+
+The coordinated cutover gate also covers the Proompteng image: Kargo discovery remains withheld while
+`TENGRI_PREPARED_SLOT_CUTOVER_READY` is false. This was verified against the repository variable and workflow input;
+the production BFF remains on its previous image. Rate limits use the connection peer, so clients reaching the
+LoadBalancer cannot choose buckets with proxy headers. Tunnel clients share the tunnel Pod's bucket. An isolated
+Traefik 3.7.13 fixture on NUC reproduced seven admitted requests with rotating headers under the previous configuration
+and returned HTTP 429 on the seventh request under the corrected configuration. This is isolated ingress proof;
+production ingress acceptance remains part of P8. Fifty-seven focused inventory, rollout and ingress checks pass.
+The enabled-app inventory follows declared nested Kustomize inputs, excluding prepared directories until referenced;
+only Ofz's classification changed in the current repository inventory.

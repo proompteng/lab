@@ -15,7 +15,10 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("TLS crypto provider already installed"))?;
     tracing_subscriber::fmt()
         .json()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .init();
     let database = Database::from_environment().await?;
     match env::args().nth(1).as_deref() {
@@ -23,20 +26,27 @@ async fn main() -> anyhow::Result<()> {
             database.migrate().await?;
             return Ok(());
         }
+        Some("migrate-runtime") => {
+            database.migrate_runtime().await?;
+            return Ok(());
+        }
         Some("serve") | None => {}
-        _ => bail!("expected serve or migrate"),
+        _ => bail!("expected serve, migrate or migrate-runtime"),
     }
     database.verify_schema().await?;
+    tracing::debug!("control database schema verified");
     let native = Native::new(
         &env::var("OFZ_SPICEDB_ENDPOINT")?,
         PathBuf::from(env::var("OFZ_SPICEDB_KEY_FILE")?),
     )?;
     commands::recover(&database, &native).await?;
+    tracing::debug!("pending commands reconciled");
     let issuer = Issuer::new(
         env::var("OFZ_OIDC_ISSUER")?,
         env::var("OFZ_OIDC_CLIENT_ID")?,
     )?;
     let tls = transport::server_config().await?;
+    tracing::debug!("attested authorization transport initialized");
     let listener =
         TcpListener::bind(env::var("OFZ_LISTEN").unwrap_or_else(|_| "0.0.0.0:9443".into())).await?;
     tracing::info!(

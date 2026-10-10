@@ -613,6 +613,11 @@
   },
   {
     "surface": "ofz",
+    "operation": "AuthorizeCommand",
+    "action": "ACTION_POLICY_CHECK"
+  },
+  {
+    "surface": "ofz",
     "operation": "GetPolicyState",
     "action": "ACTION_POLICY_CHECK"
   },
@@ -851,5 +856,151 @@
     "operation": "navigate",
     "internal_only": true,
     "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/access",
+    "action": "ACTION_POLICY_READ",
+    "dispatch": "Dispatch also requires workspace read_access or audit_read for those views."
+  },
+  {
+    "surface": "bff_http",
+    "operation": "POST /api/tengri/access",
+    "action": "ACTION_POLICY_COMMAND"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "HEAD /api/tengri",
+    "public": true,
+    "dispatch": "Rejects HEAD / serves empty OPTIONS without allocating streams or invoking protected handlers."
+  },
+  {
+    "surface": "bff_http",
+    "operation": "OPTIONS /api/tengri",
+    "public": true,
+    "dispatch": "Rejects HEAD / serves empty OPTIONS without allocating streams or invoking protected handlers."
+  },
+  {
+    "surface": "bff_http",
+    "operation": "HEAD /api/tengri/events",
+    "public": true,
+    "dispatch": "Rejects HEAD / serves empty OPTIONS without allocating streams or invoking protected handlers."
+  },
+  {
+    "surface": "bff_http",
+    "operation": "OPTIONS /api/tengri/events",
+    "public": true,
+    "dispatch": "Rejects HEAD / serves empty OPTIONS without allocating streams or invoking protected handlers."
+  },
+  {
+    "surface": "bff_http",
+    "operation": "HEAD /api/tengri/files/events",
+    "public": true,
+    "dispatch": "Rejects HEAD / serves empty OPTIONS without allocating streams or invoking protected handlers."
+  },
+  {
+    "surface": "bff_http",
+    "operation": "OPTIONS /api/tengri/files/events",
+    "public": true,
+    "dispatch": "Rejects HEAD / serves empty OPTIONS without allocating streams or invoking protected handlers."
+  },
+  {
+    "surface": "bff_http",
+    "operation": "HEAD /api/tengri/access",
+    "public": true,
+    "dispatch": "Rejects HEAD / serves empty OPTIONS without allocating streams or invoking protected handlers."
+  },
+  {
+    "surface": "bff_http",
+    "operation": "OPTIONS /api/tengri/access",
+    "public": true,
+    "dispatch": "Rejects HEAD / serves empty OPTIONS without allocating streams or invoking protected handlers."
+  },
+  {
+    "surface": "bff_access",
+    "operation": "membership",
+    "action": "ACTION_MEMBERS_MANAGE"
+  },
+  {
+    "surface": "bff_access",
+    "operation": "collaborator",
+    "action": "ACTION_COLLABORATORS_MANAGE"
+  },
+  {
+    "surface": "bff_access",
+    "operation": "quota",
+    "action": "ACTION_QUOTAS_MANAGE"
+  },
+  {
+    "surface": "bff_access",
+    "operation": "target",
+    "action": "ACTION_TARGETS_MANAGE"
+  },
+  {
+    "surface": "bff_access",
+    "operation": "grant",
+    "action": "ACTION_GRANTS_MANAGE"
+  },
+  {
+    "surface": "bff_access",
+    "operation": "revoke",
+    "action": "ACTION_GRANTS_MANAGE"
+  },
+  {
+    "surface": "bff_access",
+    "operation": "transfer",
+    "action": "ACTION_WORKSPACE_TRANSFER"
+  },
+  {
+    "surface": "bff_access",
+    "operation": "emergency",
+    "action": "ACTION_MEMBERS_MANAGE"
+  },
+  {
+    "surface": "bff_auth",
+    "operation": "POST /api/auth/login",
+    "public": true,
+    "dispatch": "Pre-admission OAuth exchange; Ofz establishes a session only after verified identity and active membership."
+  },
+  {
+    "surface": "bff_auth",
+    "operation": "POST /api/auth/step-up",
+    "public": true,
+    "dispatch": "Pre-admission OAuth exchange; Ofz establishes a session only after verified identity and active membership."
+  },
+  {
+    "surface": "bff_auth",
+    "operation": "GET /api/auth/callback",
+    "public": true,
+    "dispatch": "Pre-admission OAuth exchange; Ofz establishes a session only after verified identity and active membership."
+  },
+  {
+    "surface": "bff_auth",
+    "operation": "POST /api/auth/logout",
+    "action": "ACTION_SESSION_REVOKE"
+  },
+  {
+    "surface": "bff_auth_http",
+    "operation": "GET /api/auth/[...all]",
+    "public": true,
+    "dispatch": "Bounded dispatch to the separately classified authentication endpoints; unknown paths are rejected."
+  },
+  {
+    "surface": "bff_auth_http",
+    "operation": "POST /api/auth/[...all]",
+    "public": true,
+    "dispatch": "Bounded dispatch to the separately classified authentication endpoints; unknown paths are rejected."
+  },
+  {
+    "surface": "bff_auth_http",
+    "operation": "HEAD /api/auth/[...all]",
+    "public": true,
+    "dispatch": "Bounded dispatch to the separately classified authentication endpoints; unknown paths are rejected."
+  },
+  {
+    "surface": "bff_auth_http",
+    "operation": "OPTIONS /api/auth/[...all]",
+    "public": true,
+    "dispatch": "Bounded dispatch to the separately classified authentication endpoints; unknown paths are rejected."
   }
 ]

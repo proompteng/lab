@@ -160,6 +160,67 @@ impl Database {
         Ok(())
     }
 
+    pub async fn migrate_runtime(&self) -> Result<(), Status> {
+        const MIGRATION: &str = include_str!("../../tengri/migrations/0001_control.sql");
+        let checksum = Sha256::digest(MIGRATION.as_bytes()).to_vec();
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|_| Status::unavailable("migration database pool unavailable"))?;
+        let tx = client.transaction().await.map_err(sql_error)?;
+        let identity = tx
+            .query_one("SELECT current_database(),current_user", &[])
+            .await
+            .map_err(sql_error)?;
+        if identity.get::<_, String>(0) != "tengri_control"
+            || identity.get::<_, String>(1) != "tengri_migrator"
+        {
+            return Err(Status::failed_precondition(
+                "Tengri migration owner and database required",
+            ));
+        }
+        tx.query_one("SELECT pg_advisory_xact_lock(726635522921)", &[])
+            .await
+            .map_err(sql_error)?;
+        let exists: bool = tx
+            .query_one(
+                "SELECT to_regclass('tengri.schema_version') IS NOT NULL",
+                &[],
+            )
+            .await
+            .map_err(sql_error)?
+            .get(0);
+        if !exists {
+            let body = MIGRATION
+                .trim()
+                .strip_prefix("BEGIN;")
+                .and_then(|body| body.strip_suffix("COMMIT;"))
+                .ok_or_else(|| Status::internal("invalid packaged runtime migration"))?;
+            tx.batch_execute(body).await.map_err(sql_error)?;
+            tx.execute(
+                "INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)",
+                &[&checksum],
+            )
+            .await
+            .map_err(sql_error)?;
+        }
+        let rows = tx
+            .query("SELECT version,checksum FROM tengri.schema_version", &[])
+            .await
+            .map_err(sql_error)?;
+        if rows.len() != 1
+            || rows[0].get::<_, i32>(0) != 1
+            || rows[0].get::<_, Vec<u8>>(1) != checksum
+        {
+            return Err(Status::failed_precondition(
+                "runtime migration checksum mismatch",
+            ));
+        }
+        tx.commit().await.map_err(sql_error)?;
+        Ok(())
+    }
+
     pub async fn command_connection(&self) -> Result<CommandConnection, Status> {
         let permit = self
             .command_slots

@@ -40,6 +40,19 @@ def next_methods(source):
     return methods
 
 
+def next_routes(root, prefix):
+    operations = set()
+    for path in root.rglob("route.*"):
+        assert path.suffix in {".js", ".jsx", ".ts", ".tsx"}, (
+            "unsupported Next route extension requires inventory review"
+        )
+        route = (prefix + "/" + str(path.parent.relative_to(root))).removesuffix("/.")
+        operations.update(
+            f"{method} {route}" for method in next_methods(path.read_text())
+        )
+    return operations
+
+
 def rust_routes(source, fallback=None):
     source = without_comments(source)
     assert not re.search(
@@ -274,15 +287,24 @@ def main():
     codex = codex[: codex.index("\n}")]
     actual["codex"] = codex_cases(codex + "\n}")
     api_root = ROOT / "apps/landing/src/app/api/tengri"
-    actual["bff_http"] = set()
-    for path in api_root.rglob("route.*"):
-        assert path.suffix in {".js", ".jsx", ".ts", ".tsx"}, (
-            "unsupported Next route extension requires inventory review"
-        )
-        route = "/api/tengri/" + str(path.parent.relative_to(api_root))
-        route = route.removesuffix("/.")
-        for method in next_methods(path.read_text()):
-            actual["bff_http"].add(f"{method} {route}")
+    actual["bff_http"] = next_routes(api_root, "/api/tengri")
+    access = (ROOT / "apps/landing/src/app/api/tengri/access/route.ts").read_text()
+    actual["bff_access"] = operation_cases(access)
+    access_schema = (ROOT / "apps/landing/src/lib/tengri/access-schemas.ts").read_text()
+    assert not re.search(r"\baction:\s*z\.(?!literal\b)", access_schema), (
+        "access commands require explicit literal schema actions"
+    )
+    schema_actions = set(
+        re.findall(r"\baction:\s*z\.literal\('([^']+)'\)", access_schema)
+    )
+    assert schema_actions == actual["bff_access"], (
+        f"access schema and handler classification disagree: unclassified={sorted(actual['bff_access'] - schema_actions)}, missing={sorted(schema_actions - actual['bff_access'])}"
+    )
+    auth = (ROOT / "apps/landing/src/lib/tengri/auth.ts").read_text()
+    actual["bff_auth"] = operation_cases(auth)
+    actual["bff_auth_http"] = next_routes(
+        ROOT / "apps/landing/src/app/api/auth", "/api/auth"
+    )
     guest_http = "\n".join(
         path.read_text()
         for path in (ROOT / "services/nanoagent").rglob("*.go")

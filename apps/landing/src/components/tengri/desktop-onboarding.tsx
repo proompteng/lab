@@ -7,7 +7,7 @@ import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
-import { tengriAuthClient } from '@/lib/tengri/auth-client'
+import { startTengriSignIn } from '@/lib/tengri/auth-client'
 import { desktopRefreshDelay, resolveDesktopGate, type DesktopGateState } from '@/lib/tengri/desktop-gate'
 import type { TengriAgent, TengriDesktopSnapshot } from '@/lib/tengri/types'
 import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/tengri-agent'
@@ -247,25 +247,17 @@ function SignInWindow() {
   function signIn() {
     setBusy(true)
     setError('')
-    void tengriAuthClient.signIn
-      .social({ provider: 'github', callbackURL: '/' })
-      .then((result) => {
-        if (result.error) {
-          setError(result.error.message || 'Tengri could not start GitHub sign-in')
-          setBusy(false)
-        }
-      })
-      .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : 'Tengri could not start GitHub sign-in')
-        setBusy(false)
-      })
+    void startTengriSignIn().catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : 'Tengri could not start GitHub sign-in')
+      setBusy(false)
+    })
   }
 
   return (
     <ActionWindow
       icon={busy ? <LoaderCircle className="h-7 w-7 animate-spin" /> : <CircleUserRound className="h-7 w-7" />}
       title="Sign in to Tengri"
-      detail="Your GitHub identity owns one private Firecracker agent and its persistent workspace."
+      detail="Sign in with GitHub and your passkey. Ofz determines which workspaces you can access."
       error={error}
       actionIcon={<CircleUserRound aria-hidden="true" className="h-4 w-4" />}
       actionBusy={busy}
