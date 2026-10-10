@@ -36,10 +36,12 @@ import {
 } from './decision'
 import {
   decideJevExit,
+  jevBrokerEvidenceFreshUntilMs,
   jevMaximumHoldDueAt,
   jevProtectiveQuoteIsFresh,
   jevProtectiveStopCrossed,
   JevExitReason,
+  type JevExitEvidence,
   type JevExitTarget,
 } from './exit'
 import { JevPositionStore } from './portfolio'
@@ -317,7 +319,7 @@ export const evaluateJevPositionManagement = (input: {
     // Per-evaluation only: failures before the validated portfolio read have no holding deadline.
     let maximumHoldDueAt: string | undefined
     let maximumHoldEvaluatedAt: string | undefined
-    let maximumHoldEvidence: Parameters<typeof decideJevExit>[0] | undefined
+    let maximumHoldEvidence: JevExitEvidence | undefined
     return Effect.gen(function* () {
       const store = yield* JevPositionStore
       const portfolio = yield* store.read({
@@ -342,6 +344,14 @@ export const evaluateJevPositionManagement = (input: {
       maximumHoldEvidence = { ...evidence, trigger: { reason: JevExitReason.MaximumHold } }
       if (Date.parse(observedAt) >= Date.parse(maximumHoldDueAt))
         return yield* Effect.fromResult(decideJevExit({ ...evidence, trigger: { reason: JevExitReason.MaximumHold } }))
+      const managementBudgetMs = Math.max(
+        0,
+        Math.min(
+          Date.parse(maximumHoldDueAt) - Date.parse(observedAt),
+          input.protocol.inferenceValidityMs,
+          jevBrokerEvidenceFreshUntilMs(portfolio.brokerState) - Date.parse(observedAt) - 1,
+        ),
+      )
       return yield* Effect.gen(function* () {
         const pricingQuery = yield* Effect.fromResult(
           jevPricingQuery(
@@ -414,20 +424,15 @@ export const evaluateJevPositionManagement = (input: {
             )
           : undefined
       }).pipe(
-        Effect.timeoutOption(Duration.millis(Date.parse(maximumHoldDueAt) - Date.parse(observedAt))),
+        Effect.timeoutOption(Duration.millis(managementBudgetMs)),
         Effect.flatMap((result) =>
           Option.isSome(result)
             ? Effect.succeed(result.value)
-            : currentUtcInstant.pipe(
-                Effect.flatMap((checkedAt) =>
-                  Effect.fromResult(
-                    decideJevExit({
-                      ...evidence,
-                      observedAt: checkedAt,
-                      trigger: { reason: JevExitReason.MaximumHold },
-                    }),
-                  ),
-                ),
+            : Effect.fail(
+                new JevAwaitingEvidence({
+                  message: 'Position management exhausted its validity window; retry with current position evidence',
+                  readiness: DecisionReadinessReason.InferenceUnavailable,
+                }),
               ),
         ),
       )
@@ -483,8 +488,20 @@ export const evaluateJevPositionManagement = (input: {
                 maximumHoldDueAt,
                 checkedAt,
                 deadlineOverrunMs: Date.parse(checkedAt) - Date.parse(maximumHoldDueAt),
+                brokerEvidenceFreshUntil: utcInstantFromEpochMillis(
+                  jevBrokerEvidenceFreshUntilMs(maximumHoldEvidence.portfolio.brokerState),
+                ),
               }),
             )
+            if (Date.parse(checkedAt) >= jevBrokerEvidenceFreshUntilMs(maximumHoldEvidence.portfolio.brokerState))
+              return {
+                _tag: 'Wait' as const,
+                details: {
+                  waitReason: 'JEV_POSITION_AWAITING_RECONCILIATION' as const,
+                  maximumHoldDueAt,
+                  maximumHoldEvaluatedAt,
+                },
+              }
             return {
               _tag: 'Exit' as const,
               target: yield* Effect.fromResult(decideJevExit({ ...maximumHoldEvidence, observedAt: checkedAt })),

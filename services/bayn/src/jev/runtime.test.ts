@@ -17,6 +17,8 @@ import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } fro
 import { JevPositionStore, JevPurpose } from './portfolio'
 import { evaluateJevObservation, evaluateJevPositionManagement } from './runtime'
 import { utcInstantFromEpochMillis } from '../time'
+import { canonicalHashV1 } from '../hash'
+import { reconciledStateHash } from '../reconciliation'
 
 const scenario = (
   options: {
@@ -34,14 +36,44 @@ const scenario = (
     readonly completedHold?: boolean
     readonly inferenceDelayMs?: number
     readonly stalledInference?: boolean
+    readonly advanceMs?: number
+    readonly brokerEvidenceAgeMs?: number
+    readonly interruptionDelayMs?: number
     readonly expiredObservation?: boolean
   } = {},
 ) => {
   const fixture = nativeJevFixture(JevPurpose.Manage, options.observedAt ?? '2026-09-04T14:30:32.000Z')
   const original = fixture.portfolio
   if (original.purpose !== JevPurpose.Manage) throw new Error('Expected held-position fixture')
+  let brokerState = original.brokerState
+  if (options.brokerEvidenceAgeMs !== undefined) {
+    const at = utcInstantFromEpochMillis(
+      Date.parse(fixture.observation.payload.observedAt) - options.brokerEvidenceAgeMs,
+    )
+    const material = {
+      account: { ...brokerState.account, observedAt: at },
+      positions: brokerState.positions.map((position) => ({ ...position, observedAt: at })),
+      positionsObservedAt: at,
+      orders: brokerState.orders.map((order) => ({ ...order, observedAt: at })),
+      ordersObservedAt: at,
+      accountingHash: brokerState.accountingHash,
+    }
+    const stateHash = Result.getOrThrow(reconciledStateHash(material))
+    brokerState = {
+      ...material,
+      unknownOrderCount: brokerState.unknownOrderCount,
+      reconciliation: {
+        ...brokerState.reconciliation,
+        expectedHash: stateHash,
+        observedHash: stateHash,
+        contentHash: canonicalHashV1(material),
+        reconciledAt: at,
+      },
+    }
+  }
   const portfolio = {
     ...original,
+    brokerState,
     entryFills: options.maximumHold
       ? original.entryFills.map((fill) => ({ ...fill, occurredAt: '2026-09-04T14:15:32.000Z' }))
       : original.entryFills.map((fill, index) => ({
@@ -160,8 +192,10 @@ const scenario = (
               if (options.stalledInference)
                 return yield* Effect.never.pipe(
                   Effect.onInterrupt(() =>
-                    Effect.sync(() => {
+                    Effect.gen(function* () {
                       inferenceInterrupted++
+                      if (options.interruptionDelayMs !== undefined)
+                        yield* TestClock.adjust(options.interruptionDelayMs)
                     }),
                   ),
                 )
@@ -200,7 +234,7 @@ const scenario = (
           options.stalledInference
             ? Effect.gen(function* () {
                 const run = yield* program.pipe(Effect.forkChild({ startImmediately: true }))
-                yield* TestClock.adjust(7_000)
+                yield* TestClock.adjust(options.advanceMs ?? 7_000)
                 return yield* Fiber.join(run)
               })
             : program,
@@ -296,6 +330,61 @@ describe('Jev management observation admission', () => {
       target: {
         reason: JevExitReason.MaximumHold,
         observedAt: '2026-09-04T14:30:39.000Z',
+      },
+    })
+    expect(check.inferenceInterruptions()).toBe(1)
+  })
+
+  test('long-stalled management returns at inference validity before the holding deadline and broker expiry', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      stalledInference: true,
+      advanceMs: 10_000,
+      firstFillAt: '2026-09-04T14:17:32.000Z',
+    })
+    expect(await check.run()).toMatchObject({
+      _tag: 'Wait',
+      details: {
+        maximumHoldDueAt: '2026-09-04T14:32:32.000Z',
+        readiness: { reason: 'INFERENCE_UNAVAILABLE' },
+      },
+    })
+    expect(check.inferenceInterruptions()).toBe(1)
+  })
+
+  test('nearly expired broker evidence ends management before its strict freshness boundary', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      stalledInference: true,
+      advanceMs: 999,
+      brokerEvidenceAgeMs: 59_000,
+      firstFillAt: '2026-09-04T14:15:39.000Z',
+    })
+    expect(await check.run()).toMatchObject({
+      _tag: 'Wait',
+      details: {
+        maximumHoldDueAt: '2026-09-04T14:30:39.000Z',
+        readiness: { reason: 'INFERENCE_UNAVAILABLE' },
+      },
+    })
+    expect(check.inferenceInterruptions()).toBe(1)
+  })
+
+  test('slow cancellation requires reconciliation rather than an exit from stale broker evidence', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      stalledInference: true,
+      interruptionDelayMs: 60_000,
+      firstFillAt: '2026-09-04T14:15:39.000Z',
+    })
+    expect(await check.run()).toMatchObject({
+      _tag: 'Wait',
+      details: {
+        maximumHoldDueAt: '2026-09-04T14:30:39.000Z',
+        waitReason: 'JEV_POSITION_AWAITING_RECONCILIATION',
       },
     })
     expect(check.inferenceInterruptions()).toBe(1)

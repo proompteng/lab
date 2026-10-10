@@ -94,10 +94,11 @@ existing continuation qualifies. Elapsed, missing or invalid timestamps, other r
 keep their normal cadence. Every wake rechecks source readiness and the existing completed-window admission; it
 does not repeat inference on an already consumed window or change broker polling, signal history or position limits.
 
-Discretionary management is interrupted at the first-fill holding deadline. A completed or retryable management
-result rechecks the deadline before returning, so a slow quote or inference cannot return a late hold decision.
-Cancellation still waits for scoped finalizers. The holding-deadline log records any overrun; order authorization
-continues to require fresh broker evidence and all existing risk checks.
+Discretionary management is bounded by the earliest of the first-fill holding deadline, inference-validity budget,
+and broker-evidence freshness boundary. A completed or retryable management result rechecks the holding deadline
+before returning. Cancellation still waits for scoped finalizers. If finalization outlasts broker freshness, the
+result requires reconciliation instead of constructing an exit from stale evidence. The holding-deadline log records
+any overrun and the broker-evidence expiry; order authorization retains all existing risk checks.
 
 Held-position waits also retain the first-fill-based maximum-hold deadline. A future deadline caps the next wake,
 while an earlier signal boundary still wins. The absolute bound survives management work, completion persistence,
