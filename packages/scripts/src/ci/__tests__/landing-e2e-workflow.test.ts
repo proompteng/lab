@@ -11,9 +11,8 @@ const tengriWorkflow = readFileSync(new URL('../../../../../.github/workflows/te
 
 describe('landing browser validation workflow', () => {
   test('installs Chromium and runs the co-located Tengri Playwright suite', () => {
-    const landingStep = workflow.match(
-      /- name: Run landing validation[\s\S]*?\n\s+- name: Upload landing browser artifacts/,
-    )?.[0]
+    const landingStep =
+      workflow.match(/- name: Run landing validation[\s\S]*?\n\s+- name: Upload landing browser artifacts/)?.[0] ?? ''
     const artifactStep = workflow.match(
       /- name: Upload landing browser artifacts[\s\S]*?\n\s+- name: Run selected validation/,
     )?.[0]
@@ -21,6 +20,10 @@ describe('landing browser validation workflow', () => {
 
     expect(landingStep).toContain('bunx playwright install --with-deps chromium')
     expect(landingStep).toContain('bun run --cwd apps/landing test:e2e')
+    expect(landingStep).toContain('bun run --filter landing build')
+    expect(landingStep.indexOf('bun run --filter landing build')).toBeLessThan(
+      landingStep.indexOf('bun run --cwd apps/landing test:e2e'),
+    )
     expect(landingStep).toContain('TENGRI_EDITOR_NEXT_MODE=start bash services/nanoagent/test-vscode-browser.sh')
     expect(runner).toContain("matrix.target == 'landing' && 'ubuntu-24.04'")
     expect(runner).not.toContain("matrix.target == 'landing' && 'arc-amd64'")
@@ -43,5 +46,8 @@ describe('landing browser validation workflow', () => {
     expect(trigger).toContain('push:')
     expect(trigger).toContain('workflow_dispatch:')
     expect(trigger).not.toContain('pull_request:')
+    expect(tengriWorkflow.indexOf('- name: Build desktop for browser acceptance')).toBeLessThan(
+      tengriWorkflow.indexOf('- name: Run Tengri desktop browser suite'),
+    )
   })
 })

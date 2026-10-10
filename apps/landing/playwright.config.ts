@@ -30,14 +30,16 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     timezoneId: 'UTC',
     trace: 'on-first-retry',
-    video: 'retain-on-failure',
+    video: 'on-first-retry',
     viewport: { width: 1440, height: 900 },
   },
   webServer:
     process.env.TENGRI_PLAYWRIGHT_SKIP_WEBSERVER === '1'
       ? undefined
       : {
-          command: `bunx next dev --turbopack --hostname 127.0.0.1 --port ${port}`,
+          command: process.env.CI
+            ? `bunx next start --hostname 127.0.0.1 --port ${port}`
+            : `bunx next dev --turbopack --hostname 127.0.0.1 --port ${port}`,
           cwd: __dirname,
           env: {
             ...process.env,
