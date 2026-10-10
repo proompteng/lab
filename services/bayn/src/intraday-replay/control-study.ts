@@ -981,7 +981,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
         new ControlStudyFailure({ message: 'Frozen residual shock cadence or native protective rules differ' }),
       )
     const policyDefinition = falsification ? residualShockControlStudyDefinition : controlStudyDefinition
-    const definition =
+    const baseDefinition =
       input.schemaVersion === 'bayn.control-study-input.v6'
         ? ridgeControlStudyDefinition
         : accountScheduledOpportunities
@@ -991,6 +991,15 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
               opportunityAccounting: opportunityAccountingDefinition,
             }
           : policyDefinition
+    const definition =
+      input.management === ControlManagementMode.Jev
+        ? {
+            ...baseDefinition,
+            schemaVersion: 'bayn.control-study-definition.v9',
+            managementDeadline:
+              'The independent provider clock bounds the complete management pass, including journal work, by the earlier of inference validity and first-fill maximum hold. Cancellation waits for finalizers and retains known or unresolved costs. An interrupted journal is permanently invalid and cannot resume. Source catch-up follows completion; hold and model-exit commitment must precede the deadline.',
+          }
+        : baseDefinition
     if (prepared.input.cadence.pollIntervalMs > 60_000 || prepared.input.assumptions.latencyMs > 60_000)
       return yield* Result.fail(
         new ControlStudyFailure({ message: 'Control polling and routing latency must each be at most one minute' }),
