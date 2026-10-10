@@ -134,6 +134,46 @@ class InventoryTests(unittest.TestCase):
                         ):
                             inventory.main()
 
+    def test_nonliteral_go_handlers_fail_closed(self):
+        read_text = Path.read_text
+        for handler in ["Handle", "HandleFunc"]:
+            with self.subTest(handler=handler):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("nanoagent/api.go"):
+                        content += f"\nmux.{handler}(secretPath, secret)\n"
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "Go handler path must be an explicit string literal",
+                    ):
+                        inventory.main()
+
+    def test_every_codex_method_literal_requires_classification(self):
+        read_text = Path.read_text
+        for method in ["thread/foo2", "thread/foo_bar", "thread/foo-bar", "ping"]:
+            with self.subTest(method=method):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("nanoagent/codex.go"):
+                        start = content.index("func allowedCodexMethod")
+                        content = content[:start] + content[start:].replace(
+                            'case "account/read",',
+                            f'case "{method}", "account/read",',
+                            1,
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(AssertionError, "codex: unclassified="):
+                        inventory.main()
+        with self.assertRaisesRegex(AssertionError, "explicit string literals"):
+            inventory.operation_cases("case dynamicMethod: return true")
+
 
 if __name__ == "__main__":
     unittest.main()

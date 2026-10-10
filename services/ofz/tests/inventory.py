@@ -80,6 +80,26 @@ def rust_routes(source):
     return operations
 
 
+def go_routes(source):
+    routes = set()
+    for call in re.finditer(r"\b\w+\.Handle(?:Func)?\s*\(", source):
+        path = re.match(r'\s*"([^"\\]+)"\s*,', source[call.end() :])
+        assert path, "Go handler path must be an explicit string literal"
+        routes.add(path.group(1))
+    return routes
+
+
+def operation_cases(source):
+    methods = set()
+    for clause in re.findall(r"\bcase\s+([^:]+):", source):
+        literal = r"""(?:"[^"\\]+"|'[^'\\]+')"""
+        assert re.fullmatch(rf"\s*{literal}(?:\s*,\s*{literal})*\s*", clause), (
+            "operation cases must contain explicit string literals"
+        )
+        methods.update(match[1:-1] for match in re.findall(literal, clause))
+    return methods
+
+
 def main():
     catalog = json.loads((OFZ / "operations.json").read_text())
     actions = set(
@@ -108,10 +128,10 @@ def main():
         ("guest", "services/tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto"),
     ]:
         actual[surface] = set(
-            re.findall(r"\brpc\s+(\w+)\(", (ROOT / proto).read_text())
+            re.findall(r"\brpc\s+(\w+)\s*\(", (ROOT / proto).read_text())
         )
     bff = (ROOT / "apps/landing/src/app/api/tengri/route.ts").read_text()
-    actual["bff"] = set(re.findall(r"case '([^']+)':", bff))
+    actual["bff"] = operation_cases(bff)
     gateway = (ROOT / "services/tengri/src/gateway.rs").read_text()
     gateway = gateway[
         gateway.index("pub fn control_router") : gateway.index("async fn readiness")
@@ -122,7 +142,7 @@ def main():
     codex = (ROOT / "services/nanoagent/codex.go").read_text()
     codex = codex[codex.index("func allowedCodexMethod") :]
     codex = codex[: codex.index("\n}")]
-    actual["codex"] = set(re.findall(r'"([a-zA-Z]+/[a-zA-Z/]+)"', codex))
+    actual["codex"] = operation_cases(codex)
     api_root = ROOT / "apps/landing/src/app/api/tengri"
     actual["bff_http"] = set()
     for path in api_root.rglob("route.ts"):
@@ -135,20 +155,17 @@ def main():
         for path in (ROOT / "services/nanoagent").rglob("*.go")
         if not path.name.endswith("_test.go")
     )
-    actual["guest_http"] = set(
-        re.findall(r'\b\w+\.Handle(?:Func)?\(\s*"([^"]+)"', guest_http)
-    )
+    actual["guest_http"] = go_routes(guest_http)
     supervisor = (ROOT / "services/tengri/src/slot/supervisor.rs").read_text()
     actual["supervisor"] = rust_routes(supervisor)
     assert ".fallback(forward)" in supervisor, "review changed supervisor dispatch"
     actual["supervisor"].add("* {*forward}")
     computer = (ROOT / "services/nanoagent/browser_cua.go").read_text()
     browser_mcp = computer[computer.index("func runBrowserMCP") :]
-    actual["browser_mcp"] = set(re.findall(r'case "([a-z/]+)":', browser_mcp))
+    actual["browser_mcp"] = operation_cases(browser_mcp)
     actions = computer[computer.index("func validateComputerAction") :]
     actions = actions[: actions.index("\n}")]
-    cases = re.findall(r"case ([^:\n]+):", actions)
-    actual["browser_action"] = set(re.findall(r'"([a-z_]+)"', " ".join(cases)))
+    actual["browser_action"] = operation_cases(actions)
     actual["browser_action"].add("status")
     for surface, operations in actual.items():
         classified = {op for kind, op in known if kind == surface}
