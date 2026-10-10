@@ -160,8 +160,9 @@ to reach 34,359,738,368 bytes. Update the existing MicroVM's `spec.resources.wor
 same PVC with initialization marked `complete` against the reviewed boot image. Cold boot the replacement slot;
 ordinary snapshot resume retains the former guest device geometry and does not execute guest initialization.
 
-Guest initialization requires the full 32 GiB raw device, mounts the recognized ext4 filesystem, and runs
-`resize2fs /dev/vdb` before starting Nanoagent. A resize failure prevents readiness and preserves the home for
+Guest initialization requires the full 32 GiB raw device, checks the recognized ext4 filesystem with `e2fsck -p -f`,
+and runs `resize2fs /dev/vdb` before mounting it and starting Nanoagent. Only clean or corrected filesystem checks
+permit growth. A check or resize failure prevents readiness and preserves the home for
 recovery. Verify `/dev/vdb` capacity, `df -B1 /home/nanoagent`, unchanged filesystem UUID and retained-file hashes,
 a synced write, conversation recovery, terminal use, and browser operation before reopening lifecycle traffic.
 Expansion cannot be rolled back by shrinking the PVC. On failure, retain the expanded PVC and fenced claim and

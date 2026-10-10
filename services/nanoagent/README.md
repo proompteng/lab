@@ -236,4 +236,6 @@ memory usage in tab hover cards. Interactive browser prompts remain available.
 Computer-tool screenshots use the guest's temporary filesystem and are removed after encoding, so a full retained
 home does not prevent screen capture. Codex transcripts, browser profiles, tools, and workspace files still share
 the retained home and require free space there.
+Desktop replay replaces tool-result image payloads with `[Image output]` before enforcing its byte limit. The tool's
+identity, completion status, text, and structured result remain available; Codex receives the full original image.
 See [browser architecture and research](../../docs/tengri/browser.md).
