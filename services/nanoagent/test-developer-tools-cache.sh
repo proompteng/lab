@@ -16,7 +16,7 @@ cleanup() {
     mv -- "$work/go" "$HOME/.local/go"
   fi
   local command
-  for command in brew nvim fd; do
+  for command in brew nvim fd lazygit gdu btm; do
     if [[ -e "$work/$command" || -L "$work/$command" ]]; then
       rm -f -- "$prefix/bin/$command"
       mv -- "$work/$command" "$prefix/bin/$command"
@@ -46,14 +46,16 @@ if "$bootstrap" --install-only; then
 fi
 test ! -e "$receipt"
 
-cp -- "$work/receipt" "$receipt"
-mv -- "$prefix/bin/fd" "$work/fd"
-if "$bootstrap" --install-only; then
-  printf 'A missing executable incorrectly skipped installation\n' >&2
-  exit 1
-fi
-test ! -e "$receipt"
-mv -- "$work/fd" "$prefix/bin/fd"
+for command in fd lazygit gdu btm; do
+  cp -- "$work/receipt" "$receipt"
+  mv -- "$prefix/bin/$command" "$work/$command"
+  if "$bootstrap" --install-only; then
+    printf 'A missing %s executable incorrectly skipped installation\n' "$command" >&2
+    exit 1
+  fi
+  test ! -e "$receipt"
+  mv -- "$work/$command" "$prefix/bin/$command"
+done
 
 cp -- "$work/receipt" "$receipt"
 mv -- "$HOME/.local/bin/g++" "$work/g++"

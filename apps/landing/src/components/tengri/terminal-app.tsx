@@ -64,7 +64,7 @@ export function TerminalApp({
     message: 'Starting Terminal…',
     action: null,
   })
-  const [renderer, setRenderer] = useState<'canvas' | 'dom' | 'loading'>('loading')
+  const [renderer, setRenderer] = useState<'webgl' | 'dom' | 'loading'>('loading')
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchValue, setSearchValue] = useState('')
   const [run, setRun] = useState(0)
@@ -557,13 +557,17 @@ export function TerminalApp({
         import('@xterm/addon-unicode11'),
       ])
       if (disposed || !hostRef.current) return
-      const fontFamily = getComputedStyle(hostRef.current).getPropertyValue('--font-mono').trim()
+      const fontFamily = getComputedStyle(hostRef.current).getPropertyValue('--font-terminal').trim()
+      await document.fonts.load(`13px ${fontFamily}`, 'M\ue5ff\uf115\u{f031e}').catch((cause) => {
+        console.warn('[tengri-terminal] terminal font unavailable; using monospace fallback', cause)
+      })
+      if (disposed || !hostRef.current) return
       const terminal = new xterm.Terminal({
         allowProposedApi: true,
         disableStdin: true,
         cursorBlink: true,
         cursorInactiveStyle: 'outline',
-        cursorStyle: 'bar',
+        cursorStyle: 'block',
         fontFamily,
         fontSize: 13,
         letterSpacing: 0,
@@ -600,23 +604,30 @@ export function TerminalApp({
       terminal.unicode.activeVersion = '11'
       terminal.open(hostRef.current)
 
-      const [canvasModule, clipboardModule, imageModule, webLinksModule] = await Promise.allSettled([
-        import('@xterm/addon-canvas'),
+      const [webglModule, clipboardModule, imageModule, webLinksModule] = await Promise.allSettled([
+        import('@xterm/addon-webgl'),
         import('@xterm/addon-clipboard'),
         import('@xterm/addon-image'),
         import('@xterm/addon-web-links'),
       ])
       if (disposed) return
-      if (canvasModule.status === 'fulfilled') {
+      if (webglModule.status === 'fulfilled') {
         try {
-          loadAddon(new canvasModule.value.CanvasAddon())
-          setRenderer('canvas')
+          const webgl = new webglModule.value.WebglAddon()
+          disposables.push(
+            webgl.onContextLoss(() => {
+              webgl.dispose()
+              setRenderer('dom')
+            }),
+          )
+          loadAddon(webgl)
+          setRenderer('webgl')
         } catch (cause) {
-          console.warn('[tengri-terminal] canvas renderer unavailable; using DOM fallback', cause)
+          console.warn('[tengri-terminal] WebGL renderer unavailable; using DOM fallback', cause)
           setRenderer('dom')
         }
       } else {
-        console.warn('[tengri-terminal] canvas renderer unavailable; using DOM fallback', canvasModule.reason)
+        console.warn('[tengri-terminal] WebGL renderer unavailable; using DOM fallback', webglModule.reason)
         setRenderer('dom')
       }
       if (clipboardModule.status === 'fulfilled') {
@@ -697,12 +708,6 @@ export function TerminalApp({
         })
       })
       resizeObserver.observe(host)
-      if ('fonts' in document) {
-        void document.fonts
-          .load(`13px ${fontFamily}`)
-          .then(() => !disposed && fit(fitAddon))
-          .catch(() => undefined)
-      }
       await connect()
     }
 

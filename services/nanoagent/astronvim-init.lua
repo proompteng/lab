@@ -26,8 +26,7 @@ require("lazy").setup({
     opts = {
       mapleader = " ",
       maplocalleader = ",",
-      -- The web terminal uses system monospace fonts rather than Nerd Fonts.
-      icons_enabled = false,
+      icons_enabled = true,
     },
   },
 }, {
