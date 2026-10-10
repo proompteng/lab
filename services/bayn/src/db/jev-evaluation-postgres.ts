@@ -13,7 +13,13 @@ import {
 import { JevClaim, JevEvaluationStore, type JevEvaluationClaim } from '../jev/evaluation'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { reproduceJevRequestFromVerifiedObservation } from '../jev/trading-signals'
-import { decodeJevBatchPlan, decodeJevBatchResult, JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
+import {
+  decodeJevBatchPlan,
+  decodeJevBatchResult,
+  JevCandidatePlanStatus,
+  JevCandidateResultStatus,
+  makeJevBatchResult,
+} from '../jev/batch'
 import { JevPurpose } from '../jev/portfolio'
 import { utcInstantFromEpochMillis } from '../time'
 import { JevResolutionStatus, makeJevResolution, type JevResolution } from '../jev/resolution'
@@ -51,9 +57,9 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
     VALUES (${resolution.requestId}, ${resolution.resolutionHash}, ${sql.json(resolution)})
   `.pipe(Effect.as(resolution))
   // Finalization and receipt recording take the batch lock before the request lock.
-  // Only native one-position management shares a commit; entry batches keep their
-  // independent candidate receipts and their existing all-candidate finalization.
-  const lockManagementBatch = (request: JevEvaluationRequest) =>
+  // Native batches with one requested candidate can share a commit. Filter before
+  // locking so multiple-request entry batches retain independent receipt writes.
+  const lockSingleRequestBatch = (request: JevEvaluationRequest) =>
     Effect.gen(function* () {
       const rows = yield* Schema.decodeUnknownEffect(
         Schema.Array(Schema.Struct({ plan: Schema.Unknown })),
@@ -65,13 +71,27 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
           WHERE plan.cycle_id = ${request.cycleId}
             AND plan.authority_generation_hash = ${request.authorityGenerationHash}
             AND plan.snapshot_id = ${request.snapshotId}
-            AND jsonb_array_length(plan.payload->'candidates') = 1
-            AND plan.payload #>> '{candidates,0,request,request,state,task,decisionPurpose}' = ${JevPurpose.Manage}
-            AND plan.payload #> '{candidates,0,request}' = ${sql.json(request)}
+            AND (
+              (
+                jsonb_array_length(plan.payload->'candidates') = 1
+                AND plan.payload #>> '{candidates,0,request,request,state,task,decisionPurpose}' = ${JevPurpose.Manage}
+                AND plan.payload #> '{candidates,0,request}' = ${sql.json(request)}
+              ) OR (
+                SELECT count(*) FILTER (WHERE candidate->>'status' = 'REQUESTED') = 1
+                  AND bool_and(
+                    candidate->>'status' = 'EXCLUDED' OR (
+                      candidate->>'status' = 'REQUESTED'
+                      AND candidate #>> '{request,request,state,task,decisionPurpose}' = ${JevPurpose.Entry}
+                      AND candidate->'request' = ${sql.json(request)}
+                    )
+                  )
+                FROM jsonb_array_elements(plan.payload->'candidates') AS candidate
+              )
+            )
           FOR UPDATE OF plan
         `,
       )
-      if (rows.length > 1) return yield* persistError('Jev management request belongs to multiple batches')
+      if (rows.length > 1) return yield* persistError('Jev request belongs to multiple single-request batches')
       const row = rows[0]
       if (row === undefined) return null
       const plan = yield* Effect.fromResult(decodeJevBatchPlan(row.plan))
@@ -85,8 +105,8 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
       const result = stored === undefined ? null : yield* Effect.fromResult(decodeJevBatchResult(plan, stored.payload))
       return { plan, result }
     })
-  const finishManagementBatch = (
-    batch: NonNullable<Effect.Success<ReturnType<typeof lockManagementBatch>>>,
+  const finishSingleRequestBatch = (
+    batch: NonNullable<Effect.Success<ReturnType<typeof lockSingleRequestBatch>>>,
     request: JevEvaluationRequest,
     receipt: JevEvaluationReceipt,
     resolution: JevResolution,
@@ -112,15 +132,17 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
           schemaVersion: 'bayn.jev-batch-result.v1',
           batchId: batch.plan.batchId,
           completedAt: utcInstantFromEpochMillis(now),
-          candidates: [
-            {
-              symbol: request.symbol,
-              status: JevCandidateResultStatus.Resolved,
-              requestId: request.requestId,
-              receipt,
-              resolution,
-            },
-          ],
+          candidates: batch.plan.candidates.map((candidate) =>
+            candidate.status === JevCandidatePlanStatus.Excluded
+              ? { symbol: candidate.symbol, status: JevCandidateResultStatus.Excluded }
+              : {
+                  symbol: candidate.symbol,
+                  status: JevCandidateResultStatus.Resolved,
+                  requestId: request.requestId,
+                  receipt,
+                  resolution,
+                },
+          ),
         }),
       )
       yield* sql`INSERT INTO jev_batch_results (batch_id, result_hash, payload)
@@ -198,7 +220,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
         const receipt = yield* Effect.fromResult(decodeJevEvaluationReceipt(request, evidence))
         return yield* sql.withTransaction(
           Effect.gen(function* () {
-            const managementBatch = yield* lockManagementBatch(request)
+            const batch = yield* lockSingleRequestBatch(request)
             yield* lockRequest(request)
             const existing = yield* read(request.requestId)
             yield* sql`
@@ -227,7 +249,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
                   }),
                 ),
               ))
-            if (managementBatch !== null) yield* finishManagementBatch(managementBatch, request, receipt, resolution)
+            if (batch !== null) yield* finishSingleRequestBatch(batch, request, receipt, resolution)
             return resolution
           }),
         )

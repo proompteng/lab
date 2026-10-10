@@ -187,12 +187,14 @@ provider precision guarantee. Score answers must also fit the same distribution 
 Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
 discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
 
-Each model request commits its at-most-once claim before inference. Native single-candidate management persists the
-receipt, resolution and complete batch result in one transaction; entry candidates retain independent receipts and
-all-candidate finalization. Receipt recording and recovery lock the batch before the request. A completed batch is
-verified and reused without opening another transaction. Commit failure or interruption cannot expose a partial
-management result, and every consumer still checks the original evidence deadline after persistence. Synchronous
-commit and standby durability are unchanged.
+Each model request commits its at-most-once claim before inference. Native single-candidate management and entry
+batches with exactly one requested candidate persist the receipt, resolution and complete batch result in one
+transaction. Entry results retain every excluded candidate in plan order. Entry batches with multiple requested
+candidates retain independent receipts and all-candidate finalization. Atomic receipt recording and recovery lock
+the batch before the request. A completed batch is verified and reused without opening another transaction. A
+failure, defect or interruption during atomic persistence rolls back the receipt, resolution and result together;
+the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
+evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
 the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
