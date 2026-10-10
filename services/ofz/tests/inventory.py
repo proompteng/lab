@@ -96,15 +96,35 @@ def rust_routes(source, fallback=None):
 
 def go_routes(source):
     source = without_comments(source)
-    assert not re.search(r"\.Handle(?:Func)?\b(?!\s*\()", source), (
-        "Go handler aliases require explicit inventory support"
+    masked = re.sub(
+        r'"(?:\\.|[^"\\])*"|`[^`]*`', lambda match: " " * len(match[0]), source
     )
     routes = set()
-    for call in re.finditer(r"\b\w+\.Handle(?:Func)?\s*\(", source):
-        path = re.match(r'\s*"([^"\\]+)"\s*,', source[call.end() :])
+    for selector in re.finditer(r"\.\s*Handle(?:Func)?\b", masked):
+        call = re.match(r"\s*\(", source[selector.end() :])
+        assert call, "Go handler aliases require explicit inventory support"
+        assert re.search(r"\b\w+$", masked[: selector.start()].rstrip()), (
+            "Go handler receiver requires explicit inventory support"
+        )
+        start = selector.end() + call.end()
+        path = re.match(r'\s*"([^"\\]+)"\s*,', source[start:])
         assert path, "Go handler path must be an explicit string literal"
         routes.add(path.group(1))
     return routes
+
+
+def browser_prevalidation_actions(source):
+    perform = source[source.index("func (browser *browserSupervisor) perform") :]
+    perform = without_comments(
+        perform[: perform.index("validateComputerAction(action)")]
+    )
+    perform = re.sub(r"func \([^)]*\) perform\([^)]*\)[^{]*\{", "", perform, count=1)
+    actions = set(re.findall(r'\baction\.Action\s*==\s*"([^"\\]+)"', perform))
+    perform = re.sub(r'\baction\.Action\s*==\s*"[^"\\]+"', "", perform)
+    assert not re.search(r"\baction\b", perform), (
+        "browser pre-validation dispatch requires explicit literal actions"
+    )
+    return actions
 
 
 def operation_cases(source, selector=None, default=None):
@@ -283,7 +303,7 @@ def main():
     actual["browser_action"] = operation_cases(
         actions, "action.Action", r'return\s+errors\.New\("[^"\\]*"\)'
     )
-    actual["browser_action"].add("status")
+    actual["browser_action"].update(browser_prevalidation_actions(computer))
     for surface, operations in actual.items():
         classified = {op for kind, op in known if kind == surface}
         assert classified == operations, (

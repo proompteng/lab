@@ -1,4 +1,5 @@
 import contextlib
+from fnmatch import fnmatchcase
 import io
 import re
 import unittest
@@ -12,6 +13,60 @@ class InventoryTests(unittest.TestCase):
     def test_current_services_are_completely_classified(self):
         with contextlib.redirect_stdout(io.StringIO()):
             inventory.main()
+
+    def test_browser_prevalidation_actions_are_classified(self):
+        read_text = Path.read_text
+        for branch in [
+            'if action.Action == "export_secrets" { return nil, nil }',
+            'alias := action; if alias.Action == "export_secrets" { return nil, nil }',
+            "if action.Action == newAction { return nil, nil }",
+        ]:
+            with self.subTest(branch=branch):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("nanoagent/browser_cua.go"):
+                        content = content.replace(
+                            'if action.Action == "status" {',
+                            branch + '\n if action.Action == "status" {',
+                            1,
+                        )
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaises(AssertionError):
+                        inventory.main()
+
+    def test_every_go_handler_selector_is_parsed_or_rejected(self):
+        for registration in [
+            '(mux).HandleFunc("GET /secret", secret)',
+            '(*http.ServeMux).HandleFunc(mux, "GET /secret", secret)',
+            "mux . HandleFunc(secretPath, secret)",
+            'http.ServeMux.HandleFunc(mux, "GET /secret", secret)',
+        ]:
+            with self.subTest(registration=registration):
+                with self.assertRaisesRegex(AssertionError, "handler (receiver|path)"):
+                    inventory.go_routes(registration)
+        self.assertEqual(
+            inventory.go_routes('mux . HandleFunc("GET /secret", secret)'),
+            {"GET /secret"},
+        )
+
+    def test_schema_only_changes_trigger_inventory_for_prs_and_main(self):
+        workflow = (inventory.ROOT / ".github/workflows/ofz.yaml").read_text()
+        sections = re.findall(
+            r"(?ms)^  (?:pull_request|push):\n(.*?)(?=^  \w+:)", workflow
+        )
+        self.assertEqual(len(sections), 2)
+        for section in sections:
+            paths = re.findall(r"^      - '([^']+)'$", section, re.M)
+            self.assertTrue(
+                any(
+                    fnmatchcase("apps/landing/src/lib/tengri/schemas.ts", pattern)
+                    for pattern in paths
+                ),
+                "inventory schema dependency must trigger Ofz validation",
+            )
 
     def test_new_rpc_fails_before_it_can_be_shipped(self):
         read_text = Path.read_text

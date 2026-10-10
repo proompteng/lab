@@ -8,6 +8,7 @@ on:
       - 'services/tengri/**'
       - 'services/nanoagent/**'
       - 'apps/landing/src/app/api/tengri/**'
+      - 'apps/landing/src/lib/tengri/schemas.ts'
       - '.github/workflows/ofz.yaml'
   push:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - 'services/tengri/**'
       - 'services/nanoagent/**'
       - 'apps/landing/src/app/api/tengri/**'
+      - 'apps/landing/src/lib/tengri/schemas.ts'
       - '.github/workflows/ofz.yaml'
   workflow_dispatch:
 
