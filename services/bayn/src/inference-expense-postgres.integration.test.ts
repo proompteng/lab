@@ -14,7 +14,9 @@ import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from './test-environm
 import { runInferenceExpensePass } from './inference-expense-runtime'
 import { readInferenceExpenseLedger } from './inference-expense-journal'
 import { makeTigerBeetleRequestClient } from './tigerbeetle-client'
+import { readForwardInferenceExpenses } from './forward-performance/inference-expenses'
 import { readInferenceExpenseSession } from './inference-cost-command'
+import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_expense_test'
@@ -228,17 +230,54 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
               Effect.provide(NodeServices.layer),
             )
             const sql = yield* PgClient.PgClient
+            const forwardExpenses = yield* Effect.gen(function* () {
+              const fence = yield* WriterFence
+              return yield* fence.transaction(
+                Effect.gen(function* () {
+                  yield* sql`SELECT 1`
+                  return yield* readForwardInferenceExpenses(
+                    {
+                      operationTimeoutMs: 30_000,
+                      tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7001 },
+                    },
+                    sql,
+                    source.accountId,
+                    source.authorityGenerationHash,
+                    fence,
+                  )
+                }),
+              )
+            }).pipe(Effect.provide(WriterFenceLive))
+            const foreignExpenses = yield* readForwardInferenceExpenses(
+              {
+                operationTimeoutMs: 30_000,
+                tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7001 },
+              },
+              sql,
+              source.accountId,
+              'f'.repeat(64),
+            )
             const openReaderConnections = yield* sql<{
               count: number
             }>`SELECT count(*)::integer AS count FROM pg_stat_activity
         WHERE datname = current_database() AND application_name = 'bayn' AND pid <> pg_backend_pid()`
-            return { concurrent, replay, rows, ledger, report, openReaderConnections }
+            return { concurrent, replay, rows, ledger, report, openReaderConnections, forwardExpenses, foreignExpenses }
           }),
         ),
       )
       expect(result.concurrent.some((pass) => pass.transferCount === 1)).toBe(true)
       expect(result.replay.transferCount).toBe(0)
       expect(result.rows[0]?.verifiedAt).not.toBeNull()
+      expect(result.foreignExpenses).toEqual([])
+      expect(result.forwardExpenses).toMatchObject([
+        {
+          knownEstimatedCostPicoUsd: '42000',
+          claimedRequestCount: 1,
+          exactSessionLedger: true,
+          completeMeteredCoverage: true,
+          invoiceReconciled: false,
+        },
+      ])
       expect(result.ledger.transferCount).toBe(1)
       expect(result.ledger.knownEstimatedCostPicoUsd).toBe('42000')
       expect(result.report.coverage.completeMeteredCoverage).toBe(true)

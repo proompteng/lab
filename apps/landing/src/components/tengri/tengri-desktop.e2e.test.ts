@@ -21,6 +21,7 @@ const readyAgent = {
   cpuMillis: 4_000,
   memoryMib: 8_192,
   workspaceGib: 32,
+  uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
   power: { idleTimeoutMinutes: 60 },
   nodeName: 'ryzen',
   message: '',
@@ -359,7 +360,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
       body: `<!doctype html><title>Opening preview</title><script>location.replace(${JSON.stringify(launchLocations)}[decodeURIComponent(location.hash.slice(1))])</script>`,
     })
   })
-  await page.route('**/api/auth/sign-out', async (route) => {
+  await page.route('**/api/auth/logout', async (route) => {
     authenticated = false
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true }) })
   })

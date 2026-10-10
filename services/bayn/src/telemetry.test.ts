@@ -240,6 +240,49 @@ describe('Bayn telemetry', () => {
     }
   })
 
+  test('retries a transient collector failure with the same batch and logs transport recovery', async () => {
+    const output: unknown[] = []
+    const testConsole: Console.Console = { ...console, error: (...messages) => output.push(...messages) }
+    const bodies: Buffer[] = []
+    const server = createServer((request, response) => {
+      const chunks: Uint8Array[] = []
+      request.on('data', (chunk: Uint8Array) => chunks.push(chunk))
+      request.on('end', () => {
+        bodies.push(Buffer.concat(chunks))
+        response.writeHead(bodies.length === 1 ? 503 : 200).end()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('telemetry test server did not bind TCP')
+    try {
+      await Effect.runPromise(
+        Effect.void.pipe(
+          withObservedSpan('bayn.test.recovery'),
+          Effect.provide(
+            makeTelemetryRuntimeLayer({
+              serviceName: 'bayn-telemetry-test',
+              endpoint: `http://127.0.0.1:${address.port}/v1/traces`,
+            }),
+          ),
+          Effect.provideService(Console.Console, testConsole),
+        ),
+      )
+      expect(bodies).toHaveLength(2)
+      expect(bodies[0]).toEqual(bodies[1])
+      expect(output.map((entry) => JSON.parse(String(entry)))).toContainEqual(
+        expect.objectContaining({
+          message: 'Bayn OTLP trace export request recovered',
+          annotations: expect.objectContaining({ failedAttempts: 1, httpStatus: 200 }),
+        }),
+      )
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((cause) => (cause === undefined ? resolve() : reject(cause))),
+      )
+    }
+  })
+
   test('retains rejected trace exports as bounded warnings without collector response contents', async () => {
     const output: unknown[] = []
     const stdout: unknown[] = []

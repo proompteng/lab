@@ -86,6 +86,7 @@ export async function createSpiffeFixture() {
   const own = certificate('bff', ownId)
   const peer = certificate('controller', peerId)
   let current = own.svid
+  let additional: (typeof current)[] = []
   const calls = new Set<grpc.ServerWritableStream<object, object>>()
   const protoPath = path.resolve(import.meta.dir, '../../../../../services/tengri/proto/spiffe/workloadapi.proto')
   const descriptor = grpc.loadPackageDefinition(protoLoader.loadSync(protoPath, { defaults: true, keepCase: false }))
@@ -101,7 +102,7 @@ export async function createSpiffeFixture() {
       }
       calls.add(call)
       call.on('cancelled', () => calls.delete(call))
-      call.write({ svids: [current] })
+      call.write({ svids: [current, ...additional] })
     },
   })
   const endpoint = `unix://${directory}/api.sock`
@@ -118,9 +119,13 @@ export async function createSpiffeFixture() {
     peer,
     bundle,
     certificate,
+    include(...identities: (typeof current)[]) {
+      additional = identities
+      for (const call of calls) call.write({ svids: [current, ...additional] })
+    },
     rotate() {
       current = certificate('bff-rotated', ownId).svid
-      for (const call of calls) call.write({ svids: [current] })
+      for (const call of calls) call.write({ svids: [current, ...additional] })
     },
     close() {
       server.forceShutdown()
