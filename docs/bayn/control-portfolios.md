@@ -184,6 +184,11 @@ that deadline; the session then rechecks its mechanical exit. Received usage sta
 persistence crosses the deadline; interrupted calls without usage remain unknown. Existing Jev reports retain
 their original bytes and identities. Run a new registered study with the corrected executable and definition for
 comparisons. Mechanical definitions and reports are unchanged by this correction.
+Journal operations retain their serial permit and scoped file cleanup without masking the complete operation from
+cancellation. Interruption can leave an uncertain durable prefix, so it permanently invalidates that journal and
+forbids further observation, batch or request work. Preserve the interrupted directory and start a new registered
+experiment; never resume it or infer a successful write from an existing file. Received-call retention and file
+finalizers still drain before management returns, and their elapsed time remains measured.
 
 Every session retains opening, closing, and one-minute marked equity at a fresh bid with positive displayed size.
 It also marks each poll, decision completion, and the portfolio before and after each order outcome. Every valid

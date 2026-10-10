@@ -289,6 +289,7 @@ test.each([
   { name: 'remaining holding time', remainingHoldingMs: 1000, budgetMs: 1000, stage: 'provider', cleanupMs: 0 },
   { name: 'model validity', remainingHoldingMs: 30_000, budgetMs: 10_000, stage: 'provider', cleanupMs: 0 },
   { name: 'observation persistence', remainingHoldingMs: 1000, budgetMs: 1000, stage: 'observation', cleanupMs: 0 },
+  { name: 'request claim persistence', remainingHoldingMs: 1000, budgetMs: 1000, stage: 'request', cleanupMs: 0 },
   {
     name: 'holding deadline with slow cleanup',
     remainingHoldingMs: 1000,
@@ -303,18 +304,15 @@ test.each([
       Effect.gen(function* () {
         const fixture = controlJevFixture(undefined, 15 * 60_000 - remainingHoldingMs)
         const fs = yield* FileSystem.FileSystem
-        const journal = yield* makeControlJevJournal(
-          `${yield* fs.makeTempDirectoryScoped()}/journal`,
-          fixture.input.runId,
-        )
         const providerClock = yield* TestClock.make()
         const marketClock = yield* TestClock.make()
         yield* providerClock.setTime(Date.parse('2026-09-24T21:00:00Z'))
         yield* marketClock.setTime(fixture.atMs)
         const started = yield* Deferred.make<void>()
+        const released = yield* Deferred.make<void>()
         let finalized = 0
         const blocked = Deferred.succeed(started, undefined).pipe(
-          Effect.andThen(Effect.never),
+          Effect.andThen(stage === 'provider' ? Effect.never : Deferred.await(released)),
           Effect.ensuring(
             providerClock.adjust(cleanupMs).pipe(
               Effect.andThen(
@@ -325,19 +323,46 @@ test.each([
             ),
           ),
         )
+        let closedFiles = 0
+        const controlled: FileSystem.FileSystem = {
+          ...fs,
+          open: (path, options) =>
+            Effect.gen(function* () {
+              const file = yield* fs.open(path, options)
+              if (stage === 'provider' || !String(path).includes(`/${stage}-`)) return file
+              yield* Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  closedFiles++
+                }),
+              )
+              return {
+                [FileSystem.FileTypeId]: FileSystem.FileTypeId,
+                stat: file.stat,
+                seek: (offset, from) => file.seek(offset, from),
+                sync: blocked,
+                read: (buffer) => file.read(buffer),
+                readAlloc: (size) => file.readAlloc(size),
+                truncate: (length) => file.truncate(length),
+                write: (buffer) => file.write(buffer),
+                writeAll: (buffer) => file.writeAll(buffer),
+              } satisfies FileSystem.File
+            }),
+        }
+        const directory = `${yield* fs.makeTempDirectoryScoped()}/journal`
+        const journal = yield* makeControlJevJournal(directory, fixture.input.runId).pipe(
+          Effect.provideService(FileSystem.FileSystem, controlled),
+        )
         const sourceAdvances: number[] = []
+        let providerCalls = 0
         const manager = yield* makeControlJevManagement(
           {
-            journal:
-              stage === 'observation'
-                ? {
-                    ...journal,
-                    observations: { ...journal.observations, record: () => blocked },
-                  }
-                : journal,
+            journal,
             providerClock,
             provider: {
-              evaluate: () => blocked,
+              evaluate: () =>
+                Effect.sync(() => {
+                  providerCalls++
+                }).pipe(Effect.andThen(blocked), Effect.andThen(Effect.never)),
             },
           },
           (atMs) =>
@@ -354,9 +379,13 @@ test.each([
         expect(finalized).toBe(0)
         expect(sourceAdvances).toEqual([])
         yield* providerClock.adjust(1)
-        const outcome = yield* Fiber.join(fiber).pipe(Effect.timeout('1 second'))
+        const outcome = yield* Fiber.join(fiber).pipe(
+          Effect.timeout('1 second'),
+          Effect.ensuring(Deferred.succeed(released, undefined)),
+        )
         expect(outcome).toMatchObject({ status: 'UNAVAILABLE' })
         expect(finalized).toBe(1)
+        expect(providerCalls).toBe(stage === 'provider' ? 1 : 0)
         expect(yield* marketClock.currentTimeMillis).toBe(fixture.atMs + budgetMs + cleanupMs)
         expect(sourceAdvances).toEqual([fixture.atMs + budgetMs + cleanupMs])
         expect((yield* journal.calls).map((call) => call.outcome.status)).toEqual(
@@ -366,6 +395,36 @@ test.each([
         if (request?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected management request')
         if (stage === 'provider')
           expect((yield* journal.evaluations.begin(request.request)).status).toBe(JevClaim.Pending)
+        else {
+          expect(closedFiles).toBe(1)
+          expect(
+            Result.isFailure(
+              yield* Effect.result(
+                journal.observations.record({
+                  contentHash: canonicalHashV1(fixture.prepared.observation),
+                  payload: fixture.prepared.observation,
+                }),
+              ),
+            ),
+          ).toBeTrue()
+          expect(Result.isFailure(yield* Effect.result(journal.batches.begin(fixture.prepared.batch)))).toBeTrue()
+          expect(Result.isFailure(yield* Effect.result(journal.evaluations.begin(request.request)))).toBeTrue()
+          expect(
+            Result.isFailure(
+              yield* Effect.result(
+                journal.observations.latestJevWindowEnd({
+                  cycleId: fixture.prepared.observation.cycleId,
+                  purpose: fixture.prepared.observation.portfolio.purpose,
+                }),
+              ),
+            ),
+          ).toBeTrue()
+          expect(
+            Result.isFailure(yield* Effect.result(makeControlJevJournal(directory, fixture.input.runId))),
+          ).toBeTrue()
+          expect(closedFiles).toBe(1)
+          expect(yield* journal.calls).toEqual([])
+        }
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     )
   },

@@ -997,7 +997,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
             ...baseDefinition,
             schemaVersion: 'bayn.control-study-definition.v9',
             managementDeadline:
-              'The independent provider clock bounds the complete management pass, including journal work, by the earlier of inference validity and first-fill maximum hold. Cancellation waits for finalizers and retains known or unresolved costs. Source catch-up follows completion; hold and model-exit commitment must precede the deadline.',
+              'The independent provider clock bounds the complete management pass, including journal work, by the earlier of inference validity and first-fill maximum hold. Cancellation waits for finalizers and retains known or unresolved costs. An interrupted journal is permanently invalid and cannot resume. Source catch-up follows completion; hold and model-exit commitment must precede the deadline.',
           }
         : baseDefinition
     if (prepared.input.cadence.pollIntervalMs > 60_000 || prepared.input.assumptions.latencyMs > 60_000)
