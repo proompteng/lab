@@ -2900,7 +2900,7 @@ mod tests {
         assert_eq!(request.display_name, "My agent");
         assert_eq!(MicroVMResources::default().cpu_millis, 4_000);
         assert_eq!(MicroVMResources::default().memory_mib, 8_192);
-        assert_eq!(MicroVMResources::default().workspace_gib, 16);
+        assert_eq!(MicroVMResources::default().workspace_gib, 32);
     }
 
     #[test]

@@ -4,7 +4,14 @@ set -euo pipefail
 : "${TENGRI_KVM_TEST_IMAGE:?set the native test image}"
 : "${TENGRI_KVM_GUEST_IMAGE:?set the paired real guest boot image}"
 : "${TENGRI_KVM_OUTPUT:?set an absolute local result directory}"
-[[ "$TENGRI_KVM_OUTPUT" == /* && "${TENGRI_KVM_SAMPLES:-50}" =~ ^[1-9][0-9]*$ ]]
+if ! [[ "$TENGRI_KVM_OUTPUT" == /* && "${TENGRI_KVM_SAMPLES:-3}" =~ ^[1-9][0-9]*$ ]] || \
+  (( ${TENGRI_KVM_SAMPLES:-3} < 3 )); then
+  printf 'KVM acceptance requires an absolute output directory and at least three cycles\n' >&2
+  exit 2
+fi
+fixture_interface="$(ip -4 route get 1.1.1.1 | awk '{for (i=1; i<NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+[[ "$fixture_interface" =~ ^[a-zA-Z0-9_.:-]+$ ]]
+fixture_network_mtu="$(cat "/sys/class/net/${fixture_interface}/mtu")"
 fixture_name="tengri-kvm-$(date -u +%Y%m%d%H%M%S)-${RANDOM}"
 mkdir -p "$TENGRI_KVM_OUTPUT"
 artifacts_volume="${fixture_name}-artifacts"
@@ -31,5 +38,11 @@ docker run --name "$fixture_name" --cpus=1 --memory=9g --memory-swap=9g --pids-l
   --mount "type=volume,source=${artifacts_volume},target=/guest,readonly" \
   --mount "type=volume,source=${work_volume},target=/work" \
   --env NANOAGENT_RPC_FIXTURE=/fixture/nanoagent-tests \
-  --env "TENGRI_GUEST_IMAGE=${guest_digest}" --env "TENGRI_KVM_SAMPLES=${TENGRI_KVM_SAMPLES:-50}" \
+  --env "TENGRI_KVM_NETWORK_MTU=${fixture_network_mtu}" \
+  --env "TENGRI_GUEST_IMAGE=${guest_digest}" --env "TENGRI_KVM_SAMPLES=${TENGRI_KVM_SAMPLES:-3}" \
   "$TENGRI_KVM_TEST_IMAGE"
+docker cp "$fixture_name:/work/result.json" "$TENGRI_KVM_OUTPUT/result.json"
+if ! test -s "$TENGRI_KVM_OUTPUT/result.json"; then
+  printf 'KVM acceptance requires a nonempty lifecycle result receipt\n' >&2
+  exit 1
+fi

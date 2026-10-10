@@ -32,6 +32,7 @@ import java.util.concurrent.Executors
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -73,6 +74,39 @@ class ForwarderBarRecoveryTest {
     }
     return producer
   }
+
+  @Test
+  fun `pending Kafka callback retains delivery identity without the decoded envelope`() =
+    runBlocking {
+      val pending = CompletableDeferred<Callback>()
+      val producer = mockk<KafkaProducer<String, String>>(relaxed = true)
+      val metadata = mockk<RecordMetadata>()
+      every { producer.send(any<ProducerRecord<String, String>>(), any<Callback>()) } answers {
+        pending.complete(secondArg())
+        CompletableFuture<RecordMetadata>()
+      }
+      val client = HttpClient(MockEngine { respond(response(listOf("19:59"))) })
+      val app = ForwarderApp(config, nowMs = { Instant.parse("2026-09-18T20:01:00Z").toEpochMilli() }, httpClient = client)
+      val recovery = launch { app.reconcileBars(producer, SeqTracker(), listOf("SPY")) }
+      try {
+        val callback = withTimeout(5_000) { pending.await() }
+        // Inspect the actual producer callback, rather than just the metadata helper. Kafka
+        // retains it until acknowledgement, potentially for the entire delivery timeout.
+        callback.javaClass.declaredFields.forEach { field ->
+          field.isAccessible = true
+          val retained = field.get(callback)
+          assertFalse(retained is Envelope<*>, "Kafka callback retains decoded envelope in ${field.name}")
+          assertFalse(retained is JsonElement, "Kafka callback retains decoded payload in ${field.name}")
+          assertFalse(retained is ProducerRecord<*, *>, "Kafka callback retains serialized record in ${field.name}")
+        }
+        callback.onCompletion(metadata, null)
+        withTimeout(5_000) { recovery.join() }
+      } finally {
+        recovery.cancelAndJoin()
+        app.stop()
+        client.close()
+      }
+    }
 
   @Test
   fun `canceling bar recovery interrupts blocked Kafka publication and leaves the bar retryable`() =

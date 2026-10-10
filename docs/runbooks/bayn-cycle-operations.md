@@ -118,10 +118,13 @@ Check Loki/Tempo retention and query completeness before calling the session rec
 missing CPU throttle metrics or an idle database sample remain UNKNOWN. Database waits and synchronous replication
 require the measurements below; a readiness endpoint or a fast idle pass does not prove session performance.
 
-The collector samples the `bayn-db` catalog diagnostics every five seconds and retains
-`scrape_duration_seconds{job="cnpg-postgres",namespace="bayn"}`. Verify `up`, exporter collection errors and sample
-timestamps for both database instances. A thirty-second or stale sample can miss an entire multi-second commit
-stall; even the five-second cadence cannot attribute a shorter wait. Correlate `cnpg_bayn_waits_*`, WAL I/O counters
+The collector scrapes the `bayn-db` catalog diagnostics every five seconds and retains
+`scrape_duration_seconds{job="cnpg-postgres",namespace="bayn"}`. Bayn's Cluster sets `monitoring.metricsQueriesTTL`
+to one second so those scrapes refresh the catalog queries; CNPG's default thirty-second output cache otherwise
+repeats old observations with new scrape timestamps. Verify the live setting, both exporters' `up`, collection
+errors and scrape durations, and changes in the primary's replication reply-age or active walsender query-age
+samples. A thirty-second or stale sample can miss an entire multi-second commit stall; even the five-second
+cadence cannot attribute a shorter wait. Correlate `cnpg_bayn_waits_*`, WAL I/O counters
 and replication gauges with the `COMMIT` span and the server's slow-statement timestamp. Active query age is the
 age of the statement, rather than time spent in its current wait event. A missing wait sample remains UNKNOWN.
 
@@ -220,6 +223,23 @@ Missing telemetry is UNKNOWN, not a healthy input window. A stale runtime projec
 an unavailable cycle projection and a failed scrape have their own alerts. This rule cannot diagnose the underlying
 input cause from the condition alone. Mimir ingestion uses the shared Kafka cluster, so this is not out-of-band
 detection of a Kafka or storage outage. No alert here proves storage repair, strategy alpha, or permission to trade.
+
+## Trace-export failures
+
+The **Trace export failures** panel counts failed export attempts in each rolling five-minute window, grouped by
+service, failure reason and HTTP status. **Trace export failure logs** shows up to 1,000 corresponding native warning
+records, newest first. Both use the existing Loki datasource and Bayn container log stream; they add no work to order
+execution or position closure.
+
+Open log details to inspect `annotations.sourceRevision`, `annotations.serviceName`, `annotations.failureReason`
+and, for HTTP failures, `annotations.httpStatus`. These are failed attempts, not a count of lost spans. Empty results
+may mean no recorded failures or unavailable logs. Verify the collector and Loki before treating an empty panel as
+recovery; these panels do not prove trace delivery.
+
+For HTTP 503 failures, correlate the same interval with Tempo distributor ingestion logs and the shared Kafka
+producer, quorum and storage evidence. Use retained logs and persisted transaction records alongside traces when
+ingestion is failing. An idle Kafka snapshot, current ISR membership or a ready distributor does not establish the
+cause of an earlier timeout or prove repair.
 
 ## Database latency investigation
 
