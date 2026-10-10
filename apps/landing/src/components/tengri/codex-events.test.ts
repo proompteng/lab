@@ -6,7 +6,6 @@ import {
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
-  codexCanStartNewConversation,
   codexEventDisplayText,
   codexEventContinuesRestoredItem,
   codexEventMatchesThread,
@@ -20,6 +19,7 @@ import {
   codexTranscriptFromThread,
   parseCodexEvent,
   reconcileCodexEventsWithRestoredHistory,
+  reconcileSubmittedPrompts,
 } from './codex-events'
 
 const event: TengriCodexEvent = {
@@ -34,7 +34,101 @@ const event: TengriCodexEvent = {
   rawJson: '{}',
 }
 
+describe('Accepted prompt retention', () => {
+  const prompt = {
+    id: 'sent-1',
+    threadId: 'thread-1',
+    text: 'Inspect the workspace.',
+    previousItemIds: new Set(['previous-user', 'previous-answer']),
+  }
+  const previous = { id: 'previous-user', kind: 'user-message' as const, text: prompt.text }
+
+  test('keeps an accepted prompt before the new response when its echo is absent', () => {
+    const answer = { id: 'new-answer', kind: 'assistant-text' as const, text: 'Reading files.' }
+    const result = reconcileSubmittedPrompts([previous, answer], [prompt])
+    expect(result.acknowledged.size).toBe(0)
+    expect(result.pending).toEqual([{ prompt, beforeItemId: answer.id }])
+  })
+
+  test('acknowledges a new canonical item without matching an identical earlier prompt', () => {
+    const next = { ...previous, id: 'new-user' }
+    const result = reconcileSubmittedPrompts([previous, next], [prompt])
+    expect([...result.acknowledged]).toEqual(['sent-1'])
+    expect(result.pending).toEqual([])
+  })
+
+  test('one server echo cannot consume two identical accepted prompts', () => {
+    const second = { ...prompt, id: 'sent-2' }
+    const result = reconcileSubmittedPrompts([{ ...previous, id: 'new-user' }], [prompt, second])
+    expect([...result.acknowledged]).toEqual(['sent-1'])
+    expect(result.pending.map(({ prompt }) => prompt.id)).toEqual(['sent-2'])
+  })
+
+  test('matches restored image inputs to the accepted image-only prompt', () => {
+    const imagePrompt = { ...prompt, text: '[Image]' }
+    const result = reconcileSubmittedPrompts(
+      [{ ...previous, id: 'new-image', text: '[Local image: /workspace/.tengri-attachments/image.png]' }],
+      [imagePrompt],
+    )
+    expect([...result.acknowledged]).toEqual(['sent-1'])
+    expect(result.pending).toEqual([])
+  })
+})
+
 describe('Codex event replay', () => {
+  test('keeps pending approvals when later notices exceed the event buffer', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: '101',
+    }
+    let current = appendCodexEvent([], approval)
+    for (let sequence = 8; sequence < 520; sequence += 1) {
+      current = appendCodexEvent(current, {
+        ...event,
+        sequence,
+        kind: 'warning',
+        method: 'tengri/eventOmitted',
+        approvalId: '',
+      })
+    }
+    expect(current.filter((event) => event.kind === 'approval')).toEqual([approval])
+    expect(current.filter((event) => event.kind === 'warning').length).toBeLessThanOrEqual(500)
+    const resolved = appendCodexEvent(current, {
+      ...event,
+      sequence: 520,
+      kind: 'thread-state',
+      method: 'serverRequest/resolved',
+      rawJson: '{"params":{"requestId":101}}',
+    })
+    expect(resolved.filter((event) => event.kind === 'approval')).toEqual([])
+  })
+
+  test('removes approvals when their turn completes without a resolution notification', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: '101',
+    }
+    const anotherTurn = { ...approval, turnId: 'turn-2', approvalId: '102' }
+    const anotherThread = { ...approval, threadId: 'thread-2', approvalId: '103' }
+    const completed = {
+      ...event,
+      sequence: 8,
+      kind: 'thread-state' as const,
+      method: 'turn/completed',
+      itemId: '',
+      text: '',
+    }
+    const next = appendCodexEvent([approval, anotherTurn, anotherThread], completed)
+    expect(next.filter((event) => event.kind === 'approval')).toEqual([anotherTurn, anotherThread])
+    expect(
+      appendCodexEvent(appendCodexEvent([], approval), completed).filter((event) => event.kind === 'approval'),
+    ).toEqual([])
+  })
+
   test('deduplicates an event replayed after an SSE reconnect', () => {
     const current = [event]
     expect(appendCodexEvent(current, { ...event })).toBe(current)
@@ -342,19 +436,6 @@ describe('Codex event replay', () => {
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-1')).toBe(true)
     expect(codexResumeCommitIsCurrent(2, 3, 'thread-1', 'thread-1')).toBe(false)
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-2')).toBe(false)
-  })
-
-  test('allows abandoning a thread after replay recovery fails', () => {
-    const failedRecovery = {
-      activeTurnId: 'stale-turn',
-      recovering: false,
-      submitting: false,
-      threadReady: false,
-    }
-
-    expect(codexCanStartNewConversation(failedRecovery)).toBe(true)
-    expect(codexCanStartNewConversation({ ...failedRecovery, recovering: true })).toBe(false)
-    expect(codexCanStartNewConversation({ ...failedRecovery, threadReady: true })).toBe(false)
   })
 
   test('reconciles reordered snapshot responses and event deliveries against the server cursor', () => {

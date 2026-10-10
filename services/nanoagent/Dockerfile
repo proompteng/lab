@@ -18,6 +18,9 @@ ARG TARGETARCH
 ARG TARGETOS
 
 WORKDIR /src
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs && \
+    rm -rf /var/lib/apt/lists/*
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
@@ -25,11 +28,16 @@ COPY internal ./internal
 COPY vscode-extension ./vscode-extension
 COPY test-guest-admin.sh /out/test-guest-admin.sh
 COPY browser-client.html browser-client.js ./
+COPY developer-profile.sh ./
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent . && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go test -c -o /out/nanoagent-tests
+
+FROM scratch AS kvm-tests
+COPY --from=build /out/nanoagent-tests /out/nanoagent-tests
+COPY --from=build /out/test-guest-admin.sh /out/test-guest-admin.sh
 
 FROM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS go-runtime
 
@@ -433,7 +441,7 @@ RUN mkdir -p "$HOME" && \
 
 # Download and verify the pinned native Codex package during every image build. The
 # package is intentionally not copied into the final rootfs; a guest installs the
-# same verified package into its persistent 16 GiB home volume on first boot.
+# same verified package into its persistent 32 GiB home volume on first boot.
 FROM runtime AS codex-smoke
 
 ENV CODEX_BINARY=/home/nanoagent/.smoke/.local/bin/codex \
@@ -460,12 +468,13 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     brew config > /tmp/developer-tools-version && \
     brew list --versions >> /tmp/developer-tools-version && \
     brew doctor && \
-    nvim --headless '+lua assert(vim.o.number and vim.o.undofile); assert(require("astronvim").version() == "v6.1.0"); assert(require("astronvim").config.icons_enabled == false)' '+if v:errmsg != "" | cquit 1 | endif' +qa && \
+    nvim --headless '+lua assert(vim.o.number and vim.o.undofile); assert(require("astronvim").version() == "v6.1.0"); assert(require("astronvim").config.icons_enabled)' '+if v:errmsg != "" | cquit 1 | endif' +qa && \
     tree-sitter --version && \
     test "$EDITOR" = nvim && test "$VISUAL" = nvim && \
     test "$(node --version)" = v24.11.1 && \
     test "$(gcc -dumpfullversion)" = 13.3.0 && \
-    gh --version && fd --version && fzf --version && tmux -V && \
+    gh --version && fd --version && fzf --version && lazygit --version && gdu --version && btm --version && tmux -V && \
+    kubectl version --client=true && \
     make --version && cmake --version && pkg-config --version && \
     printf '#include <iostream>\nint main(){std::cout << "cpp-ok";}\n' > /tmp/cpp-smoke.cpp && \
     test "$(g++ /tmp/cpp-smoke.cpp -o /tmp/cpp-smoke && /tmp/cpp-smoke)" = cpp-ok && \

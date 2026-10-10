@@ -9,7 +9,7 @@ import {
 } from './capture'
 import {
   deriveResearchCaptureExportManifest,
-  ResearchCaptureByteIndexSchema,
+  decodeResearchCaptureExportChunk,
   ResearchCaptureExportManifestSchema,
   researchCaptureObjectKey,
   verifyResearchCaptureExport,
@@ -49,22 +49,22 @@ export const recoverCaptureFromStoredObjects = (
     )
     if (manifest.exportedChunks !== sqlChunks.length)
       return yield* Result.fail(fail('SQL frontier differs from export root'))
-    const chunks: Array<{ metadata: ResearchCaptureBytes; index: ResearchCaptureBytes; raw: Uint8Array }> = []
-    let hash = manifest.lastIndexHash
+    const sealObject = asText(yield* read(manifest.metadataSeal.contentHash))
+    if (sealObject.contentHash !== sqlSeal.contentHash || sealObject.payload !== sqlSeal.payload)
+      return yield* Result.fail(fail('SQL and exported seal differ'))
+    const chunks: ResearchCaptureObject[] = []
+    let hash = manifest.lastChunkHash
     for (let ordinal = sqlChunks.length - 1; ordinal >= 0; ordinal--) {
-      if (hash === null) return yield* Result.fail(fail('Missing index tail'))
-      const indexBytes = asText(yield* read(hash))
-      const index = yield* Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureByteIndexSchema))(
-        indexBytes.payload,
-      )
-      const metadata = asText(yield* read(index.metadata.contentHash))
+      if (hash === null) return yield* Result.fail(fail('Missing capture frame tail'))
+      const object = yield* read(hash)
+      const decoded = yield* decodeResearchCaptureExportChunk(object)
+      const metadata = decoded.metadata
       if (metadata.payload !== sqlChunks[ordinal]?.payload || metadata.contentHash !== sqlChunks[ordinal]?.contentHash)
         return yield* Result.fail(fail('SQL and exported metadata differ'))
-      const raw = yield* read(index.raw.contentHash)
-      chunks.unshift({ metadata, index: indexBytes, raw: raw.payload })
-      hash = index.previousIndexHash
+      chunks.unshift(object)
+      hash = decoded.previousChunkHash
     }
-    if (hash !== null) return yield* Result.fail(fail('Index chain exceeds SQL frontier'))
+    if (hash !== null) return yield* Result.fail(fail('Capture frame chain exceeds SQL frontier'))
     return yield* verifyResearchCaptureExport(chunks, sqlSeal, manifestBytes)
   })
 

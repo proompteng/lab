@@ -172,6 +172,55 @@ describe('hybrid-crash-vwap-gate', () => {
     expect(sessionVwapSeries(bars)).toEqual([100, 105])
   })
 
+  test('exact decimal crash boundary is inclusive without admitting a smaller decline', () => {
+    for (const [signalClose, expectedCount] of [
+      [16.1199999, 1],
+      [16.12, 1], // 16.25 -> 16.12 is exactly -80 bp.
+      [16.1200001, 0],
+    ] as const) {
+      const bars = [
+        ...Array.from({ length: 30 }, (_, i) => bar(open + i, 16.25)),
+        bar(open + 30, signalClose),
+        bar(open + 31, 16.13),
+        bar(open + 32, 16.14),
+      ]
+      const decoded = decodeHybridCrashVwapSessionBars(sessionText({ CRDO: bars }))
+      if (Result.isFailure(decoded)) throw decoded.failure
+      const record = evaluateHybridCrashVwapShadow({
+        session: decoded.success,
+        evaluatedAt: '2026-10-07T20:00:00.000Z',
+      })
+      expect(record.candidates).toHaveLength(expectedCount)
+      expect(record.exclusions).toEqual([])
+      expect(record.acceptanceEligible).toBe(false)
+    }
+  })
+
+  test('exact decimal VWAP boundary is inclusive without admitting a smaller discount', () => {
+    for (const [signalClose, expectedCount] of [
+      [11.6794999, 1],
+      [11.6795, 1], // The cumulative VWAP is exactly 11.75: this close is exactly -60 bp.
+      [11.6795001, 0],
+    ] as const) {
+      const bars = [
+        ...Array.from({ length: 29 }, (_, i) => bar(open + i, 11.75)),
+        bar(open + 29, 11.8205),
+        bar(open + 30, signalClose),
+        bar(open + 31, 11.69),
+        bar(open + 32, 11.7),
+      ]
+      const decoded = decodeHybridCrashVwapSessionBars(sessionText({ CRDO: bars }))
+      if (Result.isFailure(decoded)) throw decoded.failure
+      const record = evaluateHybridCrashVwapShadow({
+        session: decoded.success,
+        evaluatedAt: '2026-10-07T20:00:00.000Z',
+      })
+      expect(record.candidates).toHaveLength(expectedCount)
+      expect(record.exclusions).toEqual([])
+      expect(record.acceptanceEligible).toBe(false)
+    }
+  })
+
   test('fires only with crash∩VWAP and bounce confirm', () => {
     const hits = collectCrashVwapBounceCandidates(
       crashSession([bar(open + 36, 99 * 1.002), bar(open + 37, 99 * 1.003)]),

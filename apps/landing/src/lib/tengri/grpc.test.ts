@@ -88,7 +88,7 @@ beforeAll(async () => {
         architecture: 'ARCHITECTURE_ARM64',
         cpuMillis: 2_000,
         memoryMib: 4_096,
-        workspaceGib: 16,
+        workspaceGib: 32,
         ...(call.request.displayName === 'Old runtime' ? {} : { idleTimeoutMinutes: 60 }),
       })
     },
@@ -104,7 +104,7 @@ beforeAll(async () => {
         architecture: 'ARCHITECTURE_AMD64',
         cpuMillis: 4_000,
         memoryMib: 8_192,
-        workspaceGib: 16,
+        workspaceGib: 32,
         idleTimeoutMinutes: 60,
       })
     },
@@ -625,7 +625,7 @@ describe('Tengri gRPC BFF transport', () => {
       architecture: 'arm64',
       cpuMillis: 2_000,
       memoryMib: 4_096,
-      workspaceGib: 16,
+      workspaceGib: 32,
     })
 
     const subject = metadataValue('x-tengri-subject')

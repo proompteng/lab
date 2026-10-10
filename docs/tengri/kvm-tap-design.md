@@ -14,7 +14,7 @@ usable Nanoagent. Include request signing, replay protection, ownership checks, 
 A successful response requires a working file read, terminal round trip, and already initialized Codex app server.
 Opening a listener or reporting Kubernetes readiness alone does not meet the target.
 
-Keep the existing 4 vCPU, 8 GiB guest RAM, 16 GiB private home, and six-owner capacity. Every completed sleep releases
+Keep the existing 4 vCPU, 8 GiB guest RAM, 32 GiB private home, and six-owner capacity. Every completed sleep releases
 resident guest RAM and stops background processes. The home and workspace survive. Automatic sleep uses the power
 settings from #14787, including zero to disable automatic sleep and manual sleep to release RAM.
 
@@ -38,7 +38,7 @@ flowchart LR
     Supervisor -->|Private Unix sockets| Runner[VMM runner]
     Runner --> Firecracker[Unprivileged Firecracker]
     Firecracker -->|Private vsock| Guest[Nanoagent and user processes]
-    Firecracker --> Home[16 GiB private Ceph home]
+    Firecracker --> Home[32 GiB private Ceph home]
     Firecracker --> Snapshot[Private snapshot on disk]
     Guest --> TAP[TAP and NAT in Pod network namespace]
   end
@@ -185,10 +185,10 @@ snapshot resume. The journal records the fencing evidence and successor incarnat
 
 ## Bound storage and distinguish RAM from reservations
 
-Keep each 16 GiB home on the existing shared Ceph raw-block PVC. Guest root and snapshots use a private disk-backed
+Keep each 32 GiB home on the existing shared Ceph raw-block PVC. Guest root and snapshots use a private disk-backed
 `emptyDir`, not tmpfs. Use a 24 GiB disk-backed snapshot/root volume for the private root, two 8 GiB memory
 generations, and metadata, plus a 2 GiB artifact volume. Each runner reserves and limits 26 GiB ephemeral storage. Check full allocation rather than assuming sparse files stay sparse. Six slots require up
-to 156 GiB of local disk in addition to the existing 96 GiB home capacity.
+to 156 GiB of local disk in addition to the 192 GiB home capacity.
 
 Local snapshots intentionally survive sleep and controller restarts, but not loss of their Pod or node. The home PVC
 remains the durable recovery boundary. This choice removes remote snapshot reads from normal resume and leaves shared
