@@ -174,6 +174,96 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "explicit string literals"):
             inventory.operation_cases("case dynamicMethod: return true")
 
+    def test_codex_early_allow_and_default_allow_fail_closed(self):
+        read_text = Path.read_text
+        for change in ["early", "default"]:
+            with self.subTest(change=change):
+
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    if str(path).endswith("nanoagent/codex.go"):
+                        start = content.index("func allowedCodexMethod")
+                        body = content[start:]
+                        if change == "early":
+                            body = body.replace(
+                                "switch method {",
+                                'if method == "thread/export" { return true }; switch method {',
+                                1,
+                            )
+                        else:
+                            body = body.replace("return false", "return true", 1)
+                        content = content[:start] + body
+                    return content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaisesRegex(
+                        AssertionError, "exhaustive literal switch"
+                    ):
+                        inventory.main()
+        for selector in ["action.action", "request.Method", "action.Action"]:
+            with self.subTest(selector=selector):
+                with self.assertRaisesRegex(
+                    AssertionError, "outside the classified switch"
+                ):
+                    inventory.operation_cases(
+                        f'if ({selector} === "secret") return true; switch ({selector}) {{ case "known": return true; }}',
+                        selector,
+                    )
+
+    def test_axum_composition_and_fallback_replacement_fail_closed(self):
+        for method in [
+            "route_service",
+            "nest",
+            "nest_service",
+            "merge",
+            "fallback_service",
+            "method_not_allowed_fallback",
+        ]:
+            with self.subTest(method=method):
+                with self.assertRaisesRegex(AssertionError, "composition requires"):
+                    inventory.rust_routes(f'Router::new().{method}("/secret", service)')
+        with self.assertRaisesRegex(AssertionError, "composition requires"):
+            inventory.rust_routes('Router::route(router, "/secret", get(secret))')
+        with self.assertRaisesRegex(AssertionError, "fallback requires"):
+            inventory.rust_routes(
+                "Router::new().fallback(preview_host_proxy).fallback(secret)",
+                "preview_host_proxy",
+            )
+        with self.assertRaisesRegex(AssertionError, "aliases require"):
+            inventory.go_routes('handler := mux.HandleFunc; handler("/secret", secret)')
+
+    def test_next_route_extensions_are_all_classified(self):
+        read_text, rglob = Path.read_text, Path.rglob
+        for extension in ["js", "jsx", "ts", "tsx"]:
+            path = (
+                inventory.ROOT
+                / f"apps/landing/src/app/api/tengri/secret/route.{extension}"
+            )
+            with self.subTest(extension=extension):
+
+                def files(directory, pattern):
+                    yield from rglob(directory, pattern)
+                    if str(directory).endswith("app/api/tengri") and path.match(
+                        pattern
+                    ):
+                        yield path
+
+                def contents(source, *args, **kwargs):
+                    return (
+                        "export const DELETE = () => new Response()"
+                        if source == path
+                        else read_text(source, *args, **kwargs)
+                    )
+
+                with (
+                    patch.object(Path, "rglob", files),
+                    patch.object(Path, "read_text", contents),
+                ):
+                    with self.assertRaisesRegex(
+                        AssertionError, "unclassified=.*DELETE /api/tengri/secret"
+                    ):
+                        inventory.main()
+
 
 if __name__ == "__main__":
     unittest.main()

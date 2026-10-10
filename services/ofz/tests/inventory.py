@@ -9,12 +9,16 @@ ROOT = Path(__file__).resolve().parents[3]
 OFZ = ROOT / "services/ofz"
 
 
-def next_methods(source):
-    source = re.sub(
+def without_comments(source):
+    return re.sub(
         r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|/\*[\s\S]*?\*/|//[^\n]*""",
         lambda match: match.group(1) or " ",
         source,
     )
+
+
+def next_methods(source):
+    source = without_comments(source)
     assert not re.search(r"\bexport\s*\*", source), (
         "wildcard Next route exports require explicit method declarations"
     )
@@ -36,7 +40,17 @@ def next_methods(source):
     return methods
 
 
-def rust_routes(source):
+def rust_routes(source, fallback=None):
+    source = without_comments(source)
+    assert not re.search(
+        r"(?:\.|::)(?:route_service|nest|nest_service|merge|fallback_service|method_not_allowed_fallback)\s*\(|::route\s*\(|\.(?:on|on_service)\s*\(",
+        source,
+    ), "Axum router composition requires explicit inventory support"
+    fallbacks = list(re.finditer(r"\.fallback\s*\(", source))
+    assert len(fallbacks) == (1 if fallback else 0) and all(
+        re.match(r"\s*" + re.escape(fallback or "") + r"\s*\)", source[call.end() :])
+        for call in fallbacks
+    ), "Axum fallback requires explicit inventory support"
     operations = set()
     for call in re.finditer(r"\.route\s*\(", source):
         route = re.match(r'\s*"([^"\\]+)"\s*,', source[call.end() :])
@@ -81,6 +95,9 @@ def rust_routes(source):
 
 
 def go_routes(source):
+    assert not re.search(r"\.Handle(?:Func)?\b(?!\s*\()", without_comments(source)), (
+        "Go handler aliases require explicit inventory support"
+    )
     routes = set()
     for call in re.finditer(r"\b\w+\.Handle(?:Func)?\s*\(", source):
         path = re.match(r'\s*"([^"\\]+)"\s*,', source[call.end() :])
@@ -89,7 +106,45 @@ def go_routes(source):
     return routes
 
 
-def operation_cases(source):
+def operation_cases(source, selector=None, default=None):
+    source = without_comments(source)
+    if selector:
+        # Only this explicit dispatch may classify the operation. Code before/after it,
+        # including an early allow, cannot inspect the operation discriminator.
+        masked = re.sub(
+            r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`""",
+            lambda match: " " * len(match[0]),
+            source,
+        )
+        switches = list(
+            re.finditer(
+                r"\bswitch\s*(?:\(\s*)?" + re.escape(selector) + r"\s*\)?\s*\{", masked
+            )
+        )
+        assert len(switches) == 1, "operation dispatch requires one explicit switch"
+        start = switches[0].end()
+        depth = 1
+        end = start
+        for end in range(start, len(masked)):
+            depth += (masked[end] == "{") - (masked[end] == "}")
+            if depth == 0:
+                break
+        assert depth == 0, "unparsed operation switch"
+        outside = masked[: switches[0].start()] + masked[end + 1 :]
+        # The Go function signature declares the argument but cannot execute it.
+        outside = re.sub(r"\bfunc\s+\w+\s*\([^)]*\)[^{]*\{", "", outside, count=1)
+        assert not re.search(r"\b" + re.escape(selector) + r"\b", outside), (
+            "operation logic outside the classified switch"
+        )
+        source = source[start:end]
+        branch = re.search(r"\bdefault\s*:", masked[start:end])
+        if default is None:
+            assert branch is None, "unclassified operation default"
+        else:
+            assert branch and re.fullmatch(default, source[branch.end() :].strip()), (
+                "operation default must deny unknown values"
+            )
+            source = source[: branch.start()]
     methods = set()
     for clause in re.findall(r"\bcase\s+([^:]+):", source):
         literal = r"""(?:"[^"\\]+"|'[^'\\]+')"""
@@ -98,6 +153,17 @@ def operation_cases(source):
         )
         methods.update(match[1:-1] for match in re.findall(literal, clause))
     return methods
+
+
+def codex_cases(source):
+    # This allowlist has one permitted implementation shape. Adding another return,
+    # condition, delegation or default requires an explicit contract change.
+    literal = r"""(?:"[^"\\]+"|'[^'\\]+')"""
+    assert re.fullmatch(
+        rf"\s*func allowedCodexMethod\(method string\) bool\s*\{{\s*switch method\s*\{{\s*case\s+{literal}(?:\s*,\s*{literal})*\s*:\s*return true\s*default\s*:\s*return false\s*\}}\s*\}}\s*",
+        without_comments(source),
+    ), "Codex allowlist requires an exhaustive literal switch"
+    return operation_cases(source, "method", r"return\s+false")
 
 
 def main():
@@ -131,21 +197,23 @@ def main():
             re.findall(r"\brpc\s+(\w+)\s*\(", (ROOT / proto).read_text())
         )
     bff = (ROOT / "apps/landing/src/app/api/tengri/route.ts").read_text()
-    actual["bff"] = operation_cases(bff)
+    actual["bff"] = operation_cases(bff, "action.action")
     gateway = (ROOT / "services/tengri/src/gateway.rs").read_text()
     gateway = gateway[
         gateway.index("pub fn control_router") : gateway.index("async fn readiness")
     ]
-    actual["gateway"] = rust_routes(gateway)
-    assert ".fallback(preview_host_proxy)" in gateway, "review changed preview dispatch"
+    actual["gateway"] = rust_routes(gateway, "preview_host_proxy")
     actual["gateway"].add("* {*preview_host_proxy}")
     codex = (ROOT / "services/nanoagent/codex.go").read_text()
     codex = codex[codex.index("func allowedCodexMethod") :]
     codex = codex[: codex.index("\n}")]
-    actual["codex"] = operation_cases(codex)
+    actual["codex"] = codex_cases(codex + "\n}")
     api_root = ROOT / "apps/landing/src/app/api/tengri"
     actual["bff_http"] = set()
-    for path in api_root.rglob("route.ts"):
+    for path in api_root.rglob("route.*"):
+        assert path.suffix in {".js", ".jsx", ".ts", ".tsx"}, (
+            "unsupported Next route extension requires inventory review"
+        )
         route = "/api/tengri/" + str(path.parent.relative_to(api_root))
         route = route.removesuffix("/.")
         for method in next_methods(path.read_text()):
@@ -157,15 +225,19 @@ def main():
     )
     actual["guest_http"] = go_routes(guest_http)
     supervisor = (ROOT / "services/tengri/src/slot/supervisor.rs").read_text()
-    actual["supervisor"] = rust_routes(supervisor)
-    assert ".fallback(forward)" in supervisor, "review changed supervisor dispatch"
+    actual["supervisor"] = rust_routes(supervisor, "forward")
     actual["supervisor"].add("* {*forward}")
     computer = (ROOT / "services/nanoagent/browser_cua.go").read_text()
     browser_mcp = computer[computer.index("func runBrowserMCP") :]
-    actual["browser_mcp"] = operation_cases(browser_mcp)
+    browser_mcp = browser_mcp[: browser_mcp.index("\n}") + 2]
+    actual["browser_mcp"] = operation_cases(
+        browser_mcp, "request.Method", r'failure\s*=\s*errors\.New\("[^"\\]*"\)'
+    )
     actions = computer[computer.index("func validateComputerAction") :]
     actions = actions[: actions.index("\n}")]
-    actual["browser_action"] = operation_cases(actions)
+    actual["browser_action"] = operation_cases(
+        actions, "action.Action", r'return\s+errors\.New\("[^"\\]*"\)'
+    )
     actual["browser_action"].add("status")
     for surface, operations in actual.items():
         classified = {op for kind, op in known if kind == surface}

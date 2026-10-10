@@ -12,6 +12,11 @@ must check its expiring grant and its issuer's current permission in one fully c
 `build.rs`. Unknown actions, mismatched resource types, name-based workspace IDs and unattested callers fail closed.
 Observation and control are separate actions. HTTP application proxies and editor access are privileged even for GET.
 
+The inventory gate accepts explicit route registrations and literal operation switches. It checks JavaScript and
+TypeScript Next routes, rejects unsupported Axum composition and fallback changes, and rejects operation handling
+outside the classified switch. The Codex allowlist must use its exhaustive switch with an explicit deny default.
+Changing these dispatch forms requires updating the inventory contract and its bypass regressions in the same review.
+
 ```sh
 cd services/ofz
 cargo fmt --check
