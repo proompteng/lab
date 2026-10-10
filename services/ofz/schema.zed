@@ -1,0 +1,102 @@
+use expiration
+
+definition human {}
+definition agent {}
+definition workload {}
+
+definition platform {
+    relation member: human
+    relation administrator: human
+    relation auditor: human
+    relation operator: human
+    relation bff: workload
+    relation controller: workload
+    relation kube_broker: workload
+    relation connector_broker: workload
+
+    permission admit = member
+    permission create_workspace = member
+    permission manage_members = administrator & member
+    permission manage_quotas = administrator & member
+    permission manage_targets = administrator & member
+    permission read_policy = (administrator + auditor) & member
+    permission read_audit = (administrator + auditor) & member
+    permission operate = (administrator + operator) & member
+    permission establish_session = bff
+    permission enroll_workspace = controller
+    permission execute_kube = kube_broker
+    permission execute_connector = connector_broker
+    permission check = bff + controller + kube_broker + connector_broker
+    permission command = bff + controller
+    permission inspect_session = bff + controller
+    permission revoke_session = bff
+}
+
+definition workspace {
+    relation platform: platform
+    relation owner: human
+    relation developer: human
+    relation viewer: human
+    relation emergency: human with expiration
+
+    permission view_metadata = (owner + developer + viewer + emergency) & platform->admit
+    permission observe_files = view_metadata
+    permission observe_terminal = view_metadata
+    permission observe_codex = view_metadata
+    permission observe_browser = view_metadata
+    permission observe_preview = view_metadata
+    permission control_guest = (owner + developer + emergency) & platform->admit
+    permission write_files = control_guest
+    permission control_terminal = control_guest
+    permission control_codex = control_guest
+    permission control_browser = control_guest
+    permission open_editor = control_guest
+    permission access_preview = control_guest
+    permission resume = control_guest
+    permission sleep = control_guest
+    permission configure_power = control_guest
+    permission delete = owner & platform->admit
+    permission manage_collaborators = owner & platform->admit
+    permission read_access = owner & platform->admit
+    permission manage_grants = owner & platform->admit
+    permission transfer = owner & platform->admit
+}
+
+// The API checks this permission and the issuer's current resource permission
+// together in one fully consistent CheckBulkPermissions request. A grant never
+// replaces the issuer's permission or creates transitive delegation.
+definition agent_grant {
+    relation subject: agent with expiration
+    relation issuer: human
+    relation workspace: workspace
+    relation kube_namespace: kube_namespace
+    relation connector_connection: connector_connection
+    permission use = subject
+}
+
+definition kube_namespace {
+    relation platform: platform
+    relation status_reader: human
+    relation log_reader: human
+    relation event_reader: human
+
+    permission read_status = status_reader & platform->admit
+    permission read_logs = log_reader & platform->admit
+    permission read_events = event_reader & platform->admit
+}
+
+definition connector_connection {
+    relation platform: platform
+    relation reader: human
+    permission read = reader & platform->admit
+}
+
+// Used only by the serialized command reconciler. The marker and policy version
+// are committed in the same native transaction as the relationship changes.
+definition policy_version {
+    relation current: workload
+}
+
+definition applied_command {
+    relation committed: workload
+}

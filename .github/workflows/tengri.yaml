@@ -56,14 +56,20 @@ jobs:
         with:
           toolchain: 1.90.0
 
+      - name: Cache editor acceptance Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: landing-editor-acceptance
+          workspaces: services/tengri -> target
+
       - name: Install browser acceptance prerequisites
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler iproute2
 
-      - name: Run Tengri desktop browser suite
-        run: bun run --cwd apps/landing test:e2e
-
       - name: Build desktop for browser acceptance
         run: bun run --cwd apps/landing build
+
+      - name: Run Tengri desktop browser suite
+        run: bun run --cwd apps/landing test:e2e
 
       - name: Run real Chromium, CUA, and VS Code acceptance
         env:

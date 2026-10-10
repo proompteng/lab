@@ -66,6 +66,7 @@ SMCIPMITool.properties
 smcrakp.properties
 **/charts/*.tgz
 **/generated/*
+!apps/landing/src/lib/tengri/generated/**
 **/_generated/
 !argocd/applications/*/generated/**
 !packages/backend/convex/_generated/
@@ -282,6 +283,7 @@ tmp/
 services/dernier/config/master.key
 /packages/temporal-bun-sdk/native/temporal-bun-bridge/target/
 /services/tengri/target/
+/services/ofz/target/
 /packages/temporal-bun-sdk/vendor/
 
 # Temporal libraries cache and releases

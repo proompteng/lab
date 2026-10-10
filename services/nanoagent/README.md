@@ -196,8 +196,8 @@ go test -race ./...
 Use the wire interoperability test for local RPC validation. The production guest requires Linux vsock and the private
 boot configuration injected by the slot runner. It has no alternate TCP development transport.
 
-The Nanoagent workflow runs the focused Go validation. Tengri's image workflow then builds native `linux/amd64` and
-`linux/arm64` Nanoagent images alongside the controller, publishes and keylessly signs
+Tengri's image workflow owns Nanoagent's protobuf generation, Go race tests, vet, rootfs, and bootstrap validation in
+one job. It builds native `linux/amd64` and `linux/arm64` Nanoagent images alongside the controller, publishes and keylessly signs
 `registry.ide-newton.ts.net/lab/nanoagent` by immutable digest. CI publishes matching `kargo-sha-<source>` tags for the
 controller and guest; the automatic Tengri Warehouse and Stage promote only the matched pair and pin both digests on
 `kargo/tengri` for Argo reconciliation.
