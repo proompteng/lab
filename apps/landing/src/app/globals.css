@@ -15,6 +15,16 @@
   unicode-range: U+2000-2BFF;
 }
 
+@font-face {
+  font-family: 'Tengri Nerd Symbols';
+  src: url('/tengri/fonts/SymbolsNerdFontMono-Regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  size-adjust: 60%;
+  unicode-range: U+E000-F8FF, U+F0000-FFFFD;
+}
+
 @keyframes hero-glow {
   0%,
   100% {
@@ -72,6 +82,7 @@
   .font-geist {
     --font-sans: var(--font-geist-sans);
     --font-mono: var(--font-geist-mono);
+    --font-terminal: 'Tengri Nerd Symbols', var(--font-mono), monospace;
     font-family: var(--font-sans);
     font-size: 14px;
     line-height: 20px;
