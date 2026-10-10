@@ -103,6 +103,11 @@ pub struct Native {
     client: reqwest::Client,
     endpoint: String,
     key_path: PathBuf,
+    #[cfg(test)]
+    check_barrier: Option<(
+        std::sync::Arc<tokio::sync::Notify>,
+        std::sync::Arc<tokio::sync::Notify>,
+    )>,
 }
 
 impl Native {
@@ -130,7 +135,19 @@ impl Native {
             client,
             endpoint: endpoint.trim_end_matches('/').into(),
             key_path,
+            #[cfg(test)]
+            check_barrier: None,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_check_barrier(
+        mut self,
+        checked: std::sync::Arc<tokio::sync::Notify>,
+        resume: std::sync::Arc<tokio::sync::Notify>,
+    ) -> Self {
+        self.check_barrier = Some((checked, resume));
+        self
     }
 
     async fn post(&self, path: &str, body: Value) -> Result<Value, Status> {
@@ -213,6 +230,11 @@ impl Native {
             .as_str()
             .filter(|r| !r.is_empty())
             .ok_or_else(|| Status::unavailable("missing authorization revision"))?;
+        #[cfg(test)]
+        if let Some((checked, resume)) = &self.check_barrier {
+            checked.notify_one();
+            resume.notified().await;
+        }
         Ok((allowed, revision.into()))
     }
 

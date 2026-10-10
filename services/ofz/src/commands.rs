@@ -716,6 +716,13 @@ pub(crate) async fn prepare(
             if c.running && row.get::<_, String>(1) != "active" {
                 return Err(Status::failed_precondition("workspace quarantined"));
             }
+            if c.running
+                && row.get::<_, bool>(0)
+                && row.get::<_, Option<Uuid>>(2).map(|epoch| epoch.to_string())
+                    != Some(c.runtime_epoch.clone())
+            {
+                return Err(Status::aborted("stop the running epoch before replacement"));
+            }
             if c.running && !row.get::<_, bool>(0) {
                 quota(client, &human, 0, 1, 0, true).await?;
             }

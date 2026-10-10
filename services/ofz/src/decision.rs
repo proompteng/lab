@@ -491,7 +491,7 @@ pub async fn evaluate(
     let after = database.state().await?;
     if after.now_ms >= valid_until
         || after.recovery_generation != state.recovery_generation
-        || (after.fenced && !allow_fenced_revoke)
+        || ((after.fenced || !after.archive_healthy) && !allow_fenced_revoke)
     {
         return Err(Status::deadline_exceeded("authorization decision expired"));
     }

@@ -18,7 +18,7 @@ use crate::{
         execute_command_request::Command, *,
     },
     service::Service,
-    sessions::Issuer,
+    sessions::{self, Issuer},
     store::{self, Database, sql_error},
     transport::Peer,
 };
@@ -152,7 +152,7 @@ async fn setup() -> (Database, Database, Native, Vec<(String, String)>) {
             )));
         }
         let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
-        conn.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,$8)", &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&((now+3_600_000) as i64),&(now as i64),&number.to_string()]).await.unwrap();
+        conn.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,$8,$2)", &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&((now+3_600_000) as i64),&(now as i64),&number.to_string()]).await.unwrap();
         identities.push((human, session.to_string()));
     }
     for (role, id) in [
@@ -300,6 +300,86 @@ async fn control_integration_durability_authority_and_quota() {
         )
         .unwrap(),
     );
+    let retry_credential = URL_SAFE_NO_PAD.encode(Sha256::digest(Uuid::new_v4().as_bytes()));
+    let retry_id = Uuid::new_v4();
+    let retry_operation = Uuid::new_v4();
+    let retry_request = EstablishSessionRequest {
+        identity_token: "completed-identity-response-fixture".into(),
+        nonce: URL_SAFE_NO_PAD.encode(Sha256::digest(b"completed-oidc-nonce")),
+        operation_id: retry_operation.to_string(),
+        credential: retry_credential.clone(),
+    };
+    let retry_fingerprint = Sha256::digest(
+        store::encode(&retry_request)
+            .unwrap()
+            .to_string()
+            .as_bytes(),
+    )
+    .to_vec();
+    let conn = admin.pool.get().await.unwrap();
+    conn.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) SELECT $1,$2,human_id,identity_subject,identity_session,$3,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,$4 FROM ofz.sessions WHERE id=$5", &[&retry_id,&Sha256::digest(retry_credential.as_bytes()).to_vec(),&retry_operation,&retry_fingerprint,&Uuid::parse_str(&owner.1).unwrap()]).await.unwrap();
+    let before_retry: i64 = conn
+        .query_one("SELECT count(*) FROM ofz.sessions", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let issuer = Issuer::new(
+        "https://identity.invalid/realms/tengri".into(),
+        "tengri-bff".into(),
+    )
+    .unwrap();
+    let recovered = sessions::establish(&database, &native, &issuer, BFF_ID, retry_request.clone())
+        .await
+        .unwrap();
+    assert_eq!(recovered.id, retry_id.to_string());
+    assert_eq!(recovered.credential, retry_credential);
+    assert_eq!(
+        conn.query_one("SELECT count(*) FROM ofz.sessions", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        before_retry,
+        "recovering a committed session does not create another session"
+    );
+    let mut collision = retry_request.clone();
+    collision.nonce.push('A');
+    assert_eq!(
+        sessions::establish(&database, &native, &issuer, BFF_ID, collision)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::AlreadyExists
+    );
+    let mut collision = retry_request.clone();
+    collision.credential = URL_SAFE_NO_PAD.encode([9_u8; 32]);
+    assert_eq!(
+        sessions::establish(&database, &native, &issuer, BFF_ID, collision)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::AlreadyExists
+    );
+    conn.execute(
+        "UPDATE ofz.sessions SET revoked=true WHERE id=$1",
+        &[&retry_id],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sessions::establish(&database, &native, &issuer, BFF_ID, retry_request)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated,
+        "lost-response recovery does not revive a revoked session"
+    );
+    assert!(
+        conn.query_one("SELECT revoked FROM ofz.sessions WHERE id=$1", &[&retry_id])
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    drop(conn);
     let context = request(
         &database,
         owner,
@@ -1095,6 +1175,38 @@ async fn control_integration_durability_authority_and_quota() {
     );
     drop(conn);
     acknowledge_fixture_archive(&admin).await;
+    let checked = std::sync::Arc::new(tokio::sync::Notify::new());
+    let resume = std::sync::Arc::new(tokio::sync::Notify::new());
+    let paused_native = native
+        .clone()
+        .with_check_barrier(checked.clone(), resume.clone());
+    let (in_flight, ()) = tokio::join!(
+        read(
+            &database,
+            &paused_native,
+            owner,
+            &uid,
+            Action::WorkspaceMetadataRead
+        ),
+        async {
+            checked.notified().await;
+            admin
+                .pool
+                .get()
+                .await
+                .unwrap()
+                .execute("UPDATE ofz.archive_state SET acknowledged_at_ms=0", &[])
+                .await
+                .unwrap();
+            resume.notify_one();
+        }
+    );
+    assert_eq!(
+        in_flight.unwrap_err().code(),
+        Code::DeadlineExceeded,
+        "archive loss during a native check cannot return an allowed disclosure"
+    );
+    acknowledge_fixture_archive(&admin).await;
     // Archive loss fences new data access; durable revocation remains available.
     admin
         .pool
@@ -1182,7 +1294,52 @@ async fn control_integration_durability_authority_and_quota() {
         owner,
         Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
             workspace_uid: uid.clone(),
-            runtime_epoch,
+            runtime_epoch: runtime_epoch.clone(),
+            running: true,
+        }),
+    )
+    .await;
+    let rotation = request(
+        &database,
+        owner,
+        Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
+            workspace_uid: uid.clone(),
+            runtime_epoch: Uuid::new_v4().to_string(),
+            running: true,
+        }),
+    )
+    .await;
+    assert_eq!(
+        commands::execute(&database, &native, BFF_ID, rotation)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Aborted,
+        "a live epoch cannot be replaced without stopping it"
+    );
+    assert_eq!(
+        admin
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "SELECT runtime_epoch FROM ofz.workspaces WHERE uid=$1 AND running",
+                &[&Uuid::parse_str(&uid).unwrap()]
+            )
+            .await
+            .unwrap()
+            .get::<_, Uuid>(0)
+            .to_string(),
+        runtime_epoch
+    );
+    execute(
+        &database,
+        &native,
+        owner,
+        Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
+            workspace_uid: uid.clone(),
+            runtime_epoch: runtime_epoch.clone(),
             running: true,
         }),
     )

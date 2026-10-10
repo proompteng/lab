@@ -336,6 +336,9 @@ message EstablishSessionRequest {
   string identity_token = 1;
   string nonce = 2;
   string operation_id = 3;
+  // BFF-generated 256-bit base64url credential, reused only for an exact retry.
+  // Ofz persists its hash and the request fingerprint, never this plaintext.
+  string credential = 5;
 }
 
 message Session {

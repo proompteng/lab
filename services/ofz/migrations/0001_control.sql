@@ -62,6 +62,7 @@ CREATE TABLE ofz.sessions (
     image_url text NOT NULL DEFAULT '' CHECK (length(image_url) <= 2048),
     identity_session text NOT NULL,
     operation_id uuid UNIQUE NOT NULL,
+    establishment_fingerprint bytea NOT NULL CHECK (octet_length(establishment_fingerprint) = 32),
     expires_at_ms bigint NOT NULL,
     idle_deadline_ms bigint NOT NULL,
     mfa_at_ms bigint NOT NULL DEFAULT 0,

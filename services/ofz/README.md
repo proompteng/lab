@@ -57,8 +57,15 @@ activity advances the session's idle deadline without exceeding its absolute exp
 stream rechecks do not. Logout binds its operation ID and original receipt to the opaque session credential and origin,
 so a lost response can be retried without producing another effect or revoking another session.
 
+The BFF supplies a fresh 256-bit credential when establishing a session and reuses the exact request for uncertain
+RPC retries. Ofz binds its operation ID to the credential hash and full request fingerprint. A committed retry returns
+the same still-active credential without consuming another OIDC nonce, creating a session, extending idle time, or
+writing another successful establishment receipt. Changed payloads collide; expired and revoked sessions stay denied.
+A live runtime epoch can only be repeated or stopped before replacement, preserving the controller's stop authority.
+
 Archive health requires a recent acknowledgement and no unacknowledged receipt older than sixty seconds, checked
-against both the outbox and the durable sequence checkpoint. A live exporter heartbeat cannot hide a backlog.
+against both the outbox and the durable sequence checkpoint. A live exporter heartbeat cannot hide a backlog. The final decision guard rechecks archive health after the native
+permission response, including a failure that occurs while the request is in flight.
 
 `test-control.sh` exercises real TLS PostgreSQL and SpiceDB, database role boundaries, native/SQL/response crash points,
 operation collisions, concurrent reservations, independent emergency approval, grant expiry and parent revocation,

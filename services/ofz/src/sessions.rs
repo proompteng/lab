@@ -1,7 +1,6 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures::StreamExt;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
-use rand::RngCore;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tonic::Status;
@@ -170,6 +169,70 @@ impl Issuer {
     }
 }
 
+async fn established<C: tokio_postgres::GenericClient + Sync>(
+    client: &C,
+    operation: Uuid,
+    fingerprint: &[u8],
+    credential_hash: &[u8],
+) -> Result<bool, Status> {
+    let Some(row) = client
+        .query_opt(
+            "SELECT establishment_fingerprint,token_hash FROM ofz.sessions WHERE operation_id=$1",
+            &[&operation],
+        )
+        .await
+        .map_err(sql_error)?
+    else {
+        return Ok(false);
+    };
+    if row.get::<_, Vec<u8>>(0) != fingerprint || row.get::<_, Vec<u8>>(1) != credential_hash {
+        return Err(Status::already_exists("session operation ID collision"));
+    }
+    Ok(true)
+}
+
+async fn recover_session(
+    database: &Database,
+    native: &Native,
+    peer: &str,
+    credential: &str,
+    state: &store::State,
+) -> Result<Session, Status> {
+    let mut session = inspect(
+        database,
+        native,
+        peer,
+        InspectSessionRequest {
+            session_id: credential.into(),
+        },
+    )
+    .await?;
+    let after = database.state().await?;
+    if after.version != state.version
+        || after.recovery_generation != state.recovery_generation
+        || after.fenced
+        || !after.archive_healthy
+    {
+        return Err(Status::aborted("session authority changed during retry"));
+    }
+    // A retry must not revive an expired or revoked session, or extend its idle time.
+    decision::session(
+        database,
+        &RequestContext {
+            actor: Some(Actor {
+                identity: Some(Identity::HumanId(session.human_id.clone())),
+            }),
+            session_id: session.id.clone(),
+            ..Default::default()
+        },
+        Action::SessionInspect,
+        &after,
+    )
+    .await?;
+    session.credential = credential.into();
+    Ok(session)
+}
+
 pub async fn establish(
     database: &Database,
     native: &Native,
@@ -184,9 +247,30 @@ pub async fn establish(
     }
     decision::workload(native, peer, Action::SessionEstablish).await?;
     let operation = decision::parse_uuid(&request.operation_id)?;
+    if !URL_SAFE_NO_PAD
+        .decode(&request.credential)
+        .is_ok_and(|bytes| bytes.len() == 32 && URL_SAFE_NO_PAD.encode(bytes) == request.credential)
+    {
+        return Err(Status::invalid_argument(
+            "canonical 256-bit session credential required",
+        ));
+    }
+    let hash = Sha256::digest(request.credential.as_bytes()).to_vec();
+    let fingerprint = Sha256::digest(store::encode(&request)?.to_string().as_bytes()).to_vec();
     let state = database.state().await?;
     if state.fenced || !state.archive_healthy {
         return Err(Status::unavailable("identity audit archive unavailable"));
+    }
+    let exists = {
+        let client = database
+            .pool
+            .get()
+            .await
+            .map_err(|_| Status::unavailable("control database pool unavailable"))?;
+        established(&**client, operation, &fingerprint, &hash).await?
+    };
+    if exists {
+        return recover_session(database, native, peer, &request.credential, &state).await;
     }
     let claims = issuer
         .verify(&request.identity_token, &request.nonce, state.now_ms / 1000)
@@ -199,10 +283,6 @@ pub async fn establish(
     {
         return Err(Status::permission_denied("platform admission required"));
     }
-    let mut random = [0_u8; 32];
-    rand::rng().fill_bytes(&mut random);
-    let credential = URL_SAFE_NO_PAD.encode(random);
-    let hash = Sha256::digest(credential.as_bytes()).to_vec();
     let nonce_hash = Sha256::digest(request.nonce.as_bytes()).to_vec();
     let id = Uuid::new_v4();
     let mut client = database
@@ -211,6 +291,34 @@ pub async fn establish(
         .await
         .map_err(|_| Status::unavailable("control database pool unavailable"))?;
     let tx = client.transaction().await.map_err(sql_error)?;
+    tx.query_one(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+        &[&format!("ofz.session:{operation}")],
+    )
+    .await
+    .map_err(sql_error)?;
+    if established(&*tx, operation, &fingerprint, &hash).await? {
+        drop(tx);
+        drop(client);
+        return recover_session(database, native, peer, &request.credential, &state).await;
+    }
+    tx.query_one(
+        "SELECT recovery_generation FROM ofz.platform_state FOR SHARE",
+        &[],
+    )
+    .await
+    .map_err(sql_error)?;
+    let current = store::state(&*tx).await?;
+    if current.version != state.version
+        || current.recovery_generation != state.recovery_generation
+        || current.fenced
+        || !current.archive_healthy
+    {
+        return Err(Status::aborted(
+            "identity authority changed during verification",
+        ));
+    }
+    let state = current;
     if tx
         .query_opt(
             "SELECT 1 FROM ofz.memberships WHERE human_id=$1 AND role=1",
@@ -234,13 +342,13 @@ pub async fn establish(
             0
         },
         recovery_generation: state.recovery_generation,
-        credential,
+        credential: request.credential.clone(),
         github_id: claims.github_id.clone(),
         display_name: claims.name.clone(),
         email: claims.email.clone(),
         image_url: claims.picture.clone(),
     };
-    tx.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,display_name,email,image_url) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)", &[&id,&hash,&human,&claims.sub,&claims.sid,&operation,&(session.expires_at_unix_ms as i64),&(session.idle_deadline_unix_ms as i64),&(session.mfa_at_unix_ms as i64),&(session.recovery_generation as i64),&claims.github_id,&claims.name,&claims.email,&claims.picture]).await.map_err(sql_error)?;
+    tx.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,display_name,email,image_url,establishment_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", &[&id,&hash,&human,&claims.sub,&claims.sid,&operation,&(session.expires_at_unix_ms as i64),&(session.idle_deadline_unix_ms as i64),&(session.mfa_at_unix_ms as i64),&(session.recovery_generation as i64),&claims.github_id,&claims.name,&claims.email,&claims.picture,&fingerprint]).await.map_err(sql_error)?;
     let context = RequestContext {
         actor: Some(Actor {
             identity: Some(Identity::HumanId(human)),
