@@ -115,6 +115,86 @@ fn context<T>(value: Option<T>) -> Result<T, Status> {
 
 #[tonic::async_trait]
 impl AuthorizationService for Service {
+    async fn authorize_command(
+        &self,
+        request: Request<proto::AuthorizeCommandRequest>,
+    ) -> Result<Response<proto::AuthorizeCommandResponse>, Status> {
+        let _capacity = self.acquire()?;
+        let peer = transport::peer(&request)?;
+        if peer != policy::BFF_ID {
+            return Err(Status::permission_denied(
+                "human command preflight requires the BFF",
+            ));
+        }
+        let request = request.into_inner();
+        let context = context(request.context)?;
+        decision::human(&context)?;
+        let resource = request
+            .resource
+            .ok_or_else(|| Status::invalid_argument("resource required"))?;
+        let action = Action::try_from(request.action)
+            .map_err(|_| Status::invalid_argument("unknown action"))?;
+        if !matches!(
+            action,
+            Action::MembersManage
+                | Action::CollaboratorsManage
+                | Action::WorkspaceTransfer
+                | Action::QuotasManage
+                | Action::TargetsManage
+                | Action::GrantsManage
+        ) {
+            return Err(Status::invalid_argument("policy command action required"));
+        }
+        // Preflight discloses no content or policy data and performs no mutation.
+        // It remains available for revocation while the archive or fleet is fenced.
+        resource.validate_for(action)?;
+        let outcome = decision::evaluate(
+            &self.database,
+            &self.native,
+            &peer,
+            decision::Evaluation {
+                context: &context,
+                action,
+                resource: &resource,
+                target: "",
+            },
+            true,
+        )
+        .await;
+        let allowed = outcome.as_ref().is_ok_and(|(allowed, _, _, _)| *allowed);
+        let receipt = store::receipt(
+            &context,
+            &peer,
+            resource,
+            action,
+            allowed,
+            "",
+            "command preflight",
+        );
+        let mut client = self
+            .database
+            .pool
+            .get()
+            .await
+            .map_err(|_| Status::unavailable("control database pool unavailable"))?;
+        let tx = client.transaction().await.map_err(sql_error)?;
+        store::record_audit(&*tx, &receipt, "").await?;
+        tx.commit().await.map_err(sql_error)?;
+        if let Err(mut error) = outcome {
+            error.metadata_mut().insert(
+                "x-ofz-audit-receipt",
+                receipt
+                    .id
+                    .parse()
+                    .map_err(|_| Status::internal("invalid audit ID"))?,
+            );
+            return Err(error);
+        }
+        Ok(Response::new(proto::AuthorizeCommandResponse {
+            allowed,
+            audit_receipt_id: receipt.id,
+        }))
+    }
     async fn check(
         &self,
         request: Request<proto::CheckRequest>,

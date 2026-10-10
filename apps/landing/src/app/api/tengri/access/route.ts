@@ -114,6 +114,30 @@ export async function POST(request: Request) {
       expectedVersion: BigInt(parsed.expectedVersion),
       reason: parsed.reason,
     }
+    if ('login' in parsed) {
+      const permission = {
+        membership: Action.MEMBERS_MANAGE,
+        collaborator: Action.COLLABORATORS_MANAGE,
+        transfer: Action.WORKSPACE_TRANSFER,
+        quota: Action.QUOTAS_MANAGE,
+        target: Action.TARGETS_MANAGE,
+        emergency: Action.MEMBERS_MANAGE,
+      }[parsed.action]
+      const workspacePermission = parsed.action === 'collaborator' || parsed.action === 'transfer'
+      const authorization = await ofzCall(
+        AuthorizationService.method.authorizeCommand,
+        {
+          context: input.context,
+          action: permission,
+          resource: {
+            kind: workspacePermission ? ResourceKind.WORKSPACE : ResourceKind.PLATFORM,
+            id: workspacePermission ? workspace(parsed) : 'lab',
+          },
+        },
+        request.signal,
+      )
+      if (!authorization.allowed) throw new OfzError(403, authorization.auditReceiptId)
+    }
     const human = 'login' in parsed ? await resolveGithubIdentity(parsed.login) : undefined
     switch (parsed.action) {
       case 'membership':
@@ -198,6 +222,7 @@ export async function POST(request: Request) {
         }
         break
     }
+    input.context = humanContext(identity, workspace(parsed))
     const response = await ofzCall(AuthorizationService.method.executeCommand, input, request.signal)
     return Response.json(toJson(ExecuteCommandResponseSchema, response), { headers: noStoreHeaders() })
   } catch (error) {

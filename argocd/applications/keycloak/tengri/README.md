@@ -5,7 +5,10 @@ It creates a separate realm and preserves the master realm, Headlamp and Agents 
 
 `bootstrap.py` imports only a new, initially disabled realm. It locks managed profile attributes, verifies the GitHub
 provider, exact client callbacks, protocol mappers, required actions and authentication flows before enabling it.
-Repeat runs verify configuration and fail on drift. They never replace users, passkeys or broker links.
+Repeat runs verify configuration and fail on drift. After verification they reconcile the mounted GitHub and BFF
+client secrets through the administrator API and verify the BFF secret readback. They preserve users, passkeys and
+broker links. The isolated browser fixture rotates both secrets after passkey enrollment, rejects the old BFF secret
+and completes a fresh login using the rotated GitHub and BFF credentials.
 
 GitHub's numeric profile ID is copied by its built-in broker mapper into an administrator-only `github_id` attribute.
 The username derives from that ID. Email does not link accounts or grant authority. The broker session's provider note

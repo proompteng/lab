@@ -67,6 +67,10 @@ the same still-active credential without consuming another OIDC nonce, creating 
 writing another successful establishment receipt. Changed payloads collide; expired and revoked sessions stay denied.
 A live runtime epoch can only be repeated or stopped before replacement, preserving the controller's stop authority.
 
+`AuthorizeCommand` checks human command permission before the BFF resolves an external subject. It produces an audit
+receipt without changing policy, returning content or renewing idle activity. This preflight remains available during
+archive loss for revocation; `ExecuteCommand` independently checks the final actor, command and current version.
+
 Archive health requires a recent acknowledgement and no unacknowledged receipt older than sixty seconds, checked
 against both the outbox and the durable sequence checkpoint. A live exporter heartbeat cannot hide a backlog. The final decision guard rechecks archive health after the native
 permission response, including a failure that occurs while the request is in flight. Controller enrollment checks a

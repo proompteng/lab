@@ -32,9 +32,11 @@ fn rpc_as<T>(message: T, peer: &str) -> Request<T> {
     request
 }
 
-fn rpc<T>(message: T) -> Request<T> { rpc_as(message, BFF_ID) }
+fn rpc<T>(message: T) -> Request<T> {
+    rpc_as(message, BFF_ID)
+}
 
-async fn roster(
+async fn workspace_roster(
     service: &Service,
     database: &Database,
     identity: &(String, String),
@@ -475,6 +477,37 @@ async fn control_integration_durability_authority_and_quota() {
         )
         .await
         .unwrap();
+    let preflight = AuthorizeCommandRequest {
+        context: request(
+            &database,
+            owner,
+            Command::ReserveWorkspace(ReserveWorkspace::default()),
+        )
+        .await
+        .context,
+        action: Action::MembersManage as i32,
+        resource: Some(policy::platform()),
+    };
+    assert_eq!(
+        service
+            .authorize_command(rpc_as(preflight.clone(), CONTROLLER_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    assert_eq!(
+        service
+            .authorize_command(rpc(AuthorizeCommandRequest {
+                action: Action::FilesObserve as i32,
+                ..preflight
+            }))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::InvalidArgument,
+        "preflight cannot authorize runtime content"
+    );
     let reservation = Uuid::new_v4().to_string();
     let first = request(
         &database,
@@ -702,7 +735,7 @@ async fn control_integration_durability_authority_and_quota() {
         context
     };
     let roster = service
-        .list_access(rpc_as(ListAccessRequest {
+        .list_access(rpc(ListAccessRequest {
             context: Some(roster_context(owner)),
             resource: Some(policy::workspace(&uid)),
             ..Default::default()
@@ -728,7 +761,7 @@ async fn control_integration_durability_authority_and_quota() {
     assert_eq!(roster.quotas[0].used_workspaces, 1);
     assert_eq!(roster.quotas[0].used_bytes, HOME_BYTES);
     let denied = service
-        .list_access(rpc_as(ListAccessRequest {
+        .list_access(rpc(ListAccessRequest {
             context: Some(roster_context(&identities[2])),
             resource: Some(policy::workspace(&uid)),
             ..Default::default()
@@ -741,7 +774,7 @@ async fn control_integration_durability_authority_and_quota() {
         "roster denials must be audited"
     );
     let platform = service
-        .list_access(rpc_as(ListAccessRequest {
+        .list_access(rpc(ListAccessRequest {
             context: Some(roster_context(owner)),
             resource: Some(policy::platform()),
             ..Default::default()
@@ -758,7 +791,7 @@ async fn control_integration_durability_authority_and_quota() {
             .all(|entry| !entry.github_id.is_empty())
     );
     let denied = service
-        .read_audit(rpc_as(ReadAuditRequest {
+        .read_audit(rpc(ReadAuditRequest {
             context: Some(roster_context(&identities[2])),
             ..Default::default()
         }))
@@ -783,7 +816,7 @@ async fn control_integration_durability_authority_and_quota() {
     )
     .await;
     let audit = service
-        .read_audit(rpc_as(ReadAuditRequest {
+        .read_audit(rpc(ReadAuditRequest {
             context: Some(roster_context(&identities[1])),
             limit: 200,
             ..Default::default()
@@ -1003,7 +1036,7 @@ async fn control_integration_durability_authority_and_quota() {
         "first custodian cannot activate emergency access alone"
     );
     assert!(
-        !roster(&service, &database, owner, &uid)
+        !workspace_roster(&service, &database, owner, &uid)
             .await
             .iter()
             .any(|entry| entry.role == "emergency")
@@ -1029,7 +1062,7 @@ async fn control_integration_durability_authority_and_quota() {
         Command::EmergencyAccess(emergency.clone()),
     )
     .await;
-    let entries = roster(&service, &database, owner, &uid).await;
+    let entries = workspace_roster(&service, &database, owner, &uid).await;
     let active = entries
         .iter()
         .find(|entry| entry.role == "emergency")
@@ -1521,6 +1554,40 @@ async fn control_integration_durability_authority_and_quota() {
         .execute("UPDATE ofz.archive_state SET acknowledged_at_ms=0", &[])
         .await
         .unwrap();
+    let conn = admin.pool.get().await.unwrap();
+    let idle_before: i64 = conn.query_one("UPDATE ofz.sessions SET idle_deadline_ms=ofz.now_ms()+60000 WHERE id=$1 RETURNING idle_deadline_ms", &[&Uuid::parse_str(&owner.1).unwrap()]).await.unwrap().get(0);
+    let preflight = service
+        .authorize_command(rpc(AuthorizeCommandRequest {
+            context: request(
+                &database,
+                owner,
+                Command::ReserveWorkspace(ReserveWorkspace::default()),
+            )
+            .await
+            .context,
+            action: Action::MembersManage as i32,
+            resource: Some(policy::platform()),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(
+        preflight.allowed,
+        "permission-only command preflight remains available for revocation during archive loss"
+    );
+    assert!(!preflight.audit_receipt_id.is_empty());
+    assert_eq!(
+        conn.query_one(
+            "SELECT idle_deadline_ms FROM ofz.sessions WHERE id=$1",
+            &[&Uuid::parse_str(&owner.1).unwrap()]
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0),
+        idle_before,
+        "preflight cannot extend session activity"
+    );
+    drop(conn);
     assert_eq!(
         read(
             &database,

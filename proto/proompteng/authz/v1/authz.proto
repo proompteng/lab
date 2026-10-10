@@ -8,6 +8,7 @@ option go_package = "github.com/proompteng/lab/gen/proompteng/authz/v1;authzv1";
 // All methods require an attested, explicitly allowed SPIFFE workload identity.
 service AuthorizationService {
   rpc Check(CheckRequest) returns (CheckResponse);
+  rpc AuthorizeCommand(AuthorizeCommandRequest) returns (AuthorizeCommandResponse);
   rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse);
   rpc GetCommand(GetCommandRequest) returns (GetCommandResponse);
   rpc ListAccess(ListAccessRequest) returns (ListAccessResponse);
@@ -122,6 +123,19 @@ message CheckResponse {
   string audit_receipt_id = 3;
   uint64 valid_until_unix_ms = 4;
   uint64 recovery_generation = 5;
+}
+
+// Permission-only preflight before resolving external command subjects. The result
+// cannot authorize content access or a policy write; ExecuteCommand checks again.
+message AuthorizeCommandRequest {
+  RequestContext context = 1;
+  Action action = 2;
+  Resource resource = 3;
+}
+
+message AuthorizeCommandResponse {
+  bool allowed = 1;
+  string audit_receipt_id = 2;
 }
 
 enum WorkspaceRole {

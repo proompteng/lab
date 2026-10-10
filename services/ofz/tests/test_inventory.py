@@ -191,7 +191,7 @@ class InventoryTests(unittest.TestCase):
                 content += "\nexport const DELETE = () => new Response();\n"
             return content
 
-        for method in ["DELETE", "HEAD", "OPTIONS"]:
+        for method in ["DELETE", "PUT", "PATCH"]:
             with self.subTest(method=method):
 
                 def inject(path, *args, **kwargs):

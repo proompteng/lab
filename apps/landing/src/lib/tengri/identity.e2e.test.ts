@@ -178,6 +178,7 @@ identityTest(
     await control.query('UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()')
     const codes = new Map<string, string>(),
       tokens = new Map<string, string>()
+    let githubSecret = 'fixture-github-secret'
     const github = httpServer(async (request, response) => {
       const url = new URL(request.url || '/', 'http://localhost')
       if (url.pathname === '/login/oauth/authorize') {
@@ -185,7 +186,7 @@ identityTest(
           state = z.string().parse(url.searchParams.get('state'))
         response.setHeader('Content-Type', 'text/html')
         response.end(
-          ['1', '2', '999']
+          ['1', '2', '3', '999']
             .map((id) => {
               const code = randomUUID()
               codes.set(code, id)
@@ -203,6 +204,18 @@ identityTest(
         const body = new URLSearchParams(Buffer.concat(bytes).toString()),
           code = body.get('code') || '',
           id = codes.get(code)
+        const basic = (request.headers.authorization || '').startsWith('Basic ')
+          ? Buffer.from((request.headers.authorization || '').slice(6), 'base64')
+              .toString()
+              .split(':')
+          : []
+        if (
+          (body.get('client_id') || basic[0]) !== 'fixture-github' ||
+          (body.get('client_secret') || basic[1]) !== githubSecret
+        ) {
+          response.writeHead(401).end()
+          return
+        }
         codes.delete(code)
         if (!id) {
           response.writeHead(400).end()
@@ -288,8 +301,10 @@ identityTest(
     const { getTengriIdentity } = await import('./auth')
     const authRoute = await import('@/app/api/auth/[...all]/route')
     const { verifyGithubIdentity } = await import('./github-identity')
+    let identityLookups = 0
     void mock.module('./github-identity', () => ({
       resolveGithubIdentity: async (login: string) => {
+        identityLookups++
         const id = z
           .string()
           .regex(/^fixture-(1|2|3|999)$/)
@@ -425,18 +440,20 @@ identityTest(
       } catch {}
       await new Promise((resolve) => setTimeout(resolve, 500))
     }
-    execFileSync('python3', [path.join(root, 'argocd/applications/keycloak/tengri/bootstrap.py')], {
-      env: {
-        ...process.env,
-        KEYCLOAK_ADMIN_URL: adminBase,
-        KEYCLOAK_ADMIN_USERNAME: 'fixture-admin',
-        KEYCLOAK_ADMIN_PASSWORD: 'fixture-only-password',
-        GITHUB_CLIENT_ID: 'fixture-github',
-        GITHUB_CLIENT_SECRET: 'fixture-github-secret',
-        TENGRI_OIDC_CLIENT_SECRET: 'fixture-bff-secret-not-production-0000000',
-      },
-      stdio: 'pipe',
-    })
+    const bootstrap = (providerSecret: string, clientSecret: string) =>
+      execFileSync('python3', [path.join(root, 'argocd/applications/keycloak/tengri/bootstrap.py')], {
+        env: {
+          ...process.env,
+          KEYCLOAK_ADMIN_URL: adminBase,
+          KEYCLOAK_ADMIN_USERNAME: 'fixture-admin',
+          KEYCLOAK_ADMIN_PASSWORD: 'fixture-only-password',
+          GITHUB_CLIENT_ID: 'fixture-github',
+          GITHUB_CLIENT_SECRET: providerSecret,
+          TENGRI_OIDC_CLIENT_SECRET: clientSecret,
+        },
+        stdio: 'pipe',
+      })
+    bootstrap(githubSecret, 'fixture-bff-secret-not-production-0000000')
     const tokenResponse = await fetch(adminBase + '/realms/master/protocol/openid-connect/token', {
       method: 'POST',
       body: new URLSearchParams({
@@ -586,6 +603,61 @@ identityTest(
     const inspected = await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
     expect(inspected?.session.githubId).toBe('1')
 
+    // Repeated bootstrap must rotate both credentials while retaining enrolled users/passkeys.
+    const usersBefore = z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())
+    const firstUser = usersBefore[0]
+    if (!firstUser) throw new Error('Enrolled fixture user missing')
+    const credentialsBefore = await (await adminCall(`/users/${firstUser.id}/credentials`)).json()
+    const productionRealm = z
+      .object({ clients: z.array(z.unknown()) })
+      .parse(JSON.parse(readFileSync(path.join(root, 'argocd/applications/keycloak/tengri/realm.json'), 'utf8')))
+    const productionClient = z
+      .object({ clientId: z.literal('tengri-bff'), redirectUris: z.array(z.string()), webOrigins: z.array(z.string()) })
+      .parse(productionRealm.clients[0])
+    const productionProvider = { ...provider, config: { ...provider.config } }
+    delete productionProvider.config.baseUrl
+    delete productionProvider.config.apiUrl
+    delete productionProvider.config.githubJsonFormat
+    await adminCall('/identity-provider/instances/github', 'PUT', productionProvider)
+    await adminCall(`/clients/${client.id}`, 'PUT', productionClient)
+    githubSecret = 'fixture-github-secret-rotated'
+    const rotatedBffSecret = 'fixture-bff-secret-rotated-not-production-0000000'
+    bootstrap(githubSecret, rotatedBffSecret)
+    expect(z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())).toEqual(usersBefore)
+    expect(await (await adminCall(`/users/${firstUser.id}/credentials`)).json()).toEqual(credentialsBefore)
+    const currentProvider = z
+      .object({ config: z.record(z.string(), z.string()) })
+      .passthrough()
+      .parse(await (await adminCall('/identity-provider/instances/github')).json())
+    currentProvider.config = {
+      ...currentProvider.config,
+      baseUrl: `http://127.0.0.1:${githubAddress.port}`,
+      apiUrl: `http://127.0.0.1:${githubAddress.port}`,
+      githubJsonFormat: 'true',
+    }
+    await adminCall('/identity-provider/instances/github', 'PUT', currentProvider)
+    await adminCall(`/clients/${client.id}`, 'PUT', { redirectUris: [base + '/api/auth/callback'], webOrigins: [base] })
+    writeFileSync(z.string().parse(process.env.TENGRI_OIDC_CLIENT_SECRET_FILE), rotatedBffSecret)
+    for (const [secretValue, status] of [
+      ['fixture-bff-secret-not-production-0000000', 401],
+      [rotatedBffSecret, 400],
+    ] as const) {
+      const response = await fetch(adminBase + '/realms/tengri/protocol/openid-connect/token', {
+        method: 'POST',
+        body: new URLSearchParams({
+          client_id: 'tengri-bff',
+          client_secret: secretValue,
+          grant_type: 'authorization_code',
+          code: 'invalid-fixture-code',
+          redirect_uri: base + '/api/auth/callback',
+        }),
+      })
+      expect(response.status).toBe(status)
+      expect(z.object({ error: z.string() }).parse(await response.json()).error).toBe(
+        status === 401 ? 'unauthorized_client' : 'invalid_grant',
+      )
+    }
+
     const applyChange = async (status: number) => {
       const result = page.waitForResponse(
         (response) => response.url() === base + '/api/tengri/access' && response.request().method() === 'POST',
@@ -600,6 +672,7 @@ identityTest(
     await page.getByLabel('retainedGiB', { exact: true }).fill('96')
     await page.getByLabel('Reason', { exact: true }).fill('Isolated quota qualification')
     await applyChange(200)
+    expect(identityLookups).toBeGreaterThan(0)
     await browserExpect(page.getByText('Policy version 2', { exact: true })).toBeVisible()
     expect(
       (
@@ -682,6 +755,29 @@ identityTest(
     await browserExpect(secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
     // The nonmember is a separate upstream identity, with no existing Keycloak SSO cookie.
     await secondContext.clearCookies()
+    await enroll('3')
+    const lookupsBeforeDenial = identityLookups
+    const memberDenied = await secondPage.evaluate(async (operationId) => {
+      const response = await fetch('/api/tengri/access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'membership',
+          operationId,
+          expectedVersion: '3',
+          reason: 'Member must not consume external identity lookups',
+          login: 'fixture-2',
+          role: 'administrator',
+          enabled: true,
+        }),
+      })
+      return { status: response.status, body: await response.json() }
+    }, randomUUID())
+    expect(memberDenied.status).toBe(403)
+    expect(identityLookups).toBe(lookupsBeforeDenial)
+    expect(z.object({ auditReceiptId: z.uuid() }).parse(memberDenied.body).auditReceiptId).toBeTruthy()
+    await secondPage.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await secondContext.clearCookies()
     await enroll('999')
     const denied = z
       .object({ error: z.string(), auditReceiptId: z.uuid() })
@@ -725,7 +821,7 @@ identityTest(
         ])
       ).rows[0]?.reason,
     ).toBe('verified passkey assurance required')
-    expect((await control.query('SELECT count(*) FROM ofz.sessions')).rows[0]?.count).toBe('3')
+    expect((await control.query('SELECT count(*) FROM ofz.sessions')).rows[0]?.count).toBe('4')
     const mappers = z
       .array(z.object({ id: z.string(), name: z.string() }))
       .parse(await (await adminCall(`/clients/${client.id}/protocol-mappers/models`)).json())
@@ -755,7 +851,7 @@ identityTest(
           "SELECT count(*) FROM ofz.audit WHERE (receipt->>'action')::integer=32 AND (receipt->>'allowed')::boolean",
         )
       ).rows[0]?.count,
-    ).toBe('3')
+    ).toBe('4')
     console.log(
       'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, logout and HEAD/replay denial',
     )

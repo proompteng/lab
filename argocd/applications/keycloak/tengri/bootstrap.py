@@ -154,6 +154,7 @@ def bootstrap():
         realm["identityProviderMappers"],
     ):
         raise RuntimeError("GitHub immutable identity mapping drift")
+    client_credentials = []
     for expected_client in realm["clients"]:
         query = urllib.parse.urlencode({"clientId": expected_client["clientId"]})
         clients = request("GET", path + "/clients?" + query, token)
@@ -161,6 +162,8 @@ def bootstrap():
         wanted.pop("secret", None)
         if len(clients) != 1 or not contains(clients[0], wanted):
             raise RuntimeError("Dedicated realm client configuration drift")
+        if "secret" in expected_client:
+            client_credentials.append((clients[0]["id"], expected_client["secret"]))
     for flow in realm["authenticationFlows"]:
         alias = urllib.parse.quote(flow["alias"], safe="")
         executions = request(
@@ -203,6 +206,23 @@ def bootstrap():
     for wanted in realm["requiredActions"]:
         if not any(contains(actual, wanted) for actual in actions):
             raise RuntimeError("Dedicated passkey enrollment drift")
+    # Reconcile credentials only after validating identity, flows and client bounds.
+    # Keycloak masks provider secrets on read; the successful PUT is its write receipt.
+    provider["config"]["clientSecret"] = realm["identityProviders"][0]["config"][
+        "clientSecret"
+    ]
+    request(
+        "PUT",
+        path + "/identity-provider/instances/github",
+        token,
+        provider,
+        expected=(204,),
+    )
+    for client_id, secret in client_credentials:
+        client_path = path + "/clients/" + urllib.parse.quote(client_id, safe="")
+        request("PUT", client_path, token, {"secret": secret}, expected=(204,))
+        if request("GET", client_path + "/client-secret", token).get("value") != secret:
+            raise RuntimeError("Dedicated client credential reconciliation failed")
     request("PUT", path, token, {"enabled": True}, expected=(204,))
     print(
         "Dedicated Tengri realm, immutable GitHub identity and passkey requirements verified"
