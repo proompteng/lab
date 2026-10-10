@@ -87,12 +87,20 @@ const resourceAttributes = (options: TelemetryRuntimeOptions): Record<string, st
 })
 
 const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) => {
+  let failedAttempts = 0
+  let firstFailureAt: number | undefined
   const exportLoggers = new Set([Logger.withConsoleError(Logger.formatJson)])
   const exportFailure = (
     failureReason: 'http-status' | HttpClientError.HttpClientError['reason']['_tag'],
     httpStatus?: number,
   ) =>
-    Effect.logWarning('Bayn OTLP trace export attempt failed').pipe(
+    Effect.gen(function* () {
+      failedAttempts++
+      firstFailureAt ??= yield* operationCurrentTimeMillis
+      yield* Effect.logWarning('Bayn OTLP trace export attempt failed').pipe(
+        Effect.annotateLogs({ consecutiveFailedAttempts: failedAttempts }),
+      )
+    }).pipe(
       Effect.annotateLogs({
         stage: 'bayn.telemetry.export',
         dependency: 'telemetry',
@@ -108,7 +116,25 @@ const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) => {
     Effect.map(HttpClient.HttpClient, (client) =>
       client.pipe(
         HttpClient.tap((response) =>
-          response.status >= 200 && response.status < 300 ? Effect.void : exportFailure('http-status', response.status),
+          response.status >= 200 && response.status < 300
+            ? Effect.gen(function* () {
+                if (failedAttempts === 0) return
+                const checkedAt = yield* operationCurrentTimeMillis
+                yield* Effect.logInfo('Bayn OTLP trace export request recovered').pipe(
+                  Effect.annotateLogs({
+                    stage: 'bayn.telemetry.export',
+                    dependency: 'telemetry',
+                    serviceName: options.serviceName,
+                    failedAttempts,
+                    outageElapsedMs: firstFailureAt === undefined ? 0 : checkedAt - firstFailureAt,
+                    httpStatus: response.status,
+                  }),
+                  Effect.provideService(Logger.CurrentLoggers, exportLoggers),
+                )
+                failedAttempts = 0
+                firstFailureAt = undefined
+              })
+            : exportFailure('http-status', response.status),
         ),
         HttpClient.tapError((error) => exportFailure(error.reason._tag)),
       ),

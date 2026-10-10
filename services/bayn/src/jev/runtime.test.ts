@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Logger, Option, References, Result } from 'effect'
+import { Clock, Effect, Fiber, Logger, Option, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { NodeServices } from '@effect/platform-node'
 
@@ -17,6 +17,8 @@ import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } fro
 import { JevPositionStore, JevPurpose } from './portfolio'
 import { evaluateJevObservation, evaluateJevPositionManagement } from './runtime'
 import { utcInstantFromEpochMillis } from '../time'
+import { canonicalHashV1 } from '../hash'
+import { reconciledStateHash } from '../reconciliation'
 
 const scenario = (
   options: {
@@ -33,14 +35,45 @@ const scenario = (
     readonly snapshotPending?: boolean
     readonly completedHold?: boolean
     readonly inferenceDelayMs?: number
+    readonly stalledInference?: boolean
+    readonly advanceMs?: number
+    readonly brokerEvidenceAgeMs?: number
+    readonly interruptionDelayMs?: number
     readonly expiredObservation?: boolean
   } = {},
 ) => {
   const fixture = nativeJevFixture(JevPurpose.Manage, options.observedAt ?? '2026-09-04T14:30:32.000Z')
   const original = fixture.portfolio
   if (original.purpose !== JevPurpose.Manage) throw new Error('Expected held-position fixture')
+  let brokerState = original.brokerState
+  if (options.brokerEvidenceAgeMs !== undefined) {
+    const at = utcInstantFromEpochMillis(
+      Date.parse(fixture.observation.payload.observedAt) - options.brokerEvidenceAgeMs,
+    )
+    const material = {
+      account: { ...brokerState.account, observedAt: at },
+      positions: brokerState.positions.map((position) => ({ ...position, observedAt: at })),
+      positionsObservedAt: at,
+      orders: brokerState.orders.map((order) => ({ ...order, observedAt: at })),
+      ordersObservedAt: at,
+      accountingHash: brokerState.accountingHash,
+    }
+    const stateHash = Result.getOrThrow(reconciledStateHash(material))
+    brokerState = {
+      ...material,
+      unknownOrderCount: brokerState.unknownOrderCount,
+      reconciliation: {
+        ...brokerState.reconciliation,
+        expectedHash: stateHash,
+        observedHash: stateHash,
+        contentHash: canonicalHashV1(material),
+        reconciledAt: at,
+      },
+    }
+  }
   const portfolio = {
     ...original,
+    brokerState,
     entryFills: options.maximumHold
       ? original.entryFills.map((fill) => ({ ...fill, occurredAt: '2026-09-04T14:15:32.000Z' }))
       : original.entryFills.map((fill, index) => ({
@@ -57,6 +90,7 @@ const scenario = (
     updatedAt: fixture.observation.payload.observedAt,
   }
   const calls = { pricing: 0, signal: 0, pending: 0, finish: 0, window: 0 }
+  let inferenceInterrupted = 0
   const databaseFailure = operationalError({ component: 'database', operation: 'window', message: 'test failure' })
   const marketData: IntradayMarketDataService = {
     check: Effect.void,
@@ -155,6 +189,16 @@ const scenario = (
       begin: (plan) =>
         options.completedHold
           ? Effect.gen(function* () {
+              if (options.stalledInference)
+                return yield* Effect.never.pipe(
+                  Effect.onInterrupt(() =>
+                    Effect.gen(function* () {
+                      inferenceInterrupted++
+                      if (options.interruptionDelayMs !== undefined)
+                        yield* TestClock.adjust(options.interruptionDelayMs)
+                    }),
+                  ),
+                )
               const result = nativeJevBatchResult(plan, fixture.observation.payload.observedAt, () => 'hold')
               if (options.inferenceDelayMs !== undefined) yield* TestClock.adjust(options.inferenceDelayMs)
               return { plan, result }
@@ -186,12 +230,20 @@ const scenario = (
   const run = () =>
     Effect.runPromise(
       TestClock.setTime(Date.parse(fixture.observation.payload.observedAt)).pipe(
-        Effect.andThen(program),
+        Effect.andThen(
+          options.stalledInference
+            ? Effect.gen(function* () {
+                const run = yield* program.pipe(Effect.forkChild({ startImmediately: true }))
+                yield* TestClock.adjust(options.advanceMs ?? 7_000)
+                return yield* Fiber.join(run)
+              })
+            : program,
+        ),
         Effect.provide(TestClock.layer()),
         Effect.provide(NodeServices.layer),
       ),
     )
-  return { calls, run }
+  return { calls, run, inferenceInterruptions: () => inferenceInterrupted }
 }
 
 describe('Jev management observation admission', () => {
@@ -252,7 +304,7 @@ describe('Jev management observation admission', () => {
     expect(check.calls).toEqual({ pricing: 1, signal: 1, pending: 1, finish: 0, window: 1 })
   })
 
-  test('a slow inference wait retains the time the hold guard ran before its deadline', async () => {
+  test('a slow inference wait exits when it crosses the holding deadline', async () => {
     const check = scenario({
       consumed: false,
       completedHold: true,
@@ -261,13 +313,81 @@ describe('Jev management observation admission', () => {
       laterFillAt: '2026-09-04T14:27:32.000Z',
     })
     expect(await check.run()).toMatchObject({
+      _tag: 'Exit',
+      target: { reason: JevExitReason.MaximumHold },
+    })
+  })
+
+  test('the holding deadline cancels stalled inference exactly once and exits', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      stalledInference: true,
+      firstFillAt: '2026-09-04T14:15:39.000Z',
+    })
+    expect(await check.run()).toMatchObject({
+      _tag: 'Exit',
+      target: {
+        reason: JevExitReason.MaximumHold,
+        observedAt: '2026-09-04T14:30:39.000Z',
+      },
+    })
+    expect(check.inferenceInterruptions()).toBe(1)
+  })
+
+  test('long-stalled management returns at inference validity before the holding deadline and broker expiry', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      stalledInference: true,
+      advanceMs: 10_000,
+      firstFillAt: '2026-09-04T14:17:32.000Z',
+    })
+    expect(await check.run()).toMatchObject({
       _tag: 'Wait',
       details: {
-        maximumHoldDueAt: '2026-09-04T14:30:39.000Z',
-        maximumHoldEvaluatedAt: '2026-09-04T14:30:32.000Z',
+        maximumHoldDueAt: '2026-09-04T14:32:32.000Z',
         readiness: { reason: 'INFERENCE_UNAVAILABLE' },
       },
     })
+    expect(check.inferenceInterruptions()).toBe(1)
+  })
+
+  test('nearly expired broker evidence ends management before its strict freshness boundary', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      stalledInference: true,
+      advanceMs: 999,
+      brokerEvidenceAgeMs: 59_000,
+      firstFillAt: '2026-09-04T14:15:39.000Z',
+    })
+    expect(await check.run()).toMatchObject({
+      _tag: 'Wait',
+      details: {
+        maximumHoldDueAt: '2026-09-04T14:30:39.000Z',
+        readiness: { reason: 'INFERENCE_UNAVAILABLE' },
+      },
+    })
+    expect(check.inferenceInterruptions()).toBe(1)
+  })
+
+  test('slow cancellation requires reconciliation rather than an exit from stale broker evidence', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      stalledInference: true,
+      interruptionDelayMs: 60_000,
+      firstFillAt: '2026-09-04T14:15:39.000Z',
+    })
+    expect(await check.run()).toMatchObject({
+      _tag: 'Wait',
+      details: {
+        maximumHoldDueAt: '2026-09-04T14:30:39.000Z',
+        waitReason: 'JEV_POSITION_AWAITING_RECONCILIATION',
+      },
+    })
+    expect(check.inferenceInterruptions()).toBe(1)
   })
 
   test.each(['2026-09-04T14:30:39.000Z', '2026-09-04T14:30:40.000Z'])(

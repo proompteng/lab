@@ -1,0 +1,280 @@
+{
+  "realm": "tengri",
+  "enabled": true,
+  "displayName": "Tengri",
+  "sslRequired": "all",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": false,
+  "registrationEmailAsUsername": false,
+  "duplicateEmailsAllowed": true,
+  "editUsernameAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "failureFactor": 5,
+  "accessTokenLifespan": 120,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 28800,
+  "clientSessionIdleTimeout": 1800,
+  "clientSessionMaxLifespan": 28800,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanLogin": 300,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "defaultSignatureAlgorithm": "RS256",
+  "browserFlow": "tengri-github",
+  "firstBrokerLoginFlow": "tengri-first-github",
+  "webAuthnPolicyRpEntityName": "Tengri",
+  "webAuthnPolicyRpId": "auth.proompteng.ai",
+  "webAuthnPolicySignatureAlgorithms": [
+    "ES256",
+    "RS256"
+  ],
+  "webAuthnPolicyAttestationConveyancePreference": "none",
+  "webAuthnPolicyAuthenticatorAttachment": "not specified",
+  "webAuthnPolicyUserVerificationRequirement": "required",
+  "webAuthnPolicyCreateTimeout": 60,
+  "webAuthnPolicyAvoidSameAuthenticatorRegister": true,
+  "attributes": {
+    "acr.loa.map": "{\"2\":2}",
+    "default.acr.values": "2",
+    "minimum.acr.value": "2"
+  },
+  "eventsEnabled": true,
+  "eventsExpiration": 2592000,
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": false,
+  "authenticationFlows": [
+    {
+      "alias": "tengri-github",
+      "description": "GitHub broker only",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "identity-provider-redirector",
+          "authenticatorConfig": "tengri-github-provider",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorFlow": false
+        }
+      ]
+    },
+    {
+      "alias": "tengri-first-github",
+      "description": "Create from immutable GitHub ID; no account linking",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "idp-create-user-if-unique",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorFlow": false
+        }
+      ]
+    },
+    {
+      "alias": "tengri-passkey",
+      "description": "Fresh verified passkey after GitHub",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "flowAlias": "tengri-passkey-level",
+          "requirement": "CONDITIONAL",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorFlow": true
+        }
+      ]
+    },
+    {
+      "alias": "tengri-passkey-level",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorConfig": "tengri-level-two",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorFlow": false
+        },
+        {
+          "authenticator": "webauthn-authenticator",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": true,
+          "authenticatorFlow": false
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "tengri-github-provider",
+      "config": {
+        "defaultProvider": "github"
+      }
+    },
+    {
+      "alias": "tengri-level-two",
+      "config": {
+        "loa-condition-level": "2",
+        "loa-max-age": "0"
+      }
+    }
+  ],
+  "requiredActions": [
+    {
+      "alias": "webauthn-register",
+      "name": "Register a passkey",
+      "providerId": "webauthn-register",
+      "enabled": true,
+      "defaultAction": true,
+      "priority": 10,
+      "config": {}
+    }
+  ],
+  "identityProviders": [
+    {
+      "alias": "github",
+      "providerId": "github",
+      "enabled": true,
+      "trustEmail": false,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "authenticateByDefault": true,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "tengri-first-github",
+      "postBrokerLoginFlowAlias": "tengri-passkey",
+      "config": {
+        "clientId": "",
+        "clientSecret": "",
+        "defaultScope": "read:user user:email",
+        "syncMode": "FORCE",
+        "disableUserInfo": "false"
+      }
+    }
+  ],
+  "identityProviderMappers": [
+    {
+      "name": "immutable-github-id",
+      "identityProviderAlias": "github",
+      "identityProviderMapper": "github-user-attribute-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "jsonField": "id",
+        "userAttribute": "github_id"
+      }
+    },
+    {
+      "name": "immutable-github-username",
+      "identityProviderAlias": "github",
+      "identityProviderMapper": "oidc-username-idp-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "template": "${ALIAS}.${CLAIM.id}",
+        "target": "LOCAL"
+      }
+    },
+    {
+      "name": "github-avatar",
+      "identityProviderAlias": "github",
+      "identityProviderMapper": "github-user-attribute-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "jsonField": "avatar_url",
+        "userAttribute": "picture"
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "tengri-bff",
+      "name": "Tengri desktop",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "secret": "",
+      "redirectUris": [
+        "https://proompteng.ai/api/auth/callback"
+      ],
+      "webOrigins": [
+        "https://proompteng.ai"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "pkce.code.challenge.required": "true",
+        "minimum.acr.value": "2",
+        "default.acr.values": "2",
+        "acr.loa.map": "{\"2\":2}",
+        "use.refresh.tokens": "false",
+        "oauth2.device.authorization.grant.enabled": "false"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "acr"
+      ],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "github-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "github_id",
+            "claim.name": "github_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "verified-provider",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "config": {
+            "user.session.note": "identity_provider",
+            "claim.name": "identity_provider",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "account",
+      "enabled": false
+    },
+    {
+      "clientId": "account-console",
+      "enabled": false
+    }
+  ],
+  "webAuthnPolicyResidentKey": "required"
+}
