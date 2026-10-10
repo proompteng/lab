@@ -234,6 +234,51 @@ const listYamlFiles = (dir: string): string[] => {
   return entries.sort()
 }
 
+const listApplicationYamlFiles = (dir: string, visited = new Set<string>()): string[] => {
+  if (!existsSync(dir) || visited.has(dir)) return []
+  visited.add(dir)
+  const kustomization = ['kustomization.yaml', 'kustomization.yml', 'Kustomization']
+    .map((name) => join(dir, name))
+    .find((path) => existsSync(path))
+  if (!kustomization) return listYamlFiles(dir)
+
+  const files = new Set(
+    readdirSync(dir)
+      .map((name) => join(dir, name))
+      .filter((path) => statSync(path).isFile() && /\.(ya?ml)$/.test(path)),
+  )
+  files.add(kustomization)
+  for (const document of readYamlDocuments(kustomization)) {
+    if (!isRecord(document)) continue
+    const paths: unknown[] = [
+      ...(['resources', 'bases', 'components', 'patchesStrategicMerge'] as const).flatMap((field) =>
+        Array.isArray(document[field]) ? document[field] : [],
+      ),
+      ...(['patches', 'patchesJson6902'] as const).flatMap((field) =>
+        Array.isArray(document[field]) ? document[field].flatMap((entry) => (isRecord(entry) ? [entry.path] : [])) : [],
+      ),
+      ...(Array.isArray(document.helmCharts)
+        ? document.helmCharts.flatMap((chart) =>
+            isRecord(chart)
+              ? [chart.valuesFile, ...(Array.isArray(chart.additionalValuesFiles) ? chart.additionalValuesFiles : [])]
+              : [],
+          )
+        : []),
+    ]
+    for (const path of paths) {
+      if (typeof path !== 'string' || /^(?:https?:\/\/|git::)/.test(path)) continue
+      const absolute = resolve(dir, path)
+      if (!existsSync(absolute)) continue
+      if (statSync(absolute).isDirectory()) {
+        for (const input of listApplicationYamlFiles(absolute, visited)) files.add(input)
+      } else if (/\.(ya?ml)$/.test(absolute)) {
+        files.add(absolute)
+      }
+    }
+  }
+  return [...files].sort()
+}
+
 const isEnabledValue = (value: unknown): boolean => {
   const normalized =
     typeof value === 'string'
@@ -401,7 +446,7 @@ const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): 
   }
 
   const absolutePath = resolve(root, entry.path)
-  const yamlFiles = listYamlFiles(absolutePath)
+  const yamlFiles = listApplicationYamlFiles(absolutePath)
   const repoImages = new Set<string>()
   let hasHelmChart = false
 

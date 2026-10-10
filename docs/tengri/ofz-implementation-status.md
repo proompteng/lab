@@ -67,5 +67,16 @@ fails the actual browser flow. Command preflight remains available for revocatio
 under archive loss and never renews idle activity. Both the 26-command control fixture and the 44-assertion browser
 fixture also passed against the exact PostgreSQL 18.6 and SpiceDB containers on NUC. Twenty-two inventory regressions,
 TypeScript, type-aware lint, generated-client verification and strict prepared-manifest validation passed after
-restacking onto current main. Recalculated Bun dependency hashes require native Linux CI validation. Real custodian
+restacking onto current main. Native Linux builds supplied the dependency hashes for both architectures; corrected
+hashes still require successful image builds. Real custodian
 enrollment and deployed product proof remain later gates.
+
+The coordinated cutover gate also covers the Proompteng image: Kargo discovery remains withheld while
+`TENGRI_PREPARED_SLOT_CUTOVER_READY` is false. This was verified against the repository variable and workflow input;
+the production BFF remains on its previous image. Rate limits use the connection peer, so clients reaching the
+LoadBalancer cannot choose buckets with proxy headers. Tunnel clients share the tunnel Pod's bucket. An isolated
+Traefik 3.7.13 fixture on NUC reproduced seven admitted requests with rotating headers under the previous configuration
+and returned HTTP 429 on the seventh request under the corrected configuration. This is isolated ingress proof;
+production ingress acceptance remains part of P8. Fifty-seven focused inventory, rollout and ingress checks pass.
+The enabled-app inventory follows declared nested Kustomize inputs, excluding prepared directories until referenced;
+only Ofz's classification changed in the current repository inventory.

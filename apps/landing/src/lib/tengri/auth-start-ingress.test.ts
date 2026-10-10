@@ -38,7 +38,7 @@ test('unauthenticated login and step-up reach the edge rate limiter before alloc
           average: z.number().positive().max(6),
           burst: z.number().positive().max(6),
           period: z.literal('1m'),
-          sourceCriterion: z.object({ requestHeaderName: z.literal('CF-Connecting-IP') }),
+          sourceCriterion: z.undefined().optional(),
         }),
       }),
     })
