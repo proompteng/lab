@@ -175,6 +175,14 @@ Design references: Apple [windows](https://developer.apple.com/design/human-inte
 minimize targets, reduced motion, idle geometry reads, and guest lifecycle behavior. Visual snapshots are generated
 with the pinned Playwright browser on both macOS and Linux.
 
+The mocked desktop tests run independently with four workers in CI and two locally. CI builds the production desktop
+once and serves it for both the mocked browser suite and real acceptance fixtures, avoiding a second development
+compilation. The real editor fixture restores compiled Rust dependencies from a toolchain and dependency keyed cache.
+PR browser validation uses hosted Ubuntu capacity instead of competing with native image builds on ARC.
+Failure screenshots remain enabled; video and traces are recorded on the first retry instead of encoding discarded
+videos for passing tests. Frontend-only PRs skip the VM image workflow; main still builds and validates the coordinated
+Tengri and Nanoagent release pair.
+
 ```sh
 cd apps/landing
 bunx tsc --noEmit
