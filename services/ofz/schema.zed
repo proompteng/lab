@@ -29,6 +29,7 @@ definition platform {
     permission check = bff + controller + kube_broker + connector_broker
     permission command = bff + controller
     permission inspect_session = bff + controller
+    permission revoke_session = bff
 }
 
 definition workspace {

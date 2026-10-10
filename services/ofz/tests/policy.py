@@ -265,6 +265,7 @@ def main():
             ("check", {"bff", "controller", "kube_broker", "connector_broker"}),
             ("command", {"bff", "controller"}),
             ("inspect_session", {"bff", "controller"}),
+            ("revoke_session", {"bff"}),
         ]:
             check("platform", "lab", permission, subject, role in permitted, "workload")
         for permission in ["view_metadata", "write_files"]:

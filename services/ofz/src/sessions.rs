@@ -320,7 +320,7 @@ pub async fn revoke(
     if peer != BFF_ID || request.credential.len() != 43 {
         return Err(Status::unauthenticated("BFF session credential required"));
     }
-    decision::workload(native, peer, Action::PolicyCommand).await?;
+    decision::workload(native, peer, Action::SessionRevoke).await?;
     let operation = decision::parse_uuid(&request.operation_id)?;
     let state = database.state().await?;
     let hash = Sha256::digest(request.credential.as_bytes()).to_vec();
@@ -363,7 +363,7 @@ pub async fn revoke(
         &context,
         peer,
         policy::platform(),
-        Action::SessionInspect,
+        Action::SessionRevoke,
         true,
         &operation.to_string(),
         "session revoked",

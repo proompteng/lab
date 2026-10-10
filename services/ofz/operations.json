@@ -662,7 +662,7 @@
     "surface": "ofz",
     "operation": "RevokeSession",
     "internal_only": true,
-    "action": "ACTION_SESSION_ESTABLISH"
+    "action": "ACTION_SESSION_REVOKE"
   },
   {
     "surface": "bff_http",

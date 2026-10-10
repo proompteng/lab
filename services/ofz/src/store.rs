@@ -236,7 +236,7 @@ pub async fn record_activity<C: GenericClient + Sync>(
     else {
         return Ok(true);
     };
-    if !receipt.allowed || !policy::requires_mfa(action) {
+    if !receipt.allowed || !policy::renews_session(action) {
         return Ok(true);
     }
     let id =

@@ -422,6 +422,17 @@ async fn control_integration_durability_authority_and_quota() {
             .code(),
         Code::FailedPrecondition
     );
+    let owner_session = Uuid::parse_str(&owner.1).unwrap();
+    let client = admin.pool.get().await.unwrap();
+    let creation_idle: i64 = client
+        .query_one(
+            "UPDATE ofz.sessions SET idle_deadline_ms=ofz.now_ms()+60000 WHERE id=$1 RETURNING idle_deadline_ms",
+            &[&owner_session],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    drop(client);
     let a = request(
         &database,
         owner,
@@ -448,6 +459,22 @@ async fn control_integration_durability_authority_and_quota() {
         usize::from(a.is_ok()) + usize::from(b.is_ok()),
         1,
         "concurrent expected-version commands serialize"
+    );
+    assert!(
+        admin
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "SELECT idle_deadline_ms FROM ofz.sessions WHERE id=$1",
+                &[&owner_session]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0)
+            > creation_idle + 1_000_000,
+        "accepted workspace reservation renews idle time without an MFA requirement"
     );
     let over = request(
         &database,
@@ -1173,6 +1200,22 @@ async fn control_integration_durability_authority_and_quota() {
     let original = crate::sessions::revoke(&database, &native, BFF_ID, revoke.clone())
         .await
         .unwrap();
+    assert_eq!(
+        admin
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "SELECT (receipt->>'action')::integer FROM ofz.audit WHERE id=$1",
+                &[&Uuid::parse_str(&original.audit_receipt_id).unwrap()]
+            )
+            .await
+            .unwrap()
+            .get::<_, i32>(0),
+        Action::SessionRevoke as i32,
+        "logout receipt uses the catalogued revocation action"
+    );
     let retried = crate::sessions::revoke(&database, &native, BFF_ID, revoke.clone())
         .await
         .unwrap();

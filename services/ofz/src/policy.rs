@@ -58,6 +58,7 @@ impl Action {
             PolicyCheck => (Platform, "check", false),
             PolicyCommand => (Platform, "command", false),
             SessionInspect => (Platform, "inspect_session", false),
+            SessionRevoke => (Platform, "revoke_session", false),
         };
         Ok(Permission {
             resource_kind,
@@ -139,6 +140,30 @@ pub fn requires_mfa(action: Action) -> bool {
                 | Action::WorkspaceSleep
                 | Action::WorkspacePowerConfigure
         )
+}
+
+pub fn renews_session(action: Action) -> bool {
+    matches!(
+        action,
+        Action::WorkspaceCreate
+            | Action::MembersManage
+            | Action::QuotasManage
+            | Action::TargetsManage
+            | Action::CollaboratorsManage
+            | Action::GrantsManage
+            | Action::WorkspaceTransfer
+            | Action::WorkspaceDelete
+            | Action::PlatformOperate
+            | Action::FilesWrite
+            | Action::TerminalControl
+            | Action::CodexControl
+            | Action::BrowserControl
+            | Action::EditorOpen
+            | Action::PreviewAccess
+            | Action::WorkspaceResume
+            | Action::WorkspaceSleep
+            | Action::WorkspacePowerConfigure
+    )
 }
 
 pub fn platform() -> Resource {
