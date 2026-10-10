@@ -318,6 +318,7 @@ async fn control_integration_durability_authority_and_quota() {
         nonce: URL_SAFE_NO_PAD.encode(Sha256::digest(b"completed-oidc-nonce")),
         operation_id: retry_operation.to_string(),
         credential: retry_credential.clone(),
+        previous_credential: String::new(),
     };
     let retry_fingerprint = Sha256::digest(
         store::encode(&retry_request)

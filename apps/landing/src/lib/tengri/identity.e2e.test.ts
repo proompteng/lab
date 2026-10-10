@@ -6,6 +6,7 @@ import { createServer as httpServer } from 'node:http'
 import { createServer as httpsServer } from 'node:https'
 import path from 'node:path'
 import { afterAll, expect, mock, test } from 'bun:test'
+import { create, toBinary } from '@bufbuild/protobuf'
 import { chromium, expect as browserExpect } from '@playwright/test'
 import { Pool } from 'pg'
 import { z } from 'zod'
@@ -298,6 +299,26 @@ identityTest(
       { stdio: 'ignore' },
     )
     // The HTTPS adapter executes the actual route functions. Only HTML and GitHub are fixtures.
+    const { ofzCall: realOfzCall, OfzError, isOfzConfigured } = await import('./ofz')
+    let loseEstablishmentReply = true
+    const establishmentAttempts: string[] = []
+    const withReplyLoss: typeof realOfzCall = async (method, input, signal) => {
+      if (method.localName === 'establishSession') {
+        establishmentAttempts.push(
+          createHash('sha256')
+            .update(toBinary(method.input, create(method.input, input)))
+            .digest('hex'),
+        )
+      }
+      const result = await realOfzCall(method, input, signal)
+      if (method.localName === 'establishSession' && loseEstablishmentReply) {
+        loseEstablishmentReply = false
+        throw new OfzError(503)
+      }
+      return result
+    }
+    // Simulate one lost reply after the real Ofz transaction and RPC have succeeded.
+    void mock.module('./ofz', () => ({ ofzCall: withReplyLoss, OfzError, isOfzConfigured }))
     const { getTengriIdentity } = await import('./auth')
     const authRoute = await import('@/app/api/auth/[...all]/route')
     const { verifyGithubIdentity } = await import('./github-identity')
@@ -593,6 +614,15 @@ identityTest(
       'SELECT human_id,github_id,mfa_at_ms,expires_at_ms,idle_deadline_ms,token_hash FROM ofz.sessions',
     )
     expect(sessions.rowCount).toBe(1)
+    expect(establishmentAttempts).toHaveLength(2)
+    expect(establishmentAttempts[0]).toBe(establishmentAttempts[1])
+    expect(
+      (
+        await control.query(
+          "SELECT count(*) FROM ofz.audit WHERE (receipt->>'action')::integer=32 AND (receipt->>'allowed')::boolean",
+        )
+      ).rows[0]?.count,
+    ).toBe('1')
     expect(sessions.rows[0]?.github_id).toBe('1')
     expect(Number(sessions.rows[0]?.mfa_at_ms)).toBeGreaterThan(0)
     // An independent handler invocation inspects the opaque cookie through Ofz, without browser state.
@@ -853,7 +883,7 @@ identityTest(
       ).rows[0]?.count,
     ).toBe('4')
     console.log(
-      'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, logout and HEAD/replay denial',
+      'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment lost-reply recovery, logout and HEAD/replay denial',
     )
   },
   180_000,

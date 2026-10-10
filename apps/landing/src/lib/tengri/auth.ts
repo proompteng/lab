@@ -174,12 +174,19 @@ export async function handleTengriAuth(request: Request) {
             code_verifier: attempt.verifier,
           }),
         )
-        const established = await ofzCall(AuthorizationService.method.establishSession, {
+        const establishment = {
           identityToken: tokens.id_token,
           nonce: attempt.nonce,
           operationId: attempt.operation_id,
           previousCredential: cookie(request.headers, SESSION_COOKIE) || '',
-        })
+          credential: randomBytes(32).toString('base64url'),
+        }
+        const established = await ofzCall(AuthorizationService.method.establishSession, establishment).catch(
+          (error) => {
+            if (!(error instanceof OfzError) || error.status !== 503) throw error
+            return ofzCall(AuthorizationService.method.establishSession, establishment)
+          },
+        )
         const session = established.session
         if (!session || !opaque.safeParse(session.credential).success) throw new OfzError(503)
         responseHeaders.append(
