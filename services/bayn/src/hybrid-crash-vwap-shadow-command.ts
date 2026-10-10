@@ -8,7 +8,7 @@ import {
   HybridCrashVwapFailure,
   HybridCrashVwapMode,
   HybridCrashVwapModeSchema,
-} from './jev/hybrid-crash-vwap-gate'
+} from './intraday-replay/crash-vwap-bounce'
 import { currentUtcInstant } from './time'
 
 /** RESEARCH_ONLY shadow switch. Absent means off; any value outside the closed vocabulary fails at startup. */

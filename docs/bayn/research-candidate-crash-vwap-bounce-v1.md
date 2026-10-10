@@ -1,91 +1,48 @@
-# RESEARCH candidate: crash∩VWAP + bounce confirm (v1)
+# Research candidate: crash-below-VWAP bounce (v1)
 
-**Status:** `RESEARCH_ONLY` — not promoted. Live strategy remains `jev`.
+Status: `RESEARCH_ONLY`. Live strategy remains `jev`; nothing here changes fills, GitOps or the Bayn image.
 
-**Schema:** `bayn.research-candidate.crash-vwap-bounce.v1`
+## Signal
 
-## Intent
+Implemented by `services/bayn/src/intraday-replay/crash-vwap-bounce.ts` (model `crash-vwap-bounce-1.0.0`). Minutes
+are America/New_York minute-of-day.
 
-High-frequency hybrid producer: **bars emit candidates**; **Jev (or a future decision layer) only decides** size/enter/exit within Bayn envelope. This document freezes the **signal definition** that cleared stop=50 dual OOS on the 191d IEX research corpus (evidence `2026-10-07-hybrid-hf-v5`).
+| Parameter              | Value                                                       |
+| ---------------------- | ----------------------------------------------------------- |
+| `crashBp`              | one-minute close-to-close return ≤ −80 bp                   |
+| `vwapDistBp`           | close ≤ −60 bp from cumulative session VWAP (typical price) |
+| `minSessionAgeMinutes` | signal ≥ 30 minutes after 09:30                             |
+| `bounceMinutes`        | close one minute later must be above the signal close       |
+| `lastSignalMinute`     | 15:50                                                       |
+| `lastEntryMinute`      | 15:53                                                       |
 
-## Signal definition (frozen for shadow)
+Both the crash and the bounce require consecutive minutes; a gap drops the opportunity. Entry is the bounce bar close.
 
-| Field          | Value                                                               |
-| -------------- | ------------------------------------------------------------------- |
-| Family         | `crash_vwap_bounce`                                                 |
-| Crash          | 1-minute close-to-close return ≤ **−80 bp**                         |
-| VWAP distance  | `(close / session_vwap − 1) × 1e4 ≤ −60`                            |
-| Session age    | ≥ **30** minutes after RTH open (09:30 ET)                          |
-| Bounce confirm | Wait **+1** minute; require `close[t+1] > close[signal]`            |
-| Entry          | Close of bounce bar (or next open in live wiring)                   |
-| Max hold       | **90** minutes                                                      |
-| Stop           | **Hard −50 bp** (current Bayn mandate — no change)                  |
-| Flatten        | 15:55 ET                                                            |
-| Position       | ≤1, ≤20% equity (Bayn envelope)                                     |
-| Cost stress    | Research scored at **10 bp** RT; winner also dual-positive at 15 bp |
+Exit rules used in the exploratory search (90-minute hold, hard −50 bp stop, flatten 15:55, ≤20% equity) are not
+implemented here. The shadow record lists entries only.
 
-## What this is not
+## Prior evidence
 
-- Not acceptance v2 completion
-- Not a claim of live profitability
-- Not a mega-cap / SPY-relative strategy — edge is **semi/high-beta** (CRDO/SNDK/MRVL heavy)
-- Not a license to remove or widen the 50 bp stop
+An exploratory grid over 191 Alpaca IEX sessions (2026-01-02 to 2026-10-06, 10 bp round trip) ranked this cell best
+among hard −50 bp stop variants. The screener and corpus are not in the repository, so those results are not
+reproducible from committed code and are not promotion evidence. They were also concentrated in a few semiconductor
+names. Treat the definition as pre-registered for a prospective test, not as a measured edge.
 
-## Evidence summary (191d IEX, research)
-
-- PnL ≈ **+$10.7k** on $100k×20% @10bp; dual train/test +14 / +36 bp; all quartiles >0
-- tps ≈ 1.17; hit ≈ 26.5%; stop_frac ≈ 73%; max DD ≈ −$2.3k
-- Drop CRDO: still dual ≥$6k; drop CRDO+SNDK: dual fails
-- Full table: `docs/bayn/evidence/2026-10-07-hybrid-hf-v5/`
-
-## Mandate note (alternate paths, not this candidate)
-
-These **also** cleared dual ≥$3k but require explicit protocol change before any promote attempt:
-
-1. Delayed stop arm 5–15m with stop=50 (~+$20k cells) — unprotected window
-2. Soft stop (partial exit at −50)
-3. Wider hard stops 75 / 100 / 150
-4. No stop / time-stop only (v4 path)
-
-**This candidate uses hard stop=50** so it does not require a mandate change.
-
-## Shadow mode
-
-Entry point: `services/bayn/src/hybrid-crash-vwap-shadow-command.ts`, built by `bun run build` as
-`dist/hybrid-crash-vwap-shadow-command.js` (script `hybrid:crash-vwap-shadow`). It is not packaged into the Bayn image or
-scheduled by GitOps. It is an offline research command like `bayn-control-study`: it reads one session of 1-minute bars, never touches the broker, the
-ledger or the live `jev` strategy, and writes a new record file (it refuses to overwrite).
+## Shadow command
 
 ```sh
+bun run build
 BAYN_HYBRID_CRASH_VWAP=shadow node dist/hybrid-crash-vwap-shadow-command.js \
-  --input session-bars.json --input-sha256 <sha256-of-input> --output shadow-record.json
+  --input session-bars.json --input-sha256 <sha256> --output shadow-record.json
 ```
 
-Env `BAYN_HYBRID_CRASH_VWAP` is decoded once at startup through Effect `Config` with the closed vocabulary below. Any
-other value (including `on`) fails startup instead of silently disabling the experiment.
+`BAYN_HYBRID_CRASH_VWAP` accepts `off` (default) or `shadow`; any other value fails startup. With `off` the command
+writes nothing. With `shadow` it decodes `bayn.hybrid-crash-vwap.session-bars.v1`, writes a new
+`bayn.hybrid-crash-vwap.shadow.v1` record (never overwrites) and logs its canonical hash. `evaluatedAt` comes from
+`Clock`, so a replay under a fixed clock reproduces the record hash.
 
-| Value                            | Behavior                                                                                       |
-| -------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `off` (default; also when unset) | No-op; prints `{"mode":"off","outputPath":null}` and writes nothing                            |
-| `shadow`                         | Evaluate producer; write compare record `bayn.hybrid-crash-vwap.shadow.v1`; **no fill change** |
+## Before any promotion
 
-There is no `on` value until a separate promotion RFC adds one.
-
-Input (`bayn.hybrid-crash-vwap.session-bars.v1`) is Schema-decoded and validated: ISO `sessionDate`, bars filed under
-their own symbol, strictly ascending `minuteOfDay` (America/New_York), positive OHLC with open and close inside `[low, high]`, and
-non-negative volume. The crash return and the +1 minute bounce confirm require exact minute continuity; a gap in sparse
-IEX bars excludes that opportunity rather than stretching the frozen 1-minute signal. `evaluatedAt` comes from the Effect
-`Clock`, so a replay under a fixed clock reproduces the same record and `recordHash`.
-
-## Prospective freeze checklist (before any promote RFC)
-
-1. Pre-register params above (no retune mid-window)
-2. ≥20 session calendar, held out from this 191d search
-3. Paired control (e.g. same opportunities without bounce, or buy&hold sleeve)
-4. Document universe: either accept semi concentration or constrain symbols in protocol
-5. Quote spread ≤5 bp gate if acceptance v2 requires it
-6. Only then consider flipping live path — **not done here**
-
-## Blunt recommendation
-
-**Best path under real Bayn constraints:** shadow this hard50+bounce definition now; collect prospective sessions; do **not** chase delayed-arm/$22k prints without a written stop-mandate change. If prospective fails, the honest fallback is mandate wider/delayed stop on crash-reversion only — still not a silent `strategy.ts` flip.
+1. Run unchanged on at least 20 sessions after 2026-10-06.
+2. Implement the exit rules and costs in committed replay code and compare against a paired control.
+3. Decide in the protocol whether symbol concentration is acceptable.

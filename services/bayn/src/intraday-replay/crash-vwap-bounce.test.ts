@@ -7,12 +7,11 @@ import {
   evaluateHybridCrashVwapShadow,
   hybridCrashVwapParams,
   hybridCrashVwapSessionBarsSchemaVersion,
-  HybridCrashVwapMode,
   sessionVwapSeries,
   type HybridBar,
-} from './hybrid-crash-vwap-gate'
+} from './crash-vwap-bounce'
 
-const open = hybridCrashVwapParams.rthOpenMinutes
+const open = hybridCrashVwapParams.rthOpenMinute
 
 const bar = (minuteOfDay: number, close: number, opts: Partial<HybridBar> = {}): HybridBar => ({
   symbol: opts.symbol ?? 'CRDO',
@@ -35,7 +34,7 @@ const crashSession = (followThrough: readonly HybridBar[], symbol = 'CRDO'): Hyb
 const sessionText = (barsBySymbol: Record<string, readonly HybridBar[]>, sessionDate = '2026-10-07') =>
   JSON.stringify({ schemaVersion: hybridCrashVwapSessionBarsSchemaVersion, sessionDate, barsBySymbol })
 
-describe('hybrid-crash-vwap-gate', () => {
+describe('crash-VWAP bounce scan', () => {
   test('session VWAP is cumulative typical/volume', () => {
     const bars = [
       bar(570, 100, { high: 100, low: 100, volume: 100 }),
@@ -64,6 +63,16 @@ describe('hybrid-crash-vwap-gate', () => {
 
   test('a gap after the crash bar is not a one-minute bounce confirm', () => {
     expect(collectCrashVwapBounceCandidates(crashSession([bar(open + 41, 99 * 1.002)]))).toEqual([])
+  })
+
+  test('signals after the last signal minute are ignored', () => {
+    const lateSession = (signalMinute: number) => [
+      ...Array.from({ length: signalMinute - open }, (_, m) => bar(open + m, 100)),
+      bar(signalMinute, 99, { volume: 5000 }),
+      bar(signalMinute + 1, 99.2),
+    ]
+    expect(collectCrashVwapBounceCandidates(lateSession(hybridCrashVwapParams.lastSignalMinute))).toHaveLength(1)
+    expect(collectCrashVwapBounceCandidates(lateSession(hybridCrashVwapParams.lastSignalMinute + 1))).toEqual([])
   })
 
   test('sparse 10:00, 10:05, 10:20 bars never produce a candidate', () => {
@@ -115,10 +124,8 @@ describe('hybrid-crash-vwap-gate', () => {
     expect(evaluateHybridCrashVwapShadow(input)).toEqual(record)
     expect(record).toMatchObject({
       schemaVersion: 'bayn.hybrid-crash-vwap.shadow.v1',
-      mode: HybridCrashVwapMode.Shadow,
       sessionDate: '2026-10-07',
       evaluatedAt: '2026-10-07T20:00:00.000Z',
-      note: 'RESEARCH_ONLY_no_live_fills',
     })
     expect(record.candidates.map(({ symbol }) => symbol)).toEqual(['CRDO', 'SNDK'])
   })

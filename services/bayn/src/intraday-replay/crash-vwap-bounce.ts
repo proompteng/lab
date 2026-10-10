@@ -1,14 +1,6 @@
 /**
- * RESEARCH hybrid producer: crash ∩ VWAP + bounce confirm.
- *
- * Schema: bayn.hybrid-crash-vwap.shadow.v1
- * Status: RESEARCH_ONLY — never changes live fills.
- *
- * Mode is decoded once at the command boundary (`BAYN_HYBRID_CRASH_VWAP`, see
- * `hybrid-crash-vwap-shadow-command.ts`); this module is pure and receives decoded bars and the evaluation instant.
- *
- * Frozen params match docs/bayn/research-candidate-crash-vwap-bounce-v1.md
- * Evidence: docs/bayn/evidence/2026-10-07-hybrid-hf-v5/
+ * RESEARCH_ONLY crash-below-VWAP bounce scan. Pure: callers decode the session bars and supply `evaluatedAt`.
+ * Definition: docs/bayn/research-candidate-crash-vwap-bounce-v1.md. Never feeds live fills.
  */
 import { Data, Result, Schema } from 'effect'
 
@@ -24,16 +16,15 @@ export const hybridCrashVwapSchemaVersion = 'bayn.hybrid-crash-vwap.shadow.v1' a
 export const hybridCrashVwapSessionBarsSchemaVersion = 'bayn.hybrid-crash-vwap.session-bars.v1' as const
 export const hybridCrashVwapModel = 'crash-vwap-bounce-1.0.0' as const
 
-/** Frozen research definition — do not retune without a new candidate id. */
+/** Frozen signal definition; retuning requires a new model id. Minutes are America/New_York minute-of-day. */
 export const hybridCrashVwapParams = {
   crashBp: 80,
   vwapDistBp: 60,
-  ageMinMinutes: 30,
-  bounceBars: 1,
-  holdMinutes: 90,
-  stopBp: 50,
-  rthOpenMinutes: 9 * 60 + 30, // 09:30 ET as minute-of-day
-  flattenMinutes: 15 * 60 + 55, // 15:55 ET
+  minSessionAgeMinutes: 30,
+  bounceMinutes: 1,
+  rthOpenMinute: 9 * 60 + 30,
+  lastSignalMinute: 15 * 60 + 50,
+  lastEntryMinute: 15 * 60 + 53,
 } as const
 
 /** Closed `BAYN_HYBRID_CRASH_VWAP` vocabulary. There is no live mode until a separate promotion RFC. */
@@ -46,7 +37,7 @@ export const HybridCrashVwapModeSchema = Schema.Enum(HybridCrashVwapMode)
 
 const MinuteOfDaySchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 24 * 60 - 1 }))
 
-export const HybridBarSchema = Schema.Struct({
+const HybridBarSchema = Schema.Struct({
   symbol: SymbolSchema,
   /** Minutes from midnight in America/New_York (RTH clock). */
   minuteOfDay: MinuteOfDaySchema,
@@ -59,7 +50,7 @@ export const HybridBarSchema = Schema.Struct({
 
 export type HybridBar = typeof HybridBarSchema.Type
 
-export const HybridCrashVwapSessionBarsSchema = Schema.Struct({
+const HybridCrashVwapSessionBarsSchema = Schema.Struct({
   schemaVersion: Schema.Literal(hybridCrashVwapSessionBarsSchemaVersion),
   sessionDate: IsoDateSchema,
   barsBySymbol: Schema.Record(SymbolSchema, Schema.Array(HybridBarSchema)),
@@ -86,18 +77,13 @@ export type HybridCrashVwapCandidate = {
 export type HybridCrashVwapShadowRecord = {
   readonly schemaVersion: typeof hybridCrashVwapSchemaVersion
   readonly model: typeof hybridCrashVwapModel
-  readonly mode: HybridCrashVwapMode.Shadow
   readonly sessionDate: string
   readonly evaluatedAt: string
   readonly params: typeof hybridCrashVwapParams
   readonly candidates: readonly HybridCrashVwapCandidate[]
-  readonly note: 'RESEARCH_ONLY_no_live_fills'
 }
 
-/**
- * Decode one session of bars from its JSON text. Every bar must belong to its symbol key and minutes must be strictly
- * ascending, so the pure scan below can rely on ordering and uniqueness.
- */
+/** Bars must be filed under their own symbol, strictly ascending by minute, with open and close inside the range. */
 export const decodeHybridCrashVwapSessionBars = (text: string) =>
   Result.gen(function* () {
     const session = yield* Schema.decodeUnknownResult(
@@ -139,86 +125,69 @@ export const decodeHybridCrashVwapSessionBars = (text: string) =>
     return session
   })
 
-/** Session VWAP from typical price × volume (honest cumulative). */
+/** Cumulative session VWAP of typical price. */
 export const sessionVwapSeries = (bars: readonly HybridBar[]): number[] => {
-  const out: number[] = []
-  let pv = 0
-  let vv = 0
-  for (const b of bars) {
-    const tp = (b.high + b.low + b.close) / 3
-    pv += tp * b.volume
-    vv += b.volume
-    out.push(vv > 0 ? pv / vv : b.close)
-  }
-  return out
+  let priceVolume = 0
+  let volume = 0
+  return bars.map((bar) => {
+    priceVolume += ((bar.high + bar.low + bar.close) / 3) * bar.volume
+    volume += bar.volume
+    return volume > 0 ? priceVolume / volume : bar.close
+  })
 }
 
 /**
- * Scan one symbol's RTH bars (decoded: strictly ascending by minuteOfDay).
- * The crash return and bounce confirmation require exact minute continuity; a gap in sparse IEX data excludes the
- * opportunity instead of stretching the frozen one-minute signal. Bounce confirm waits +bounceBars minutes and
- * requires close rebound — no same-bar lookahead entry.
+ * Signal: a one-minute close-to-close drop of at least `crashBp` that closes `vwapDistBp` below session VWAP, followed
+ * `bounceMinutes` later by a higher close. Both steps need exact minute continuity, so gaps in sparse bars drop the
+ * opportunity. Entry is the bounce bar's close.
  */
 export const collectCrashVwapBounceCandidates = (
   bars: readonly HybridBar[],
   params: typeof hybridCrashVwapParams = hybridCrashVwapParams,
 ): HybridCrashVwapCandidate[] => {
-  if (bars.length < 3) return []
   const vwap = sessionVwapSeries(bars)
-  const out: HybridCrashVwapCandidate[] = []
-  for (let i = 1; i < bars.length; i++) {
-    const signal = bars[i]
-    const previous = bars[i - 1]
-    const signalVwap = vwap[i]
-    if (signal === undefined || previous === undefined || signalVwap === undefined) continue
+  const candidates: HybridCrashVwapCandidate[] = []
+  for (let index = 1; index < bars.length; index++) {
+    const signal = bars[index]
+    const previous = bars[index - 1]
+    const sessionVwap = vwap[index]
+    const bounce = bars[index + params.bounceMinutes]
+    if (signal === undefined || previous === undefined || sessionVwap === undefined || bounce === undefined) continue
     if (previous.minuteOfDay !== signal.minuteOfDay - 1) continue
-    const age = signal.minuteOfDay - params.rthOpenMinutes
-    if (age < params.ageMinMinutes) continue
-    if (signal.minuteOfDay >= params.flattenMinutes - 5) continue
-    if (previous.close <= 0 || signalVwap <= 0) continue
+    if (bounce.minuteOfDay !== signal.minuteOfDay + params.bounceMinutes) continue
+    if (signal.minuteOfDay < params.rthOpenMinute + params.minSessionAgeMinutes) continue
+    if (signal.minuteOfDay > params.lastSignalMinute || bounce.minuteOfDay > params.lastEntryMinute) continue
     const crashBp = (signal.close / previous.close - 1) * 1e4
-    const distBp = (signal.close / signalVwap - 1) * 1e4
-    if (crashBp > -params.crashBp || distBp > -params.vwapDistBp) continue
-    const bounce = bars[i + params.bounceBars]
-    if (bounce === undefined || bounce.minuteOfDay !== signal.minuteOfDay + params.bounceBars) continue
-    if (bounce.close <= signal.close) continue
-    if (bounce.minuteOfDay >= params.flattenMinutes - 2) continue
-    out.push({
+    const vwapDistBp = (signal.close / sessionVwap - 1) * 1e4
+    if (crashBp > -params.crashBp || vwapDistBp > -params.vwapDistBp || bounce.close <= signal.close) continue
+    candidates.push({
       symbol: signal.symbol,
       signalMinuteOfDay: signal.minuteOfDay,
       entryMinuteOfDay: bounce.minuteOfDay,
       crashBp,
-      vwapDistBp: distBp,
-      sessionVwap: signalVwap,
+      vwapDistBp,
+      sessionVwap,
       signalClose: signal.close,
       entryClose: bounce.close,
     })
   }
-  return out
+  return candidates
 }
 
-/** Pure and deterministic: the caller supplies the evaluation instant from its `Clock` boundary. */
 export const evaluateHybridCrashVwapShadow = (input: {
   readonly session: HybridCrashVwapSessionBars
   readonly evaluatedAt: string
 }): HybridCrashVwapShadowRecord => {
-  const candidates: HybridCrashVwapCandidate[] = []
-  for (const symbol of Object.keys(input.session.barsBySymbol).toSorted()) {
-    const bars = input.session.barsBySymbol[symbol]
-    if (bars === undefined || bars.length === 0) continue
-    candidates.push(...collectCrashVwapBounceCandidates(bars))
-  }
+  const candidates = Object.values(input.session.barsBySymbol).flatMap((bars) => collectCrashVwapBounceCandidates(bars))
   candidates.sort(
     (a, b) => a.entryMinuteOfDay - b.entryMinuteOfDay || (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0),
   )
   return {
     schemaVersion: hybridCrashVwapSchemaVersion,
     model: hybridCrashVwapModel,
-    mode: HybridCrashVwapMode.Shadow,
     sessionDate: input.session.sessionDate,
     evaluatedAt: input.evaluatedAt,
     params: hybridCrashVwapParams,
     candidates,
-    note: 'RESEARCH_ONLY_no_live_fills',
   }
 }

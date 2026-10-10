@@ -15,7 +15,7 @@ import {
   HybridCrashVwapMode,
   hybridCrashVwapParams,
   hybridCrashVwapSessionBarsSchemaVersion,
-} from './jev/hybrid-crash-vwap-gate'
+} from './intraday-replay/crash-vwap-bounce'
 
 const hash = 'a'.repeat(64)
 const args = ['--input', 'bars.json', '--input-sha256', hash, '--output', 'record.json']
@@ -58,7 +58,7 @@ describe('hybrid crash-VWAP shadow command', () => {
   test('writes one clock-stamped shadow record and refuses to overwrite it', async () => {
     const directory = await mkdtemp(join(import.meta.dir, '.hybrid-crash-vwap-'))
     try {
-      const open = hybridCrashVwapParams.rthOpenMinutes
+      const open = hybridCrashVwapParams.rthOpenMinute
       const bars = [
         ...Array.from({ length: 35 }, (_, m) => ({ minuteOfDay: open + m, close: 100 })),
         { minuteOfDay: open + 35, close: 99 },
@@ -108,7 +108,6 @@ describe('hybrid crash-VWAP shadow command', () => {
       expect(Exit.isSuccess(await run({ BAYN_HYBRID_CRASH_VWAP: 'shadow' }))).toBe(true)
       const record = JSON.parse(await readFile(outputPath, 'utf8'))
       expect(record).toMatchObject({
-        mode: HybridCrashVwapMode.Shadow,
         sessionDate: '2026-10-07',
         evaluatedAt: '2026-10-07T20:05:00.000Z',
         candidates: [{ symbol: 'CRDO', signalMinuteOfDay: open + 35, entryMinuteOfDay: open + 36 }],
