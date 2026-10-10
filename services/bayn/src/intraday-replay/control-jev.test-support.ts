@@ -6,7 +6,7 @@ import { JevPurpose } from '../jev/portfolio'
 import { makeControlManagementBatch } from './control-management'
 import { createControlPortfolio } from './control-portfolio'
 
-export const controlJevFixture = (observedAt?: string) => {
+export const controlJevFixture = (observedAt?: string, holdingAgeMs = 180_000) => {
   const fixture = nativeJevFixture(JevPurpose.Manage, observedAt)
   const atMs = Date.parse(fixture.snapshot.manifest.observedAt)
   const quote = (time: number) => {
@@ -33,10 +33,10 @@ export const controlJevFixture = (observedAt?: string) => {
       quantityMicros: 10_000_000n,
       protocol: fixture.protocol,
       assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
-      decisionAtMs: atMs - 180_100,
-      arrivalAtMs: atMs - 180_000,
-      decisionQuote: quote(atMs - 180_100),
-      arrivalQuote: quote(atMs - 180_000),
+      decisionAtMs: atMs - holdingAgeMs - 100,
+      arrivalAtMs: atMs - holdingAgeMs,
+      decisionQuote: quote(atMs - holdingAgeMs - 100),
+      arrivalQuote: quote(atMs - holdingAgeMs),
     },
     snapshot: fixture.snapshot,
   }
