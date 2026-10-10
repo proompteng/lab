@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ofz-api
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ofz-api
+spec:
+  selector:
+    app.kubernetes.io/name: ofz-api
+  ports:
+    - name: grpc
+      port: 9443
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ofz-api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ofz-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ofz-api
+        spiffe.io/spire-managed-identity: 'true'
+    spec:
+      serviceAccountName: ofz-api
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: ofz-api
+      containers:
+        - name: ofz-api
+          image: registry.ide-newton.ts.net/lab/ofz
+          args: [serve]
+          ports:
+            - name: grpc
+              containerPort: 9443
+          env:
+            - name: RUST_LOG
+              value: ofz=info
+            - name: OFZ_DATABASE_DSN
+              value: host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=ofz_control user=ofz_api sslmode=require
+            - name: OFZ_DATABASE_PASSWORD_FILE
+              value: /var/run/ofz/database/password
+            - name: OFZ_DATABASE_CA_FILE
+              value: /var/run/ofz/database-ca/ca.crt
+            - name: OFZ_SPICEDB_ENDPOINT
+              value: http://ofz.ofz.svc.cluster.local:8443
+            - name: OFZ_SPICEDB_KEY_FILE
+              value: /var/run/ofz/native/preshared_key
+            - name: OFZ_OIDC_ISSUER
+              value: https://auth.proompteng.ai/realms/tengri
+            - name: OFZ_OIDC_CLIENT_ID
+              value: tengri-bff
+            - name: OFZ_OIDC_CONNECT_IP
+              value: 100.100.244.181
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///spiffe-workload-api/spire-agent.sock
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: '1'
+              memory: 512Mi
+          startupProbe:
+            tcpSocket:
+              port: grpc
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: database
+              mountPath: /var/run/ofz/database
+              readOnly: true
+            - name: database-ca
+              mountPath: /var/run/ofz/database-ca
+              readOnly: true
+            - name: native
+              mountPath: /var/run/ofz/native
+              readOnly: true
+      volumes:
+        - name: workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: database
+          secret:
+            secretName: ofz-api-db-auth
+            defaultMode: 0440
+        - name: database-ca
+          secret:
+            secretName: ofz-db-ca
+            defaultMode: 0440
+        - name: native
+          secret:
+            secretName: ofz-spicedb-key
+            defaultMode: 0440
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ofz-api
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ofz-api

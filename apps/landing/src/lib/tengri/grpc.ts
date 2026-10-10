@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
+import { z } from 'zod'
 import type {
   AgentArchitecture,
   AgentPhase,
@@ -46,6 +47,7 @@ const POWER_SETTINGS_PRESERVED_SCALAR_DEFAULTS = new Set(['idleTimeoutMinutes'])
 type RawRecord = Record<string, unknown>
 type RawAgent = RawRecord & {
   id?: string
+  uid?: string
   displayName?: string
   phase?: string
   architecture?: string
@@ -843,6 +845,7 @@ function normalizeAgent(agent: RawAgent): TengriAgent {
     throw new TengriUnavailableError('The runtime returned invalid power settings. Update Tengri and refresh.')
   return {
     id: stringValue(agent.id),
+    uid: z.uuid().parse(agent.uid),
     displayName: stringValue(agent.displayName, 'Unnamed agent'),
     phase: normalizePhase(stringValue(agent.phase)),
     architecture: normalizeArchitecture(stringValue(agent.architecture)),

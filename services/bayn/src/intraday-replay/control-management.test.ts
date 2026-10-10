@@ -12,6 +12,7 @@ import { makeJevTradingSignalBatch, reproduceJevTradingSignalBatchEvidence } fro
 import { reconciledStateHash } from '../reconciliation'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { applyControlManagementDecision, makeControlManagementBatch } from './control-management'
+import { controlJevFixture } from './control-jev.test-support'
 
 const fixture = nativeJevFixture(JevPurpose.Manage)
 const observedAtMs = Date.parse(fixture.snapshot.manifest.observedAt)
@@ -140,6 +141,7 @@ test('unbound, expired, future and changed-position management cannot trigger an
     { expectedBatchId: 'a'.repeat(64) },
     { committedAtMs: observedAtMs + 99 },
     { committedAtMs: Date.parse(value.batch.expiresAt) + 1 },
+    { committedAtMs: Date.parse(value.batch.expiresAt) },
     { committedAtMs: NaN },
     { portfolio: { ...value.controlPortfolio, ledger: { ...value.controlPortfolio.ledger, cashMicros: '1' } } },
     { portfolio: Result.getOrThrow(createControlPortfolio('100000000000')) },
@@ -148,6 +150,19 @@ test('unbound, expired, future and changed-position management cannot trigger an
     expect(Result.isFailure(applyControlManagementDecision({ ...base, ...patch }))).toBe(true)
   const other = prepared({ ...input(), runId: '7'.repeat(64) })
   expect(Result.isFailure(applyControlManagementDecision({ ...base, decision: managedDecision(other) }))).toBe(true)
+})
+
+test('management commitment is strictly before the holding deadline for both hold and exit', () => {
+  const value = controlJevFixture(undefined, 15 * 60_000 - 1000).prepared
+  for (const action of ['hold', 'exit']) {
+    const base = {
+      portfolio: value.controlPortfolio,
+      expectedBatchId: value.batch.batchId,
+      decision: managedDecision(value, action),
+    }
+    expect(Result.isSuccess(applyControlManagementDecision({ ...base, committedAtMs: observedAtMs + 999 }))).toBeTrue()
+    expect(Result.isFailure(applyControlManagementDecision({ ...base, committedAtMs: observedAtMs + 1000 }))).toBeTrue()
+  }
 })
 
 describe('native control management requests', () => {

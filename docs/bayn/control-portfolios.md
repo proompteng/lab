@@ -177,6 +177,19 @@ The management pass advances its deadline clock without reading historical sourc
 the source and equity marks catch up to that clock, including on failure. Replay parsing time never becomes model
 latency or changes the management deadline.
 
+Jev management definition `bayn.control-study-definition.v9` bounds the complete observation, inference and journal
+pass using the independent provider clock. Its deadline is the earlier of model validity and the first-fill maximum
+hold. Cancellation waits for cleanup and retains its elapsed time. A hold or model exit cannot commit at or after
+that deadline; the session then rechecks its mechanical exit. Received usage stays priced even when receipt
+persistence crosses the deadline; interrupted calls without usage remain unknown. Existing Jev reports retain
+their original bytes and identities. Run a new registered study with the corrected executable and definition for
+comparisons. Mechanical definitions and reports are unchanged by this correction.
+Journal operations retain their serial permit and scoped file cleanup without masking the complete operation from
+cancellation. Interruption can leave an uncertain durable prefix, so it permanently invalidates that journal and
+forbids further observation, batch or request work. Preserve the interrupted directory and start a new registered
+experiment; never resume it or infer a successful write from an existing file. Received-call retention and file
+finalizers still drain before management returns, and their elapsed time remains measured.
+
 Every session retains opening, closing, and one-minute marked equity at a fresh bid with positive displayed size.
 It also marks each poll, decision completion, and the portfolio before and after each order outcome. Every valid
 mark records broker equity and net equity after cumulative external expenses separately. Broker equity and its

@@ -101,6 +101,18 @@ describe('Tengri BFF request bodies', () => {
     expect(await response.json()).toEqual({ error: 'Request body is invalid JSON' })
   })
 
+  test('the smaller administration limit applies to both declared and streamed bodies', async () => {
+    for (const declared of [false, true]) {
+      const request = new Request('https://proompteng.ai/api/tengri/access', {
+        method: 'POST',
+        body: new Uint8Array(65537),
+        headers: { 'content-type': 'application/json', ...(declared ? { 'content-length': '65537' } : {}) },
+      })
+      const error = await readTengriJsonBody(request, { maxBytes: 65536 }).catch((cause: unknown) => cause)
+      expect(tengriRouteError(error).status).toBe(413)
+    }
+  })
+
   test('accepts the worst common JSON escaping within the editable file limit', async () => {
     const content = '\u0000'.repeat(1024 * 1024)
     const body = JSON.stringify({ action: 'write-file', agentId: 'agent-test', path: '/workspace/nul.txt', content })
@@ -282,7 +294,7 @@ describe('Tengri BFF request bodies', () => {
   })
 
   test('requires JSON and rejects cross-origin state-changing requests', async () => {
-    process.env.BETTER_AUTH_URL = 'https://proompteng.ai'
+    process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
     const wrongType = new Request('https://proompteng.ai/api/tengri', {
       method: 'POST',
       body: '{}',
