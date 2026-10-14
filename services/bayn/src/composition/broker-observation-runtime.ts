@@ -5,6 +5,7 @@ import {
   Cause,
   Clock,
   Effect,
+  type Exit,
   Layer,
   Logger,
   ManagedRuntime,
@@ -18,12 +19,12 @@ import {
 import { HttpClient } from 'effect/http'
 
 import type { ApplicationPlanFor } from '../app'
-import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
+import { layer as brokerSessionLayer, BrokerSession, BrokerSessionAcquisitionError } from '../broker/alpaca/session'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
 import { brokerObservationQuotaWindowMs, makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
 import { brokerSnapshotCacheConfig, captureBrokerObservation } from '../broker/alpaca/snapshot-cache'
 import { observedBrokerSnapshotHash, observationUnavailable } from '../broker/alpaca/observed-snapshot'
-import type { BrokerReadError } from '../broker/alpaca/failures'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
@@ -66,6 +67,25 @@ export const brokerPublicationFailureAnnotations = (failure: BrokerReadError): R
     return unknown
   }
 }
+
+/** Preserve typed acquisition failures, defects and interruption across the managed runtime boundary. */
+export const runBrokerObservationCapture = <A>(
+  capture: (signal: AbortSignal) => Promise<Exit.Exit<A, BrokerReadError | BrokerSessionAcquisitionError>>,
+): Effect.Effect<A, BrokerReadError> =>
+  Effect.promise(capture).pipe(
+    Effect.flatten,
+    Effect.mapError((cause) => {
+      if (cause instanceof BrokerReadError) return cause
+      const read = cause.cause instanceof BrokerReadError ? cause.cause : undefined
+      return new BrokerReadError({
+        operation: read?.operation ?? 'preflight',
+        kind: read?.kind ?? BrokerReadErrorKind.Forbidden,
+        retryable: read?.retryable ?? false,
+        message: 'Verified broker observation acquisition failed',
+        cause,
+      })
+    }),
+  )
 
 export const settleCompletedBrokerObservationPoll = <R>(
   poll: Effect.Effect<BrokerObservationPoll, BrokerReadError, R>,
@@ -183,20 +203,18 @@ export const acquireBrokerObservationRuntime = (
                   const broker = yield* ScopedRef.get(brokerRuntimes)
                   const parent = yield* Effect.currentSpan.pipe(Effect.orDie)
                   const annotations = yield* References.CurrentLogAnnotations
-                  return yield* Effect.tryPromise({
-                    try: (captureSignal) =>
-                      broker.runPromise(
-                        Effect.gen(function* () {
-                          return yield* captureBrokerObservation(
-                            (yield* BrokerSession).read,
-                            ticket.startedAt,
-                            captureTimeoutMs,
-                          )
-                        }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
-                        { signal: captureSignal },
-                      ),
-                    catch: (cause) => observationUnavailable('Verified broker observation acquisition failed', cause),
-                  })
+                  return yield* runBrokerObservationCapture((captureSignal) =>
+                    broker.runPromiseExit(
+                      Effect.gen(function* () {
+                        return yield* captureBrokerObservation(
+                          (yield* BrokerSession).read,
+                          ticket.startedAt,
+                          captureTimeoutMs,
+                        )
+                      }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
+                      { signal: captureSignal },
+                    ),
+                  )
                 })
                 const result = yield* capture.pipe(
                   withObservedSpan('bayn.broker.observation.capture'),

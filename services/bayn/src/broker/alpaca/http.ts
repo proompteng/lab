@@ -76,6 +76,7 @@ import {
 } from './requests'
 import { Pipeable } from '../../pipeable'
 import { makeReadDiagnostics, projectReadDiagnostic, type ReadDiagnostic } from './read-diagnostics'
+import { positionDecodeDiagnostic } from './response-decode-diagnostics'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 
@@ -286,6 +287,21 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         }
 
         const value = yield* Effect.fromResult(decoder(raw)).pipe(
+          Effect.tapError((cause) => {
+            if (operation !== 'positions') return Effect.void
+            const diagnostic = positionDecodeDiagnostic(cause, raw)
+            const annotations = {
+              'broker.decode_field': diagnostic.field,
+              'broker.decode_issue': diagnostic.issue,
+              'broker.decode_expected_type': diagnostic.expectedType,
+              'broker.decode_actual_type': diagnostic.actualType,
+            }
+            return Effect.annotateCurrentSpan(annotations).pipe(
+              Effect.andThen(
+                Effect.logWarning('Broker positions response schema rejected').pipe(Effect.annotateLogs(annotations)),
+              ),
+            )
+          }),
           Effect.mapError((cause) =>
             invalidResponse({
               operation,

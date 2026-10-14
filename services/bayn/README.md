@@ -617,6 +617,11 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
 - Jev HTTP spans retain Effect's default redaction for authorization, cookies, Set-Cookie and API-key headers while
   preserving HTTP status, timing and rate-limit diagnostics. The inference client preserves caller-provided redaction.
+- Rejected positions responses emit one bounded schema diagnostic on the existing read span and a warning. The
+  `broker.decode_field` path uses only authored position fields and `[]` in place of array indices; issue, expected type
+  and actual type use fixed categories. Payload values, arbitrary keys, schema messages and account identifiers are
+  omitted. The response remains `INVALID_RESPONSE`; lazy broker-session acquisition preserves its underlying read
+  category instead of labelling every failure `TIMEOUT`. Deadlines, retries, validation and freshness are unchanged.
 - Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings to stderr. They contain the
   telemetry stage, service, source revision when configured, and HTTP status or transport reason. Collector bodies,
   headers, endpoints, and raw errors are omitted, and command JSON output stays on stdout. Successful exports remain
