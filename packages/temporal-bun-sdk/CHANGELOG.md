@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.11.5...temporal-bun-sdk-v1.0.0) (2026-10-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **temporal-bun-sdk:** workflow Effect and Schema contracts now use Effect 4. Existing Effect 3 histories must remain on their original worker runtime. Keep production Bumba and Jangar on the verified 0.11.5 registry artifact.
+
+### Features
+
+* **temporal-bun-sdk:** migrate to Effect 4 with safe worker isolation ([#14772](https://github.com/proompteng/lab/issues/14772)) ([2b2b437](https://github.com/proompteng/lab/commit/2b2b4377ffca9efb02003b25cc7c1cecb2a233da))
+
 ## [0.11.5](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.11.4...temporal-bun-sdk-v0.11.5) (2026-10-04)
 
 
