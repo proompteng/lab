@@ -8,7 +8,7 @@ import {
   HybridCrashVwapFailure,
   HybridCrashVwapMode,
   HybridCrashVwapModeSchema,
-} from './jev/hybrid-crash-vwap-gate'
+} from './intraday-replay/crash-vwap-bounce'
 import { currentUtcInstant } from './time'
 
 /** RESEARCH_ONLY shadow switch. Absent means off; any value outside the closed vocabulary fails at startup. */
@@ -87,10 +87,7 @@ export const runHybridCrashVwapShadowCommand = (rawArgs: readonly string[]) =>
       recordHash,
       sessionDate: record.sessionDate,
       candidates: record.candidates.length,
-      qualification: record.qualification,
-      acceptanceEligible: record.acceptanceEligible,
-      historicalEvidence: record.historicalEvidence,
-      exclusions: record.exclusions,
+      exclusions: record.exclusions.length,
     }
     yield* Effect.logInfo('Hybrid crash-VWAP shadow record written').pipe(Effect.annotateLogs(summary))
     yield* print(JSON.stringify(summary))
