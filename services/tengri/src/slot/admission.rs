@@ -439,7 +439,9 @@ fn request_target(method: &str, body: &[u8]) -> anyhow::Result<String> {
             canonical::<proto::Empty>(body)?;
             String::new()
         }
-        "ListFiles" | "ReadFile" | "CreateDirectory" => canonical::<proto::Path>(body)?.path,
+        "StatFile" | "ListFiles" | "ReadFile" | "CreateDirectory" => {
+            canonical::<proto::Path>(body)?.path
+        }
         "WriteFile" => canonical::<proto::FileWrite>(body)?.path,
         "MoveFile" => canonical::<proto::FileMove>(body)?.source_path,
         "DeleteFile" => canonical::<proto::FileDelete>(body)?.path,
@@ -547,6 +549,43 @@ mod tests {
     }
 
     const READ: &str = "/proompteng.runtime.guest.v1.NanoagentService/ReadFile";
+
+    #[tokio::test]
+    async fn supervisor_binds_path_rpcs_to_the_signed_target() {
+        let admission = GuestAdmission::fixture();
+        let target = "/workspace/tengri-durability-check";
+        let body = proto::Path {
+            path: target.into(),
+        }
+        .encode_to_vec();
+        for operation in ["StatFile", "ListFiles", "ReadFile", "CreateDirectory"] {
+            let method = format!("/proompteng.runtime.guest.v1.NanoagentService/{operation}");
+            let (mut opening, forwarded) = admission
+                .opening(signed(&method, target, &body))
+                .await
+                .unwrap_or_else(|error| panic!("{operation}: {error}"));
+            assert_eq!(opening.target, target);
+            admission
+                .require_binding(&opening, &claim(), fence())
+                .unwrap();
+            assert_eq!(
+                forwarded
+                    .into_body()
+                    .collect()
+                    .await
+                    .unwrap()
+                    .to_bytes()
+                    .as_ref(),
+                framed(&body)
+            );
+            opening.target = "/workspace/other".into();
+            assert!(
+                admission
+                    .require_binding(&opening, &claim(), fence())
+                    .is_err()
+            );
+        }
+    }
 
     #[tokio::test]
     async fn supervisor_binds_preview_method_path_query_and_body_before_forwarding() {
