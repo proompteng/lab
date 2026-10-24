@@ -288,6 +288,15 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         "concurrent guest requests changed the retained file"
     );
     eprintln!("real KVM concurrent guest requests passed");
+    let metadata = rpc.stat_file("/workspace/continuity.txt").await?;
+    ensure!(
+        !metadata.directory && metadata.size == i64::try_from(file.content.len())?,
+        "signed file metadata differs from the retained file"
+    );
+    ensure!(
+        rpc.stat_file("/workspace").await?.directory,
+        "signed directory metadata was not forwarded"
+    );
     let mut foreign = claim.clone();
     foreign.microvm_uid = "66666666-6666-4666-8666-666666666666".into();
     ensure!(
