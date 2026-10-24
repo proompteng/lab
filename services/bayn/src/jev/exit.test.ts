@@ -1,4 +1,4 @@
-import { jevMarketForSymbol } from './markets'
+import { jevHoldingMinutesForSymbol, jevMarketForSymbol } from './markets'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -226,7 +226,7 @@ describe('native Jev exit targets', () => {
   ])('holding deadline uses the broker lifetime for a %ims-old reconciled cut', (ageMs, accepted) => {
     const portfolio = portfolioWithBrokerAge(ageMs)
     if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected held position')
-    const firstAt = Date.parse(evidence.observedAt) - fixture.protocol.maximumHoldingMinutes * 60_000
+    const firstAt = Date.parse(evidence.observedAt) - jevHoldingMinutesForSymbol(fixture.protocol, 'AAPL') * 60_000
     const result = decideJevExit({
       ...evidence,
       portfolio: {
@@ -327,7 +327,7 @@ describe('native Jev exit targets', () => {
   })
   test('the holding limit starts at the first real partial fill and does not require inference', () => {
     if (fixture.portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected held position')
-    const firstAt = Date.parse(evidence.observedAt) - fixture.protocol.maximumHoldingMinutes * 60_000
+    const firstAt = Date.parse(evidence.observedAt) - jevHoldingMinutesForSymbol(fixture.protocol, 'AAPL') * 60_000
     const material = {
       ...evidence,
       portfolio: {

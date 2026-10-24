@@ -1,5 +1,5 @@
 import { exchangeSessions } from '../market-hours'
-import { jevMarketForSymbol } from './markets'
+import { jevHoldingMinutesForSymbol, jevMarketForSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
 
@@ -132,7 +132,7 @@ export const decideJevExit = (input: unknown) =>
     const evidence = yield* Schema.decodeUnknownResult(JevExitEvidenceSchema, strictParseOptions)(input)
     const { portfolio, protocol, trigger } = evidence
     if (portfolio.purpose !== JevPurpose.Manage) return yield* invalid('Exit requires an accounted held position')
-    if (!equal(portfolio.exitPolicy, jevPositionExitPolicy(protocol, portfolio.exitPolicy.plans)))
+    if (!equal(portfolio.exitPolicy, jevPositionExitPolicy(portfolio.exitPolicy.plans)))
       return yield* invalid('Exit policy differs from the policy sealed into the entry decision')
     const state = portfolio.brokerState
     const position = state.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
@@ -141,6 +141,8 @@ export const decideJevExit = (input: unknown) =>
     if (position === undefined || firstFill === undefined)
       return yield* invalid('Exit requires a long position with cost basis and its first fill')
     const market = jevMarketForSymbol(position.symbol)
+    if (entryPlan.levels.maximumHoldingMinutes !== jevHoldingMinutesForSymbol(protocol, position.symbol))
+      return yield* invalid('The entry-bound holding horizon differs from its market protocol')
     const now = Date.parse(evidence.observedAt)
     if (
       !protocol.candidateSymbols.includes(position.symbol) ||
@@ -163,7 +165,7 @@ export const decideJevExit = (input: unknown) =>
           return yield* invalid('Protection release requires a durable exit request or an accounted protective fill')
         break
       case JevExitReason.MaximumHold:
-        if (now < Date.parse(firstFill.occurredAt) + protocol.maximumHoldingMinutes * 60_000)
+        if (now < Date.parse(firstFill.occurredAt) + entryPlan.levels.maximumHoldingMinutes * 60_000)
           return yield* invalid('Maximum holding time has not elapsed since the actual first fill')
         break
       case JevExitReason.ProtectiveStop:
@@ -179,7 +181,7 @@ export const decideJevExit = (input: unknown) =>
       }
     }
     return {
-      schemaVersion: 'bayn.jev-exit-target.v5' as const,
+      schemaVersion: 'bayn.jev-exit-target.v6' as const,
       strategyName: 'jev' as const,
       cycleId: evidence.cycleId,
       entryDecisionHash: portfolio.entryDecisionHash,
@@ -194,7 +196,7 @@ export const decideJevExit = (input: unknown) =>
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev exit evidence does not reproduce', cause })))
 
 export const JevExitTargetSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-exit-target.v5'),
+  schemaVersion: Schema.Literal('bayn.jev-exit-target.v6'),
   strategyName: Schema.Literal('jev'),
   cycleId: Sha256Schema,
   entryDecisionHash: Sha256Schema,
@@ -262,7 +264,7 @@ export const jevProfitTargetLimitFloors = (
     if (firstFill === undefined || reference === undefined)
       return yield* invalid('A profit limit requires its first fill and current close reference')
     if (
-      observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, target.evidence.protocol.maximumHoldingMinutes) ||
+      observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, plan.levels.maximumHoldingMinutes) ||
       jevProtectiveStopCrossed(BigInt(reference.referencePriceMicros), plan.levels)
     )
       return {}
@@ -274,9 +276,10 @@ export const jevProfitTargetHoldingDeadlineAt = (
 ): Result.Result<string | undefined, JevContractError> => {
   if (!isProfitExit(target)) return Result.succeed(undefined)
   const portfolio = target.evidence.portfolio
-  if (portfolio.purpose !== JevPurpose.Manage || portfolio.entryFills[0] === undefined)
-    return invalid('A profit limit requires the entry-bound first fill')
-  return Result.succeed(
-    jevMaximumHoldDueAt(portfolio.entryFills[0].occurredAt, target.evidence.protocol.maximumHoldingMinutes),
+  if (portfolio.purpose !== JevPurpose.Manage) return invalid('A profit limit requires an accounted held position')
+  const firstFill = portfolio.entryFills[0]
+  if (firstFill === undefined) return invalid('A profit limit requires the entry-bound first fill')
+  return jevManagedExitPlan(portfolio).pipe(
+    Result.map((plan) => jevMaximumHoldDueAt(firstFill.occurredAt, plan.levels.maximumHoldingMinutes)),
   )
 }

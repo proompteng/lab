@@ -666,8 +666,10 @@ the preparation ordering does not guarantee submission.
 Position management binds original accounted entry fills, posted inventory debits, and fresh reconciliation.
 Gross entry fills minus posted coin debits and accounted protective disposals must equal held quantity. A missing or unposted debit cannot authorize
 management. Overdue positions are evaluated before archive or model work, including crypto positions from a prior
-UTC date. Expired broker evidence waits for reconciliation before authorizing a close. A 15-minute holding limit
-starts at the first actual fill. A verified adverse bid triggers the absolute strategy stop. A verified bid at the absolute strategy target triggers
+UTC date. Expired broker evidence waits for reconciliation before authorizing a close. The holding deadline is sealed into the selected entry plan and starts at the first actual fill: 15 minutes for
+equity and 60 minutes for crypto. The source window remains 30 minutes. The continuous execution window reserves
+60 seconds for entry, 60 minutes for holding and three minutes for close recovery; entry validity, loss, drawdown,
+exposure, stop, funding, quote freshness and accounting checks are unchanged. A verified adverse bid triggers the absolute strategy stop. A verified bid at the absolute strategy target triggers
 the application profit exit when a broker group has not already disposed of inventory. Its initial close must
 commit before that quote expires, measured from the quote event time. Native targets bind the proof and deadline;
 no model response authorizes an exit.
@@ -2039,9 +2041,10 @@ Equity admission starts after that first completed minute and its existing decis
 remains 60 seconds. Continuous markets remain eligible before that boundary.
 
 Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
-predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 140 owns the
-current economic-plan v18 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
-reconciliation before activating a new same-account v18 PAPER mandate against its verified published image.
+predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 144 owns the
+market-specific holding-horizon v21 cutover. Verify flat settled inventory, terminal orders, complete accounting and
+fresh exact reconciliation before activating a new same-account v21 PAPER mandate against its verified published
+image. Existing evidence, loss history, capital limits and acceptance cohorts remain intact.
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.
 See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.

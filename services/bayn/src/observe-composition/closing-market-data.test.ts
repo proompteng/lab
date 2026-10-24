@@ -308,18 +308,14 @@ describe('closing market-data fallback boundaries', () => {
   ] as const)('profit close preserves its price and mandatory exits: %s', async (scenario) => {
     const request = await fixture()
     const entry = request.entryDocument.strategyDecision
-    if (entry?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('Expected a Jev entry')
+    if (entry?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Expected a Jev entry')
     const plan = entry.exitPolicy.plans['AAPL']
     if (plan === undefined) throw new Error('Expected an entry-bound plan')
     const floor = Number(plan.levels.profitLimitPriceMicros) / 1_000_000
     const pending = scenario.startsWith('pending-') || scenario.startsWith('partial-')
     const observedAt = new Date(
       Date.parse(at) +
-        (pending
-          ? scenario.includes('stop')
-            ? 60_000
-            : native.protocol.maximumHoldingMinutes * 60_000 - 1_500
-          : 1_000),
+        (pending ? (scenario.includes('stop') ? 60_000 : plan.levels.maximumHoldingMinutes * 60_000 - 1_500) : 1_000),
     ).toISOString()
     const snapshotAt = (query: Parameters<IntradayMarketDataService['loadSnapshot']>[0], bid: number) => {
       const raw = makeIntradayMomentumTestSnapshot(
@@ -422,7 +418,7 @@ describe('closing market-data fallback boundaries', () => {
       scenario !== 'pending-stop-nonprofit'
     const buildAt =
       scenario === 'holding'
-        ? new Date(Date.parse(at) + native.protocol.maximumHoldingMinutes * 60_000).toISOString()
+        ? new Date(Date.parse(at) + plan.levels.maximumHoldingMinutes * 60_000).toISOString()
         : observedAt
     const bid = scenario === 'stop' || scenario === 'pending-stop-nonprofit' ? stopBid : floor - 0.01
     const result = await Effect.runPromise(

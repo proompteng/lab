@@ -1,24 +1,20 @@
 import { Schema } from 'effect'
 
-import { PositiveIntegerSchema, SymbolSchema } from '../schemas'
-import type { JevProtocol } from './protocol'
+import { SymbolSchema } from '../schemas'
 import { JevFundedExitPlanSchema, type JevFundedExitPlan } from './strategy-exit-plan'
 
 export const positionProtectionIntervalMs = 5_000 as const
 
 export const JevPositionExitPolicySchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.position-exit-policy.v4'),
+  schemaVersion: Schema.Literal('bayn.position-exit-policy.v5'),
   maximumPriceCheckIntervalMs: Schema.Literal(positionProtectionIntervalMs),
-  maximumHoldingMinutes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60)),
   plans: Schema.Record(SymbolSchema, JevFundedExitPlanSchema),
 })
 
 export const jevPositionExitPolicy = (
-  protocol: JevProtocol,
   plans: Readonly<Record<string, JevFundedExitPlan>>,
 ): typeof JevPositionExitPolicySchema.Type => ({
-  schemaVersion: 'bayn.position-exit-policy.v4',
+  schemaVersion: 'bayn.position-exit-policy.v5',
   maximumPriceCheckIntervalMs: positionProtectionIntervalMs,
-  maximumHoldingMinutes: protocol.maximumHoldingMinutes,
   plans,
 })

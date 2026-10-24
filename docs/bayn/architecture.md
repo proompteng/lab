@@ -6,8 +6,12 @@ Bayn is a single-writer intraday trading service. The execution path is account-
 the same strategy, intent, risk, mutation, recovery, accounting, and reconciliation code. Broker environment and a
 durable capital activation determine where an otherwise identical execution plan may run.
 
-The active runtime contains one strategy, `jev`, using
-`bayn.jev.protocol.v20` over trading-signal state `v17`. Historical strategy and decision schemas remain readable only
+Bayn implements one strategy, `jev`, using
+`bayn.jev.protocol.v21` over trading-signal state `v18`. The source holding policy is 15 minutes for equities and
+60 minutes for crypto, sealed into each entry plan; the observed source window remains 30 minutes.
+Migration 144 requires a flat, settled, fully accounted and freshly reconciled cutover before restricting prior
+PAPER authority to OBSERVE. Image delivery grants no new capital authority or trading qualification.
+Historical strategy and decision schemas remain readable only
 where persisted records require them; they are not runtime fallbacks and cannot start new cycles.
 
 ## Ownership

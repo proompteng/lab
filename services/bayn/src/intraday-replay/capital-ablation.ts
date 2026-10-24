@@ -3,7 +3,7 @@ import { Result, Schema } from 'effect'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { canonicalHashV1Result } from '../hash'
-import { jevMarketForSymbol } from '../jev/markets'
+import { jevHoldingMinutesForSymbol, jevMarketForFeed, jevMarketForSymbol } from '../jev/markets'
 import { jevEntryQuoteExclusion } from '../jev/trading-signals'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { isContinuousMarket, observationSession } from '../market-hours'
@@ -185,7 +185,8 @@ export const capitalEvents = (
     add(CapitalEventKind.Opportunity, Math.min(atMs, endMs))
     add(CapitalEventKind.EntryArrival, atMs + scenario.latencyMs)
     const protocol = opportunity.batch.observation.protocol
-    const deadline = Math.min(endMs, atMs + scenario.latencyMs + protocol.maximumHoldingMinutes * 60_000 + 180_000)
+    const holdingMinutes = protocol.holdingMinutes[jevMarketForFeed(opportunity.batch.snapshot.manifest.feed).market]
+    const deadline = Math.min(endMs, atMs + scenario.latencyMs + holdingMinutes * 60_000 + 180_000)
     for (let at = atMs + scenario.latencyMs + 5000; at + scenario.latencyMs < deadline; at += 5000) {
       add(CapitalEventKind.Poll, at)
       add(CapitalEventKind.ExitArrival, at + scenario.latencyMs)
@@ -318,7 +319,7 @@ export const stepCapitalState = (
           ? Number.POSITIVE_INFINITY
           : Date.parse(session.closeAt) - protocol.flattenBeforeCloseMinutes * 60_000,
         closeMs: isContinuousMarket(batch.snapshot.manifest.calendar)
-          ? atMs + scenario.latencyMs + protocol.maximumHoldingMinutes * 60_000 + 180_000
+          ? atMs + scenario.latencyMs + jevHoldingMinutesForSymbol(protocol, symbol) * 60_000 + 180_000
           : Date.parse(session.closeAt),
       }
       if (atMs + scenario.latencyMs >= terms.cutoffMs) return row(CapitalAdmission.Cutoff)

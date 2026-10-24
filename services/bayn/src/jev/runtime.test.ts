@@ -19,6 +19,7 @@ import { evaluateJevObservation, evaluateJevPositionManagement } from './runtime
 import { utcInstantFromEpochMillis } from '../time'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { defaultJevProtocolDocument } from './protocol'
+import { jevHoldingMinutesForSymbol } from './markets'
 
 const scenario = (
   options: {
@@ -73,8 +74,9 @@ const scenario = (
           levels: {
             ...planned.levels,
             symbol,
+            maximumHoldingMinutes: jevHoldingMinutesForSymbol(fixture.protocol, symbol),
             sourceEndAt: utcInstantFromEpochMillis(sourceEnd),
-            sourceStartAt: utcInstantFromEpochMillis(sourceEnd - planned.levels.maximumHoldingMinutes * 60_000),
+            sourceStartAt: utcInstantFromEpochMillis(sourceEnd - fixture.protocol.lookbackMinutes * 60_000),
           },
         },
       },
@@ -249,6 +251,31 @@ describe('entry-bound native position exits', () => {
     })
     expect(check.pricingCalls()).toBe(0)
   })
+  for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
+    test(`${symbol} retains its entry-bound sixty-minute deadline after fifteen minutes`, async () => {
+      const check = scenario({ symbol, firstFillAt: '2026-09-04T14:15:32.000Z', pricingUnavailable: true })
+      expect(await check.run()).toMatchObject({
+        _tag: 'Wait',
+        details: { maximumHoldDueAt: '2026-09-04T15:15:32.000Z' },
+      })
+    })
+    test(`${symbol} exits at sixty minutes without market data or inference`, async () => {
+      const check = scenario({ symbol, firstFillAt: '2026-09-04T13:30:32.000Z', pricingUnavailable: true })
+      expect(await check.run()).toMatchObject({
+        _tag: 'Exit',
+        target: { reason: JevExitReason.MaximumHold, symbols: [symbol] },
+      })
+      expect(check.pricingCalls()).toBe(0)
+    })
+    test(`${symbol} cannot close at sixty minutes with stale broker evidence`, async () => {
+      const check = scenario({ symbol, firstFillAt: '2026-09-04T13:30:32.000Z', brokerEvidenceAgeMs: 60_000 })
+      expect(await check.run()).toMatchObject({
+        _tag: 'Wait',
+        details: { waitReason: 'JEV_POSITION_AWAITING_RECONCILIATION' },
+      })
+      expect(check.pricingCalls()).toBe(0)
+    })
+  }
   for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
     test(`${symbol} recovers an overdue prior-day position without market data or Jev`, async () => {
       const check = scenario({ symbol, firstFillAt: '2026-09-03T23:50:00.000Z', pricingUnavailable: true })

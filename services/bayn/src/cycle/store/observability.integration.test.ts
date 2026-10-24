@@ -436,7 +436,7 @@ describePostgres('PostgreSQL intraday observability projection', () => {
             ) ON COMMIT DROP`
             const document = {
               targetPlan: { status: 'NO_TRADE', reason: 'TARGETS_SATISFIED', targets: [] },
-              strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v6', entryPlanRejections: rejections },
+              strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v7', entryPlanRejections: rejections },
               orderedIntentIds: [],
               dispatchable: false,
             }

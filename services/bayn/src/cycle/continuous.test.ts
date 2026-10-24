@@ -51,7 +51,7 @@ for (const at of ['2026-10-09T23:59:50.000Z', '2026-10-11T00:00:10.000Z']) {
       }),
     )
     expect(binding.submissionCutoffAt).toBe(new Date(Date.parse(at) + 60_000).toISOString())
-    expect(Date.parse(binding.executionSession.closeAt) - Date.parse(at)).toBe(19 * 60_000)
+    expect(Date.parse(binding.executionSession.closeAt) - Date.parse(at)).toBe(64 * 60_000)
     const query = Result.getOrThrow(
       jevObservationQuery(cycle, protocol, continuousMarketHours, observedAt, JevPurpose.Entry),
     )

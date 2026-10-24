@@ -1,3 +1,5 @@
+import { jevMarketForFeed } from '../jev/markets'
+import { continuousExecutionPolicy } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -134,7 +136,15 @@ const evaluate = (
   const states = Object.values(CapitalArm).map((arm) =>
     Result.getOrThrow(createCapitalState(arm, config.openingCashMicros)),
   )
-  const end = Math.max(...opps.map((o) => o.committedAtMs ?? Date.parse(o.batch.decidedAt))) + 19 * 60_000
+  const end = Math.max(
+    ...opps.map(
+      (o) =>
+        (o.committedAtMs ?? Date.parse(o.batch.decidedAt)) +
+        o.batch.observation.protocol.holdingMinutes[jevMarketForFeed(o.batch.snapshot.manifest.feed).market] * 60_000 +
+        continuousExecutionPolicy.entryValidityMs +
+        continuousExecutionPolicy.closeRecoveryMs,
+    ),
+  )
   for (const event of capitalEvents(opps, chosen, end)) {
     for (let index = 0; index < states.length; index++) {
       const state = states[index]
@@ -332,7 +342,7 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
 test('current chosen-model-action baseline retains an enter choice below the retired probability floor', () => {
   const opp = opportunity(0, 'enter', 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v20')
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v21')
   expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('supported-setup-and-economic-plan')
   expect(baseline?.metrics.filledEntries).toBe(1)
   expect(baseline?.opportunities[0]?.status).toBe(CapitalAdmission.Admitted)
@@ -460,7 +470,15 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
         const events = []
         const sourceAt = index === 0 ? at : equityAt
         let offset = 0
-        for (let time = sourceAt; time <= sourceAt + 19 * 60_000; time += 5000) {
+        for (
+          let time = sourceAt;
+          time <=
+          sourceAt +
+            continuousExecutionPolicy.entryValidityMs +
+            continuousExecutionPolicy.maximumHoldingMs +
+            continuousExecutionPolicy.closeRecoveryMs;
+          time += 5000
+        ) {
           for (const symbol of profile.universe) {
             const quote = quoteAt(symbol, time).value
             events.push(
@@ -517,9 +535,17 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
           dataSha256: sha256(bytes),
           recordCount: events.length,
           coverageStartMs: sourceAt,
-          coverageEndMs: sourceAt + 19 * 60_000,
+          coverageEndMs:
+            sourceAt +
+            continuousExecutionPolicy.entryValidityMs +
+            continuousExecutionPolicy.maximumHoldingMs +
+            continuousExecutionPolicy.closeRecoveryMs,
           firstAvailableAtMs: sourceAt,
-          lastAvailableAtMs: sourceAt + 19 * 60_000,
+          lastAvailableAtMs:
+            sourceAt +
+            continuousExecutionPolicy.entryValidityMs +
+            continuousExecutionPolicy.maximumHoldingMs +
+            continuousExecutionPolicy.closeRecoveryMs,
           positions: [
             { topic: profile.sourceTopics.quotes, partition: 0, startOffset: '0', endOffsetExclusive: String(offset) },
           ],

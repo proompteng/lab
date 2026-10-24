@@ -123,8 +123,8 @@ const makeStore = Effect.gen(function* () {
   const verifyExit = (closure: ExecutionCycleClosure, original?: ExecutionCycleClosure) =>
     Effect.gen(function* () {
       const target = closure.document.strategyDecision
-      if (target?.schemaVersion !== 'bayn.jev-exit-target.v5') {
-        if (original?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5')
+      if (target?.schemaVersion !== 'bayn.jev-exit-target.v6') {
+        if (original?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v6')
           return yield* storeError('bind-replan', 'invariant', 'A Jev close replan cannot discard its exit evidence')
         return
       }
@@ -221,7 +221,7 @@ const makeStore = Effect.gen(function* () {
             if (Option.isSome(replay)) return replay.value
             const original = yield* readByCycleId(sql, closure.cycleId)
             if (
-              closure.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' &&
+              closure.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v6' &&
               Option.isNone(original)
             )
               return yield* storeError(

@@ -98,7 +98,7 @@ export const snapshotMarketCloseAt = (
 
 export const continuousExecutionPolicy = Object.freeze({
   entryValidityMs: 60_000,
-  maximumHoldingMs: 15 * 60_000,
+  maximumHoldingMs: 60 * 60_000,
   closeRecoveryMs: 3 * 60_000,
 })
 

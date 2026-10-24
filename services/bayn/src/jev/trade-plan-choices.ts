@@ -8,6 +8,7 @@ import { JevContractError, type JevRequest, type JevResponse } from './contract'
 import { fundJevTradePlan, type JevEntryEconomics } from './entry-economics'
 import { jevBreakEvenExitLimitPrice, jevExitLimitValue } from './liquidation-economics'
 import type { JevProtocol } from './protocol'
+import { jevHoldingMinutesForSymbol } from './markets'
 import { JevFundedExitPlanSchema, JevStrategyExitPlanSchema } from './strategy-exit-plan'
 
 export enum JevEntrySetup {
@@ -132,7 +133,7 @@ export const jevTradePlanQuestion = (input: {
             symbol,
             sourceStartAt: snapshot.manifest.rangeStartAt,
             sourceEndAt: snapshot.manifest.rangeEndAt,
-            maximumHoldingMinutes: protocol.maximumHoldingMinutes,
+            maximumHoldingMinutes: jevHoldingMinutesForSymbol(protocol, symbol),
             maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
             stopPriceMicros: stop.toString(),
             stopLimitPriceMicros: stopLimit.toString(),

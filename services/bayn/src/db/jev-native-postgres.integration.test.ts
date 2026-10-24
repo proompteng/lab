@@ -229,7 +229,7 @@ const seedManagedPosition = (
           ...portfolio,
           entryDecisionHash: options.entryDocument.contentHash,
           exitPolicy:
-            options.entryDocument.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v6'
+            options.entryDocument.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7'
               ? options.entryDocument.strategyDecision.exitPolicy
               : portfolio.exitPolicy,
           entryIntentIds: [entryId],
@@ -260,7 +260,7 @@ const seedManagedPosition = (
         policyHash: '3'.repeat(64),
         authorityGenerationHash: nativeInput.authorityGenerationHash,
       },
-      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v6', exitPolicy: portfolio.exitPolicy },
+      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v7', exitPolicy: portfolio.exitPolicy },
       orderedIntentIds: portfolio.entryIntentIds,
     }
     yield* acquireEntryCycle(entryAt)
@@ -1133,7 +1133,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* insert('jev', '9'.repeat(64), 2)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v20' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v21' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
@@ -1920,7 +1920,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           },
         }).pipe(Effect.tapError((error) => Effect.logError(error)))
         expect(reconciliations).toBe(2)
-        expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v6')
+        expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v7')
         expect(document.dispatchable).toBe(true)
         expect(document.orderedIntentIds).toHaveLength(1)
         expect(document.createdAt).toBe(new Date(observed + 7000).toISOString())
@@ -1930,7 +1930,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(document.deltaRisk[0]?.evaluation.decision.expiresAt).toBe(
           new Date(Date.parse(entryQuote.eventAt) + fixture.protocol.maximumQuoteAgeMs).toISOString(),
         )
-        if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v6')
+        if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v7')
           throw new Error('Expected native Jev entry target')
         expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V6)
         expect(Date.parse(document.deltaRisk[0].evaluation.decision.expiresAt)).toBeGreaterThan(

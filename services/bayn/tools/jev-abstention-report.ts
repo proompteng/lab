@@ -185,7 +185,7 @@ const Document = Schema.Struct({
 })
 const NonNegative = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 const State = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-trading-signal-state.v17'),
+  schemaVersion: Schema.Literal('bayn.jev-trading-signal-state.v18'),
   task: Schema.Struct({ horizonMinutes: Schema.Finite }),
   execution: Schema.Struct({ estimatedFeeBpsPerSide: NonNegative, estimatedRoundTripFeesBps: NonNegative }),
   entryEconomics: Schema.NullOr(

@@ -65,7 +65,7 @@ test.each([0, 0.1, 0.25])('a %s USD observed range retains a fee-covering hypoth
     expect(Number(plan.levels.profitLimitPriceMicros) / 1_000_000).toBeGreaterThanOrEqual(
       economics.takeProfitBreakEvenLimitUsd,
     )
-    expect(plan.levels.maximumHoldingMinutes).toBe(15)
+    expect(plan.levels.maximumHoldingMinutes).toBe(60)
   }
 })
 

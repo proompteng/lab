@@ -185,11 +185,23 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The implementation uses `bayn.jev.protocol.v20`, `bayn.jev.executable-profit-limit.behavior.v1`,
+The checked-in capital activation uses `bayn.jev.protocol.v20`, `bayn.jev.executable-profit-limit.behavior.v1`,
 trading-signal state v17, batch v6 and pinned `jev-1.13.0`. Jev separately classifies the current setup and judges a complete funded entry/stop/target trade after costs within its holding deadline. Both answers must support entry; either judgment can abstain. Its options label hypothetical future order prices
 separately from observed market evidence. The selected complete plan binds those terms to the order and existing account
 limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
 and remaining economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
+
+The source implementation now defines protocol v21 and trading-signal state v18 with market-specific holding limits:
+15 minutes for equities and 60 minutes for crypto. The observation window stays at 30 minutes, and the selected
+funded plan owns the holding deadline. Migration 144 preserves financial history and native protection/commitment
+guards, requires a flat, settled, fully accounted and freshly reconciled cutover, and restricts prior PAPER authority
+to OBSERVE. Do not replace the v20 activation with a v21 mandate until strategy validation, required release gates
+and the matching published image are verified. Source tests or image promotion alone establish no natural trade.
+The candidate runtime metadata matches the v21 image; the sealed capital request and its authored lineages still
+bind v20. The required PAPER identity check rejects this mismatch. Keep the source change in draft until the
+qualified cutover can retire that request and its lineages through explicit OBSERVE, then seal the matching
+same-account mandate against the published image. Do not change identity annotations without matching ciphertext
+or relax the PAPER identity check to promote this candidate.
 
 Migration 143 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover

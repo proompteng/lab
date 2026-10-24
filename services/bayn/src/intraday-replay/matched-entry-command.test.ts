@@ -93,8 +93,7 @@ const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input
 const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, maximumHoldingMinutes = 15) => {
   const base = nativeJevFixture(JevPurpose.Entry, undefined, 'jev-native-test', {
     ...defaultJevProtocolDocument,
-    maximumHoldingMinutes,
-    horizonMinutes: maximumHoldingMinutes,
+    holdingMinutes: { ...defaultJevProtocolDocument.holdingMinutes, EQUITY: maximumHoldingMinutes },
   })
   const dates = ['2026-09-04', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11'] as const
   const calendar = Result.getOrThrow(

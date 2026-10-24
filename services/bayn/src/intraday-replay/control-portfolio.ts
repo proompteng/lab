@@ -4,7 +4,7 @@ import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { momentumControlCandidates } from './momentum-control'
 import { replayInstrument, type ReplayInstrumentsSchema } from './execution-core'
 import { quantityFromNumber } from '../quantity'
-import { equityMarketProfile, jevMarketForSymbol } from '../jev/markets'
+import { equityMarketProfile, jevHoldingMinutesForSymbol, jevMarketForSymbol } from '../jev/markets'
 import { equityRollingValues } from '../market-data/features/native-feature'
 
 import { Data, Result } from 'effect'
@@ -274,7 +274,7 @@ export const triggerControlExit = (input: {
     let reason: ControlExit | undefined
     if (atMs >= input.cutoffMs) reason = ControlExit.SessionClose
     else if (input.policy !== ControlPolicy.RetainedBreakout) {
-      if (atMs - portfolio.inventory.enteredAtMs >= protocol.maximumHoldingMinutes * 60_000)
+      if (atMs - portfolio.inventory.enteredAtMs >= jevHoldingMinutesForSymbol(protocol, position.symbol) * 60_000)
         reason = ControlExit.MaximumHold
       else if (
         quote !== undefined &&

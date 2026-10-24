@@ -1,5 +1,6 @@
 import { controlExitDefinition } from './control-portfolio'
 import { equityMarketProfile } from '../jev/markets'
+import { MarketKind } from '../instruments'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { Clock, Effect, FileSystem, Result, Schema } from 'effect'
@@ -914,7 +915,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       (prepared.input.cadence.pollIntervalMs !== residualShockDefinition.pollIntervalMs ||
         equityMarketProfile.maximumEntrySpreadBps !== residualShockDefinition.maximumSpreadBps ||
         controlExitDefinition.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
-        prepared.protocol.maximumHoldingMinutes !== 15 ||
+        prepared.protocol.holdingMinutes[MarketKind.Equity] !== 15 ||
         prepared.protocol.flattenBeforeCloseMinutes !== residualShockDefinition.flattenMinutesBeforeClose)
     )
       return yield* Result.fail(

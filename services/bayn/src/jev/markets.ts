@@ -11,6 +11,7 @@ import {
 } from '../market-data/features/crypto-contract'
 import { intradaySourceTopics, intradayStreamingContract, intradayUniverse } from '../strategy/intraday-market'
 import type { AutonomousCycle } from '../cycle/model'
+import type { JevProtocol } from './protocol'
 
 export const equityMarketProfile = Object.freeze({
   market: MarketKind.Equity,
@@ -60,6 +61,8 @@ export const JevMarketProfilesSchema = Schema.declare<readonly JevMarketProfile[
 
 export const jevMarketForSymbol = (symbol: string): JevMarketProfile =>
   instrumentMarket(symbol) === MarketKind.Crypto ? cryptoMarketProfile : equityMarketProfile
+export const jevHoldingMinutesForSymbol = (protocol: JevProtocol, symbol: string): number =>
+  protocol.holdingMinutes[jevMarketForSymbol(symbol).market]
 export const jevMarketForCycle = (cycle: {
   readonly window: Pick<AutonomousCycle['window'], 'executionCalendarSchemaVersion'>
 }): JevMarketProfile =>

@@ -1,4 +1,4 @@
-import { equityMarketProfile } from '../jev/markets'
+import { equityMarketProfile, jevHoldingMinutesForSymbol } from '../jev/markets'
 
 import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
@@ -1616,7 +1616,7 @@ durableTest.each(
           action: 'WAITING',
           waitReason: 'JEV_POSITION_HELD',
           maximumHoldDueAt: utcInstantFromEpochMillis(
-            Date.parse(entryFill.transactionTime) + protocol.maximumHoldingMinutes * 60_000,
+            Date.parse(entryFill.transactionTime) + jevHoldingMinutesForSymbol(protocol, entryFill.symbol) * 60_000,
           ),
         })
         if (waiting.result?.outcome !== 'RECOVERED' || waiting.result.action !== 'WAITING')

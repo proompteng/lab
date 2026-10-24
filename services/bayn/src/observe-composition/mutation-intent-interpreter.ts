@@ -599,7 +599,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       return { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
     }
     const profitTarget =
-      document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' ? document.strategyDecision : undefined
+      document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v6' ? document.strategyDecision : undefined
     const profitHoldingDeadlineAt = yield* Effect.fromResult(jevProfitTargetHoldingDeadlineAt(profitTarget)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )

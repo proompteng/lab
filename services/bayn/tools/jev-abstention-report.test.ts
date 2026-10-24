@@ -551,8 +551,8 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   expect(report).toMatchObject({
     diagnosticOnly: true,
     schemaVersion: 'bayn.jev-abstention-report.v2',
-    protocol: 'bayn.jev.protocol.v20',
-    inputDefinition: 'bayn.jev-trading-signal-state.v17',
+    protocol: 'bayn.jev.protocol.v21',
+    inputDefinition: 'bayn.jev-trading-signal-state.v18',
     selectedSymbols: [],
     profitableEdgeProven: false,
   })

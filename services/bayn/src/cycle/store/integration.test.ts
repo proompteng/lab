@@ -557,7 +557,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             'bayn.paper-authority-generation.v3', ${parentAuthorityGenerationHash}, ${Authority.Execution}, 2,
             ${'3'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'4'.repeat(64)}`},
             'jev', ${'5'.repeat(64)}, ${'6'.repeat(64)},
-            'bayn.jev.protocol.v20', ${'7'.repeat(64)}, ${accountId},
+            'bayn.jev.protocol.v21', ${'7'.repeat(64)}, ${accountId},
             'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${policyHash},
             ${'9'.repeat(64)}, ${reconciliationId}, ${reconciliationHash}, ${'b'.repeat(64)},
             ${authorityUpdatedAt}

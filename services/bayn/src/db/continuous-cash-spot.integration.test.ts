@@ -334,7 +334,25 @@ integration(
         expect(replay.created).toBe(false)
         expect(replay.cycle).toEqual(first.cycle)
         expect(first.cycle.window.submissionCutoffAt).toBe('2026-10-11T00:00:50.000Z')
-        expect(first.cycle.window.executionCloseAt).toBe('2026-10-11T00:18:50.000Z')
+        expect(first.cycle.window.executionCloseAt).toBe('2026-10-11T01:03:50.000Z')
+        const sql = yield* PgClient.PgClient
+        for (const maximumHoldingMinutes of [15, 59, 61]) {
+          const changes = {
+            cycle_id: Result.getOrThrow(canonicalHashV1Result({ maximumHoldingMinutes })),
+            account_id: `${accountId}-${maximumHoldingMinutes}`,
+            execution_close_at: new Date(Date.parse(at) + (maximumHoldingMinutes + 4) * 60_000).toISOString(),
+          }
+          const rejected = yield* sql`INSERT INTO autonomous_cycles
+            SELECT (jsonb_populate_record(NULL::autonomous_cycles,
+              to_jsonb(cycle) || ${JSON.stringify(changes)}::jsonb)).*
+            FROM autonomous_cycles cycle WHERE cycle_id = ${first.cycle.identity.cycleId}`.pipe(Effect.result)
+          expect(rejected).toMatchObject({
+            _tag: 'Failure',
+            failure: {
+              reason: { cause: { constraint: 'autonomous_cycles_market_hours_check' } },
+            },
+          })
+        }
       }).pipe(Effect.provide(client), Effect.provide(NodeServices.layer)),
     )
   },

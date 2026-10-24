@@ -1,6 +1,6 @@
 import { jevBatchQuestionSetHash } from './batch'
 import { exchangeSessions } from '../market-hours'
-import { jevBenchmarkSymbol, jevMarketForSymbol } from './markets'
+import { jevBenchmarkSymbol, jevHoldingMinutesForSymbol, jevMarketForSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
 import { rollingValues } from '../market-data/features/native-feature'
 import { missingMinuteBars } from '../market-data/streaming/inputs'
@@ -279,6 +279,7 @@ const requestFromSnapshot = (
     if (!continuous && session === undefined)
       return yield* unavailable('Jev signal snapshot has no matching market session')
     const observed = Date.parse(snapshot.manifest.observedAt)
+    const maximumHoldingMinutes = jevHoldingMinutesForSymbol(native.protocol, symbol)
     let position = null
     if (native.portfolio.purpose === JevPurpose.Manage) {
       const held = native.portfolio.brokerState.positions.find(
@@ -293,8 +294,8 @@ const requestFromSnapshot = (
         quantityUnits: Number(held.quantityAtoms) / 1_000_000_000,
         entryFilledAt: firstFill.occurredAt,
         heldForMinutes,
-        maximumHoldingMinutes: native.protocol.maximumHoldingMinutes,
-        remainingHoldingMinutes: Math.max(0, native.protocol.maximumHoldingMinutes - heldForMinutes),
+        maximumHoldingMinutes,
+        remainingHoldingMinutes: Math.max(0, maximumHoldingMinutes - heldForMinutes),
       }
     }
     const economics =
@@ -313,7 +314,7 @@ const requestFromSnapshot = (
         schemaVersion: native.protocol.inputDefinition,
         task: {
           positionPolicy: 'long-only',
-          horizonMinutes: native.protocol.horizonMinutes,
+          horizonMinutes: maximumHoldingMinutes,
           decisionPurpose: native.portfolio.purpose,
           purpose:
             'Evaluate the supplied trading signals. No unreported outside facts or future observations are available.',

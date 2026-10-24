@@ -473,7 +473,7 @@ export const ensureExecutionCycleClosure = <R>({
     if (
       observedAt < closeWindow.startAt &&
       exitTarget === undefined &&
-      existing?.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v5'
+      existing?.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v6'
     )
       return { _tag: 'Wait', observedAt, waitReason: 'AWAITING_CLOSE_WINDOW' } as const
     const entryDecisionHash = cycle.bindings.decisionHash
@@ -594,7 +594,7 @@ export const ensureExecutionCycleClosure = <R>({
       initialReconciliation: residualReconciliation,
       closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
-      ...(existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5'
+      ...(existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v6'
         ? { exitTarget: existing.document.strategyDecision }
         : {}),
     }).pipe(
@@ -816,7 +816,7 @@ const executeBoundExecutionCycle = (
         : yield* readExecutionCycleClosure(cycle.identity.cycleId, input.executionCycleClosureStore)
     const closeDue =
       observedAt >= closeWindow.startAt ||
-      committedClosure?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5'
+      committedClosure?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v6'
     const closeOnlyContainmentReason =
       document.targetPlan.status === TargetPlanStatus.Blocked &&
       (document.targetPlan.reason === TargetPlanReason.ShortPositionNotAllowed ||

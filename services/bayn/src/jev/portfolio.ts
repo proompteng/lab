@@ -131,7 +131,6 @@ export const JevPortfolioSchema = Base.check(
       plan === undefined ||
       Object.keys(context.exitPolicy.plans).length !== 1 ||
       plan.levels.symbol !== position.symbol ||
-      plan.levels.maximumHoldingMinutes !== context.exitPolicy.maximumHoldingMinutes ||
       fills.some(
         (fill) =>
           fill.occurredAt < plan.levels.sourceEndAt ||

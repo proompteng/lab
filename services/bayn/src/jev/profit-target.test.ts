@@ -61,7 +61,7 @@ test('reported cash fees cannot move the pre-entry target', () => {
 
 test('the entry target seals the exit policy and rejects a rehashed policy substitution', () => {
   const entry = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence()))
-  expect(entry.exitPolicy.schemaVersion).toBe('bayn.position-exit-policy.v4')
+  expect(entry.exitPolicy.schemaVersion).toBe('bayn.position-exit-policy.v5')
   expect(entry.exitPolicy.maximumPriceCheckIntervalMs).toBe(5000)
   expect(entry.exitPolicy.plans['AAPL']?.levels.stopPriceMicros).toBeDefined()
   expect(

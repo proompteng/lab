@@ -1332,7 +1332,6 @@ describePostgres('PostgreSQL execution persistence', () => {
         if (authority.readOrInitializeObserveAuthority === undefined) throw new Error('Missing authority initializer')
         const generationHash = hash('settlement-generation')
         yield* authority.readOrInitializeObserveAuthority({ generationHash, maximum: Authority.Observe })
-        const cycles = yield* makeCycleStore()
         const start = '2026-08-28T14:30:00.000Z'
         const window = Result.getOrThrow(
           tradingWindow(continuousMarketHours, start, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 }),
@@ -1354,9 +1353,57 @@ describePostgres('PostgreSQL execution persistence', () => {
             window,
           ),
         )
-        const acquired = yield* cycles.acquire(draft, start)
-        yield* cycles.activate(acquired.cycle.identity.cycleId, start)
-        const cycleId = acquired.cycle.identity.cycleId
+        let cycleId = draft.identity.cycleId
+        if (historical || overreleased) {
+          const calendar = {
+            executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1',
+            executionCalendarSource: 'alpaca-crypto-us',
+            executionSessionDate: '2026-08-28',
+            executionOpenAt: start,
+            executionCloseAt: '2026-08-28T14:49:00.000Z',
+          }
+          const identity = {
+            ...draft.identity,
+            executionCalendarHash: Result.getOrThrow(canonicalHashV1Result(calendar)),
+          }
+          const { cycleId: _currentCycleId, ...material } = identity
+          cycleId = Result.getOrThrow(canonicalHashV1Result(material))
+          // Seed the immutable 19-minute format required by the pre-144 fee fixtures.
+          yield* sql`INSERT INTO autonomous_cycles ${sql.insert({
+            cycle_id: cycleId,
+            schema_version: 'bayn.autonomous-cycle.v4',
+            identity_schema_version: identity.schemaVersion,
+            strategy_name: identity.strategyName,
+            qualification_run_id: identity.qualificationRunId,
+            strategy_protocol_hash: identity.strategyProtocolHash,
+            account_id: accountId,
+            entry_attempt_ordinal: identity.entryAttemptOrdinal,
+            execution_policy_schema_version: policy.schemaVersion,
+            execution_policy_hash: policy.executionPolicyHash,
+            strategy_execution_model_hash: policy.strategyExecutionModelHash,
+            submission_window_ms: 60_000,
+            warmup_after_open_ms: policy.warmupAfterOpenMs,
+            submission_cutoff_before_close_ms: policy.submissionCutoffBeforeCloseMs,
+            window_schema_version: 'bayn.autonomous-cycle-window.v3',
+            execution_calendar_schema_version: calendar.executionCalendarSchemaVersion,
+            execution_calendar_source: calendar.executionCalendarSource,
+            execution_calendar_hash: identity.executionCalendarHash,
+            execution_session_date: calendar.executionSessionDate,
+            submission_open_at: start,
+            execution_open_at: start,
+            execution_close_at: calendar.executionCloseAt,
+            submission_cutoff_at: '2026-08-28T14:31:00.000Z',
+            state: 'PENDING',
+            state_version: 1,
+            created_at: start,
+            updated_at: start,
+          })}`
+          yield* sql`UPDATE autonomous_cycles SET state='ACTIVE', state_version=2 WHERE cycle_id=${cycleId}`
+        } else {
+          const cycles = yield* makeCycleStore()
+          yield* cycles.acquire(draft, start)
+          yield* cycles.activate(cycleId, start)
+        }
         const opening = flatAccountEvent()
         const openingReceipt = yield* events.ingest({
           ...opening,

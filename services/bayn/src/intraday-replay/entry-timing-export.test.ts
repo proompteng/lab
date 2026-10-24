@@ -43,7 +43,7 @@ const fixture = (abstain = false) => {
   if (retained === undefined) throw new Error('Native timing fixtures are not prepared')
   const decision = abstain ? retained.abstain : retained.enter
   const target = decision.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('Missing native entry fixture')
+  if (target?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Missing native entry fixture')
   const observed = intradayInstantNanos(target.evidence.observation.observedAt)
   const created = intradayInstantNanos(decision.createdAt)
   const commitNanos = created + 1000n * ms + 751_734n

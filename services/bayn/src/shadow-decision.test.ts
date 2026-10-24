@@ -338,12 +338,12 @@ const fixture = (
     )
   })()
   const planningTargetWeights =
-    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v7'
       ? jevPlanningTargetWeights(compiledDecision)
       : compiledDecision.targetWeights
   const planningSymbols = Object.keys(planningTargetWeights)
   const hasEntryTargets =
-    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6' && compiledDecision.selectedSymbols.length > 0
+    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v7' && compiledDecision.selectedSymbols.length > 0
   const {
     candidateEvidencePolicy: _policy,
     benchmarkEvidencePolicy: _benchmark,
@@ -359,7 +359,7 @@ const fixture = (
   const rawPricing = {
     ...originalPricing,
     quotes: originalPricing.quotes.map((quote) => {
-      if (pricingStopOffsetMicros === undefined || compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v6')
+      if (pricingStopOffsetMicros === undefined || compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v7')
         return quote
       const plan = compiledDecision.exitPolicy.plans[quote.symbol]
       if (plan === undefined) return quote
@@ -435,7 +435,7 @@ const fixture = (
       snapshotId: marketData.snapshotId,
       snapshotContentHash: marketData.contentHash,
       maximumBuyQuantityAtoms:
-        compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+        compiledDecision.schemaVersion === 'bayn.jev-entry-target.v7'
           ? value(
               maximumFundedBuyQuantities({
                 plans: compiledDecision.exitPolicy.plans,
@@ -1070,7 +1070,7 @@ describe('intraday shadow decision', () => {
         ) VALUES (${hash('6')}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${hash('1')}, ${Authority.Execution}, 2, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${hash('4')}`}, 'jev', ${hash('5')}, ${hash('7')},
-          'bayn.jev.protocol.v20', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
+          'bayn.jev.protocol.v21', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
           'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
           ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
             yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
@@ -1095,7 +1095,7 @@ describe('intraday shadow decision', () => {
           })})`
             const store = yield* makeCycleStore()
             yield* store.acquire(value(makeCycleDraft(input.cycle.identity, input.cycle.window)), input.cycle.createdAt)
-            if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v6')
+            if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v7')
               throw new Error('missing Jev evidence')
             const { observation, batchPlan, batchResult } = document.strategyDecision.evidence
             yield* sql`INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
@@ -1164,7 +1164,7 @@ describe('intraday shadow decision', () => {
           JSON.stringify({
             targetPlan: document.targetPlan,
             selected:
-              document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v6'
+              document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7'
                 ? document.strategyDecision.selectedSymbols
                 : [],
           }),
@@ -1792,7 +1792,7 @@ describe('intraday shadow decision', () => {
     const selectedSymbol = protocol.candidateSymbols[0]
     if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
     const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
-    if (input.compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v6') {
+    if (input.compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v7') {
       throw new Error('Jev fixture requires one entry decision')
     }
     expect(input.compiledDecision.selectedSymbols).toEqual([selectedSymbol])
