@@ -58,7 +58,7 @@ export const makeResearchRunner = (
       const receipt = yield* inferResearch(
         input,
         runId,
-        'harness' in input.policy ? 'http://bayn-opencode.bayn.svc.cluster.local:4096/proposal' : endpoint,
+        'harness' in input.policy ? 'http://opencode-research.opencode.svc.cluster.local:4096/proposal' : endpoint,
         traceHeaders(),
         workerSourceRevision,
       )

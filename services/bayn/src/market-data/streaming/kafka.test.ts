@@ -7,7 +7,7 @@ import {
   type KafkaPartitionPosition,
 } from './bootstrap'
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Exit, Logger, Redacted, Result } from 'effect'
+import { Clock, Deferred, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { readFileSync } from 'node:fs'
 import { AuthenticationError } from '@platformatic/kafka'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
@@ -19,7 +19,9 @@ import { provideTestLayer } from '../../effect-test-support'
 import { historicalRawArrivals } from '../../testing/historical-streaming-fixture'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { CaptureDisposition } from './transport-evidence'
-import type { NativeArrivalObservation } from './native-arrival'
+import { nativeArrivalCaptureId, type NativeArrivalChunk, type NativeArrivalObservation } from './native-arrival'
+import { makeNativeArrivalJournal, type NativeArrivalCapture, type NativeArrivalEnd } from './native-arrival-journal'
+import { nativeArrivalEpochFixture } from './native-arrival.test-support'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import { reproduceStreamingSnapshot } from './replay'
 import { constructStreamingSnapshot } from './snapshot'
@@ -165,6 +167,128 @@ test('native retention observes the trading consumer cut, including rejected rec
       expect((yield* market.status).epoch).toBe(captureEpoch)
     }),
   )
+})
+
+test('failed native retention releases Kafka consumption and preserves incomplete evidence across epoch recovery', async () => {
+  const transports: FakeTransport[] = []
+  const captures: NativeArrivalCapture[] = []
+  const chunks: NativeArrivalChunk[] = []
+  const ends: NativeArrivalEnd[] = []
+  await program(
+    Effect.gen(function* () {
+      const writing = yield* Deferred.make<void>()
+      const failWriter = yield* Deferred.make<void>()
+      let appendCalls = 0
+      const market = yield* makeKafkaMarketProjection(
+        config,
+        [universe],
+        () => {
+          const transport = new FakeTransport()
+          transports.push(transport)
+          return transport
+        },
+        undefined,
+        (bootstrap, sources) =>
+          Effect.gen(function* () {
+            const build = nativeArrivalEpochFixture.build
+            const capture = yield* makeNativeArrivalJournal(
+              {
+                ...nativeArrivalEpochFixture,
+                captureId: Result.getOrThrow(nativeArrivalCaptureId(build, bootstrap, sources)),
+                bootstrap,
+                sources,
+              },
+              {
+                begin: () => Effect.void,
+                append: (batch) =>
+                  Effect.gen(function* () {
+                    if (++appendCalls === 1) {
+                      yield* Deferred.succeed(writing, undefined)
+                      yield* Deferred.await(failWriter)
+                      return yield* Effect.die('synthetic native writer defect')
+                    }
+                    chunks.push(...batch)
+                  }),
+                end: (end) => Effect.sync(() => void ends.push(end)),
+              },
+              { chunkBytes: 1, queueBytes: 700 },
+            )
+            captures.push(capture)
+            return capture
+          }),
+      )
+      yield* TestClock.adjust(1_000)
+      const first = transports[0]
+      const capture = captures[0]
+      if (first === undefined || capture === undefined) throw new Error('missing initial consumer capture')
+      const initial = yield* market.read
+      // Malformed records exercise exact delivery retention, not market-content validity or freshness.
+      const record = (offset: string): KafkaConsumedRecord => ({
+        topic: 'quotes',
+        partition: 0,
+        offset,
+        timestampMs: 900,
+        leaderEpoch: 1,
+        ...decodeKafkaTransportValue(Buffer.from('{'), true, true),
+      })
+      first.send(record('0'))
+      yield* Deferred.await(writing)
+      first.send(record('1'))
+      yield* TestClock.adjust(1_000)
+      expect(capture.status()).toMatchObject({
+        status: 'RECORDING',
+        observedConsumerSequence: 2,
+        durableConsumerSequence: 0,
+      })
+      yield* Deferred.succeed(failWriter, undefined)
+      yield* TestClock.adjust(1_000)
+      first.send(record('2'))
+      yield* TestClock.adjust(1_000)
+      expect(capture.status()).toMatchObject({
+        status: 'INCOMPLETE',
+        observedConsumerSequence: 3,
+        durableConsumerSequence: 0,
+      })
+      expect((yield* market.read).projection.epoch).toBe(initial.projection.epoch)
+      expect((yield* market.readForLiquidation).consumerSequence).toBe(3)
+      expect(transports).toHaveLength(1)
+      first.invalidated?.(new Error('synthetic assignment replacement'))
+      expect(Exit.isFailure(yield* Effect.exit(market.read))).toBe(true)
+      yield* TestClock.adjust(3_000)
+      expect(transports).toHaveLength(2)
+      expect(captures).toHaveLength(2)
+      expect((yield* market.read).projection.epoch).not.toBe(initial.projection.epoch)
+      expect(captures[1]?.status()).toMatchObject({
+        status: 'RECORDING',
+        observedConsumerSequence: 0,
+        durableConsumerSequence: 0,
+      })
+      expect(captures[1]?.status().captureId).not.toBe(capture.status().captureId)
+      expect(ends).toHaveLength(1)
+      expect(ends[0]).toMatchObject({
+        captureId: capture.status().captureId,
+        status: 'INCOMPLETE',
+        observedConsumerSequence: 3,
+        durableConsumerSequence: 1,
+      })
+      expect(chunks).toHaveLength(1)
+      expect(chunks[0]?.header.lastConsumerSequence).toBe(1)
+      expect(chunks[0]?.header.captureId).toBe(capture.status().captureId)
+      expect(ends[0]?.lastChunkHash).toBe(chunks[0]?.contentHash)
+      transports[1]?.send(record('0'))
+      yield* TestClock.adjust(1_000)
+      expect(captures[1]?.status()).toMatchObject({
+        status: 'RECORDING',
+        observedConsumerSequence: 1,
+        durableConsumerSequence: 1,
+      })
+      expect(chunks).toHaveLength(2)
+      expect(chunks[1]?.header.captureId).toBe(captures[1]?.status().captureId)
+      expect(ends[0]?.status).toBe('INCOMPLETE')
+    }),
+  )
+  expect(ends.map((end) => end.status)).toEqual(['INCOMPLETE', 'STOPPED'])
+  expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
 })
 
 test('projection cuts preserve current offsets and fresh advancing outputs', async () => {

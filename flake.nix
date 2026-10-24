@@ -266,6 +266,11 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "opencode-image" = import ./nix/images/opencode.nix {
+              inherit pkgs lib nodejs repoRevision ciToolchain;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
             "bayn-image" = import ./nix/images/bayn.nix {
               inherit pkgs lib nodejs repoRevision;
               repoRoot = ./.;

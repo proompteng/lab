@@ -71,11 +71,11 @@ export const verifyResearchReceipt = (run: RetainedResearchRun, input: unknown) 
       if (
         'harness' in run.policy &&
         (receipt.workerSourceRevision === null ||
-          receipt.harnessEvidence?.serverSourceRevision !== receipt.workerSourceRevision ||
+          receipt.harnessEvidence === undefined ||
           receipt.harnessEvidence.firstTokenAtMs !== receipt.firstTokenAtMs)
       )
         return yield* Result.fail(
-          new ResearchError({ message: 'OpenCode receipt lacks matching serving source and provider timing evidence' }),
+          new ResearchError({ message: 'OpenCode receipt lacks worker source or matching provider timing evidence' }),
         )
       const stream = makeResearchStreamDecoder(run)
       yield* stream.push(Buffer.from(receipt.responseBase64, 'base64'), receipt.startedAtMs)

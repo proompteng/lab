@@ -149,7 +149,7 @@ fn control_digest(control: &Control) -> Result<String, Status> {
 }
 
 impl State {
-    fn terminal(&self) -> bool {
+    pub(crate) fn terminal(&self) -> bool {
         matches!(
             self,
             Self::Succeeded { .. }

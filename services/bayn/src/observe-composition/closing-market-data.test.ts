@@ -28,6 +28,7 @@ import {
   type MutationStoreShape,
 } from '../execution/mutations/model'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { legacyCycleClosureSchemaVersion } from '../execution/legacy-wire'
 import { canonicalHashV1Result } from '../hash'
 import { decidePreparedMutationIntent } from './mutation-decisions'
 import {
@@ -50,7 +51,7 @@ import { jevPricingQuery } from '../jev/runtime'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 
 import { IntradaySnapshotFailure } from '../market-data/intraday/model'
-import { retryableOperationalError } from '../errors'
+import { OperationalError, retryableOperationalError } from '../errors'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { type ReconciliationPassResult } from '../reconciler'
 import { loadStrategyExecutionRiskPolicy } from './startup'
@@ -291,6 +292,17 @@ describe('closing market-data fallback boundaries', () => {
     'released-profit',
     'released-stop',
     'pending-before-holding',
+    'pending-at-stop',
+    'partial-at-stop',
+    'pending-stop-stale',
+    'pending-stop-wrong-symbol',
+    'pending-stop-wrong-source',
+    'pending-stop-malformed',
+    'pending-stop-unavailable',
+    'pending-stop-error',
+    'pending-stop-no-position',
+    'pending-stop-inexact-accounting',
+    'pending-stop-nonprofit',
     'pending-at-holding',
     'partial-at-holding',
   ] as const)('profit close preserves its price and mandatory exits: %s', async (scenario) => {
@@ -300,9 +312,14 @@ describe('closing market-data fallback boundaries', () => {
     const plan = entry.exitPolicy.plans['AAPL']
     if (plan === undefined) throw new Error('Expected an entry-bound plan')
     const floor = Number(plan.levels.profitLimitPriceMicros) / 1_000_000
-    const pending = scenario.includes('holding') && scenario !== 'holding'
+    const pending = scenario.startsWith('pending-') || scenario.startsWith('partial-')
     const observedAt = new Date(
-      Date.parse(at) + (pending ? native.protocol.maximumHoldingMinutes * 60_000 - 1_500 : 1_000),
+      Date.parse(at) +
+        (pending
+          ? scenario.includes('stop')
+            ? 60_000
+            : native.protocol.maximumHoldingMinutes * 60_000 - 1_500
+          : 1_000),
     ).toISOString()
     const snapshotAt = (query: Parameters<IntradayMarketDataService['loadSnapshot']>[0], bid: number) => {
       const raw = makeIntradayMomentumTestSnapshot(
@@ -331,7 +348,8 @@ describe('closing market-data fallback boundaries', () => {
         IntradaySnapshotPurpose.Liquidation,
       ),
     )
-    const trigger = snapshotAt(query, floor)
+    const stopBid = Number(plan.levels.stopPriceMicros) / 1_000_000
+    const trigger = snapshotAt(query, scenario === 'pending-stop-nonprofit' ? stopBid : floor)
     const managed = activeNativeFixture(JevPurpose.Manage).portfolio
     if (managed.purpose !== JevPurpose.Manage) throw new Error('Expected a managed portfolio')
     const fill = managed.entryFills[0]
@@ -377,7 +395,7 @@ describe('closing market-data fallback boundaries', () => {
         },
         observedAt,
         trigger: {
-          reason: JevExitReason.ProfitTarget,
+          reason: scenario === 'pending-stop-nonprofit' ? JevExitReason.ProtectiveStop : JevExitReason.ProfitTarget,
           manifest: trigger.manifest,
           rows: Result.getOrThrow(persistIntradayRecordRows(trigger)),
         },
@@ -397,12 +415,16 @@ describe('closing market-data fallback boundaries', () => {
           }),
         )
       : triggeredTarget
-    const expectProfitFloor = scenario !== 'stop' && scenario !== 'holding' && scenario !== 'released-stop'
+    const expectProfitFloor =
+      scenario !== 'stop' &&
+      scenario !== 'holding' &&
+      scenario !== 'released-stop' &&
+      scenario !== 'pending-stop-nonprofit'
     const buildAt =
       scenario === 'holding'
         ? new Date(Date.parse(at) + native.protocol.maximumHoldingMinutes * 60_000).toISOString()
         : observedAt
-    const bid = scenario === 'stop' ? Number(plan.levels.stopPriceMicros) / 1_000_000 : floor - 0.01
+    const bid = scenario === 'stop' || scenario === 'pending-stop-nonprofit' ? stopBid : floor - 0.01
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(buildAt))
@@ -472,7 +494,7 @@ describe('closing market-data fallback boundaries', () => {
     const open = Result.getOrThrow(decidePreparedMutationIntent(intent, accepted))
     if (open._tag !== 'Pending') throw new Error('Expected acknowledged profit order')
     const checkAt = new Date(
-      Date.parse(buildAt) + (scenario === 'pending-before-holding' ? 1_499 : 1_500),
+      Date.parse(buildAt) + (scenario === 'pending-at-holding' || scenario === 'partial-at-holding' ? 1_500 : 1_499),
     ).toISOString()
     expect(Date.parse(checkAt)).toBeLessThan(Date.parse(risk.evaluation.decision.expiresAt))
     expect(Date.parse(checkAt)).toBeLessThan(Date.parse(result.document.submissionCutoffAt))
@@ -483,13 +505,16 @@ describe('closing market-data fallback boundaries', () => {
       updatedAt: buildAt,
     }
     const freshFacts = makeHeldFacts(checkAt)
-    const filled = scenario === 'partial-at-holding' ? quantity / 2n : 0n
+    const filled = scenario.startsWith('partial-') ? quantity / 2n : 0n
     const positionState = {
       ...freshFacts.brokerState,
       positions: freshFacts.brokerState.positions.map((position) => ({
         ...position,
-        quantityAtoms: String(quantity - filled),
-        costBasisMicros: String(((quantity - filled) * priceAtoms) / 1_000_000_000_000n),
+        quantityAtoms: scenario === 'pending-stop-no-position' ? '0' : String(quantity - filled),
+        costBasisMicros:
+          scenario === 'pending-stop-no-position'
+            ? '0'
+            : String(((quantity - filled) * priceAtoms) / 1_000_000_000_000n),
       })),
       orders: [
         ...freshFacts.brokerState.orders,
@@ -506,14 +531,47 @@ describe('closing market-data fallback boundaries', () => {
     const reconciliation = {
       ...freshFacts,
       brokerState: { ...positionState, reconciliation: exact },
-      report: { ...freshFacts.report, reconciliation: exact },
+      report: {
+        ...freshFacts.report,
+        reconciliation: exact,
+        metrics: { ...freshFacts.report.metrics, accountingExact: scenario !== 'pending-stop-inexact-accounting' },
+      },
     }
     for (const allowSubmit of [true, false]) {
       const unused = () => Effect.die(new Error('Pending profit must use its existing immutable commit'))
-      const step = await Effect.runPromise(
+      let marketReads = 0
+      const stopMarket: IntradayMarketDataService = {
+        ...freshMarket,
+        loadSnapshot: (pricing) =>
+          Effect.suspend(() => {
+            marketReads += 1
+            if (scenario === 'pending-stop-unavailable') return Effect.fail(marketFailure)
+            if (scenario === 'pending-stop-error')
+              return Effect.fail(
+                new OperationalError({
+                  component: 'market-data',
+                  operation: 'snapshot',
+                  message: 'Fixture source contract failure',
+                  retryable: false,
+                  cause: { _tag: 'FixtureContractFailure' },
+                }),
+              )
+            const source = scenario === 'pending-stop-wrong-symbol' ? { ...pricing, symbols: ['AMD'] } : pricing
+            const snapshot = snapshotAt(source, scenario === 'pending-before-holding' ? floor - 0.01 : stopBid)
+            return Effect.succeed(
+              scenario === 'pending-stop-wrong-source'
+                ? { ...snapshot, manifest: { ...snapshot.manifest, universeId: 'unrelated-source' } }
+                : scenario === 'pending-stop-malformed'
+                  ? { ...snapshot, manifest: { ...snapshot.manifest, contentHash: '0'.repeat(64) } }
+                  : snapshot,
+            )
+          }),
+      }
+      const outcome = await Effect.runPromise(
         prepareMutationIntent(
           {
             ...request.input,
+            intradayMarketData: stopMarket,
             mutationPhase: 'CLOSE',
             executionCycleCloseSubmitCutoffAt: result.document.submissionCutoffAt,
             executionCycleCloseExpiresAt: result.document.expiresAt,
@@ -526,7 +584,11 @@ describe('closing market-data fallback boundaries', () => {
           allowSubmit,
           false,
           {
-            now: Effect.succeed(checkAt),
+            now: Effect.sync(() =>
+              scenario === 'pending-stop-stale' && marketReads > 0
+                ? new Date(Date.parse(checkAt) + native.protocol.maximumQuoteAgeMs + 1).toISOString()
+                : checkAt,
+            ),
             restrictAuthority: unused,
             readFacts: () =>
               Effect.succeed({
@@ -551,14 +613,166 @@ describe('closing market-data fallback boundaries', () => {
             latest: (_intentId: string, operation: MutationOperation) =>
               Effect.succeed(operation === MutationOperation.Submit ? accepted : undefined),
           } as unknown as MutationStoreShape),
+          Effect.result,
         ),
       )
+      if (
+        [
+          'pending-stop-stale',
+          'pending-stop-wrong-symbol',
+          'pending-stop-wrong-source',
+          'pending-stop-malformed',
+          'pending-stop-error',
+        ].includes(scenario)
+      ) {
+        expect(Result.isFailure(outcome)).toBe(true)
+        if (Result.isSuccess(outcome)) throw new Error('Invalid stop evidence selected an action')
+        expect(outcome.failure.message).toBe('Pending profit stop evidence could not be verified')
+        expect(marketReads).toBe(1)
+        continue
+      }
+      const step = Result.getOrThrow(outcome)
       expect(step).toEqual(
-        scenario === 'pending-before-holding'
+        [
+          'pending-before-holding',
+          'pending-stop-unavailable',
+          'pending-stop-no-position',
+          'pending-stop-inexact-accounting',
+          'pending-stop-nonprofit',
+        ].includes(scenario)
           ? { _tag: 'Wait', observedAt: checkAt, waitReason: 'intent-nonterminal' }
           : { _tag: 'Execute', action: 'CANCEL', intentId: intent.intentId, observedAt: checkAt },
       )
+      expect(marketReads).toBe(
+        [
+          'pending-at-holding',
+          'partial-at-holding',
+          'pending-stop-no-position',
+          'pending-stop-inexact-accounting',
+          'pending-stop-nonprofit',
+        ].includes(scenario)
+          ? 0
+          : 1,
+      )
     }
+    if (scenario !== 'partial-at-stop') return
+    // A stop releases only the resting remainder. A rebound cannot create another
+    // order before cancellation settles, and the current-bid contract restores the floor.
+    const closure = Result.getOrThrow(
+      makeExecutionCycleClosure({
+        schemaVersion: legacyCycleClosureSchemaVersion,
+        cycleId: request.cycle.identity.cycleId,
+        entryDecisionHash: request.entryDocument.contentHash,
+        document: result.document,
+        createdAt: result.document.createdAt,
+        expiresAt: result.document.expiresAt,
+      }),
+    )
+    let terminal = false
+    let settled = false
+    let replans = 0
+    const unused = () => Effect.die(new Error('Stop recovery must not create another broker mutation'))
+    const reboundAt = new Date(Date.parse(checkAt) + 1_000).toISOString()
+    const settledState = {
+      ...positionState,
+      account: { ...positionState.account, observedAt: reboundAt },
+      positions: positionState.positions.map((position) => ({ ...position, observedAt: reboundAt })),
+      positionsObservedAt: reboundAt,
+      ordersObservedAt: reboundAt,
+      orders: positionState.orders.map((order) => ({ ...order, status: OrderStatus.Canceled, observedAt: reboundAt })),
+    }
+    const settledHash = Result.getOrThrow(reconciledStateHash(settledState))
+    const settledReconciliation = {
+      ...exact,
+      reconciledAt: reboundAt,
+      expectedHash: settledHash,
+      observedHash: settledHash,
+    }
+    const recovered = {
+      ...reconciliation,
+      brokerState: { ...settledState, reconciliation: settledReconciliation },
+      report: { ...reconciliation.report, reconciliation: settledReconciliation },
+    }
+    const closureStore: ExecutionCycleClosureStoreShape = {
+      read: () => Effect.succeed(Option.some(closure)),
+      readLatestReplan: () => Effect.succeed(Option.none()),
+      bind: unused,
+      bindReplan: (value) =>
+        Effect.sync(() => {
+          replans += 1
+          return value
+        }),
+      containsIntent: () => Effect.succeed(true),
+    }
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(reboundAt))
+        const reconcile = Effect.suspend(() => Effect.succeed(settled ? recovered : reconciliation))
+        const recover = ensureExecutionCycleClosure({
+          ...request,
+          input: {
+            ...request.input,
+            executionCycleClosureStore: closureStore,
+            intradayMarketData: {
+              ...freshMarket,
+              loadSnapshot: (pricing) => Effect.succeed(snapshotAt(pricing, floor - 0.01)),
+            },
+          },
+          closeWindow: {
+            startAt: result.document.createdAt,
+            submitCutoffAt: result.document.submissionCutoffAt,
+            expiresAt: result.document.expiresAt,
+          },
+          existing: closure,
+          reconcile,
+          refreshReconciliation: reconcile,
+        })
+        const pending = yield* recover
+        expect(pending._tag).toBe('Close')
+        if (pending._tag !== 'Close') throw new Error('Expected the immutable pending close')
+        expect(pending.document.contentHash).toBe(result.document.contentHash)
+        expect(replans).toBe(0)
+        terminal = true
+        expect(yield* recover).toMatchObject({ _tag: 'Wait', waitReason: 'COMPLETION_EVIDENCE_PENDING' })
+        expect(replans).toBe(0)
+        settled = true
+        const replacement = yield* recover
+        expect(replacement._tag).toBe('Close')
+        if (replacement._tag !== 'Close') throw new Error('Expected a fresh residual close')
+        expect(replans).toBe(1)
+        expect(replacement.document.replanGenerationHash).toBe(closure.contentHash)
+        expect(replacement.document.deltaRisk[0]?.limitPriceMicros).toBe(plan.levels.profitLimitPriceMicros)
+        expect(replacement.document.targetPlan.intentTargets[0]?.quantityAtoms).toBe(String(quantity - filled))
+        expect(replacement.document.orderedIntentIds).not.toEqual(result.document.orderedIntentIds)
+      }).pipe(
+        Effect.provide(TestClock.layer()),
+        Effect.provideService(IntentStore, {
+          protectionForCycle: () => Effect.succeed([]),
+          beginProtectionCancel: unused,
+          read: () =>
+            Effect.sync(() =>
+              Option.some(
+                terminal
+                  ? {
+                      ...record,
+                      intent: {
+                        ...record.intent,
+                        state: IntentState.Terminal,
+                        terminalOutcome: TerminalOutcome.Canceled,
+                      },
+                      updatedAt: reboundAt,
+                    }
+                  : record,
+              ),
+            ),
+          commit: unused,
+          commitClosing: unused,
+        }),
+        Effect.provideService(MutationStore, {
+          latest: () => Effect.succeed(accepted),
+        } as unknown as MutationStoreShape),
+      ),
+    )
   })
 
   test('an equity-calendar recovery closes an external crypto holding with IOC', async () => {

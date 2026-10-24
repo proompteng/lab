@@ -222,8 +222,6 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
         return
       }
       state.outcome = ResearchOutcome.Rejected
-      if ('harness' in run.policy && incoming.headers['x-bayn-source-revision'] !== workerSourceRevision)
-        return yield* new ResearchError({ message: 'OpenCode server source differs from the research worker' })
       const attestation = incoming.headers['x-model-serving-identity']
       if (attestation === undefined || attestation.length > 1024)
         return yield* new ResearchError({ message: 'Research response lacks bounded serving attestation' })
@@ -241,8 +239,8 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
           strictParseOptions,
         )(yield* incoming.json.pipe(Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.mebibytes(3))))
         harnessEvidence = envelope.harnessEvidence
-        if (harnessEvidence.serverSourceRevision !== workerSourceRevision)
-          return yield* new ResearchError({ message: 'OpenCode response and research worker source identities differ' })
+        if (harnessEvidence.serverSourceRevision !== incoming.headers['x-bayn-source-revision'])
+          return yield* new ResearchError({ message: 'OpenCode response and serving source identities differ' })
         yield* Effect.fromResult(verifyOpenCodeEvidence(run, harnessEvidence, startedAtMs))
         yield* Effect.fromResult(
           stream.push(Buffer.from(envelope.providerResponseBase64, 'base64'), harnessEvidence.firstTokenAtMs),

@@ -125,7 +125,7 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
     else if (action.action === 'codex-login-status') result = { active: false }
     else if (action.action === 'list-terminals') result = { sessions: [] }
     else if (action.action === 'codex-models') result = { models: codexModelFixtures, nextCursor: null }
-    else if (action.action === 'list-conversations') result = { threads: [] }
+    else if (action.action === 'list-threads') result = { threads: [], nextCursor: null }
     await route.fulfill({ json: { result } })
   })
   await page.route('**/api/tengri/**/events**', (route) =>

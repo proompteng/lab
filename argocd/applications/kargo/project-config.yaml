@@ -82,3 +82,6 @@ spec:
     - stageSelector:
         name: temporal-worker
       autoPromotionEnabled: true
+    - stageSelector:
+        name: opencode
+      autoPromotionEnabled: true

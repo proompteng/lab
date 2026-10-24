@@ -17,14 +17,14 @@ const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v20'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v22'),
   entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
   entrySelectionPolicy: Schema.Literal('supported-setup-and-economic-plan'),
   maximumEntryQuoteDriftBps: Schema.Literal(10),
   maximumEntryLimitSlippageBps: Schema.Literal(10),
   entrySignalPolicy: Schema.Literal('model-selected-entry-and-protection'),
   model: Schema.Literal(jevModel),
-  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v17'),
+  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v20'),
   marketProfiles: JevMarketProfilesSchema,
   universe: Schema.Array(SymbolSchema),
   candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(18)),
@@ -90,14 +90,14 @@ export const JevProtocolSchema = ProtocolBase.check(
 export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v20',
+  schemaVersion: 'bayn.jev.protocol.v22',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entrySelectionPolicy: 'supported-setup-and-economic-plan',
   maximumEntryQuoteDriftBps: 10,
   maximumEntryLimitSlippageBps: 10,
   entrySignalPolicy: 'model-selected-entry-and-protection',
   model: jevModel,
-  inputDefinition: 'bayn.jev-trading-signal-state.v17',
+  inputDefinition: 'bayn.jev-trading-signal-state.v20',
   marketProfiles: jevMarketProfiles,
   universe: jevUniverse,
   candidateSymbols: jevCandidateSymbols,

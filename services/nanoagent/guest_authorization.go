@@ -190,7 +190,7 @@ func guestRPCTarget(method string, message proto.Message) (string, error) {
 		pb.NanoagentService_CodexLogin_FullMethodName,
 		pb.NanoagentService_WatchCodexEvents_FullMethodName:
 		return "", nil
-	case pb.NanoagentService_ListFiles_FullMethodName, pb.NanoagentService_ReadFile_FullMethodName,
+	case pb.NanoagentService_StatFile_FullMethodName, pb.NanoagentService_ListFiles_FullMethodName, pb.NanoagentService_ReadFile_FullMethodName,
 		pb.NanoagentService_CreateDirectory_FullMethodName:
 		if request, ok := message.(*pb.Path); ok {
 			return request.Path, nil

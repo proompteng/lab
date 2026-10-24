@@ -194,9 +194,12 @@ spec:
         - port: 3128
           protocol: TCP
     - from:
-        - podSelector:
+        - namespaceSelector:
             matchLabels:
-              app.kubernetes.io/name: bayn-opencode
+              kubernetes.io/metadata.name: opencode
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opencode-research
       ports:
         - port: 3129
           protocol: TCP

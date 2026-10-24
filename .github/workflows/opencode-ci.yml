@@ -1,0 +1,38 @@
+name: opencode
+permissions:
+  contents: read
+on:
+  pull_request:
+    paths:
+      - 'services/opencode/**'
+      - 'services/bayn/src/opencode*'
+      - 'services/bayn/src/opencode/**'
+      - 'nix/images/opencode*.nix'
+      - 'nix/images/bayn-deps-hash.nix'
+      - 'nix/images/bayn-runtime-root.nix'
+      - 'nix/verify-opencode-image.sh'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/workflows/opencode*.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'argocd/applications/opencode/**'
+jobs:
+  migration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s services/opencode
+      - run: bash -n services/opencode/start.sh nix/verify-opencode-image.sh
+  image:
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: opencode
+      package_attr: opencode-image
+      tag: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+      source_revision: ${{ github.event.pull_request.head.sha }}
+      pr_number: '${{ github.event.pull_request.number }}'
+      image_build_timeout: 20m
+    secrets: inherit
