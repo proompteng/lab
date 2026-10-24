@@ -20,9 +20,12 @@ spec:
           protocol: TCP
   egress:
     - to:
-        - podSelector:
+        - namespaceSelector:
             matchLabels:
-              app.kubernetes.io/name: bayn-opencode
+              kubernetes.io/metadata.name: opencode
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opencode-research
       ports:
         - port: 4096
           protocol: TCP

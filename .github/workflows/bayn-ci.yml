@@ -40,7 +40,7 @@ jobs:
               - 'argocd/applications/torghut/clickhouse/**'
               - 'argocd/applicationsets/product.yaml'
               - 'nix/images/bayn.nix'
-              - 'nix/images/bayn-opencode.nix'
+              - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
               - 'nix/images/normalize-bayn-bun-deps.sh'
               - 'nix/images/normalize-bayn-bun-deps.test.sh'
@@ -73,7 +73,7 @@ jobs:
             image:
               - 'services/bayn/**'
               - 'nix/images/bayn.nix'
-              - 'nix/images/bayn-opencode.nix'
+              - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
               - 'nix/images/normalize-bayn-bun-deps.sh'
               - 'nix/images/normalize-bayn-bun-deps.test.sh'

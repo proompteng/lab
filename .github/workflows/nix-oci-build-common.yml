@@ -63,7 +63,7 @@ on:
         value: ${{ jobs.publish-index.outputs.platform_digest_arm64 }}
 
 concurrency:
-  group: ${{ inputs.pr_number != '' && format('ci-pr-{0}', inputs.pr_number) || format('{0}-{1}-{2}', github.workflow, inputs.image_name, inputs.tag) }}
+  group: ${{ inputs.pr_number != '' && format('ci-pr-{0}-{1}', inputs.pr_number, inputs.image_name) || format('{0}-{1}-{2}', github.workflow, inputs.image_name, inputs.tag) }}
   cancel-in-progress: true
 
 jobs:
@@ -216,6 +216,16 @@ jobs:
           set -euo pipefail
           bash nix/ci-run-timed.sh "verify-agents-shell-lifecycle-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-agents-shell-lifecycle-${ARCH}.log" \
             bash nix/verify-agents-shell-image-lifecycle.sh "${IMAGE_TAR}"
+
+      - name: Verify OpenCode development server from image
+        if: inputs.image_name == 'opencode'
+        env:
+          IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          bash nix/ci-run-timed.sh "verify-opencode-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-opencode-${ARCH}.log" \
+            bash nix/verify-opencode-image.sh "${IMAGE_TAR}"
 
       - name: Verify Bayn forward-performance command from image
         if: inputs.image_name == 'bayn'

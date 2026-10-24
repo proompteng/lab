@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,6 +47,7 @@ type expectedFileRename struct {
 	destination           string
 	rawDestination        string
 	fenceDirectory        string
+	fenceLost             bool
 	destinationObserved   bool
 	rawObserved           bool
 	rawEchoPossible       bool
@@ -66,6 +68,7 @@ type completedFileRename struct {
 	destination         string
 	rawDestination      string
 	fenceDirectory      string
+	fenceLost           bool
 	rawEchoPossible     bool
 	rawObserved         bool
 	destinationObserved bool
@@ -154,6 +157,7 @@ func (files *fileWatcher) handleWatcherError(err error) {
 		delete(files.completedRenames, generation)
 	}
 	for source, expected := range files.expectedRenames {
+		expected.fenceLost = true
 		expected.deferredEvents = nil
 		expected.suppressedSource = false
 		expected.suppressedDestination = false
@@ -486,6 +490,7 @@ func (files *fileWatcher) publishPairedRename(source string, generation uint64, 
 			destination:         expected.destination,
 			rawDestination:      expected.rawDestination,
 			fenceDirectory:      expected.fenceDirectory,
+			fenceLost:           expected.fenceLost,
 			rawEchoPossible:     expected.rawEchoPossible || files.rawRenameMayArriveLocked(expected.rawSource),
 			rawObserved:         expected.rawObserved,
 			destinationObserved: expected.destinationObserved,
@@ -527,6 +532,10 @@ func (files *fileWatcher) rememberCompletedRenameLocked(completed completedFileR
 	}
 	files.completedRenames[completed.generation] = completed
 	if files.finishCompletedRenameLocked(completed.generation, completed) {
+		return
+	}
+	if completed.fenceDirectory != "" && !completed.fenceLost {
+		// The watched destination supplies an ordered fence even when delivery is delayed.
 		return
 	}
 	time.AfterFunc(files.renameFenceTimeout(), func() {
@@ -583,7 +592,7 @@ func (files *fileWatcher) expireCompletedRename(generation uint64) {
 	files.mu.Lock()
 	defer files.mu.Unlock()
 	completed, found := files.completedRenames[generation]
-	if !found {
+	if !found || (completed.fenceDirectory != "" && !completed.fenceLost) {
 		return
 	}
 	delete(files.completedRenames, generation)
@@ -707,6 +716,23 @@ func (files *fileWatcher) releaseWatchLocked(directory string) {
 	}
 	delete(files.watched, directory)
 	_ = files.watcher.Remove(directory)
+	// A removed source watch cannot produce the echo expected by a rename.
+	// Keep the destination fence until its ordered event arrives, but do not
+	// retain that watch forever waiting for a source event that cannot arrive.
+	for source, expected := range files.expectedRenames {
+		if !files.rawRenameMayArriveLocked(expected.rawSource) {
+			expected.rawEchoPossible = false
+			files.expectedRenames[source] = expected
+		}
+	}
+	for generation, completed := range files.completedRenames {
+		rawSource := filepath.Join(files.workspace.realRoot, strings.TrimPrefix(completed.rawSource, workspacePath))
+		if !files.rawRenameMayArriveLocked(rawSource) {
+			completed.rawEchoPossible = false
+			files.completedRenames[generation] = completed
+			files.finishCompletedRenameLocked(generation, completed)
+		}
+	}
 }
 
 func (files *fileWatcher) invalidateDirectory(directory string) {

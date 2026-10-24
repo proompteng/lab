@@ -1,0 +1,46 @@
+name: opencode-build-push
+
+permissions:
+  actions: read
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/opencode/**'
+      - 'services/bayn/**'
+      - 'nix/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'bun.lock'
+      - '**/package.json'
+      - '.npmrc'
+      - 'bunfig.toml'
+      - 'patches/**'
+      - '.github/actions/setup-nix-toolchain/**'
+      - '.github/workflows/opencode-build-push.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'argocd/applications/opencode/**'
+      - 'argocd/applications/kargo/**'
+      - 'argocd/applicationsets/platform.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-main
+  cancel-in-progress: false
+
+jobs:
+  image:
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: opencode
+      package_attr: opencode-image
+      image_build_timeout: 20m
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      source_revision: ${{ github.sha }}
+      pr_number: ''
+      latest: true
+      publish_on_dispatch: false
+    secrets: inherit

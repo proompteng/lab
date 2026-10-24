@@ -104,7 +104,9 @@ describe('Tengri image workflow', () => {
     expect(harness?.with?.file).toBe(steps[controllerIndex]?.with?.file)
     expect(harness?.with?.['build-args']).toBe('SOURCE_REVISION=${{ github.sha }}')
     expect(harness?.with?.['build-contexts']).toContain('nanoagent-tests=${{ runner.temp }}/nanoagent-tests')
-    expect(harness?.with?.['cache-from']).toBeUndefined()
+    expect(harness?.with?.['cache-from']).toBe(
+      'type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}',
+    )
     expect(harness?.with?.['cache-to']).toBeUndefined()
     expect(harness?.with?.load).toBe(true)
     expect(harness?.with?.push).not.toBe(true)

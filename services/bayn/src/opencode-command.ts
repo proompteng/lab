@@ -3,7 +3,6 @@ import { createServer } from 'node:http'
 import { NodeHttpClient, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Config, Context, Effect, Layer, Logger, Redacted } from 'effect'
 
-import { embeddedBuildMetadata } from './build'
 import { JevHttpClientLive } from './jev/http'
 import { HttpClient } from 'effect/http'
 import { GitSourceRevisionSchema } from './schemas'
@@ -11,10 +10,7 @@ import { serveOpenCode } from './opencode/server'
 import { ResearchError } from './research-inference/contract'
 
 export const openCodeServerProgram = Effect.gen(function* () {
-  const sourceRevision =
-    embeddedBuildMetadata === undefined
-      ? yield* Config.schema(GitSourceRevisionSchema, 'BAYN_CODE_REVISION')
-      : embeddedBuildMetadata.sourceRevision
+  const sourceRevision = yield* Config.schema(GitSourceRevisionSchema, 'OPENCODE_CODE_REVISION')
   const proxy = yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY')
   const binary = yield* Config.NonEmptyString('BAYN_OPENCODE_BINARY').pipe(Config.withDefault('/bin/opencode'))
   const upstream = Context.get(yield* Layer.build(JevHttpClientLive(proxy)), HttpClient.HttpClient)

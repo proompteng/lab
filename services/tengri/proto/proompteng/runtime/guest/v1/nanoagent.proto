@@ -10,6 +10,7 @@ service NanoagentService {
   rpc GetInfo(Empty) returns (GuestInfo);
   rpc OpenEditor(Empty) returns (Editor);
   rpc OpenBrowser(Empty) returns (Browser);
+  rpc StatFile(Path) returns (FileEntry);
   rpc ListFiles(Path) returns (FileList);
   rpc ReadFile(Path) returns (FileContent);
   rpc WriteFile(FileWrite) returns (FileWriteResult);

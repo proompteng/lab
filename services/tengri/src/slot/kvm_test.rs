@@ -9,7 +9,7 @@ use anyhow::{Context, ensure};
 use k8s_openapi::api::core::v1::Pod;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use tokio::{fs, net::TcpListener, sync::mpsc};
+use tokio::{fs, io::AsyncReadExt, net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::{
@@ -233,6 +233,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         "real KVM create CPU before:\n{}",
         fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
     );
+    let create_resources_before = creation_resource_counters(Path::new("/sys/fs/cgroup")).await;
     let started = Instant::now();
     let stage = |name: &str| {
         eprintln!(
@@ -262,6 +263,17 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     stage("codex");
     let create_ms = started.elapsed().as_secs_f64() * 1000.0;
     eprintln!("real KVM prepared creation: {create_ms:.2} ms");
+    let create_resources_after = creation_resource_counters(Path::new("/sys/fs/cgroup")).await;
+    fs::write(
+        "/work/creation-resources.json",
+        serde_json::to_vec(&json!({
+            "createMs": create_ms,
+            "scope": "fixture cgroup; counter snapshots collected outside the timed creation boundary",
+            "before": create_resources_before,
+            "after": create_resources_after,
+        }))?,
+    )
+    .await?;
     eprintln!(
         "real KVM create CPU after:\n{}",
         fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
@@ -863,8 +875,37 @@ async fn vmm_diagnostic_tasks() -> anyhow::Result<Vec<PathBuf>> {
     anyhow::bail!("awake guest has no Firecracker process")
 }
 
+async fn creation_resource_counters(directory: &Path) -> serde_json::Value {
+    let mut counters = serde_json::Map::new();
+    for name in [
+        "cpu.stat",
+        "memory.stat",
+        "io.stat",
+        "cpu.pressure",
+        "memory.pressure",
+        "io.pressure",
+    ] {
+        counters.insert(name.into(), optional_counter(&directory.join(name)).await);
+    }
+    counters.into()
+}
+
 async fn optional_counter(path: &Path) -> serde_json::Value {
-    match fs::read_to_string(path).await {
+    let read = async {
+        let mut bytes = Vec::new();
+        fs::File::open(path)
+            .await?
+            .take(65_537)
+            .read_to_end(&mut bytes)
+            .await?;
+        if bytes.len() > 65_536 {
+            return Err(std::io::Error::other("counter exceeds 64 KiB limit"));
+        }
+        String::from_utf8(bytes).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "counter is not UTF-8")
+        })
+    };
+    match read.await {
         Ok(value) => json!({ "value": value }),
         Err(error) => json!({
             "unavailable": { "kind": format!("{:?}", error.kind()), "message": error.to_string() }
@@ -878,6 +919,49 @@ async fn missing_optional_counter_reports_its_absence_without_failing() {
     let diagnostic = optional_counter(&path).await;
     assert_eq!(diagnostic["unavailable"]["kind"], "NotFound");
     assert!(diagnostic["unavailable"]["message"].is_string());
+}
+
+#[tokio::test]
+async fn creation_resource_counters_are_allowlisted_and_report_missing_files() {
+    let directory =
+        std::env::temp_dir().join(format!("tengri-create-counters-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&directory).await.unwrap();
+    fs::write(directory.join("memory.stat"), "pgfault 42\npgmajfault 7\n")
+        .await
+        .unwrap();
+    fs::write(directory.join("unrelated"), "must not be collected")
+        .await
+        .unwrap();
+    let counters = creation_resource_counters(&directory).await;
+    assert_eq!(counters.as_object().unwrap().len(), 6);
+    assert_eq!(
+        counters["memory.stat"]["value"],
+        "pgfault 42\npgmajfault 7\n"
+    );
+    assert_eq!(counters["io.pressure"]["unavailable"]["kind"], "NotFound");
+    assert!(counters.get("unrelated").is_none());
+    fs::remove_dir_all(directory).await.unwrap();
+}
+
+#[tokio::test]
+async fn optional_counter_rejects_oversized_and_invalid_text_without_returning_content() {
+    let path =
+        std::env::temp_dir().join(format!("tengri-bounded-counter-{}", uuid::Uuid::new_v4()));
+    fs::write(&path, vec![b'x'; 65_536]).await.unwrap();
+    assert_eq!(
+        optional_counter(&path).await["value"]
+            .as_str()
+            .unwrap()
+            .len(),
+        65_536
+    );
+    for content in [vec![b'x'; 65_537], vec![0xff]] {
+        fs::write(&path, content).await.unwrap();
+        let diagnostic = optional_counter(&path).await;
+        assert!(diagnostic.get("value").is_none());
+        assert!(diagnostic["unavailable"]["kind"].is_string());
+    }
+    fs::remove_file(path).await.unwrap();
 }
 
 async fn uring_workers() -> anyhow::Result<usize> {

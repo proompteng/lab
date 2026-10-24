@@ -40,7 +40,9 @@ RUN devbox-install-deps && \
     NIX_REMOTE=local nix-store --dump-db > /opt/devbox/nix-registration && \
     rm -rf /root/.bun/install/cache /root/.npm /var/lib/apt/lists/*
 ARG CODEX_VERSION=0.162.1
-RUN curl --fail --location --retry 3 https://chatgpt.com/codex/install.sh -o /tmp/codex-install.sh && \
+ARG CODEX_INSTALLER_SHA256=150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6
+RUN curl --fail --location --retry 3 "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/install.sh" -o /tmp/codex-install.sh && \
+    printf '%s  %s\n' "${CODEX_INSTALLER_SHA256}" /tmp/codex-install.sh | sha256sum -c - && \
     runuser -u codex -- env CODEX_NON_INTERACTIVE=1 sh /tmp/codex-install.sh --release "${CODEX_VERSION}" && \
     rm /tmp/codex-install.sh
 COPY services/devbox /opt/lab-seed/services/devbox

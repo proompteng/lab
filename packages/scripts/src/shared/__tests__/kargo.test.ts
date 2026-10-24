@@ -218,6 +218,12 @@ const expected = {
       'bun.lock',
     ],
   },
+  opencode: {
+    creationCriteria: 'image-revision',
+    images: [imageRepo('opencode')],
+    apps: ['opencode'],
+    includePaths: [],
+  },
   bayn: {
     creationCriteria: 'image-revision',
     images: [imageRepo('bayn')],

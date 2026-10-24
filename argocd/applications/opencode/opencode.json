@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "update": "disable",
+  "model": "flamingo/qwen36-flamingo",
+  "providers": {
+    "flamingo": {
+      "name": "Flamingo",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": { "baseURL": "http://flamingo.flamingo.svc.cluster.local/v1" },
+      "models": {
+        "qwen36-flamingo": {
+          "name": "Flamingo Qwen3.6 35B A3B",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"], "temperature": true },
+          "limit": { "context": 262144, "output": 16384 }
+        }
+      }
+    }
+  }
+}
