@@ -186,3 +186,10 @@ evidence, then restore Kargo control through Git/configuration afterward.
 
 Historical release-branch and Image Updater documents are not current operating instructions; consult Git history when
 auditing an old transaction.
+
+The standalone `opencode` Application uses `lab/opencode`, Warehouse/Stage
+`opencode`, and `kargo/opencode`. Its personal development server and isolated
+Bayn research gateway consume the same promoted immutable image. Bayn workers
+remain on `lab/bayn`; research receipts record both worker and gateway source
+revisions. The [OpenCode migration contract](../services/opencode/README.md)
+requires offline state verification before the new research gateway can start.

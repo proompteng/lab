@@ -8,15 +8,15 @@
 }:
 
 let
-  openCode = import ./bayn-opencode.nix { inherit pkgs lib; };
+  openCode = import ./opencode-cli.nix { inherit pkgs lib; };
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
   # SHA-256 identity for bayn.jev.executable-profit-limit.behavior.v1, verified by the production executable.
   strategyBehaviorHash = "191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2";
-  # Canonical hash of the compiled bayn.jev.protocol.v20 document.
-  strategyParameterHash = "5e4f552bb0420b98017e6a91b3df933dbb70408a51c6e13f804e1220de5700d6";
+  # Canonical hash of the compiled bayn.jev.protocol.v22 document.
+  strategyParameterHash = "3353cf13424c80c4498a53ff388782585a5969d63b950579675223f582e21f4a";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "f4a4ea1fff4aaba7ebfeb7a2a40b7a1823880f948bd8000cbb99db29187fbd5e";
+  strategyProtocolHash = "d88530748288c895b348f0c4bdfcb1b13f305f5ce120f664ad2c5aa932ca1c7f";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
@@ -93,10 +93,7 @@ let
     (buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash)
   ];
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
-  depsHash = {
-    x86_64-linux = "sha256-TY+rJMR1vTCP84/kFDIRPurtGaCepT6lGy4Zjkx9ouA=";
-    aarch64-linux = "sha256-CqZAxmjpRsJYuztoHliGnPJQCX0GuiMGH9NiZIR5H+E=";
-  };
+  depsHash = import ./bayn-deps-hash.nix;
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     "BAYN_TEST_OPENCODE_BINARY=${openCode}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
@@ -104,7 +101,6 @@ let
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/opencode-command.js"
     "node services/bayn/dist/jev-evaluation-command.js --help"
     "node services/bayn/dist/dual-signal-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
@@ -125,6 +121,7 @@ let
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist"
     cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
+    rm "$out/app/services/bayn/dist/opencode-command.js"
     cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     mkdir -p "$out/app/services/bayn/gepa"
@@ -172,7 +169,6 @@ import ./bun-workspace-service.nix {
   workingDir = "/app/services/bayn";
   includeBunRuntime = false;
   extraContents = [
-    openCode
     nodejs
     pkgs.cacert
     forwardPerformanceCommand

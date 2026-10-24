@@ -52,6 +52,7 @@ import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 import { codexHistoryResponse } from './codex-history-stream'
 import { codexRunSchema, type TengriCodexRun } from './codex-run'
+import { parseCodexThreadPage } from './codex-threads'
 import type { CodexHistoryPage } from './codex-history'
 import { TENGRI_UNARY_TIMEOUT_MS } from './limits'
 
@@ -276,6 +277,12 @@ export async function deleteAgent(identity: TengriIdentity, id: string, workspac
     await new Promise((resolve) => setTimeout(resolve, 250))
   } while (Date.now() < deadline)
   throw new TengriUnavailableError('Workspace cleanup is still pending. Retry to recover its current state.', 504)
+}
+
+export async function statFile(identity: TengriIdentity, agentId: string, filePath: string, signal?: AbortSignal) {
+  return normalizeFileEntry(
+    await unary<RawRecord>('statFile', { agentId, path: filePath }, identity, TENGRI_UNARY_TIMEOUT_MS, signal),
+  )
 }
 
 export async function listFiles(identity: TengriIdentity, agentId: string, filePath: string) {
@@ -506,6 +513,36 @@ export async function listCodexModels(
   } catch {
     throw new TengriUnavailableError('The guest returned an invalid Codex model catalog', 502, 'model_catalog_invalid')
   }
+}
+
+export async function listCodexThreads(
+  identity: TengriIdentity,
+  agentId: string,
+  archived: boolean,
+  cursor?: string,
+  signal?: AbortSignal,
+) {
+  const response = await unary<RawRecord>(
+    'listCodexThreads',
+    { agentId, archived, cursor },
+    identity,
+    TENGRI_UNARY_TIMEOUT_MS,
+    signal,
+  )
+  try {
+    return parseCodexThreadPage(stringValue(response.rawJson))
+  } catch {
+    throw new TengriUnavailableError('The agent returned an invalid chat index', 502)
+  }
+}
+
+export async function setCodexThreadArchived(
+  identity: TengriIdentity,
+  agentId: string,
+  threadId: string,
+  archived: boolean,
+) {
+  await unary('setCodexThreadArchived', { agentId, threadId, archived }, identity)
 }
 
 export async function createCodexThread(

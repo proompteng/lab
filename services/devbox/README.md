@@ -149,6 +149,11 @@ Add `codex-turin` in the desktop app's Connections settings and open
 `/home/codex/src/lab`.
 The image contains the version-pinned official standalone Codex installation under
 the user's persistent home. It can bootstrap the daemon without a device login.
+The build downloads `install.sh` from that version's official `openai/codex`
+GitHub release and verifies its pinned SHA-256 before execution. Update
+`CODEX_VERSION` and `CODEX_INSTALLER_SHA256` together from the release asset metadata.
+The upstream installer verifies the selected platform package's checksum and
+reported version; the mutable website installer URL is not a build dependency.
 On boot, the image refreshes its managed standalone package and command links while
 preserving personal configuration, skills, memories, credentials, and workspaces.
 The first-boot service initializes the daemon, clones the source revision used to

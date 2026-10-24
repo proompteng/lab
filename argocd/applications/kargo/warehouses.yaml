@@ -1086,3 +1086,28 @@ spec:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
         cacheByTag: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: opencode
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  interval: 1m0s
+  freightCreationPolicy: Automatic
+  freightCreationCriteria:
+    expression: >-
+      imageFrom('registry.ide-newton.ts.net/lab/opencode').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/opencode').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/opencode').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
+  subscriptions:
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/opencode
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - ^kargo-sha-[0-9a-f]{40}$
+        platform: linux/amd64
+        cacheByTag: true

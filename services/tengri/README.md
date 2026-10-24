@@ -366,6 +366,12 @@ enabling slot creation during cutover.
 Supervisor readiness checks the shared database schema and runner state together under a two-second deadline.
 A vacant, awake or sleeping runner cannot advertise a usable slot while its supervisor's database connection is
 unavailable. Process liveness remains independent of that dependency.
+The supervisor's `/readyz` response contains only a bounded reason code: `ready` (200), or
+`admission_unavailable`, `schema_unavailable`, `runner_unavailable`, or `timeout` (503).
+Admission means the replay startup fence has not elapsed. Schema includes SQL connectivity or checksum failure;
+runner includes an unavailable control socket or a phase other than vacant, awake, or sleeping. Timeout retains
+the same two-second combined dependency deadline. These codes do not expose underlying errors, credentials,
+claims, or filesystem paths, and do not authorize bypassing readiness or resetting slot storage.
 
 The namespace allows seven Leases for six slot claims and rolling-upgrade headroom, including a retired
 controller-election Lease left by older releases. The old Lease is ignored; it grants no controller authority.
@@ -511,6 +517,12 @@ It checks real files, the same PTY shell, initialized Codex, stop/page-eviction,
 diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared
 creation and repeated slot resumes do not prove the full authenticated BFF/Kubernetes creation distribution or six
 concurrent guests.
+
+`creation-resources.json` retains fixture-cgroup CPU, memory (including major faults), I/O and pressure counters
+before and after prepared creation. These bounded, fixed-file reads run outside the unchanged creation timer and
+are saved before later lifecycle checks, so a later failure does not erase the creation evidence. Missing counters
+are reported as unavailable, not zero. Cgroup-wide deltas can identify contention or paging evidence but do not
+attribute individual guest operations or prove a performance improvement.
 
 ## Editor sessions
 

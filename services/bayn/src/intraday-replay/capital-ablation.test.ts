@@ -332,7 +332,7 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
 test('current chosen-model-action baseline retains an enter choice below the retired probability floor', () => {
   const opp = opportunity(0, 'enter', 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v20')
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v22')
   expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('supported-setup-and-economic-plan')
   expect(baseline?.metrics.filledEntries).toBe(1)
   expect(baseline?.opportunities[0]?.status).toBe(CapitalAdmission.Admitted)

@@ -122,3 +122,18 @@ test('resealing changed provider bytes cannot turn an unrelated prompt into a ve
   }
   expect((await infer({ ...envelope(), harnessEvidence: evidence })).outcome).toBe(ResearchOutcome.Rejected)
 })
+
+test('standalone harness records its independent server revision alongside the Bayn worker revision', async () => {
+  const serverSourceRevision = 'a'.repeat(40)
+  const receipt = await infer(
+    { ...envelope(), harnessEvidence: { ...envelope().harnessEvidence, serverSourceRevision } },
+    {
+      'x-model-serving-identity': JSON.stringify(researchServingIdentity(run.policy)),
+      'x-bayn-source-revision': serverSourceRevision,
+    },
+  )
+  expect(receipt.outcome).toBe(ResearchOutcome.Complete)
+  expect(receipt.workerSourceRevision).toBe(run.sourceRevision)
+  expect(receipt.harnessEvidence?.serverSourceRevision).toBe(serverSourceRevision)
+  expect(Result.isSuccess(verifyResearchReceipt(run, receipt))).toBe(true)
+})

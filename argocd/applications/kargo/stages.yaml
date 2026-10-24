@@ -2424,3 +2424,85 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: opencode
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/opencode
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/opencode
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: opencode
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/opencode
+            images:
+              - image: opencode-main
+                newName: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(opencode): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: opencode
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}

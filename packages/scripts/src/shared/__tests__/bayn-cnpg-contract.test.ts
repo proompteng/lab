@@ -380,7 +380,12 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
     ports: [{ port: 3128, protocol: 'TCP' }],
   })
   expect(egressProxyPolicy.spec.ingress).toContainEqual({
-    from: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-opencode' } } }],
+    from: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'opencode' } },
+        podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opencode-research' } },
+      },
+    ],
     ports: [{ port: 3129, protocol: 'TCP' }],
   })
   const researchPolicy = YAML.parseAllDocuments(readRepoFile('argocd/applications/bayn/research-networkpolicy.yaml'))
