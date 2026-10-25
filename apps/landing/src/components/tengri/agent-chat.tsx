@@ -101,6 +101,7 @@ import {
   reconcileCodexEventsWithRestoredHistory,
   reconcileSubmittedPrompts,
   retainSubmittedPromptImages,
+  retireCodexAsyncQuestions,
   type CodexApprovalDecision,
   type CodexBufferedEvent,
   type CodexTranscriptItem,
@@ -966,19 +967,30 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     [historyById, renderedEvents, restoredHistorySequence],
   )
 
-  const questionItems = [
-    ...historyItems.map((item) => {
-      const update = restoredItemUpdates.get(item.id)
-      return update ? { kind: update.event.kind, text: update.text, questionRequest: update.questionRequest } : item
-    }),
-    ...renderedEvents
-      .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
-      .map(({ event, text, questionRequest }) => ({ kind: event.kind, text, questionRequest })),
-  ]
-  const answeredAsyncQuestions = new Set([
-    ...(resolvedAsyncQuestions.get(threadId) ?? []),
-    ...codexAnsweredAsyncQuestions(questionItems),
-  ])
+  const questionItems = useMemo(
+    () => [
+      ...historyItems.map((item) => {
+        const update = restoredItemUpdates.get(item.id)
+        return update ? { kind: update.event.kind, text: update.text, questionRequest: update.questionRequest } : item
+      }),
+      ...renderedEvents
+        .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
+        .map(({ event, text, questionRequest }) => ({ kind: event.kind, text, questionRequest })),
+    ],
+    [historyItems, renderedEvents, restoredItemUpdates],
+  )
+  const answeredAsyncQuestions = useMemo(
+    () => new Set([...(resolvedAsyncQuestions.get(threadId) ?? []), ...codexAnsweredAsyncQuestions(questionItems)]),
+    [resolvedAsyncQuestions, threadId, questionItems],
+  )
+  useEffect(() => {
+    if (!answeredAsyncQuestions.size) return
+    setEvents((current) => retireCodexAsyncQuestions(current, threadId, answeredAsyncQuestions))
+    setResolvedAsyncQuestions((current) => {
+      if ([...answeredAsyncQuestions].every((key) => current.get(threadId)?.has(key))) return current
+      return new Map(current).set(threadId, new Set([...(current.get(threadId) ?? []), ...answeredAsyncQuestions]))
+    })
+  }, [answeredAsyncQuestions, threadId])
   const asyncInputPending = questionItems.some((item) =>
     item.questionRequest?.fields.some((field) => !answeredAsyncQuestions.has(field.key)),
   )
@@ -993,7 +1005,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         card: update ? (
           renderEvent(update)
         ) : item.questionRequest ? (
-          renderAsyncQuestions(item.id, item.questionRequest)
+          renderAsyncQuestions(item.id, item.questionRequest, item.text)
         ) : (
           <CodexEventCard
             key={`wrap-${threadId}-${item.id}-${item.kind}`}
@@ -1085,7 +1097,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }
 
   function renderEvent({ event, text, activityTitle, questionRequest }: (typeof renderedEvents)[number]) {
-    if (questionRequest) return renderAsyncQuestions(event.itemId, questionRequest)
+    if (questionRequest) return renderAsyncQuestions(event.itemId, questionRequest, text)
     const question = codexQuestionRequest(event)
     if (question)
       return (
@@ -1120,31 +1132,34 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     )
   }
 
-  function renderAsyncQuestions(itemId: string, request: QuestionRequest) {
+  function renderAsyncQuestions(itemId: string, request: QuestionRequest, text: string) {
     const fields = request.fields.filter((field) => !answeredAsyncQuestions.has(field.key))
     if (!fields.length)
       return (
         <CodexEventCard
           key={`answered-${itemId}`}
           kind="assistant-text"
-          text={request.fields.map((field) => field.title).join('\n\n')}
+          agentId={agentId}
+          text={text || request.fields.map((field) => field.title).join('\n\n')}
         />
       )
     const pending = { ...request, fields }
     return (
-      <CodexQuestionCard
-        key={`${threadId}:${itemId}:${fields.map((field) => field.key).join(',')}`}
-        agentId={agentId}
-        runId=""
-        approvalId=""
-        request={pending}
-        disabled={submitting || !threadReady || replayRecovering || !runRecovered || (!activeTurnId && !canStartTurn)}
-        onRespond={async (response) => {
-          if ('answers' in response && Object.keys(response.answers).length === 0) return
-          await send({ text: codexAsyncQuestionReply(pending, response) })
-        }}
-        onAnswered={() => retireAsyncQuestions(fields.map((field) => field.key))}
-      />
+      <div key={`${threadId}:${itemId}:${fields.map((field) => field.key).join(',')}`} className="space-y-3">
+        {text ? <CodexEventCard agentId={agentId} kind="assistant-text" text={text} /> : null}
+        <CodexQuestionCard
+          agentId={agentId}
+          runId=""
+          approvalId=""
+          request={pending}
+          disabled={submitting || !threadReady || replayRecovering || !runRecovered || (!activeTurnId && !canStartTurn)}
+          onRespond={async (response) => {
+            if ('answers' in response && Object.keys(response.answers).length === 0) return
+            await send({ text: codexAsyncQuestionReply(pending, response) })
+          }}
+          onAnswered={() => retireAsyncQuestions(fields.map((field) => field.key))}
+        />
+      </div>
     )
   }
 

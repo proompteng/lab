@@ -29,6 +29,7 @@ export function CodexQuestionCard({
   const id = useId()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [freeTextFields, setFreeTextFields] = useState<ReadonlySet<string>>(new Set())
   const fields = Object.fromEntries(
     request.fields.map((field, index) => {
       const schema = z
@@ -125,8 +126,11 @@ export function CodexQuestionCard({
                   <input
                     type="radio"
                     name={`${id}-${key}`}
-                    checked={value === choice.value}
-                    onChange={() => setValue(key, choice.value, { shouldValidate: true })}
+                    checked={!freeTextFields.has(key) && value === choice.value}
+                    onChange={() => {
+                      setFreeTextFields((current) => new Set([...current].filter((field) => field !== key)))
+                      setValue(key, choice.value, { shouldValidate: true })
+                    }}
                     className="mt-1 accent-blue-400"
                   />
                   <span>
@@ -140,8 +144,13 @@ export function CodexQuestionCard({
               {field.freeText ? (
                 <input
                   {...register(key)}
-                  value={field.choices.some((choice) => choice.value === value) ? '' : value}
-                  onChange={(event) => setValue(key, event.target.value, { shouldValidate: true })}
+                  value={
+                    !freeTextFields.has(key) && field.choices.some((choice) => choice.value === value) ? '' : value
+                  }
+                  onChange={(event) => {
+                    setFreeTextFields((current) => new Set([...current, key]))
+                    setValue(key, event.target.value, { shouldValidate: true })
+                  }}
                   placeholder={field.choices.length ? 'Other answer' : undefined}
                   type={
                     field.secret ? 'password' : field.type === 'number' || field.type === 'integer' ? 'number' : 'text'

@@ -8930,7 +8930,7 @@ for (const width of [1440, 390]) {
     const item = {
       id: 'async-call',
       type: 'agentMessage',
-      text: '',
+      text: width === 1440 ? 'The rollout is waiting for your environment choice.' : '',
       delivery: 'async',
       questions: [{ title: 'Which environment?', options: ['Staging', 'Production'] }, { title: 'Any notes?' }],
     }
@@ -8947,6 +8947,7 @@ for (const width of [1440, 390]) {
     const prompt = chat.getByRole('textbox', { name: /^(Message your agent|Steer the current turn)$/ })
     const question = chat.getByRole('article', { name: 'Agent question', exact: true })
     await expect(question).toContainText('Which environment?')
+    if (item.text) await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
     await question.screenshot({ path: test.info().outputPath(`async-question-${width}.png`) })
     await expect(question.getByRole('radio', { name: 'Staging', exact: true })).toBeChecked()
     await expect(question.getByRole('textbox', { name: 'Other answer: Which environment?', exact: true })).toHaveValue(
@@ -8963,6 +8964,7 @@ for (const width of [1440, 390]) {
     await expect(question.getByRole('button', { name: 'Submit answers', exact: true })).toBeEnabled()
     await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
     await expect(question).toHaveCount(0)
+    if (item.text) await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
     await expect(prompt).toHaveValue('Keep my newer draft.')
     const sends = mock.actions.filter((action) => action.action === 'send-turn')
     expect(sends).toHaveLength(1)
@@ -8997,6 +8999,7 @@ for (const width of [1440, 390]) {
     await page.reload()
     await expect(chat.getByRole('article', { name: 'Your message' })).toContainText('Preserve the files.')
     await expect(question).toHaveCount(0)
+    if (item.text) await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
     expect(mock.actions.filter((action) => action.action === 'send-turn')).toHaveLength(1)
   })
 }
@@ -9029,7 +9032,7 @@ test('renders live async questions and retries their exact steering operation af
   const item = {
     id: 'live-question',
     type: 'agentMessage',
-    text: '',
+    text: 'I can keep investigating while you choose a target.',
     delivery: 'async',
     questions: [{ title: 'Which target?', options: ['Default'] }],
   }
@@ -9044,20 +9047,39 @@ test('renders live async questions and retries their exact steering operation af
       threadId: 'thread-active',
       turnId: 'turn-active',
       itemId: item.id,
-      text: '',
+      text: item.text,
       approvalId: '',
       rawJson: JSON.stringify({ params: { item } }),
     })
   const question = chat.getByRole('article', { name: 'Agent question', exact: true })
   await expect(question).toHaveCount(1)
-  await question.getByRole('textbox', { name: 'Other answer: Which target?', exact: true }).fill('Custom target')
+  await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+  await question
+    .getByRole('textbox', { name: 'Other answer: Which target?', exact: true })
+    .pressSequentially('Default with a canary')
+  await expect(question.getByRole('textbox')).toHaveValue('Default with a canary')
+  for (let sequence = 3; sequence < 504; sequence++)
+    await emitCodexEvent(page, {
+      sequence,
+      kind: 'tool-output',
+      method: 'item/completed',
+      threadId: 'thread-active',
+      turnId: 'turn-active',
+      itemId: `activity-${sequence}`,
+      text: 'Still working',
+      approvalId: '',
+      rawJson: '{}',
+    })
+  await expect(question).toHaveCount(1)
+  await expect(question.getByRole('textbox')).toHaveValue('Default with a canary')
   await prompt.fill('Do not replace this draft.')
   await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
   await expect(question.getByRole('alert')).toHaveText('Answer delivery was interrupted')
-  await expect(question.getByRole('textbox')).toHaveValue('Custom target')
+  await expect(question.getByRole('textbox')).toHaveValue('Default with a canary')
   await expect(prompt).toHaveValue('Do not replace this draft.')
   await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
   await expect(question).toHaveCount(0)
+  await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
   expect(attempts).toHaveLength(2)
   expect(attempts[0].operationId).toBe(attempts[1].operationId)
   expect(attempts[0].text).toBe(attempts[1].text)
