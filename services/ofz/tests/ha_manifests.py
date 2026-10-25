@@ -1033,9 +1033,13 @@ def main():
                     if {"protocol": "TCP", "port": 8443} not in rule.get("ports", [])
                 ]
             ),
-            lambda data: resource(
-                data, "proompteng", "NetworkPolicy", "proompteng-web"
-            )["spec"]["egress"][-1]["to"][0]["podSelector"]["matchLabels"].update(
+            lambda data: next(
+                rule
+                for rule in resource(
+                    data, "proompteng", "NetworkPolicy", "proompteng-web"
+                )["spec"]["egress"]
+                if {"protocol": "TCP", "port": 8443} in rule.get("ports", [])
+            )["to"][0]["podSelector"]["matchLabels"].update(
                 {"app.kubernetes.io/name": "wrong-identity-provider"}
             ),
         ]
