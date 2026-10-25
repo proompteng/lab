@@ -6,11 +6,8 @@ option go_package = "github.com/proompteng/lab/gen/proompteng/authz/v1;authzv1";
 
 // Ofz is the only normal application holding the native SpiceDB credential.
 // All methods require an attested, explicitly allowed SPIFFE workload identity.
-service AuthorizationService {
+service TengriAuthorizationService {
   rpc Check(CheckRequest) returns (CheckResponse);
-  // Connector broker only: authenticates an agent's proof-bound grant before
-  // returning an operation-specific decision and server-derived actor context.
-  rpc CheckConnectorAgent(CheckConnectorAgentRequest) returns (CheckConnectorAgentResponse);
   rpc AuthorizeCommand(AuthorizeCommandRequest) returns (AuthorizeCommandResponse);
   rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse);
   rpc GetCommand(GetCommandRequest) returns (GetCommandResponse);
@@ -29,6 +26,7 @@ service AuthorizationService {
 }
 
 enum Action {
+  reserved 28, 29, 30, 31, 34, 35, 41, 42, 43;
   ACTION_UNSPECIFIED = 0;
   ACTION_PLATFORM_ADMIT = 1;
   ACTION_WORKSPACE_CREATE = 2;
@@ -57,30 +55,20 @@ enum Action {
   ACTION_EDITOR_OPEN = 25;
   ACTION_PREVIEW_OBSERVE = 26;
   ACTION_PREVIEW_ACCESS = 27;
-  ACTION_KUBE_STATUS_READ = 28;
-  ACTION_KUBE_LOGS_READ = 29;
-  ACTION_KUBE_EVENTS_READ = 30;
-  ACTION_CONNECTOR_READ = 31;
   ACTION_SESSION_ESTABLISH = 32;
   ACTION_WORKSPACE_ENROLL = 33;
-  ACTION_KUBE_EXECUTE = 34;
-  ACTION_CONNECTOR_EXECUTE = 35;
   ACTION_POLICY_CHECK = 36;
   ACTION_POLICY_COMMAND = 37;
   ACTION_SESSION_INSPECT = 38;
   ACTION_WORKSPACE_POLICY_READ = 39;
   ACTION_SESSION_REVOKE = 40;
-  ACTION_CONNECTOR_CREATE = 41;
-  ACTION_CONNECTOR_MANAGE = 42;
-  ACTION_CONNECTOR_INVOKE = 43;
 }
 
 enum ResourceKind {
+  reserved 3, 4;
   RESOURCE_KIND_UNSPECIFIED = 0;
   RESOURCE_KIND_PLATFORM = 1;
   RESOURCE_KIND_WORKSPACE = 2;
-  RESOURCE_KIND_KUBE_NAMESPACE = 3;
-  RESOURCE_KIND_CONNECTOR_CONNECTION = 4;
 }
 
 message Resource {
@@ -118,11 +106,7 @@ message ObservationScope {
   bool browser_screenshot = 4;
   uint32 max_bytes = 5;
   uint32 max_items = 6;
-  // Exact reviewed gateway operations. Empty grants cannot use CheckConnectorAgent;
-  // legacy diagnostic ConnectorRead grants retain their existing contract.
-  repeated string connector_operations = 7;
-  // Server-owned epoch captured when a connector capability is issued.
-  string connector_runtime_epoch = 8;
+  reserved 7, 8;
 }
 
 message CheckRequest {
@@ -141,22 +125,6 @@ message CheckResponse {
   uint64 valid_until_unix_ms = 4;
   uint64 recovery_generation = 5;
   ObservationScope effective_scope = 6;
-}
-
-message CheckConnectorAgentRequest {
-  string grant_id = 1;
-  string credential = 2;
-  string proof = 3;
-  bytes request_hash = 4;
-  string connection_id = 5;
-  string operation = 6;
-  // Selected by the trusted broker from the reviewed provider catalog.
-  Action action = 7;
-}
-
-message CheckConnectorAgentResponse {
-  RequestContext context = 1;
-  CheckResponse decision = 2;
 }
 
 enum GuestMaintenancePurpose {
@@ -243,20 +211,8 @@ message RevokeGrant {
   string grant_id = 1;
 }
 
-message SetTargetAccess {
-  Resource resource = 1;
-  string human_id = 2;
-  Action action = 3;
-  bool enabled = 4;
-}
-
 // BFF only. Creation binds the immutable connection UUID to the authenticated
 // human. Subsequent enable/disable requires its current owner permission.
-message ConfigureConnector {
-  string connection_id = 1;
-  bool create = 2;
-  bool enabled = 3;
-}
 
 message SetQuota {
   string human_id = 1;
@@ -344,7 +300,6 @@ message ExecuteCommandRequest {
     TransferWorkspace transfer_workspace = 7;
     CreateGrant create_grant = 8;
     RevokeGrant revoke_grant = 9;
-    SetTargetAccess set_target_access = 10;
     SetQuota set_quota = 11;
     EnrollWorkspace enroll_workspace = 12;
     RemoveWorkspace remove_workspace = 13;
@@ -353,7 +308,6 @@ message ExecuteCommandRequest {
     ReleaseReservation release_reservation = 16;
     SetWorkspaceRuntime set_workspace_runtime = 17;
     CompleteWorkspaceRemoval complete_workspace_removal = 18;
-    ConfigureConnector configure_connector = 21;
     BeginWorkspaceEnrollment begin_workspace_enrollment = 20;
   }
 }
@@ -458,6 +412,10 @@ message AuditReceipt {
   // Typed policy data, without raw credentials, needed to reconcile independent recovery.
   ExecuteCommandRequest policy_command = 18;
   string revision = 19;
+  string platform_action = 20;
+  repeated string platform_resources = 21;
+  string platform_client = 22;
+  bytes platform_request_hash = 23;
 }
 
 message ReadAuditResponse {

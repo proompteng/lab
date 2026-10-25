@@ -7,8 +7,8 @@ the same strategy, intent, risk, mutation, recovery, accounting, and reconciliat
 durable capital activation determine where an otherwise identical execution plan may run.
 
 The active runtime contains one strategy, `jev`, using
-`bayn.jev.protocol.v1`. Historical strategy and decision schemas remain readable only where persisted
-records require them; they are not runtime fallbacks and cannot start new cycles.
+`bayn.jev.protocol.v20` over trading-signal state `v17`. Historical strategy and decision schemas remain readable only
+where persisted records require them; they are not runtime fallbacks and cannot start new cycles.
 
 ## Ownership
 
@@ -38,7 +38,8 @@ records require them; they are not runtime fallbacks and cannot start new cycles
 4. Bayn constructs verified trading-signal state for the pinned Jev model, retains the complete inference batch, and
    derives a target portfolio or typed readiness from that evidence. Missing candidate features remain explicit
    exclusions; missing benchmark evidence blocks the observation. Unavailable inference stays distinct from a valid
-   no-trade result. Existing positions retain deterministic protective-stop, holding-time and session-close exits.
+   no-trade result. Existing positions retain their sealed plan's protective stop and profit limit, plus holding-time
+   and session-close deadlines; whole-share equity entries register the stop and target as native bracket children.
    PostgreSQL retains exact raw rows, selected feature payloads, actual receipt times, consumer epoch and sequence,
    transport positions, and snapshot hashes before execution. Archive and shadow modes retain their separate
    archive-availability evidence contracts; changing the deployed data mode requires reviewed GitOps.
@@ -60,25 +61,36 @@ records require them; they are not runtime fallbacks and cannot start new cycles
 
 ## Active strategy
 
-The submission window opens with the regular session. After its first completed minute and two-second
-decision delay, Bayn evaluates up to 30 minutes of actual, possibly sparse history until five minutes before the close, without an extra clock warmup.
-It supplies verified prices, volume, computed technical indicators, quotes, benchmark relationships and position
-context to `jev-1.13.0`. Bayn owns arithmetic, timing, sizing, risk and accounting. The default development protocol
-requires a reported entry probability of at least 0.65 and a spread no wider than 5 basis points. Complete batch
-evidence must complete within its ten-second lifetime before authorization. Entry risk then binds a fresh execution
-quote for at most ten seconds from its event time. These parameters have not established a
+The submission window opens with the regular session. After its first completed minute and two-second decision
+delay, Bayn evaluates up to 30 minutes of actual, possibly sparse history until five minutes before the close,
+without an extra clock warmup. It supplies verified prices, volume, computed technical indicators, quotes, benchmark
+relationships and position context to `jev-1.13.0`. Bayn owns arithmetic, timing, sizing, risk and accounting.
+
+Admission requires a typed setup judgment and a funded plan. Jev must classify the setup `upward` and select a
+complete plan whose target proceeds cover acquisition cost and the modeled entry and exit fees. The protocol has no
+entry or exit probability threshold, and no reported choice probability is a calibrated probability of profit. A
+candidate's entry quote must also pass its market profile's maximum spread: 5 basis points for equities and 25 for
+crypto. Complete batch evidence must arrive within its ten-second lifetime before authorization. Entry risk then
+binds a fresh execution quote for at most ten seconds from its event time. These parameters have not established a
 profitable trading advantage.
 
 The strategy selects at most one long position and caps it at 20% of account equity. Allocation bounds the actual
-weighted target by order, symbol, gross and net exposure limits and remaining daily buy-plus-sell turnover. It reserves
-slippage and current exposure's liquidation notional before sizing the target. The planner and allocation bounds use
-the same fixed-point weight precision. Entry uses whole-share IOC limit orders within the verified adverse quote and
-the risk policy's slippage allowance. Model exits require a reported probability of at least 0.65. Deterministic exits
-enforce a 15-minute maximum holding period and a 50-basis-point protective stop on fresh quotes.
-Entries stop and forced flattening starts five minutes before
-the actual session close. Close orders remain eligible until the bell; residual positions or unresolved reconciliation
-remain incomplete. The protocol, universe, thresholds, feed contract, and execution model are
-source-controlled and included in the image's verified behavior, parameter, and protocol hashes.
+weighted target by order, symbol, gross and net exposure limits and remaining daily buy-plus-sell turnover. It
+reserves slippage and current exposure's liquidation notional before sizing the target. The planner and allocation
+bounds use the same fixed-point weight precision.
+
+Code builds at most sixteen candidate plans from four representative stops and up to four targets per stop. Stop
+scenarios sit one, two, four and eight quarter-range steps below the observed bid; targets combine observed levels
+with a net-reward scenario whose proceeds cover acquisition cost plus the modeled stop loss. Jev selects the plan; the
+construction rules never select an entry or default exit. Whole-share equity entries submit a LIMIT/DAY bracket that
+binds the take-profit and stop before the parent fills; crypto and fractional inventory use individual protective
+stop-limit orders. The sealed plan's profit limit, protective stop and 15-minute maximum holding period remain
+enforced; protection and exit pricing are rechecked against fresh quotes, and an application exit cancels outstanding
+protection and closes only reconciled residual inventory. Entries stop and forced flattening starts five minutes
+before the actual session close. Close orders remain eligible until the bell; residual positions or unresolved
+reconciliation remain incomplete. The protocol, universe, thresholds, feed contract, and execution model are
+source-controlled and included in the image's verified behavior, parameter, and protocol hashes. See
+[strategy protection](strategy-protection.md) for the exact plan, funding and protection contracts.
 
 ## Mutation and risk boundary
 

@@ -237,10 +237,13 @@ pub async fn run() -> anyhow::Result<()> {
                 let database = readiness_database.clone();
                 let admission = readiness_admission.clone();
                 async move {
-                    if !admission.is_ready() {
-                        return StatusCode::SERVICE_UNAVAILABLE;
-                    }
-                    readiness(&database, &runner::sockets_directory().join("control.sock")).await
+                    readiness(
+                        &database,
+                        &runner::sockets_directory().join("control.sock"),
+                        admission.is_ready(),
+                    )
+                    .await
+                    .response()
                 }
             }),
         );
@@ -254,25 +257,62 @@ pub async fn run() -> anyhow::Result<()> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Readiness {
+    Ready,
+    Admission,
+    Schema,
+    Runner,
+    Timeout,
+}
+
+impl Readiness {
+    fn response(self) -> (StatusCode, &'static str) {
+        match self {
+            Self::Ready => (StatusCode::OK, "ready\n"),
+            Self::Admission => (StatusCode::SERVICE_UNAVAILABLE, "admission_unavailable\n"),
+            Self::Schema => (StatusCode::SERVICE_UNAVAILABLE, "schema_unavailable\n"),
+            Self::Runner => (StatusCode::SERVICE_UNAVAILABLE, "runner_unavailable\n"),
+            Self::Timeout => (StatusCode::SERVICE_UNAVAILABLE, "timeout\n"),
+        }
+    }
+}
+
 async fn readiness(
     database: &crate::control::Database,
     runner_socket: &std::path::Path,
-) -> StatusCode {
+    admission_ready: bool,
+) -> Readiness {
     let check = async {
-        database.verify_schema().await?;
-        let status = runner::command_at(runner_socket, &CommandRequest::Status).await?;
-        anyhow::ensure!(
-            matches!(
-                status.state,
-                SlotState::Vacant { .. } | SlotState::Awake { .. } | SlotState::Sleeping { .. }
-            ),
-            "slot runner is unavailable"
-        );
-        Ok::<(), anyhow::Error>(())
+        database
+            .verify_schema()
+            .await
+            .map_err(|_| Readiness::Schema)?;
+        let status = runner::command_at(runner_socket, &CommandRequest::Status)
+            .await
+            .map_err(|_| Readiness::Runner)?;
+        if !matches!(
+            status.state,
+            SlotState::Vacant { .. } | SlotState::Awake { .. } | SlotState::Sleeping { .. }
+        ) {
+            return Err(Readiness::Runner);
+        }
+        Ok(())
     };
+    readiness_check(admission_ready, check).await
+}
+
+async fn readiness_check(
+    admission_ready: bool,
+    check: impl std::future::Future<Output = Result<(), Readiness>>,
+) -> Readiness {
+    if !admission_ready {
+        return Readiness::Admission;
+    }
     match tokio::time::timeout(READINESS_TIMEOUT, check).await {
-        Ok(Ok(())) => StatusCode::OK,
-        _ => StatusCode::SERVICE_UNAVAILABLE,
+        Ok(Ok(())) => Readiness::Ready,
+        Ok(Err(reason)) => reason,
+        Err(_) => Readiness::Timeout,
     }
 }
 
@@ -724,6 +764,50 @@ fn matches_claim(headers: &HeaderMap, claim: &Claim) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readiness_responses_are_bounded_and_preserve_http_status() {
+        for (reason, body) in [
+            (Readiness::Admission, "admission_unavailable\n"),
+            (Readiness::Schema, "schema_unavailable\n"),
+            (Readiness::Runner, "runner_unavailable\n"),
+            (Readiness::Timeout, "timeout\n"),
+        ] {
+            assert_eq!(reason.response(), (StatusCode::SERVICE_UNAVAILABLE, body));
+        }
+        assert_eq!(Readiness::Ready.response(), (StatusCode::OK, "ready\n"));
+    }
+
+    #[tokio::test]
+    async fn readiness_admission_does_not_poll_dependencies() {
+        let reason = readiness_check(false, async {
+            panic!("admission must close before checking dependencies")
+        })
+        .await;
+        assert_eq!(reason, Readiness::Admission);
+    }
+
+    #[tokio::test]
+    async fn readiness_preserves_dependency_failures_and_success() {
+        for failure in [Readiness::Schema, Readiness::Runner] {
+            assert_eq!(readiness_check(true, async { Err(failure) }).await, failure);
+        }
+        assert_eq!(
+            readiness_check(true, async { Ok(()) }).await,
+            Readiness::Ready
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn readiness_preserves_two_second_deadline() {
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            readiness_check(true, std::future::pending()).await,
+            Readiness::Timeout
+        );
+        assert_eq!(started.elapsed(), READINESS_TIMEOUT);
+        assert_eq!(READINESS_TIMEOUT, std::time::Duration::from_secs(2));
+    }
 
     #[test]
     fn guest_headers_require_exact_single_current_runtime_binding() {
@@ -1277,14 +1361,14 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            readiness(&readiness_database, &supervisor.runner_socket).await,
-            StatusCode::OK
+            readiness(&readiness_database, &supervisor.runner_socket, true).await,
+            Readiness::Ready
         );
         readiness_database.close_fixture();
         let started = tokio::time::Instant::now();
         assert_eq!(
-            readiness(&readiness_database, &supervisor.runner_socket).await,
-            StatusCode::SERVICE_UNAVAILABLE,
+            readiness(&readiness_database, &supervisor.runner_socket, true).await,
+            Readiness::Schema,
             "a healthy sleeping runner cannot make a disconnected supervisor ready"
         );
         assert!(started.elapsed() < std::time::Duration::from_secs(3));

@@ -27,13 +27,20 @@ type relayOperation struct {
 	InputSchema json.RawMessage `json:"inputSchema"`
 	ReadOnly    bool            `json:"readOnly"`
 }
+type relayBinding struct {
+	Service    string `json:"service"`
+	ID         string `json:"id"`
+	Generation string `json:"generation"`
+}
 type relayConfiguration struct {
-	ConnectionID string           `json:"connectionId"`
-	Endpoint     string           `json:"endpoint"`
-	GrantID      string           `json:"grantId"`
-	Credential   string           `json:"credential"`
-	Operations   []relayOperation `json:"operations"`
-	KeyFile      string           `json:"keyFile,omitempty"`
+	DelegationID  string           `json:"delegationId"`
+	ConnectorID   string           `json:"connectorId"`
+	ClientService string           `json:"clientService"`
+	Binding       relayBinding     `json:"binding"`
+	Endpoint      string           `json:"endpoint"`
+	Credential    string           `json:"credential"`
+	Operations    []relayOperation `json:"operations"`
+	KeyFile       string           `json:"keyFile,omitempty"`
 }
 
 var relayUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -116,9 +123,6 @@ func relayIdentity(root string) (map[string]string, error) {
 }
 
 func (supervisor *codexSupervisor) relayCall(ctx context.Context, method string, params json.RawMessage) (codexCallResult, error) {
-	if !supervisor.connectorsEnabled {
-		return codexCallResult{}, errors.New("connectors are not enabled")
-	}
 	supervisor.relayMu.Lock()
 	defer supervisor.relayMu.Unlock()
 	identity, err := relayIdentity(supervisor.relayRoot)
@@ -135,20 +139,20 @@ func (supervisor *codexSupervisor) relayCall(ctx context.Context, method string,
 	var config relayConfiguration
 	decoder := json.NewDecoder(bytes.NewReader(params))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&config) != nil || !relayUUID.MatchString(config.ConnectionID) {
+	if decoder.Decode(&config) != nil || !relayUUID.MatchString(config.DelegationID) {
 		return codexCallResult{}, errors.New("invalid connector configuration")
 	}
 	var extra any
 	if decoder.Decode(&extra) != io.EOF {
 		return codexCallResult{}, errors.New("invalid connector configuration")
 	}
-	serverName := "relay_" + strings.ReplaceAll(config.ConnectionID, "-", "")
-	file := filepath.Join(supervisor.relayRoot, config.ConnectionID+".json")
+	serverName := "relay_" + strings.ReplaceAll(config.DelegationID, "-", "")
+	file := filepath.Join(supervisor.relayRoot, config.DelegationID+".json")
 	var value any
 	switch method {
 	case "relay/configure":
 		endpoint, parseErr := url.Parse(config.Endpoint)
-		if parseErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.Path != "/api/tengri/connectors/agent" || endpoint.RawQuery != "" || endpoint.Fragment != "" || !relayUUID.MatchString(config.GrantID) || !relayCredential.MatchString(config.Credential) || len(config.Operations) == 0 || len(config.Operations) > 128 || config.KeyFile != "" {
+		if parseErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.Path != "/api/platform/relay/agent" || endpoint.RawQuery != "" || endpoint.Fragment != "" || !relayName.MatchString(config.ConnectorID) || config.ClientService != "tengri-web" || config.Binding.Service != "tengri" || !relayUUID.MatchString(config.Binding.ID) || !relayUUID.MatchString(config.Binding.Generation) || !relayCredential.MatchString(config.Credential) || len(config.Operations) == 0 || len(config.Operations) > 128 || config.KeyFile != "" {
 			return codexCallResult{}, errors.New("invalid connector grant")
 		}
 		seen := map[string]bool{}
@@ -202,7 +206,7 @@ func (supervisor *codexSupervisor) relayCall(ctx context.Context, method string,
 	if _, err := supervisor.request(ctx, "config/mcpServer/reload", json.RawMessage(`null`), true, nil); err != nil {
 		return codexCallResult{}, errors.New("connector tools could not be refreshed")
 	}
-	raw, _ := json.Marshal(map[string]bool{"configured": method == "relay/configure"})
+	raw, _ := json.Marshal(map[string]any{"configured": method == "relay/configure", "delegationId": config.DelegationID, "proofKeyThumbprint": identity["proofKeyThumbprint"]})
 	return codexCallResult{result: raw}, nil
 }
 

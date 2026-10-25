@@ -1,15 +1,15 @@
 # Ofz authorization API
 
-Ofz owns the final Tengri policy schema, action catalog, typed authorization API and durable control state.
-The migration is tracked in [the implementation checklist](../../docs/tengri/ofz-implementation-status.md).
-Ofz and its consumers release through the coordinated Ofz, Tengri, Nanoagent and Proompteng cohort.
+Ofz owns platform authorization, service registration, policy onboarding and durable authorization state through
+SpiceDB. [The platform package](platform/README.md) explains service/policy onboarding and relationship management;
+[the architecture and cutover guide](../../docs/platform/ofz-relay.md) covers Relay and its clients.
 
-[Dormant Relay support](../../docs/tengri/relay-staged-rollout.md) adds compatible
-connector contracts behind the default-off `TENGRI_CONNECTORS_ENABLED` server gate.
-The active native schema and existing diagnostic grants remain usable without
-enabling connectors or provisioning Relay.
+`PlatformAuthorizationService` is the extensible platform contract. `TengriAuthorizationService` owns Tengri's existing
+identity, workspace lifecycle, session and content-access operations. The former `AuthorizationService` and its
+Tengri connector API are removed. Kubernetes connector execution goes through the separate Relay service.
+Ofz and its existing Tengri consumers retain their coordinated image release cohort.
 
-[`schema.zed`](schema.zed) uses immutable workspace and namespace UIDs, active platform membership, explicit workspace
+[`schema.zed`](schema.zed) uses immutable workspace UIDs, active platform membership, explicit workspace
 roles and native expiring agent grants. Platform administration grants no workspace content access. An agent decision
 must check its expiring grant and its issuer's current permission in one fully consistent bulk request.
 
@@ -35,7 +35,7 @@ bash test-control.sh
 
 The policy fixture starts a disposable, loopback-only SpiceDB and an isolated PostgreSQL using the same pinned images as the cluster.
 It never reads or modifies production relationships. It checks the complete human role matrix, platform membership
-revocation, namespace/connector isolation, and native grant expiration. API, crash, broker and product acceptance are
+revocation, workspace isolation, and native grant expiration. API, crash, broker and product acceptance are
 separate gates; a schema fixture does not establish deployed application enforcement.
 
 The pinned SpiceDB release retained an allowed expiration result with both dispatch caches enabled, including fully
@@ -80,7 +80,7 @@ and distinct canonical UUIDs in `operationId` and `activationOperationId`. Use t
 account IDs. Keep the same manifest for every uncertain retry; usernames and email addresses are not authority.
 
 Bootstrap requires a fresh, fenced control database. It durably records the approved intent before installing the
-compiled SpiceDB schema and the two Member/Administrator assignments, plus the four exact application workload
+compiled SpiceDB schema and the two Member/Administrator assignments, plus the two exact application workload
 relationships. It commits the SQL identities, immutable audit and original receipt while retaining the fence.
 The existing per-member defaults remain two workspaces, one active workspace and 64 GiB, within the fleet budget.
 The native schema read/write calls follow the [Authzed schema API](https://github.com/authzed/api/blob/main/authzed/api/v1/schema_service.proto).
@@ -88,7 +88,7 @@ The journal records the server's installed schema hash and rejects a changed sch
 
 Activation requires acknowledgement of the bootstrap and all prior audit receipts, a healthy archive checkpoint,
 unchanged initial administrator/workload authority and the installed schema. A fully consistent bounded read must
-match exactly the eight approved platform relationships; surplus principals, cross-role assignments and retired
+match exactly the six approved platform relationships; surplus principals, cross-role assignments and retired
 platform objects keep activation fenced. The final authority check repeats that comparison after the audit insertion.
 It rechecks archive health after its own
 audit insertion before removing the platform fence. Completed retries return their original receipt and report current
@@ -156,10 +156,12 @@ permission response, including a failure that occurs while the request is in fli
 fresh state after workload authorization and cannot install new access during archive loss; stop/release remain available.
 
 The image also packages `/bin/ofz-audit-export`, which exports bounded batches from the durable outbox to the
-[independent NUC archive](../../devices/nuc/ofz-recovery/README.md). It requires the separate `ofz_archiver` SQL role
-and verifies database TLS and the native S3 certificate. Configure `OFZ_DATABASE_DSN`,
+[Ceph recovery store](recovery.md). It requires the separate `ofz_archiver` SQL role
+and verifies database TLS. Configure `OFZ_DATABASE_DSN`,
 `OFZ_DATABASE_PASSWORD_FILE`, `OFZ_DATABASE_CA_FILE`, `OFZ_ARCHIVE_ACCESS_KEY_FILE` and
-`OFZ_ARCHIVE_SECRET_KEY_FILE` with mounted files. The destination is the approved private NUC endpoint on port 9444.
+`OFZ_ARCHIVE_SECRET_KEY_FILE` with mounted files. The destination is the private Ceph object gateway on port 80.
+This deployment uses the existing Ceph storage configuration without SSE or a separate key manager. Versioning,
+COMPLIANCE retention, payload hashes, version-specific readback and archive freshness gates remain required.
 
 The exporter holds a PostgreSQL session lease. Standbys wait for that lease; keepalives and a fifteen-second database
 idle-session limit bound abandoned connections. Every batch records ordered sequences, original receipts, target

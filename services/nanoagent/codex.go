@@ -102,18 +102,17 @@ type codexProcessGeneration struct {
 }
 
 type codexSupervisor struct {
-	binary            string
-	browserMCP        bool
-	cwd               string
-	closed            atomic.Bool
-	requestID         atomic.Uint64
-	writePermit       chan struct{}
-	loginMu           sync.Mutex
-	relayMu           sync.Mutex
-	relayRoot         string
-	connectorsEnabled bool
-	operationMu       sync.Mutex
-	responseTimeout   time.Duration
+	binary          string
+	browserMCP      bool
+	cwd             string
+	closed          atomic.Bool
+	requestID       atomic.Uint64
+	writePermit     chan struct{}
+	loginMu         sync.Mutex
+	relayMu         sync.Mutex
+	relayRoot       string
+	operationMu     sync.Mutex
+	responseTimeout time.Duration
 
 	mu              sync.Mutex
 	command         *exec.Cmd
@@ -141,19 +140,18 @@ type codexSupervisor struct {
 
 func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 	supervisor := &codexSupervisor{
-		binary:            binary,
-		connectorsEnabled: os.Getenv("TENGRI_CONNECTORS_ENABLED") == "true",
-		cwd:               cwd,
-		writePermit:       make(chan struct{}, 1),
-		responseTimeout:   codexResponseWriteTimeout,
-		generation:        newCodexProcessGeneration(),
-		workRequests:      make(map[string]struct{}),
-		activeTurns:       make(map[string]string),
-		workChangedAt:     time.Now(),
-		pending:           make(map[string]chan codexPendingResult),
-		approvals:         make(map[string]codexApproval),
-		subscriptions:     make(map[uint64]codexSubscription),
-		shutdown:          make(chan struct{}),
+		binary:          binary,
+		cwd:             cwd,
+		writePermit:     make(chan struct{}, 1),
+		responseTimeout: codexResponseWriteTimeout,
+		generation:      newCodexProcessGeneration(),
+		workRequests:    make(map[string]struct{}),
+		activeTurns:     make(map[string]string),
+		workChangedAt:   time.Now(),
+		pending:         make(map[string]chan codexPendingResult),
+		approvals:       make(map[string]codexApproval),
+		subscriptions:   make(map[uint64]codexSubscription),
+		shutdown:        make(chan struct{}),
 	}
 	supervisor.writePermit <- struct{}{}
 	return supervisor
@@ -348,6 +346,9 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 	}
 	if method == "account/login/start" {
 		return supervisor.startLogin(ctx, params)
+	}
+	if method == "thread/archive" {
+		return supervisor.archiveThread(ctx, params)
 	}
 	if strings.HasPrefix(method, "relay/") {
 		return supervisor.relayCall(ctx, method, params)
@@ -1598,9 +1599,29 @@ func codexResumeThreadID(params json.RawMessage) (string, bool) {
 	return input.ThreadID, input.ThreadID != ""
 }
 
+var errCodexThreadActive = errors.New("Wait for the response to finish before archiving this chat")
+
+func (supervisor *codexSupervisor) archiveThread(ctx context.Context, params json.RawMessage) (codexCallResult, error) {
+	var input struct {
+		ThreadID string `json:"threadId"`
+	}
+	if json.Unmarshal(params, &input) != nil || input.ThreadID == "" {
+		return codexCallResult{}, errors.New("threadId is required")
+	}
+	supervisor.operationMu.Lock()
+	defer supervisor.operationMu.Unlock()
+	supervisor.mu.Lock()
+	_, active := supervisor.activeTurns[input.ThreadID]
+	supervisor.mu.Unlock()
+	if active {
+		return codexCallResult{}, errCodexThreadActive
+	}
+	return supervisor.request(ctx, "thread/archive", params, true, nil)
+}
+
 func allowedCodexMethod(method string) bool {
 	switch method {
-	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/start", "thread/read", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt", "tengri/pending", "tengri/operation", "tengri/reconcileOperation", "tengri/resolveApproval", "relay/identity", "relay/configure", "relay/remove":
+	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/list", "thread/archive", "thread/unarchive", "thread/start", "thread/read", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt", "tengri/pending", "tengri/operation", "tengri/reconcileOperation", "tengri/resolveApproval", "relay/identity", "relay/configure", "relay/remove":
 		return true
 	default:
 		return false

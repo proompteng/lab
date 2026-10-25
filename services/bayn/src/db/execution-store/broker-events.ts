@@ -107,11 +107,11 @@ export const makeBrokerEventInterpreter = (
         return sql`
           INSERT INTO account_snapshots (
             event_id, account_id, schema_version, status, currency,
-            cash_micros, equity_micros, buying_power_micros
+            cash_micros, equity_micros, buying_power_micros, crypto_fee_tier
           ) VALUES (
             ${eventId}, ${input.account.accountId}, ${input.account.schemaVersion}, ${input.account.status},
             ${input.account.currency}, ${input.account.cashMicros}, ${input.account.equityMicros},
-            ${input.account.buyingPowerMicros}
+            ${input.account.buyingPowerMicros}, ${input.account.cryptoFeeTier}
           )
         `.pipe(Effect.asVoid)
       case 'Position':

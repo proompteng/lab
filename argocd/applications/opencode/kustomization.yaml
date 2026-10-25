@@ -3,7 +3,6 @@ kind: Kustomization
 namespace: opencode
 resources:
   - research.yaml
-  - migration.yaml
   - server.yaml
   - networkpolicy.yaml
   - tailscale-ingress.yaml

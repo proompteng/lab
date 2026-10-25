@@ -4,7 +4,19 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { ConfigProvider, Console, Deferred, Effect, Exit, Fiber, Layer, Logger, Metric, References } from 'effect'
+import {
+  ConfigProvider,
+  Console,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Logger,
+  Metric,
+  References,
+  Tracer,
+} from 'effect'
 import { PrometheusMetrics } from 'effect/observability'
 import { TestClock } from 'effect/testing'
 
@@ -21,6 +33,34 @@ import {
 } from './telemetry'
 
 describe('Bayn telemetry', () => {
+  test.each(['success', 'failure', 'defect', 'interruption'])(
+    'retains the native millisecond interval through %s and finalizes once',
+    async (outcome) => {
+      const spans: Tracer.Span[] = []
+      let finalized = 0
+      const exit = await Effect.runPromiseExit(
+        Effect.gen(function* () {
+          spans.push(yield* Effect.currentSpan.pipe(Effect.orDie))
+          yield* TestClock.adjust(25)
+          if (outcome === 'failure') return yield* Effect.fail('fixture failure')
+          if (outcome === 'defect') return yield* Effect.die('fixture defect')
+          if (outcome === 'interruption') return yield* Effect.interrupt
+        }).pipe(
+          Effect.ensuring(Effect.sync(() => finalized++)),
+          withObservedStage('bayn.postgres.commit'),
+          Effect.provide(TestClock.layer()),
+          Effect.provide(Logger.layer([])),
+        ),
+      )
+      expect(Exit.isSuccess(exit)).toBe(outcome === 'success')
+      expect(finalized).toBe(1)
+      expect(spans).toHaveLength(1)
+      expect(spans[0]?.attributes.get('bayn.native_wall.clock')).toBe('effect.Clock.currentTimeMillis')
+      expect(spans[0]?.attributes.get('bayn.native_wall.started_at')).toBe('1970-01-01T00:00:00.000Z')
+      expect(spans[0]?.attributes.get('bayn.native_wall.finished_at')).toBe('1970-01-01T00:00:00.025Z')
+    },
+  )
+
   test('published research telemetry uses its embedded source without a deployment revision variable', async () => {
     const directory = await mkdtemp(join(import.meta.dir, '.telemetry-build-'))
     const sourceRevision = 'a'.repeat(40)

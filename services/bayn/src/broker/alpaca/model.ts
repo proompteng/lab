@@ -14,6 +14,7 @@ import { BrokerReadError } from './failures'
 import type { ObservedBrokerState } from './observed-snapshot'
 
 import type { CashReportingQuantum } from './cash-reporting'
+import { CryptoFeeTierSchema, type CryptoFeeTier } from '../crypto-fees'
 
 export const defaultFillActivitiesPageSize = 100
 const maxMarketCalendarRangeDays = 31
@@ -252,6 +253,7 @@ export interface Account {
   readonly equityMicros: string
   readonly lastEquityMicros: string
   readonly cryptoStatus: string | null
+  readonly cryptoFeeTier: CryptoFeeTier | null
   readonly nonMarginableBuyingPowerMicros: string | null
   readonly buyingPowerMicros: string
   readonly accountBlocked: boolean
@@ -523,6 +525,7 @@ export const AccountResponseSchema = Schema.Struct({
   buying_power: Decimal,
   non_marginable_buying_power: Schema.optionalKey(Decimal),
   crypto_status: Schema.optionalKey(Schema.String),
+  crypto_tier: Schema.optionalKey(Schema.NullOr(CryptoFeeTierSchema)),
   account_blocked: Schema.Boolean,
   trading_blocked: Schema.Boolean,
   trade_suspended_by_user: Schema.Boolean,
