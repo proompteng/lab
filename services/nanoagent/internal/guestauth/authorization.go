@@ -53,7 +53,7 @@ func RPCAction(method string) (Action, error) {
 		return EditorOpen, nil
 	case "OpenBrowser":
 		return BrowserControl, nil
-	case "ListFiles", "ReadFile", "SearchFiles", "WatchFiles":
+	case "StatFile", "ListFiles", "ReadFile", "SearchFiles", "WatchFiles":
 		return FilesObserve, nil
 	case "WriteFile", "CreateDirectory", "MoveFile", "DeleteFile":
 		return FilesWrite, nil

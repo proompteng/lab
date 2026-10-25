@@ -10,7 +10,6 @@ on:
       - 'nix/images/opencode*.nix'
       - 'nix/images/bayn-deps-hash.nix'
       - 'nix/images/bayn-runtime-root.nix'
-      - 'nix/verify-opencode-image.sh'
       - 'flake.nix'
       - 'flake.lock'
       - '.github/workflows/opencode*.yml'
@@ -24,8 +23,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: bash -n services/opencode/start.sh
       - run: python -m unittest discover -s services/opencode
-      - run: bash -n services/opencode/start.sh nix/verify-opencode-image.sh
   image:
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:

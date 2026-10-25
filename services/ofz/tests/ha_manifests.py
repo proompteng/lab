@@ -305,10 +305,17 @@ def validate(targets):
         export_network["ingress"] == []
         and export_network["egress"][-1]
         == {
-            "to": [{"ipBlock": {"cidr": "100.78.240.108/32"}}],
-            "ports": [{"protocol": "TCP", "port": 9444}],
+            "to": [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {"kubernetes.io/metadata.name": "rook-ceph"}
+                    },
+                    "podSelector": {"matchLabels": {"app": "rook-ceph-rgw"}},
+                }
+            ],
+            "ports": [{"protocol": "TCP", "port": 8080}],
         },
-        "ofz: exporter egress requires the approved private NUC destination",
+        "ofz: exporter egress requires the private Ceph object gateway",
     )
     for target, kind, name in workloads:
         spec = resource(targets, target, kind, name)["spec"]
@@ -629,11 +636,12 @@ def validate(targets):
         config = store["configuration"]
         require(
             config["destinationPath"] == f"s3://{target}-database-backups/"
-            and config["endpointURL"] == "https://nuc.ide-newton.ts.net:9444"
-            and config["data"].get("encryption") == "AES256"
-            and config["wal"].get("encryption") == "AES256"
+            and config["endpointURL"]
+            == "http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80"
+            and "encryption" not in config["data"]
+            and "encryption" not in config["wal"]
             and store["retentionPolicy"] == "35d",
-            f"{target}: independent encrypted base backups and WAL are required",
+            f"{target}: Ceph base backups and WAL are required",
         )
         require(
             config["s3Credentials"]
@@ -699,7 +707,7 @@ def validate(targets):
             f"{target}: daily schedule must not duplicate the explicit initial backup",
         )
         initial = resource(
-            targets, target, "Backup", f"{target}-db-nuc-cutover-primary"
+            targets, target, "Backup", f"{target}-db-ceph-cutover-primary"
         )
         require(
             initial["spec"]["method"] == "plugin"
@@ -811,17 +819,17 @@ def main():
             ]
             if role["name"] == "tengri_supervisor"
         ).update(connectionLimit=12),
-        lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover-primary")[
+        lambda data: resource(data, "ofz", "Backup", "ofz-db-ceph-cutover-primary")[
             "spec"
         ].update(method="volumeSnapshot"),
         lambda data: resource(
-            data, "keycloak", "Backup", "keycloak-db-nuc-cutover-primary"
+            data, "keycloak", "Backup", "keycloak-db-ceph-cutover-primary"
         )["metadata"]["annotations"].update({"argocd.argoproj.io/sync-wave": "0"}),
-        lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover-primary")[
+        lambda data: resource(data, "ofz", "Backup", "ofz-db-ceph-cutover-primary")[
             "spec"
         ].update(target="prefer-standby"),
         lambda data: resource(
-            data, "keycloak", "Backup", "keycloak-db-nuc-cutover-primary"
+            data, "keycloak", "Backup", "keycloak-db-ceph-cutover-primary"
         )["spec"].update(target="prefer-standby"),
         lambda data: resource(data, "ofz", "Cluster", "ofz-db")["spec"][
             "affinity"
@@ -880,7 +888,7 @@ def main():
         ].update(destinationPath="s3://ofz-database-backups/"),
         lambda data: resource(data, "ofz", "ObjectStore", "ofz-db")["spec"][
             "configuration"
-        ]["wal"].pop("encryption"),
+        ]["wal"].update(encryption="AES256"),
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "postgresql"
         ]["parameters"].update(archive_timeout="1h"),
@@ -1013,7 +1021,7 @@ def main():
             ]["strategy"]["rollingUpdate"].update(maxSurge=2),
             lambda data: resource(data, "ofz", "NetworkPolicy", "ofz-audit-export")[
                 "spec"
-            ]["egress"][-1]["to"][0]["ipBlock"].update(cidr="0.0.0.0/0"),
+            ]["egress"][-1]["to"][0].update(ipBlock={"cidr": "0.0.0.0/0"}),
             lambda data: resource(
                 data, "proompteng", "NetworkPolicy", "proompteng-web"
             )["spec"].update(

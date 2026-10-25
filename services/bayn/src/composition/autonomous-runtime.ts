@@ -266,12 +266,13 @@ export const makeAutonomousServiceRuntime = (plan: ApplicationPlan, options: Aut
                                     executionMode: restricted ? 'CloseOnly' : 'Mutation',
                                     execution: {
                                       currentUtcInstant,
-                                      verifyBrokerStateVersion: (version, intentId) =>
+                                      verifyBrokerStateVersion: (version, intentId, requireCryptoEntryFeeBound) =>
                                         verifyBrokerStateVersion(
                                           runtimeServices.pgClient,
                                           realizedPlan.config.alpaca.expectedAccountId,
                                           version,
                                           intentId,
+                                          requireCryptoEntryFeeBound,
                                         ),
                                       brokerRead: runtimeServices.session.read,
                                       brokerMutation,

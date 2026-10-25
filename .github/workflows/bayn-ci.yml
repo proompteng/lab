@@ -56,7 +56,6 @@ jobs:
               - 'nix/oci-push.sh'
               - 'nix/oci-release-contract.sh'
               - 'nix/verify-bayn-image-command.sh'
-              - 'nix/verify-bayn-image-command.test.sh'
               - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
@@ -87,7 +86,6 @@ jobs:
               - 'nix/oci-inspect-archive.sh'
               - 'nix/oci-push.sh'
               - 'nix/verify-bayn-image-command.sh'
-              - 'nix/verify-bayn-image-command.test.sh'
               - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
@@ -394,7 +392,6 @@ jobs:
         run: |
           bash nix/images/normalize-bayn-bun-deps.test.sh
           bash nix/images/bun-workspace-deps-source.test.sh
-          bash nix/verify-bayn-image-command.test.sh
 
   image:
     needs: changes

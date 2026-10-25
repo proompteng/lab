@@ -2348,12 +2348,13 @@ const file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc = "" +
 	"\x10OperationFailure\x12)\n" +
 	"\x10current_revision\x18\x02 \x01(\tR\x0fcurrentRevision\x12,\n" +
 	"\x12resource_too_large\x18\x03 \x01(\bR\x10resourceTooLarge\x128\n" +
-	"\x18codex_operation_rejected\x18\x04 \x01(\bR\x16codexOperationRejectedJ\x04\b\x01\x10\x02R\vhttp_status2\xcf\r\n" +
+	"\x18codex_operation_rejected\x18\x04 \x01(\bR\x16codexOperationRejectedJ\x04\b\x01\x10\x02R\vhttp_status2\xa6\x0e\n" +
 	"\x10NanoagentService\x12U\n" +
 	"\aGetInfo\x12\".proompteng.runtime.guest.v1.Empty\x1a&.proompteng.runtime.guest.v1.GuestInfo\x12U\n" +
 	"\n" +
 	"OpenEditor\x12\".proompteng.runtime.guest.v1.Empty\x1a#.proompteng.runtime.guest.v1.Editor\x12W\n" +
 	"\vOpenBrowser\x12\".proompteng.runtime.guest.v1.Empty\x1a$.proompteng.runtime.guest.v1.Browser\x12U\n" +
+	"\bStatFile\x12!.proompteng.runtime.guest.v1.Path\x1a&.proompteng.runtime.guest.v1.FileEntry\x12U\n" +
 	"\tListFiles\x12!.proompteng.runtime.guest.v1.Path\x1a%.proompteng.runtime.guest.v1.FileList\x12W\n" +
 	"\bReadFile\x12!.proompteng.runtime.guest.v1.Path\x1a(.proompteng.runtime.guest.v1.FileContent\x12a\n" +
 	"\tWriteFile\x12&.proompteng.runtime.guest.v1.FileWrite\x1a,.proompteng.runtime.guest.v1.FileWriteResult\x12\\\n" +
@@ -2441,41 +2442,43 @@ var file_proompteng_runtime_guest_v1_nanoagent_proto_depIdxs = []int32{
 	0,  // 14: proompteng.runtime.guest.v1.NanoagentService.GetInfo:input_type -> proompteng.runtime.guest.v1.Empty
 	0,  // 15: proompteng.runtime.guest.v1.NanoagentService.OpenEditor:input_type -> proompteng.runtime.guest.v1.Empty
 	0,  // 16: proompteng.runtime.guest.v1.NanoagentService.OpenBrowser:input_type -> proompteng.runtime.guest.v1.Empty
-	5,  // 17: proompteng.runtime.guest.v1.NanoagentService.ListFiles:input_type -> proompteng.runtime.guest.v1.Path
-	5,  // 18: proompteng.runtime.guest.v1.NanoagentService.ReadFile:input_type -> proompteng.runtime.guest.v1.Path
-	9,  // 19: proompteng.runtime.guest.v1.NanoagentService.WriteFile:input_type -> proompteng.runtime.guest.v1.FileWrite
-	5,  // 20: proompteng.runtime.guest.v1.NanoagentService.CreateDirectory:input_type -> proompteng.runtime.guest.v1.Path
-	11, // 21: proompteng.runtime.guest.v1.NanoagentService.MoveFile:input_type -> proompteng.runtime.guest.v1.FileMove
-	12, // 22: proompteng.runtime.guest.v1.NanoagentService.DeleteFile:input_type -> proompteng.runtime.guest.v1.FileDelete
-	13, // 23: proompteng.runtime.guest.v1.NanoagentService.SearchFiles:input_type -> proompteng.runtime.guest.v1.FileSearch
-	15, // 24: proompteng.runtime.guest.v1.NanoagentService.WatchFiles:input_type -> proompteng.runtime.guest.v1.FileWatch
-	17, // 25: proompteng.runtime.guest.v1.NanoagentService.CreateTerminal:input_type -> proompteng.runtime.guest.v1.TerminalCreate
-	0,  // 26: proompteng.runtime.guest.v1.NanoagentService.ListTerminals:input_type -> proompteng.runtime.guest.v1.Empty
-	21, // 27: proompteng.runtime.guest.v1.NanoagentService.TerminateTerminal:input_type -> proompteng.runtime.guest.v1.TerminalID
-	24, // 28: proompteng.runtime.guest.v1.NanoagentService.AttachTerminal:input_type -> proompteng.runtime.guest.v1.TerminalInput
-	29, // 29: proompteng.runtime.guest.v1.NanoagentService.CodexCall:input_type -> proompteng.runtime.guest.v1.CodexRequest
-	0,  // 30: proompteng.runtime.guest.v1.NanoagentService.CodexLogin:input_type -> proompteng.runtime.guest.v1.Empty
-	32, // 31: proompteng.runtime.guest.v1.NanoagentService.WatchCodexEvents:input_type -> proompteng.runtime.guest.v1.CodexWatch
-	1,  // 32: proompteng.runtime.guest.v1.NanoagentService.GetInfo:output_type -> proompteng.runtime.guest.v1.GuestInfo
-	3,  // 33: proompteng.runtime.guest.v1.NanoagentService.OpenEditor:output_type -> proompteng.runtime.guest.v1.Editor
-	4,  // 34: proompteng.runtime.guest.v1.NanoagentService.OpenBrowser:output_type -> proompteng.runtime.guest.v1.Browser
-	7,  // 35: proompteng.runtime.guest.v1.NanoagentService.ListFiles:output_type -> proompteng.runtime.guest.v1.FileList
-	8,  // 36: proompteng.runtime.guest.v1.NanoagentService.ReadFile:output_type -> proompteng.runtime.guest.v1.FileContent
-	10, // 37: proompteng.runtime.guest.v1.NanoagentService.WriteFile:output_type -> proompteng.runtime.guest.v1.FileWriteResult
-	6,  // 38: proompteng.runtime.guest.v1.NanoagentService.CreateDirectory:output_type -> proompteng.runtime.guest.v1.FileEntry
-	6,  // 39: proompteng.runtime.guest.v1.NanoagentService.MoveFile:output_type -> proompteng.runtime.guest.v1.FileEntry
-	0,  // 40: proompteng.runtime.guest.v1.NanoagentService.DeleteFile:output_type -> proompteng.runtime.guest.v1.Empty
-	14, // 41: proompteng.runtime.guest.v1.NanoagentService.SearchFiles:output_type -> proompteng.runtime.guest.v1.FileSearchResult
-	16, // 42: proompteng.runtime.guest.v1.NanoagentService.WatchFiles:output_type -> proompteng.runtime.guest.v1.FileEvent
-	19, // 43: proompteng.runtime.guest.v1.NanoagentService.CreateTerminal:output_type -> proompteng.runtime.guest.v1.TerminalCreated
-	20, // 44: proompteng.runtime.guest.v1.NanoagentService.ListTerminals:output_type -> proompteng.runtime.guest.v1.TerminalList
-	0,  // 45: proompteng.runtime.guest.v1.NanoagentService.TerminateTerminal:output_type -> proompteng.runtime.guest.v1.Empty
-	28, // 46: proompteng.runtime.guest.v1.NanoagentService.AttachTerminal:output_type -> proompteng.runtime.guest.v1.TerminalOutput
-	30, // 47: proompteng.runtime.guest.v1.NanoagentService.CodexCall:output_type -> proompteng.runtime.guest.v1.CodexResult
-	31, // 48: proompteng.runtime.guest.v1.NanoagentService.CodexLogin:output_type -> proompteng.runtime.guest.v1.CodexLoginState
-	33, // 49: proompteng.runtime.guest.v1.NanoagentService.WatchCodexEvents:output_type -> proompteng.runtime.guest.v1.CodexEvent
-	32, // [32:50] is the sub-list for method output_type
-	14, // [14:32] is the sub-list for method input_type
+	5,  // 17: proompteng.runtime.guest.v1.NanoagentService.StatFile:input_type -> proompteng.runtime.guest.v1.Path
+	5,  // 18: proompteng.runtime.guest.v1.NanoagentService.ListFiles:input_type -> proompteng.runtime.guest.v1.Path
+	5,  // 19: proompteng.runtime.guest.v1.NanoagentService.ReadFile:input_type -> proompteng.runtime.guest.v1.Path
+	9,  // 20: proompteng.runtime.guest.v1.NanoagentService.WriteFile:input_type -> proompteng.runtime.guest.v1.FileWrite
+	5,  // 21: proompteng.runtime.guest.v1.NanoagentService.CreateDirectory:input_type -> proompteng.runtime.guest.v1.Path
+	11, // 22: proompteng.runtime.guest.v1.NanoagentService.MoveFile:input_type -> proompteng.runtime.guest.v1.FileMove
+	12, // 23: proompteng.runtime.guest.v1.NanoagentService.DeleteFile:input_type -> proompteng.runtime.guest.v1.FileDelete
+	13, // 24: proompteng.runtime.guest.v1.NanoagentService.SearchFiles:input_type -> proompteng.runtime.guest.v1.FileSearch
+	15, // 25: proompteng.runtime.guest.v1.NanoagentService.WatchFiles:input_type -> proompteng.runtime.guest.v1.FileWatch
+	17, // 26: proompteng.runtime.guest.v1.NanoagentService.CreateTerminal:input_type -> proompteng.runtime.guest.v1.TerminalCreate
+	0,  // 27: proompteng.runtime.guest.v1.NanoagentService.ListTerminals:input_type -> proompteng.runtime.guest.v1.Empty
+	21, // 28: proompteng.runtime.guest.v1.NanoagentService.TerminateTerminal:input_type -> proompteng.runtime.guest.v1.TerminalID
+	24, // 29: proompteng.runtime.guest.v1.NanoagentService.AttachTerminal:input_type -> proompteng.runtime.guest.v1.TerminalInput
+	29, // 30: proompteng.runtime.guest.v1.NanoagentService.CodexCall:input_type -> proompteng.runtime.guest.v1.CodexRequest
+	0,  // 31: proompteng.runtime.guest.v1.NanoagentService.CodexLogin:input_type -> proompteng.runtime.guest.v1.Empty
+	32, // 32: proompteng.runtime.guest.v1.NanoagentService.WatchCodexEvents:input_type -> proompteng.runtime.guest.v1.CodexWatch
+	1,  // 33: proompteng.runtime.guest.v1.NanoagentService.GetInfo:output_type -> proompteng.runtime.guest.v1.GuestInfo
+	3,  // 34: proompteng.runtime.guest.v1.NanoagentService.OpenEditor:output_type -> proompteng.runtime.guest.v1.Editor
+	4,  // 35: proompteng.runtime.guest.v1.NanoagentService.OpenBrowser:output_type -> proompteng.runtime.guest.v1.Browser
+	6,  // 36: proompteng.runtime.guest.v1.NanoagentService.StatFile:output_type -> proompteng.runtime.guest.v1.FileEntry
+	7,  // 37: proompteng.runtime.guest.v1.NanoagentService.ListFiles:output_type -> proompteng.runtime.guest.v1.FileList
+	8,  // 38: proompteng.runtime.guest.v1.NanoagentService.ReadFile:output_type -> proompteng.runtime.guest.v1.FileContent
+	10, // 39: proompteng.runtime.guest.v1.NanoagentService.WriteFile:output_type -> proompteng.runtime.guest.v1.FileWriteResult
+	6,  // 40: proompteng.runtime.guest.v1.NanoagentService.CreateDirectory:output_type -> proompteng.runtime.guest.v1.FileEntry
+	6,  // 41: proompteng.runtime.guest.v1.NanoagentService.MoveFile:output_type -> proompteng.runtime.guest.v1.FileEntry
+	0,  // 42: proompteng.runtime.guest.v1.NanoagentService.DeleteFile:output_type -> proompteng.runtime.guest.v1.Empty
+	14, // 43: proompteng.runtime.guest.v1.NanoagentService.SearchFiles:output_type -> proompteng.runtime.guest.v1.FileSearchResult
+	16, // 44: proompteng.runtime.guest.v1.NanoagentService.WatchFiles:output_type -> proompteng.runtime.guest.v1.FileEvent
+	19, // 45: proompteng.runtime.guest.v1.NanoagentService.CreateTerminal:output_type -> proompteng.runtime.guest.v1.TerminalCreated
+	20, // 46: proompteng.runtime.guest.v1.NanoagentService.ListTerminals:output_type -> proompteng.runtime.guest.v1.TerminalList
+	0,  // 47: proompteng.runtime.guest.v1.NanoagentService.TerminateTerminal:output_type -> proompteng.runtime.guest.v1.Empty
+	28, // 48: proompteng.runtime.guest.v1.NanoagentService.AttachTerminal:output_type -> proompteng.runtime.guest.v1.TerminalOutput
+	30, // 49: proompteng.runtime.guest.v1.NanoagentService.CodexCall:output_type -> proompteng.runtime.guest.v1.CodexResult
+	31, // 50: proompteng.runtime.guest.v1.NanoagentService.CodexLogin:output_type -> proompteng.runtime.guest.v1.CodexLoginState
+	33, // 51: proompteng.runtime.guest.v1.NanoagentService.WatchCodexEvents:output_type -> proompteng.runtime.guest.v1.CodexEvent
+	33, // [33:52] is the sub-list for method output_type
+	14, // [14:33] is the sub-list for method input_type
 	14, // [14:14] is the sub-list for extension type_name
 	14, // [14:14] is the sub-list for extension extendee
 	0,  // [0:14] is the sub-list for field type_name

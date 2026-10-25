@@ -10,11 +10,11 @@ The API begins fenced. Publishing this configuration does not establish a comple
 | Component | Configuration |
 | --- | --- |
 | SpiceDB | Three replicas of upstream `v1.56.2`, pinned to its multi-architecture image digest |
-| PostgreSQL | CNPG PostgreSQL 18.6, three instances, one required synchronous standby, 20 GiB per instance |
-| Backups | Barman Cloud plugin, WAL archived within 60 seconds, daily base backup at 10:30 UTC, 35-day recovery window on independent NUC |
+| PostgreSQL | CNPG PostgreSQL 18.6, three instances, one required synchronous standby, 30 GiB per instance |
+| Backups | Barman Cloud plugin, WAL archived within 60 seconds, daily base backup at 10:30 UTC, 35-day recovery window on Ceph S3 |
 | Playground | Two replicas of upstream `v0.3.1`, pinned to its multi-architecture image digest |
 | Authorization API | Two replicas, exact SPIFFE mTLS, SQL-backed sessions and policy commands |
-| Audit exporter | Two replicas with one SQL lease, COMPLIANCE archive on independent NUC |
+| Audit exporter | Two replicas with one SQL lease, versioned COMPLIANCE archive on Ceph S3 |
 | Browser endpoint | <https://ofz.ide-newton.ts.net>, through the lab's Tailscale ingress |
 | SpiceDB API | `ofz.ofz.svc.cluster.local:50051` for gRPC and port `8443` for the HTTP gateway |
 
@@ -47,15 +47,16 @@ transport inside the cluster and has no ingress route. Browser access uses Tails
 The Tailscale operator provisions the private DNS name and certificate without a separate Pi-hole entry.
 
 The database, its inherited resources and backup ObjectStore are retained during Argo pruning or Application deletion.
-Ceph provides database storage. Physical base backups and WAL use the independent `ofz-database-backups` bucket on
-NUC through verified private HTTPS, AES256 and a separate namespace-scoped writer. Thirty-day COMPLIANCE retention
-protects immutable versions. The historical Ceph bucket claim remains protected and is excluded from active source.
+Ceph provides database storage, physical base backups and WAL. The private S3 gateway serves the
+`ofz-database-backups` bucket through a separate namespace-scoped writer. Thirty-day COMPLIANCE retention protects
+immutable versions. The old `cnpg-ofz` bucket remains protected and is outside the active destination.
 
 Tengri consumes the typed Ofz API. The final schema is maintained in
 [`services/ofz/schema.zed`](../../../services/ofz/schema.zed); controllers and BFFs hold no native SpiceDB key.
 The [control-plane runbook](control-plane/README.md) describes managed roles, checksum-bound migration hooks,
-archive credentials and fenced bootstrap. The [independent NUC recovery store](../../../devices/nuc/ofz-recovery/README.md)
-holds both the audit archive and separate database buckets. PostgreSQL persists the native relationship datastore and the separate `ofz_control`
+archive credentials and fenced bootstrap. The [Ceph recovery store](../../../services/ofz/recovery.md)
+holds both the audit archive and separate database buckets. These backups share the live database storage's failure
+domain. PostgreSQL persists the native relationship datastore and the separate `ofz_control`
 and `tengri_control` databases. Application roles have distinct schema/table permissions.
 
 Separated Tengri pools require two connections per process for schema/readiness and leadership operations,
