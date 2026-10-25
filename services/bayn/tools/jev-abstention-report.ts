@@ -16,7 +16,10 @@ import type { ObservedMarketValue } from '../src/market-data/streaming/projectio
 import { StrategySnapshotManifestSchema } from '../src/market-data/streaming/manifest-schema'
 import { NativeArrivalEpochSchema } from '../src/market-data/streaming/native-arrival'
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
-import { auditNativeArrivalCoverage, nativeCoverageMaximumInputBytes } from './native-arrival-coverage'
+import {
+  auditNativeArrivalCoverage,
+  nativeCoverageMaximumInputBytes,
+} from '../src/intraday-replay/native-arrival-coverage'
 import { historicalFeeProvenance, hypotheticalCryptoFeeSensitivity } from './jev-fee-sensitivity'
 import { AccountingTransactionSchema } from '../src/accounting/schema'
 import { PositionOutcomeSchema } from '../src/forward-performance/position-outcomes'
@@ -548,27 +551,33 @@ export const reportAuditedJevPlanPath = (input: {
   return { ...path, sourceAudit: audited.report }
 }
 
+const usage =
+  'Usage: node dist/research/jev-abstention-report.js <private-decision.json> [--realized-evidence | <assumptions.json> <native-bundle.json>] | --help'
+
 if (import.meta.main) {
-  const path = process.argv[2]
-  if (path === undefined) throw new Error('Usage: bun tools/jev-abstention-report.ts <private-decision.json>')
-  const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
-  const assumptionsPath = process.argv[3]
-  const sourcePath = process.argv[4]
-  if (assumptionsPath === '--realized-evidence' && sourcePath === undefined) {
-    console.log(JSON.stringify(reportJevRealizedEvidence(raw)))
-  } else {
-    if ((assumptionsPath === undefined) !== (sourcePath === undefined) || process.argv.length > 5)
-      throw new Error('Provide both an assumption manifest and native source bundle, or neither')
-    console.log(
-      JSON.stringify(
-        assumptionsPath === undefined || sourcePath === undefined
-          ? reportJevAbstention(raw)
-          : reportAuditedJevPlanPath({
-              decisionDocument: raw,
-              assumptions: JSON.parse(readFileSync(assumptionsPath, 'utf8')),
-              sourceBundle: readFileSync(sourcePath),
-            }),
-      ),
-    )
+  if (process.argv.length === 3 && process.argv[2] === '--help') process.stdout.write(`${usage}\n`)
+  else {
+    const path = process.argv[2]
+    if (path === undefined) throw new Error(usage)
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    const assumptionsPath = process.argv[3]
+    const sourcePath = process.argv[4]
+    if (assumptionsPath === '--realized-evidence' && sourcePath === undefined) {
+      console.log(JSON.stringify(reportJevRealizedEvidence(raw)))
+    } else {
+      if ((assumptionsPath === undefined) !== (sourcePath === undefined) || process.argv.length > 5)
+        throw new Error('Provide both an assumption manifest and native source bundle, or neither')
+      console.log(
+        JSON.stringify(
+          assumptionsPath === undefined || sourcePath === undefined
+            ? reportJevAbstention(raw)
+            : reportAuditedJevPlanPath({
+                decisionDocument: raw,
+                assumptions: JSON.parse(readFileSync(assumptionsPath, 'utf8')),
+                sourceBundle: readFileSync(sourcePath),
+              }),
+        ),
+      )
+    }
   }
 }
