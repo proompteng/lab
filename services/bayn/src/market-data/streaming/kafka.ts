@@ -30,6 +30,7 @@ import {
 
 import {
   emptyStreamingProjection,
+  kafkaCaptureDisposition,
   incorporateMarketRecord,
   topicPartitionKey,
   type StreamingProjection,
@@ -128,18 +129,6 @@ export const decodeKafkaTransportValue = (
     ...(captureRawValues ? { rawValue: value } : {}),
     value: value.toString('utf-8'),
   }
-}
-
-export const kafkaCaptureDisposition = (previous: StreamingProjection, next: StreamingProjection) => {
-  if (next.rejections !== previous.rejections || next.technicalRejections !== previous.technicalRejections)
-    return CaptureDisposition.Rejected
-  return next.bars !== previous.bars ||
-    next.quotes !== previous.quotes ||
-    next.trades !== previous.trades ||
-    next.features !== previous.features ||
-    next.technicalFeatures !== previous.technicalFeatures
-    ? CaptureDisposition.Accepted
-    : CaptureDisposition.Ignored
 }
 
 const positionList = (offsets: Offsets): readonly KafkaPartitionPosition[] =>

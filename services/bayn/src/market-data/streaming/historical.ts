@@ -3,7 +3,6 @@ import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../../hash'
 import { sha256 } from '../../hash'
 import { CaptureDisposition, OriginalKafkaTransportSchema, restoreKafkaTransportTimestamp } from './transport-evidence'
-import { kafkaCaptureDisposition } from './kafka'
 import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
@@ -12,7 +11,12 @@ import {
   UnsignedMicrosSchema,
   strictParseOptions,
 } from '../../schemas'
-import { emptyStreamingProjection, incorporateSimulatedMarketRecord, topicPartitionKey } from './projection'
+import {
+  kafkaCaptureDisposition,
+  emptyStreamingProjection,
+  incorporateSimulatedMarketRecord,
+  topicPartitionKey,
+} from './projection'
 import { MarketSourcesSchema, marketSourceForTopic, type MarketSources } from './raw-events'
 
 const ArrivalFields = {

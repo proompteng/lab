@@ -30,6 +30,16 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/inference-cost-command.js" "$@"
   '';
+  evidenceExportCommand = pkgs.writeShellScriptBin "bayn-evidence-export" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/evidence-export-command.js" "$@"
+  '';
+  studyExportCommand = pkgs.writeShellScriptBin "bayn-jev-study-export" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/jev-study-export-command.js" "$@"
+  '';
   researchCommand = pkgs.writeShellScriptBin "bayn-research" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -101,6 +111,8 @@ let
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
+    "node services/bayn/dist/evidence-export-command.js --help"
+    "node services/bayn/dist/jev-study-export-command.js --help"
     "node services/bayn/dist/jev-evaluation-command.js --help"
     "node services/bayn/dist/dual-signal-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
@@ -173,6 +185,8 @@ import ./bun-workspace-service.nix {
     pkgs.cacert
     forwardPerformanceCommand
     inferenceCostCommand
+    evidenceExportCommand
+    studyExportCommand
     researchCommand
     gepaCommand
     gepaNativeCommand

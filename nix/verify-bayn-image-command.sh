@@ -65,6 +65,10 @@ forward_wrapper="$(resolve_image_entry /bin/bayn-forward-performance)"
 forward_command="$(resolve_image_entry /app/services/bayn/dist/forward-performance-command.js)"
 cost_wrapper="$(resolve_image_entry /bin/bayn-inference-cost)"
 cost_command="$(resolve_image_entry /app/services/bayn/dist/inference-cost-command.js)"
+evidence_wrapper="$(resolve_image_entry /bin/bayn-evidence-export)"
+evidence_command="$(resolve_image_entry /app/services/bayn/dist/evidence-export-command.js)"
+study_wrapper="$(resolve_image_entry /bin/bayn-jev-study-export)"
+study_command="$(resolve_image_entry /app/services/bayn/dist/jev-study-export-command.js)"
 research_wrapper="$(resolve_image_entry /bin/bayn-research)"
 research_command="$(resolve_image_entry /app/services/bayn/dist/research-command.js)"
 gepa_wrapper="$(resolve_image_entry /bin/bayn-gepa)"
@@ -84,6 +88,10 @@ test -x "${forward_wrapper}"
 test -f "${forward_command}"
 test -x "${cost_wrapper}"
 test -f "${cost_command}"
+test -x "${evidence_wrapper}"
+test -f "${evidence_command}"
+test -x "${study_wrapper}"
+test -f "${study_command}"
 test -x "${research_wrapper}"
 test -f "${research_command}"
 test -x "${gepa_wrapper}"
@@ -142,6 +150,22 @@ research_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
 expected_research='Usage: bayn-research --validate <run.json> | --run <run.json> --output <new-receipt.json> | --help'
 if [[ "${research_actual}" != "${expected_research}" ]]; then
   printf 'Unexpected Bayn research help output: %s\n' "${research_actual}" >&2
+  exit 1
+fi
+
+evidence_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --entrypoint /bin/bayn-evidence-export "${image_id}" --help)"
+if [[ "${evidence_actual}" != 'Usage: bayn-evidence-export '* ]]; then
+  printf 'Unexpected Bayn evidence export help output: %s\n' "${evidence_actual}" >&2
+  exit 1
+fi
+
+study_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --entrypoint /bin/bayn-jev-study-export "${image_id}" --help)"
+if [[ "${study_actual}" != 'Usage: bayn-jev-study-export '* ]]; then
+  printf 'Unexpected Bayn study export help output: %s\n' "${study_actual}" >&2
   exit 1
 fi
 

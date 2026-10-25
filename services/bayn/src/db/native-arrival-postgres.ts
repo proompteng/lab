@@ -7,6 +7,7 @@ import {
   NativeArrivalCaptureError,
   NativeArrivalChunkHeaderSchema,
   NativeArrivalEpochSchema,
+  NativeArrivalEndSchema,
   nativeArrivalCaptureId,
   type NativeArrivalChunk,
 } from '../market-data/streaming/native-arrival'
@@ -116,7 +117,7 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
       .pipe(Effect.mapError(error), Effect.asVoid),
 })
 
-export const readNativeArrivalEpoch = (sql: PgClient.PgClient, captureId: string) =>
+export const readNativeArrivalEpochRecord = (sql: PgClient.PgClient, captureId: string) =>
   Effect.gen(function* () {
     const id = yield* Schema.decodeUnknownEffect(Sha256Schema)(captureId)
     const rows = yield* Schema.decodeUnknownEffect(
@@ -134,23 +135,31 @@ export const readNativeArrivalEpoch = (sql: PgClient.PgClient, captureId: string
       (yield* Effect.fromResult(nativeArrivalCaptureId(epoch.build, epoch.bootstrap, epoch.sources))) !== id
     )
       return yield* error('Native capture epoch content or identity differs')
-    return epoch
+    return { epoch, payload: row.payload, contentHash: row.content_hash }
   }).pipe(Effect.mapError(error))
 
 /** Each read bounds memory; callers retain the exact last verified ordinal between pages. */
-export const readNativeArrivalChunks = (sql: PgClient.PgClient, captureId: string, afterOrdinal: number) =>
+export const readNativeArrivalChunks = (
+  sql: PgClient.PgClient,
+  captureId: string,
+  afterOrdinal: number,
+  maximumChunks: number,
+) =>
   Effect.gen(function* () {
     const id = yield* Schema.decodeUnknownEffect(Sha256Schema)(captureId)
-    const epoch = yield* readNativeArrivalEpoch(sql, id)
+    const { epoch } = yield* readNativeArrivalEpochRecord(sql, id)
     const after = yield* Schema.decodeUnknownEffect(
       Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
     )(afterOrdinal)
+    const limit = yield* Schema.decodeUnknownEffect(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })))(
+      maximumChunks,
+    )
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.Array(PersistedChunk),
       strictParseOptions,
     )(
       yield* sql`SELECT content_hash,header,compressed FROM native_arrival_chunks
-        WHERE capture_id=${id} AND ordinal>${after} ORDER BY ordinal LIMIT 32`,
+        WHERE capture_id=${id} AND ordinal>${after} ORDER BY ordinal LIMIT ${limit}`,
     )
     const chunks: NativeArrivalChunk[] = []
     for (const row of rows) {
@@ -165,4 +174,16 @@ export const readNativeArrivalChunks = (sql: PgClient.PgClient, captureId: strin
       chunks.push(chunk)
     }
     return chunks
+  }).pipe(Effect.mapError(error))
+
+export const readNativeArrivalEnd = (sql: PgClient.PgClient, captureId: string) =>
+  Effect.gen(function* () {
+    const id = yield* Schema.decodeUnknownEffect(Sha256Schema)(captureId)
+    const rows = yield* Schema.decodeUnknownEffect(
+      Schema.Array(Schema.Struct({ payload: NativeArrivalEndSchema })).check(Schema.isMaxLength(1)),
+      strictParseOptions,
+    )(yield* sql`SELECT payload FROM native_arrival_ends WHERE capture_id=${id}`)
+    const end = rows[0]?.payload ?? null
+    if (end !== null && end.captureId !== id) return yield* error('Native end receipt capture identity differs')
+    return end
   }).pipe(Effect.mapError(error))

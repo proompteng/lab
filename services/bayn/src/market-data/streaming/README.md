@@ -54,7 +54,7 @@ delivery counts. Native capture failures also use the error-only GlitchTip bound
 interrupt journal finalization. Shutdown drains queued chunks before flushing its remaining observed tail, retries an interrupted
 chunk by exact content and records `native_arrival_ends` only after
 the stored prefix is confirmed. An unsealed or incomplete epoch cannot assert complete capture coverage.
-`readNativeArrivalEpoch` and bounded `readNativeArrivalChunks` verify stored identities and original bytes for research.
+`readNativeArrivalEpochRecord` and explicitly bounded `readNativeArrivalChunks` verify stored identities and original bytes for research.
 These native records still require interval, source-cut and strategy qualification. They do not recover missing older
 study sessions or authorize an entry, and the current single-universe backtest manifest cannot label a filtered mixed
 market epoch as a complete original capture.

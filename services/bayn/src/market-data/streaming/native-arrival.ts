@@ -29,6 +29,17 @@ export const NativeArrivalEpochSchema = Schema.Struct({
 })
 export type NativeArrivalEpoch = typeof NativeArrivalEpochSchema.Type
 
+export const NativeArrivalEndSchema = Schema.Struct({
+  captureId: Sha256Schema,
+  status: Schema.Literals(['STOPPED', 'INCOMPLETE']),
+  observedConsumerSequence: NonNegativeIntegerSchema,
+  durableConsumerSequence: NonNegativeIntegerSchema,
+  lastChunkHash: Schema.NullOr(Sha256Schema),
+  reason: Schema.NullOr(Schema.String),
+  consumerScopeCompleted: Schema.Boolean,
+})
+export type NativeArrivalEnd = typeof NativeArrivalEndSchema.Type
+
 export const nativeArrivalCaptureId = (
   build: NativeArrivalEpoch['build'],
   bootstrap: KafkaBootstrapEvidence,

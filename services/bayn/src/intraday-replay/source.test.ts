@@ -15,8 +15,11 @@ import {
 } from './source'
 import { cryptoMarketProfile } from '../jev/markets'
 import { backtestSourcePartitions } from './source'
-import { emptyStreamingProjection, incorporateMarketRecord } from '../market-data/streaming/projection'
-import { kafkaCaptureDisposition } from '../market-data/streaming/kafka'
+import {
+  kafkaCaptureDisposition,
+  emptyStreamingProjection,
+  incorporateMarketRecord,
+} from '../market-data/streaming/projection'
 import { CaptureDisposition, captureKafkaTransport } from '../market-data/streaming/transport-evidence'
 
 const archiveTopology = (positions: ReturnType<typeof fixture>['manifest']['positions']) => ({

@@ -11,8 +11,9 @@ import {
   nativeArrival,
   NativeArrivalCaptureError,
   type NativeArrivalChunk,
+  type NativeArrivalEnd,
 } from './native-arrival'
-import { makeNativeArrivalJournal, type NativeArrivalEnd, type NativeArrivalStore } from './native-arrival-journal'
+import { makeNativeArrivalJournal, type NativeArrivalStore } from './native-arrival-journal'
 import {
   nativeArrivalEpochFixture as epoch,
   nativeArrivalObservationFixture as observation,

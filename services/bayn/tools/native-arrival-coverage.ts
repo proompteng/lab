@@ -7,6 +7,7 @@ import {
   nativeArrivalCaptureId,
   NativeArrivalChunkHeaderSchema,
   NativeArrivalEpochSchema,
+  NativeArrivalEndSchema,
 } from '../src/market-data/streaming/native-arrival'
 import {
   decodeRawMarketRecord,
@@ -30,17 +31,7 @@ const Input = Schema.Struct({
       compressedBase64: Schema.String.check(Schema.isMaxLength(6 * 1024 * 1024)),
     }),
   ).check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
-  end: Schema.NullOr(
-    Schema.Struct({
-      captureId: Sha256Schema,
-      status: Schema.Literals(['STOPPED', 'INCOMPLETE']),
-      observedConsumerSequence: NonNegativeIntegerSchema,
-      durableConsumerSequence: NonNegativeIntegerSchema,
-      lastChunkHash: Schema.NullOr(Sha256Schema),
-      reason: Schema.NullOr(Schema.String),
-      consumerScopeCompleted: Schema.Boolean,
-    }),
-  ),
+  end: Schema.NullOr(NativeArrivalEndSchema),
   interval: Schema.Struct({ startMs: NonNegativeIntegerSchema, endMs: NonNegativeIntegerSchema }),
   symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
 })

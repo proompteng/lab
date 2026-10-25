@@ -23,6 +23,7 @@ const files = [
   'src/db/forward-performance-receipt.integration.test.ts',
   'src/db/streaming-snapshot.integration.test.ts',
   'src/db/native-arrival-postgres.integration.test.ts',
+  'src/db/evidence-reader.integration.test.ts',
   'src/db/jev-evaluation-postgres.integration.test.ts',
   'src/db/jev-batch-postgres.integration.test.ts',
   'src/db/jev-study-export.integration.test.ts',

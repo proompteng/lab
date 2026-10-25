@@ -19,6 +19,19 @@ spec:
   maxSyncReplicas: 1
   managed:
     roles:
+      - name: bayn_evidence
+        ensure: present
+        login: true
+        inherit: false
+        superuser: false
+        createdb: false
+        createrole: false
+        replication: false
+        bypassrls: false
+        connectionLimit: 2
+        comment: Read-only native source and evaluation evidence export
+        passwordSecret:
+          name: bayn-evidence-db
       - name: bayn_research
         ensure: present
         login: true

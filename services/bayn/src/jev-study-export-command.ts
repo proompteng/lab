@@ -4,6 +4,7 @@ import { Effect, Layer, Logger, Redacted, Result, Schema, Stdio, Stream } from '
 
 import { PostgresClientLive } from './db/postgres-client'
 import { researchReaderConfig } from './db/research-reader-config'
+import { evidenceReaderUrl } from './db/evidence-reader'
 import { exportJevStudySession, JevStudyExportFailure } from './jev/study-export'
 import { IsoDateSchema } from './schemas'
 
@@ -45,6 +46,7 @@ export const runJevStudyExportCommand = (args: readonly string[]) =>
     const command = yield* Effect.fromResult(parseJevStudyExportArgs(args))
     if (command._tag === 'Help') return yield* print(JEV_STUDY_EXPORT_USAGE)
     const config = yield* researchReaderConfig
+    const reader = { ...config, url: yield* Effect.fromResult(evidenceReaderUrl(config.url)) }
     const report = yield* Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       return yield* exportJevStudySession(
@@ -55,7 +57,12 @@ export const runJevStudyExportCommand = (args: readonly string[]) =>
       )
     }).pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- read-only export owns its scoped database layer
-      Effect.provide(PostgresClientLive({ operationTimeoutMs: 30_000, postgres: config })),
+      Effect.provide(
+        PostgresClientLive(
+          { operationTimeoutMs: 30_000, postgres: reader },
+          { maxConnections: 1, applicationName: 'bayn-study-evidence-export' },
+        ),
+      ),
     )
     yield* print(JSON.stringify(report))
   })

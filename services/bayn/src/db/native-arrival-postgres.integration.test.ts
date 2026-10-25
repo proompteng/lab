@@ -16,7 +16,12 @@ import {
 } from '../market-data/streaming/native-arrival.test-support'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
-import { makeNativeArrivalStore, readNativeArrivalChunks, readNativeArrivalEpoch } from './native-arrival-postgres'
+import {
+  makeNativeArrivalStore,
+  readNativeArrivalChunks,
+  readNativeArrivalEnd,
+  readNativeArrivalEpochRecord,
+} from './native-arrival-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { migrationLoader } from './migrations'
 import { postgresMigrations } from './postgres-migrations'
@@ -78,8 +83,16 @@ describePostgres('PostgreSQL native arrival retention', () => {
         yield* postgresMigrations
         yield* postgresMigrations
         expect(yield* retained).toEqual(before)
-        expect(yield* readNativeArrivalEpoch(sql, epoch.captureId)).toEqual(epoch)
-        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first, second])
+        expect((yield* readNativeArrivalEpochRecord(sql, epoch.captureId)).epoch).toEqual(epoch)
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1, 32)).toEqual([first, second])
+        const record = yield* readNativeArrivalEpochRecord(sql, epoch.captureId)
+        expect(sha256(record.payload)).toBe(record.contentHash)
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1, 1)).toEqual([first])
+        expect(yield* readNativeArrivalEnd(sql, epoch.captureId)).toBeNull()
+        for (const invalidLimit of [0, 33])
+          expect(
+            Exit.isFailure(yield* Effect.exit(readNativeArrivalChunks(sql, epoch.captureId, -1, invalidLimit))),
+          ).toBeTrue()
         expect(yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id=142`).toEqual([
           { migration_id: 142 },
         ])
@@ -118,7 +131,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
         expect(Exit.isFailure(yield* Effect.exit(store.end({ ...end, durableConsumerSequence: 2 })))).toBe(true)
         yield* store.end(end)
         expect(Exit.isFailure(yield* Effect.exit(store.append([chunk(3, third.contentHash)])))).toBe(true)
-        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first, second, third])
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1, 32)).toEqual([first, second, third])
       }),
     )
   })
@@ -132,8 +145,8 @@ describePostgres('PostgreSQL native arrival retention', () => {
         yield* store.begin(epoch)
         yield* store.begin(epoch)
         yield* Effect.all([store.append([first]), store.append([first])], { concurrency: 2 })
-        expect(yield* readNativeArrivalEpoch(sql, epoch.captureId)).toEqual(epoch)
-        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first])
+        expect((yield* readNativeArrivalEpochRecord(sql, epoch.captureId)).epoch).toEqual(epoch)
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1, 32)).toEqual([first])
         expect(yield* sql`SELECT count(*)::int AS count FROM native_arrival_chunks`).toEqual([{ count: 1 }])
       }),
     )
@@ -154,15 +167,15 @@ describePostgres('PostgreSQL native arrival retention', () => {
           previous = next.contentHash
         }
         expect(Exit.isFailure(yield* Effect.exit(store.append([...prefix, chunk(33, previous)])))).toBe(true)
-        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([])
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1, 32)).toEqual([])
         expect(Exit.isFailure(yield* Effect.exit(store.append([first, chunk(2, first.contentHash)])))).toBe(true)
-        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([])
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1, 32)).toEqual([])
         yield* store.append([first])
         const changed = Result.getOrThrow(
           makeNativeArrivalChunk(epoch, 0, null, [nativeArrival(epoch, observation(1, 'different'))]),
         )
         expect(Exit.isFailure(yield* Effect.exit(store.append([changed])))).toBe(true)
-        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first])
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1, 32)).toEqual([first])
       }),
     )
   })
@@ -181,7 +194,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
         const last = chunk(2, large.contentHash)
         yield* store.begin(epoch)
         yield* store.append([first, large, last])
-        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first, large, last])
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1, 32)).toEqual([first, large, last])
       }),
     )
   })
@@ -225,7 +238,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
         )
         const retained: NativeArrivalChunk[] = []
         while (retained.length < 100) {
-          const page = yield* readNativeArrivalChunks(sql, epoch.captureId, retained.length - 1)
+          const page = yield* readNativeArrivalChunks(sql, epoch.captureId, retained.length - 1, 32)
           expect(page.length).toBeGreaterThan(0)
           retained.push(...page)
         }
@@ -301,7 +314,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
           })
           const retained: NativeArrivalChunk[] = []
           while (retained.length < inputs.length) {
-            const page = yield* readNativeArrivalChunks(sql, epoch.captureId, retained.length - 1)
+            const page = yield* readNativeArrivalChunks(sql, epoch.captureId, retained.length - 1, 32)
             expect(page.length).toBeGreaterThan(0)
             retained.push(...page)
           }
@@ -417,7 +430,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
         expect(
           Exit.isFailure(yield* Effect.exit(store.append([{ ...first, compressed: Uint8Array.of(0, 1, 2) }]))),
         ).toBe(true)
-        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([])
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1, 32)).toEqual([])
       }),
     )
   })
@@ -438,7 +451,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
           ]),
         )
         yield* store.append([changed])
-        expect(Exit.isFailure(yield* Effect.exit(readNativeArrivalChunks(sql, epoch.captureId, -1)))).toBe(true)
+        expect(Exit.isFailure(yield* Effect.exit(readNativeArrivalChunks(sql, epoch.captureId, -1, 32)))).toBe(true)
       }),
     )
   })
@@ -457,8 +470,8 @@ describePostgres('PostgreSQL native arrival retention', () => {
           previous = next.contentHash
         }
         yield* store.append(all)
-        const first = yield* readNativeArrivalChunks(sql, epoch.captureId, -1)
-        const second = yield* readNativeArrivalChunks(sql, epoch.captureId, 31)
+        const first = yield* readNativeArrivalChunks(sql, epoch.captureId, -1, 32)
+        const second = yield* readNativeArrivalChunks(sql, epoch.captureId, 31, 32)
         expect(first).toHaveLength(32)
         expect(second).toHaveLength(3)
         expect([...first, ...second]).toEqual(all)

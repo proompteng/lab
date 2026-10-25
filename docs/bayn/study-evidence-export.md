@@ -2,8 +2,11 @@
 
 Run `bun run --filter @proompteng/bayn jev:study-export` to export the complete committed batch inventory for one configured account and session.
 Build the offline commands with `bun run --filter @proompteng/bayn build:research`. `--help` needs no configuration.
-It reads PostgreSQL and writes a new private local directory. It requires the configured account ID, PostgreSQL URL,
-and the existing verified PostgreSQL CA. It has no broker or model client and requires neither credential.
+It reads PostgreSQL and writes a new private local directory. It requires the configured account ID,
+the dedicated `bayn_evidence` PostgreSQL URL, and the existing verified PostgreSQL CA. The command rejects
+other database identities. Install that reader only after approving its
+[explicit permission scope](native-evidence-export.md#reader-authority).
+It has no broker or model client and requires neither credential.
 
 ```sh
 node services/bayn/dist/research/jev-study-export-command.js --session YYYY-MM-DD --output /private/new-session-directory
@@ -19,7 +22,9 @@ Do not commit, publish, or paste the data file into logs. The command prints onl
 
 ## Execution and storage
 
-Run the export in a separate research process with the existing database read access and a private output filesystem.
+Run the export in a separate process with the dedicated evidence reader and a private output filesystem.
+The GEPA proposer retains its separate `bayn_research` identity; its restricted permissions do not cover these
+trading evidence tables. The arrival collector's 64 MiB temporary volume is also insufficient for this session export.
 Do not run full session exports inside Bayn API or execution-controller pods. Their `/tmp` volume is shared with
 the running service and limited to 256 MiB, while one admitted export can reach 512 MiB. A read-only database
 transaction still writes local files; exceeding the pod's temporary-storage limit can evict the trading worker.

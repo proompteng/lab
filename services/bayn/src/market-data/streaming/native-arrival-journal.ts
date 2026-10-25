@@ -11,17 +11,8 @@ import {
   type NativeArrivalChunk,
   type NativeArrivalEpoch,
   type NativeArrivalObservation,
+  type NativeArrivalEnd,
 } from './native-arrival'
-
-export interface NativeArrivalEnd {
-  readonly captureId: string
-  readonly status: 'STOPPED' | 'INCOMPLETE'
-  readonly observedConsumerSequence: number
-  readonly durableConsumerSequence: number
-  readonly lastChunkHash: string | null
-  readonly reason: string | null
-  readonly consumerScopeCompleted: boolean
-}
 
 export interface NativeArrivalStore {
   readonly begin: (epoch: NativeArrivalEpoch) => Effect.Effect<void, NativeArrivalCaptureError>

@@ -1,4 +1,5 @@
 import { MarketKind } from '../../instruments'
+import { CaptureDisposition } from './transport-evidence'
 import {
   cryptoFeatureDefinitionMaterial,
   decodeCryptoMarketFeature,
@@ -27,6 +28,18 @@ import {
   type KafkaMarketRecord,
   type StreamingUniverse,
 } from './raw-events'
+
+export const kafkaCaptureDisposition = (previous: StreamingProjection, next: StreamingProjection) => {
+  if (next.rejections !== previous.rejections || next.technicalRejections !== previous.technicalRejections)
+    return CaptureDisposition.Rejected
+  return next.bars !== previous.bars ||
+    next.quotes !== previous.quotes ||
+    next.trades !== previous.trades ||
+    next.features !== previous.features ||
+    next.technicalFeatures !== previous.technicalFeatures
+    ? CaptureDisposition.Accepted
+    : CaptureDisposition.Ignored
+}
 
 const decodeFeatureIdentity = Schema.decodeUnknownResult(
   Schema.Struct({ material: Schema.Struct({ definitionId: Schema.NonEmptyString }) }),

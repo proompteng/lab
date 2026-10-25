@@ -1,0 +1,99 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: bayn-evidence
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app.kubernetes.io/name: bayn-evidence
+    app.kubernetes.io/part-of: bayn
+spec:
+  schedule: "*/5 * * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: bayn-evidence
+            app.kubernetes.io/part-of: bayn
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          terminationGracePeriodSeconds: 30
+          nodeSelector:
+            network.proompteng.ai/100g: 'true'
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: evidence
+              image: bayn-main
+              command: [bayn-evidence-export]
+              args: [--arrivals-since, "2026-10-24", --maximum-pages, "256"]
+              env:
+                - name: NODE_ENV
+                  value: production
+                - name: BAYN_POSTGRES_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-evidence-db
+                      key: fqdn-uri
+                - name: BAYN_PUBLIC_INFORMATION_STORAGE_ENDPOINT
+                  value: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+                - name: BAYN_PUBLIC_INFORMATION_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: bayn-research-captures
+                      key: BUCKET_NAME
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-research-captures
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: bayn-research-captures
+                      key: AWS_SECRET_ACCESS_KEY
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 192Mi
+                limits:
+                  cpu: "1"
+                  memory: 768Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: postgres-ca
+                  mountPath: /var/run/secrets/bayn/postgres
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: postgres-ca
+              secret:
+                secretName: bayn-db-ca
+                defaultMode: 0444
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi

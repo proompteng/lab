@@ -626,3 +626,8 @@ loss, drawdown, exposure, order and turnover limits and all financial history.
 
 See [strategy protection](../../../docs/bayn/strategy-protection.md) for model choices, validation and broker
 lifecycle details. Model choices are unqualified research decisions; deployment does not establish an edge.
+
+Native source retention runs outside execution through the `bayn-evidence` CronJob and the separate
+`bayn_evidence` read-only identity. Its credential and exact twelve-table SELECT scope require approval
+before installation. See [native evidence export](../../../docs/bayn/native-evidence-export.md) for the
+conditional archive, reader grants, native session command and remaining timing/qualification boundaries.
