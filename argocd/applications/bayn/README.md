@@ -43,10 +43,10 @@ Both inference secrets sync before the controller rollout. Their controller envi
 independent recovery and code-owned exits can start during a model-secret outage. Missing credentials fail entry
 inference explicitly; they never select a fallback strategy. Research jobs require both credentials.
 
-The source cutover removes the previous mandate from the SealedSecret and all three runtime inputs. It first rolls
-out with read-only broker access and no capital authority. After migration 147 and native OBSERVE recovery, restore
-a reviewed same-account PAPER request bound to the published image and new strategy identity through the existing
-sealed GitOps path. Preserve loss, peak-equity, turnover and financial history throughout the rotation.
+The source cutover removed the previous mandate from the SealedSecret and all three runtime inputs. Its initial rollout
+used read-only broker access and no capital authority. After migration 147 and native OBSERVE recovery, the v24 PAPER
+request restores the same-account mandate bound to the verified published image and new strategy identity through the
+existing sealed GitOps path. Loss, peak-equity, turnover and financial history remain intact throughout the rotation.
 The prior v23 activation receipt below is historical evidence. Image health does not establish a natural trade or
 completed fee-reconciled round trip.
 
@@ -207,7 +207,16 @@ structure and source anchors. Code funds source-anchored recovery and breakout p
 Jev request, and selects from atomic proposal-specific judgments. Both providers share the original inference deadline.
 Account risk, broker protection, fee accounting and exact reconciliation remain mandatory.
 [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the source contracts and venue capabilities.
-Deployment and natural round-trip proof remain outstanding for this replacement.
+The source rollout and native OBSERVE recovery completed against source
+`264735d18ae2075bcde2bd162f68df980b09c13e` and immutable digest
+`sha256:a8807cea2888383ad6e42713c5e977314324d8b7cdb1362c9005ca57bf0bb3fc`, through Kargo commit
+`7a966f66df10ad780b61326eed15c62f1f89c8a6`. The readback retained all 802 accounting records and 381 cash-fee records,
+with flat inventory, zero unfinished intents or unresolved mutations, and fresh exact reconciliation.
+
+The v24 PAPER request `46ea546cd7bf679c9b56311e8e64c28d6d36dad550d2594fdf04f766cde77e47` is authored against
+that verified image. Its sealed identity and all three runtime build lineages move together. The broker credentials,
+account, grant kind, risk policy, monetary limits, 15-minute holding limit and original inference lifetime remain unchanged.
+Native PAPER activation and natural fee-reconciled crypto and equity round trips still require runtime evidence.
 
 The following receipt records the previous v23 activation.
 
