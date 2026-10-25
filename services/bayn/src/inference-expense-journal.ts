@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 
 import { stableU128, stableU64 } from './hash'
-import { InferenceCostError } from './inference-costs'
+import { InferenceCostError, inferenceStageKey } from './inference-costs'
 import {
   buildInferenceExpensePlan,
   inferenceExpenseLedger,
@@ -283,9 +283,13 @@ export const readInferenceExpenseLedger = <E, R>(
       return actual === undefined ? [] : [actual]
     })
     const byRequest = new Map<string, InferenceExpenseQuote>()
+    const evidenceOrder = (quote: InferenceExpenseQuote) =>
+      (quote.line.receiptHash !== null ? 2 : 0) +
+      ('handoffHash' in quote.line && quote.line.handoffHash !== null ? 1 : 0)
     for (const quote of quotes) {
-      const prior = byRequest.get(quote.line.requestId)
-      if (prior === undefined || quote.line.receiptHash !== null) byRequest.set(quote.line.requestId, quote)
+      const key = inferenceStageKey(quote.line)
+      const prior = byRequest.get(key)
+      if (prior === undefined || evidenceOrder(quote) > evidenceOrder(prior)) byRequest.set(key, quote)
     }
     const selected = [...byRequest.values()]
     return {
@@ -300,6 +304,7 @@ export const readInferenceExpenseLedger = <E, R>(
       invoiceReconciled: false as const,
       exactLedgerPrefix: true as const,
       quotedRequestCount: selected.length,
+      claimedRequestCount: new Set(selected.map((quote) => quote.line.requestId)).size,
       pricedRequestCount: selected.filter((quote) => quote.line.estimatedCostPicoUsd !== null).length,
       gapRequestCount: selected.filter((quote) => quote.line.estimatedCostPicoUsd === null).length,
       transferCount: sourceTransfers.length,
