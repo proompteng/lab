@@ -3,7 +3,12 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result, stableU128, stableU64 } from './hash'
 import {
   InferenceCostError,
-  InferenceCostLineSchema,
+  HistoricalInferenceCostLineSchema,
+  StagedInferenceCostLineSchema,
+  HistoricalInferenceRateSchema,
+  InferenceStage,
+  inferenceStageKey,
+  priceInferenceUsage,
   InferenceCostRequestSchema,
   InferenceRateSchema,
   InferenceUsageStatus,
@@ -40,6 +45,19 @@ export const inferenceExpenseRateCard = {
       inputMicrosPerMillionTokens: '42000',
       outputMicrosPerMillionTokens: '0',
     },
+    {
+      provider: 'openai',
+      model: 'gpt-6-luna',
+      currency: 'USD',
+      source:
+        'OpenAI Decisions API standard list price with 30-minute cache writes, https://developers.openai.com/api/docs/pricing, verified 2026-10-25 UTC; not invoice-reconciled.',
+      effectiveFrom: '2026-10-22T00:00:00.000Z',
+      effectiveUntil: '9999-12-31T23:59:59.999Z',
+      inputMicrosPerMillionTokens: '100000',
+      cachedInputMicrosPerMillionTokens: '10000',
+      cacheWriteInputMicrosPerMillionTokens: '125000',
+      outputMicrosPerMillionTokens: '0',
+    },
   ],
 } as const
 
@@ -51,14 +69,24 @@ export const InferenceExpenseSourceSchema = Schema.Struct({
 })
 export type InferenceExpenseSource = typeof InferenceExpenseSourceSchema.Type
 
-export const InferenceExpenseQuoteSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.inference-expense-quote.v1'),
-  accountBindingHash: Sha256Schema,
-  sessionDate: IsoDateSchema,
-  line: InferenceCostLineSchema,
-  rate: Schema.NullOr(InferenceRateSchema),
-  quoteHash: Sha256Schema,
-})
+export const InferenceExpenseQuoteSchema = Schema.Union([
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.inference-expense-quote.v1'),
+    accountBindingHash: Sha256Schema,
+    sessionDate: IsoDateSchema,
+    line: HistoricalInferenceCostLineSchema,
+    rate: Schema.NullOr(HistoricalInferenceRateSchema),
+    quoteHash: Sha256Schema,
+  }),
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.inference-expense-quote.v2'),
+    accountBindingHash: Sha256Schema,
+    sessionDate: IsoDateSchema,
+    line: StagedInferenceCostLineSchema,
+    rate: Schema.NullOr(InferenceRateSchema),
+    quoteHash: Sha256Schema,
+  }),
+])
 export type InferenceExpenseQuote = typeof InferenceExpenseQuoteSchema.Type
 
 export interface InferenceExpenseRecord {
@@ -83,21 +111,21 @@ type InferenceExpenseRequestCoverage = Pick<
   'requestId' | 'model' | 'purpose' | 'usageStatus' | 'receiptHash' | 'resolutionHash'
 > & { readonly issues: readonly InferenceExpenseCoverageIssue[] }
 
-export const makeInferenceExpenseQuote = (
+export const makeInferenceExpenseQuotes = (
   source: InferenceExpenseSource,
   rateCard: {
     readonly schemaVersion: 'bayn.inference-rate-card.v1'
     readonly rates: readonly (typeof InferenceRateSchema.Type)[]
   },
-): Result.Result<InferenceExpenseQuote, InferenceCostError> =>
+): Result.Result<readonly InferenceExpenseQuote[], InferenceCostError> =>
   Result.gen(function* () {
     const accountBindingHash = yield* canonicalHashV1Result({
       schemaVersion: 'bayn.inference-cost-account.v1',
       accountId: source.accountId,
-    }).pipe(Result.mapError(() => new InferenceCostError({ message: 'Inference expense account cannot be hashed' })))
+    })
     const report = yield* makeInferenceCostReport(
       {
-        schemaVersion: 'bayn.inference-cost-evidence.v1',
+        schemaVersion: 'bayn.inference-cost-evidence.v2',
         accountBindingHash,
         sessionDate: source.sessionDate,
         asOf: source.asOf,
@@ -109,33 +137,60 @@ export const makeInferenceExpenseQuote = (
             request: source.request,
             receipt: source.receipt,
             resolution: source.resolution,
+            handoff: source.handoff,
           },
         ],
       },
       rateCard,
     )
-    const line = report.requests[0]
-    if (line === undefined)
-      return yield* Result.fail(new InferenceCostError({ message: 'Inference expense request is absent' }))
-    let rate: typeof InferenceRateSchema.Type | null = null
-    for (const candidate of rateCard.rates) {
-      const hash = yield* canonicalHashV1Result(candidate).pipe(
-        Result.mapError(() => new InferenceCostError({ message: 'Inference expense rate cannot be hashed' })),
-      )
-      if (hash === line.rateHash) rate = candidate
-    }
-    const material = {
-      schemaVersion: 'bayn.inference-expense-quote.v1' as const,
-      accountBindingHash,
-      sessionDate: source.sessionDate,
-      line,
-      rate,
-    }
-    const quoteHash = yield* canonicalHashV1Result(material).pipe(
-      Result.mapError(() => new InferenceCostError({ message: 'Inference expense quote cannot be hashed' })),
+    return yield* Result.all(
+      report.requests.map((line) =>
+        Result.gen(function* () {
+          let rate: typeof InferenceRateSchema.Type | null = null
+          for (const candidate of rateCard.rates)
+            if ((yield* canonicalHashV1Result(candidate)) === line.rateHash) rate = candidate
+          const material = {
+            schemaVersion: 'stage' in line ? 'bayn.inference-expense-quote.v2' : 'bayn.inference-expense-quote.v1',
+            accountBindingHash,
+            sessionDate: source.sessionDate,
+            line,
+            rate,
+          }
+          return yield* Schema.decodeUnknownResult(
+            InferenceExpenseQuoteSchema,
+            strictParseOptions,
+          )({ ...material, quoteHash: yield* canonicalHashV1Result(material) })
+        }),
+      ),
     )
-    return { ...material, quoteHash }
-  })
+  }).pipe(
+    Result.mapError((cause) =>
+      cause instanceof InferenceCostError
+        ? cause
+        : new InferenceCostError({ message: 'Inference expense quotes cannot be constructed', cause }),
+    ),
+  )
+
+export const makeInferenceExpenseQuote = (
+  source: InferenceExpenseSource,
+  rateCard: Parameters<typeof makeInferenceExpenseQuotes>[1],
+  stage?: InferenceStage,
+) =>
+  makeInferenceExpenseQuotes(source, rateCard).pipe(
+    Result.flatMap((quotes) => {
+      const selected =
+        stage === undefined
+          ? quotes.length === 1
+            ? quotes[0]
+            : undefined
+          : quotes.find((quote) => 'stage' in quote.line && quote.line.stage === stage)
+      return selected === undefined
+        ? Result.fail(
+            new InferenceCostError({ message: 'A provider stage is required for a sequential inference expense' }),
+          )
+        : Result.succeed(selected)
+    }),
+  )
 
 export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<InferenceExpenseQuote, InferenceCostError> =>
   Result.gen(function* () {
@@ -152,6 +207,25 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
     if (quoteHash !== expected)
       return yield* Result.fail(new InferenceCostError({ message: 'Frozen inference expense quote hash differs' }))
     const line = quote.line
+    if ('stage' in line) {
+      if (
+        line.usageStatus === InferenceUsageStatus.Unknown
+          ? line.cachedInputTokens !== null || line.cacheWriteInputTokens !== null
+          : line.cachedInputTokens === null || line.cacheWriteInputTokens === null
+      )
+        return yield* Result.fail(
+          new InferenceCostError({ message: 'Stage cache metering must agree with usage coverage' }),
+        )
+      if (
+        line.usageStatus === InferenceUsageStatus.NotDispatched &&
+        (line.cachedInputTokens !== '0' || line.cacheWriteInputTokens !== '0')
+      )
+        return yield* Result.fail(
+          new InferenceCostError({ message: 'Undispatched inference cannot consume cache tokens' }),
+        )
+      if (quote.rate !== null && quote.rate.provider !== (line.stage === InferenceStage.Chart ? 'openai' : 'typesafe'))
+        return yield* Result.fail(new InferenceCostError({ message: 'Stage tariff belongs to another provider' }))
+    }
     if (line.usageStatus === InferenceUsageStatus.Unknown) {
       if (
         line.inputTokens !== null ||
@@ -165,7 +239,7 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         )
     } else if (line.usageStatus === InferenceUsageStatus.NotDispatched) {
       if (
-        line.receiptHash === null ||
+        (line.receiptHash === null && !('handoffHash' in line && line.handoffHash !== null)) ||
         line.inputTokens !== '0' ||
         line.outputTokens !== '0' ||
         line.estimatedCostPicoUsd !== '0' ||
@@ -178,7 +252,11 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
           }),
         )
     } else {
-      if (line.receiptHash === null || line.inputTokens === null || line.outputTokens === null)
+      if (
+        (line.receiptHash === null && !('handoffHash' in line && line.handoffHash !== null)) ||
+        line.inputTokens === null ||
+        line.outputTokens === null
+      )
         return yield* Result.fail(new InferenceCostError({ message: 'Metered inference expense has incomplete usage' }))
       if (line.estimatedCostPicoUsd === null) {
         if (line.rateHash !== null || quote.rate !== null)
@@ -193,9 +271,19 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         const rateHash = yield* canonicalHashV1Result(quote.rate).pipe(
           Result.mapError(() => new InferenceCostError({ message: 'Frozen inference rate cannot be hashed' })),
         )
-        const cost =
-          BigInt(line.inputTokens) * BigInt(quote.rate.inputMicrosPerMillionTokens) +
-          BigInt(line.outputTokens) * BigInt(quote.rate.outputMicrosPerMillionTokens)
+        const cost = yield* priceInferenceUsage(
+          {
+            inputTokens: BigInt(line.inputTokens),
+            outputTokens: BigInt(line.outputTokens),
+            cachedInputTokens:
+              'cachedInputTokens' in line && line.cachedInputTokens !== null ? BigInt(line.cachedInputTokens) : 0n,
+            cacheWriteInputTokens:
+              'cacheWriteInputTokens' in line && line.cacheWriteInputTokens !== null
+                ? BigInt(line.cacheWriteInputTokens)
+                : 0n,
+          },
+          quote.rate,
+        )
         if (rateHash !== line.rateHash || cost.toString() !== line.estimatedCostPicoUsd || cost >= 2n ** 128n)
           return yield* Result.fail(
             new InferenceCostError({ message: 'Frozen inference expense price differs from its usage and tariff' }),
@@ -208,10 +296,21 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
 export const verifyInferenceExpenseQuote = (source: InferenceExpenseSource, quote: InferenceExpenseQuote) =>
   Result.gen(function* () {
     const valid = yield* decodeInferenceExpenseQuote(quote)
-    const expected = yield* makeInferenceExpenseQuote(source, {
-      schemaVersion: 'bayn.inference-rate-card.v1',
-      rates: valid.rate === null ? [] : [valid.rate],
-    })
+    const line = valid.line
+    const staged = 'stage' in line
+    const independentHandoff =
+      staged &&
+      line.handoffHash !== null &&
+      (line.stage === InferenceStage.Chart || line.usageStatus === InferenceUsageStatus.NotDispatched)
+    const expected = yield* makeInferenceExpenseQuote(
+      {
+        ...source,
+        receipt: line.receiptHash !== null || independentHandoff ? source.receipt : null,
+        handoff: staged && line.handoffHash !== null ? source.handoff : null,
+      },
+      { schemaVersion: 'bayn.inference-rate-card.v1', rates: valid.rate === null ? [] : [valid.rate] },
+      staged ? line.stage : undefined,
+    )
     if (expected.quoteHash !== valid.quoteHash)
       return yield* Result.fail(
         new InferenceCostError({ message: 'Frozen inference expense differs from the immutable request evidence' }),
@@ -255,12 +354,12 @@ export const verifyInferenceExpenseCoverage = (
           accountId,
           sessionDate: evidence.sessionDate,
           asOf: evidence.asOf,
-          receipt: quote.line.receiptHash === null ? null : source.receipt,
+          receipt: source.receipt,
         },
         quote,
       )
-      const prior = byRequest.get(quote.line.requestId) ?? []
-      byRequest.set(quote.line.requestId, [...prior, row])
+      const prior = byRequest.get(inferenceStageKey(quote.line)) ?? []
+      byRequest.set(inferenceStageKey(quote.line), [...prior, row])
     }
     let missingQuoteCount = 0
     let unverifiedRequestCount = 0
@@ -268,8 +367,11 @@ export const verifyInferenceExpenseCoverage = (
     const requestsWithCoverageIssues: InferenceExpenseRequestCoverage[] = []
     for (const line of original.requests) {
       const issues: InferenceExpenseCoverageIssue[] = []
-      const matches = (byRequest.get(line.requestId) ?? []).filter(
-        (row) => row.quote.line.receiptHash === line.receiptHash,
+      const matches = (byRequest.get(inferenceStageKey(line)) ?? []).filter(
+        (row) =>
+          row.quote.line.receiptHash === line.receiptHash &&
+          ('handoffHash' in row.quote.line ? row.quote.line.handoffHash : null) ===
+            ('handoffHash' in line ? line.handoffHash : null),
       )
       if (matches.length === 0) {
         missingQuoteCount++
@@ -382,7 +484,7 @@ export const buildInferenceExpensePlan = (
       const quote = yield* decodeInferenceExpenseQuote(input)
       const amount = quote.line.estimatedCostPicoUsd
       if (amount === null) continue
-      const requestKey = `${quote.accountBindingHash}:${quote.line.requestId}`
+      const requestKey = `${quote.accountBindingHash}:${inferenceStageKey(quote.line)}`
       const previousQuote = pricedRequests.get(requestKey)
       if (previousQuote !== undefined && previousQuote !== quote.quoteHash)
         return yield* Result.fail(
@@ -392,7 +494,9 @@ export const buildInferenceExpensePlan = (
       const scope = inferenceExpenseScope(quote.accountBindingHash, quote.sessionDate)
       const posting = inferenceExpensePosting(
         scope,
-        `bayn.inference-expense.transfer.v1:${quote.accountBindingHash}:${quote.line.requestId}`,
+        'stage' in quote.line && quote.line.stage === InferenceStage.Chart
+          ? `bayn.inference-expense.transfer.v2:${quote.accountBindingHash}:${quote.line.requestId}:CHART`
+          : `bayn.inference-expense.transfer.v1:${quote.accountBindingHash}:${quote.line.requestId}`,
         quote.quoteHash,
         BigInt(amount),
       )

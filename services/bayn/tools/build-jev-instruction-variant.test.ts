@@ -18,10 +18,11 @@ const ProbeSchema = Schema.Struct({
   instructions: JevInstructionsSchema,
   request: JevRequestSchema,
   selectedSymbols: Schema.Array(Schema.String),
+  parameterHash: Schema.String,
   injected: Schema.Boolean,
 })
 
-test('compiled candidate requests and decisions pass native reproduction with only the complete-plan instruction changed', async () => {
+test('compiled instruction edits change actual atomic judgments and protocol identity while preserving native reproduction', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'bayn-jev-variant-'))
   try {
     await symlink(join(root, 'services/bayn/node_modules'), join(directory, 'node_modules'))
@@ -33,13 +34,18 @@ test('compiled candidate requests and decisions pass native reproduction with on
       import { Result, Schema } from 'effect';
       import { nativeJevFixture, nativeJevDecisionEvidence } from ${source('jev/native.test-support.ts')};
       import { decideJevEntry, JevEntryTargetSchema } from ${source('jev/decision.ts')};
-      import { makeJevTradingSignalRequest } from ${source('jev/trading-signals.ts')};
+      import { defaultJevProtocolDocument } from ${source('jev/protocol.ts')};
+      import { canonicalHashV1Result } from ${source('hash.ts')};
       import { jevInstructions } from ${source('jev/instructions.ts')};
       const fixture = nativeJevFixture();
       const target = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(fixture)));
       const checked = Schema.decodeUnknownSync(JevEntryTargetSchema)(target);
-      const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'));
-      process.stdout.write(JSON.stringify({ instructions: jevInstructions, request: request.request,
+      const candidate = checked.evidence.batchResult.candidates.find(value => value.symbol === 'AAPL');
+      if (candidate?.status !== 'RESOLVED' || candidate.receipt?.outcome.status !== 'COMPLETED') throw new Error('Missing completed native candidate');
+      const handoff = candidate.receipt.outcome.completion.handoff;
+      if (handoff.disposition.status !== 'READY') throw new Error('Missing dependent request');
+      process.stdout.write(JSON.stringify({ instructions: jevInstructions, request: handoff.disposition.jevRequest,
+        parameterHash: Result.getOrThrow(canonicalHashV1Result(defaultJevProtocolDocument)),
         selectedSymbols: checked.selectedSymbols, injected: Object.hasOwn(globalThis, '__jevInjected') }));
     `,
     )
@@ -74,12 +80,14 @@ test('compiled candidate requests and decisions pass native reproduction with on
     expect(edited.injected).toBe(false)
     expect(edited.request.state).toEqual(baseline.request.state)
     expect(edited.selectedSymbols).toEqual(baseline.selectedSymbols)
-    const question = edited.request.questions['action']
-    expect(question?.instructions).toBe(candidate.entry)
-    expect({ ...question, instructions: null }).toEqual({
-      ...baseline.request.questions['action'],
-      instructions: null,
-    })
+    expect(edited.parameterHash).not.toBe(baseline.parameterHash)
+    for (const [name, question] of Object.entries(edited.request.questions)) {
+      expect(question.type).toBe('noul')
+      expect(question.instructions).toMatchObject({ evidence: candidate.entry })
+      const original = baseline.request.questions[name]
+      expect(original?.instructions).toMatchObject({ evidence: jevInstructions.entry })
+      expect({ ...question, instructions: null }).toEqual({ ...original, instructions: null })
+    }
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

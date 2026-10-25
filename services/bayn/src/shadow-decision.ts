@@ -320,7 +320,7 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
   }
-  const intradayEntry = decision.schemaVersion === 'bayn.jev-entry-target.v6'
+  const intradayEntry = decision.schemaVersion === 'bayn.jev-entry-target.v7'
   const intradayClose = isFlatExecutionTarget(decision)
   const intradayDecision = intradayEntry || intradayClose
   const decisionMarketData = input.decisionMarketData ?? input.executionMarketData
@@ -333,7 +333,7 @@ const validateBindings = (
       : makeBoundExecutionCalendar(executionMarketData.calendar, cycle.window)
   if (intradayEntry) {
     const expected =
-      decision.schemaVersion === 'bayn.jev-entry-target.v6' && decisionMarketData !== undefined
+      decision.schemaVersion === 'bayn.jev-entry-target.v7' && decisionMarketData !== undefined
         ? canonicalHashV1Result(decisionMarketData.calendar)
         : Result.succeed(cycle.window.executionCalendarHash)
     if (Result.isFailure(expected) || decision.calendarHash !== expected.success)
@@ -414,7 +414,7 @@ const validateBindings = (
     return Result.fail(error('binding', 'execution market data must match the intraday strategy decision and cycle'))
   }
   const expectedPlanningWeights =
-    input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+    input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v7'
       ? jevPlanningTargetWeights(input.compiledDecision)
       : input.compiledDecision.targetWeights
   const compiledWeightsHash = hashValue(
@@ -469,7 +469,7 @@ const validateRiskState = (
     (input.executionMarketData === undefined ||
       !('maximumQuoteAgeMs' in input.executionMarketData) ||
       state.entryQuote.maximumAgeMs !==
-        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v7'
           ? jevEntryQuoteMaximumAgeMs(
               input.compiledDecision,
               state.entryQuote.eventAt,
@@ -571,7 +571,7 @@ const reduceShadowDelta = (
     targetIntent.symbol,
     targetIntent.quantityAtoms,
     targetIntent.createdAt,
-    context.input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+    context.input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v7'
       ? context.input.compiledDecision.exitPolicy.plans[targetIntent.symbol]
       : undefined,
   )

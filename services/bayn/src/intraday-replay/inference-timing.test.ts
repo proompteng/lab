@@ -1,13 +1,19 @@
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
+import { entryEvaluationRequestFixture, nativeChartInference } from '../jev/entry-inference.test-support'
+import { nativeJevInference } from '../jev/native.test-support'
+import { DecisionsClient } from '../jev/decisions'
+import { JevClient } from '../jev/client'
+import { EntryInferenceJournal, evaluateClaimedEntryInference } from '../jev/entry-inference'
 import { expect, test } from 'bun:test'
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevError, type JevClient } from '../jev/client'
+import { JevError } from '../jev/client'
 import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
-import { makeBoundedReplayJevProvider, makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { makeReplayInferenceBudget, makeReplayInferenceTiming, type ReplayInferenceCall } from './inference-timing'
 
 const request = (symbol: string) =>
   Result.getOrThrow(
@@ -25,69 +31,40 @@ const response: JevResponse = {
 const providerAt = Date.parse('2026-09-21T12:00:00.000Z')
 const marketAt = Date.parse('2026-09-04T14:00:02.000Z')
 
-test('a frozen replay budget bounds concurrent provider dispatches and does not refund failed calls', async () => {
-  let providerCalls = 0
-  const prepared = request('AAPL')
-  const bounded = makeBoundedReplayJevProvider(
-    {
-      evaluate: () =>
-        Effect.suspend(() => {
-          providerCalls++
-          return providerCalls === 1
-            ? Effect.fail(new JevError({ failure: JevFailure.Transport, message: 'Fixture transport failure' }))
-            : Effect.succeed({
-                requestHash: prepared.requestHash,
-                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
-                startedAt: utcInstantFromEpochMillis(providerAt),
-                completedAt: utcInstantFromEpochMillis(providerAt),
-                response,
-              })
-        }),
-    },
-    2,
-  )
+test('a frozen shared replay budget bounds concurrent provider dispatches and never refunds claims', async () => {
+  const budget = makeReplayInferenceBudget(2)
   const outcomes = await Effect.runPromise(
     Effect.all(
-      Array.from({ length: 10 }, () => bounded.provider.evaluate(prepared.request).pipe(Effect.result)),
+      Array.from({ length: 10 }, () => budget.claim.pipe(Effect.result)),
       { concurrency: 'unbounded' },
     ),
   )
-  expect(providerCalls).toBe(2)
-  expect(bounded.dispatchCount()).toBe(2)
-  expect(outcomes.filter(Result.isSuccess)).toHaveLength(1)
-  expect(outcomes.filter(Result.isFailure).map((result) => result.failure.failure)).toEqual([
-    JevFailure.Transport,
-    ...Array.from({ length: 8 }, () => JevFailure.NotDispatched),
-  ])
+  expect(outcomes.filter(Result.isSuccess)).toHaveLength(2)
+  expect(outcomes.filter(Result.isFailure)).toHaveLength(8)
+  expect(budget.dispatchCount()).toBe(2)
 })
 
-test('interrupting a provider stops it and retains its consumed replay budget', async () => {
+test('interrupting a provider retains its consumed replay budget', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>()
+      const budget = makeReplayInferenceBudget(1)
       let stopped = false
-      const bounded = makeBoundedReplayJevProvider(
-        {
-          evaluate: () =>
-            Deferred.succeed(started, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  stopped = true
-                }),
-              ),
-            ),
-        },
-        1,
+      const first = yield* budget.claim.pipe(
+        Effect.andThen(Deferred.succeed(started, undefined)),
+        Effect.andThen(Effect.never),
+        Effect.ensuring(
+          Effect.sync(() => {
+            stopped = true
+          }),
+        ),
+        Effect.forkChild,
       )
-      const first = yield* bounded.provider.evaluate(request('AAPL').request).pipe(Effect.forkChild)
       yield* Deferred.await(started)
       yield* Fiber.interrupt(first)
-      const next = yield* bounded.provider.evaluate(request('AMD').request).pipe(Effect.result)
       expect(stopped).toBe(true)
-      expect(bounded.dispatchCount()).toBe(1)
-      expect(next._tag).toBe('Failure')
-      if (Result.isFailure(next)) expect(next.failure.failure).toBe(JevFailure.NotDispatched)
+      expect(budget.dispatchCount()).toBe(1)
+      expect(yield* budget.claim.pipe(Effect.result)).toMatchObject({ _tag: 'Failure' })
     }),
   )
 })
@@ -97,14 +74,14 @@ const fixture = Effect.gen(function* () {
   const marketClock = yield* TestClock.make()
   yield* providerClock.setTime(providerAt)
   yield* marketClock.setTime(marketAt)
-  const calls: ReplayJevCall[] = []
+  const calls: ReplayInferenceCall[] = []
   const marketArrivals: number[] = []
   const advanceTo = (atMs: number) =>
     Effect.gen(function* () {
       marketArrivals.push(atMs)
       yield* marketClock.setTime(atMs)
     })
-  const retain = (call: ReplayJevCall) =>
+  const retain = (call: ReplayInferenceCall) =>
     Effect.sync(() => {
       calls.push(call)
     })
@@ -126,26 +103,30 @@ test('provider receipts start after measured clock synchronization', async () =>
   const calls = await Effect.runPromise(
     Effect.gen(function* () {
       const f = yield* fixture
-      const timing = yield* makeReplayJevTiming({
+      const timing = yield* makeReplayInferenceTiming({
+        budget: makeReplayInferenceBudget(1000),
         ...f,
         advanceDeadlineTo: (atMs) => f.advanceDeadlineTo(atMs).pipe(Effect.andThen(f.providerClock.adjust(30))),
-        provider: {
-          evaluate: (raw) =>
-            Effect.gen(function* () {
-              const prepared = Result.getOrThrow(prepareJevRequest(raw))
-              const startedAt = yield* Clock.currentTimeMillis
-              yield* f.providerClock.adjust(50)
-              return {
-                requestHash: prepared.requestHash,
-                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
-                startedAt: utcInstantFromEpochMillis(startedAt),
-                completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
-                response,
-              }
-            }),
+        providers: {
+          jev: {
+            evaluate: (raw) =>
+              Effect.gen(function* () {
+                const prepared = Result.getOrThrow(prepareJevRequest(raw))
+                const startedAt = yield* Clock.currentTimeMillis
+                yield* f.providerClock.adjust(50)
+                return {
+                  requestHash: prepared.requestHash,
+                  responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                  startedAt: utcInstantFromEpochMillis(startedAt),
+                  completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                  response,
+                }
+              }),
+          },
+          chart: chartProviderFixture,
         },
       }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
-      const inference = yield* timing.run(timing.client.evaluate(request('AAPL').request))
+      const inference = yield* timing.run(timing.clients.jev.evaluate(request('AAPL').request, 10_000))
       expect(inference.startedAt).toBe(utcInstantFromEpochMillis(marketAt + 30))
       return f.calls
     }).pipe(Effect.scoped),
@@ -160,10 +141,14 @@ test.each([-1, 1.5, 101])('invalid source exclusion %sms fails the replay', asyn
     Effect.gen(function* () {
       const f = yield* fixture
       let excluded = 0
-      const timing = yield* makeReplayJevTiming({
+      const timing = yield* makeReplayInferenceTiming({
+        budget: makeReplayInferenceBudget(1000),
         ...f,
         excludedSourceMillis: Effect.sync(() => excluded),
-        provider: { evaluate: () => Effect.die('This clock regression does not infer') },
+        providers: {
+          jev: { evaluate: () => Effect.die('This clock regression does not infer') },
+          chart: chartProviderFixture,
+        },
       }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
       return yield* timing
         .run(
@@ -184,9 +169,13 @@ test('source parsing cannot consume native decision time while persistence work 
     Effect.gen(function* () {
       const f = yield* fixture
       let excludedSourceMillis = 0
-      const timing = yield* makeReplayJevTiming({
+      const timing = yield* makeReplayInferenceTiming({
+        budget: makeReplayInferenceBudget(1000),
         ...f,
-        provider: { evaluate: () => Effect.die('This clock regression does not infer') },
+        providers: {
+          jev: { evaluate: () => Effect.die('This clock regression does not infer') },
+          chart: chartProviderFixture,
+        },
         excludedSourceMillis: Effect.sync(() => excludedSourceMillis),
         advanceTo: (atMs) =>
           f.advanceTo(atMs).pipe(
@@ -218,9 +207,13 @@ test('reconciliation timestamps stay on the published source clock when advancin
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const f = yield* fixture
-      const timing = yield* makeReplayJevTiming({
+      const timing = yield* makeReplayInferenceTiming({
+        budget: makeReplayInferenceBudget(1000),
         ...f,
-        provider: { evaluate: () => Effect.die('This clock regression does not infer') },
+        providers: {
+          jev: { evaluate: () => Effect.die('This clock regression does not infer') },
+          chart: chartProviderFixture,
+        },
         advanceTo: (atMs) => f.advanceTo(atMs).pipe(Effect.andThen(f.providerClock.adjust(5))),
       }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
       const observations = yield* timing.run(
@@ -247,9 +240,13 @@ test('failed operations still publish the final source cut after measurement cle
     Effect.gen(function* () {
       const f = yield* fixture
       const failure = new ReplayBrokerFailure({ message: 'Runtime failed' })
-      const timing = yield* makeReplayJevTiming({
+      const timing = yield* makeReplayInferenceTiming({
+        budget: makeReplayInferenceBudget(1000),
         ...f,
-        provider: { evaluate: () => Effect.die('This cleanup regression does not infer') },
+        providers: {
+          jev: { evaluate: () => Effect.die('This cleanup regression does not infer') },
+          chart: chartProviderFixture,
+        },
         measureDatabaseTime: (operation) => operation.pipe(Effect.ensuring(f.marketClock.adjust(25))),
       }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
       const exit = yield* timing.run(Effect.fail(failure)).pipe(Effect.result)
@@ -265,9 +262,13 @@ test('failure to publish the cleanup source cut fails an otherwise successful re
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const f = yield* fixture
-      const timing = yield* makeReplayJevTiming({
+      const timing = yield* makeReplayInferenceTiming({
+        budget: makeReplayInferenceBudget(1000),
         ...f,
-        provider: { evaluate: () => Effect.die('This cleanup regression does not infer') },
+        providers: {
+          jev: { evaluate: () => Effect.die('This cleanup regression does not infer') },
+          chart: chartProviderFixture,
+        },
         measureDatabaseTime: (operation) => operation.pipe(Effect.ensuring(f.marketClock.adjust(25))),
         advanceTo: (atMs) =>
           atMs > marketAt
@@ -311,9 +312,10 @@ test('concurrent inference advances source time by elapsed batch time and preser
               }
             }),
         }
-        const timing = yield* makeReplayJevTiming({
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
           ...f,
-          provider,
+          providers: { jev: provider, chart: chartProviderFixture },
           advanceTo: (atMs) =>
             Effect.sync(() => {
               if (activeCalls > 0) sourceAdvancedDuringInference = true
@@ -325,8 +327,8 @@ test('concurrent inference advances source time by elapsed batch time and preser
               const values = yield* Effect.forEach(
                 requests,
                 (item, index) =>
-                  timing.client
-                    .evaluate(item.request)
+                  timing.clients.jev
+                    .evaluate(item.request, 10_000)
                     .pipe(Effect.tap(() => (index === 1 ? Deferred.succeed(fastFinished, undefined) : Effect.void))),
                 { concurrency: 2 },
               )
@@ -389,10 +391,14 @@ test('provider failures consume elapsed time and remain retained', async () => {
                 ),
               ),
         }
-        const timing = yield* makeReplayJevTiming({ ...f, provider }).pipe(
-          Effect.provideService(Clock.Clock, f.marketClock),
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
+          ...f,
+          providers: { jev: provider, chart: chartProviderFixture },
+        }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+        const outcome = yield* timing.run(
+          timing.clients.jev.evaluate(request('AAPL').request, 10_000).pipe(Effect.result),
         )
-        const outcome = yield* timing.run(timing.client.evaluate(request('AAPL').request).pipe(Effect.result))
         return { outcome, calls: f.calls, now: yield* f.marketClock.currentTimeMillis }
       }),
     ),
@@ -421,13 +427,15 @@ test('payment-required receipts stop the replay even when native evaluation hand
               return Effect.fail(new JevError({ failure: JevFailure.Status, message: 'Payment required', status: 402 }))
             }),
         }
-        const timing = yield* makeReplayJevTiming({ ...f, provider }).pipe(
-          Effect.provideService(Clock.Clock, f.marketClock),
-        )
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
+          ...f,
+          providers: { jev: provider, chart: chartProviderFixture },
+        }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
         const outcome = yield* timing
           .run(
             Effect.forEach(['AAPL', 'AMD'], (symbol) =>
-              timing.client.evaluate(request(symbol).request).pipe(Effect.result),
+              timing.clients.jev.evaluate(request(symbol).request, 10_000).pipe(Effect.result),
             ),
           )
           .pipe(Effect.result)
@@ -446,7 +454,7 @@ test('payment-required receipts stop the replay even when native evaluation hand
   })
   expect(result.outcome).toMatchObject({
     _tag: 'Failure',
-    failure: { _tag: 'ReplayBrokerFailure', message: 'Jev replay stopped after HTTP 402 payment required' },
+    failure: { _tag: 'ReplayBrokerFailure', message: 'Inference replay stopped after HTTP 402 payment required' },
   })
 })
 
@@ -458,13 +466,14 @@ test('failure to retain inference fails the replay even when the evaluator handl
         const provider: JevClient['Service'] = {
           evaluate: () => Effect.fail(new JevError({ failure: JevFailure.Transport, message: 'Offline' })),
         }
-        const timing = yield* makeReplayJevTiming({
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
           ...f,
-          provider,
+          providers: { jev: provider, chart: chartProviderFixture },
           retain: () => Effect.fail(new ReplayBrokerFailure({ message: 'Receipt disk unavailable' })),
         }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
         return yield* timing
-          .run(timing.client.evaluate(request('AAPL').request).pipe(Effect.result))
+          .run(timing.clients.jev.evaluate(request('AAPL').request, 10_000).pipe(Effect.result))
           .pipe(Effect.result)
       }),
     ),
@@ -493,10 +502,14 @@ test('cancellation stops the provider and preserves an unresolved paid-call rece
               ),
             ),
         }
-        const timing = yield* makeReplayJevTiming({ ...f, provider }).pipe(
-          Effect.provideService(Clock.Clock, f.marketClock),
-        )
-        const fiber = yield* timing.run(timing.client.evaluate(request('AAPL').request)).pipe(Effect.forkChild)
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
+          ...f,
+          providers: { jev: provider, chart: chartProviderFixture },
+        }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+        const fiber = yield* timing
+          .run(timing.clients.jev.evaluate(request('AAPL').request, 10_000))
+          .pipe(Effect.forkChild)
         yield* Deferred.await(entered)
         yield* f.providerClock.setTime(providerAt + 100)
         yield* Fiber.interrupt(fiber)
@@ -515,10 +528,11 @@ test('a replay cannot reuse its frozen market clock for real inference', async (
     Effect.scoped(
       Effect.gen(function* () {
         const f = yield* fixture
-        return yield* makeReplayJevTiming({
+        return yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
           ...f,
           providerClock: f.marketClock,
-          provider: { evaluate: () => Effect.die('must not infer') },
+          providers: { jev: { evaluate: () => Effect.die('must not infer') }, chart: chartProviderFixture },
         }).pipe(Effect.provideService(Clock.Clock, f.marketClock), Effect.result)
       }),
     ),
@@ -531,11 +545,12 @@ test('provider defects remain defects and retain their unresolved cost evidence'
     Effect.scoped(
       Effect.gen(function* () {
         const f = yield* fixture
-        const timing = yield* makeReplayJevTiming({
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
           ...f,
-          provider: { evaluate: () => Effect.die('provider defect') },
+          providers: { jev: { evaluate: () => Effect.die('provider defect') }, chart: chartProviderFixture },
         }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
-        const exit = yield* timing.run(timing.client.evaluate(request('AAPL').request)).pipe(Effect.exit)
+        const exit = yield* timing.run(timing.clients.jev.evaluate(request('AAPL').request, 10_000)).pipe(Effect.exit)
         return { exit, calls: f.calls }
       }),
     ),
@@ -549,21 +564,25 @@ test('a substituted response identity fails the replay after preserving the actu
     Effect.scoped(
       Effect.gen(function* () {
         const f = yield* fixture
-        const timing = yield* makeReplayJevTiming({
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
           ...f,
-          provider: {
-            evaluate: () =>
-              Effect.succeed({
-                requestHash: request('AMZN').requestHash,
-                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
-                startedAt: utcInstantFromEpochMillis(providerAt),
-                completedAt: utcInstantFromEpochMillis(providerAt),
-                response,
-              }),
+          providers: {
+            jev: {
+              evaluate: () =>
+                Effect.succeed({
+                  requestHash: request('AMZN').requestHash,
+                  responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                  startedAt: utcInstantFromEpochMillis(providerAt),
+                  completedAt: utcInstantFromEpochMillis(providerAt),
+                  response,
+                }),
+            },
+            chart: chartProviderFixture,
           },
         }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
         const outcome = yield* timing
-          .run(timing.client.evaluate(request('AAPL').request).pipe(Effect.result))
+          .run(timing.clients.jev.evaluate(request('AAPL').request, 10_000).pipe(Effect.result))
           .pipe(Effect.result)
         return { outcome, calls: f.calls }
       }),
@@ -572,4 +591,140 @@ test('a substituted response identity fails the replay after preserving the actu
   expect(result.outcome).toMatchObject({ _tag: 'Failure', failure: { _tag: 'ReplayBrokerFailure' } })
   expect(result.calls).toHaveLength(1)
   expect(result.calls[0]?.outcome.status).toBe('RECEIVED')
+})
+
+test.each([1000, null])(
+  'chart, durable handoff and Jev share the original deadline (Jev latency %s)',
+  async (latencyMs) => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const f = yield* fixture
+        const request = entryEvaluationRequestFixture(utcInstantFromEpochMillis(marketAt))
+        const budgets: number[] = []
+        const jevStarted = yield* Deferred.make<void>()
+        const chartReceived = yield* Deferred.make<void>()
+        let committed = false
+        let cancelled = false
+        const budget = makeReplayInferenceBudget(2)
+        const timing = yield* makeReplayInferenceTiming({
+          ...f,
+          budget,
+          providers: {
+            chart: {
+              evaluate: (raw, remainingMs) =>
+                Effect.gen(function* () {
+                  budgets.push(remainingMs)
+                  yield* f.providerClock.adjust(3000)
+                  yield* Deferred.succeed(chartReceived, undefined)
+                  return nativeChartInference(raw, utcInstantFromEpochMillis(yield* Clock.currentTimeMillis))
+                }),
+            },
+            jev: {
+              evaluate: (raw, remainingMs) =>
+                Effect.gen(function* () {
+                  expect(committed).toBe(true)
+                  budgets.push(remainingMs)
+                  yield* Deferred.succeed(jevStarted, undefined)
+                  if (latencyMs === null)
+                    return yield* Effect.never.pipe(
+                      Effect.onInterrupt(() =>
+                        Effect.sync(() => {
+                          cancelled = true
+                        }),
+                      ),
+                    )
+                  yield* f.providerClock.adjust(latencyMs)
+                  return nativeJevInference(raw, utcInstantFromEpochMillis(yield* Clock.currentTimeMillis))
+                }),
+            },
+          },
+        }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+        const operation = timing.run(
+          evaluateClaimedEntryInference({
+            requestId: request.requestId,
+            input: request.request,
+            observedAt: request.observedAt,
+            expiresAt: request.expiresAt,
+            claimedAt: request.observedAt,
+          }).pipe(
+            Effect.provideService(JevClient, timing.clients.jev),
+            Effect.provideService(DecisionsClient, timing.clients.chart),
+            Effect.provideService(EntryInferenceJournal, {
+              recordHandoff: () =>
+                f.providerClock.adjust(1000).pipe(
+                  Effect.as({ dispatchAllowed: true }),
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      committed = true
+                    }),
+                  ),
+                ),
+            }),
+            Effect.provideService(Clock.Clock, f.marketClock),
+          ),
+        )
+        const fiber = yield* operation.pipe(Effect.forkChild)
+        yield* Deferred.await(chartReceived)
+        yield* Deferred.await(jevStarted)
+        expect(budgets).toEqual([10_000, 6000])
+        if (latencyMs === null) yield* f.providerClock.adjust(6000)
+        const result = yield* Fiber.join(fiber)
+        expect(f.calls.map((call) => [call.stage, call.budgetMs])).toEqual([
+          ['CHART', 10_000],
+          ['JEV', 6000],
+        ])
+        expect(budget.dispatchCount()).toBe(2)
+        if (latencyMs === null) {
+          expect(cancelled).toBe(true)
+          expect(result.jev).toMatchObject({ status: 'FAILED', failure: JevFailure.Timeout })
+        } else expect(result.jev.status).toBe('RECEIVED')
+      }).pipe(Effect.scoped),
+    )
+  },
+)
+
+test('exhausting the shared budget after the chart retains its paid call and prevents Jev dispatch', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const f = yield* fixture
+      const request = entryEvaluationRequestFixture(utcInstantFromEpochMillis(marketAt))
+      const budget = makeReplayInferenceBudget(1)
+      let jevCalls = 0
+      const timing = yield* makeReplayInferenceTiming({
+        ...f,
+        budget,
+        providers: {
+          chart: chartProviderFixture,
+          jev: {
+            evaluate: () =>
+              Effect.sync(() => {
+                jevCalls++
+              }).pipe(Effect.andThen(Effect.die('Budget must prevent this dispatch'))),
+          },
+        },
+      }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+      const result = yield* timing
+        .run(
+          evaluateClaimedEntryInference({
+            requestId: request.requestId,
+            input: request.request,
+            observedAt: request.observedAt,
+            expiresAt: request.expiresAt,
+            claimedAt: request.observedAt,
+          }).pipe(
+            Effect.provideService(JevClient, timing.clients.jev),
+            Effect.provideService(DecisionsClient, timing.clients.chart),
+            Effect.provideService(EntryInferenceJournal, {
+              recordHandoff: () => Effect.succeed({ dispatchAllowed: true }),
+            }),
+            Effect.provideService(Clock.Clock, f.marketClock),
+          ),
+        )
+        .pipe(Effect.result)
+      expect(result).toMatchObject({ _tag: 'Failure', failure: { _tag: 'ReplayBrokerFailure' } })
+      expect(jevCalls).toBe(0)
+      expect(f.calls.map((call) => call.stage)).toEqual(['CHART'])
+      expect(budget.dispatchCount()).toBe(1)
+    }).pipe(Effect.scoped),
+  )
 })

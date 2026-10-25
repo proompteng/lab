@@ -4,8 +4,10 @@ import type { JevObservationCheck, JevObservationField } from './observation-dia
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import {
   NonNegativeIntegerSchema,
+  Sha256Schema,
   StrictNonEmptyStringSchema,
   UnitIntervalSchema,
+  UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
 
@@ -83,6 +85,14 @@ export const JevResponseSchema = Schema.Struct({
 })
 
 export type JevResponse = typeof JevResponseSchema.Type
+
+export const JevInferenceSchema = Schema.Struct({
+  requestHash: Sha256Schema,
+  responseHash: Sha256Schema,
+  startedAt: UtcInstantSchema,
+  completedAt: UtcInstantSchema,
+  response: JevResponseSchema,
+})
 
 export class JevContractError extends Data.TaggedError('JevContractError')<{
   readonly message: string

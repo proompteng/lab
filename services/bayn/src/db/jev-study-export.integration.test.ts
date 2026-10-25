@@ -24,7 +24,7 @@ postgresTest(
     const schema = `study_export_${randomUUID().replaceAll('-', '')}`
     url.searchParams.set('options', `-c search_path=${schema}`)
     const evidence = nativeJevDecisionEvidence()
-    const management = nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Manage), 'hold')
+    const laterEntry = nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:31:02.000Z'), false)
     const plan = evidence.batchPlan
     const accountId = evidence.observation.portfolio.brokerState.account.accountId
     const sessionDate = evidence.observation.manifest.sessionDate
@@ -52,7 +52,7 @@ postgresTest(
           yield* sql`INSERT INTO autonomous_cycles VALUES (${'b'.repeat(64)}, ${accountId}, ${sessionDate}::date,
           'jev', ${'a'.repeat(64)}, 'BLOCKED', NULL), (${'c'.repeat(64)}, 'foreign', ${sessionDate}::date,
           'jev', ${'a'.repeat(64)}, 'COMPLETED', NULL)`
-          for (const batch of [evidence, management]) {
+          for (const batch of [evidence, laterEntry]) {
             const batchPlan = batch.batchPlan
             yield* sql`INSERT INTO jev_batch_plans VALUES (${batchPlan.batchId}, ${batchPlan.cycleId}, ${batchPlan.observationHash}, ${sql.json(batchPlan)})`
             yield* sql`INSERT INTO intraday_candidate_observations VALUES (${batchPlan.observationHash}, ${sql.json(batch.observation)})`
@@ -62,8 +62,8 @@ postgresTest(
           expect(pending).toMatchObject({
             cycleCount: 2,
             batchCount: 2,
-            entryBatchCount: 1,
-            managementBatchCount: 1,
+            entryBatchCount: 2,
+            managementBatchCount: 0,
             pendingResultCount: 2,
             qualification: 'UNQUALIFIED',
             controllerCoverage: 'UNKNOWN',
@@ -78,7 +78,7 @@ postgresTest(
           expect(lines).toHaveLength(3)
           expect(lines[0].cycles).toHaveLength(2)
           expect(lines.slice(1).map((line) => line.batchId)).toEqual(
-            [plan.batchId, management.batchPlan.batchId].sort(),
+            [plan.batchId, laterEntry.batchPlan.batchId].sort(),
           )
           expect(lines.slice(1).every((line) => line.result === null)).toBe(true)
           const inventory = yield* Effect.fromResult(
@@ -106,7 +106,7 @@ postgresTest(
             'Failure',
           )
           expect(yield* fs.readFileString(paths.join(pendingPath, 'batches.ndjson'))).toBe(data)
-          for (const batch of [evidence, management])
+          for (const batch of [evidence, laterEntry])
             yield* sql`INSERT INTO jev_batch_results VALUES (${batch.batchPlan.batchId}, ${sql.json(batch.batchResult)})`
           const completed = yield* exportJevStudySession(
             sql,
