@@ -34,11 +34,21 @@ command is **not** run automatically from the trading service at startup.
 
 # Bayn GitOps rollout notes
 
-Protocol v23 retains the broker account's crypto fee tier in v2 account observations. Entry pricing uses that
-account-bound taker rate; future sells retain the maximum fee. Migration 146 requires flat, settled, fully accounted
-inventory and fresh exact reconciliation. The source rollout removes the prior PAPER request and activates OBSERVE.
-The v23 request below restores PAPER with the same account, limits and risk policy, bound to the verified published image.
-Keep the existing financial history and acceptance cohort. Release health and modeled economics do not prove a natural trade.
+The replacement source uses protocol v24 and sequential OpenAI Decisions API chart judgments followed by Jev
+proposal judgments. Migration 147 requires terminal mutation cycles, flat settled inventory, complete accounting,
+fresh exact reconciliation and no unexpired inference claims. It restricts prior PAPER authority for native OBSERVE
+recovery and installs the new request, handoff, receipt and batch write guards. Historical financial rows remain intact.
+
+Both inference secrets sync before the controller rollout. Their controller environment references remain optional so
+independent recovery and code-owned exits can start during a model-secret outage. Missing credentials fail entry
+inference explicitly; they never select a fallback strategy. Research jobs require both credentials.
+
+The source cutover removes the previous mandate from the SealedSecret and all three runtime inputs. It first rolls
+out with read-only broker access and no capital authority. After migration 147 and native OBSERVE recovery, restore
+a reviewed same-account PAPER request bound to the published image and new strategy identity through the existing
+sealed GitOps path. Preserve loss, peak-equity, turnover and financial history throughout the rotation.
+The prior v23 activation receipt below is historical evidence. Image health does not establish a natural trade or
+completed fee-reconciled round trip.
 
 ## Isolated Jev instruction research
 
@@ -191,15 +201,15 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The implementation uses `bayn.jev.protocol.v23`, `bayn.jev.executable-profit-limit.behavior.v1`,
-trading-signal state v21, batch v6 and pinned `jev-1.13.0`, with the existing 15-minute holding limit.
-Crypto candidate and benchmark relative returns use matching completed-bar endpoints. Current candidate quote
-indicators remain separate, and fresh executable quotes still determine pricing, funding and fees. Crypto breakout
-uses the fresh bid against the completed range high; an older contextual trade cannot cap that current quote metric.
-Jev separately classifies the current setup and judges a complete funded entry/stop/target trade after costs within its holding deadline. Both answers must support entry; either judgment can abstain. Its options label hypothetical future order prices
-separately from observed market evidence. The selected complete plan binds those terms to the order and existing account
-limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
-and remaining economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
+The replacement implementation uses `bayn.jev.protocol.v24`, `bayn.chart-first-entry.behavior.v1`, entry state v22,
+batch v7 and pinned `jev-1.13.0`, retaining the 15-minute holding limit. OpenAI Decisions API judgments identify chart
+structure and source anchors. Code funds source-anchored recovery and breakout proposals, commits the exact dependent
+Jev request, and selects from atomic proposal-specific judgments. Both providers share the original inference deadline.
+Account risk, broker protection, fee accounting and exact reconciliation remain mandatory.
+[Strategy protection](../../../docs/bayn/strategy-protection.md) defines the source contracts and venue capabilities.
+Deployment and natural round-trip proof remain outstanding for this replacement.
+
+The following receipt records the previous v23 activation.
 
 Migration 146 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
@@ -227,9 +237,9 @@ and fresh flat/exact reconciliation before replacing the account-keyed controlle
 reviewed published source and image into all runtime activation lineages. Retained evidence remains immutable.
 Rollback requires a reviewed source/mandate pair and fresh flat/exact preflight; never rewrite evidence or reset turnover.
 
-Only the execution worker receives `BAYN_JEV_API_KEY` from `bayn-jev-auth`, delivered by the SealedSecrets controller
-before worker rollout. Jev uses a scoped HTTP CONNECT client through the existing egress proxy. The allowlist contains
-the three exact Alpaca API hosts and `api.typesafe.ai`; direct external worker access remains unavailable. A missing
+The execution worker receives `BAYN_JEV_API_KEY` from `bayn-jev-auth` and `BAYN_OPENAI_API_KEY` from `bayn-openai-auth`.
+Both inference clients use the scoped HTTP CONNECT client through the existing egress proxy. Its allowlist contains
+the three exact Alpaca API hosts, `api.typesafe.ai` and `api.openai.com`; direct external worker access remains unavailable. A missing
 credential or unavailable provider blocks new entries while deterministic position-reducing management remains active.
 The public status service and activation hook do not receive the model credential.
 
@@ -430,10 +440,10 @@ immutable history rewrite; readiness and native authority still require complete
 
 The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
 no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migrations
-97 and 140, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
+97 and 147, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
 Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
-containing this migration and the current Jev v18 strategy/risk identities. Its sealed request and PR may be prepared
-while the OBSERVE rollout finishes; hold the activation merge until migration 140, the source-bound controller plan v3
+containing this migration and the current Jev v24 strategy/risk identities. Its sealed request and PR may be prepared
+while the OBSERVE rollout finishes; hold the activation merge until migration 147, the source-bound controller plan v3
 handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
 build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
 PAPER authority only after validating the complete binding.
@@ -594,7 +604,7 @@ at the first completed minute plus two seconds. Crypto uses its current complete
 up to 30 minutes of actual context, expose gaps, and require fresh quotes and the latest completed bar.
 
 Migration 108 introduced the available-history cutover with terminal mutation cycles, fee-net flat inventory,
-settled orders, fresh exact reconciliation and complete fill accounting. Later migrations preserve those safeguards. Migration 140 and the [v18 activation procedure](#jev-protocol-activation)
+settled orders, fresh exact reconciliation and complete fill accounting. Later migrations preserve those safeguards. Migration 147 and the [current activation procedure](#jev-protocol-activation)
 own the current economic-plan cutover. Retired feature and strategy contracts cannot authorize execution.
 The broker account and order-risk limits remain the same.
 
@@ -603,8 +613,8 @@ LIMIT/IOC through the shared planner, coordinator and generic completion proof. 
 entry spreads at 5 bps and crypto spreads at 25 bps. A canceled partial entry can complete only after an exact flat
 reconciliation consumes the same timestamped broker cut. Its trusted flat observation must remain strictly newer
 than entry terminalization, with complete fills and settled orders. Quantities follow the approved capital weight
-and instrument precision. Current PAPER authority requires a new mandate bound to the published v18 strategy after
-the migration-140 OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation. The 20%
+and instrument precision. Current PAPER authority requires a new mandate bound to the published v24 strategy after
+the migration-147 OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation. The 20%
 target weight and broker risk limits remain enforced. Broker fills, fee-net inventory, ledger transfers and exact
 reconciliation remain required runtime evidence.
 
@@ -616,9 +626,11 @@ Unavailable reconciliation retains the restriction. The old PAPER generation and
 
 ### Jev-selected trade-plan cutover
 
-Protocol v20, signal state v17, batch v6, entry target v6 and exit target v5 require an upward current setup and a
-supported complete economic trade. Either judgment can abstain. The stop and target remain one complete plan. Hypothetical order prices remain distinct from observed market evidence.
-Migration 143 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
+Protocol v24, numerical state v22, batch v7, entry target v7 and exit policy v5 use sequential chart judgments and
+proposal-specific Jev judgments. Code derives protective prices from identified source bars, funds proposals after
+conservative costs and selects the supported funded proposal. Unsupported evidence and provider refusals remain
+explicit abstentions. Hypothetical order prices remain distinct from observed market evidence.
+Migration 147 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
 retiring the prior PAPER generation. The initial source rollout carries no capital mandate. After the
 published image and OBSERVE cutover are verified, restore the same-account PAPER mandate through the
 existing sealed GitOps path with the new exact strategy and image bindings. Preserve the existing account,
