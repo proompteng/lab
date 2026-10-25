@@ -124,6 +124,16 @@ spec:
           podSelector:
             matchLabels:
               app.kubernetes.io/name: traefik
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: relay
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: relay
+      ports:
+        - protocol: TCP
+          port: 9443
   ingress:
     - from:
         - namespaceSelector:

@@ -71,7 +71,7 @@ describe('Tengri image workflow', () => {
       expect(build?.['continue-on-error']).not.toBe(true)
     }
     const pairedBoot = steps.find((step) => step.name === 'Verify paired boot artifact checksums')
-    expect(pairedBoot?.run).toContain('crane export "$guest"')
+    expect(pairedBoot?.run).toContain('crane export --platform "linux/${ARCHITECTURE}" "$guest"')
     expect(pairedBoot?.run).toContain('sha256sum --check SHA256SUMS')
     expect(steps.some((step) => step.name === 'Build native KVM test harness')).toBe(false)
 
@@ -180,7 +180,7 @@ describe('Tengri image workflow', () => {
     expect(steps[exposed]?.run).toContain('publish_kargo_alias "${NANOAGENT_IMAGE}" "${NANOAGENT_DIGEST}"')
   })
 
-  it('holds automatic discovery until prepared-slot cutover is explicitly ready', () => {
+  it('holds automatic discovery until the enrolled guest protocol matches the release', () => {
     const images = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       jobs: { publish: { steps: Array<{ name?: string; run?: string; env?: Record<string, string> }> } }
     }
@@ -190,39 +190,88 @@ describe('Tengri image workflow', () => {
     const calls = resolve(fixture, 'calls')
     const summary = resolve(fixture, 'summary')
     try {
+      mkdirSync(resolve(fixture, 'services/tengri/src'), { recursive: true })
       for (const command of ['crane', 'docker']) {
         writeFileSync(resolve(fixture, command), '#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$CALLS"\nexit 42\n', {
           mode: 0o755,
         })
       }
-      for (const ready of ['', 'false', 'TRUE', 'true']) {
-        const result = Bun.spawnSync(['bash', '-c', exposed.run], {
-          cwd: fixture,
-          env: {
-            ...process.env,
-            PATH: `${fixture}:${process.env.PATH}`,
-            CALLS: calls,
-            GITHUB_STEP_SUMMARY: summary,
-            TENGRI_PREPARED_SLOT_CUTOVER_READY: ready,
-            SOURCE_SHA: '1'.repeat(40),
-            GITHUB_SHA: '1'.repeat(40),
-            TENGRI_DIGEST: `sha256:${'2'.repeat(64)}`,
-            NANOAGENT_DIGEST: `sha256:${'3'.repeat(64)}`,
-            TENGRI_IMAGE: 'registry.example.test/tengri',
-            NANOAGENT_IMAGE: 'registry.example.test/nanoagent',
-          },
-        })
-        if (ready === 'true') {
-          expect(result.exitCode).not.toBe(0)
-          expect(readFileSync(calls, 'utf8')).toContain('crane digest registry.example.test/tengri:kargo-sha-')
-        } else {
-          expect(result.exitCode).toBe(0)
-          expect(existsSync(calls)).toBe(false)
-          expect(readFileSync(summary, 'utf8')).toContain('publication held')
+      for (const protocol of [9, 10]) {
+        writeFileSync(
+          resolve(fixture, 'services/tengri/src/lib.rs'),
+          `pub const GUEST_API_PROTOCOL_VERSION: u32 = ${protocol};\n`,
+        )
+        for (const enrolled of ['', 'false', 'true', '8', '9', '10', '09']) {
+          rmSync(calls, { force: true })
+          const result = Bun.spawnSync(['bash', '-c', exposed.run], {
+            cwd: fixture,
+            env: {
+              ...process.env,
+              PATH: `${fixture}:${process.env.PATH}`,
+              CALLS: calls,
+              GITHUB_STEP_SUMMARY: summary,
+              TENGRI_PREPARED_SLOT_CUTOVER_READY: 'true',
+              TENGRI_PREPARED_SLOT_GUEST_API_VERSION: enrolled,
+              SOURCE_SHA: '1'.repeat(40),
+              GITHUB_SHA: '1'.repeat(40),
+              TENGRI_DIGEST: `sha256:${'2'.repeat(64)}`,
+              NANOAGENT_DIGEST: `sha256:${'3'.repeat(64)}`,
+              TENGRI_IMAGE: 'registry.example.test/tengri',
+              NANOAGENT_IMAGE: 'registry.example.test/nanoagent',
+            },
+          })
+          if (enrolled === String(protocol)) {
+            expect(result.exitCode).not.toBe(0)
+            expect(readFileSync(calls, 'utf8')).toContain('crane digest registry.example.test/tengri:kargo-sha-')
+          } else {
+            expect(result.exitCode).toBe(0)
+            expect(existsSync(calls)).toBe(false)
+            expect(readFileSync(summary, 'utf8')).toContain('publication held')
+          }
         }
       }
-      expect(exposed.env?.TENGRI_PREPARED_SLOT_CUTOVER_READY).toBe(
-        "${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY || 'false' }}",
+      expect(exposed.env?.TENGRI_PREPARED_SLOT_GUEST_API_VERSION).toBe(
+        "${{ vars.TENGRI_PREPARED_SLOT_GUEST_API_VERSION || '' }}",
+      )
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the same enrolled protocol to gate the web image', () => {
+    const products = YAML.parse(
+      readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
+    ) as {
+      jobs: { changes: { steps: Array<{ id?: string; run?: string; env?: Record<string, string> }> } }
+    }
+    const gate = products.jobs.changes.steps.find((step) => step.id === 'cutover')
+    if (!gate?.run) throw new Error('Product cutover gate is missing')
+    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-web-cutover-'))
+    const output = resolve(fixture, 'output')
+    try {
+      mkdirSync(resolve(fixture, 'services/tengri/src'), { recursive: true })
+      for (const protocol of [9, 10]) {
+        writeFileSync(
+          resolve(fixture, 'services/tengri/src/lib.rs'),
+          `pub const GUEST_API_PROTOCOL_VERSION: u32 = ${protocol};\n`,
+        )
+        for (const enrolled of ['', 'true', '8', '9', '10', '09']) {
+          rmSync(output, { force: true })
+          const result = Bun.spawnSync(['bash', '-c', gate.run], {
+            cwd: fixture,
+            env: {
+              ...process.env,
+              GITHUB_OUTPUT: output,
+              TENGRI_PREPARED_SLOT_CUTOVER_READY: 'true',
+              TENGRI_PREPARED_SLOT_GUEST_API_VERSION: enrolled,
+            },
+          })
+          expect(result.exitCode).toBe(0)
+          expect(readFileSync(output, 'utf8').trim()).toBe(`cutover_ready=${enrolled === String(protocol)}`)
+        }
+      }
+      expect(gate.env?.TENGRI_PREPARED_SLOT_GUEST_API_VERSION).toBe(
+        "${{ vars.TENGRI_PREPARED_SLOT_GUEST_API_VERSION || '' }}",
       )
     } finally {
       rmSync(fixture, { recursive: true, force: true })

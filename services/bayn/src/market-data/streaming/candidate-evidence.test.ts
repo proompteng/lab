@@ -70,7 +70,7 @@ describe('candidate executable quote and window trade evidence', () => {
     )
     expect(exclusion(snapshot)).toBeUndefined()
     expect(jevStalePricingSymbols(snapshot)).not.toContain('AAPL')
-    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).state
+    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).numericalState
     expect(state.candidate.quote.ageMs).toBe(1000)
     expect(state.candidate.latestTrade.ageMs).toBe(602_000)
     expect(state.units.latestTrade).toContain('not an executable price')

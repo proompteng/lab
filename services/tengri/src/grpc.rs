@@ -87,7 +87,6 @@ pub struct ControlPlane {
     activity: ActivityTracker,
     terminal_creation_locks: TerminalCreationLockManager,
     provisional_terminal_leases: ProvisionalTerminalLeaseManager,
-    connectors_enabled: bool,
 }
 
 pub struct ControlPlaneConfig {
@@ -136,7 +135,6 @@ impl ControlPlane {
             activity,
             terminal_creation_locks: TerminalCreationLockManager::default(),
             provisional_terminal_leases,
-            connectors_enabled: std::env::var("TENGRI_CONNECTORS_ENABLED").as_deref() == Ok("true"),
         })
     }
 
@@ -844,9 +842,6 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<proto::ConnectorAgentRequest>,
     ) -> Result<Response<CodexModels>, Status> {
-        if !self.connectors_enabled {
-            return Err(Status::unimplemented("connectors are not enabled"));
-        }
         let principal = self.authorize(&request, "ConnectorAgent").await?;
         let request = request.into_inner();
         let method = match request.action.as_str() {
@@ -2718,6 +2713,16 @@ fn created_terminal_cleanup_id(error: &GuestError) -> Option<&str> {
 fn map_guest_error(error: GuestError) -> Status {
     metrics::global().record_guest_failure();
     match error {
+        GuestError::IncompatibleProtocol { .. } => {
+            let mut status = Status::failed_precondition(
+                "This workspace needs a runtime upgrade before it can reconnect.",
+            );
+            status.metadata_mut().insert(
+                "x-tengri-error-code",
+                tonic::metadata::MetadataValue::from_static("runtime_upgrade_required"),
+            );
+            status
+        }
         GuestError::NotReady(message) | GuestError::MissingGuestIp(message) => {
             Status::unavailable(message)
         }
@@ -2753,6 +2758,39 @@ fn map_guest_error(error: GuestError) -> Status {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
+    #[tokio::test]
+    async fn incompatible_guest_reports_required_runtime_upgrade() {
+        use crate::guest::rpc::{
+            proto::GuestInfo,
+            test_server::{TestServer, TestService},
+        };
+
+        let fixture = TestServer::start(TestService {
+            get_info: Some(std::sync::Arc::new(|_| {
+                Ok(GuestInfo {
+                    microvm_id: "expected".into(),
+                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION - 1,
+                    ..Default::default()
+                })
+            })),
+            ..Default::default()
+        })
+        .await;
+        let error = fixture
+            .guest
+            .rpc
+            .verify_identity("expected")
+            .await
+            .unwrap_err();
+        let status = map_guest_error(error);
+
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            status.metadata().get("x-tengri-error-code").unwrap(),
+            "runtime_upgrade_required"
+        );
+    }
 
     #[test]
     fn validates_codex_images_and_image_only_messages() {
@@ -2821,11 +2859,10 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn dormant_connector_rpc_stops_before_authentication_and_workspace_access() {
+    async fn connector_rpc_requires_authentication_before_workspace_access() {
         let (service, _handle) =
             tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
-        let mut control = test_control_plane(Client::new(service, "tengri"));
-        control.connectors_enabled = false;
+        let control = test_control_plane(Client::new(service, "tengri"));
         let denied = control
             .connector_agent(Request::new(proto::ConnectorAgentRequest {
                 agent_id: "unavailable-workspace".into(),
@@ -2834,7 +2871,7 @@ pub(crate) mod tests {
             }))
             .await
             .unwrap_err();
-        assert_eq!(denied.code(), tonic::Code::Unimplemented);
+        assert_eq!(denied.code(), tonic::Code::Unauthenticated);
     }
 
     #[tokio::test]

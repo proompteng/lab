@@ -61,6 +61,10 @@ describe('Nix rollout report', () => {
     expect(bayn?.nixImageAttr).toBe('bayn-image')
     expect(bayn?.deployScriptPath).toBeUndefined()
     expect(bayn?.workflowPaths).toContain('argocd/applications/kargo')
+    const relay = report.nixImages.find((candidate) => candidate.name === 'relay')
+    expect(relay?.nixImageAttr).toBe('relay-image')
+    expect(relay?.workflowPaths).toContain('.github/workflows/relay.yml')
+    expect(relay?.workflowPaths).toContain('argocd/applications/kargo')
   })
 
   it('accepts an immutable Kargo image build without duplicate manual release wrappers', () => {

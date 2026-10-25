@@ -315,7 +315,7 @@ state and never clears either database. Give each attempt a distinct `replicate`
 PostgreSQL while retaining TigerBeetle under the same run ID is not a fresh run. Database clients close with the command. Individual database and reconciliation operations retain their deadlines; the total backtest length is governed by the selected sessions.
 The normal service composition does not load this command or its virtual clock.
 
-`bayn.backtest.v5` binds one explicit UTC interval, the unchanged source-controlled strategy and build, opening cash,
+`bayn.backtest.v6` binds one explicit UTC interval, the unchanged source-controlled strategy and build, opening cash,
 broker assets, execution assumptions and controller cadence. The source must cover the complete interval. UTC reporting
 windows are contiguous, including weekends. The retained Alpaca calendar still controls equities, with a successor
 session after the interval. Crypto remains continuous through the same engine and shared account.

@@ -1,3 +1,6 @@
+import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
+import { EntryInferenceJournal } from './entry-inference'
+import { entryCompletionFixture } from './entry-inference.test-support'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Config, Effect, FileSystem, Layer, Redacted, Schema } from 'effect'
 
@@ -9,7 +12,6 @@ import { JevCandidatePlanStatus } from './batch'
 import { JevBatchStore } from './batch-evaluation'
 import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevEvaluationStore } from './evaluation'
-import { tradingSignalInferenceFixture } from './trading-signal.test-support'
 
 const main = Effect.gen(function* () {
   const [mode, rawId, checkpointPath, resultPath] = process.argv.slice(2)
@@ -21,7 +23,7 @@ const main = Effect.gen(function* () {
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
     return yield* new JevEvidenceError({ message: 'Jev batch worker requires a local _test database' })
   const stores = JevBatchStoreLive.pipe(
-    Layer.provideMerge(JevEvaluationStoreLive),
+    Layer.provideMerge(Layer.mergeAll(JevEvaluationStoreLive, EntryInferenceJournalLive)),
     Layer.provide(PostgresClientLive({ operationTimeoutMs: 5000, postgres: { url, tls: false, caPath: '/unused' } })),
   )
   yield* Effect.gen(function* () {
@@ -40,17 +42,19 @@ const main = Effect.gen(function* () {
     if ((yield* store.read(request.requestId)) === null)
       return yield* new JevEvidenceError({ message: 'Worker requires its committed batch claim' })
     if (mode === 'record')
+      yield* (yield* EntryInferenceJournal).recordHandoff(entryCompletionFixture(request, request.observedAt).handoff)
+    if (mode === 'record')
       yield* store.record(
         request,
         yield* Effect.fromResult(
           makeJevEvaluationReceipt(request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
             requestId: request.requestId,
             startedAt: request.observedAt,
             completedAt: request.observedAt,
             outcome: {
-              status: JevOutcome.Received,
-              inference: tradingSignalInferenceFixture(request.request, request.observedAt),
+              status: JevOutcome.Completed,
+              completion: entryCompletionFixture(request, request.observedAt, 0.9),
             },
           }),
         ),

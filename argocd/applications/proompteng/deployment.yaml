@@ -52,6 +52,8 @@ spec:
                 configMapKeyRef:
                   name: proompteng-observability
                   key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            - name: RELAY_GRPC_ENDPOINT
+              value: relay.relay.svc.cluster.local:9443
             - name: OFZ_GRPC_ENDPOINT
               value: ofz-api.ofz.svc.cluster.local:9443
             - name: TENGRI_DESKTOP_ORIGIN

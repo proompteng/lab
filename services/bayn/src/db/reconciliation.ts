@@ -463,8 +463,12 @@ export const verifyBrokerStateVersion = (
         WHERE i.intent_id = ${intentId} AND i.account_id = ${accountId} AND i.side = 'BUY'
           AND i.decision_hash = d.document #>> '{bindings,strategyDecisionHash}'
           AND d.document #>> '{bindings,accountId}' = ${accountId}
-          AND d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v6'
-          AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' = 'bayn.jev.protocol.v23'
+          AND (
+            (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v6'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' = 'bayn.jev.protocol.v23')
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v7'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' = 'bayn.jev.protocol.v24')
+          )
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,schemaVersion}' = 'bayn.paper-account-snapshot.v2'
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}' = ${accountId}
           AND (d.document #> '{strategyDecision,evidence,observation,portfolio,brokerState,account}') ? 'cryptoFeeTier'

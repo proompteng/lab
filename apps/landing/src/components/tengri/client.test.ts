@@ -110,6 +110,13 @@ test('preserves HTTP status and recognized conversation errors without trusting 
     [503, { error: 'Unavailable', code: 'model_catalog_invalid' }, 'Unavailable', undefined],
     [
       412,
+      { error: 'Runtime upgrade required', code: 'runtime_upgrade_required' },
+      'Runtime upgrade required',
+      'runtime_upgrade_required',
+    ],
+    [503, { error: 'Unavailable', code: 'runtime_upgrade_required' }, 'Unavailable', undefined],
+    [
+      412,
       { error: 'Model selection unavailable', code: 'model_selection_unavailable' },
       'Model selection unavailable',
       undefined,

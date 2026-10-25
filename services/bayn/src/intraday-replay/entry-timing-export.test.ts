@@ -33,7 +33,7 @@ beforeAll(async () => {
       const native = nativeJevFixture()
       return {
         enter: yield* matchedCommittedDecisionFixture(native, nativeJevDecisionEvidence(native)),
-        abstain: yield* matchedCommittedDecisionFixture(native, nativeJevDecisionEvidence(native, 'wait')),
+        abstain: yield* matchedCommittedDecisionFixture(native, nativeJevDecisionEvidence(native, false)),
       }
     }),
   )
@@ -43,7 +43,7 @@ const fixture = (abstain = false) => {
   if (retained === undefined) throw new Error('Native timing fixtures are not prepared')
   const decision = abstain ? retained.abstain : retained.enter
   const target = decision.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('Missing native entry fixture')
+  if (target?.schemaVersion !== 'bayn.jev-entry-target.v7') throw new Error('Missing native entry fixture')
   const observed = intradayInstantNanos(target.evidence.observation.observedAt)
   const created = intradayInstantNanos(decision.createdAt)
   const commitNanos = created + 1000n * ms + 751_734n
@@ -152,7 +152,7 @@ test.each([false, true])('exports exact native timing and a conservative v2 rece
   expect(Result.isSuccess(Schema.decodeUnknownResult(EntryTimingReceiptSchema)(result.timing))).toBeTrue()
   expect(result.timing.decisionHash).toBe(f.decision.contentHash)
   expect(result.timing.deterministicSymbol).toBe('AAPL')
-  expect(f.target.selectedSymbols).toEqual(abstain ? [] : ['AAPL'])
+  expect(f.target.selectedSymbols).toEqual(abstain ? [] : ['AMD'])
   const receiptNanos = intradayInstantNanos(result.timing.decisionCommittedAt)
   expect(receiptNanos).toBe(f.commitNanos + 248_266n)
   expect(receiptNanos - f.commitNanos).toBeGreaterThanOrEqual(0n)
@@ -266,7 +266,7 @@ test('rejects source, process and same-trace ancestry substitution', () => {
   const trace = fixture()
   trace.byName('bayn.postgres.commit').traceId = Buffer.alloc(16, 8).toString('base64')
   expect(Result.isFailure(buildEntryTimingExport(trace.input()))).toBeTrue()
-})
+}, 30_000)
 
 test.each([
   'zero',

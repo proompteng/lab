@@ -1,5 +1,7 @@
 # Observability object storage (Ceph RGW)
 
+For image-build timing, cache evidence, dashboards and alerts, see [CI performance observability](ci/README.md).
+
 Observability uses Ceph RGW object storage, not MinIO.
 Loki, Mimir, and Tempo read S3 access credentials from secret `rook-ceph-rgw-loki` in the `observability`
 namespace.
@@ -85,6 +87,12 @@ Observability is exposed over Tailscale using `Ingress` resources (not `Service`
 - Loki gateway: `loki.ide-newton.ts.net`
 - Mimir nginx: `mimir.ide-newton.ts.net`
 - Tempo gateway: `tempo.ide-newton.ts.net`
+
+Grafana permits anonymous Viewer access to dashboards and data source queries on the private Tailscale and
+`grafana.k8s.proompteng.ai` routes. Optional administrator sign-in remains available for editing and cleanup;
+ordinary dashboard access requires no login. Keep these routes private when changing ingress or network exposure.
+The home page opens CI Build Performance directly; Grafana's personal home screen requests account-only stars and
+team APIs that return 401 for anonymous visitors.
 
 ## Reflect RGW credentials
 
