@@ -426,7 +426,7 @@ mod tests {
             .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("fixture")));
         tracing::subscriber::with_default(subscriber, || {
             let request = Request::builder()
-                .uri("/proompteng.authz.v1.AuthorizationService/PRIVATE_SENTINEL")
+                .uri("/proompteng.authz.v1.TengriAuthorizationService/PRIVATE_SENTINEL")
                 .method("PRIVATE_SENTINEL")
                 .header("content-type", "application/grpc")
                 .body(())
@@ -463,7 +463,7 @@ mod tests {
         assert!(data.contains("55P03"));
         assert!(data.contains("db.policy.read"));
         assert!(data.contains("postgresql"));
-        assert!(RPC_PATHS.contains(&"/proompteng.authz.v1.AuthorizationService/Check"));
+        assert!(RPC_PATHS.contains(&"/proompteng.authz.v1.TengriAuthorizationService/Check"));
     }
 
     #[test]
@@ -577,7 +577,7 @@ mod tests {
             .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("fixture")));
         tracing::subscriber::with_default(subscriber, || {
             let request = Request::builder()
-                .uri("/proompteng.authz.v1.AuthorizationService/Check")
+                .uri("/proompteng.authz.v1.TengriAuthorizationService/Check")
                 .header(
                     "traceparent",
                     "00-11111111111111111111111111111111-2222222222222222-01",

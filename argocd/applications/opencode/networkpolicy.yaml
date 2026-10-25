@@ -61,3 +61,13 @@ spec:
           protocol: TCP
         - port: 22
           protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: relay
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: relay
+      ports:
+        - protocol: TCP
+          port: 9443

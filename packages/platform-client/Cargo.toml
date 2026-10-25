@@ -1,0 +1,25 @@
+[package]
+name = "platform-client"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+[dependencies]
+anyhow = "1.0.100"
+async-stream = "0.3.6"
+futures = "0.3.31"
+hyper-util = { version = "0.1.17", features = ["tokio"] }
+prost = "0.14.4"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }
+rustls = { version = "0.23.43", default-features = false, features = ["aws_lc_rs", "std"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.145"
+spiffe = { version = "0.16.1", features = ["x509-source"] }
+spiffe-rustls = { version = "0.8.0", default-features = false, features = ["aws-lc-rs"] }
+tokio = { version = "1.53.1", features = ["net", "time", "io-util"] }
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["aws-lc-rs"] }
+tonic = "0.14.6"
+tonic-prost = "0.14.6"
+tower = { version = "0.5.2", features = ["util"] }
+[build-dependencies]
+tonic-prost-build = "0.14.6"

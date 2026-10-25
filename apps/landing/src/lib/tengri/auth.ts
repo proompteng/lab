@@ -7,7 +7,7 @@ import { isIP } from 'node:net'
 import { z } from 'zod'
 import type { TengriUser } from './types'
 import { controlDatabase, hashOpaque } from './control-db'
-import { AuthorizationService, type Session } from './generated/proompteng/authz/v1/authz_pb'
+import { TengriAuthorizationService, type Session } from './generated/proompteng/authz/v1/authz_pb'
 import { isOfzConfigured, OfzError, ofzCall } from './ofz'
 import { reportServerError } from '../observability/server'
 
@@ -66,7 +66,7 @@ export async function getTengriIdentity(headers: Headers): Promise<TengriIdentit
   const credential = cookie(headers, SESSION_COOKIE)
   if (!credential) return null
   try {
-    const response = await ofzCall(AuthorizationService.method.inspectSession, { sessionId: credential })
+    const response = await ofzCall(TengriAuthorizationService.method.inspectSession, { sessionId: credential })
     const session = response.session
     if (
       !session ||
@@ -188,10 +188,10 @@ export async function handleTengriAuth(request: Request) {
           previousCredential: cookie(request.headers, SESSION_COOKIE) || '',
           credential: randomBytes(32).toString('base64url'),
         }
-        const established = await ofzCall(AuthorizationService.method.establishSession, establishment).catch(
+        const established = await ofzCall(TengriAuthorizationService.method.establishSession, establishment).catch(
           (error) => {
             if (!(error instanceof OfzError) || error.status !== 503) throw error
-            return ofzCall(AuthorizationService.method.establishSession, establishment)
+            return ofzCall(TengriAuthorizationService.method.establishSession, establishment)
           },
         )
         const session = established.session
@@ -209,7 +209,11 @@ export async function handleTengriAuth(request: Request) {
         const credential = cookie(request.headers, SESSION_COOKIE)
         const operationId = z.uuid().parse(request.headers.get('x-tengri-operation-id'))
         if (credential)
-          await ofzCall(AuthorizationService.method.revokeSession, { credential, operationId, origin: env.base.origin })
+          await ofzCall(TengriAuthorizationService.method.revokeSession, {
+            credential,
+            operationId,
+            origin: env.base.origin,
+          })
         responseHeaders.append('Set-Cookie', setCookie(SESSION_COOKIE, '', 0))
         responseHeaders.append('Set-Cookie', setCookie(OAUTH_COOKIE, '', 0))
         return new Response(null, { status: 204, headers: responseHeaders })

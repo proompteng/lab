@@ -6,7 +6,7 @@ import * as grpc from '@grpc/grpc-js'
 import type { TengriIdentity } from './auth'
 import { humanContext } from './authorization'
 import {
-  AuthorizationService,
+  TengriAuthorizationService,
   CommandState,
   ExecuteCommandRequestSchema,
   type CommandReceipt,
@@ -51,7 +51,7 @@ function readLifecycleCommand(
   workspaceUid: string,
   runtimeEpoch = '',
 ) {
-  return ofzCall(AuthorizationService.method.getCommand, {
+  return ofzCall(TengriAuthorizationService.method.getCommand, {
     context: humanContext(identity, workspaceUid, runtimeEpoch),
     operationId: lifecycleId(identity, intent.operationId, phase),
     clientRequestHash: requestHash(intent),
@@ -93,9 +93,9 @@ export async function lifecycleCommand(
     try {
       const recovered = await recoverLifecycleCommand(identity, intent, phase, workspaceUid, runtimeEpoch)
       if (recovered) return recovered
-      const policy = await ofzCall(AuthorizationService.method.getPolicyState, {})
+      const policy = await ofzCall(TengriAuthorizationService.method.getPolicyState, {})
       if (policy.recoveryGeneration !== identity.session.recoveryGeneration) throw new OfzError(401)
-      const result = await ofzCall(AuthorizationService.method.executeCommand, {
+      const result = await ofzCall(TengriAuthorizationService.method.executeCommand, {
         context: context(),
         operationId: id,
         expectedVersion: policy.version,
