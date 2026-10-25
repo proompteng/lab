@@ -56,16 +56,18 @@ class MigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "current"):
             migration["verify_inventory"](source, target, ledger)
 
-    def test_verified_current_delete_marker_preserves_deletion(self):
-        source = [version("source-marker", latest=True, marker=True)]
-        target = [version("copied-marker", latest=True, marker=True)]
-        ledger = {
-            json.dumps(["backup", "source-marker"]): {
-                "version_id": "copied-marker",
-                "delete_marker": True,
-            }
-        }
-        migration["verify_inventory"](source, target, ledger)
+    def test_source_delete_markers_stop_before_any_copy(self):
+        source, target = Mock(), Mock()
+        source.get_paginator.return_value.paginate.return_value = [
+            {"DeleteMarkers": [version("source-marker", latest=True, marker=True)]}
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "Source delete markers"):
+                migration["migrate_bucket"](
+                    source, target, "bucket", Path(directory), False
+                )
+        target.delete_object.assert_not_called()
+        target.put_object.assert_not_called()
 
     def test_provision_sets_cleanup_and_missing_audit_object_permissions(self):
         storage = Mock()

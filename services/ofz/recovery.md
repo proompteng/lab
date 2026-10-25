@@ -29,7 +29,8 @@ python3 services/ofz/migrate_recovery.py rebind-audit
 
 Every source object version is copied in creation order, read back by its new Ceph version ID, and checked against
 the original SHA-256 and retention deadline. The ledger permits retries without creating another copy of completed
-versions. Reconcile the final source inventory before retiring its writer. Update persisted audit archive receipts
+versions. The three source inventories contain no delete markers; the migration rejects them before copying.
+Reconcile the final source inventory before retiring its writer. Update persisted audit archive receipts
 to the verified Ceph version IDs with `rebind-audit`, which holds the exporter's SQL advisory lease. It ends only
 the old exporter sessions using that same SQL role. Preserve acknowledgement times,
 sequence numbers, original receipts and payload hashes.

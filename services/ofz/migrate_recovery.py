@@ -63,7 +63,7 @@ def client(endpoint, identity):
             signature_version="s3v4",
             retries={"max_attempts": 2},
             connect_timeout=3,
-            read_timeout=15,
+            read_timeout=60,
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
             s3={"addressing_style": "path", "payload_signing_enabled": True},
@@ -247,6 +247,8 @@ def digest_body(response):
 
 def migrate_bucket(source, destination, bucket, directory, verify):
     inventory = versions(source, bucket)
+    if any(item["DeleteMarker"] for item in inventory):
+        raise RuntimeError("Source delete markers are outside this migration")
     ledger_path = directory / f"{bucket}.json"
     ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {}
     database = sqlite3.connect(directory / f"{bucket}.sqlite")
@@ -275,108 +277,96 @@ def migrate_bucket(source, destination, bucket, directory, verify):
             if record and not verify:
                 copied.append((identity, record))
                 continue
-            if item["DeleteMarker"]:
+            options = {"Bucket": bucket, "Key": key, "VersionId": version}
+            response = source.get_object(**options)
+            retention = source.get_object_retention(**options).get("Retention", {})
+            with tempfile.TemporaryFile() as buffer:
+                original = hashlib.sha256()
+                transport = hashlib.md5(usedforsecurity=False)
+                length = 0
+                with response["Body"] as body:
+                    for block in iter(lambda: body.read(1024 * 1024), b""):
+                        original.update(block)
+                        transport.update(block)
+                        length += len(block)
+                        buffer.write(block)
+                digest = original.hexdigest()
                 if not record:
                     if verify:
-                        raise RuntimeError("Uncopied delete marker")
-                    value = destination.delete_object(Bucket=bucket, Key=key)
+                        raise RuntimeError("Uncopied object version")
+                    for candidate in existing.get(key, []):
+                        target = destination.head_object(
+                            Bucket=bucket, Key=key, VersionId=candidate
+                        )
+                        metadata = target.get("Metadata", {})
+                        if (
+                            metadata.get("source-version") == version
+                            and metadata.get("sha256") == digest
+                        ):
+                            record = {
+                                "key": key,
+                                "source_version": version,
+                                "version_id": candidate,
+                                "sha256": digest,
+                                "bytes": length,
+                                "retention": retention,
+                            }
+                            break
+                if not record:
+                    buffer.seek(0)
+                    extra = {
+                        "Metadata": {
+                            **response.get("Metadata", {}),
+                            "source-version": version,
+                            "sha256": digest,
+                        },
+                        "ContentType": response.get(
+                            "ContentType", "application/octet-stream"
+                        ),
+                    }
+                    if retention.get("RetainUntilDate"):
+                        extra.update(
+                            ObjectLockMode=retention["Mode"],
+                            ObjectLockRetainUntilDate=retention["RetainUntilDate"],
+                        )
+                    if length > 5 * 1024**3:
+                        raise RuntimeError(
+                            "Source object exceeds the migration's single-upload budget"
+                        )
+                    target = destination.put_object(
+                        Bucket=bucket,
+                        Key=key,
+                        Body=buffer,
+                        ContentLength=length,
+                        ContentMD5=base64.b64encode(transport.digest()).decode(),
+                        **extra,
+                    )
                     record = {
                         "key": key,
                         "source_version": version,
-                        "version_id": value["VersionId"],
-                        "delete_marker": True,
+                        "version_id": target["VersionId"],
+                        "sha256": digest,
+                        "bytes": length,
+                        "retention": retention,
                     }
-            else:
-                options = {"Bucket": bucket, "Key": key, "VersionId": version}
-                response = source.get_object(**options)
-                retention = source.get_object_retention(**options).get("Retention", {})
-                with tempfile.TemporaryFile() as buffer:
-                    original = hashlib.sha256()
-                    transport = hashlib.md5(usedforsecurity=False)
-                    length = 0
-                    with response["Body"] as body:
-                        for block in iter(lambda: body.read(1024 * 1024), b""):
-                            original.update(block)
-                            transport.update(block)
-                            length += len(block)
-                            buffer.write(block)
-                    digest = original.hexdigest()
-                    if not record:
-                        if verify:
-                            raise RuntimeError("Uncopied object version")
-                        for candidate in existing.get(key, []):
-                            target = destination.head_object(
-                                Bucket=bucket, Key=key, VersionId=candidate
-                            )
-                            metadata = target.get("Metadata", {})
-                            if (
-                                metadata.get("source-version") == version
-                                and metadata.get("sha256") == digest
-                            ):
-                                record = {
-                                    "key": key,
-                                    "source_version": version,
-                                    "version_id": candidate,
-                                    "sha256": digest,
-                                    "bytes": length,
-                                    "retention": retention,
-                                }
-                                break
-                    if not record:
-                        buffer.seek(0)
-                        extra = {
-                            "Metadata": {
-                                **response.get("Metadata", {}),
-                                "source-version": version,
-                                "sha256": digest,
-                            },
-                            "ContentType": response.get(
-                                "ContentType", "application/octet-stream"
-                            ),
-                        }
-                        if retention.get("RetainUntilDate"):
-                            extra.update(
-                                ObjectLockMode=retention["Mode"],
-                                ObjectLockRetainUntilDate=retention["RetainUntilDate"],
-                            )
-                        if length > 5 * 1024**3:
-                            raise RuntimeError(
-                                "Source object exceeds the migration's single-upload budget"
-                            )
-                        target = destination.put_object(
-                            Bucket=bucket,
-                            Key=key,
-                            Body=buffer,
-                            ContentLength=length,
-                            ContentMD5=base64.b64encode(transport.digest()).decode(),
-                            **extra,
-                        )
-                        record = {
-                            "key": key,
-                            "source_version": version,
-                            "version_id": target["VersionId"],
-                            "sha256": digest,
-                            "bytes": length,
-                            "retention": retention,
-                        }
-                    target_options = {
-                        "Bucket": bucket,
-                        "Key": key,
-                        "VersionId": record["version_id"],
-                    }
-                    if digest_body(destination.get_object(**target_options)) != (
-                        length,
-                        digest,
-                    ):
-                        raise RuntimeError("Destination object bytes differ")
-                    actual = destination.get_object_retention(**target_options).get(
-                        "Retention", {}
-                    )
-                    if retention.get("RetainUntilDate") and (
-                        actual.get("Mode") != retention["Mode"]
-                        or actual.get("RetainUntilDate") < retention["RetainUntilDate"]
-                    ):
-                        raise RuntimeError("Destination retention is shorter")
+                target_options = {
+                    "Bucket": bucket,
+                    "Key": key,
+                    "VersionId": record["version_id"],
+                }
+                if digest_body(destination.get_object(**target_options)) != (
+                    length,
+                    digest,
+                ):
+                    raise RuntimeError("Destination object bytes differ")
+                actual = destination.get_object_retention(**target_options).get(
+                    "Retention", {}
+                )
+                if retention.get("RetainUntilDate") and (
+                    actual.get("Mode") != retention["Mode"]
+                    or actual.get("RetainUntilDate") < retention["RetainUntilDate"]
+                ):
+                    raise RuntimeError("Destination retention is shorter")
             copied.append((identity, record))
         return copied
 
@@ -485,7 +475,7 @@ def rebind_audit(destination, directory):
             receipt = json.loads(encoded)
             record = ledger.get(json.dumps([receipt["key"], receipt["version_id"]]))
             if record:
-                if record.get("delete_marker") or record["sha256"] != receipt["sha256"]:
+                if record["sha256"] != receipt["sha256"]:
                     raise RuntimeError(
                         "Verified audit version does not match its SQL receipt"
                     )
