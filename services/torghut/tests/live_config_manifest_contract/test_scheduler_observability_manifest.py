@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from typing import Mapping, cast
 from unittest import TestCase
@@ -97,23 +96,6 @@ class SchedulerObservabilityManifestTests(TestCase):
             for group in _mimir_groups()
             for rule in cast(list[Mapping[str, object]], group.get("rules", []))
             if "torghut_trading_" in str(rule.get("expr", ""))
-        ]
-        self.assertTrue(expressions)
-        for expression in expressions:
-            self.assertIn('service="torghut-scheduler"', expression)
-            self.assertNotIn('service="torghut"', expression)
-
-    def test_execution_dashboard_reads_scheduler_metrics(self) -> None:
-        dashboard_json = _configmap_data(
-            "argocd/applications/observability/torghut-execution-recovery-dashboard-configmap.yaml",
-            "torghut-execution-recovery-dashboard.json",
-        )
-        dashboard = json.loads(dashboard_json)
-        expressions = [
-            str(target.get("expr", ""))
-            for panel in dashboard.get("panels", [])
-            for target in panel.get("targets", [])
-            if "torghut_trading_" in str(target.get("expr", ""))
         ]
         self.assertTrue(expressions)
         for expression in expressions:

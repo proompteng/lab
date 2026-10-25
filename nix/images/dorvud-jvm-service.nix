@@ -19,6 +19,8 @@ let
   dorvudRoot = repoRoot + "/services/dorvud";
   dorvudRootString = toString dorvudRoot;
   jre = pkgs.temurin-jre-bin-21;
+  jdk = pkgs.jdk21_headless;
+  gradle = (pkgs.gradle-packages.override { jdk21 = jdk; }).gradle_9.wrapped;
 
   relativePath =
     path:
@@ -54,8 +56,8 @@ let
       pkgs.bash
       pkgs.coreutils
       pkgs.findutils
-      pkgs.gradle_9
-      pkgs.jdk21_headless
+      gradle
+      jdk
     ];
 
     dontConfigure = true;
@@ -65,7 +67,7 @@ let
       runHook preBuild
 
       export GRADLE_USER_HOME="$TMPDIR/gradle-home"
-      export JAVA_HOME=${pkgs.jdk21_headless}
+      export JAVA_HOME=${jdk}
       mkdir -p "$GRADLE_USER_HOME"
 
       gradle --no-daemon --project-cache-dir "$TMPDIR/gradle-project-cache" :${gradleProject}:${gradleTask}
