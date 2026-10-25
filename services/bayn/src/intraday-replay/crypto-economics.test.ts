@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { canonicalHashV1Result } from '../hash'
 import { studyRoundTrip } from './signal-study'
@@ -22,7 +23,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
     const priceMicros = 2_425_310_000n
     const notional = Result.getOrThrow(notionalMicros(quantityAtoms, priceMicros))
     const buy = { symbol, side: 'buy' as const, quantityAtoms, notionalMicros: notional }
-    expect(receivedCryptoFee(buy, 1_000_000n)).toEqual({
+    expect(receivedCryptoFee(buy, 1_000_000n, cryptoMaximumTakerFeeBps)).toEqual({
       quantityAtoms: 82_625n,
       valueMicros: 200_392n,
       cashMicros: 0n,
@@ -74,7 +75,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
       notionalMicros: String(Result.getOrThrow(notionalMicros(quantityAtoms, sellPrice))),
     }
     expect(Result.isFailure(applyReplayFill(bought, oversell, oversell.quantityAtoms, model, 1_000_000))).toBeTrue()
-    const fees = Result.getOrThrow(calculateSessionFees([buy], model, 2_000_000n))
+    const fees = Result.getOrThrow(calculateSessionFees([buy], model, 2_000_000n, cryptoMaximumTakerFeeBps))
     expect(fees.cryptoMicros).toBeGreaterThan(400_000n)
     expect(fees.cashMicros).toBe(0n)
     expect(fees.secMicros + fees.tafMicros + fees.catMicros).toBe(0n)

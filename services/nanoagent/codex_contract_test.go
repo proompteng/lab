@@ -30,6 +30,121 @@ func TestPinnedCodexRecoversAcceptanceFromPersistedClientIdentity(t *testing.T) 
 	}
 }
 
+func TestPinnedCodexArchivesAndRestoresPersistedHistory(t *testing.T) {
+	binary := os.Getenv("TENGRI_CODEX_CONTRACT_BINARY")
+	if binary == "" {
+		t.Skip("set TENGRI_CODEX_CONTRACT_BINARY to the pinned Codex 0.164.0 binary")
+	}
+	home, workspace := t.TempDir(), t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("OPENAI_API_KEY", "")
+	provider := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(response, `{"error":{"message":"Local archive fixture","type":"invalid_request_error"}}`)
+	}))
+	t.Cleanup(provider.Close)
+	config := fmt.Sprintf(`model = "fixture"
+model_provider = "fixture"
+[model_providers.fixture]
+name = "Fixture"
+base_url = %q
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+request_max_retries = 0
+stream_max_retries = 0
+`, provider.URL)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := newCodexSupervisor(binary, workspace)
+	supervisor.start()
+	t.Cleanup(supervisor.close)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+	call := func(method string, input any) json.RawMessage {
+		t.Helper()
+		params, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := supervisor.call(ctx, method, params)
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		return result.result
+	}
+	var created struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(call("thread/start", map[string]any{"model": "fixture", "cwd": workspace, "historyMode": "paginated"}), &created); err != nil || created.Thread.ID == "" {
+		t.Fatal("native thread creation failed", err)
+	}
+	subscription, events, err := supervisor.subscribe(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { supervisor.unsubscribe(subscription) })
+	params := json.RawMessage(strings.Replace(operationParams, "thread-1", created.Thread.ID, 1))
+	call("turn/start", params)
+	for {
+		select {
+		case event := <-events:
+			var notice struct {
+				Params struct {
+					ThreadID string `json:"threadId"`
+				} `json:"params"`
+			}
+			if event.Method == "turn/completed" && json.Unmarshal(event.Raw, &notice) == nil && notice.Params.ThreadID == created.Thread.ID {
+				goto completed
+			}
+		case <-ctx.Done():
+			t.Fatal("native archive fixture did not finish")
+		}
+	}
+completed:
+	listed := func(archived bool) bool {
+		t.Helper()
+		var page struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(call("thread/list", map[string]any{"archived": archived, "limit": 50}), &page); err != nil {
+			t.Fatal(err)
+		}
+		for _, thread := range page.Data {
+			if thread.ID == created.Thread.ID {
+				return true
+			}
+		}
+		return false
+	}
+	if !listed(false) || listed(true) {
+		t.Fatal("new thread was not in the active index")
+	}
+	thread := map[string]any{"threadId": created.Thread.ID}
+	call("thread/archive", thread)
+	if listed(false) || !listed(true) {
+		t.Fatal("archive did not move the persisted thread")
+	}
+	call("thread/unarchive", thread)
+	if !listed(false) || listed(true) {
+		t.Fatal("restore did not return the persisted thread")
+	}
+	var history struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(call("thread/turns/list", map[string]any{"threadId": created.Thread.ID, "limit": 50, "itemsView": "notLoaded"}), &history); err != nil || len(history.Data) != 1 || history.Data[0].ID == "" {
+		t.Fatal("archive lost the original turn", err)
+	}
+}
+
 func testPinnedCodexRecoversAcceptance(t *testing.T, process bool) {
 	binary := os.Getenv("TENGRI_CODEX_CONTRACT_BINARY")
 	if binary == "" {
@@ -221,6 +336,10 @@ stream_max_retries = 0
 	case <-started:
 	case <-ctx.Done():
 		t.Fatal("native model request did not reach the held loopback provider")
+	}
+	archive, _ := json.Marshal(map[string]any{"threadId": thread.Thread.ID})
+	if _, err := supervisor.call(ctx, "thread/archive", archive); !errors.Is(err, errCodexThreadActive) {
+		t.Fatalf("archive did not preserve the active native turn: %v", err)
 	}
 	if _, err := supervisor.call(ctx, "turn/interrupt", interrupt); err != nil {
 		t.Fatal("native interrupt failed", err)

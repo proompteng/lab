@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
@@ -16,11 +17,71 @@ import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { calculateSessionFees } from '../strategy/execution-model/fees'
 import { quantityScale } from '../quantity'
+import { makeJevObservation } from './observation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
+
+test('uses the broker crypto fee tier for received entry inventory', () => {
+  const economics = Result.getOrThrow(
+    jevEntryEconomics({
+      cryptoFeeTier: 4,
+
+      protocol: defaultJevProtocolDocument,
+      symbol: 'BTC/USD',
+      bidMicros: 80_000_000_000n,
+      askMicros: 80_000_000_000n,
+      capitalMicros: '400800400000',
+    }),
+  )
+  if (economics === null) throw new Error('Expected a fully funded BTC unit')
+  expect(economics.maximumEntryPriceMicros).toBe('80160080000')
+  expect(economics.maximumQuantityAtoms).toBe('1000000000')
+  expect(economics.receivedQuantityAtoms).toBe('998200000')
+  expect(economics.estimatedEntryFeesUsd).toBeCloseTo(144.288144, 6)
+  expect(economics.entryTakerFeeBps).toBe(18)
+  expect(economics.maximumExitTakerFeeBps).toBe(25)
+})
+
+test('the sealed model state uses the account tier for entry and the maximum future exit fee', () => {
+  const { snapshot } = cryptoMarketFixture('BTC/USD')
+  const base = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
+  const state = {
+    ...base.portfolio.brokerState,
+    account: { ...base.portfolio.brokerState.account, cryptoFeeTier: 4 as const },
+  }
+  const hash = Result.getOrThrow(reconciledStateHash(state))
+  const observation = Result.getOrThrow(
+    makeJevObservation({
+      cycleId: base.cycleId,
+      authorityGenerationHash: base.authorityGenerationHash,
+      protocol: base.protocol,
+      snapshot,
+      portfolio: {
+        ...base.portfolio,
+        brokerState: { ...state, reconciliation: { ...state.reconciliation, expectedHash: hash, observedHash: hash } },
+      },
+    }),
+  )
+  const request = Result.getOrThrow(makeJevTradingSignalRequest(observation.payload, 'BTC/USD'))
+  const context = JSON.parse(request.body).state
+  expect(context.execution).toMatchObject({
+    maximumEntryFeeBps: 18,
+    maximumExitFeeBps: 25,
+    estimatedRoundTripFeesBps: 43,
+  })
+  expect(context.execution.estimatedFeeBpsPerSide).toBeUndefined()
+  expect(context.entryEconomics).toMatchObject({
+    entryCryptoFeeTier: 4,
+    entryTakerFeeBps: 18,
+    maximumExitTakerFeeBps: 25,
+  })
+})
 
 test('funding values a native take-profit at its submitted minimum sell price', () => {
   const protocol = defaultJevProtocolDocument
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      cryptoFeeTier: null,
+
       protocol,
       symbol: 'AAPL',
       bidMicros: 100_000_000n,
@@ -48,6 +109,7 @@ test('funding values a native take-profit at its submitted minimum sell price', 
       [{ symbol: 'AAPL', side: 'sell', quantityAtoms: quantity, notionalMicros: proceeds }],
       protocol.executionModel,
       1_000_000n,
+      cryptoMaximumTakerFeeBps,
     ),
   )
   expect(proceeds - fees.cashMicros).toBeGreaterThan(BigInt(economics.acquisitionCostMicros))
@@ -123,6 +185,8 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
         const protocol = defaultJevProtocolDocument
         const economics = Result.getOrThrow(
           jevEntryEconomics({
+            cryptoFeeTier: null,
+
             protocol,
             symbol: 'BTC/USD',
             askMicros: ask,
@@ -157,6 +221,8 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
 test('a cheaper refreshed crypto ask preserves the funded cap used by durable reproduction', () => {
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      cryptoFeeTier: null,
+
       protocol: defaultJevProtocolDocument,
       symbol: 'BTC/USD',
       bidMicros: 99990000n,

@@ -54,18 +54,7 @@ import {
   type TengriCodexImage,
 } from '@/lib/tengri/codex-images'
 import { cn } from '@/lib/utils'
-import {
-  conversationTitleFromRegistry,
-  markStoredConversationUnavailable,
-  mergePersistedConversationRegistry,
-  promoteAcceptedConversationTitle,
-  readStoredConversations,
-  resolveConversationTitle,
-  touchStoredConversation,
-  truncateConversationTitle,
-  upsertStoredConversation,
-  type StoredConversation,
-} from './agent-conversation-storage'
+import { AgentSessionList } from './agent-session-list'
 import { CodexQuestionCard } from './codex-question-card'
 import { codexQuestionRequest } from './codex-question-model'
 import { CodexEventCard } from './codex-event-card'
@@ -82,7 +71,8 @@ import {
   appendCodexEvent,
   appendCodexEventAfterRestore,
   codexAccountRefreshIsCurrent,
-  codexActiveTurnIdFromThread,
+  codexThreadTurnState,
+  codexEventClientTurnIds,
   codexApprovalDecisions,
   codexApprovalTitle,
   codexEventConfirmsRuntimeReady,
@@ -225,7 +215,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const conversationMissing = error instanceof TengriRequestError && error.code === 'conversation_not_found'
   const [eventStreamState, setEventStreamState] = useState<EventStreamState>('connecting')
   const [followingConversation, setFollowingConversation] = useState(true)
-  const [conversations, setConversations] = useState<StoredConversation[]>([])
+  const [sessionRevision, setSessionRevision] = useState(0)
+  const [archivedThread, setArchivedThread] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarWide, setSidebarWide] = useState(true)
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -238,6 +229,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const drawerFocus = useModalFocus<HTMLElement>(compactDrawerOpen)
   const accountRefreshGeneration = useRef(0)
   const completedTurns = useRef(new Set<string>())
+  const clientTurnIds = useRef(new Map<string, string>())
   const loginIdRef = useRef('')
   const threadIdRef = useRef('')
   const activeTurnIdRef = useRef('')
@@ -251,8 +243,15 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const threadStartupController = useRef<AbortController | null>(null)
   const mountedRef = useRef(true)
   const conversationSelection = useRef(0)
-  const submissionThread = useRef('')
-  const submittingHere = submitting && submissionThread.current === threadId
+  const submission = useRef<{
+    threadId: string
+    operation: Awaited<ReturnType<typeof prepareCodexOperation>> | null
+  } | null>(null)
+  const submittingHere = submitting && submission.current?.threadId === threadId
+  const submittedOperation = submission.current?.operation
+  const submittedTurnId =
+    submittedOperation && (submittedOperation.turnId || clientTurnIds.current.get(submittedOperation.id))
+  const submittedTurnCompleted = Boolean(submittedTurnId && completedTurns.current.has(submittedTurnId))
   const connectionInterrupted = eventStreamState === 'reconnecting' || error instanceof AgentConnectionError
   const selectedOptions = codexOptionsForSelection(selection, models ?? [])
   const runMatchesThread = Boolean(run && run.runId === runId && run.agentId === agentId && run.threadId === threadId)
@@ -267,12 +266,27 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const optionsRef = useRef<TengriCodexOptions>({})
   optionsRef.current = selectedOptions ?? {}
   const accountChecked = account !== null
-  const showStopAction =
-    Boolean(activeTurnId || (run && !codexRunIsTerminal(run))) && !prompt.trim() && images.length === 0
-  const runActivity = run && codexRunActivity(run.state)
-  const responsePending = Boolean(activeTurnId || submittingHere || (run && !codexRunIsTerminal(run)))
+  const runTurnId =
+    run && ('turnId' in run.state && run.state.turnId ? run.state.turnId : clientTurnIds.current.get(run.runId))
+  const runPending = Boolean(
+    runMatchesThread &&
+    run &&
+    !codexRunIsTerminal(run) &&
+    (run.state.phase === 'cancelling' ||
+      run.state.phase === 'needs_reconciliation' ||
+      !(runTurnId && completedTurns.current.has(runTurnId))),
+  )
+  const showStopAction = Boolean(activeTurnId || runPending) && !prompt.trim() && images.length === 0
+  const runActivity = runPending && run ? codexRunActivity(run.state) : null
+  const responsePending = Boolean(activeTurnId || (submittingHere && !submittedTurnCompleted) || runPending)
   const readingImages = images.some((image) => image.input === null)
   const canChangeConversation = !readingImages
+
+  useEffect(() => {
+    if (!archivedThread || readingImages) return
+    if (threadIdRef.current === archivedThread) newConversation()
+    setArchivedThread('')
+  }, [archivedThread, readingImages])
 
   useEffect(() => {
     if (!connectionInterrupted) {
@@ -410,7 +424,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (timer) clearTimeout(timer)
     }
-  }, [agentId, threadId, runId, setCurrentActiveTurnId])
+  }, [agentId, threadId, runId, runPending, setCurrentActiveTurnId])
 
   useEffect(() => {
     const prompt = promptRef.current
@@ -541,6 +555,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     setError('')
     setEventStreamState('connecting')
     completedTurns.current.clear()
+    clientTurnIds.current.clear()
     lastEventSequence.current = 0
     lastTurnLifecycleSequence.current = 0
     restoredHistoryRef.current = new Map()
@@ -551,13 +566,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     const stored = readStoredThread(agentId)
     threadIdRef.current = stored
     setThreadId(stored)
-    setConversations(readStoredConversations(agentId))
+    setSessionRevision(0)
+    setArchivedThread('')
   }, [agentId, setCurrentActiveTurnId])
-
-  useEffect(() => {
-    if (!conversationMissing || !threadId) return
-    setConversations((current) => markStoredConversationUnavailable(agentId, threadId, current))
-  }, [agentId, conversationMissing, threadId])
 
   useLayoutEffect(() => {
     const root = rootRef.current
@@ -668,21 +679,13 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         itemSequences,
       )
       setEvents((current) => reconcileCodexEventsWithRestoredHistory(current, restoredById, sequence, itemSequences))
-      const restoredActiveTurnId = codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current)
-      const activeTurnId = commitActiveTurn ? restoredActiveTurnId : activeTurnIdRef.current
-      if (commitActiveTurn) setCurrentActiveTurnId(activeTurnId)
-      setConversations((current) => {
-        const registry = mergePersistedConversationRegistry(current, readStoredConversations(agentId))
-        const title = resolveConversationTitle(
-          conversationTitleFromRegistry(registry, thread.id),
-          titleFromTranscript(restored.historyItems),
-        )
-        const existing = registry.find((conversation) => conversation.id === thread.id)
-        const updatedAt = existing?.unavailable
-          ? Math.max(Date.now(), existing.updatedAt + 1)
-          : (existing?.updatedAt ?? Date.now())
-        return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt }, registry)
-      })
+      for (const [clientId, turnId] of restored.clientTurnIds) clientTurnIds.current.set(clientId, turnId)
+      for (const turnId of restored.completedTurnIds) completedTurns.current.add(turnId)
+      const activeTurnId = codexReconciledActiveTurnId(
+        commitActiveTurn ? restored.activeTurnId : activeTurnIdRef.current,
+        completedTurns.current,
+      )
+      setCurrentActiveTurnId(activeTurnId)
       return { ...restored, activeTurnId }
     },
     [agentId, setCurrentActiveTurnId],
@@ -799,6 +802,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         ? parsed
         : { ...parsed, threadId: parsed.threadId || currentThread }
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
+      if (
+        ['thread/started', 'thread/name/updated', 'thread/archived', 'thread/unarchived', 'turn/completed'].includes(
+          event.method,
+        )
+      ) {
+        setSessionRevision((current) => current + 1)
+        if (event.method === 'thread/archived' && event.threadId) setArchivedThread(event.threadId)
+      }
       const resolvedApprovalId = codexResolvedApprovalId(event)
       if (resolvedApprovalId) retireApproval(resolvedApprovalId)
       if (event.kind === 'approval' && resolvedApprovals.current.has(event.approvalId)) return
@@ -813,6 +824,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         )
       }
       if (!codexEventMatchesThread(event, currentThread)) return
+      for (const [clientId, turnId] of codexEventClientTurnIds(event)) clientTurnIds.current.set(clientId, turnId)
       const eventMethod = event.method.toLowerCase()
       if (eventMethod === 'account/login/completed') {
         const activeLoginId = loginIdRef.current
@@ -835,7 +847,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         })
       } else if (event.method === 'tengri/replayWarning') {
         void recoverThreadState()
-      } else if (event.method === 'turn/started' && event.turnId) {
+      } else if (event.method === 'turn/started' && event.turnId && !completedTurns.current.has(event.turnId)) {
         lastTurnLifecycleSequence.current = Math.max(lastTurnLifecycleSequence.current, event.sequence)
         setCurrentActiveTurnId(event.turnId)
       } else if (event.method === 'turn/completed' && event.turnId) {
@@ -1130,7 +1142,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     if (activeTurnIdRef.current && !runMatchesThread) return
     const selectedConversation = conversationSelection.current
     if (!threadId) creatingDraftRef.current = { selection: selectedConversation }
-    submissionThread.current = threadId
+    submission.current = { threadId, operation: null }
     let submittedThread = threadId
     setSubmitting(true)
     setFollowingConversation(true)
@@ -1157,7 +1169,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       }
       const currentThread = await ensureThread(selectedConversation)
       submittedThread = currentThread.id
-      submissionThread.current = currentThread.id
+      submission.current = { threadId: currentThread.id, operation: null }
       const operationKey = `tengri-operation:${agentId}:${currentThread.id}`
       let operation = await prepareCodexOperation(
         operationKey,
@@ -1166,6 +1178,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         optionsRef.current,
       )
       sentOperation = { key: operationKey, id: operation.id }
+      submission.current = { threadId: currentThread.id, operation }
       if (!operation.turnId && JSON.stringify(operation.options) !== JSON.stringify(optionsRef.current)) {
         setSelectionWarning('This retry uses the original message model and reasoning settings.')
       }
@@ -1189,6 +1202,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         } catch (cause) {
           if (!(cause instanceof TengriRequestError) || cause.code !== 'control_not_dispatched') throw cause
           completeCodexOperation(operationKey, operation.id)
+          submission.current = { threadId: currentThread.id, operation: null }
           await waitForRunCompletion(agentId, runId, currentThread.id)
           completedTurns.current.add(operation.turnId)
           if (threadIdRef.current === currentThread.id) setCurrentActiveTurnId('')
@@ -1199,6 +1213,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             operation.options,
           )
           sentOperation = { key: operationKey, id: operation.id }
+          submission.current = { threadId: currentThread.id, operation }
         }
       }
       if (!operation.turnId) {
@@ -1248,10 +1263,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         }
       }
       completeCodexOperation(operationKey, operation.id)
-      // The turn was accepted, so its prompt can now title a still-untitled conversation.
-      if (text) {
-        setConversations((current) => promoteAcceptedConversationTitle(agentId, currentThread.id, text, current))
-      }
+      setSessionRevision((current) => current + 1)
     } catch (cause) {
       if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && sentOperation)
         completeCodexOperation(sentOperation.key, sentOperation.id)
@@ -1290,12 +1302,12 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     } finally {
       if (creatingDraftRef.current?.selection === selectedConversation) creatingDraftRef.current = null
       setSubmitting(false)
+      submission.current = null
     }
   }
 
   async function ensureThread(selectedConversation: number) {
     if (threadId && threadReady) {
-      setConversations((current) => touchStoredConversation(agentId, threadId, current))
       return { id: threadId, activeTurnId: activeTurnIdRef.current }
     }
     const resumeSequence = lastEventSequence.current
@@ -1308,18 +1320,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         if (draft) draftsRef.current.set(thread.id, draft)
         creatingDraftRef.current = null
       }
-      setConversations((current) =>
-        upsertStoredConversation(
-          agentId,
-          {
-            id: thread.id,
-            title: conversationTitleFromRegistry(current, thread.id),
-            updatedAt: Date.now(),
-          },
-          current,
-        ),
-      )
-      return { id: thread.id, activeTurnId: codexActiveTurnIdFromThread(thread.rawJson) }
+      return { id: thread.id, activeTurnId: codexThreadTurnState(thread.rawJson).activeTurnId }
     }
     if (!threadId) {
       creatingDraftRef.current = null
@@ -1484,6 +1485,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     replayRecoveryRef.current = false
     setError('')
     completedTurns.current.clear()
+    clientTurnIds.current.clear()
   }
 
   function focusComposerAfterConversationChange() {
@@ -1526,11 +1528,6 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     const persisted = writeStoredSelection(agentId, next)
     setSelectionWarning(persisted ? '' : 'Browser storage is unavailable. This selection lasts until the tab closes.')
   }
-
-  const sortedConversations = useMemo(
-    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
-    [conversations],
-  )
 
   if (!account) {
     return (
@@ -1631,15 +1628,15 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         )}
       >
         <div className="flex h-11 shrink-0 items-center gap-2 px-3">
-          <span className="min-w-0 flex-1 truncate text-label-12 text-zinc-400 uppercase">Conversations</span>
           <button
             type="button"
             disabled={!canChangeConversation}
             onClick={newConversation}
-            className="inline-flex size-7 items-center justify-center rounded-md text-zinc-400 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
+            className="inline-flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-2 text-label-14 text-zinc-400 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
             aria-label="New conversation"
           >
             <Plus className="size-3.5" aria-hidden="true" />
+            New chat
           </button>
         </div>
         <WorkspacePinnedResources
@@ -1647,42 +1644,23 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             if (!sidebarWide) setSidebarOpen(false)
           }}
         />
-        <nav
-          aria-label="Conversations"
-          className="tengri-chat-scrollbar min-h-0 flex-1 overflow-auto py-1 [scrollbar-gutter:stable]"
-        >
-          {sortedConversations.length === 0 ? (
-            <p className="px-3 py-2 text-label-12 text-zinc-400">No conversations yet</p>
-          ) : (
-            <ul className="px-1.5">
-              {sortedConversations.map((conversation) => {
-                const active = conversation.id === threadId
-                return (
-                  <li key={conversation.id}>
-                    <button
-                      type="button"
-                      data-conversation-id={conversation.id}
-                      disabled={!canChangeConversation}
-                      aria-current={active ? 'true' : undefined}
-                      onClick={() => switchConversation(conversation.id)}
-                      className={cn(
-                        'mb-0.5 flex w-full min-w-0 flex-col rounded-md px-2.5 py-2 text-left outline-none transition-colors focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none',
-                        active
-                          ? 'bg-white/[0.06] text-zinc-100'
-                          : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200',
-                      )}
-                    >
-                      <span className="truncate text-label-14">{conversation.title}</span>
-                      {conversation.unavailable ? (
-                        <span className="mt-0.5 text-label-12 text-zinc-400">Unavailable</span>
-                      ) : null}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </nav>
+        <AgentSessionList
+          key={agentId}
+          agentId={agentId}
+          enabled={account.authenticated}
+          selected={threadId ? { id: threadId, unavailable: conversationMissing } : null}
+          busyThreadId={
+            workspaceRun && !codexRunIsTerminal(workspaceRun)
+              ? workspaceRun.threadId
+              : activeTurnId || submittingHere
+                ? threadId
+                : ''
+          }
+          canSelect={canChangeConversation}
+          revision={sessionRevision}
+          onSelect={switchConversation}
+          onArchived={setArchivedThread}
+        />
       </aside>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" inert={compactDrawerOpen || undefined}>
@@ -2411,7 +2389,7 @@ function commitThread(
   writeStoredThread(agentId, thread.id)
   const historyItems = codexTranscriptFromThread(thread.rawJson, thread.itemEventSequences)
   setHistoryItems(historyItems)
-  return { activeTurnId: codexActiveTurnIdFromThread(thread.rawJson), historyItems }
+  return { ...codexThreadTurnState(thread.rawJson), historyItems }
 }
 
 function storageKey(agentId: string) {
@@ -2446,11 +2424,6 @@ function codexEventWrapperKey(event: TengriCodexEvent) {
   if (event.approvalId) return `wrap-approval-${event.approvalId}`
   if (event.itemId) return `wrap-${event.threadId}-${event.itemId}-${event.kind}`
   return `wrap-${event.sequence}-${event.method}`
-}
-
-function titleFromTranscript(items: readonly CodexTranscriptItem[]) {
-  const firstUser = items.find((item) => item.kind === 'user-message' && item.text.trim())
-  return firstUser ? truncateConversationTitle(firstUser.text) : ''
 }
 
 function retryableReadFailure(cause: unknown) {

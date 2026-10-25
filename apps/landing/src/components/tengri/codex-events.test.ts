@@ -4,7 +4,8 @@ import {
   appendCodexEvent,
   appendCodexEventAfterRestore,
   codexAccountRefreshIsCurrent,
-  codexActiveTurnIdFromThread,
+  codexThreadTurnState,
+  codexEventClientTurnIds,
   codexApprovalDecisions,
   codexEventDisplayText,
   codexEventContinuesRestoredItem,
@@ -1148,6 +1149,29 @@ describe('Codex event decoding', () => {
 })
 
 describe('Codex thread restoration', () => {
+  test('links native client identities to turns in streamed items and recovered history', () => {
+    const item = { type: 'userMessage', id: 'user-1', clientId: 'run-identity', content: [] }
+    expect(
+      codexEventClientTurnIds({ ...event, kind: 'user-message', rawJson: JSON.stringify({ params: { item } }) }),
+    ).toEqual([['run-identity', 'turn-1']])
+    expect(
+      codexEventClientTurnIds({
+        ...event,
+        rawJson: JSON.stringify({ params: { item: { ...item, type: 'commandExecution' } } }),
+      }),
+    ).toEqual([])
+    expect(codexEventClientTurnIds({ ...event, rawJson: '{' })).toEqual([])
+    expect(
+      codexThreadTurnState(
+        JSON.stringify({ thread: { turns: [{ id: 'turn-1', status: 'completed', items: [item] }] } }),
+      ),
+    ).toEqual({
+      activeTurnId: '',
+      completedTurnIds: ['turn-1'],
+      clientTurnIds: new Map([['run-identity', 'turn-1']]),
+    })
+  })
+
   test('recovers the active turn from the authoritative resumed thread', () => {
     const thread = JSON.stringify({
       thread: {
@@ -1158,8 +1182,12 @@ describe('Codex thread restoration', () => {
       },
     })
 
-    expect(codexActiveTurnIdFromThread(thread)).toBe('turn-active')
-    expect(codexActiveTurnIdFromThread('{')).toBe('')
+    expect(codexThreadTurnState(thread)).toEqual({
+      activeTurnId: 'turn-active',
+      completedTurnIds: ['turn-complete'],
+      clientTurnIds: new Map(),
+    })
+    expect(codexThreadTurnState('{')).toEqual({ activeTurnId: '', completedTurnIds: [], clientTurnIds: new Map() })
   })
 
   test('restores persisted typed items in thread order', () => {

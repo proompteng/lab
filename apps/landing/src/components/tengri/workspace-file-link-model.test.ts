@@ -2,6 +2,15 @@ import { describe, expect, test } from 'bun:test'
 import { parseWorkspaceFileLink } from './workspace-file-link-model'
 
 describe('workspace file links', () => {
+  test('opens the workspace root and canonicalizes folder links', () => {
+    expect(parseWorkspaceFileLink('/workspace')).toEqual({ path: '/workspace', line: undefined, column: undefined })
+    expect(parseWorkspaceFileLink('/workspace/src/')).toEqual({
+      path: '/workspace/src',
+      line: undefined,
+      column: undefined,
+    })
+    expect(parseWorkspaceFileLink('/workspace/')).toEqual({ path: '/workspace', line: undefined, column: undefined })
+  })
   test('preserves the canonical path used by signed file requests', () => {
     const file = parseWorkspaceFileLink('/workspace/lab/README.md:2')
     expect(file).not.toBeNull()

@@ -305,6 +305,9 @@ impl GuestClient {
     pub async fn open_browser(&self) -> Result<(), GuestError> {
         self.rpc.open_browser().await
     }
+    pub async fn stat_file(&self, path: &str) -> Result<FileEntry, GuestError> {
+        self.rpc.stat_file(path).await
+    }
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
         self.rpc.list_files(path).await
     }

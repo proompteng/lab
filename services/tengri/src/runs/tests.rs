@@ -87,6 +87,96 @@ fn principal() -> Principal {
 }
 
 #[tokio::test]
+async fn status_reads_accept_delayed_authorized_responses() {
+    let service = Arc::new(fixture());
+    let router = axum::Router::new().route(
+        "/restate/call/{service}/{key}/{handler}",
+        axum::routing::post({
+            let service = service.clone();
+            move |axum::extract::Path((name, key, handler)): axum::extract::Path<(
+                String,
+                String,
+                String,
+            )>,
+                  axum::Json(envelope): axum::Json<Envelope>| {
+                let service = service.clone();
+                async move {
+                    let domain = if handler == "active" {
+                        "active-query"
+                    } else {
+                        "query"
+                    };
+                    let query: Query = open(&service, domain, &envelope).await.unwrap();
+                    let now = crate::ofz::now_ms().unwrap();
+                    assert!(query.expires_at_ms > now && query.expires_at_ms <= now + 2000);
+                    assert_eq!(query.owner_hash, principal().owner_hash);
+                    assert_eq!(query.workspace_uid, principal().context.workspace_uid);
+                    let value = if handler == "active" {
+                        assert_eq!(name, "TengriWorkspaceRuns");
+                        assert_eq!(key, query.workspace_uid);
+                        serde_json::Value::Null
+                    } else {
+                        assert_eq!(name, "TengriAgentRun");
+                        assert_eq!(key, query.run_id);
+                        serde_json::to_value(Snapshot {
+                            run_id: key,
+                            agent_id: "agent-current".into(),
+                            thread_id: "thread-fixture".into(),
+                            owner_hash: query.owner_hash,
+                            workspace_uid: query.workspace_uid,
+                            digest: "fixture".into(),
+                            state: State::Succeeded {
+                                turn_id: "turn-fixture".into(),
+                            },
+                        })
+                        .unwrap()
+                    };
+                    tokio::time::sleep(Duration::from_millis(2200)).await;
+                    ([("x-restate-id", "inv_delayed-read")], axum::Json(value))
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let output = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::process::Command::new(std::env::current_exe().unwrap())
+            .kill_on_drop(true)
+            .args([
+                "--exact",
+                "runs::tests::delayed_status_read_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("TENGRI_RESTATE_INGRESS", format!("http://{address}"))
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    server.abort();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+#[ignore = "child process for the isolated status response deadline test"]
+async fn delayed_status_read_child() {
+    let service = fixture();
+    assert!(active(&service, &principal()).await.unwrap().is_none());
+    let id = Uuid::new_v4().to_string();
+    let snapshot = read(&service, &principal(), &id, None).await.unwrap();
+    assert_eq!(snapshot.run_id, id);
+    assert!(matches!(snapshot.state, State::Succeeded { .. }));
+}
+
+#[tokio::test]
 async fn run_admission_is_bound_to_payload_and_domain() {
     let service = fixture();
     let mut envelope = seal(&service, "query", &input()).await.unwrap();

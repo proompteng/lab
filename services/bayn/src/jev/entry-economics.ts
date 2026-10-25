@@ -1,9 +1,10 @@
 import { Result } from 'effect'
+import { cryptoMaximumTakerFeeBps, cryptoTakerFeeBps, type CryptoFeeTier } from '../broker/crypto-fees'
 
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { OrderSide, OrderType } from '../execution/contracts'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
-import { instrumentMarket } from '../instruments'
+import { instrumentMarket, MarketKind } from '../instruments'
 import { quantityScale } from '../quantity'
 import { calculateSessionFees, receivedCryptoFee } from '../strategy/execution-model/fees'
 import { JevContractError } from './contract'
@@ -21,6 +22,7 @@ export const jevEntryEconomics = (input: {
   readonly bidMicros: bigint
   readonly askMicros: bigint
   readonly capitalMicros: string
+  readonly cryptoFeeTier: CryptoFeeTier | null
 }) =>
   Result.gen(function* () {
     const { protocol, symbol } = input
@@ -49,8 +51,11 @@ export const jevEntryEconomics = (input: {
       quantityAtoms: quantity,
       notionalMicros: (maximumEntryPrice * quantity + quantityScale - 1n) / quantityScale,
     }
-    const fees = yield* calculateSessionFees([buy], protocol.executionModel, 1_000_000n)
-    const received = quantity - receivedCryptoFee(buy, 1_000_000n).quantityAtoms
+    const crypto = instrumentMarket(symbol) === MarketKind.Crypto
+    const entryFeeTier = crypto ? input.cryptoFeeTier : null
+    const entryTakerFeeBps = cryptoTakerFeeBps(entryFeeTier)
+    const fees = yield* calculateSessionFees([buy], protocol.executionModel, 1_000_000n, entryTakerFeeBps)
+    const received = quantity - receivedCryptoFee(buy, 1_000_000n, entryTakerFeeBps).quantityAtoms
     if (received <= 0n) return null
     const acquisitionCost = buy.notionalMicros + fees.cashMicros
     const breakEvenBid = yield* jevBreakEvenExitBid({
@@ -76,6 +81,9 @@ export const jevEntryEconomics = (input: {
       maximumEntryPriceUsd: Number(maximumEntryPrice) / 1_000_000,
       assumedEntryQuantity: Number(quantity) / Number(quantityScale),
       estimatedEntryFeesUsd: Number(fees.totalMicros) / 1_000_000,
+      entryCryptoFeeTier: entryFeeTier,
+      entryTakerFeeBps: crypto ? entryTakerFeeBps : 0,
+      maximumExitTakerFeeBps: crypto ? cryptoMaximumTakerFeeBps : 0,
       holdingExitBreakEvenBidUsd: Number(breakEvenBid) / 1_000_000,
       holdingExitRequiredBidRiseBps: Number(((breakEvenBid - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
       takeProfitBreakEvenLimitUsd: Number(breakEvenLimit) / 1_000_000,

@@ -91,7 +91,7 @@ let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let receiverAudience = '77777777-7777-4777-8777-777777777777'
-let receiverGuestApiProtocolVersion = 7
+let receiverGuestApiProtocolVersion = 8
 let fileWriteCalls = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
@@ -799,11 +799,24 @@ describe('Tengri gRPC BFF transport', () => {
       receiverAudience = '77777777-7777-4777-8777-777777777777'
     }
   })
+  test('accepts guest API 8 before sending canonical file writes', async () => {
+    const { writeFile } = await import('./grpc')
+    const before = fileWriteCalls
+    const previous = receiverGuestApiProtocolVersion
+    try {
+      receiverGuestApiProtocolVersion = 8
+      await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
+      expect(fileWriteCalls).toBe(before + 1)
+    } finally {
+      receiverGuestApiProtocolVersion = previous
+    }
+  })
+
   test('refuses incompatible controllers before sending canonical file writes', async () => {
     const { writeFile } = await import('./grpc')
     const before = fileWriteCalls
     try {
-      for (const version of [0, 4, 5, 6, 8]) {
+      for (const version of [0, 4, 5, 6, 7, 9]) {
         receiverGuestApiProtocolVersion = version
         expect(
           await rejection(writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')),
@@ -811,7 +824,7 @@ describe('Tengri gRPC BFF transport', () => {
         expect(fileWriteCalls).toBe(before)
       }
     } finally {
-      receiverGuestApiProtocolVersion = 7
+      receiverGuestApiProtocolVersion = 8
     }
     await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
     expect(fileWriteCalls).toBe(before + 1)

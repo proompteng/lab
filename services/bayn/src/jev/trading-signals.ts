@@ -1,5 +1,6 @@
 import { jevBatchQuestionSetHash } from './batch'
 import { exchangeSessions } from '../market-hours'
+import { effectiveCryptoFeeTier } from '../broker/crypto-fees'
 import { jevBenchmarkSymbol, jevMarketForSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
 import { rollingValues } from '../market-data/features/native-feature'
@@ -340,6 +341,12 @@ const requestFromSnapshot = (
     const economics =
       native.portfolio.purpose === JevPurpose.Entry
         ? yield* jevEntryEconomics({
+            cryptoFeeTier: effectiveCryptoFeeTier(
+              native.portfolio.brokerState.account.cryptoFeeTier,
+              native.portfolio.brokerState.account.observedAt,
+              snapshot.manifest.observedAt,
+            ),
+
             protocol: native.protocol,
             symbol,
             bidMicros: candidate.prices.bid,
@@ -366,8 +373,11 @@ const requestFromSnapshot = (
           extendedHours: !continuous,
           sizingPolicy: native.protocol.entrySizingPolicy,
           maximumEntrySpreadBps: jevMarketForSymbol(symbol).maximumEntrySpreadBps,
-          estimatedFeeBpsPerSide: jevMarketForSymbol(symbol).estimatedTakerFeeBps,
-          estimatedRoundTripFeesBps: 2 * jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+          maximumEntryFeeBps: economics?.entryTakerFeeBps ?? jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+          maximumExitFeeBps: jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+          estimatedRoundTripFeesBps:
+            (economics?.entryTakerFeeBps ?? jevMarketForSymbol(symbol).estimatedTakerFeeBps) +
+            jevMarketForSymbol(symbol).estimatedTakerFeeBps,
         },
         units: {
           prices: 'USD per unit',
