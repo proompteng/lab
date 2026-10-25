@@ -32,14 +32,22 @@ const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
   return {
-    schemaVersion: 'bayn.backtest.v5',
+    schemaVersion: 'bayn.backtest.v6',
     jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
     inference: {
-      mode: 'measured-provider',
+      mode: 'measured-providers',
       maximumCalls: 1000,
-      model: jevModel,
-      inputDefinition: 'bayn.jev-trading-signal-state.v21',
-      costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+      models: { jev: jevModel, chart: 'gpt-6-luna' },
+      inputDefinition: 'bayn.jev-entry-state.v22',
+      costs: {
+        jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+        chart: {
+          inputMicrosPerMillionTokens: '100000',
+          outputMicrosPerMillionTokens: '0',
+          cachedInputMicrosPerMillionTokens: '10000',
+          cacheWriteInputMicrosPerMillionTokens: '125000',
+        },
+      },
     },
     allocatedDataCostPerSessionMicros: '0',
     replicate: 'validation-test',
@@ -130,7 +138,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v23')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v24')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
@@ -179,7 +187,13 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
     Result.getOrThrow(
       prepareBacktest({
         ...input,
-        inference: { ...input.inference, costs: { ...input.inference.costs, inputMicrosPerMillionTokens: '84000' } },
+        inference: {
+          ...input.inference,
+          costs: {
+            ...input.inference.costs,
+            jev: { ...input.inference.costs.jev, inputMicrosPerMillionTokens: '84000' },
+          },
+        },
       }),
     ).runId,
   ).not.toBe(prepared.runId)
@@ -568,7 +582,7 @@ test('prepared replay admits a native control batch before any provider dispatch
       const plan = Result.getOrThrow(
         makeJevTradingSignalBatch({
           observation: observation.payload,
-          planVersion: JevBatchPlanVersion.V6,
+          planVersion: JevBatchPlanVersion.V7,
           expiresAt: new Date(
             Date.parse(observation.payload.observedAt) + prepared.protocol.inferenceValidityMs,
           ).toISOString(),

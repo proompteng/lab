@@ -3,7 +3,13 @@ import { Effect, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest, type JevEvaluationRequest } from '../jev/evidence'
+import {
+  decodeJevEvaluationReceipt,
+  decodeJevEvaluationRequest,
+  JevOutcome,
+  type JevEvaluationRequest,
+} from '../jev/evidence'
+import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { decodeJevResolution, type JevEvaluationEvidence } from '../jev/resolution'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import { withObservedStage } from '../telemetry'
@@ -12,6 +18,7 @@ const StoredRow = Schema.Struct({
   request_id: Sha256Schema,
   request: Schema.Unknown,
   receipt: Schema.NullOr(Schema.Unknown),
+  handoff: Schema.NullOr(Schema.Unknown),
   resolution: Schema.NullOr(Schema.Unknown),
 })
 const ObservationRow = Schema.Struct({
@@ -107,10 +114,11 @@ export const readJevEvaluationEvidence = (sql: PgClient.PgClient, input: readonl
       strictParseOptions,
     )(
       yield* sql`
-        SELECT request.request_id, request.payload AS request, receipt.payload AS receipt,
+        SELECT request.request_id, request.payload AS request, receipt.payload AS receipt, handoff.payload AS handoff,
           resolution.payload AS resolution
         FROM jev_evaluation_requests AS request
         LEFT JOIN jev_evaluation_receipts AS receipt USING (request_id)
+        LEFT JOIN jev_inference_handoffs AS handoff USING (request_id)
         LEFT JOIN jev_evaluation_resolutions AS resolution USING (request_id)
         WHERE request.request_id IN ${sql.in(requestIds)}
       `,
@@ -130,6 +138,25 @@ export const readJevEvaluationEvidence = (sql: PgClient.PgClient, input: readonl
     for (const { row, request } of decoded) {
       const receipt =
         row.receipt === null ? null : yield* Effect.fromResult(decodeJevEvaluationReceipt(request, row.receipt))
+      const handoff =
+        row.handoff === null
+          ? null
+          : yield* Effect.fromResult(
+              decodeEntryHandoff(
+                {
+                  requestId: request.requestId,
+                  input: request.request,
+                  observedAt: request.observedAt,
+                  expiresAt: request.expiresAt,
+                },
+                row.handoff,
+              ),
+            )
+      if (
+        receipt?.outcome.status === JevOutcome.Completed &&
+        (handoff === null || handoff.handoffHash !== receipt.outcome.completion.handoff.handoffHash)
+      )
+        return yield* jevEvaluationReadError('Entry receipt differs from its committed provider handoff')
       const resolution =
         row.resolution === null ? null : yield* Effect.fromResult(decodeJevResolution(request, receipt, row.resolution))
       if (receipt !== null && resolution === null)
