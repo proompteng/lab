@@ -419,7 +419,9 @@ See [implementation status](../../docs/tengri/ofz-implementation-status.md) for 
 
 System Settings → Lifecycle controls `spec.power.idleTimeoutMinutes`. The default is 60 minutes, values through 1440
 are accepted, and zero disables automatic sleep. Manual sleep always releases resident guest RAM. Changing the timeout
-starts a new idle interval; authenticated activity extends it. Automatic sleep also requires the guest to confirm that
+starts a new idle interval; authenticated activity extends it. Power settings refresh the MicroVM after the Ofz
+decision, verify the same UID, owner and runtime epoch, then patch with that current resource version. Activity
+updates during authorization therefore do not consume the optimistic-concurrency retries. Automatic sleep also requires the guest to confirm that
 Codex is idle across all conversations. Active turns, pending starts/steering and approvals keep the VM awake even with
 no browser connected. The idle interval starts again when work finishes. Work-state probes do not count as user activity;
 unavailable, restarting or older guests without work metadata defer automatic sleep. Each guest control request records
@@ -611,6 +613,11 @@ terminal outcome or permanent removal receipt. Restate retains completed run and
 Admission attempt journals expire after one minute; they do not reserve run or control identities before authentication.
 Read-only status queries journal their signature and two-second admission-expiry check so a worker retry replays
 the same read path. Rechecking a mutable key or wall clock before a replayed state read can cause a journal mismatch.
+Each response has a five-second budget. Read recovery has a total fifteen-second budget, shared by the active claim
+and its snapshot. Transport failures, HTTP 5xx, response timeouts and explicit HTTP 408 admission expiry can issue a
+fresh signed read with exponential backoff capped at one second. Each request retains its two-second admission
+window. Signature and authority denials, missing or conflicting runs and invalid responses fail immediately.
+Run submissions and controls are not replayed by this read recovery.
 Workspace claim returns the latest Stop with its result, avoiding a separate initial Stop call; the run still checks
 Stop after preparation and immediately before dispatch. This changes the private claim response contract. Drain active
 run and control invocations before registering this worker version, and retain earlier versions for pinned history.
