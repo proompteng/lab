@@ -862,7 +862,7 @@ export const runControlSession = (input: {
       completedEpisodes: portfolio.episodes.length,
       filledNotionalMicros: String(portfolio.tradedNotionalMicros),
       netPnlAfterKnownCostsMicros: netPnl,
-      allCostNetPnlMicros: input.dataCostMicros === null || sessionModelCosts.unresolvedCallCount > 0 ? null : netPnl,
+      allCostNetPnlMicros: issues.length === 0 ? netPnl : null,
       netAfterAdditional10BpsMicros:
         netPnl === null ? null : String(BigInt(netPnl) - (portfolio.tradedNotionalMicros + 999n) / 1000n),
       executionFeesMicros: portfolio.ledger.executionFeesMicros,
