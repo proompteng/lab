@@ -25,6 +25,7 @@ import {
 } from './broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from './broker/alpaca/failures'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
+import { verifyProtectionGroup } from './broker/alpaca/protection-group'
 import { canonicalHashV1Result } from './hash'
 import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './execution/contracts'
 import {
@@ -566,6 +567,103 @@ describe('reconciliation pure decisions', () => {
       })
     }
   })
+
+  test.each(
+    [OrderClass.Bracket, OrderClass.OneCancelsOther].flatMap((orderClass) =>
+      [false, true].map((permanent) => ({ orderClass, permanent })),
+    ),
+  )(
+    'waits for nested $orderClass child fill activity convergence; permanent=$permanent',
+    async ({ orderClass, permanent }) => {
+      const bracket = orderClass === OrderClass.Bracket
+      const parent = {
+        ...order(0),
+        orderClass,
+        orderType: BrokerOrderType.Limit,
+        side: bracket ? BrokerSide.Buy : BrokerSide.Sell,
+        filledQuantityAtoms: bracket ? '1000000000' : '0',
+        status: bracket ? BrokerOrderStatus.Filled : BrokerOrderStatus.Canceled,
+        limitPriceMicros: '110000000',
+      }
+      const child = {
+        ...order(1),
+        parentBrokerOrderId: parent.brokerOrderId,
+        side: BrokerSide.Sell,
+        orderType: BrokerOrderType.StopLimit,
+        stopPriceMicros: '90000000',
+        limitPriceMicros: '89000000',
+      }
+      const profit = {
+        ...order(2),
+        parentBrokerOrderId: parent.brokerOrderId,
+        side: BrokerSide.Sell,
+        orderType: BrokerOrderType.Limit,
+        limitPriceMicros: '110000000',
+        filledQuantityAtoms: '0',
+        status: BrokerOrderStatus.Canceled,
+      }
+      const nested = { ...parent, legs: bracket ? [child, profit] : [child] }
+      expect(
+        Result.isSuccess(
+          verifyProtectionGroup(nested, {
+            symbol: parent.symbol,
+            quantityAtoms: '1000000000',
+            protection: {
+              _tag: bracket ? 'Bracket' : 'Oco',
+              entryDecisionHash: hash('entry-decision'),
+              stopPriceMicros: '90000000',
+              stopLimitPriceMicros: '89000000',
+              profitLimitPriceMicros: '110000000',
+            },
+          }),
+        ),
+      ).toBe(true)
+      const parentFill = fill(0, parent)
+      const childFill = fill(1, child)
+      const parentFills = bracket ? [parentFill] : []
+      const history = {
+        orders: { rows: [{ value: nested, evidence: evidence('nested-order') }], observedAt },
+        fills: parentFills.map((value) => ({ value, evidence: evidence('parent-fill') })),
+        fees: [],
+      }
+      expect(decideStableHistory(history, history)).toMatchObject({
+        _tag: 'Failure',
+        failure: { failure: { _tag: 'Snapshot', reason: 'FillActivitiesPending' } },
+      })
+      let fillReads = 0
+      const read: BrokerReadShape = {
+        ...emptyRead(),
+        orders: () => Effect.succeed({ value: [nested], evidence: evidence('nested-orders') }),
+        fillActivities: () =>
+          Effect.sync(() => ({
+            value: { items: ++fillReads <= 2 || permanent ? parentFills : [...parentFills, childFill] },
+            evidence: evidence('nested-fills'),
+          })),
+      }
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fiber = yield* readStableBrokerSnapshot(read, Effect.succeed(observedAt)).pipe(
+              Effect.result,
+              Effect.forkScoped({ startImmediately: true }),
+            )
+            yield* TestClock.adjust(1000)
+            return yield* Fiber.join(fiber)
+          }),
+        ).pipe((self) => provideTestLayer(self, TestClock.layer())),
+      )
+      if (permanent) {
+        expect(fillReads).toBe(6)
+        expect(result).toMatchObject({
+          _tag: 'Failure',
+          failure: { failure: { _tag: 'Snapshot', reason: 'FillActivitiesPending' } },
+        })
+      } else {
+        expect(fillReads).toBe(4)
+        expect(Result.getOrThrow(result).history.fills.map(({ value }) => value)).toEqual([...parentFills, childFill])
+      }
+    },
+  )
 
   test('classifies stable history, missing baselines, and containment without effects', () => {
     const emptyHistory = {
