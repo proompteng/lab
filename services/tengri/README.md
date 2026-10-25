@@ -276,6 +276,11 @@ id-less requests instead of generating a compatibility identity or negotiating w
 Pending Codex device logins are guest-owned. A reconnecting desktop reads the active attempt from Nanoagent and keeps
 the same verification code and original expiry instead of silently starting and invalidating another attempt.
 
+Claimed slots retain their guest image when the controller and supervisor roll. An incompatible guest API returns
+`FAILED_PRECONDITION` with `x-tengri-error-code: runtime_upgrade_required`; the BFF and browser preserve this as HTTP
+412 and `runtime_upgrade_required`. Complete the [retained-home runtime replacement](../../docs/tengri/operations.md#replacing-a-claimed-guest-while-retaining-its-home)
+before releasing an incompatible image cohort. Retrying or resuming the old snapshot does not upgrade its guest image.
+
 Workspace file reads return bounded protobuf bytes and a required strong SHA-256 revision. Tengri verifies that the
 revision matches the content and rejects missing, malformed, or mismatched revisions. Writes require a lowercase
 64-character SHA-256 `expected_revision` or `missing` for create-only writes; malformed preconditions fail before
