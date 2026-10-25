@@ -23,6 +23,15 @@ def version(identifier, *, latest=False, marker=False):
 
 
 class MigrationTests(unittest.TestCase):
+    def test_source_metadata_has_one_case_insensitive_hash_header(self):
+        value = migration["copied_metadata"](
+            {"Sha256": "old", "Other-Field": "kept"}, "version", "verified"
+        )
+        self.assertEqual(
+            value,
+            {"sha256": "verified", "other-field": "kept", "source-version": "version"},
+        )
+
     def test_equal_timestamps_preserve_version_order_and_current_live_state(self):
         source = Mock()
         source.get_paginator.return_value.paginate.return_value = [

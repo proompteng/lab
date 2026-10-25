@@ -245,6 +245,14 @@ def digest_body(response):
     return length, digest.hexdigest()
 
 
+def copied_metadata(original, version, digest):
+    return {
+        **{key.lower(): value for key, value in original.items()},
+        "source-version": version,
+        "sha256": digest,
+    }
+
+
 def migrate_bucket(source, destination, bucket, directory, verify):
     inventory = versions(source, bucket)
     if any(item["DeleteMarker"] for item in inventory):
@@ -315,11 +323,9 @@ def migrate_bucket(source, destination, bucket, directory, verify):
                 if not record:
                     buffer.seek(0)
                     extra = {
-                        "Metadata": {
-                            **response.get("Metadata", {}),
-                            "source-version": version,
-                            "sha256": digest,
-                        },
+                        "Metadata": copied_metadata(
+                            response.get("Metadata", {}), version, digest
+                        ),
                         "ContentType": response.get(
                             "ContentType", "application/octet-stream"
                         ),
