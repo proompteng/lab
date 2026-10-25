@@ -57,6 +57,12 @@ import { cn } from '@/lib/utils'
 import { AgentSessionList } from './agent-session-list'
 import { CodexQuestionCard } from './codex-question-card'
 import { codexQuestionRequest } from './codex-question-model'
+import type { QuestionRequest } from './codex-question-model'
+import {
+  codexAnsweredAsyncQuestions,
+  codexAsyncQuestionReply,
+  codexEventAsyncQuestionRequest,
+} from './codex-async-questions'
 import { CodexEventCard } from './codex-event-card'
 import { groupCodexActivity } from './codex-activity'
 import { automaticApprovalDecision, readApprovalMode, writeApprovalMode, type ApprovalMode } from './approval-mode'
@@ -192,6 +198,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>('ask')
   const autoApprovalAttempts = useRef(new Set<string>())
   const resolvedApprovals = useRef(new Set<string>())
+  const [resolvedAsyncQuestions, setResolvedAsyncQuestions] = useState<ReadonlySet<string>>(new Set())
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
@@ -929,10 +936,19 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     () =>
       events
         .filter((event) => codexEventShouldRender(event, threadId, historyIds, restoredHistorySequence))
-        .map((event) => ({ event, text: codexEventDisplayText(event), activityTitle: codexEventActivityTitle(event) }))
+        .map((event) => ({
+          event,
+          text: codexEventDisplayText(event),
+          activityTitle: codexEventActivityTitle(event),
+          questionRequest: codexEventAsyncQuestionRequest(event),
+        }))
         .filter(
-          ({ event, text }) =>
-            Boolean(text) || event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error',
+          ({ event, text, questionRequest }) =>
+            Boolean(text) ||
+            Boolean(questionRequest) ||
+            event.kind === 'approval' ||
+            event.kind === 'warning' ||
+            event.kind === 'error',
         ),
     [events, historyIds, restoredHistorySequence, threadId],
   )
@@ -948,6 +964,20 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     [historyById, renderedEvents, restoredHistorySequence],
   )
 
+  const questionItems = [
+    ...historyItems.map((item) => {
+      const update = restoredItemUpdates.get(item.id)
+      return update ? { kind: update.event.kind, text: update.text, questionRequest: update.questionRequest } : item
+    }),
+    ...renderedEvents
+      .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
+      .map(({ event, text, questionRequest }) => ({ kind: event.kind, text, questionRequest })),
+  ]
+  const answeredAsyncQuestions = new Set([...resolvedAsyncQuestions, ...codexAnsweredAsyncQuestions(questionItems)])
+  const asyncInputPending = questionItems.some((item) =>
+    item.questionRequest?.fields.some((field) => !answeredAsyncQuestions.has(field.key)),
+  )
+
   const transcriptCards = [
     ...historyItems.map((item) => {
       const update = restoredItemUpdates.get(item.id)
@@ -957,6 +987,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         text: update?.text ?? item.text,
         card: update ? (
           renderEvent(update)
+        ) : item.questionRequest ? (
+          renderAsyncQuestions(item.id, item.questionRequest)
         ) : (
           <CodexEventCard
             key={`wrap-${threadId}-${item.id}-${item.kind}`}
@@ -1047,7 +1079,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     })
   }
 
-  function renderEvent({ event, text, activityTitle }: (typeof renderedEvents)[number]) {
+  function renderEvent({ event, text, activityTitle, questionRequest }: (typeof renderedEvents)[number]) {
+    if (questionRequest) return renderAsyncQuestions(event.itemId, questionRequest)
     const question = codexQuestionRequest(event)
     if (question)
       return (
@@ -1078,6 +1111,36 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         onResolveApproval={event.kind === 'approval' ? (decision) => void resolveApproval(event, decision) : undefined}
         resolvingApproval={resolvingApprovals.has(event.approvalId)}
         text={text}
+      />
+    )
+  }
+
+  function renderAsyncQuestions(itemId: string, request: QuestionRequest) {
+    const fields = request.fields.filter((field) => !answeredAsyncQuestions.has(field.key))
+    if (!fields.length)
+      return (
+        <CodexEventCard
+          key={`answered-${itemId}`}
+          kind="assistant-text"
+          text={request.fields.map((field) => field.title).join('\n\n')}
+        />
+      )
+    const pending = { ...request, fields }
+    return (
+      <CodexQuestionCard
+        key={`${threadId}:${itemId}:${fields.map((field) => field.key).join(',')}`}
+        agentId={agentId}
+        runId=""
+        approvalId=""
+        request={pending}
+        disabled={submitting || !threadReady || replayRecovering || !runRecovered || (!activeTurnId && !canStartTurn)}
+        onRespond={async (response) => {
+          if ('answers' in response && Object.keys(response.answers).length === 0) return
+          await send({ text: codexAsyncQuestionReply(pending, response) })
+        }}
+        onAnswered={() =>
+          setResolvedAsyncQuestions((current) => new Set([...current, ...fields.map((field) => field.key)]))
+        }
       />
     )
   }
@@ -1121,9 +1184,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     )
   }
 
-  async function send() {
-    const text = prompt.trim()
-    const draftImages = imagesRef.current
+  async function send(answer?: { text: string }) {
+    const text = (answer?.text ?? prompt).trim()
+    const draftImages = answer ? [] : imagesRef.current
     const inputImages = draftImages.flatMap((image) => (image.input ? [image.input] : []))
     if (
       (!text && !inputImages.length) ||
@@ -1136,9 +1199,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       (!activeTurnIdRef.current &&
         !canStartTurn &&
         !(run && 'turnId' in run.state && run.state.turnId && completedTurns.current.has(run.state.turnId)))
-    )
+    ) {
+      if (answer) throw new Error('Wait for the conversation to be ready before sending your answer.')
       return
-    if (activeTurnIdRef.current && !runMatchesThread) return
+    }
+    if (activeTurnIdRef.current && !runMatchesThread) {
+      if (answer) throw new Error('The active run has not been recovered yet. Try your answer again shortly.')
+      return
+    }
     const selectedConversation = conversationSelection.current
     if (!threadId) creatingDraftRef.current = { selection: selectedConversation }
     submission.current = { threadId, operation: null }
@@ -1158,9 +1226,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         previousItemIds,
       },
     ])
-    setPrompt('')
-    commitImages([])
-    draftsRef.current.delete(threadId)
+    if (!answer) {
+      setPrompt('')
+      commitImages([])
+      draftsRef.current.delete(threadId)
+    }
     let sentOperation: { key: string; id: string } | undefined
     try {
       if (!activeTurnIdRef.current && run && !codexRunIsTerminal(run)) {
@@ -1262,10 +1332,22 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         }
       }
       completeCodexOperation(operationKey, operation.id)
+      if (!answer)
+        setResolvedAsyncQuestions(
+          (current) =>
+            new Set([
+              ...current,
+              ...questionItems.flatMap((item) => item.questionRequest?.fields.map((field) => field.key) ?? []),
+            ]),
+        )
       setSessionRevision((current) => current + 1)
     } catch (cause) {
       if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && sentOperation)
         completeCodexOperation(sentOperation.key, sentOperation.id)
+      if (answer) {
+        setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
+        throw cause
+      }
       const stillSelected =
         (submittedThread && threadIdRef.current === submittedThread) ||
         conversationSelection.current === selectedConversation
@@ -1583,7 +1665,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     ? 'Reconnecting'
     : replayRecovering
       ? 'Recovering'
-      : renderedEvents.some(({ event }) => codexQuestionRequest(event))
+      : asyncInputPending || renderedEvents.some(({ event }) => codexQuestionRequest(event))
         ? 'Input requested'
         : approvalPending
           ? 'Approval needed'

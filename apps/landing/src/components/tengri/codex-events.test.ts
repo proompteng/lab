@@ -37,6 +37,37 @@ const event: TengriCodexEvent = {
 }
 
 describe('Accepted prompt retention', () => {
+  test('restores textless async questions with their choices instead of dropping them', () => {
+    const items = codexTranscriptFromThread(
+      JSON.stringify({
+        thread: {
+          turns: [
+            {
+              items: [
+                {
+                  id: 'question-call',
+                  type: 'agentMessage',
+                  text: '',
+                  delivery: 'async',
+                  questions: [{ title: 'Which environment?', options: ['Staging', 'Production'] }],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    )
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({
+      id: 'question-call',
+      questionRequest: {
+        fields: [
+          { title: 'Which environment?', freeText: true, choices: [{ label: 'Staging' }, { label: 'Production' }] },
+        ],
+      },
+    })
+  })
+
   const prompt = {
     id: 'sent-1',
     threadId: 'thread-1',

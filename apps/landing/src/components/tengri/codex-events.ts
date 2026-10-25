@@ -1,6 +1,8 @@
 import { codexToolText } from './codex-tool-text'
 import { codexMessageAttachments, type TengriCodexImage } from '@/lib/tengri/codex-images'
 import type { TengriCodexEvent, TengriCodexEventKind } from '@/lib/tengri/types'
+import { codexAsyncQuestionRequest } from './codex-async-questions'
+import type { QuestionRequest } from './codex-question-model'
 
 const MAX_CODEX_EVENTS = 500
 const MAX_EVENT_TEXT_BYTES = 512 << 10
@@ -39,6 +41,7 @@ export type CodexTranscriptItem = {
   text: string
   eventSequence?: number
   activityTitle?: string
+  questionRequest?: QuestionRequest
 }
 
 export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
@@ -619,7 +622,12 @@ function transcriptItemFromCodex(id: string, type: string, item: Record<string, 
     const content = Array.isArray(item.content) ? item.content : []
     return transcript(id, 'user-message', content.map(userInputText).filter(Boolean).join('\n'))
   }
-  if (type === 'agentMessage') return transcript(id, 'assistant-text', string(item.text))
+  if (type === 'agentMessage') {
+    const questionRequest = codexAsyncQuestionRequest(item)
+    return questionRequest
+      ? { id, kind: 'assistant-text', text: truncateEventText(string(item.text)), questionRequest }
+      : transcript(id, 'assistant-text', string(item.text))
+  }
   if (type === 'plan') return transcript(id, 'plan', string(item.text))
   if (type === 'reasoning') {
     const summary = stringArray(item.summary).join('\n')

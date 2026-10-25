@@ -15,12 +15,16 @@ export function CodexQuestionCard({
   approvalId,
   request,
   onAnswered,
+  onRespond,
+  disabled = false,
 }: {
   agentId: string
   runId: string
   approvalId: string
   request: QuestionRequest
   onAnswered: () => void
+  onRespond?: (response: TengriCodexInputResponse) => Promise<void>
+  disabled?: boolean
 }) {
   const id = useId()
   const [error, setError] = useState('')
@@ -67,7 +71,7 @@ export function CodexQuestionCard({
     formState: { errors },
   } = useForm({
     resolver: zodResolver(z.object(fields)),
-    defaultValues: Object.fromEntries(request.fields.map((_, index) => [`q${index}`, ''])),
+    defaultValues: Object.fromEntries(request.fields.map((field, index) => [`q${index}`, field.defaultValue ?? ''])),
   })
   async function respond(response: TengriCodexInputResponse) {
     const key = `tengri-control:${runId}:${approvalId}`
@@ -75,6 +79,11 @@ export function CodexQuestionCard({
     setBusy(true)
     setError('')
     try {
+      if (onRespond) {
+        await onRespond(response)
+        onAnswered()
+        return
+      }
       if (!runId)
         throw new Error('This question has no durable run identity. Sleep the workspace before starting new work.')
       const op = await prepareCodexOperation(key, response, '')
@@ -102,8 +111,8 @@ export function CodexQuestionCard({
           const value = watch(key)
           const errorId = `${id}-${key}-error`
           return (
-            <fieldset key={key} disabled={busy} className="space-y-2">
-              <legend className="text-label-14">
+            <fieldset key={key} disabled={busy || disabled} className="min-w-0 space-y-2">
+              <legend className="whitespace-pre-wrap break-words text-label-14">
                 {field.title}
                 {field.required ? '' : ' (optional)'}
               </legend>
@@ -131,6 +140,9 @@ export function CodexQuestionCard({
               {field.freeText ? (
                 <input
                   {...register(key)}
+                  value={field.choices.some((choice) => choice.value === value) ? '' : value}
+                  onChange={(event) => setValue(key, event.target.value, { shouldValidate: true })}
+                  placeholder={field.choices.length ? 'Other answer' : undefined}
                   type={
                     field.secret ? 'password' : field.type === 'number' || field.type === 'integer' ? 'number' : 'text'
                   }
@@ -168,18 +180,18 @@ export function CodexQuestionCard({
         <div className="flex gap-2">
           <button
             type="submit"
-            disabled={busy}
+            disabled={busy || disabled}
             className="rounded-lg bg-zinc-100 px-3 py-2 text-label-12 text-zinc-950 disabled:opacity-50"
           >
             {busy ? 'Sending…' : request.mode === 'url' ? 'Done' : 'Submit answers'}
           </button>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || disabled}
             onClick={() => void respond(request.mode === 'questions' ? { answers: {} } : { action: 'cancel' })}
             className="rounded-lg px-3 py-2 text-label-12 text-zinc-400"
           >
-            {request.mode === 'questions' ? 'Skip questions' : 'Cancel'}
+            {onRespond ? 'Dismiss for now' : request.mode === 'questions' ? 'Skip questions' : 'Cancel'}
           </button>
         </div>
       </form>
