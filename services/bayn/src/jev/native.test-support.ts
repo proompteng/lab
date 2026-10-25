@@ -1,7 +1,10 @@
 import { jevPositionExitPolicy } from './exit-policy'
-import { jevEntryEconomics, fundJevTradePlan } from './entry-economics'
-import { entryCompletionFixture } from './entry-inference.test-support'
-import { EntrySetup } from './entry-proposals'
+import { jevEntryEconomics } from './entry-economics'
+import { entryCompletionFixture, nativeChartInference } from './entry-inference.test-support'
+import { EntrySetup, makeEntryProposals } from './entry-proposals'
+import { makeNativeChartEvidence } from './chart-evidence'
+import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
+import { entryProposalExitPlan } from './strategy-exit-plan'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { equityMarketProfile } from './markets'
@@ -223,33 +226,30 @@ export const nativeJevFixture = (
                 }),
               )
               if (economics === null) throw new Error('Managed fixture requires a funded pre-entry plan')
-              const funded = Result.getOrThrow(
-                fundJevTradePlan({
-                  protocol,
-                  economics,
-                  levels: {
-                    schemaVersion: 'bayn.jev-strategy-exit-plan.v4',
-                    rule: 'source-anchored-complete-plan',
-                    proposalId: Result.getOrThrow(canonicalHashV1Result({ fixture: 'historical-managed-entry' })),
-                    source: {
-                      setup: EntrySetup.SupportRecovery,
-                      supportBarId: 'historical-support',
-                      resistanceBarId: 'historical-resistance',
-                      targetBasis: 'OBSERVED_RESISTANCE',
-                    },
-                    symbol: 'AAPL',
-                    sourceStartAt: new Date(Date.parse(at) - 30 * 60000).toISOString(),
-                    sourceEndAt: new Date(Date.parse(at) - 3 * 60000).toISOString(),
-                    maximumHoldingMinutes: protocol.maximumHoldingMinutes,
-                    maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
-                    stopPriceMicros: '99000000',
-                    stopLimitPriceMicros: '98910000',
-                    profitLimitPriceMicros: '105000000',
-                  },
+              const chart = Result.getOrThrow(
+                makeNativeChartEvidence({
+                  symbol: 'AAPL',
+                  windowEndAt: new Date(Math.floor(Date.parse(at) / 60_000) * 60_000 - 3 * 60_000).toISOString(),
+                  bars: [
+                    { minuteBeforeWindowEnd: 27, open: 102, high: 103, low: 99.01, close: 102, volume: 100 },
+                    { minuteBeforeWindowEnd: 2, open: 102, high: 105.01, low: 101, close: 102, volume: 100 },
+                    { minuteBeforeWindowEnd: 1, open: 102, high: 103, low: 101, close: 102, volume: 100 },
+                  ],
                 }),
               )
-              if (funded === null) throw new Error('Managed fixture requires funded model prices')
-              return jevPositionExitPolicy(protocol, { AAPL: funded.exitPlan })
+              const visual = nativeChartInference(Result.getOrThrow(makeChartDecisionsRequest(chart)).request, at)
+              const { proposals } = Result.getOrThrow(
+                makeEntryProposals({
+                  chart,
+                  assessments: Result.getOrThrow(chartAssessments(chart, visual.response)),
+                  economics,
+                  protocol,
+                  bidMicros: 102_000_000n,
+                }),
+              )
+              const proposal = proposals.find((value) => value.source.setup === EntrySetup.SupportRecovery)
+              if (proposal === undefined) throw new Error('Managed fixture requires a source-anchored funded proposal')
+              return jevPositionExitPolicy(protocol, { AAPL: entryProposalExitPlan(proposal) })
             })(),
             entryIntentIds: [intentId],
             protectionIntentIds: [],
