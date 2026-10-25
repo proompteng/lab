@@ -2,10 +2,16 @@ import { Data, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { decodeJevResponse, JevFailure, JevRequestSchema, JevResponseSchema, prepareJevRequest } from './contract'
+import { JevFailure } from './contract'
+import { EntryInferenceInputSchema, prepareEntryInferenceInput } from './entry-inference-input'
+import {
+  EntryInferenceCompletionSchema,
+  decodeEntryInferenceCompletion,
+  usableEntryInferenceCompletion,
+} from './entry-inference-evidence'
 
 const RequestMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-evaluation-request.v1'),
+  schemaVersion: Schema.Literal('bayn.jev-evaluation-request.v2'),
   cycleId: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
   snapshotId: Sha256Schema,
@@ -13,170 +19,116 @@ const RequestMaterialSchema = Schema.Struct({
   observedAt: UtcInstantSchema,
   expiresAt: UtcInstantSchema,
   requestHash: Sha256Schema,
-  request: JevRequestSchema,
+  request: EntryInferenceInputSchema,
 })
-
-export const JevEvaluationRequestSchema = Schema.Struct({
-  ...RequestMaterialSchema.fields,
-  requestId: Sha256Schema,
-})
+export const JevEvaluationRequestSchema = Schema.Struct({ ...RequestMaterialSchema.fields, requestId: Sha256Schema })
 export type JevEvaluationRequest = typeof JevEvaluationRequestSchema.Type
 
 export enum JevOutcome {
-  Received = 'RECEIVED',
+  Completed = 'COMPLETED',
   Failed = 'FAILED',
 }
-
-const InferenceSchema = Schema.Struct({
-  requestHash: Sha256Schema,
-  responseHash: Sha256Schema,
-  startedAt: UtcInstantSchema,
-  completedAt: UtcInstantSchema,
-  response: JevResponseSchema,
-})
-
-const OutcomeSchema = Schema.Union([
-  Schema.Struct({ status: Schema.Literal(JevOutcome.Received), inference: InferenceSchema }),
-  Schema.Struct({
-    status: Schema.Literal(JevOutcome.Failed),
-    failure: Schema.Enum(JevFailure),
-    httpStatus: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))),
-    responseHash: Schema.NullOr(Sha256Schema),
-    rejectedResponse: Schema.Json,
-  }),
-])
-
 const ReceiptMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-evaluation-receipt.v1'),
+  schemaVersion: Schema.Literal('bayn.jev-evaluation-receipt.v2'),
   requestId: Sha256Schema,
   startedAt: UtcInstantSchema,
   completedAt: UtcInstantSchema,
-  outcome: OutcomeSchema,
+  outcome: Schema.Union([
+    Schema.Struct({ status: Schema.Literal(JevOutcome.Completed), completion: EntryInferenceCompletionSchema }),
+    Schema.Struct({ status: Schema.Literal(JevOutcome.Failed), failure: Schema.Enum(JevFailure) }),
+  ]),
 })
-export const JevEvaluationReceiptSchema = Schema.Struct({
-  ...ReceiptMaterialSchema.fields,
-  receiptHash: Sha256Schema,
-})
+export const JevEvaluationReceiptSchema = Schema.Struct({ ...ReceiptMaterialSchema.fields, receiptHash: Sha256Schema })
 export type JevEvaluationReceipt = typeof JevEvaluationReceiptSchema.Type
 
-export class JevEvidenceError extends Data.TaggedError('JevEvidenceError')<{
-  readonly message: string
-}> {}
-
+export class JevEvidenceError extends Data.TaggedError('JevEvidenceError')<{ readonly message: string }> {}
 const invalid = (message: string) => Result.fail(new JevEvidenceError({ message }))
+const entrySource = (request: JevEvaluationRequest) => ({
+  requestId: request.requestId,
+  input: request.request,
+  observedAt: request.observedAt,
+  expiresAt: request.expiresAt,
+})
 
 export const makeJevEvaluationRequest = (input: unknown) =>
-  Schema.decodeUnknownResult(
-    RequestMaterialSchema,
-    strictParseOptions,
-  )(input).pipe(
-    Result.mapError(() => new JevEvidenceError({ message: 'Jev evaluation request is malformed' })),
-    Result.flatMap((material) =>
-      prepareJevRequest(material.request).pipe(
-        Result.mapError(() => new JevEvidenceError({ message: 'Jev evaluation request violates the model contract' })),
-        Result.flatMap((prepared) => {
-          const lifetime = Date.parse(material.expiresAt) - Date.parse(material.observedAt)
-          if (prepared.requestHash !== material.requestHash || lifetime <= 0 || lifetime > 10_000) {
-            return invalid('Jev evaluation request has a mismatched hash or invalid validity window')
-          }
-          return canonicalHashV1Result(material).pipe(
-            Result.mapError(() => new JevEvidenceError({ message: 'Jev evaluation request cannot be hashed' })),
-            Result.map((requestId) => ({ ...material, requestId })),
-          )
-        }),
-      ),
+  Result.gen(function* () {
+    const material = yield* Schema.decodeUnknownResult(RequestMaterialSchema, strictParseOptions)(input)
+    const prepared = yield* prepareEntryInferenceInput(material.request)
+    if (
+      material.symbol !== prepared.input.chartSource.symbol ||
+      prepared.input.chartSource.windowEndAt > material.observedAt ||
+      prepared.requestHash !== material.requestHash ||
+      Date.parse(material.expiresAt) - Date.parse(material.observedAt) !== prepared.input.protocol.inferenceValidityMs
+    )
+      return yield* invalid('Entry evaluation request has a mismatched source, hash or original validity interval')
+    return { ...material, request: prepared.input, requestId: yield* canonicalHashV1Result(material) }
+  }).pipe(
+    Result.mapError(
+      () => new JevEvidenceError({ message: 'Entry evaluation request is malformed or does not reproduce' }),
     ),
   )
 
 export const decodeJevEvaluationRequest = (input: unknown) =>
-  Schema.decodeUnknownResult(
-    JevEvaluationRequestSchema,
-    strictParseOptions,
-  )(input).pipe(
-    Result.mapError(() => new JevEvidenceError({ message: 'Stored Jev evaluation request is malformed' })),
-    Result.flatMap(({ requestId, ...material }) =>
-      makeJevEvaluationRequest(material).pipe(
-        Result.flatMap((request) =>
-          request.requestId === requestId ? Result.succeed(request) : invalid('Stored Jev request identity differs'),
-        ),
-      ),
-    ),
+  Result.gen(function* () {
+    const { requestId, ...material } = yield* Schema.decodeUnknownResult(
+      JevEvaluationRequestSchema,
+      strictParseOptions,
+    )(input)
+    const request = yield* makeJevEvaluationRequest(material)
+    if (request.requestId !== requestId) return yield* invalid('Stored entry request identity differs')
+    return request
+  }).pipe(
+    Result.mapError(() => new JevEvidenceError({ message: 'Stored entry request is malformed or does not reproduce' })),
   )
 
 export const makeJevEvaluationReceipt = (request: JevEvaluationRequest, input: unknown) =>
-  Schema.decodeUnknownResult(
-    ReceiptMaterialSchema,
-    strictParseOptions,
-  )(input).pipe(
-    Result.mapError(() => new JevEvidenceError({ message: 'Jev evaluation receipt is malformed' })),
-    Result.flatMap((material) => {
+  Result.gen(function* () {
+    const material = yield* Schema.decodeUnknownResult(ReceiptMaterialSchema, strictParseOptions)(input)
+    if (
+      material.requestId !== request.requestId ||
+      material.startedAt < request.observedAt ||
+      material.completedAt < material.startedAt
+    )
+      return yield* invalid('Entry receipt has a mismatched request or regressed clock')
+    if (material.outcome.status === JevOutcome.Completed) {
+      const completion = yield* decodeEntryInferenceCompletion(entrySource(request), material.outcome.completion)
       if (
-        material.requestId !== request.requestId ||
-        material.startedAt < request.observedAt ||
-        material.completedAt < material.startedAt
-      ) {
-        return invalid('Jev evaluation receipt has a mismatched request or regressed clock')
-      }
-      const outcome = material.outcome
-      if (outcome.status === JevOutcome.Received) {
-        const inference = outcome.inference
-        const responseHash = canonicalHashV1Result(inference.response)
-        if (
-          inference.requestHash !== request.requestHash ||
-          inference.startedAt < material.startedAt ||
-          inference.completedAt < inference.startedAt ||
-          inference.completedAt > material.completedAt ||
-          Result.isFailure(responseHash) ||
-          responseHash.success !== inference.responseHash ||
-          Result.isFailure(decodeJevResponse(request.request, inference.response))
-        ) {
-          return invalid('Jev inference does not match its recorded request, response or clocks')
-        }
-      } else if (outcome.responseHash !== null) {
-        const responseHash = canonicalHashV1Result(outcome.rejectedResponse)
-        if (Result.isFailure(responseHash) || responseHash.success !== outcome.responseHash) {
-          return invalid('Rejected Jev response differs from its recorded hash')
-        }
-      }
-      if (
-        outcome.status === JevOutcome.Failed &&
-        outcome.failure === JevFailure.NotDispatched &&
-        (outcome.httpStatus !== null ||
-          outcome.responseHash !== null ||
-          outcome.rejectedResponse !== null ||
-          material.startedAt >= request.expiresAt ||
-          material.completedAt < request.expiresAt)
+        completion.completedAt > material.completedAt ||
+        completion.handoff.recordedAt < material.startedAt ||
+        (completion.handoff.disposition.status !== 'VISUAL_FAILED' &&
+          completion.handoff.disposition.visual.startedAt < material.startedAt)
       )
-        return invalid('Undispatched Jev evidence must prove pre-HTTP deadline expiry without a response')
-      return canonicalHashV1Result(material).pipe(
-        Result.mapError(() => new JevEvidenceError({ message: 'Jev evaluation receipt cannot be hashed' })),
-        Result.map((receiptHash) => ({ ...material, receiptHash })),
-      )
-    }),
-  )
+        return yield* invalid('Entry receipt precedes its provider evidence or dispatch claim')
+    } else if (
+      material.outcome.failure === JevFailure.NotDispatched &&
+      (material.startedAt >= request.expiresAt || material.completedAt < request.expiresAt)
+    ) {
+      return yield* invalid('Undispatched entry evidence must prove expiry after a valid original claim')
+    }
+    return { ...material, receiptHash: yield* canonicalHashV1Result(material) }
+  }).pipe(Result.mapError(() => new JevEvidenceError({ message: 'Entry receipt is malformed or does not reproduce' })))
 
 export const decodeJevEvaluationReceipt = (request: JevEvaluationRequest, input: unknown) =>
-  Schema.decodeUnknownResult(
-    JevEvaluationReceiptSchema,
-    strictParseOptions,
-  )(input).pipe(
-    Result.mapError(() => new JevEvidenceError({ message: 'Stored Jev evaluation receipt is malformed' })),
-    Result.flatMap(({ receiptHash, ...material }) =>
-      makeJevEvaluationReceipt(request, material).pipe(
-        Result.flatMap((receipt) =>
-          receipt.receiptHash === receiptHash
-            ? Result.succeed(receipt)
-            : invalid('Stored Jev receipt identity differs'),
-        ),
-      ),
-    ),
+  Result.gen(function* () {
+    const { receiptHash, ...material } = yield* Schema.decodeUnknownResult(
+      JevEvaluationReceiptSchema,
+      strictParseOptions,
+    )(input)
+    const receipt = yield* makeJevEvaluationReceipt(request, material)
+    if (receipt.receiptHash !== receiptHash) return yield* invalid('Stored entry receipt identity differs')
+    return receipt
+  }).pipe(
+    Result.mapError(() => new JevEvidenceError({ message: 'Stored entry receipt is malformed or does not reproduce' })),
   )
 
-export const usableJevInference = (request: JevEvaluationRequest, receipt: JevEvaluationReceipt, now: number) => {
-  if (!Number.isSafeInteger(now) || now < Date.parse(receipt.completedAt) || now >= Date.parse(request.expiresAt)) {
-    return invalid('Jev evaluation evidence is outside its validity window')
-  }
-  return receipt.outcome.status === JevOutcome.Received
-    ? Result.succeed(receipt.outcome.inference)
-    : invalid('Jev evaluation failed; this decision cannot authorize an entry')
-}
+export const usableJevInference = (request: JevEvaluationRequest, receipt: JevEvaluationReceipt, now: number) =>
+  now < Date.parse(receipt.completedAt)
+    ? invalid('Entry receipt is not yet available')
+    : receipt.outcome.status === JevOutcome.Completed
+      ? usableEntryInferenceCompletion(entrySource(request), receipt.outcome.completion, now).pipe(
+          Result.mapError(
+            () =>
+              new JevEvidenceError({ message: 'Entry inference failed or is outside its original validity window' }),
+          ),
+        )
+      : invalid('Entry inference did not complete and cannot authorize an order')
