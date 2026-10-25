@@ -38,6 +38,8 @@ If an unacknowledged record exceeds Loki's 168-hour admission window, it moves a
 `loki_rejections` storage with its original timestamp, labels and content. The rejection metric and alert remain
 visible while newer records continue shipping. Inspect that table and the existing job facts before controlled
 recovery; do not clear the retained evidence to silence the alert.
+Permanent HTTP 400/413 responses are isolated by splitting the batch. Individual rejected records retain their
+original payload and HTTP status in the same table; retryable failures keep their original outbox entries.
 
 Metric labels are limited to enrolled workflow filename, declared job family, architecture, runner pool, job role, event, outcome, phase,
 cache class and fixed statistical windows. Run IDs, commit SHAs, job names and runner Pod names are record fields,

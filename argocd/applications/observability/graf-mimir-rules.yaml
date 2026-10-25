@@ -719,8 +719,8 @@ data:
               service: ci-observability
               notify: email
             annotations:
-              summary: Expired CI records need delivery recovery
-              description: Unacknowledged records exceeded Loki's seven-day admission window and are retained in SQLite loki_rejections. Newer records continue shipping. Inspect and recover these records without clearing their evidence.
+              summary: CI records need delivery recovery
+              description: Expired or permanently rejected records are retained in SQLite loki_rejections. Newer records continue shipping. Inspect and recover these records without clearing their evidence.
               dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
           - alert: CiBuildQueueDelay
             expr: |

@@ -153,7 +153,7 @@ METRICS = {
     ),
     "ci_observability_loki_rejected_records": (
         "gauge",
-        "Expired unacknowledged records retained outside the Loki delivery queue.",
+        "Unacknowledged records retained after permanent Loki rejection.",
     ),
 }
 
@@ -1134,6 +1134,9 @@ class Collector:
         ).fetchall()
         if not rows:
             return
+        self.push_records(rows)
+
+    def push_records(self, rows):
         streams = collections.defaultdict(list)
         for row in rows:
             streams[row["labels"]].append([row["stamp"], row["line"]])
@@ -1155,6 +1158,29 @@ class Collector:
         except urllib.error.HTTPError as error:
             code = error.code
             error.close()
+            if code in (400, 413):
+                if len(rows) > 1:
+                    middle = len(rows) // 2
+                    self.push_records(rows[:middle])
+                    self.push_records(rows[middle:])
+                else:
+                    row = rows[0]
+                    with self.store.db:
+                        self.store.db.execute(
+                            "INSERT OR IGNORE INTO loki_rejections VALUES (?, ?, ?, ?, ?, ?)",
+                            (
+                                row["id"],
+                                row["stamp"],
+                                row["labels"],
+                                row["line"],
+                                f"loki_http_{code}",
+                                time.time(),
+                            ),
+                        )
+                        self.store.db.execute(
+                            "DELETE FROM outbox WHERE id=?", (row["id"],)
+                        )
+                return
             raise RuntimeError(f"Loki ingestion returned HTTP {code}") from None
         with self.store.db:
             self.store.db.executemany(

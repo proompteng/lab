@@ -595,6 +595,40 @@ class CollectorTests(unittest.TestCase):
             self.store.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0
         )
 
+    def test_permanent_loki_rejection_isolates_only_the_bad_record(self):
+        first, second = job_record(run(), job()), job_record(run(), job())
+        self.store.save_job(first, cache_evidence(""))
+        second["job_id"] += 100
+        self.store.save_job(second, cache_evidence(""))
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        received = []
+
+        def deliver(request, timeout):
+            body = json.loads(request.data)
+            ids = [
+                json.loads(line)["job_id"]
+                for stream in body["streams"]
+                for _, line in stream["values"]
+            ]
+            received.append(ids)
+            if first["job_id"] in ids:
+                raise urllib.error.HTTPError(
+                    "http://loki.invalid", 400, "out of order", {}, io.BytesIO()
+                )
+            return io.BytesIO()
+
+        with patch("urllib.request.urlopen", side_effect=deliver):
+            observer.flush()
+        self.assertEqual(received[-1], [second["job_id"]])
+        rejected = self.store.db.execute(
+            "SELECT line, reason FROM loki_rejections"
+        ).fetchone()
+        self.assertEqual(json.loads(rejected["line"])["job_id"], first["job_id"])
+        self.assertEqual(rejected["reason"], "loki_http_400")
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
