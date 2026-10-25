@@ -29,6 +29,7 @@ cleanup() {
   docker logs "$fixture_name" > "$TENGRI_KVM_OUTPUT/test.log" 2>&1 || true
   docker cp "$fixture_name:/work/result.json" "$TENGRI_KVM_OUTPUT/result.json" >/dev/null 2>&1 || true
   docker cp "$fixture_name:/work/io-responsiveness.json" "$TENGRI_KVM_OUTPUT/io-responsiveness.json" >/dev/null 2>&1 || true
+  docker cp "$fixture_name:/work/creation-resources.json" "$TENGRI_KVM_OUTPUT/creation-resources.json" >/dev/null 2>&1 || true
   docker cp "$fixture_name:/work/slot/firecracker.log" "$TENGRI_KVM_OUTPUT/firecracker.log" >/dev/null 2>&1 || true
   docker rm --force "$fixture_name" >/dev/null 2>&1 || true
   docker volume rm "$artifacts_volume" "$work_volume" >/dev/null 2>&1 || true

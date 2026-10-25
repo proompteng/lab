@@ -78,8 +78,8 @@ hypothetical profit/loss estimates. Do not commit production evidence.
 The current source must reproduce the decision, including its sealed requests and
 model receipts, before diagnostics are emitted. Unsupported historical contracts or
 tampered evidence fail rather than being silently reinterpreted. Protocol version
-`bayn.jev.protocol.v20` is distinct from input state version
-`bayn.jev-trading-signal-state.v17`; both appear in report v2.
+`bayn.jev.protocol.v22` is distinct from input state version
+`bayn.jev-trading-signal-state.v20`; both appear in report v2.
 
 Each requested candidate reports funded-plan count, minimum/maximum target rise from
 the observed bid, minimum/maximum net reward/risk, per-plan estimated gains/losses,
