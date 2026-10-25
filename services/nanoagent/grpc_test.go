@@ -64,6 +64,51 @@ func TestRPCReadsCanonicalWorkspaceLinkThroughSignedAdmission(t *testing.T) {
 	}
 }
 
+func TestRPCMetadataDoesNotEnumerateSiblingsAndPreservesConfinement(t *testing.T) {
+	api := testAPIServer(t)
+	for index := range maxDirectoryEntries {
+		if err := os.WriteFile(filepath.Join(api.workspace.root, fmt.Sprintf("entry-%05d", index)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(api.workspace.root, "README.md"), []byte("readable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(api.workspace.root, "folder.md"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	client, _ := rpcTestClient(t, api)
+	ctx := rpcTestContext(t)
+	if _, err := client.ListFiles(ctx, &pb.Path{Path: "/workspace"}); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("directory limit was not preserved: %v", err)
+	}
+	entry, err := client.StatFile(ctx, &pb.Path{Path: "/workspace/README.md"})
+	if err != nil || entry.Path != "/workspace/README.md" || entry.Directory || entry.Size != 8 || entry.ModifiedAt == "" {
+		t.Fatalf("direct file metadata: %v %v", entry, err)
+	}
+	read, err := client.ReadFile(ctx, &pb.Path{Path: "/workspace/README.md"})
+	if err != nil || string(read.Content) != "readable" {
+		t.Fatalf("direct file read: %v %v", read, err)
+	}
+	for _, path := range []string{"/workspace", "/workspace/folder.md"} {
+		entry, err := client.StatFile(ctx, &pb.Path{Path: path})
+		if err != nil || !entry.Directory {
+			t.Fatalf("directory metadata %s: %v %v", path, entry, err)
+		}
+	}
+	for _, path := range []string{"/workspace/.codex/private", "/workspace/.tengri/private", "/workspace/missing"} {
+		if _, err := client.StatFile(ctx, &pb.Path{Path: path}); status.Code(err) != codes.NotFound {
+			t.Fatalf("hidden or missing metadata %s: %v", path, err)
+		}
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(api.workspace.root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.StatFile(ctx, &pb.Path{Path: "/workspace/escape"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("metadata escaped workspace confinement: %v", err)
+	}
+}
+
 func TestRPCBrowserMCPStatusReachesCodex(t *testing.T) {
 	api := testAPIServer(t)
 	api.codex, _ = readyCodexSupervisor(t)

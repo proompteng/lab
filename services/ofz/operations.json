@@ -3,31 +3,25 @@
     "surface": "controller",
     "operation": "ConnectorAgent",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off connector gate precedes authentication, workspace admission and guest effects"
+    "dispatch": "Authenticated Tengri controller admission, current workspace and Codex control authority"
   },
   {
     "surface": "codex",
     "operation": "relay/identity",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+    "dispatch": "Authenticated guest control installs or removes the platform Relay client"
   },
   {
     "surface": "codex",
     "operation": "relay/configure",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+    "dispatch": "Authenticated guest control installs or removes the platform Relay client"
   },
   {
     "surface": "codex",
     "operation": "relay/remove",
     "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
-  },
-  {
-    "surface": "ofz",
-    "operation": "CheckConnectorAgent",
-    "action": "ACTION_CONNECTOR_EXECUTE",
-    "dispatch": "Default-off connector gate precedes database, replay and authorization effects"
+    "dispatch": "Authenticated guest control installs or removes the platform Relay client"
   },
   {
     "surface": "controller",
@@ -60,6 +54,11 @@
     "surface": "controller",
     "operation": "UpdatePowerSettings",
     "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
+  },
+  {
+    "surface": "controller",
+    "operation": "StatFile",
+    "action": "ACTION_FILES_OBSERVE"
   },
   {
     "surface": "controller",
@@ -129,6 +128,16 @@
   {
     "surface": "controller",
     "operation": "ListCodexModels",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "ListCodexThreads",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "SetCodexThreadArchived",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -229,6 +238,11 @@
   },
   {
     "surface": "guest",
+    "operation": "StatFile",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "guest",
     "operation": "ListFiles",
     "action": "ACTION_FILES_OBSERVE"
   },
@@ -325,6 +339,21 @@
   },
   {
     "surface": "codex",
+    "operation": "thread/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/archive",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/unarchive",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
     "operation": "thread/start",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -410,6 +439,11 @@
   },
   {
     "surface": "bff",
+    "operation": "stat-file",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "bff",
     "operation": "list-files",
     "action": "ACTION_FILES_OBSERVE"
   },
@@ -486,6 +520,16 @@
   {
     "surface": "bff",
     "operation": "create-thread",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "list-threads",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "set-thread-archived",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -1040,11 +1084,6 @@
   },
   {
     "surface": "bff_access",
-    "operation": "target",
-    "action": "ACTION_TARGETS_MANAGE"
-  },
-  {
-    "surface": "bff_access",
     "operation": "grant",
     "action": "ACTION_GRANTS_MANAGE"
   },
@@ -1115,5 +1154,92 @@
     "operation": "OPTIONS /api/auth/[...all]",
     "public": true,
     "dispatch": "Bounded dispatch to the separately classified authentication endpoints; unknown paths are rejected."
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "GetPlatformConfiguration",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "CheckPlatformAccess",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "RecordPlatformExecution",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "WritePolicyRelationships",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "CreatePlatformDelegation",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "ActivatePlatformDelegation",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
+    "operation": "RevokePlatformDelegation",
+    "action": "ACTION_POLICY_COMMAND",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "relay",
+    "operation": "ListOperations",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
+  },
+  {
+    "surface": "relay",
+    "operation": "Execute",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/connectors",
+    "action": "ACTION_POLICY_CHECK"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "POST /api/tengri/connectors",
+    "action": "ACTION_GRANTS_MANAGE"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "DELETE /api/tengri/connectors",
+    "action": "ACTION_GRANTS_MANAGE"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/policies",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/policies",
+    "action": "ACTION_TARGETS_MANAGE",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "POST /api/platform/relay/agent",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
   }
 ]

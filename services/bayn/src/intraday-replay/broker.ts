@@ -904,6 +904,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         return yield* evidence(
           {
             cryptoStatus: cryptoEnabled ? 'ACTIVE' : null,
+            cryptoFeeTier: null,
             cashReportingQuantumMicros: '1' as const,
             nonMarginableBuyingPowerMicros: cryptoEnabled ? current.ledger.cashMicros : null,
 

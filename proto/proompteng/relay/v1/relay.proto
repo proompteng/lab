@@ -1,0 +1,40 @@
+syntax = "proto3";
+package proompteng.relay.v1;
+
+import "proompteng/authz/v1/platform.proto";
+
+option go_package = "github.com/proompteng/lab/gen/proompteng/relay/v1;relayv1";
+service RelayService {
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse);
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+}
+message ListOperationsRequest {
+  string client_service = 1;
+}
+message ConnectorOperation {
+  string connector_id = 1;
+  string name = 2;
+  string description = 3;
+  string action = 4;
+  bytes input_schema_json = 5;
+  repeated ConnectorTarget targets = 6;
+  bool read_only = 7;
+}
+message ConnectorTarget {
+  string name = 1;
+  proompteng.authz.v1.PlatformResource resource = 2;
+}
+message ListOperationsResponse {
+  repeated ConnectorOperation operations = 1;
+}
+message ExecuteRequest {
+  proompteng.authz.v1.PlatformSubject subject = 1;
+  bytes body = 2;
+}
+message ExecuteResponse {
+  string operation_id = 1;
+  bytes result = 2;
+  string content_type = 3;
+  string authorization_receipt_id = 4;
+  string execution_receipt_id = 5;
+}

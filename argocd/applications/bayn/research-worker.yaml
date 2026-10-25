@@ -75,6 +75,14 @@ spec:
                 secretKeyRef:
                   name: bayn-jev-auth
                   key: api-key
+            # Optional so no 1Password item or Kubernetes Secret is required to boot.
+            # The dual-signal CLI is not invoked by this Restate worker automatically.
+            - name: BAYN_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-openai-auth
+                  key: api-key
+                  optional: true
             - name: BAYN_RESEARCH_APPROVAL_KEY
               valueFrom:
                 secretKeyRef:

@@ -6,7 +6,7 @@ use crate::{
     commands, decision,
     native::Native,
     policy,
-    proto::{self, Action, authorization_service_server::AuthorizationService},
+    proto::{self, Action, tengri_authorization_service_server::TengriAuthorizationService},
     sessions::{self, Issuer},
     store::{self, Database, sql_error},
     transport,
@@ -328,7 +328,7 @@ fn context<T>(value: Option<T>) -> Result<T, Status> {
 }
 
 #[tonic::async_trait]
-impl AuthorizationService for Service {
+impl TengriAuthorizationService for Service {
     async fn get_workspace_reservation(
         &self,
         request: Request<proto::GetWorkspaceReservationRequest>,
@@ -548,16 +548,6 @@ impl AuthorizationService for Service {
         let _capacity = self.acquire()?;
         let peer = transport::peer(&request)?;
         decision::check(&self.database, &self.native, &peer, request.into_inner())
-            .await
-            .map(Response::new)
-    }
-    async fn check_connector_agent(
-        &self,
-        request: Request<proto::CheckConnectorAgentRequest>,
-    ) -> Result<Response<proto::CheckConnectorAgentResponse>, Status> {
-        let _capacity = self.acquire()?;
-        let peer = transport::peer(&request)?;
-        crate::connector_agent::check(&self.database, &self.native, &peer, request.into_inner())
             .await
             .map(Response::new)
     }

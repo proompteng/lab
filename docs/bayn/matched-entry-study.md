@@ -107,8 +107,8 @@ Candidate exclusions remain in the report; omitted entire batches fail the indep
 
 ### Timing and report versions
 
-Definition and report are `bayn.matched-entry-definition.v7` and `bayn.matched-entry-study.v7`. Input is v2;
-registration is v2 with the new definition hash and frozen native profit-target lifecycle. Old input contracts and registrations are rejected.
+Definition and report are `bayn.matched-entry-definition.v8` and `bayn.matched-entry-study.v8`. Input is v2;
+registration is v2 with the new definition hash, native millisecond timing contract and frozen profit-target lifecycle. Old input contracts and registrations are rejected.
 Historical reports retain their original identities and must not be relabeled as prospective evidence.
 
 The in-process recorder and its interval replay API have been removed. Producing new timing witnesses through that
@@ -116,22 +116,25 @@ path is unavailable. The [market-data archive boundary](market-data-archive.md) 
 an independent Kafka archive cannot reconstruct the trading worker's original arrival or decision-commit clocks.
 
 The native `bayn.jev.batch-plan` trace span now carries `bayn.entry_timing.batch_id`, `observation_hash`,
-`snapshot_hash`, and the worker's actual `input_available_at`. For momentum-first entry batch v4 only, it also carries
+`snapshot_hash`, and the worker's actual `input_available_at`. For current momentum-first entry batch v6, it also carries
 `deterministic_selected_at`, observed after the existing ranking and batch construction finish and before inference
 admission. This includes the actual observation-persistence delay; it is not a hypothetical earlier computation.
 The selected control symbol must be reproduced from the same retained snapshot with `jevMomentumEntryCandidates`.
 No extra ranking, database write, archive upload, or research RPC is added to execution.
 
 The native `bayn.jev.entry-decision-binding` span identifies the decision and exact batch completion. Its PostgreSQL
-children inherit those identities. An independent timing exporter must use the successful writer-fence
-`bayn.postgres.commit` span's end time as acknowledged commitment, require `binding_changed=true` and
+children inherit those identities. Cycle-pass, planning, binding, writer-fence and COMMIT stages also carry
+`bayn.native_wall.clock=effect.Clock.currentTimeMillis`, `started_at` and `finished_at`. These markers use the same
+clock as native observations and decisions. An independent timing exporter must use the successful writer-fence
+`bayn.postgres.commit` stage's native wall completion marker, require `binding_changed=true` and
 `binding_accepted=true` on the enclosing binding span, and verify the retained native decision document. Replays,
 failed or interrupted commits, missing spans, and conflicting clocks provide no witness. The trace resource must
 identify the exact registered source revision. Trace export remains asynchronous and does not gate trading or
 protective closures. Retain original trace bytes and independent capture/review seals; these annotations alone do
 not supply a complete Kafka source archive or qualify a strategy comparison.
 
-Each timing witness must point to a retained, independently verified private `bayn.jev-entry-timing.v1` file.
+Each timing witness must point to a retained, independently verified private `bayn.jev-entry-timing.v2` file with
+`clock=effect.Clock.currentTimeMillis`.
 The study command reads and hashes that file, checks source revision, batch, observation
 and snapshot identities, clock order, retained batch completion and frozen momentum selection. The required
 `decisionEvidenceHash` references the complete committed native execution-decision document exported read-only from
@@ -146,7 +149,7 @@ The [incremental-value audit](jev-incremental-audit.md) explains why selection a
 
 ### Export a retained native timing witness
 
-`services/bayn/tools/entry-timing-export.ts` derives the existing v1 timing receipt from one independently retained
+`services/bayn/tools/entry-timing-export.ts` derives the v2 timing receipt from one independently retained
 Tempo trace query response and the exact committed native execution-decision document. It runs offline, reproduces
 the current native decision and momentum selection, and has no database, broker or model client.
 
@@ -172,14 +175,19 @@ missing or ambiguous spans, foreign processes, inconsistent ancestry and conflic
 export. Valid native abstentions can supply timing; unavailable inference or an uncommitted batch cannot.
 Historical protocol documents are not rewritten and have no decoding fallback.
 
-All span chronology and containment checks use integer nanoseconds. The unchanged v1 study/receipt contract accepts
-millisecond UTC strings, so the acknowledged COMMIT end is rounded **up** to the next millisecond only after those
-checks. This adds from zero to less than one millisecond and never starts the delayed control earlier than the observed
-commit. Original input-readiness and deterministic-completion annotations retain their native millisecond values.
+Raw span chronology and containment use integer nanoseconds within the trace clock. Native chronology and parent
+containment use the explicit millisecond markers. Effect's Unix-nanosecond clock projects monotonic time onto a wall
+epoch and can drift from its `Date.now()` millisecond clock; the exporter never compares these clocks as one exact
+timeline. Missing markers, wrong clock identities, clock reversals and parent-containment failures are rejected.
+
+Commitment uses the upper bound of the native millisecond bucket observed after COMMIT acknowledgement, adding one
+millisecond to the completion marker. It therefore never starts a delayed control earlier than that observation.
+The receipt retains both the original trace nanoseconds and explicit native wall intervals. Older v1 traces and
+receipts remain historical artifacts and cannot supply a v2 witness through a fallback.
 
 The new directory has mode `0700`, with `timing.json` and `receipt.json` at `0600`. Existing destinations are never
-overwritten. The `bayn.jev-entry-timing-export.v1` receipt binds both input byte hashes, the timing-file hash, exact
-selected trace/span identities and nanosecond boundaries, and the exact commitment-rounding difference. A directory
+overwritten. The `bayn.jev-entry-timing-export.v2` receipt binds both input byte hashes, the timing-file hash, exact
+selected trace/span identities and nanosecond boundaries, native clock intervals and commitment upper bound. A directory
 without a complete receipt is an incomplete attempt. The command prints only output receipt metadata.
 Pin the raw `timing.json` hash as the matched input's `evidenceHash`, and the original native-decision file hash as
 `decisionEvidenceHash`; copy the timing fields from that verified receipt into the inline witness.

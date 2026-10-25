@@ -7,7 +7,7 @@ Status: Implemented
 
 Jangar memories (`/api/memories`) depend on an OpenAI-compatible embeddings backend (`OPENAI_API_BASE_URL`).
 
-The previous “self-hosted model” setup in this repo referenced a Harvester-based VM (`docker-host`) and Harvester PCI passthrough runbooks. We are now running on Talos; Harvester-specific docs have been moved under `archive/` and should not be used for the Talos/KubeVirt path.
+The previous “self-hosted model” setup in this repo referenced a Harvester-based VM (`docker-host`) and Harvester PCI passthrough runbooks. We are now running on Talos; Harvester-specific docs have been retired and should not be used for the Talos/KubeVirt path.
 
 Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `altra` (with the RTX 3090), with GPU passthrough to the VM, and expose an OpenAI-compatible endpoint for Jangar at a stable in-cluster address.
 
@@ -137,12 +137,3 @@ Exposure:
    Base URL wrong, or Saigak proxy not exposing a `/v1/embeddings` compatible endpoint.
 6. Argo sync fails with KubeVirt admission errors about `spec.template.spec.architecture`:
    `MultiArchitecture` feature gate is not enabled on the KubeVirt CR (see Phase 1).
-
-## Migration Notes (Docs)
-
-Harvester-based docs are archived under:
-
-- `archive/docs/harvester/harvester-gpu-pci-passthrough.md`
-- `archive/docs/harvester/harvester-ceph-jbod.md`
-- `archive/docs/harvester/local-llm-deepseek-coder.md`
-- `archive/docs/harvester/jangar-ollama-docker-host.md`

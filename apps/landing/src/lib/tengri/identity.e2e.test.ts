@@ -819,8 +819,8 @@ identityTest(
     await startApi(secondApiPort)
     const apiEndpoint = await routingEndpoint(ofzPort, firstApiPort)
     const { ofzCall } = await import('./ofz')
-    const { AuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
-    await ofzCall(AuthorizationService.method.getPolicyState, {}).catch((error) => {
+    const { TengriAuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
+    await ofzCall(TengriAuthorizationService.method.getPolicyState, {}).catch((error) => {
       throw new Error('Ofz wire handshake failed', { cause: error.cause || error })
     })
     const browser = await chromium.launch({
@@ -1732,12 +1732,12 @@ identityTest(
     await browserExpect(page.getByRole('button', { name: 'Check your passkey dialog', exact: true })).toBeDisabled()
     if (themeScreenshots)
       await page.screenshot({ path: path.join(themeScreenshots, 'verify-pending.png'), fullPage: true })
+    await page.reload()
+    await browserExpect(page.getByRole('button', { name: 'Continue with passkey', exact: true })).toBeEnabled()
     await cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
       authenticatorId: platformAuthenticatorId,
       enabled: true,
     })
-    await page.reload()
-    await browserExpect(page.getByRole('button', { name: 'Continue with passkey', exact: true })).toBeEnabled()
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
     const phoneSession = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')

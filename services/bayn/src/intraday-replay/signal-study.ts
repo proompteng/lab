@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { JevEntrySetup } from '../jev/trade-plan-choices'
 import { momentumControlCandidates } from './momentum-control'
 import { instrumentMarket } from '../instruments'
@@ -377,6 +378,7 @@ export const studyEntryQuantity = (input: {
         [{ symbol: input.symbol, side: 'buy', quantityAtoms: shares * increment, notionalMicros }],
         input.protocol.executionModel,
         BigInt(input.assumptions.feeMultiplierPpm),
+        cryptoMaximumTakerFeeBps,
       )
       if (notionalMicros + fees.cashMicros <= budget) affordableShares = shares
       else maximumShares = shares - 1n

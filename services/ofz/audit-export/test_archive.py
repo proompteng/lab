@@ -11,9 +11,11 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import psycopg
 import urllib3
@@ -35,7 +37,7 @@ module.loader.exec_module(archive)
 
 initializer_spec = importlib.util.spec_from_file_location(
     "nuc_archive_initialize",
-    Path(__file__).resolve().parents[3] / "devices/nuc/ofz-recovery/initialize.py",
+    Path(__file__).resolve().parent / "fixtures/initialize.py",
 )
 initialize = importlib.util.module_from_spec(initializer_spec)
 initializer_spec.loader.exec_module(initialize)
@@ -58,6 +60,60 @@ class StoredBeforeCrash(archive.Exporter):
 
 
 class ArchiveBoundaries(unittest.TestCase):
+    def test_ceph_retention_uses_rfc3339_nanosecond_precision(self):
+        storage = archive.CephArchive(
+            "localhost:9000",
+            access_key="fixture",
+            secret_key="fixture-secret",
+            secure=False,
+        )
+        response = SimpleNamespace(
+            data=b'<Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Mode>COMPLIANCE</Mode><RetainUntilDate>2030-01-02T03:04:05.934000000Z</RetainUntilDate></Retention>'
+        )
+        with patch.object(storage, "_execute", return_value=response):
+            retention = storage.get_object_retention(
+                "ofz-audit", "batches/fixture", version_id="ceph-version"
+            )
+        self.assertEqual(retention.mode, COMPLIANCE)
+        self.assertEqual(
+            retention.retain_until_date, datetime(2030, 1, 2, 3, 4, 5, 934000, UTC)
+        )
+
+    def test_ceph_archive_verifies_bytes_and_retention_without_sse(self):
+        payload = b"Ceph archive payload"
+        digest = hashlib.sha256(payload).hexdigest()
+        until = datetime.now(UTC) + timedelta(days=90)
+
+        class Response(io.BytesIO):
+            headers = {}
+
+            def release_conn(self):
+                pass
+
+        class Storage:
+            data = payload
+            deadline = until
+
+            def get_object_retention(self, *args, **kwargs):
+                return SimpleNamespace(mode=COMPLIANCE, retain_until_date=self.deadline)
+
+            def get_object(self, *args, **kwargs):
+                return Response(self.data)
+
+        storage = Storage()
+        exporter = archive.Exporter(None, storage)
+        receipt = archive.Receipt(
+            f"batches/1-1-{digest}.json", "ceph-version", digest, until.isoformat()
+        )
+        exporter.verify_object(receipt)
+        storage.data = b"changed"
+        with self.assertRaisesRegex(archive.ArchiveError, "readback mismatch"):
+            exporter.verify_object(receipt)
+        storage.data = payload
+        storage.deadline = until - timedelta(seconds=1)
+        with self.assertRaisesRegex(archive.ArchiveError, "retention mismatch"):
+            exporter.verify_object(receipt)
+
     def test_database_writer_identity_cannot_be_replaced(self):
         with tempfile.TemporaryDirectory(prefix="ofz-database-writers-") as temporary:
             directory = Path(temporary)
@@ -337,10 +393,7 @@ class RealArchive(unittest.TestCase):
             )
             filer_config = root / "filer.toml"
             filer_config.write_text(
-                (
-                    Path(__file__).resolve().parents[3]
-                    / "devices/nuc/ofz-recovery/filer.toml"
-                ).read_text()
+                (Path(__file__).resolve().parent / "fixtures/filer.toml").read_text()
             )
             filer_config.chmod(0o444)
             docker("volume", "create", name)
@@ -425,7 +478,7 @@ class RealArchive(unittest.TestCase):
                     timeout=urllib3.Timeout(total=8, connect=2, read=5), retries=False
                 ),
             )
-            storage = Minio(
+            storage = archive.CephArchive(
                 endpoint,
                 access_key=archive.credential(str(credentials / "archive_access_key")),
                 secret_key=archive.credential(str(credentials / "archive_secret_key")),
@@ -699,12 +752,20 @@ class RealArchive(unittest.TestCase):
                 administrator.set_bucket_encryption(
                     archive.BUCKET, SSEConfig(Rule.new_sse_s3_rule())
                 )
-            with self.assertRaisesRegex(archive.ArchiveError, "encrypted"):
+            exporter.verify_object(
+                archive.Receipt(
+                    plaintext_key,
+                    unencrypted.version_id,
+                    plaintext_hash,
+                    until.isoformat(),
+                )
+            )
+            with self.assertRaisesRegex(archive.ArchiveError, "readback mismatch"):
                 exporter.verify_object(
                     archive.Receipt(
                         plaintext_key,
                         unencrypted.version_id,
-                        plaintext_hash,
+                        "0" * 64,
                         until.isoformat(),
                     )
                 )
@@ -985,7 +1046,7 @@ class RealArchive(unittest.TestCase):
             finally:
                 archive.MAX_BATCH_BYTES = original_budget
             print(
-                "PASS: independent versioned compliance archive; encrypted multipart and ciphertext backing-store proof; unencrypted versions rejected; stable recovery key; real bootstrap/activation; owner and writer role boundaries; version-specific deletion and retention shortening denied; interrupted upload retries; out-of-order audit commits; crash/restart readback; archive failure fences without fabricated acknowledgement"
+                "PASS: versioned compliance archive; fixture encrypted multipart and ciphertext proof; Ceph-compatible versions verified by hash and retention; real bootstrap/activation; owner and writer role boundaries; version-specific deletion and retention shortening denied; interrupted upload retries; out-of-order audit commits; crash/restart readback; archive failure fences without fabricated acknowledgement"
             )
 
 

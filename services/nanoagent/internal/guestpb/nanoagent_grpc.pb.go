@@ -22,6 +22,7 @@ const (
 	NanoagentService_GetInfo_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/GetInfo"
 	NanoagentService_OpenEditor_FullMethodName        = "/proompteng.runtime.guest.v1.NanoagentService/OpenEditor"
 	NanoagentService_OpenBrowser_FullMethodName       = "/proompteng.runtime.guest.v1.NanoagentService/OpenBrowser"
+	NanoagentService_StatFile_FullMethodName          = "/proompteng.runtime.guest.v1.NanoagentService/StatFile"
 	NanoagentService_ListFiles_FullMethodName         = "/proompteng.runtime.guest.v1.NanoagentService/ListFiles"
 	NanoagentService_ReadFile_FullMethodName          = "/proompteng.runtime.guest.v1.NanoagentService/ReadFile"
 	NanoagentService_WriteFile_FullMethodName         = "/proompteng.runtime.guest.v1.NanoagentService/WriteFile"
@@ -49,6 +50,7 @@ type NanoagentServiceClient interface {
 	GetInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*GuestInfo, error)
 	OpenEditor(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Editor, error)
 	OpenBrowser(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Browser, error)
+	StatFile(ctx context.Context, in *Path, opts ...grpc.CallOption) (*FileEntry, error)
 	ListFiles(ctx context.Context, in *Path, opts ...grpc.CallOption) (*FileList, error)
 	ReadFile(ctx context.Context, in *Path, opts ...grpc.CallOption) (*FileContent, error)
 	WriteFile(ctx context.Context, in *FileWrite, opts ...grpc.CallOption) (*FileWriteResult, error)
@@ -99,6 +101,16 @@ func (c *nanoagentServiceClient) OpenBrowser(ctx context.Context, in *Empty, opt
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Browser)
 	err := c.cc.Invoke(ctx, NanoagentService_OpenBrowser_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nanoagentServiceClient) StatFile(ctx context.Context, in *Path, opts ...grpc.CallOption) (*FileEntry, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FileEntry)
+	err := c.cc.Invoke(ctx, NanoagentService_StatFile_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +298,7 @@ type NanoagentServiceServer interface {
 	GetInfo(context.Context, *Empty) (*GuestInfo, error)
 	OpenEditor(context.Context, *Empty) (*Editor, error)
 	OpenBrowser(context.Context, *Empty) (*Browser, error)
+	StatFile(context.Context, *Path) (*FileEntry, error)
 	ListFiles(context.Context, *Path) (*FileList, error)
 	ReadFile(context.Context, *Path) (*FileContent, error)
 	WriteFile(context.Context, *FileWrite) (*FileWriteResult, error)
@@ -320,6 +333,9 @@ func (UnimplementedNanoagentServiceServer) OpenEditor(context.Context, *Empty) (
 }
 func (UnimplementedNanoagentServiceServer) OpenBrowser(context.Context, *Empty) (*Browser, error) {
 	return nil, status.Error(codes.Unimplemented, "method OpenBrowser not implemented")
+}
+func (UnimplementedNanoagentServiceServer) StatFile(context.Context, *Path) (*FileEntry, error) {
+	return nil, status.Error(codes.Unimplemented, "method StatFile not implemented")
 }
 func (UnimplementedNanoagentServiceServer) ListFiles(context.Context, *Path) (*FileList, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFiles not implemented")
@@ -437,6 +453,24 @@ func _NanoagentService_OpenBrowser_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NanoagentServiceServer).OpenBrowser(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NanoagentService_StatFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Path)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NanoagentServiceServer).StatFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NanoagentService_StatFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NanoagentServiceServer).StatFile(ctx, req.(*Path))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -704,6 +738,10 @@ var NanoagentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OpenBrowser",
 			Handler:    _NanoagentService_OpenBrowser_Handler,
+		},
+		{
+			MethodName: "StatFile",
+			Handler:    _NanoagentService_StatFile_Handler,
 		},
 		{
 			MethodName: "ListFiles",

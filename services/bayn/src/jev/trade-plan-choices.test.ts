@@ -16,6 +16,8 @@ const plansForRange = (
   const { snapshot } = cryptoMarketFixture(symbol)
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      cryptoFeeTier: null,
+
       protocol: defaultJevProtocolDocument,
       symbol,
       bidMicros: BigInt(Math.round(priceUsd * 1_000_000)),
