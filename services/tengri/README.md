@@ -527,6 +527,12 @@ records the exact run binding, so subsequent key rotation does not strand accept
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
 
+Durable runs retain the admitted actor, session, grant, immutable workspace UID and recovery generation. Each worker
+RPC refreshes its deadline and lets workspace authorization bind the current runtime epoch before obtaining fresh
+Ofz authority. Snapshot sleep and resume can therefore change the runtime epoch without stranding completion
+observation. A replaced workspace, expired session or grant, revocation or changed recovery generation still denies
+access. Uncertain dispatch is reconciled through its exact native operation receipt and never resends the turn.
+
 Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
 transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
 receipt that can terminate admission. Other native errors retain acceptance reconciliation. Native terminal

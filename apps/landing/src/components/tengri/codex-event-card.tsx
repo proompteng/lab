@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils'
 import type { TengriCodexEventKind } from '@/lib/tengri/types'
 import type { CodexApprovalDecision } from './codex-events'
 import { CodexCopyButton } from './codex-copy-button'
+import { codexAsyncQuestionReplyDisplayText } from './codex-async-questions'
 import { codexActivityTitle } from './codex-activity'
 import {
   codexImageUrl,
@@ -73,7 +74,7 @@ export const CodexEventCard = memo(function CodexEventCard({
             ))}
           </div>
         ) : null}
-        {body ? <Markdown text={body} /> : null}
+        {body ? <Markdown text={codexAsyncQuestionReplyDisplayText(body)} /> : null}
       </article>
     )
   }
