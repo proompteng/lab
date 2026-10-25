@@ -8,6 +8,9 @@ use uuid::Uuid;
 
 use crate::{auth::Principal, grpc::ControlPlane};
 
+// Query expiry limits admission; an authorized response may arrive later.
+const STATUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Input {
@@ -279,7 +282,7 @@ pub(crate) async fn read(
     };
     let query = seal(service, "query", &query).await?;
     let client = TengriAgentRunIngressClient::from_client(ingress()?, id.to_owned());
-    let result = tokio::time::timeout(Duration::from_secs(2), client.status(Json(query)).call())
+    let result = tokio::time::timeout(STATUS_RESPONSE_TIMEOUT, client.status(Json(query)).call())
         .await
         .map_err(|_| Status::unavailable("durable run status timed out"))?
         .map_err(client_error)?;
@@ -299,11 +302,13 @@ pub(crate) async fn active(
     };
     let envelope = seal(service, "active-query", &query).await?;
     let client = TengriWorkspaceRunsIngressClient::from_client(ingress()?, query.workspace_uid);
-    let response =
-        tokio::time::timeout(Duration::from_secs(2), client.active(Json(envelope)).call())
-            .await
-            .map_err(|_| Status::unavailable("active run recovery timed out"))?
-            .map_err(client_error)?;
+    let response = tokio::time::timeout(
+        STATUS_RESPONSE_TIMEOUT,
+        client.active(Json(envelope)).call(),
+    )
+    .await
+    .map_err(|_| Status::unavailable("active run recovery timed out"))?
+    .map_err(client_error)?;
     let id = response.into_body().map_err(client_error)?.into_inner();
     match id {
         Some(id) => read(service, principal, &id, None).await.map(Some),
