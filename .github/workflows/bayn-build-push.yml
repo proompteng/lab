@@ -28,7 +28,6 @@ on:
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
       - 'nix/verify-bayn-image-command.sh'
-      - 'nix/verify-bayn-image-command.test.sh'
       - 'packages/scripts/src/shared/oci.ts'
       - 'flake.nix'
       - 'flake.lock'

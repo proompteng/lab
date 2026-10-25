@@ -14,8 +14,8 @@ use crate::{
     native::{Native, Relationship, Update},
     policy::{self, BFF_ID, CONTROLLER_ID, OFZ_ID},
     proto::{
-        actor::Identity, authorization_service_server::AuthorizationService,
-        execute_command_request::Command, *,
+        actor::Identity, execute_command_request::Command,
+        tengri_authorization_service_server::TengriAuthorizationService, *,
     },
     service::Service,
     sessions::{self, Issuer},
@@ -66,12 +66,12 @@ async fn workspace_roster(
         .entries
 }
 
-async fn acknowledge_fixture_archive(admin: &Database) {
+pub(crate) async fn acknowledge_fixture_archive(admin: &Database) {
     // Synthetic acknowledgement for control tests; independent archive durability is a separate gate.
     admin.pool.get().await.unwrap().batch_execute("BEGIN; UPDATE ofz.audit_outbox SET acknowledged_at_ms=ofz.now_ms(),archive_receipt='control-fixture-only'; UPDATE ofz.archive_state SET acknowledged_sequence=coalesce((SELECT max(sequence) FROM ofz.audit),0),acknowledged_at_ms=ofz.now_ms(); COMMIT;").await.unwrap();
 }
 
-async fn setup() -> (Database, Database, Native, Vec<(String, String)>) {
+pub(crate) async fn setup() -> (Database, Database, Native, Vec<(String, String)>) {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .ok();
@@ -168,12 +168,7 @@ async fn setup() -> (Database, Database, Native, Vec<(String, String)>) {
         conn.execute("INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,$8,$2)", &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&((now+3_600_000) as i64),&(now as i64),&number.to_string()]).await.unwrap();
         identities.push((human, session.to_string()));
     }
-    for (role, id) in [
-        ("bff", BFF_ID),
-        ("controller", CONTROLLER_ID),
-        ("kube_broker", policy::KUBE_BROKER_ID),
-        ("connector_broker", policy::CONNECTOR_BROKER_ID),
-    ] {
+    for (role, id) in [("bff", BFF_ID), ("controller", CONTROLLER_ID)] {
         relationships.push(Update::touch(Relationship::new(
             "platform",
             "lab",
@@ -698,11 +693,6 @@ async fn control_integration_durability_authority_and_quota() {
     Box::pin(verify_maintenance_state_during_audit(&fixture)).await;
     Box::pin(verify_session_bootstrap(&fixture)).await;
     let workspace = Box::pin(verify_workspace_enrollment(&fixture)).await;
-    if policy::connectors_enabled() {
-        Box::pin(verify_connector_grants(&fixture, &workspace)).await;
-    } else {
-        Box::pin(verify_dormant_connector_grants(&fixture)).await;
-    }
     verify_audit_write_pressure(
         &fixture.admin,
         &fixture.database,
@@ -1915,408 +1905,6 @@ async fn verify_workspace_enrollment(fixture: &ControlFixture) -> WorkspaceFixtu
         home: enrolled_home,
         reservation_id: enrolled_reservation,
     }
-}
-
-async fn verify_dormant_connector_grants(fixture: &ControlFixture) {
-    let client = fixture.admin.pool.get().await.unwrap();
-    let snapshot = "SELECT (SELECT count(*) FROM ofz.commands), (SELECT count(*) FROM ofz.grants), (SELECT count(*) FROM ofz.replay), (SELECT count(*) FROM ofz.audit), (SELECT version FROM ofz.platform_state WHERE singleton)";
-    let before = client.query_one(snapshot, &[]).await.unwrap();
-    let input = request(
-        &fixture.database,
-        &fixture.identities[0],
-        Command::ConfigureConnector(ConfigureConnector {
-            connection_id: Uuid::new_v4().to_string(),
-            create: true,
-            enabled: true,
-        }),
-    )
-    .await;
-    assert_eq!(
-        commands::execute(&fixture.database, &fixture.native, BFF_ID, input.clone())
-            .await
-            .unwrap_err()
-            .code(),
-        Code::Unimplemented,
-    );
-    assert_eq!(
-        crate::connector_agent::check(
-            &fixture.database,
-            &fixture.native,
-            policy::CONNECTOR_BROKER_ID,
-            CheckConnectorAgentRequest::default(),
-        )
-        .await
-        .unwrap_err()
-        .code(),
-        Code::Unimplemented,
-    );
-    assert_eq!(
-        decision::check(
-            &fixture.database,
-            &fixture.native,
-            BFF_ID,
-            CheckRequest {
-                context: input.context,
-                action: Action::ConnectorCreate as i32,
-                resource: Some(policy::platform()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap_err()
-        .code(),
-        Code::Unimplemented,
-    );
-    let after = client.query_one(snapshot, &[]).await.unwrap();
-    for column in 0..5usize {
-        assert_eq!(
-            before.get::<_, i64>(column),
-            after.get::<_, i64>(column),
-            "a dormant connector request changed durable authority"
-        );
-    }
-}
-
-async fn verify_connector_grants(fixture: &ControlFixture, workspace: &WorkspaceFixture) {
-    acknowledge_fixture_archive(&fixture.admin).await;
-    let owner = &fixture.identities[0];
-    let stranger = &fixture.identities[2];
-    let connection = Uuid::new_v4().to_string();
-    let configured = request(
-        &fixture.database,
-        owner,
-        Command::ConfigureConnector(ConfigureConnector {
-            connection_id: connection.clone(),
-            create: true,
-            enabled: true,
-        }),
-    )
-    .await;
-    let receipt = commands::execute(
-        &fixture.database,
-        &fixture.native,
-        BFF_ID,
-        configured.clone(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        commands::execute(&fixture.database, &fixture.native, BFF_ID, configured)
-            .await
-            .unwrap()
-            .audit_receipt_id,
-        receipt.audit_receipt_id
-    );
-    let takeover = request(
-        &fixture.database,
-        stranger,
-        Command::ConfigureConnector(ConfigureConnector {
-            connection_id: connection.clone(),
-            create: true,
-            enabled: true,
-        }),
-    )
-    .await;
-    assert_eq!(
-        commands::execute(&fixture.database, &fixture.native, BFF_ID, takeover)
-            .await
-            .unwrap_err()
-            .code(),
-        Code::AlreadyExists
-    );
-    let unauthorized = request(
-        &fixture.database,
-        stranger,
-        Command::ConfigureConnector(ConfigureConnector {
-            connection_id: connection.clone(),
-            create: false,
-            enabled: false,
-        }),
-    )
-    .await;
-    assert_eq!(
-        commands::execute(&fixture.database, &fixture.native, BFF_ID, unauthorized)
-            .await
-            .unwrap_err()
-            .code(),
-        Code::PermissionDenied
-    );
-    let old = fixture
-        .admin
-        .pool
-        .get()
-        .await
-        .unwrap()
-        .query_one(
-            "SELECT running,runtime_epoch FROM ofz.workspaces WHERE uid=$1",
-            &[&Uuid::parse_str(&workspace.uid).unwrap()],
-        )
-        .await
-        .unwrap();
-    let epoch = Uuid::new_v4().to_string();
-    execute(
-        &fixture.database,
-        &fixture.native,
-        owner,
-        Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
-            workspace_uid: workspace.uid.clone(),
-            running: true,
-            runtime_epoch: epoch.clone(),
-        }),
-    )
-    .await;
-    let body = Sha256::digest(b"exact connector invocation bytes").to_vec();
-    let (thumbprint, _) = crate::connector_agent::tests::signed_proof(&"a".repeat(43), &body);
-    let grant_id = Uuid::new_v4().to_string();
-    let command = request(
-        &fixture.database,
-        owner,
-        Command::CreateGrant(CreateGrant {
-            grant_id: grant_id.clone(),
-            agent_id: Uuid::new_v4().to_string(),
-            workspace_uid: workspace.uid.clone(),
-            resource: Some(Resource {
-                kind: ResourceKind::ConnectorConnection as i32,
-                id: connection.clone(),
-            }),
-            actions: vec![Action::ConnectorRead as i32],
-            scope: Some(ObservationScope {
-                connector_operations: vec!["search".into()],
-                max_bytes: 1024,
-                max_items: 20,
-                ..Default::default()
-            }),
-            expires_at_unix_ms: fixture.database.state().await.unwrap().now_ms + 600000,
-            proof_key_thumbprint: thumbprint,
-        }),
-    )
-    .await;
-    let credential = commands::execute(&fixture.database, &fixture.native, BFF_ID, command)
-        .await
-        .unwrap()
-        .agent_credential;
-    let signed = || {
-        let (_, proof) = crate::connector_agent::tests::signed_proof(&credential, &body);
-        CheckConnectorAgentRequest {
-            grant_id: grant_id.clone(),
-            credential: credential.clone(),
-            proof,
-            request_hash: body.clone(),
-            connection_id: connection.clone(),
-            operation: "search".into(),
-            action: Action::ConnectorRead as i32,
-        }
-    };
-    let input = signed();
-    let allowed = crate::connector_agent::check(
-        &fixture.database,
-        &fixture.native,
-        policy::CONNECTOR_BROKER_ID,
-        input.clone(),
-    )
-    .await
-    .unwrap();
-    assert!(allowed.decision.as_ref().unwrap().allowed);
-    assert_eq!(allowed.context.as_ref().unwrap().runtime_epoch, epoch);
-    assert_eq!(
-        crate::connector_agent::check(
-            &fixture.database,
-            &fixture.native,
-            policy::CONNECTOR_BROKER_ID,
-            input
-        )
-        .await
-        .unwrap_err()
-        .code(),
-        Code::Unauthenticated,
-        "a proof cannot be replayed through another API process"
-    );
-    let mut wrong = signed();
-    wrong.operation = "delete".into();
-    assert_eq!(
-        crate::connector_agent::check(
-            &fixture.database,
-            &fixture.native,
-            policy::CONNECTOR_BROKER_ID,
-            wrong
-        )
-        .await
-        .unwrap_err()
-        .code(),
-        Code::PermissionDenied
-    );
-    let mut read_cannot_write = signed();
-    read_cannot_write.action = Action::ConnectorInvoke as i32;
-    assert_eq!(
-        crate::connector_agent::check(
-            &fixture.database,
-            &fixture.native,
-            policy::CONNECTOR_BROKER_ID,
-            read_cannot_write
-        )
-        .await
-        .unwrap_err()
-        .code(),
-        Code::PermissionDenied
-    );
-    let write_grant = Uuid::new_v4().to_string();
-    let (thumbprint, _) = crate::connector_agent::tests::signed_proof(&"a".repeat(43), &body);
-    let write_command = request(
-        &fixture.database,
-        owner,
-        Command::CreateGrant(CreateGrant {
-            grant_id: write_grant.clone(),
-            agent_id: Uuid::new_v4().to_string(),
-            workspace_uid: workspace.uid.clone(),
-            resource: Some(Resource {
-                kind: ResourceKind::ConnectorConnection as i32,
-                id: connection.clone(),
-            }),
-            actions: vec![Action::ConnectorInvoke as i32],
-            scope: Some(ObservationScope {
-                connector_operations: vec!["create_issue".into()],
-                max_bytes: 1024,
-                max_items: 20,
-                ..Default::default()
-            }),
-            expires_at_unix_ms: fixture.database.state().await.unwrap().now_ms + 600000,
-            proof_key_thumbprint: thumbprint,
-        }),
-    )
-    .await;
-    let write_credential =
-        commands::execute(&fixture.database, &fixture.native, BFF_ID, write_command)
-            .await
-            .unwrap()
-            .agent_credential;
-    let (_, write_proof) = crate::connector_agent::tests::signed_proof(&write_credential, &body);
-    let mut write_input = signed();
-    write_input.grant_id = write_grant.clone();
-    write_input.credential = write_credential;
-    write_input.proof = write_proof;
-    write_input.action = Action::ConnectorInvoke as i32;
-    write_input.operation = "create_issue".into();
-    assert!(
-        crate::connector_agent::check(
-            &fixture.database,
-            &fixture.native,
-            policy::CONNECTOR_BROKER_ID,
-            write_input
-        )
-        .await
-        .unwrap()
-        .decision
-        .unwrap()
-        .allowed
-    );
-    execute(
-        &fixture.database,
-        &fixture.native,
-        owner,
-        Command::RevokeGrant(RevokeGrant {
-            grant_id: write_grant,
-        }),
-    )
-    .await;
-    let changed_epoch = Uuid::new_v4();
-    let uid = Uuid::parse_str(&workspace.uid).unwrap();
-    fixture
-        .admin
-        .pool
-        .get()
-        .await
-        .unwrap()
-        .execute(
-            "UPDATE ofz.workspaces SET runtime_epoch=$1 WHERE uid=$2",
-            &[&changed_epoch, &uid],
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        crate::connector_agent::check(
-            &fixture.database,
-            &fixture.native,
-            policy::CONNECTOR_BROKER_ID,
-            signed()
-        )
-        .await
-        .unwrap_err()
-        .code(),
-        Code::PermissionDenied,
-        "a new runtime must not resurrect an old connector capability"
-    );
-    fixture
-        .admin
-        .pool
-        .get()
-        .await
-        .unwrap()
-        .execute(
-            "UPDATE ofz.workspaces SET runtime_epoch=$1 WHERE uid=$2",
-            &[&Uuid::parse_str(&epoch).unwrap(), &uid],
-        )
-        .await
-        .unwrap();
-    let revoke = request(
-        &fixture.database,
-        owner,
-        Command::ConfigureConnector(ConfigureConnector {
-            connection_id: connection.clone(),
-            create: false,
-            enabled: false,
-        }),
-    )
-    .await;
-    commands::execute(&fixture.database, &fixture.native, BFF_ID, revoke)
-        .await
-        .unwrap();
-    assert_eq!(
-        crate::connector_agent::check(
-            &fixture.database,
-            &fixture.native,
-            policy::CONNECTOR_BROKER_ID,
-            signed()
-        )
-        .await
-        .unwrap_err()
-        .code(),
-        Code::PermissionDenied
-    );
-    execute(
-        &fixture.database,
-        &fixture.native,
-        owner,
-        Command::RevokeGrant(RevokeGrant { grant_id }),
-    )
-    .await;
-    execute(
-        &fixture.database,
-        &fixture.native,
-        owner,
-        Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
-            workspace_uid: workspace.uid.clone(),
-            running: false,
-            runtime_epoch: epoch,
-        }),
-    )
-    .await;
-    fixture
-        .admin
-        .pool
-        .get()
-        .await
-        .unwrap()
-        .execute(
-            "UPDATE ofz.workspaces SET running=$1,runtime_epoch=$2 WHERE uid=$3",
-            &[
-                &old.get::<_, bool>(0),
-                &old.get::<_, Option<Uuid>>(1),
-                &Uuid::parse_str(&workspace.uid).unwrap(),
-            ],
-        )
-        .await
-        .unwrap();
-    acknowledge_fixture_archive(&fixture.admin).await;
 }
 
 async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFixture) {
@@ -3937,8 +3525,6 @@ async fn verify_viewer_scope(fixture: &ControlFixture, uid: &str, epoch: &str) {
         "a Viewer without an approved scope must remain metadata-only on a running workspace"
     );
     let scope = ObservationScope {
-        connector_operations: vec![],
-        connector_runtime_epoch: String::new(),
         file_roots: vec!["/workspace/src".into()],
         thread_ids: vec!["thread-approved".into()],
         terminal_ids: vec!["terminal-approved".into()],

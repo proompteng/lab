@@ -162,7 +162,7 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
             source_event_id,source_sequence,occurred_at,observed_at)
             VALUES(${eventId},'bayn.paper-broker-event.v1',${eventId},'ACCOUNT','ALPACA',${accountId},${`account-${index}`},${index === 10 ? 1 : 5},${at},${at})`
                   yield* sql`INSERT INTO account_snapshots(event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros)
-            VALUES(${eventId},${accountId},'bayn.paper-account-snapshot.v1','ACTIVE','USD',${cash},${cash},${cash})`
+            VALUES(${eventId},${accountId},'bayn.paper-account-snapshot.v2','ACTIVE','USD',${cash},${cash},${cash})`
                   yield* sql`INSERT INTO account_cash_reporting VALUES(${eventId},1)`
                 }
                 yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,observed_at,position_count,content_hash)

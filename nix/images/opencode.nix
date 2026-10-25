@@ -1,5 +1,6 @@
 { pkgs, lib, repoRoot, repoRevision ? "dirty", bun, nodejs, ciToolchain }:
 let
+  relay = import ../packages/relay.nix { inherit pkgs lib repoRoot; };
   validation = import ./opencode-validation-tools.nix { inherit pkgs; };
   cli = import ./opencode-cli.nix { inherit pkgs lib; };
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
@@ -18,7 +19,7 @@ let
   };
   tools = pkgs.buildEnv {
     name = "opencode-development-tools";
-    paths = [ ciToolchain cli nodejs bun pkgs.bashInteractive pkgs.openssh pkgs.gnutar pkgs.gzip pkgs.unzip pkgs.sqlite pkgs.tini pkgs.stdenv.cc pkgs.cmake pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy pkgs.ruff pkgs.lua5_4 pkgs.protobuf validation.promtool validation.alloy ];
+    paths = [ relay ciToolchain cli nodejs bun pkgs.bashInteractive pkgs.openssh pkgs.gnutar pkgs.gzip pkgs.unzip pkgs.sqlite pkgs.tini pkgs.stdenv.cc pkgs.cmake pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy pkgs.ruff pkgs.lua5_4 pkgs.protobuf validation.promtool validation.alloy ];
     pathsToLink = [ "/bin" ];
     ignoreCollisions = true;
   };

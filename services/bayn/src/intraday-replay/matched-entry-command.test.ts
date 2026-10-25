@@ -271,7 +271,8 @@ const witnessedFixture = () =>
       decisionCommittedAt: new Date(at + 5100).toISOString(),
     }
     const timingBytes = JSON.stringify({
-      schemaVersion: 'bayn.jev-entry-timing.v1',
+      schemaVersion: 'bayn.jev-entry-timing.v2',
+      clock: 'effect.Clock.currentTimeMillis',
       sourceRevision: data.registration.sourceRevision,
       batchId: batch.batchPlan.batchId,
       observationHash: batch.batchPlan.observationHash,
@@ -802,7 +803,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
-      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v7')
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v8')
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.delayedMomentum)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')

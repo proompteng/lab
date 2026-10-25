@@ -224,6 +224,12 @@ const expected = {
     apps: ['opencode'],
     includePaths: [],
   },
+  relay: {
+    creationCriteria: 'image-revision',
+    images: [imageRepo('relay')],
+    apps: ['relay'],
+    includePaths: [],
+  },
   bayn: {
     creationCriteria: 'image-revision',
     images: [imageRepo('bayn')],
@@ -520,7 +526,6 @@ const expected = {
       'services/agents',
       'charts/agents/crds',
       'nix/images/agents.nix',
-      'nix/verify-agents-shell-image-lifecycle.sh',
       'nix/images/openai-codex-cli.nix',
       '.github/workflows/nix-oci-build-common.yml',
       'nix/oci-push.sh',
@@ -1123,14 +1128,12 @@ describe('Kargo direct-push GitOps contract', () => {
         expect.arrayContaining(keys),
       )
     }
-    expectYamlUpdate(
-      'arc-runner',
-      './out/argocd/applications/arc/application.yaml',
-      [1, 2, 3].flatMap((index) => [
-        `spec.sources.${index}.helm.valuesObject.template.spec.initContainers.0.image`,
-        `spec.sources.${index}.helm.valuesObject.template.spec.containers.0.image`,
-      ]),
-    )
+    expectYamlUpdate('arc-runner', './out/argocd/applications/arc/application.yaml', [
+      ...[1, 2].map((index) => `spec.sources.${index}.helm.valuesObject.template.spec.containers.0.image`),
+      'spec.sources.2.helm.valuesObject.template.spec.initContainers.0.image',
+      'spec.sources.3.helm.valuesObject.template.spec.initContainers.0.image',
+      'spec.sources.3.helm.valuesObject.template.spec.containers.0.image',
+    ])
     expectYamlUpdate('bumba', './out/argocd/applications/bumba/deployment.yaml', [
       'spec.template.spec.containers.0.env.6.value',
     ])

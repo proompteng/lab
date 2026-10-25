@@ -167,7 +167,8 @@ test('activation consumes the current reconciliation rather than the startup pos
   const at = '2026-09-25T15:10:15.000Z'
   const flat: ReconciledBrokerState = {
     account: {
-      schemaVersion: 'bayn.paper-account-snapshot.v1',
+      schemaVersion: 'bayn.paper-account-snapshot.v2',
+      cryptoFeeTier: null,
       accountId,
       status: AccountStatus.Active,
       currency: 'USD',
@@ -341,7 +342,8 @@ test('a cutover mandate rearms through current proof and exact reconciliation be
     }
     const brokerState: ReconciledBrokerState = {
       account: {
-        schemaVersion: 'bayn.paper-account-snapshot.v1',
+        schemaVersion: 'bayn.paper-account-snapshot.v2',
+        cryptoFeeTier: null,
         accountId,
         status: AccountStatus.Active,
         currency: 'USD',

@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import sqlite3
 import tarfile
@@ -99,6 +100,36 @@ class StateMigrationTest(unittest.TestCase):
                         restored.execute("SELECT id FROM sessions").fetchall(),
                         [("ses_in_wal",)],
                     )
+
+    def test_preserves_safe_relative_symbolic_link_with_target_bytes_and_inventory(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source"
+            target = Path(temporary) / "target"
+            source.mkdir()
+            target.mkdir()
+            (source / "studies").mkdir()
+            (source / "studies" / "data.txt").write_text("research notes")
+            (source / "studies" / "link").symlink_to("../studies/data.txt")
+            before = inventory(source)
+            self.assertIn("studies/link", before)
+            self.assertEqual(before["studies/link"]["link"], "../studies/data.txt")
+            expected_sha256 = hashlib.sha256(
+                json.dumps(before, sort_keys=True).encode()
+            ).hexdigest()
+            archive = io.BytesIO()
+            export_state(source, archive)
+            archive.seek(0)
+            restore_state(target, archive, expected_sha256)
+            link_path = target / "state" / "studies" / "link"
+            self.assertTrue(link_path.is_symlink())
+            self.assertEqual(os.readlink(link_path), "../studies/data.txt")
+            self.assertEqual(link_path.read_bytes(), b"research notes")
+            restored = inventory(target / "state")
+            del restored[".migration-complete.json"]
+            self.assertEqual(restored, before)
+            self.assertEqual(inventory(source), before)
 
     def test_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:
