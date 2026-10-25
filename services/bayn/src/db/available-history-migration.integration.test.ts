@@ -1,3 +1,6 @@
+import currentQuoteBreakoutMigration from '../../migrations/0145_current_quote_breakout'
+import accountBoundEntryFeesMigration from '../../migrations/0146_account_bound_entry_fees'
+import alignedSignalPeriodsMigration from '../../migrations/0144_aligned_signal_periods'
 import fundedPlanCoverageMigration from '../../migrations/0141_funded_plan_coverage'
 import executableProfitLimitsMigration from '../../migrations/0143_executable_profit_limits'
 import economicTradePlansMigration from '../../migrations/0140_economic_trade_plans'
@@ -40,6 +43,24 @@ const makeRuntime = () =>
   )
 
 for (const { label, id, protocol, migration } of [
+  {
+    label: 'account-bound-entry-fees',
+    id: 146,
+    protocol: 'bayn.jev.protocol.v23',
+    migration: accountBoundEntryFeesMigration,
+  },
+  {
+    label: 'current-quote-breakout',
+    id: 145,
+    protocol: 'bayn.jev.protocol.v22',
+    migration: currentQuoteBreakoutMigration,
+  },
+  {
+    label: 'aligned-signal-periods',
+    id: 144,
+    protocol: 'bayn.jev.protocol.v21',
+    migration: alignedSignalPeriodsMigration,
+  },
   {
     label: 'executable-profit-limits',
     id: 143,
@@ -134,63 +155,96 @@ for (const { label, id, protocol, migration } of [
       )
     })
 
-    if (id === 124 || id === 125 || id === 131 || id === 133 || id === 137 || id === 140 || id === 141 || id === 143) {
+    if (
+      id === 124 ||
+      id === 125 ||
+      id === 131 ||
+      id === 133 ||
+      id === 137 ||
+      id === 140 ||
+      id === 141 ||
+      id === 143 ||
+      id === 144 ||
+      id === 145 ||
+      id === 146
+    ) {
       const retired =
-        id === 143
+        id === 146
           ? {
-              protocol: 'bayn.jev.protocol.v19' as const,
-              behavior: '4ab0406516dfd12e7c664834a9bc1f2fc2c07c512f9802e55b664cda963a1b52',
-              parameters: '367f0cf235989e329c4974efd073db219e1efa4424fe0138c7a0eafb252c5fa2',
-              protocolHash: 'faa9278528a758e00138e32486df84662e38443191aa8154ed75354daa1110b0',
+              protocol: 'bayn.jev.protocol.v22' as const,
+              behavior: '191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2',
+              parameters: '3353cf13424c80c4498a53ff388782585a5969d63b950579675223f582e21f4a',
+              protocolHash: 'd88530748288c895b348f0c4bdfcb1b13f305f5ce120f664ad2c5aa932ca1c7f',
             }
-          : id === 141
+          : id === 145
             ? {
-                protocol: 'bayn.jev.protocol.v18' as const,
-                behavior: '8669593548424d848e8bcd2157eec5e571e9f7595315c9aea0c0ab56e214fc3b',
-                parameters: '167b5258319906743909ed89d6bb8fec7a01e4a134825cc64aa30d65a229f3be',
-                protocolHash: '03d49555af1590514bd756099f8da95495faad7645a00b4081532edf4bf0793a',
+                protocol: 'bayn.jev.protocol.v21' as const,
+                behavior: '191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2',
+                parameters: '8fda104747b52eb98a6d9ab961946e23e6ec7c5536aad0e9f05131307c978860',
+                protocolHash: '91ee179be3c096b91037620e8763b856744602fd86ba8c14b467f15e19d94f8c',
               }
-            : id === 140
+            : id === 144
               ? {
-                  protocol: 'bayn.jev.protocol.v17' as const,
-                  behavior: 'f390ffe05a26895a4422f18cc91750ba9fab94af69bdca8f6ab809bae2338180',
-                  parameters: '8319dc5fe813b2eaefc8c1ff2e9dffdde7ddab1ba2b23f1eb51e6c34a7cea25e',
-                  protocolHash: '682b20d9eb4e18b5f0f5d5ab8ff9f76460ab5870c3ee2c2b0c7b477154d72d21',
+                  protocol: 'bayn.jev.protocol.v20' as const,
+                  behavior: '191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2',
+                  parameters: '5e4f552bb0420b98017e6a91b3df933dbb70408a51c6e13f804e1220de5700d6',
+                  protocolHash: 'f4a4ea1fff4aaba7ebfeb7a2a40b7a1823880f948bd8000cbb99db29187fbd5e',
                 }
-              : id === 137
+              : id === 143
                 ? {
-                    protocol: 'bayn.jev.protocol.v16' as const,
-                    behavior: '118da7b475784ce63cb8d6636c0d469857ee36e2c7d8305e2d400f9aa47d548c',
-                    parameters: '6dab28f7282460dcb9fc4551a8b6f287066ab08959e726074a2bf8e00167f8a9',
-                    protocolHash: '762778f6dc4e902c85e606b0ae3c4619fcc05169b0a058248b2ea2f4eac08e86',
+                    protocol: 'bayn.jev.protocol.v19' as const,
+                    behavior: '4ab0406516dfd12e7c664834a9bc1f2fc2c07c512f9802e55b664cda963a1b52',
+                    parameters: '367f0cf235989e329c4974efd073db219e1efa4424fe0138c7a0eafb252c5fa2',
+                    protocolHash: 'faa9278528a758e00138e32486df84662e38443191aa8154ed75354daa1110b0',
                   }
-                : id === 133
+                : id === 141
                   ? {
-                      protocol: 'bayn.jev.protocol.v15' as const,
-                      behavior: '55e0d13466d967a71e7e669021ae3dd21eb2f481a32c3de0d33bc14895ff6ccf',
-                      parameters: '563596394b61aa4b68494f1854ecfc2cbeca8ead692f91a4f9b2d200ffd0ac5d',
-                      protocolHash: '358241b51b40e89e43d2a0ccee695ff673ffd2ad02dd4f1c7652c8b0cbda8c59',
+                      protocol: 'bayn.jev.protocol.v18' as const,
+                      behavior: '8669593548424d848e8bcd2157eec5e571e9f7595315c9aea0c0ab56e214fc3b',
+                      parameters: '167b5258319906743909ed89d6bb8fec7a01e4a134825cc64aa30d65a229f3be',
+                      protocolHash: '03d49555af1590514bd756099f8da95495faad7645a00b4081532edf4bf0793a',
                     }
-                  : id === 131
+                  : id === 140
                     ? {
-                        protocol: 'bayn.jev.protocol.v14' as const,
-                        behavior: '9e6afa3accf9cb27c0ea4c00fe315aaeb70748229a668f48c57d02bce6beee29',
-                        parameters: '7cf76109bc5301a4eabef41f4cf37ea531b3bb87c6b5246d74970262398936de',
-                        protocolHash: 'f0060fa9df52e2a63e1c1adea08549f0c8cfdac94c8a406f621e307b4081f14e',
+                        protocol: 'bayn.jev.protocol.v17' as const,
+                        behavior: 'f390ffe05a26895a4422f18cc91750ba9fab94af69bdca8f6ab809bae2338180',
+                        parameters: '8319dc5fe813b2eaefc8c1ff2e9dffdde7ddab1ba2b23f1eb51e6c34a7cea25e',
+                        protocolHash: '682b20d9eb4e18b5f0f5d5ab8ff9f76460ab5870c3ee2c2b0c7b477154d72d21',
                       }
-                    : id === 125
+                    : id === 137
                       ? {
-                          protocol: 'bayn.jev.protocol.v11' as const,
-                          behavior: '1eb508ec119456b8ee73a0afc02b8f4dfd27728f236ca82db452c8a22c0a52af',
-                          parameters: '3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6',
-                          protocolHash: '9688c8a626ae692b63462fd77cab6eeea84c3d5f2f5dce1eb7005ad87a2f0af7',
+                          protocol: 'bayn.jev.protocol.v16' as const,
+                          behavior: '118da7b475784ce63cb8d6636c0d469857ee36e2c7d8305e2d400f9aa47d548c',
+                          parameters: '6dab28f7282460dcb9fc4551a8b6f287066ab08959e726074a2bf8e00167f8a9',
+                          protocolHash: '762778f6dc4e902c85e606b0ae3c4619fcc05169b0a058248b2ea2f4eac08e86',
                         }
-                      : {
-                          protocol: 'bayn.jev.protocol.v10' as const,
-                          behavior: '1a5721bc72a1dbc8e13fdc4eb27c04ad019a8ca6f6f398e4e55fd2d0c4b2ae31',
-                          parameters: '6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b',
-                          protocolHash: '48c1b3b1897155193973865716e23486d6d15295359e348371936c9ab4a9221d',
-                        }
+                      : id === 133
+                        ? {
+                            protocol: 'bayn.jev.protocol.v15' as const,
+                            behavior: '55e0d13466d967a71e7e669021ae3dd21eb2f481a32c3de0d33bc14895ff6ccf',
+                            parameters: '563596394b61aa4b68494f1854ecfc2cbeca8ead692f91a4f9b2d200ffd0ac5d',
+                            protocolHash: '358241b51b40e89e43d2a0ccee695ff673ffd2ad02dd4f1c7652c8b0cbda8c59',
+                          }
+                        : id === 131
+                          ? {
+                              protocol: 'bayn.jev.protocol.v14' as const,
+                              behavior: '9e6afa3accf9cb27c0ea4c00fe315aaeb70748229a668f48c57d02bce6beee29',
+                              parameters: '7cf76109bc5301a4eabef41f4cf37ea531b3bb87c6b5246d74970262398936de',
+                              protocolHash: 'f0060fa9df52e2a63e1c1adea08549f0c8cfdac94c8a406f621e307b4081f14e',
+                            }
+                          : id === 125
+                            ? {
+                                protocol: 'bayn.jev.protocol.v11' as const,
+                                behavior: '1eb508ec119456b8ee73a0afc02b8f4dfd27728f236ca82db452c8a22c0a52af',
+                                parameters: '3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6',
+                                protocolHash: '9688c8a626ae692b63462fd77cab6eeea84c3d5f2f5dce1eb7005ad87a2f0af7',
+                              }
+                            : {
+                                protocol: 'bayn.jev.protocol.v10' as const,
+                                behavior: '1a5721bc72a1dbc8e13fdc4eb27c04ad019a8ca6f6f398e4e55fd2d0c4b2ae31',
+                                parameters: '6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b',
+                                protocolHash: '48c1b3b1897155193973865716e23486d6d15295359e348371936c9ab4a9221d',
+                              }
       test('recovers the retained prior authority through native OBSERVE after cutover', async () => {
         await runtime.runPromise(
           Effect.gen(function* () {
@@ -297,6 +351,57 @@ for (const { label, id, protocol, migration } of [
         )
       })
     }
+
+    if (id === 146)
+      test('preserves prior account observations and admits only v2 observations with a valid fee tier', async () => {
+        await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const event = (eventId: string, sequence: number) => sql`INSERT INTO broker_events
+              (event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,occurred_at,observed_at)
+              VALUES (${eventId},'bayn.paper-broker-event.v1',${eventId},'ACCOUNT','ALPACA','fee-account',${eventId},${sequence},clock_timestamp(),clock_timestamp())`
+            const oldId = '1'.repeat(64)
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* event(oldId, 1)
+                yield* sql`INSERT INTO account_snapshots
+                (event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros)
+                VALUES (${oldId},'fee-account','bayn.paper-account-snapshot.v1','ACTIVE','USD',100,100,100)`
+              }),
+            )
+            const before = yield* sql`SELECT to_jsonb(s) AS snapshot FROM account_snapshots s`
+            yield* sql.withTransaction(migration)
+            expect(yield* sql`SELECT to_jsonb(s) - 'crypto_fee_tier' AS snapshot FROM account_snapshots s`).toEqual(
+              before,
+            )
+            const newId = '2'.repeat(64)
+            const insert = (version: string, tier: number | null) =>
+              sql.withTransaction(
+                Effect.gen(function* () {
+                  yield* event(newId, 2)
+                  yield* sql`INSERT INTO account_snapshots
+                (event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros,crypto_fee_tier)
+                VALUES (${newId},'fee-account',${version},'ACTIVE','USD',100,100,100,${tier})`
+                }),
+              )
+            for (const [version, tier] of [
+              ['bayn.paper-account-snapshot.v1', null],
+              ['bayn.paper-account-snapshot.v2', 9],
+            ] as const) {
+              const rejected = yield* insert(version, tier).pipe(Effect.result)
+              expect(Result.isFailure(rejected)).toBe(true)
+              if (Result.isFailure(rejected)) {
+                expect(rejected.failure.reason._tag).toBe('ConstraintError')
+                expect(rejected.failure.reason.cause).toHaveProperty('code', '23514')
+              }
+            }
+            yield* insert('bayn.paper-account-snapshot.v2', 4)
+            expect(yield* sql`SELECT crypto_fee_tier FROM account_snapshots WHERE event_id = ${newId}`).toEqual([
+              { crypto_fee_tier: 4 },
+            ])
+          }),
+        )
+      })
 
     test('refuses a held broker position without changing authority or protocol constraints', async () => {
       await runtime.runPromise(

@@ -1,5 +1,6 @@
 import { Schema } from 'effect'
 import { Sha256Schema, SourceRevisionSchema, SymbolSchema, UtcInstantSchema } from '../schemas'
+import { nativeWallClock } from '../time'
 
 const EntryReadinessTimingSchema = Schema.Struct({
   batchId: Sha256Schema,
@@ -12,7 +13,8 @@ const EntryReadinessTimingSchema = Schema.Struct({
 })
 
 export const EntryTimingReceiptSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-entry-timing.v1'),
+  schemaVersion: Schema.Literal('bayn.jev-entry-timing.v2'),
+  clock: Schema.Literal(nativeWallClock),
   sourceRevision: SourceRevisionSchema,
   ...EntryReadinessTimingSchema.fields,
   decisionHash: Sha256Schema,

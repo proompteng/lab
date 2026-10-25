@@ -48,7 +48,8 @@ export enum MatchedRecommendation {
 }
 
 export const matchedEntryDefinition = {
-  schemaVersion: 'bayn.matched-entry-definition.v7',
+  schemaVersion: 'bayn.matched-entry-definition.v8',
+  timing: 'bayn.jev-entry-timing.v2: explicit native millisecond clock; conservative post-COMMIT bucket upper bound.',
   cryptoFees: cryptoTakerFeeSchedule,
   inventory:
     'bayn.jev-study-inventory.v1: complete native cycle and batch cut, including management and pending results.',
@@ -613,6 +614,7 @@ export const runMatchedEntryStudy = (
       const { evidenceHash: _evidenceHash, decisionEvidenceHash: _decisionEvidenceHash, ...claimed } = timing
       const {
         schemaVersion: _version,
+        clock: _clock,
         sourceRevision,
         batchId,
         observationHash,
@@ -801,7 +803,7 @@ export const runMatchedEntryStudy = (
       }
     })
     const report = {
-      schemaVersion: 'bayn.matched-entry-study.v7',
+      schemaVersion: 'bayn.matched-entry-study.v8',
       definition: matchedEntryDefinition,
       definitionHash,
       registration,

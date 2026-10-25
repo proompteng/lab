@@ -78,6 +78,10 @@ three signed installers under `registry.ide-newton.ts.net/lab/talos-kata-runtime
 running node. Galactic's Talos 1.14 Image Factory catalog must select the verified immutable extension before a
 scoped node rollout and runtime acceptance. The legacy 1.13.9 installers are not upgrade targets for Talos 1.14 nodes.
 
+Installer generation runs through `buildctl` and exports the archive directly from BuildKit. Set `BUILDKIT_HOST` to
+the native worker endpoint and provide Python 3. CI configures both through the shared BuildKit action and runner toolchain.
+The registry auth file, when present, is passed as a BuildKit secret.
+
 To reproduce an existing installer, use only the immutable extension digest recorded in the release receipt:
 
 ```bash
