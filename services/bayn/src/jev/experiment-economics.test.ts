@@ -6,8 +6,8 @@ import type { ReplayBrokerFill } from '../intraday-replay/broker'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { jevEvaluationCommand } from '../jev-evaluation-command'
-import { JevFailure, jevModel } from './contract'
-import { calculateReplayJevCosts } from '../intraday-replay/jev-costs'
+import { jevModel, prepareJevRequest } from './contract'
+import { calculateReplayInferenceCosts } from '../intraday-replay/inference-costs'
 import { applyReplayFill, createReplayLedger } from '../intraday-replay/ledger'
 import { retainedReplayFixture } from '../testing/retained-replay-fixture'
 import { BacktestComparisonInputSchema, BacktestIssue } from '../intraday-replay/backtest'
@@ -15,9 +15,12 @@ import { replayTestInstruments } from '../testing/replay-instruments'
 import { nativeJevFixture, nativeJevInference } from './native.test-support'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import { defaultJevProtocolDocument, jevBehaviorHash } from './protocol'
-import type { ReplayJevCall } from '../intraday-replay/jev-timing'
+import type { ReplayInferenceCall } from '../intraday-replay/inference-timing'
 import { jevInstructions } from './instructions'
-import { applyJevInstructions } from './instruction-evaluation'
+import { chartInferenceFixture } from './entry-inference.test-support'
+import { deriveEntryHandoffDisposition } from './entry-inference'
+import { makeNativeChartEvidence } from './chart-evidence'
+import { makeChartDecisionsRequest } from './chart-questions'
 import {
   compareJevEconomics,
   jevBacktestOutcome,
@@ -243,11 +246,32 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
   const captured = retainedReplayFixture()
   const native = nativeJevFixture()
   const original = Result.getOrThrow(makeJevTradingSignalRequest(native.observation.payload, 'AAPL'))
-  const prepared = Result.getOrThrow(applyJevInstructions(original.request, instructions))
   const at = '2026-09-04T14:30:02.000Z'
+  const visual = chartInferenceFixture(original.input, at)
+  const disposition = Result.getOrThrow(deriveEntryHandoffDisposition(original.input, visual))
+  if (disposition.status !== 'READY') throw Error('Fixture requires funded source-bound proposals')
+  const prepared = Result.getOrThrow(
+    prepareJevRequest({
+      ...disposition.jevRequest,
+      questions: Object.fromEntries(
+        Object.entries(disposition.jevRequest.questions).map(([name, question]) => [
+          name,
+          {
+            ...question,
+            instructions: {
+              ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(question.instructions),
+              evidence: instructions.entry,
+            },
+          },
+        ]),
+      ),
+    }),
+  )
   const inference = nativeJevInference(prepared.request, at)
-  const call: ReplayJevCall = {
-    schemaVersion: 'bayn.replay-jev-call.v1',
+  const call: ReplayInferenceCall = {
+    stage: 'JEV',
+    budgetMs: 10_000,
+    schemaVersion: 'bayn.replay-inference-call.v2',
     request: prepared.request,
     requestHash: prepared.requestHash,
     simulatedStartedAt: at,
@@ -255,6 +279,21 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
     providerCompletedAt: at,
     outcome: { status: 'RECEIVED', inference },
   }
+  const visualRequest = Result.getOrThrow(
+    makeChartDecisionsRequest(Result.getOrThrow(makeNativeChartEvidence(original.input.chartSource))),
+  )
+  const chartCall: ReplayInferenceCall = {
+    schemaVersion: 'bayn.replay-inference-call.v2',
+    stage: 'CHART',
+    budgetMs: 10_000,
+    request: visualRequest.request,
+    requestHash: visualRequest.requestHash,
+    simulatedStartedAt: at,
+    providerStartedAt: at,
+    providerCompletedAt: at,
+    outcome: { status: 'RECEIVED', inference: visual },
+  }
+  const calls = [chartCall, call]
   let ledger = Result.getOrThrow(createReplayLedger<ReplayBrokerFill>('10000000000'))
   for (const [side, priceMicros] of [
     ['buy', '100000000'],
@@ -285,27 +324,35 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
         1000000,
       ),
     )
-  const tariff = { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' }
-  const costs = calculateReplayJevCosts([call], tariff)
+  const tariff = {
+    jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+    chart: {
+      inputMicrosPerMillionTokens: '100000',
+      outputMicrosPerMillionTokens: '0',
+      cachedInputMicrosPerMillionTokens: '10000',
+      cacheWriteInputMicrosPerMillionTokens: '125000',
+    },
+  }
+  const costs = calculateReplayInferenceCosts(calls, tariff)
   if (ledger.netRealizedPnlAfterCostsMicros === null) throw Error('Fixture must close')
   const net = BigInt(ledger.netRealizedPnlAfterCostsMicros) - BigInt(costs.knownCostMicros) - 10n
   const material = {
-    schemaVersion: 'bayn.backtest-report.v4',
+    schemaVersion: 'bayn.backtest-report.v5',
     executableSha256: sha256('SYNTHETIC economic fixture executable ' + hash(instructions)),
     jevInstructions: { document: instructions, contentHash: hash(instructions) },
     evidenceMode: 'simulated-production-execution',
     runId: run.repeat(64),
     inference: {
       definition: {
-        mode: 'measured-provider',
+        mode: 'measured-providers',
         maximumCalls: 1000,
-        model: jevModel,
+        models: { jev: jevModel, chart: 'gpt-6-luna' },
         inputDefinition: defaultJevProtocolDocument.inputDefinition,
         costs: tariff,
       },
       costs,
-      calls: [call],
-      providerDispatchCount: 1,
+      calls,
+      providerDispatchCount: 2,
     },
     completion: 'COMPLETE',
     issues: [],
@@ -351,7 +398,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
     ],
   }
   const comparisonInput = Schema.decodeUnknownSync(BacktestComparisonInputSchema)({
-    schemaVersion: 'bayn.backtest.v5',
+    schemaVersion: 'bayn.backtest.v6',
     inference: material.inference.definition,
     allocatedDataCostPerSessionMicros: '10',
     interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-04T20:00:00.000Z' },
@@ -469,7 +516,7 @@ test('native fills and metered calls reproduce net returns with fees booked once
   expect(result.rows[0]?.netMicros).toBe(String(BigInt(report.reconciledNetPnlAfterCostsMicros) - 5n))
   expect(result.conservativeMaximumDrawdownMicros).toBe('105')
   expect(BigInt(report.brokerState.ledger.executionFeesMicros)).toBeGreaterThan(0n)
-  expect(result.providerRequests).toBe(1)
+  expect(result.providerRequests).toBe(2)
   const next = reseal({ ...report, runId: 'b'.repeat(64), source: { ...report.source, runId: 'b'.repeat(64) } })
   expect(Result.getOrThrow(project(next)).contextHash).toBe(result.contextHash)
 })
@@ -477,7 +524,7 @@ test('native fills and metered calls reproduce net returns with fees booked once
 test('retained received calls cannot exceed the provider budget by understating dispatch count', () => {
   const original = nativeReportFixture()
   const calls = [...original.inference.calls, ...original.inference.calls]
-  const costs = calculateReplayJevCosts(calls, original.inference.definition.costs)
+  const costs = calculateReplayInferenceCosts(calls, original.inference.definition.costs)
   const difference = BigInt(costs.knownCostMicros) - BigInt(original.inference.costs.knownCostMicros)
   const definition = { ...original.inference.definition, maximumCalls: 1 }
   const comparisonInput = { ...original.comparisonInput, inference: definition }
@@ -507,62 +554,38 @@ test('retained received calls cannot exceed the provider budget by understating 
   ).toBe(true)
 })
 
-test('undispatched and ambiguous calls retain their budget bounds and incomplete costs', () => {
+test('interrupted and defective calls retain consumed budget and incomplete costs', () => {
   const original = nativeReportFixture()
-  const call = original.inference.calls[0]
-  if (call === undefined) throw Error('Fixture needs a retained provider call')
-  const outcomes: ReplayJevCall['outcome'][] = [
-    {
-      status: 'FAILED',
-      failure: JevFailure.NotDispatched,
-      httpStatus: null,
-      responseHash: null,
-      rejectedResponse: null,
-    },
-    { status: 'INTERRUPTED' },
-    { status: 'DEFECT' },
-  ]
+  const call = original.inference.calls.find((value) => value.stage === 'JEV')
+  const chart = original.inference.calls.find((value) => value.stage === 'CHART')
+  if (call === undefined || chart === undefined) throw Error('Fixture needs both provider calls')
+  const outcomes = [{ status: 'INTERRUPTED' }, { status: 'DEFECT' }] as const
   for (const outcome of outcomes) {
-    const calls = [{ ...call, outcome }]
-    const costs = calculateReplayJevCosts(calls, original.inference.definition.costs)
+    const calls = [chart, { ...call, outcome }]
+    const costs = calculateReplayInferenceCosts(calls, original.inference.definition.costs)
     const material = {
       ...original,
       completion: 'INCOMPLETE',
       issues: [BacktestIssue.UnresolvedModelCost],
       maximumObservedDrawdownMicros: null,
       reconciledNetPnlAfterCostsMicros: null,
-      inference: { ...original.inference, calls, costs, providerDispatchCount: 0 },
+      inference: { ...original.inference, calls, costs, providerDispatchCount: calls.length },
       sessions: original.sessions.map((row) => ({
         ...row,
         completion: 'INCOMPLETE',
         issues: [BacktestIssue.UnresolvedModelCost],
         modelCosts: costs,
-        closingNetEquityMicros: String(BigInt(row.closingNetEquityMicros) + BigInt(row.modelCosts.knownCostMicros)),
+        closingNetEquityMicros: String(
+          BigInt(row.closingNetEquityMicros) + BigInt(row.modelCosts.knownCostMicros) - BigInt(costs.knownCostMicros),
+        ),
         netEquityChangeMicros: null,
       })),
     }
     expect(Result.getOrThrow(project(reseal(material))).rows.every((row) => !row.complete)).toBe(true)
-    const maximumDispatches = outcome.status === 'FAILED' ? 0 : 1
-    expect(
-      Result.isSuccess(
-        project(
-          reseal({
-            ...material,
-            inference: { ...material.inference, providerDispatchCount: maximumDispatches },
-          }),
-        ),
-      ),
-    ).toBe(true)
-    expect(
-      Result.isFailure(
-        project(
-          reseal({
-            ...material,
-            inference: { ...material.inference, providerDispatchCount: maximumDispatches + 1 },
-          }),
-        ),
-      ),
-    ).toBe(true)
+    for (const providerDispatchCount of [0, calls.length + 1])
+      expect(
+        Result.isFailure(project(reseal({ ...material, inference: { ...material.inference, providerDispatchCount } }))),
+      ).toBe(true)
   }
 })
 

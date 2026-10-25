@@ -9,8 +9,8 @@ import {
   jevEndpoint,
   prepareJevRequest,
   JevFailure,
+  JevInferenceSchema,
   JevResponseSchema,
-  type JevResponse,
 } from './contract'
 
 const failedResponseUsageSchema = Schema.Struct({
@@ -29,17 +29,11 @@ export class JevError extends Data.TaggedError('JevError')<{
   readonly cause?: Redacted.Redacted<unknown>
 }> {}
 
-export interface JevInference {
-  readonly requestHash: string
-  readonly responseHash: string
-  readonly startedAt: string
-  readonly completedAt: string
-  readonly response: JevResponse
-}
+export type JevInference = typeof JevInferenceSchema.Type
 
 export class JevClient extends Context.Service<
   JevClient,
-  { readonly evaluate: (request: unknown) => Effect.Effect<JevInference, JevError> }
+  { readonly evaluate: (request: unknown, budgetMs: number) => Effect.Effect<JevInference, JevError> }
 >()('@proompteng/bayn/JevClient') {}
 
 export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number) =>
@@ -58,8 +52,14 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
           message: 'Jev requires a key and a 1-10000ms timeout',
         })
       }
-      const evaluate = (input: unknown): Effect.Effect<JevInference, JevError> =>
+      const evaluate = (input: unknown, budgetMs: number): Effect.Effect<JevInference, JevError> =>
         Effect.gen(function* () {
+          if (!Number.isSafeInteger(budgetMs) || budgetMs <= 0 || budgetMs > 10_000)
+            return yield* new JevError({
+              failure: JevFailure.Request,
+              message: 'Jev requires a remaining deadline of 1-10000ms',
+            })
+          const remainingMs = Math.min(timeoutMs, budgetMs)
           const prepared = yield* Effect.fromResult(prepareJevRequest(input)).pipe(
             Effect.mapError(
               (cause) =>
@@ -146,7 +146,7 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
               })
             }
             const completed = yield* Clock.currentTimeMillis
-            if (completed < started || completed - started >= timeoutMs) {
+            if (completed < started || completed - started >= remainingMs) {
               return yield* new JevError({
                 failure: JevFailure.Timeout,
                 message: 'Jev response arrived outside its inference deadline',
@@ -163,7 +163,7 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
               response: decoded,
             }
           }).pipe(
-            Effect.timeout(`${timeoutMs} millis`),
+            Effect.timeout(`${remainingMs} millis`),
             Effect.mapError((cause) =>
               cause instanceof JevError
                 ? cause

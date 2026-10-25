@@ -150,12 +150,17 @@ export const normalizeSnapshot = (
 ): Result.Result<NormalizedBrokerSnapshot, ReconciliationError> =>
   Result.gen(function* () {
     const expandedBindings = [...bindings]
+    const bindingByClient = new Map<string, IntentBinding>()
+    for (const binding of bindings) {
+      // Preserve the first binding and defer duplicate validation until after protection verification.
+      if (!bindingByClient.has(binding.clientOrderId)) bindingByClient.set(binding.clientOrderId, binding)
+    }
     const rows: Observed<BrokerOrder>[] = []
     for (const observed of snapshot.history.orders.rows) {
       rows.push(observed)
       const parent = observed.value
       if (parent.legs === undefined) continue
-      const binding = bindings.find((item) => item.clientOrderId === parent.clientOrderId)
+      const binding = bindingByClient.get(parent.clientOrderId)
       if (binding?.protection === undefined || binding.symbol === undefined || binding.quantityAtoms === undefined)
         return yield* Result.fail(
           validationFailure('UnexpectedOrderEvent', 'broker children have no immutable strategy protection intent'),
