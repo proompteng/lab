@@ -144,6 +144,16 @@ worker before native dispatch. A retry recovers an existing accepted run before 
   integration error. Form support includes strings, booleans, numbers, integers, primitive enums and length/range bounds.
   Question responses require the updated controller and guest together; an older peer rejects them rather than
   treating them as action approvals.
+- Asynchronous `request_user_input_async` questions arrive in `agentMessage.questions`. Their choices and free-text
+  controls render from both live items and restored history, including messages without text. The first suggested
+  choice is selected initially; nothing is submitted automatically. Answers use Codex's identified desktop question
+  reply envelope through the existing durable message/steering path, preserving composer drafts and attachments.
+  Failed delivery keeps the answers editable and reuses the pending message identity for an unchanged retry.
+  Canonical reply messages retire the matching question controls after reload or another client's answer. The
+  transcript displays readable questions and answers rather than the wire envelope. Dismiss for now hides controls
+  only for the current open workspace and sends no answer. Message text remains visible alongside question controls.
+  Unanswered async items survive the ordinary event-buffer limit; answered or dismissed items return to normal
+  eviction. Free-text input remains editable even when it contains or exactly matches a suggested choice.
 - A failed turn renders the app-server failure text as an error before clearing active-turn controls.
 - A missing saved conversation returns HTTP 404 with `code: conversation_not_found`, rather than a control-plane
   outage. The desktop keeps the saved thread ID during retries and offers **Start a new conversation** beside the
