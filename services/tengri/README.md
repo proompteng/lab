@@ -1,9 +1,8 @@
 # Tengri control plane
 
-The additive `ConnectorAgent` RPC is [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
-Without the exact server-side setting `TENGRI_CONNECTORS_ENABLED=true`, it returns
-`UNIMPLEMENTED` before authentication, workspace lookups or guest calls. Existing
-workspace and conversation requests do not call Relay.
+Relay client installation is an authenticated guest-control operation. It uses the shared
+[Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit
+installation acknowledgement before activation. The former dormant connector gate and contract are removed.
 
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
 `internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
@@ -323,7 +322,7 @@ as ready to accept agent operations.
 ## Workspace authorization
 
 Ofz owns authorization for the controller and BFF. Tengri calls the canonical
-[AuthorizationService](../../proto/proompteng/authz/v1/authz.proto) over exact-peer SPIFFE mutual TLS; it never
+[TengriAuthorizationService](../../proto/proompteng/authz/v1/authz.proto) over exact-peer SPIFFE mutual TLS; it never
 receives a SpiceDB administrative key, installs schema, or creates owner tuples directly. The canonical
 [operation catalog](../ofz/operations.json) maps each runtime RPC to an explicit action. Local Kubernetes labels,
 names and owner fields locate resources; Ofz checks the actual MicroVM UID and current runtime epoch.
