@@ -475,6 +475,36 @@ class CollectorTests(unittest.TestCase):
             1,
         )
 
+    def test_history_budget_resumes_busy_day_without_restarting_its_search(self):
+        api = FakeGitHub({}, {})
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        clock = [self.now]
+
+        def runs(*_args):
+            for index in range(3):
+                clock[0] += 6
+                yield run() | {"id": 100 + index}
+
+        with (
+            patch.object(api, "runs", side_effect=runs, create=True) as discovery,
+            patch("time.time", side_effect=lambda: clock[0]),
+        ):
+            observer.history(self.now, days=1, windows=1)
+            self.assertEqual(observer.history_day, 0)
+            self.assertEqual(
+                self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0],
+                2,
+            )
+            observer.history(self.now, days=1, windows=1)
+        discovery.assert_called_once()
+        self.assertEqual(observer.history_day, 1)
+        self.assertEqual(observer.last_history, self.now + 18)
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 3
+        )
+
     def test_search_over_1000_results_is_split_without_silently_truncating(self):
         api = GitHub("unused")
         requests = []

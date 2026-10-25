@@ -88,6 +88,10 @@ Observability is exposed over Tailscale using `Ingress` resources (not `Service`
 - Mimir nginx: `mimir.ide-newton.ts.net`
 - Tempo gateway: `tempo.ide-newton.ts.net`
 
+Grafana permits anonymous Viewer access to dashboards and data source queries on the private Tailscale and
+`grafana.k8s.proompteng.ai` routes. The login form is hidden; existing signed-in administrators retain management
+access. Keep these routes private when changing ingress or network exposure.
+
 ## Reflect RGW credentials
 
 1. Keep `CephObjectStoreUser/loki` and the source secret annotation manifests owned by the `rook-ceph` app.
