@@ -433,6 +433,12 @@ beforeAll(async () => {
         callback(serviceError(grpc.status.UNIMPLEMENTED, 'model/list is unavailable'), null)
         return
       }
+      if (call.request.agentId === 'retained-runtime-upgrade') {
+        const error = serviceError(grpc.status.FAILED_PRECONDITION, 'retained guest protocol differs')
+        error.metadata.set('x-tengri-error-code', 'runtime_upgrade_required')
+        callback(error, null)
+        return
+      }
       if (call.request.agentId === 'catalog-cancel') {
         catalogRequestStarted?.()
         const timer = setTimeout(
@@ -1795,6 +1801,16 @@ describe('Tengri gRPC BFF transport', () => {
       operationId: '22222222-2222-4222-8222-222222222222',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
       responseJson: Buffer.alloc(0),
+    })
+  })
+
+  test('identifies an incompatible retained guest as requiring a runtime upgrade', async () => {
+    const { listCodexModels } = await import('./grpc')
+
+    expect(await rejection(listCodexModels(identity, 'retained-runtime-upgrade'))).toMatchObject({
+      message: 'This workspace needs a runtime upgrade before it can reconnect.',
+      status: 412,
+      code: 'runtime_upgrade_required',
     })
   })
 
