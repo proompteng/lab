@@ -21,7 +21,7 @@ test('preserves the synthetic complete report and evidence hashes across input o
         {
           ...input,
           cycles: input.cycles.toReversed(),
-          executionEvidence: input.executionEvidence?.toReversed(),
+          executionEvidence: input.executionEvidence.toReversed(),
           transactions: input.transactions.toReversed(),
         },
         [],
@@ -87,7 +87,7 @@ test('execution evidence hash failures retain their exact error before reading c
     {
       ...input,
       account: { ...input.account, accountId: '\ud800' },
-      get cycles() {
+      get cycles(): typeof input.cycles {
         throw new Error('cycle identities must not be read after failed source hashing')
       },
     },

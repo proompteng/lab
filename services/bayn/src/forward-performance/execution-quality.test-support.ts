@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto'
 import type { ForwardPerformanceEvidenceInput, ForwardPerformanceExecutionEvidence } from './model'
 
 /** Synthetic completed fills only; no account, broker, database or market-data reads. */
-export const executionQualityFixture = (count: number): ForwardPerformanceEvidenceInput => {
+export const executionQualityFixture = (
+  count: number,
+): ForwardPerformanceEvidenceInput & { readonly executionEvidence: readonly ForwardPerformanceExecutionEvidence[] } => {
   const hash = (value: string) => createHash('sha256').update(value).digest('hex')
   const accountId = 'synthetic-forward-performance'
   const createdAt = '2026-07-20T13:30:00.000Z'
