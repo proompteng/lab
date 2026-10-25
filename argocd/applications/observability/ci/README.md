@@ -86,8 +86,10 @@ establish that a CI change caused an improvement.
 
 ## Alerts and recovery
 
-The `ci-build-performance.rules` Mimir group covers unavailable scraping, stale GitHub polling, stale historical
-discovery, delayed Loki records, sustained queues and duration regressions. The duration alert compares successful
+The `ci-build-performance.rules` Mimir group covers unavailable scraping, stale GitHub polling, stalled historical
+discovery, delayed Loki records, sustained queues and duration regressions. History liveness uses index-reading
+progress; an initial scan still making progress does not trigger the stalled-discovery alert. The separate full-scan
+timestamp and backfill state retain coverage information. The duration alert compares successful
 push build jobs within the same workflow, declared job family, architecture, runner pool and cache class. Unknown
 families and cache evidence remain visible but cannot trigger the duration alert. It requires five recent samples
 and ten baseline samples, then a median above 1.5 times baseline plus 60 seconds for ten minutes. A single cold-cache

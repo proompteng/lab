@@ -135,6 +135,10 @@ METRICS = {
         "gauge",
         "Last complete historical rerun discovery scan.",
     ),
+    "ci_observability_last_history_progress_timestamp_seconds": (
+        "gauge",
+        "Last progress reading the historical run index, including initial discovery.",
+    ),
     "ci_observability_collection_errors_total": (
         "counter",
         "Collection cycle failures since process start.",
@@ -963,6 +967,7 @@ class Collector:
         self.families = workflows
         self.active_runs, self.active_metrics = {}, ""
         self.last_poll, self.last_history = 0, 0
+        self.last_history_progress = 0
         self.errors = 0
         self.cache_errors = 0
         self.history_day = 0
@@ -1054,12 +1059,14 @@ class Collector:
                     run = next(self.history_runs)
                 except StopIteration:
                     self.history_runs = None
+                    self.last_history_progress = time.time()
                     break
                 except Exception:
                     self.history_runs = None
                     raise
                 if self.selected(run):
                     self.store.discover(run, now)
+                self.last_history_progress = time.time()
             self.history_day = next_day
             if self.history_day == days:
                 self.last_history = time.time()
@@ -1211,6 +1218,7 @@ class Collector:
         for name, value in {
             "last_poll_timestamp_seconds": self.last_poll,
             "last_history_scan_timestamp_seconds": self.last_history,
+            "last_history_progress_timestamp_seconds": self.last_history_progress,
             "collection_errors_total": self.errors,
             "cache_errors_total": self.cache_errors,
             "github_rate_limit_remaining": self.api.remaining,
