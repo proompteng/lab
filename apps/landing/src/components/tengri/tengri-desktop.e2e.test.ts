@@ -2363,6 +2363,56 @@ test('ignores an old conversation failure after switching to a successfully load
   await expect(tengri.locator('[data-conversation-id="thread-beta"]')).toHaveAttribute('aria-current', 'true')
 })
 
+test('keeps a restored native chat selected when archive notifications replay', async ({ page }) => {
+  await mockTengri(page, {
+    preserveDraftStorageOnReload: true,
+    threadStore: { threads: [{ id: 'thread-restored', title: 'Restored chat', updatedAt: 2, archived: false }] },
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-restored',
+            status: 'completed',
+            items: [{ id: 'reply-restored', type: 'agentMessage', text: 'Retained native reply.' }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem('restored-selected-once')) {
+      localStorage.setItem('tengri-thread:microvm-ada', 'thread-restored')
+      sessionStorage.setItem('restored-selected-once', 'true')
+    }
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const row = chat.locator('[data-conversation-id="thread-restored"]')
+  await expect(chat.getByText('Retained native reply.', { exact: true })).toBeVisible()
+  for (const [sequence, method] of [
+    [1, 'thread/archived'],
+    [2, 'thread/unarchived'],
+  ] as const) {
+    await emitCodexEvent(page, {
+      sequence,
+      method,
+      kind: 'thread-state',
+      threadId: 'thread-restored',
+      turnId: '',
+      itemId: '',
+      approvalId: '',
+      text: '',
+      rawJson: JSON.stringify({ method, params: { threadId: 'thread-restored' } }),
+    })
+  }
+  await expect(row).toHaveAttribute('aria-current', 'true')
+  await expect(chat.getByText('Retained native reply.', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-restored')
+  await page.reload()
+  await expect(row).toHaveAttribute('aria-current', 'true')
+  await expect(chat.getByText('Retained native reply.', { exact: true })).toBeVisible()
+})
+
 for (const width of [1440, 390]) {
   test(`shows a conversation skeleton while saved history loads at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
