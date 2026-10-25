@@ -303,6 +303,21 @@ class CollectorTests(unittest.TestCase):
                 self.store.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0
             )
             self.assertNotIn("run_id", received[0]["streams"][0]["stream"])
+            another = job_record(run(), job())
+            another["job_id"] += 100
+            self.store.save_job(another, cache_evidence(""))
+            with (
+                patch.object(
+                    observer, "poll", side_effect=RuntimeError("GitHub unavailable")
+                ),
+                patch("time.sleep", side_effect=StopIteration),
+            ):
+                with self.assertRaises(StopIteration):
+                    observer.run()
+            self.assertEqual(
+                self.store.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0
+            )
+            self.assertEqual(len(received), 3)
         finally:
             server.shutdown()
             worker.join()
@@ -357,6 +372,41 @@ class CollectorTests(unittest.TestCase):
         ):
             self.assertIn(value, line)
         self.assertTrue(observer.last_poll > 0)
+
+    def test_finished_job_is_collected_before_its_workflow_finishes(self):
+        active_run = run()
+        active_run["status"] = "in_progress"
+        api = FakeGitHub({1: run()}, {1: [job()]})
+
+        def pages(path, key, conditional=False):
+            if "/attempts/" in path:
+                return iter([job()])
+            return iter([active_run] if path.endswith("status=in_progress") else [])
+
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with (
+            patch.object(api, "pages", side_effect=pages),
+            patch.object(api, "runs", return_value=iter([]), create=True),
+            patch("time.time", return_value=self.now),
+        ):
+            observer.poll(self.now)
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1
+        )
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 0
+        )
+        self.store.discover(run(), self.now)
+        observer.collect_attempt(self.store.pending())
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1
+        )
+        counts = self.store.db.execute(
+            "SELECT count FROM aggregates WHERE metric='ci_job_phase_duration_seconds'"
+        ).fetchall()
+        self.assertTrue(all(row[0] == 1 for row in counts))
 
     def test_search_over_1000_results_is_split_without_silently_truncating(self):
         api = GitHub("unused")

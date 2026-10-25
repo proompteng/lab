@@ -50,6 +50,8 @@ tests:
   - name: a well sampled matched median regression fires
     interval: 1m
     input_series:
+      - series: ci_observability_backfill_complete
+        values: 1+0x30
       - series: ci_observability_last_poll_timestamp_seconds
         values: 0+60x30
       - series: ci_job_duration_percentile_seconds{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build",job_family="build",event="push",outcome="success",phase="execution",cache_state="warm",percentile="50",window="1h"}
@@ -74,6 +76,8 @@ tests:
   - name: one cold build cannot satisfy the sample gate
     interval: 1m
     input_series:
+      - series: ci_observability_backfill_complete
+        values: 1+0x30
       - series: ci_observability_last_poll_timestamp_seconds
         values: 0+60x30
       - series: ci_job_duration_percentile_seconds{workflow="temporal-worker-images.yml",architecture="arm64",runner_pool="arc",job_role="build",job_family="build",event="push",outcome="success",phase="execution",cache_state="cold",percentile="50",window="1h"}

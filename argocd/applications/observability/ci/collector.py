@@ -141,6 +141,10 @@ METRICS = {
         "gauge",
         "Remaining GitHub requests in the shared authentication quota.",
     ),
+    "ci_observability_backfill_complete": (
+        "gauge",
+        "Historical discovery has completed and initial pending attempts are drained.",
+    ),
 }
 
 
@@ -969,10 +973,10 @@ class Collector:
                 f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"
             )
             for job in jobs:
-                if (
-                    job["run_attempt"] != run["run_attempt"]
-                    or job["status"] == "completed"
-                ):
+                if job["run_attempt"] != run["run_attempt"]:
+                    continue
+                if job["status"] == "completed":
+                    self.collect_job(run, job, now + 20)
                     continue
                 state = job["status"] if job["status"] in ACTIVE_STATES else "waiting"
                 record = job_record(run, job, self.families[workflow])
@@ -1020,6 +1024,21 @@ class Collector:
             if self.history_day == days:
                 self.last_history = time.time()
 
+    def collect_job(self, run, job, deadline):
+        if self.store.db.execute(
+            "SELECT 1 FROM jobs WHERE job_id=?", (job["id"],)
+        ).fetchone():
+            return
+        workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
+        record = job_record(run, job, self.families[workflow])
+        log = (
+            self.api.log(job["id"])
+            if time.time() < deadline
+            and any(k in record["durations"] for k in ("build", "build_and_publish"))
+            else None
+        )
+        self.store.save_job(record, cache_evidence(log or ""))
+
     def collect_attempt(self, pending):
         try:
             run = self.api.get(
@@ -1047,21 +1066,7 @@ class Collector:
         for job in jobs:
             if job["status"] != "completed":
                 raise RuntimeError("Completed run still has nonterminal jobs")
-            if self.store.db.execute(
-                "SELECT 1 FROM jobs WHERE job_id=?", (job["id"],)
-            ).fetchone():
-                continue
-            workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
-            record = job_record(run, job, self.families[workflow])
-            log = (
-                self.api.log(job["id"])
-                if time.time() < deadline
-                and any(
-                    k in record["durations"] for k in ("build", "build_and_publish")
-                )
-                else None
-            )
-            self.store.save_job(record, cache_evidence(log or ""))
+            self.collect_job(run, job, deadline)
         self.store.finish(run, jobs)
 
     def flush(self):
@@ -1105,9 +1110,31 @@ class Collector:
             "last_history_scan_timestamp_seconds": self.last_history,
             "collection_errors_total": self.errors,
             "github_rate_limit_remaining": self.api.remaining,
+            "backfill_complete": int(
+                self.last_history > 0
+                and not self.store.db.execute(
+                    "SELECT 1 FROM attempts WHERE state='pending' AND priority<? LIMIT 1",
+                    (self.store.installed_at,),
+                ).fetchone()
+            ),
         }.items():
             metrics += exposition("ci_observability_" + name, value)
         self.metrics = metrics.encode()
+
+    def failure(self, error):
+        self.errors += 1
+        print(
+            json.dumps(
+                {
+                    "event": "ci_collection_failed",
+                    "error_type": type(error).__name__,
+                    "message": str(error)
+                    if isinstance(error, RuntimeError)
+                    else "Collection request failed",
+                }
+            ),
+            flush=True,
+        )
 
     def run(self):
         while True:
@@ -1120,31 +1147,26 @@ class Collector:
                     pending = self.store.pending()
                     if pending is None:
                         break
-                    self.collect_attempt(pending)
-                while self.store.db.execute("SELECT 1 FROM outbox LIMIT 1").fetchone():
-                    self.flush()
-                    if time.time() > begin + 55:
+                    if (
+                        pending["priority"] < self.store.installed_at
+                        and self.api.remaining < 2000
+                    ):
                         break
+                    self.collect_attempt(pending)
                 with self.store.db:
                     self.store.db.execute(
                         "DELETE FROM jobs WHERE completed < ?", (begin - 90 * 86400,)
                     )
-                self.refresh()
             except Exception as error:
-                self.errors += 1
-                print(
-                    json.dumps(
-                        {
-                            "event": "ci_collection_failed",
-                            "error_type": type(error).__name__,
-                            "message": str(error)
-                            if isinstance(error, RuntimeError)
-                            else "Collection request failed",
-                        }
-                    ),
-                    flush=True,
-                )
-                self.refresh()
+                self.failure(error)
+            try:
+                while self.store.db.execute("SELECT 1 FROM outbox LIMIT 1").fetchone():
+                    self.flush()
+                    if time.time() > begin + 55:
+                        break
+            except Exception as error:
+                self.failure(error)
+            self.refresh()
             time.sleep(max(1, 60 - (time.time() - begin)))
 
 

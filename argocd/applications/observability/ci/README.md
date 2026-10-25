@@ -18,7 +18,9 @@ Search windows over GitHub's 1,000-result limit are split before pagination. Col
 remain visible in metrics; stale collection never becomes a fabricated empty queue or successful build.
 
 The target is to collect a completed attempt within five minutes during healthy API operation. Newest completed
-attempts take priority over backfill. The initial backfill covers attempts updated within 14 days. Detailed SQLite
+attempts take priority over backfill. Completed jobs are collected while their workflow is still running, so one
+slow architecture cannot delay another job's telemetry. Backfill pauses below 2,000 remaining API requests, leaving
+headroom for current runs before the shared 1,000-request ARC reserve. The initial backfill covers attempts updated within 14 days. Detailed SQLite
 job records retain 90 days; histogram aggregates and deduplication keys survive Pod restarts on the 1 GiB retained
 Ceph claim. The single replica and `Recreate` rollout serialize SQLite writers. Do not scale this deployment.
 
@@ -81,6 +83,8 @@ push build jobs within the same workflow, declared job family, architecture, run
 families and cache evidence remain visible but cannot trigger the duration alert. It requires five recent samples
 and ten baseline samples, then a median above 1.5 times baseline plus 60 seconds for ten minutes. A single cold-cache
 outlier cannot move a five-sample median enough to create that condition on its own.
+The initial historical scan and backfill must complete before duration alerts can fire. Loki outbox delivery
+continues when GitHub polling fails; GitHub collection continues during a Loki outage.
 
 Inspect `ci-observability` logs and its collection freshness/API-headroom panels first. Check `github-token` identity
 and expiry through the existing ARC secret-sync procedure without printing its value or changing permissions.
