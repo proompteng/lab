@@ -243,11 +243,9 @@ impl RpcClient {
             });
         }
         if info.protocol_version != tengri::GUEST_API_PROTOCOL_VERSION {
-            return Err(GuestError::Api {
-                status: StatusCode::BAD_GATEWAY,
-                message:
-                    "The agent requires a retained-home runtime upgrade before it can reconnect."
-                        .into(),
+            return Err(GuestError::IncompatibleProtocol {
+                actual: info.protocol_version,
+                required: tengri::GUEST_API_PROTOCOL_VERSION,
             });
         }
         Ok(())

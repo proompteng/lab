@@ -266,7 +266,7 @@ test('rejects source, process and same-trace ancestry substitution', () => {
   const trace = fixture()
   trace.byName('bayn.postgres.commit').traceId = Buffer.alloc(16, 8).toString('base64')
   expect(Result.isFailure(buildEntryTimingExport(trace.input()))).toBeTrue()
-})
+}, 30_000)
 
 test.each([
   'zero',

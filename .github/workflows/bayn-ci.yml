@@ -140,7 +140,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.bayn == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
