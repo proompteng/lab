@@ -1,10 +1,8 @@
 # Nanoagent guest API
 
-The guest includes [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
-Its connector handlers require the exact server-side setting
-`TENGRI_CONNECTORS_ENABLED=true`; the default denies calls before creating
-identity files or changing Codex configuration. Packaging the client does not
-install a connector or change normal conversation startup.
+Relay client installation is an authenticated guest-control operation. It uses the shared
+[Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit
+installation acknowledgement before activation. The former dormant connector gate and contract are removed.
 
 `internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
@@ -55,7 +53,7 @@ failures stop immediately; closing the viewer cancels any retry without reportin
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
-[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 8 adds `StatFile`,
+[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 9 hard-migrates Relay client installation; protocol 8 added `StatFile`,
 which reads one path's metadata without listing its siblings. It uses the existing file-observation authority and
 workspace confinement. The controller rejects older guest API versions; roll out the paired controller and guest
 images together. The signed Ofz request protocol remains version 4. Nanoagent serves HTTP/2 gRPC and preview
@@ -255,8 +253,8 @@ The operating-system root is the private 1.5 GiB Firecracker disk. Snapshot slee
 processes. An explicitly fenced cold replacement resets the root from the image. The 32 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
-`/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
-real guest through the isolated [KVM test](../tengri/test-kvm.sh) to exercise mounts and network administration.
+`/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Its `--runtime` mode requires an independently provisioned real guest to exercise mounts and network administration;
+the container-based KVM fixture has been removed.
 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.164.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 32 GiB PVC-backed

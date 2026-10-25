@@ -3,6 +3,10 @@ import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, ran
 import { open, readFile, stat } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
+const uuid = (value) =>
+  typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) &&
+  !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(value)
 const digest = (bytes) => createHash('sha256').update(bytes).digest('base64url')
 const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url')
 
@@ -57,12 +61,23 @@ export async function invoke(config, operation, args, fetcher = fetch) {
     endpoint.password ||
     endpoint.search ||
     endpoint.hash ||
-    endpoint.pathname !== '/api/tengri/connectors/agent'
+    endpoint.pathname !== '/api/platform/relay/agent'
   )
-    throw new Error('An HTTPS Tengri connector endpoint is required')
+    throw new Error('An HTTPS Relay client endpoint is required')
   if (!/^[A-Za-z0-9_-]{43}$/.test(config.credential) || !/^[a-zA-Z0-9_.-]{1,128}$/.test(operation))
     throw new Error('Invalid connector grant configuration')
-  const body = Buffer.from(JSON.stringify({ connectionId: config.connectionId, operation, arguments: args }))
+  const operationId = randomUUID()
+  const body = Buffer.from(
+    JSON.stringify({
+      operationId,
+      clientService: config.clientService,
+      connectorId: config.connectorId,
+      operation,
+      arguments: args,
+      binding: config.binding,
+      delegationId: config.delegationId,
+    }),
+  )
   if (body.length > 1048576) throw new Error('Connector arguments exceed their byte budget')
   const privateKey = await privateFile(config.keyFile, 16384)
   const proof = proofFor({ endpoint: endpoint.toString(), credential: config.credential, privateKey, body })
@@ -74,7 +89,7 @@ export async function invoke(config, operation, args, fetcher = fetch) {
       'content-type': 'application/json',
       authorization: `DPoP ${config.credential}`,
       dpop: proof,
-      'x-tengri-grant': config.grantId,
+      'x-relay-delegation': config.delegationId,
     },
     body: JSON.stringify({ body: body.toString('base64') }),
   })
@@ -97,7 +112,15 @@ export async function invoke(config, operation, args, fetcher = fetch) {
   } finally {
     reader.releaseLock()
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')).result
+  const result = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  if (
+    result.operationId !== operationId ||
+    !uuid(result.authorizationReceiptId) ||
+    !uuid(result.executionReceiptId) ||
+    typeof result.result !== 'string'
+  )
+    throw new Error('Relay execution receipt is invalid')
+  return { content: [{ type: 'text', text: result.result }], isError: false }
 }
 
 async function main() {
