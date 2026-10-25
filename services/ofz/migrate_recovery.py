@@ -8,6 +8,7 @@ import json
 import sqlite3
 import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -257,6 +258,9 @@ def migrate_bucket(source, destination, bucket, directory, verify):
     inventory = versions(source, bucket)
     if any(item["DeleteMarker"] for item in inventory):
         raise RuntimeError("Source delete markers are outside this migration")
+    from botocore.exceptions import HTTPClientError
+    from urllib3.exceptions import ProtocolError
+
     ledger_path = directory / f"{bucket}.json"
     ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {}
     database = sqlite3.connect(directory / f"{bucket}.sqlite")
@@ -347,6 +351,7 @@ def migrate_bucket(source, destination, bucket, directory, verify):
                         ContentMD5=base64.b64encode(transport.digest()).decode(),
                         **extra,
                     )
+                    existing.setdefault(key, []).append(target["VersionId"])
                     record = {
                         "key": key,
                         "source_version": version,
@@ -376,9 +381,28 @@ def migrate_bucket(source, destination, bucket, directory, verify):
             copied.append((identity, record))
         return copied
 
+    def copy_with_retry(items):
+        for attempt in range(3):
+            try:
+                return copy_key(items)
+            except (HTTPClientError, ProtocolError) as error:
+                if attempt == 2:
+                    raise
+                print(
+                    json.dumps(
+                        {
+                            "bucket": bucket,
+                            "transport_retry": attempt + 1,
+                            "error": type(error).__name__,
+                        }
+                    ),
+                    flush=True,
+                )
+                time.sleep(attempt + 1)
+
     with ThreadPoolExecutor(max_workers=32) as pool:
         count = 0
-        pending = [pool.submit(copy_key, items) for items in groups.values()]
+        pending = [pool.submit(copy_with_retry, items) for items in groups.values()]
         for completed in as_completed(pending):
             try:
                 records = completed.result()
