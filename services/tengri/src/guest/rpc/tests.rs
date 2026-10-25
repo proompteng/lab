@@ -21,6 +21,7 @@ async fn identity_is_verified_over_authenticated_grpc() {
         ("expected", 2, false),
         ("expected", 3, false),
         ("expected", 4, false),
+        ("expected", 7, false),
     ] {
         let fixture = TestServer::start(TestService {
             get_info: Some(Arc::new(move |request| {
@@ -100,6 +101,32 @@ async fn grpc_only_guest_rejects_legacy_http_without_discovery_or_fallback() {
             "/proompteng.runtime.guest.v1.NanoagentService/ListFiles",
         ]
     );
+}
+
+#[tokio::test]
+async fn grpc_stat_reads_native_kind_without_a_directory_listing() {
+    let fixture = TestServer::start(TestService {
+        stat_file: Some(std::sync::Arc::new(|request| {
+            assert_eq!(request.get_ref().path, "/workspace/folder.md");
+            Ok(proto::FileEntry {
+                name: "folder.md".into(),
+                path: request.into_inner().path,
+                directory: true,
+                size: 4096,
+                modified_at: "2026-10-24T00:00:00Z".into(),
+            })
+        })),
+        ..Default::default()
+    })
+    .await;
+    let entry = fixture
+        .guest
+        .stat_file("/workspace/folder.md")
+        .await
+        .unwrap();
+    assert!(entry.directory);
+    assert_eq!(entry.path, "/workspace/folder.md");
+    assert_eq!(entry.size, 4096);
 }
 
 #[tokio::test]

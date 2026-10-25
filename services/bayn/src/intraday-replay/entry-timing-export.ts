@@ -4,6 +4,7 @@ import { Data, Effect, FileSystem, Option, Path, Result, Schema } from 'effect'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
+import { nativeWallClock, utcInstantFromEpochMillisResult } from '../time'
 import {
   Sha256Schema,
   SourceRevisionSchema,
@@ -135,6 +136,27 @@ const retainedSpan = ({ span }: RetainedSpan) => ({
   parentSpanId: span.parentSpanId ?? null,
   startTimeUnixNano: span.startTimeUnixNano,
   endTimeUnixNano: span.endTimeUnixNano,
+})
+const nativeWallInterval = ({ span }: RetainedSpan) =>
+  Result.gen(function* () {
+    if (!hasString(span.attributes, 'bayn.native_wall.clock', nativeWallClock))
+      return yield* fail('Native timing requires the explicit millisecond clock')
+    const startedAt = yield* Schema.decodeUnknownResult(UtcInstantSchema)(
+      yield* stringAttribute(span.attributes, 'bayn.native_wall.started_at'),
+    )
+    const finishedAt = yield* Schema.decodeUnknownResult(UtcInstantSchema)(
+      yield* stringAttribute(span.attributes, 'bayn.native_wall.finished_at'),
+    )
+    const start = intradayInstantNanos(startedAt)
+    const end = intradayInstantNanos(finishedAt)
+    if (end < start || start % nanosPerMillisecond !== 0n || end % nanosPerMillisecond !== 0n)
+      return yield* fail('Native wall interval is reversed or is not millisecond precision')
+    return { clock: nativeWallClock, startedAt, finishedAt, start, end }
+  })
+const retainedWallInterval = (interval: { readonly startedAt: string; readonly finishedAt: string }) => ({
+  clock: nativeWallClock,
+  startedAt: interval.startedAt,
+  finishedAt: interval.finishedAt,
 })
 
 export const buildEntryTimingExport = (input: {
@@ -288,32 +310,45 @@ export const buildEntryTimingExport = (input: {
     const selectedAt = intradayInstantNanos(deterministicSelectedAt)
     const completedAt = intradayInstantNanos(target.evidence.batchResult.completedAt)
     const createdAt = intradayInstantNanos(decision.createdAt)
-    const committedAt = BigInt(commit.span.endTimeUnixNano)
-    // Native annotations have millisecond resolution. Their millisecond intervals must overlap
-    // their enclosing native spans; compare raw clocks before commitment quantization.
+    const cycleWall = yield* nativeWallInterval(parent)
+    const planningWall = yield* nativeWallInterval(planning)
+    const bindingWall = yield* nativeWallInterval(binding)
+    const fenceWall = yield* nativeWallInterval(fence)
+    const commitWall = yield* nativeWallInterval(commit)
+    for (const [child, ancestor] of [
+      [planningWall, cycleWall],
+      [bindingWall, cycleWall],
+      [fenceWall, bindingWall],
+      [commitWall, fenceWall],
+    ] as const)
+      if (child.start < ancestor.start || child.end > ancestor.end)
+        return yield* fail('Native wall interval lies outside its retained parent clock')
+    // Effect's Unix-nanosecond projection may drift from currentTimeMillis. Compare
+    // domain timestamps only to explicit markers from that same native clock.
     if (
       inputAt < intradayInstantNanos(batch.observation.observedAt) ||
-      inputAt > BigInt(planning.span.startTimeUnixNano) ||
-      inputAt + nanosPerMillisecond <= BigInt(parent.span.startTimeUnixNano) ||
+      inputAt > planningWall.start ||
+      inputAt < cycleWall.start ||
       selectedAt < inputAt ||
-      selectedAt + nanosPerMillisecond <= BigInt(planning.span.startTimeUnixNano) ||
-      selectedAt > BigInt(planning.span.endTimeUnixNano) ||
-      BigInt(planning.span.endTimeUnixNano) > completedAt ||
+      selectedAt < planningWall.start ||
+      selectedAt > planningWall.end ||
+      planningWall.end > completedAt ||
       completedAt > createdAt ||
-      createdAt > BigInt(binding.span.startTimeUnixNano) ||
-      BigInt(binding.span.startTimeUnixNano) > committedAt
+      createdAt > bindingWall.start ||
+      bindingWall.start > commitWall.end
     )
       return yield* fail('Native readiness, selection, result, decision and commitment clocks conflict')
-    const committedMs = (committedAt + nanosPerMillisecond - 1n) / nanosPerMillisecond
-    const roundedCommitNanos = committedMs * nanosPerMillisecond
-    const decisionCommittedAt = yield* Schema.decodeUnknownResult(UtcInstantSchema)(
-      new Date(Number(committedMs)).toISOString(),
+    // The marker observes the millisecond bucket after ACK. Its upper bound never
+    // claims commitment earlier than that observation, even at an exact boundary.
+    const decisionCommittedAt = yield* utcInstantFromEpochMillisResult(
+      Number(commitWall.end / nanosPerMillisecond + 1n),
     )
     const timing = yield* Schema.decodeUnknownResult(
       EntryTimingReceiptSchema,
       strictParseOptions,
     )({
-      schemaVersion: 'bayn.jev-entry-timing.v1',
+      schemaVersion: 'bayn.jev-entry-timing.v2',
+      clock: nativeWallClock,
       sourceRevision: input.sourceRevision,
       batchId: batch.plan.batchId,
       observationHash: batch.plan.observationHash,
@@ -327,7 +362,7 @@ export const buildEntryTimingExport = (input: {
     })
     const timingText = `${JSON.stringify(timing, null, 2)}\n`
     const material = {
-      schemaVersion: 'bayn.jev-entry-timing-export.v1',
+      schemaVersion: 'bayn.jev-entry-timing-export.v2',
       sourceFormat: 'TEMPO_QUERY_JSON',
       scope: 'OBSERVED_ENTRY_TIMING_ONLY',
       qualification: 'UNQUALIFIED',
@@ -351,15 +386,23 @@ export const buildEntryTimingExport = (input: {
         writerFence: retainedSpan(fence),
         commit: retainedSpan(commit),
       },
+      nativeWall: {
+        cyclePass: retainedWallInterval(cycleWall),
+        planning: retainedWallInterval(planningWall),
+        binding: retainedWallInterval(bindingWall),
+        writerFence: retainedWallInterval(fenceWall),
+        commit: retainedWallInterval(commitWall),
+      },
       commitment: {
-        policy: 'CEIL_TO_MILLISECOND',
-        acknowledgedUnixNano: String(committedAt),
-        receiptUnixNano: String(roundedCommitNanos),
-        addedNanoseconds: String(roundedCommitNanos - committedAt),
+        policy: 'UPPER_BOUND_NATIVE_MILLISECOND',
+        clock: nativeWallClock,
+        observedAt: commitWall.finishedAt,
+        receiptAt: decisionCommittedAt,
+        addedMilliseconds: 1,
       },
       limitations: [
         'Original trace and native decision bytes must be retained and independently verified; hashes identify bytes, not capture provenance.',
-        'The v1 receipt conservatively rounds acknowledged commitment up by less than one millisecond; exact span nanoseconds remain in this receipt.',
+        'The v2 receipt uses the upper bound of the native millisecond bucket observed after COMMIT ACK; trace nanoseconds are a separate clock and remain retained.',
         'No complete source, session or controller coverage, capacity, latency calibration, cost allocation or profitability qualification is established.',
         'Only current native decision schemas are accepted; historical protocols are not rewritten or supplied by fallback.',
       ],

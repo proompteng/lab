@@ -433,6 +433,7 @@ spec:
                   argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
                 managedNamespaceMetadata:
                   labels:
+                    external-secrets.proompteng.ai/enabled: "true"
                     # The TigerBeetle client requires an explicit io_uring seccomp exception.
                     # The Bayn container remains non-root with no capabilities or privilege escalation.
                     pod-security.kubernetes.io/enforce: privileged

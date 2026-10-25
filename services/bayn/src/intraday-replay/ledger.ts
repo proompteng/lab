@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { Result, Schema } from 'effect'
 
 import type { ExecutionModel } from '../execution-model-contract'
@@ -123,7 +124,7 @@ const cumulativeFees = (fills: readonly EconomicReplayFill[], model: ExecutionMo
     }
     let total = 0n
     for (const inputs of sessions.values()) {
-      const fees = calculateSessionFees(inputs, model, multiplier)
+      const fees = calculateSessionFees(inputs, model, multiplier, cryptoMaximumTakerFeeBps)
       if (Result.isFailure(fees)) return yield* accountingFailure<bigint>(fees.failure)
       total += fees.success.totalMicros
     }
@@ -197,6 +198,7 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
     const receivedFee = receivedCryptoFee(
       { symbol: fill.symbol, side, quantityAtoms: filledQuantity.success, notionalMicros: fillNotional.success },
       feeMultiplier.success,
+      cryptoMaximumTakerFeeBps,
     )
     const netQuantity = filledQuantity.success - receivedFee.quantityAtoms
     if (netQuantity <= 0n) return invalid('fill.quantityAtoms', fill.quantityAtoms, 'inconsistent-fees')
@@ -260,6 +262,7 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
   const receivedFee = receivedCryptoFee(
     { symbol: fill.symbol, side, quantityAtoms: filledQuantity.success, notionalMicros: fillNotional.success },
     feeMultiplier.success,
+    cryptoMaximumTakerFeeBps,
   )
   const cashFeeDelta = feeDelta - (receivedFee.valueMicros - receivedFee.cashMicros)
   const nextCash = cashBeforeFees - cashFeeDelta

@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import type { FeeActivity } from '../broker/alpaca/model'
 import { receivedCryptoFee } from '../strategy/execution-model/fees'
 import type { EconomicReplayFill } from './ledger'
@@ -14,6 +15,7 @@ export const replayFeeActivity = (
   const received = receivedCryptoFee(
     { ...fill, quantityAtoms: BigInt(fill.quantityAtoms), notionalMicros: BigInt(fill.notionalMicros) },
     BigInt(feeMultiplierPpm),
+    cryptoMaximumTakerFeeBps,
   )
   return {
     accountId,
