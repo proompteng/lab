@@ -25,7 +25,7 @@ test('autonomous startup admits the exact source-selected model trade-plan ident
   expect(result.strategyProtocolHash).toBe(
     Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
   )
-  expect(result.strategyProtocolHash).toBe('d88530748288c895b348f0c4bdfcb1b13f305f5ce120f664ad2c5aa932ca1c7f')
+  expect(result.strategyProtocolHash).toBe('64baeede37bbf9e9b9777ccb2746578705661a5a70f8e971a25427611fea4cd4')
 })
 
 test('rejects retired Jev protocols at the only active protocol boundary', () => {
