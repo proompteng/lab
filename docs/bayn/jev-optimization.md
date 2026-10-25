@@ -8,7 +8,9 @@ contracts are removed. Historical registrations and receipts remain immutable re
 
 Jev is the native typed System One decision model. GEPA's explicitly selected Flamingo or OpenCode free editor proposes a complete JSON
 instruction document containing only one `entry` string, bounded to 2,000 characters. The editor cannot alter
-state, the independent setup question, plan construction, arithmetic, quantities, risk, protection or authority.
+state, chart questions, atomic judgment definitions or thresholds, proposal construction, arithmetic, quantities, risk, protection or authority.
+The `entry` string supplies evidence instructions shared by every proposal-specific Noul. It cannot ask Jev to choose an action or plan.
+The protocol hash binds that string and the fixed question policy; compiled variant tests verify the actual outgoing questions.
 Question editing does not train Jev's weights.
 
 GEPA receives an explicit numeric objective and native failure diagnostics. Its evaluator uses the ordinary

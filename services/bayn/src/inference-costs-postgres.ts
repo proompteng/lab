@@ -68,11 +68,12 @@ export const readInferenceExpenseSnapshot = (
               FROM cut CROSS JOIN (
                 SELECT request.request_id AS "requestId", request.cycle_id AS "cycleId",
                   request.authority_generation_hash AS "authorityGenerationHash",
-                  request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution
+                  request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution, handoff.payload AS handoff
                 FROM jev_evaluation_requests AS request
                 JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
                 LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
                 LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
+                LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
                 WHERE cycle.account_id = ${scope.accountId}
                   AND cycle.execution_session_date = ${scope.sessionDate}::date
                 LIMIT ${maximumRequests + 1}
@@ -95,7 +96,7 @@ export const readInferenceExpenseSnapshot = (
           if (requests.length > maximumRequests)
             return yield* new InferenceCostError({ message: 'Inference cost read exceeded its complete-report limit' })
           const evidence = yield* Schema.decodeUnknownEffect(InferenceCostEvidenceSchema)({
-            schemaVersion: 'bayn.inference-cost-evidence.v1',
+            schemaVersion: 'bayn.inference-cost-evidence.v2',
             accountBindingHash,
             sessionDate: scope.sessionDate,
             asOf: cut.as_of,
