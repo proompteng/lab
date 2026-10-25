@@ -10,6 +10,67 @@ use crate::{auth::Principal, grpc::ControlPlane};
 
 // Query expiry limits admission; an authorized response may arrive later.
 const STATUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+const STATUS_RECOVERY_TIMEOUT: Duration = Duration::from_secs(15);
+
+async fn recover_status<T, F, Fut>(operation: &'static str, mut request: F) -> Result<T, Status>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, Status>>,
+{
+    tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
+        let mut backoff = Duration::from_millis(100);
+        loop {
+            match tokio::time::timeout(STATUS_RESPONSE_TIMEOUT, request()).await {
+                Ok(Ok(value)) => return Ok(value),
+                Ok(Err(error))
+                    if !matches!(
+                        error.code(),
+                        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
+                    ) =>
+                {
+                    return Err(error);
+                }
+                Ok(Err(_)) => {}
+                Err(_) => tracing::warn!(operation, "durable run read response timed out"),
+            }
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(Duration::from_secs(1));
+        }
+    })
+    .await
+    .map_err(|_| {
+        tracing::warn!(operation, "durable run read recovery timed out");
+        Status::unavailable("durable run status recovery timed out")
+    })?
+}
+
+fn read_error(error: restate_sdk::ingress::ClientError) -> Status {
+    use restate_sdk::ingress::ClientError;
+    let class = match &error {
+        ClientError::Transport { .. } => "transport",
+        ClientError::Request { .. } => "request",
+        ClientError::Serialization { .. } => "serialization",
+        ClientError::InvalidRequest { .. } => "invalid_request",
+        ClientError::Protocol { .. } => "protocol",
+        ClientError::Status { .. } => "http_status",
+        ClientError::PayloadDecode { .. } => "payload_decode",
+    };
+    let status = error.response().map(|response| response.status().as_u16());
+    tracing::warn!(
+        class,
+        http_status = status,
+        "durable run read attempt failed"
+    );
+    match status {
+        Some(408) => Status::deadline_exceeded("run query expired before admission"),
+        Some(500..=599) => Status::unavailable("durable run status unavailable"),
+        Some(400 | 401 | 403 | 404 | 409 | 422) => client_error(error),
+        _ if matches!(error, ClientError::Transport { .. }) => {
+            Status::unavailable("durable run ingress unavailable")
+        }
+        _ => Status::internal("invalid durable run status response"),
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -253,18 +314,7 @@ pub(crate) async fn submit(
         .map_err(client_error)?
         .into_body()
         .map_err(client_error)?;
-    for _ in 0..20 {
-        match read(service, &principal, &input.id, Some(digest.clone())).await {
-            Ok(snapshot) => return Ok(snapshot),
-            Err(error) if error.code() == tonic::Code::Unavailable => {
-                tokio::time::sleep(Duration::from_millis(100)).await
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Err(Status::unavailable(
-        "run accepted; retry the same operation to recover its status",
-    ))
+    read(service, &principal, &input.id, Some(digest)).await
 }
 
 pub(crate) async fn read(
@@ -273,47 +323,59 @@ pub(crate) async fn read(
     id: &str,
     digest: Option<String>,
 ) -> Result<Snapshot, Status> {
-    let query = Query {
-        run_id: id.into(),
-        owner_hash: principal.owner_hash.clone(),
-        workspace_uid: principal.context.workspace_uid.clone(),
-        digest,
-        expires_at_ms: crate::ofz::now_ms()? + 2000,
-    };
-    let query = seal(service, "query", &query).await?;
     let client = TengriAgentRunIngressClient::from_client(ingress()?, id.to_owned());
-    let result = tokio::time::timeout(STATUS_RESPONSE_TIMEOUT, client.status(Json(query)).call())
-        .await
-        .map_err(|_| Status::unavailable("durable run status timed out"))?
-        .map_err(client_error)?;
-    Ok(result.into_body().map_err(client_error)?.into_inner())
+    recover_status("status", || async {
+        let query = Query {
+            run_id: id.into(),
+            owner_hash: principal.owner_hash.clone(),
+            workspace_uid: principal.context.workspace_uid.clone(),
+            digest: digest.clone(),
+            expires_at_ms: crate::ofz::now_ms()? + 2000,
+        };
+        let query = seal(service, "query", &query).await?;
+        let response = client
+            .status(Json(query))
+            .call()
+            .await
+            .map_err(read_error)?;
+        Ok(response.into_body().map_err(read_error)?.into_inner())
+    })
+    .await
 }
 
 pub(crate) async fn active(
     service: &ControlPlane,
     principal: &Principal,
 ) -> Result<Option<Snapshot>, Status> {
-    let query = Query {
-        run_id: String::new(),
-        owner_hash: principal.owner_hash.clone(),
-        workspace_uid: principal.context.workspace_uid.clone(),
-        digest: None,
-        expires_at_ms: crate::ofz::now_ms()? + 2000,
-    };
-    let envelope = seal(service, "active-query", &query).await?;
-    let client = TengriWorkspaceRunsIngressClient::from_client(ingress()?, query.workspace_uid);
-    let response = tokio::time::timeout(
-        STATUS_RESPONSE_TIMEOUT,
-        client.active(Json(envelope)).call(),
-    )
+    tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
+        let client = TengriWorkspaceRunsIngressClient::from_client(
+            ingress()?,
+            principal.context.workspace_uid.clone(),
+        );
+        let id = recover_status("active", || async {
+            let query = Query {
+                run_id: String::new(),
+                owner_hash: principal.owner_hash.clone(),
+                workspace_uid: principal.context.workspace_uid.clone(),
+                digest: None,
+                expires_at_ms: crate::ofz::now_ms()? + 2000,
+            };
+            let envelope = seal(service, "active-query", &query).await?;
+            let response = client
+                .active(Json(envelope))
+                .call()
+                .await
+                .map_err(read_error)?;
+            Ok(response.into_body().map_err(read_error)?.into_inner())
+        })
+        .await?;
+        match id {
+            Some(id) => read(service, principal, &id, None).await.map(Some),
+            None => Ok(None),
+        }
+    })
     .await
     .map_err(|_| Status::unavailable("active run recovery timed out"))?
-    .map_err(client_error)?;
-    let id = response.into_body().map_err(client_error)?.into_inner();
-    match id {
-        Some(id) => read(service, principal, &id, None).await.map(Some),
-        None => Ok(None),
-    }
 }
 
 pub(crate) async fn control(
@@ -763,10 +825,11 @@ impl TengriAgentRun {
                 let query: Query = open(&self.service, "query", &envelope.0)
                     .await
                     .map_err(terminal)?;
-                if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)?
-                    || query.run_id != run_id
-                {
-                    return Err(TerminalError::new_with_code(401, "run query expired").into());
+                if query.run_id != run_id {
+                    return Err(TerminalError::new_with_code(403, "run unavailable").into());
+                }
+                if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)? {
+                    return Err(TerminalError::new_with_code(408, "run query expired").into());
                 }
                 Ok(Json(query))
             })
@@ -932,10 +995,11 @@ impl TengriWorkspaceRuns {
             let query: Query = open(&self.service, "active-query", &envelope.0)
                 .await
                 .map_err(terminal)?;
-            if query.workspace_uid != workspace
-                || query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)?
-            {
+            if query.workspace_uid != workspace {
                 return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
+            }
+            if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)? {
+                return Err(TerminalError::new_with_code(408, "run query expired").into());
             }
             Ok(())
         })
