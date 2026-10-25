@@ -156,6 +156,7 @@ def delegated(expected, workspace=WORKSPACE, issuer=None):
 
 def main():
     schema = (Path(__file__).resolve().parents[1] / "schema.zed").read_text()
+    schema += "\n" + (Path(__file__).resolve().parents[1] / "platform/schema.zed").read_text()
     api("/v1/schema/write", {"schema": schema})
     relationships = [
         relationship("platform", "lab", "member", "human", HUMANS[role])
@@ -173,10 +174,6 @@ def main():
     relationships += [
         relationship("workspace", WORKSPACE, role, "human", HUMANS[role])
         for role in ["owner", "developer", "viewer"]
-    ]
-    relationships += [
-        relationship("kube_namespace", NAMESPACE, "platform", "platform", "lab"),
-        relationship("connector_connection", CONNECTION, "platform", "platform", "lab"),
     ]
     write(*relationships)
     observation = [
@@ -217,8 +214,8 @@ def main():
             check("workspace", OTHER_WORKSPACE, permission, HUMANS[role], False)
         # Ownership is unrelated to namespace or connector authority.
         for permission in ["read_status", "read_logs", "read_events"]:
-            check("kube_namespace", NAMESPACE, permission, HUMANS[role], False)
-        check("connector_connection", CONNECTION, "read", HUMANS[role], False)
+            check("kubernetes_namespace", NAMESPACE, permission, HUMANS[role], False)
+
     platform_permissions = [
         ("admit", set(ROLES) - {"outsider"}),
         ("create_workspace", set(ROLES) - {"outsider"}),
@@ -244,8 +241,8 @@ def main():
         for role, namespace, account in [
             ("bff", "proompteng", "proompteng"),
             ("controller", "tengri", "tengri"),
-            ("kube_broker", "tengri", "tengri-kube-broker"),
-            ("connector_broker", "tengri", "tengri-connector-broker"),
+
+
             ("ofz", "ofz", "ofz-api"),
             ("guest", "tengri", "nanoagent"),
         ]
@@ -253,16 +250,16 @@ def main():
     write(
         *(
             relationship("platform", "lab", role, "workload", workloads[role])
-            for role in ["bff", "controller", "kube_broker", "connector_broker"]
+            for role in ["bff", "controller"]
         )
     )
     for role, subject in workloads.items():
         for permission, permitted in [
             ("establish_session", {"bff"}),
             ("enroll_workspace", {"controller"}),
-            ("execute_kube", {"kube_broker"}),
-            ("execute_connector", {"connector_broker"}),
-            ("check", {"bff", "controller", "kube_broker", "connector_broker"}),
+
+
+            ("check", {"bff", "controller"}),
             ("command", {"bff", "controller"}),
             ("inspect_session", {"bff", "controller"}),
             ("revoke_session", {"bff"}),
@@ -272,17 +269,11 @@ def main():
             check("workspace", WORKSPACE, permission, subject, False, "workload")
     write(
         relationship(
-            "kube_namespace", NAMESPACE, "status_reader", "human", HUMANS["viewer"]
+            "kubernetes_namespace", NAMESPACE, "status_reader", "human", HUMANS["viewer"]
         )
     )
-    check("kube_namespace", NAMESPACE, "read_status", HUMANS["viewer"], True)
-    check("kube_namespace", NAMESPACE, "read_logs", HUMANS["viewer"], False)
-    write(
-        relationship(
-            "connector_connection", CONNECTION, "reader", "human", HUMANS["viewer"]
-        )
-    )
-    check("connector_connection", CONNECTION, "read", HUMANS["viewer"], True)
+    check("kubernetes_namespace", NAMESPACE, "read_status", HUMANS["viewer"], True)
+    check("kubernetes_namespace", NAMESPACE, "read_logs", HUMANS["viewer"], False)
     expires = datetime.now(timezone.utc) + timedelta(seconds=60)
     write(
         relationship("agent_grant", GRANT, "subject", "agent", AGENT, expires),

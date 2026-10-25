@@ -819,8 +819,8 @@ identityTest(
     await startApi(secondApiPort)
     const apiEndpoint = await routingEndpoint(ofzPort, firstApiPort)
     const { ofzCall } = await import('./ofz')
-    const { AuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
-    await ofzCall(AuthorizationService.method.getPolicyState, {}).catch((error) => {
+    const { TengriAuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
+    await ofzCall(TengriAuthorizationService.method.getPolicyState, {}).catch((error) => {
       throw new Error('Ofz wire handshake failed', { cause: error.cause || error })
     })
     const browser = await chromium.launch({
