@@ -808,7 +808,6 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         )
       ) {
         setSessionRevision((current) => current + 1)
-        if (event.method === 'thread/archived' && event.threadId) setArchivedThread(event.threadId)
       }
       const resolvedApprovalId = codexResolvedApprovalId(event)
       if (resolvedApprovalId) retireApproval(resolvedApprovalId)

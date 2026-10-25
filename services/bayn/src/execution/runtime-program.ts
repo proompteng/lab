@@ -1,7 +1,10 @@
 import { Effect, Result } from 'effect'
+import type { CryptoTakerFeeBps } from '../broker/crypto-fees'
+import { instrumentMarket, MarketKind } from '../instruments'
+import { OrderSide } from './contracts'
 import type { JevExitTarget } from '../jev/exit'
 
-import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
+import { BrokerRead, type Account, type BrokerReadShape } from '../broker/alpaca/model'
 import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations/model'
 import { unknownOutcome } from '../broker/alpaca-mutations/model'
 import type { PersistedCapitalGrantStoreShape } from '../db/persisted-capital-grant'
@@ -26,6 +29,7 @@ import {
   executionCapitalLimitsFromPolicy,
   confirmExecutionBrokerState,
   validateExecutionBrokerSubmitSnapshot,
+  validateCryptoEntryFeeCeiling,
   validatePersistedCapitalGrantForSubmit,
   type FinalSubmitAuthorizationFailure,
 } from './mutation-authority'
@@ -39,7 +43,8 @@ export interface ExecutionProgramDependencies {
   readonly verifyBrokerStateVersion: (
     version: BrokerStateVersion,
     intentId: string,
-  ) => Effect.Effect<void, FinalSubmitAuthorizationFailure>
+    requireCryptoEntryFeeBound: boolean,
+  ) => Effect.Effect<CryptoTakerFeeBps | null, FinalSubmitAuthorizationFailure>
   readonly brokerRead: BrokerReadShape
   readonly brokerMutation: BrokerMutationShape
   readonly intentStore: IntentStoreService
@@ -126,13 +131,20 @@ const finalBrokerAuthorization = (
   intent: Intent,
   closeOnly: boolean,
   dependencies: ExecutionProgramDependencies,
-): Effect.Effect<void, FinalSubmitAuthorizationFailure> => {
+): Effect.Effect<
+  { readonly account: Account; readonly entryCryptoFeeBound: CryptoTakerFeeBps | null },
+  FinalSubmitAuthorizationFailure
+> => {
   return Effect.gen(function* () {
     const cached = yield* dependencies.brokerStateCache.take(
       yield* dependencies.currentUtcInstant,
       dependencies.riskPolicy.maxBrokerStateAgeMs,
     )
-    yield* dependencies.verifyBrokerStateVersion(cached.version, intent.intentId)
+    const entryCryptoFeeBound = yield* dependencies.verifyBrokerStateVersion(
+      cached.version,
+      intent.intentId,
+      !closeOnly && intent.side === OrderSide.Buy && instrumentMarket(intent.symbol) === MarketKind.Crypto,
+    )
     const snapshot = yield* confirmExecutionBrokerState(cached, intent, dependencies.brokerRead).pipe(
       withObservedStage('bayn.execution.broker-state-confirmation', { dependency: 'broker' }),
     )
@@ -151,6 +163,7 @@ const finalBrokerAuthorization = (
       observedAt,
       {
         closeOnly,
+        maximumCryptoEntryTakerFeeBps: entryCryptoFeeBound,
         maxBrokerStateAgeMs: dependencies.riskPolicy.maxBrokerStateAgeMs,
         maxNetExposureMicros: dependencies.riskPolicy.maxNetExposureMicros,
         currentDailyTradedNotionalMicros: riskContext.dailyTradedNotionalMicros,
@@ -161,6 +174,7 @@ const finalBrokerAuthorization = (
       },
     )
     if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
+    return { account: snapshot.account, entryCryptoFeeBound }
   })
 }
 
@@ -173,12 +187,12 @@ const validateFinalSubmitTime = (
   stored: StoredIntent,
   dependencies: ExecutionProgramDependencies,
   closeOnly: boolean,
-): Effect.Effect<void, FinalSubmitAuthorizationFailure> =>
+): Effect.Effect<string, FinalSubmitAuthorizationFailure> =>
   Effect.gen(function* () {
     const observedAt = yield* dependencies.currentUtcInstant
     yield* Effect.fromResult(validateStartedSubmitRiskDecision(stored, Date.parse(observedAt)))
     const expiresAt = closeOnly ? dependencies.closeSubmitExpiresAt : dependencies.entrySubmitExpiresAt
-    if (expiresAt === undefined || observedAt < expiresAt) return
+    if (expiresAt === undefined || observedAt < expiresAt) return observedAt
     return yield* Effect.fail({ _tag: 'ExecutionWindowExpired' as const, expiresAt, observedAt })
   })
 
@@ -201,8 +215,11 @@ export const authorizeFinalBrokerSubmit = <A, E, R>(
         yield* validateFinalSubmitTime(startedIntent, dependencies, closeOnly)
         const capital = yield* finalExecutionGrantAuthorization(authority, intent, dependencies)
         yield* validateFinalSubmitTime(startedIntent, dependencies, closeOnly)
-        yield* finalBrokerAuthorization(authority, capital, intent, closeOnly, dependencies)
-        yield* validateFinalSubmitTime(startedIntent, dependencies, closeOnly)
+        const broker = yield* finalBrokerAuthorization(authority, capital, intent, closeOnly, dependencies)
+        const transmitAt = yield* validateFinalSubmitTime(startedIntent, dependencies, closeOnly)
+        yield* Effect.fromResult(
+          validateCryptoEntryFeeCeiling(intent, broker.account, broker.entryCryptoFeeBound, closeOnly, transmitAt),
+        )
         transmissionStarted = true
         return yield* transmit
       }),

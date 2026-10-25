@@ -177,6 +177,178 @@ async fn delayed_status_read_child() {
 }
 
 #[tokio::test]
+async fn active_recovery_renews_expired_queries_and_retries_only_transient_failures() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let service = Arc::new(fixture());
+    let active_calls = Arc::new(AtomicUsize::new(0));
+    let status_calls = Arc::new(AtomicUsize::new(0));
+    let router = axum::Router::new().route(
+        "/restate/call/{service}/{key}/{handler}",
+        axum::routing::post({
+            let active_calls = active_calls.clone();
+            let status_calls = status_calls.clone();
+            move |axum::extract::Path((_, key, handler)): axum::extract::Path<(
+                String,
+                String,
+                String,
+            )>,
+                  axum::Json(envelope): axum::Json<Envelope>| {
+                let service = service.clone();
+                let active_calls = active_calls.clone();
+                let status_calls = status_calls.clone();
+                async move {
+                    let domain = if handler == "active" {
+                        "active-query"
+                    } else {
+                        "query"
+                    };
+                    let query: Query = open(&service, domain, &envelope).await.unwrap();
+                    let now = crate::ofz::now_ms().unwrap();
+                    assert!(query.expires_at_ms > now && query.expires_at_ms <= now + 2000);
+                    let (status, body) = if handler == "active" {
+                        if active_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                            tokio::time::sleep(Duration::from_millis(2100)).await;
+                            assert!(query.expires_at_ms < crate::ofz::now_ms().unwrap());
+                            (
+                                408,
+                                serde_json::json!({"code":408,"message":"run query expired"}),
+                            )
+                        } else {
+                            (200, serde_json::json!("run-current"))
+                        }
+                    } else if key == "run-current"
+                        && status_calls.fetch_add(1, Ordering::SeqCst) == 0
+                    {
+                        (
+                            503,
+                            serde_json::json!({"code":503,"message":"temporarily unavailable"}),
+                        )
+                    } else if key == "run-current" {
+                        (
+                            200,
+                            serde_json::to_value(Snapshot {
+                                run_id: key,
+                                agent_id: "agent-current".into(),
+                                thread_id: "thread-fixture".into(),
+                                owner_hash: query.owner_hash,
+                                workspace_uid: query.workspace_uid,
+                                digest: "fixture".into(),
+                                state: State::Running {
+                                    turn_id: "turn-current".into(),
+                                },
+                            })
+                            .unwrap(),
+                        )
+                    } else {
+                        let status: u16 = key.parse().unwrap();
+                        (
+                            status,
+                            serde_json::json!({"code":status,"message":"denied"}),
+                        )
+                    };
+                    (
+                        http::StatusCode::from_u16(status).unwrap(),
+                        [("x-restate-id", "inv_read-recovery")],
+                        axum::Json(body),
+                    )
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let output = tokio::time::timeout(
+        Duration::from_secs(20),
+        tokio::process::Command::new(std::env::current_exe().unwrap())
+            .kill_on_drop(true)
+            .args([
+                "--exact",
+                "runs::tests::recovering_status_read_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("TENGRI_RESTATE_INGRESS", format!("http://{address}"))
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    server.abort();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(active_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(status_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+#[ignore = "child process for isolated read recovery tests"]
+async fn recovering_status_read_child() {
+    let service = fixture();
+    let snapshot = active(&service, &principal()).await.unwrap().unwrap();
+    assert_eq!(
+        snapshot.state,
+        State::Running {
+            turn_id: "turn-current".into()
+        }
+    );
+    for (status, code) in [
+        (401, tonic::Code::Unauthenticated),
+        (403, tonic::Code::PermissionDenied),
+        (404, tonic::Code::NotFound),
+        (409, tonic::Code::AlreadyExists),
+        (422, tonic::Code::FailedPrecondition),
+    ] {
+        assert_eq!(
+            read(&service, &principal(), &status.to_string(), None)
+                .await
+                .unwrap_err()
+                .code(),
+            code
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn read_recovery_stops_at_its_total_budget_and_does_not_retry_invalid_responses() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let attempts = AtomicUsize::new(0);
+    let started = tokio::time::Instant::now();
+    let error = recover_status::<(), _, _>("status", || {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        std::future::pending()
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Unavailable);
+    assert_eq!(started.elapsed(), STATUS_RECOVERY_TIMEOUT);
+    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+
+    let response = http::Response::builder()
+        .status(200)
+        .body(hyper::body::Bytes::from_static(b"invalid JSON"))
+        .unwrap();
+    let error = read_error(restate_sdk::ingress::ClientError::PayloadDecode {
+        source: Box::new(std::io::Error::other("invalid JSON")),
+        response: Box::new(response),
+    });
+    assert_eq!(error.code(), tonic::Code::Internal);
+    let attempts = AtomicUsize::new(0);
+    let denied = recover_status::<(), _, _>("status", || {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        std::future::ready(Err(error.clone()))
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(denied.code(), tonic::Code::Internal);
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn run_admission_is_bound_to_payload_and_domain() {
     let service = fixture();
     let mut envelope = seal(&service, "query", &input()).await.unwrap();
@@ -684,7 +856,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
             .response()
             .unwrap()
             .status(),
-        401
+        408
     );
     assert_eq!(
         workspace
@@ -700,7 +872,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
             .response()
             .unwrap()
             .status(),
-        403
+        408
     );
     let claim = Claim {
         workspace_uid: query.workspace_uid,

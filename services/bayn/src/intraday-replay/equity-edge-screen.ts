@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { Data, Result } from 'effect'
 
 import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
@@ -382,6 +383,7 @@ export const runEquityEdgeScreen = (
           [...sessionFills, feeInput(symbol, buy, shares, price)],
           intradayExecutionModel,
           micros,
+          cryptoMaximumTakerFeeBps,
         ).pipe(Result.map((value) => value.cashMicros - sessionFees))
       let position: {
         symbol: string

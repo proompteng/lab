@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -29,6 +30,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
         [{ symbol, side: 'sell', quantityAtoms: input.quantityAtoms, notionalMicros: proceeds }],
         input.protocol.executionModel,
         1_000_000n,
+        cryptoMaximumTakerFeeBps,
       ),
     )
     expect(value.proceedsMicros).toBe(proceeds)
@@ -86,6 +88,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
           [{ symbol, side: 'sell', quantityAtoms, notionalMicros: proceeds }],
           protocol.executionModel,
           1_000_000n,
+          cryptoMaximumTakerFeeBps,
         ),
       )
       return proceeds - fees.cashMicros
