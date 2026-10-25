@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(30))
         .add_service(
             RelayServiceServer::new(service)
-                .max_decoding_message_size(131_072)
+                .max_decoding_message_size(platform_client::MAX_RELAY_REQUEST_BYTES)
                 .max_encoding_message_size(1_114_112),
         )
         .serve_with_incoming_shutdown(tls::incoming(listener, tls), async {
