@@ -1,3 +1,4 @@
+import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { Result } from 'effect'
 
 import { OrderSide, OrderType } from '../execution/contracts'
@@ -26,6 +27,7 @@ export const jevExitLimitValue = (input: LiquidationInput & { readonly limitPric
       [{ symbol: input.symbol, side: 'sell', quantityAtoms: input.quantityAtoms, notionalMicros: proceedsMicros }],
       input.protocol.executionModel,
       input.costMultiplierMicros ?? 1_000_000n,
+      cryptoMaximumTakerFeeBps,
     )
     const schedule = input.protocol.executionModel.fees
     const crypto = instrumentMarket(input.symbol) === MarketKind.Crypto

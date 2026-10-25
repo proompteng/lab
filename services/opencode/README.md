@@ -44,6 +44,22 @@ logs and commits. Unauthenticated API and pairing requests must fail. Tailnet
 membership and the scoped Ingress NetworkPolicy provide a separate network
 boundary; Funnel is disabled.
 
+## Platform connectors
+
+The development pod is an independent Relay client with service account `opencode` and SPIFFE identity
+`spiffe://proompteng.ai/ns/opencode/sa/opencode`. The image includes the `relay-client` MCP stdio bridge. The native
+OpenCode 2.1.3 configuration uses `mcp.servers.relay`, with separate startup/catalog/execution timeouts, matching
+[its pinned MCP schema](https://github.com/anomalyco/opencode/blob/v2.1.3/packages/schema/src/config/mcp.ts).
+
+Tools come from Relay's registered operation catalog. Kubernetes pod status, bounded logs and events execute through
+Relay and Ofz; the OpenCode container receives no cluster credential. An Ofz administrator must explicitly assign
+namespace relationships to the workload before tools can succeed. Each invocation checks current authority and
+returns durable authorization/execution receipts. It does not impersonate a Tengri workspace or browser user.
+
+The research pod has no Relay workload identity, socket mount, MCP configuration or allowed network path. Personal
+sessions and provider credentials remain in the existing development PVC. See
+[policy onboarding](../ofz/platform/README.md) and [the platform guide](../../docs/platform/ofz-relay.md).
+
 ## Connect ChatGPT from a remote browser
 
 1. In **Settings > Providers**, connect **OpenAI > Codex device code (legacy)**.

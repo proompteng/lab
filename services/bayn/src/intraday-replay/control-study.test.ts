@@ -506,6 +506,8 @@ test('property: scheduled accounting covers non-divisible sessions without addin
 test('chronological controls reuse flat cash, respect full decision and route latency, and mark open through close', async () => {
   const { report, snapshots } = await simulate({ dataCostMicros: '1000000' })
   expect(report.completion).toBe('COMPLETE')
+  expect(report.allCostNetPnlMicros).not.toBeNull()
+  expect(report.allCostNetPnlMicros).toBe(report.netPnlAfterKnownCostsMicros)
   expect(report.completedEpisodes).toBeGreaterThanOrEqual(3)
   expect(report.ledger.positions).toHaveLength(0)
   expect(snapshots).toBe(report.orders.filter((order) => order.side === OrderSide.Buy).length)
@@ -636,6 +638,8 @@ test('missing observations retain zero-trade sessions as incomplete instead of i
   expect(snapshots).toBeGreaterThan(50)
   expect(report.completion).toBe('INCOMPLETE')
   expect(report.issues).toEqual(['MISSING_DECISION_DATA'])
+  expect(report.netPnlAfterKnownCostsMicros).not.toBeNull()
+  expect(report.allCostNetPnlMicros).toBeNull()
   expect(report.missingDecisions).toBe(snapshots)
   expect(report.orders).toHaveLength(0)
   expect(report.completedEpisodes).toBe(0)
@@ -665,6 +669,8 @@ test('a zero-size bid leaves a missing valuation even when the position later cl
     netEquityAfterKnownCostsMicros: null,
     cause: 'no-displayed-bid-liquidity',
   })
+  expect(report.netPnlAfterKnownCostsMicros).not.toBeNull()
+  expect(report.allCostNetPnlMicros).toBeNull()
 })
 
 test('small exit liquidity retries the same inventory and counts only completed episodes', async () => {
@@ -771,7 +777,7 @@ const frozenControlFixture = () => {
         mode: 'measured-provider',
         maximumCalls: 1000,
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v17',
+        inputDefinition: 'bayn.jev-trading-signal-state.v21',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',
