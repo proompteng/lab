@@ -101,6 +101,7 @@ jobs:
           context: services/restate
           platforms: linux/${{ matrix.architecture }}
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          outputs: type=image,oci-mediatypes=true
           provenance: false
           tags: ${{ env.IMAGE }}:prepare-sha-${{ github.sha }}-run-${{ github.run_id }}-${{ matrix.architecture }}
           labels: |
