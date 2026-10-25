@@ -11,6 +11,7 @@ export type TengriErrorCode =
   | 'capacity_full'
   | 'lifecycle_superseded'
   | 'model_catalog_invalid'
+  | 'runtime_upgrade_required'
 
 export type TengriCondition = {
   type: string
