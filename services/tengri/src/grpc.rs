@@ -1,0 +1,4710 @@
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Weak},
+    time::Duration,
+};
+
+use async_stream::try_stream;
+use chrono::{DateTime, Utc};
+use futures::{Stream, StreamExt};
+use kube::{
+    Api, Client, Resource, ResourceExt,
+    api::{ListParams, Patch, PatchParams, PostParams},
+};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use tokio::sync::{Mutex, oneshot};
+use tokio::time::sleep;
+use tonic::{Request, Response, Status};
+use uuid::Uuid;
+
+use crate::{
+    activity::{ActivityTracker, effective_idle_deadline, last_activity_at},
+    auth::{Authenticator, Principal, deterministic_agent_id},
+    authz::WorkspaceAccess,
+    authz::WorkspaceAuthorization,
+    crd::{
+        MicroVM, MicroVMArchitecture, MicroVMDesiredState, MicroVMPhase, MicroVMPowerSettings,
+        MicroVMResources, MicroVMSpec,
+    },
+    gateway::PreviewOrigin,
+    guest::{
+        BROWSER_PORT, CodexHistoryPart as GuestHistoryPart, CodexOptions, EDITOR_BRIDGE_PORT,
+        EDITOR_PORT, GuestClient, GuestError, GuestPool, TerminalCreation as GuestTerminalCreation,
+    },
+    metrics,
+    pod::{FINALIZER_NAME, SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
+    tickets::TicketStore,
+};
+
+pub mod proto {
+    tonic::include_proto!("proompteng.runtime.v1");
+}
+
+use proto::{
+    Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
+    CodexEvent, CodexEventKind, CodexHistoryPage, CodexHistoryPart, CodexImage, CodexLogin,
+    CodexModels, CodexRun, CodexThread, CodexThreads, CodexTurn, CreateAgentRequest,
+    CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest,
+    Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest, GetCodexAccountRequest,
+    GetCodexLoginRequest, GetCodexRunRequest, InterruptCodexTurnRequest,
+    IssueDesktopSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
+    ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest, ListCodexThreadsRequest,
+    ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
+    MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
+    ResolveCodexApprovalRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest,
+    SearchFilesRequest, SearchFilesResponse, SendCodexInputRequest, SetCodexThreadArchivedRequest,
+    StartCodexLoginRequest, StatFileRequest, SteerCodexInputRequest, TerminalSession,
+    TerminalTicket, TerminateTerminalRequest, UpdatePowerSettingsRequest, WatchAgentRequest,
+    WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest, WriteFileResponse,
+    micro_vm_control_plane_server::MicroVmControlPlane,
+};
+
+const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
+const CONTROL_PLANE_SERVICE: &str = "proompteng.runtime.v1.MicroVMControlPlane";
+const MAX_CODEX_EVENT_TEXT_BYTES: usize = 512 << 10;
+const CODEX_LOGIN_ATTEMPT_TTL_MINUTES: i64 = 15;
+const TERMINAL_TICKET_TIMEOUT: Duration = Duration::from_secs(30);
+const PROVISIONAL_TERMINAL_CLEANUP_RETRY: Duration = Duration::from_secs(2);
+const PROVISIONAL_TERMINAL_ANNOTATION_PREFIX: &str = "runtime.proompteng.ai/provisional-terminal-";
+const RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX: &str =
+    "runtime.proompteng.ai/provisional-terminal-create-";
+
+#[derive(Clone)]
+pub struct ControlPlane {
+    pub(crate) client: Client,
+    guests: GuestPool,
+    pub(crate) namespace: Arc<str>,
+    default_image: Arc<str>,
+    architecture: MicroVMArchitecture,
+    pub(crate) auth: Authenticator,
+    authorization: WorkspaceAuthorization,
+    guest_authority: crate::guest::authorization::GuestAuthority,
+    tickets: TicketStore,
+    preview_origin: PreviewOrigin,
+    activity: ActivityTracker,
+    terminal_creation_locks: TerminalCreationLockManager,
+    provisional_terminal_leases: ProvisionalTerminalLeaseManager,
+}
+
+pub struct ControlPlaneConfig {
+    pub identity: crate::identity::WorkloadIdentity,
+    pub authorization: WorkspaceAuthorization,
+    pub guest_authority: crate::guest::authorization::GuestAuthority,
+    pub namespace: String,
+    pub default_image: String,
+    pub architecture: MicroVMArchitecture,
+    pub database: Arc<crate::control::Database>,
+    pub auth: Authenticator,
+    pub public_url: String,
+    pub preview_origin: PreviewOrigin,
+}
+
+impl ControlPlane {
+    pub(crate) fn request_audience(&self) -> &str {
+        self.auth.audience()
+    }
+    pub fn new(
+        client: Client,
+        config: ControlPlaneConfig,
+        activity: ActivityTracker,
+    ) -> anyhow::Result<Self> {
+        validate_digest_pinned_image(&config.default_image)?;
+        let auth = config.auth;
+        let namespace: Arc<str> = config.namespace.into();
+        let guests = GuestPool::new(client.clone(), namespace.clone(), config.identity.clone());
+        let provisional_terminal_leases = ProvisionalTerminalLeaseManager::new(
+            client.clone(),
+            namespace.clone(),
+            guests.clone(),
+            config.guest_authority.clone(),
+        );
+        Ok(Self {
+            guests,
+            client,
+            namespace,
+            default_image: config.default_image.into(),
+            architecture: config.architecture,
+            auth,
+            authorization: config.authorization,
+            guest_authority: config.guest_authority,
+            tickets: TicketStore::new(config.public_url, config.database)?,
+            preview_origin: config.preview_origin,
+            activity,
+            terminal_creation_locks: TerminalCreationLockManager::default(),
+            provisional_terminal_leases,
+        })
+    }
+
+    pub fn tickets(&self) -> TicketStore {
+        self.tickets.clone()
+    }
+
+    pub async fn recover_provisional_terminal_leases(&self) -> Result<(), kube::Error> {
+        self.provisional_terminal_leases.recover().await
+    }
+
+    async fn authorize<T: prost::Message>(
+        &self,
+        request: &Request<T>,
+        method: &'static str,
+    ) -> Result<Principal, Status> {
+        let rpc_path = format!("/{CONTROL_PLANE_SERVICE}/{method}");
+        self.auth.authorize(request, &rpc_path).await
+    }
+
+    pub(crate) async fn agent_access(
+        &self,
+        principal: &Principal,
+        id: &str,
+        target: &str,
+    ) -> Result<(MicroVM, WorkspaceAccess), Status> {
+        validate_resource_id(id)?;
+        let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        let agent = api.get(id).await.map_err(|error| match error {
+            kube::Error::Api(ref response) if response.code == 404 => {
+                Status::permission_denied("workspace unavailable")
+            }
+            error => map_kube_error(error),
+        })?;
+        let access = self.authorization.agent_access(principal, &agent, target)?;
+        access.require().await?;
+        Ok((agent, access))
+    }
+
+    async fn authorized_agent(&self, principal: &Principal, id: &str) -> Result<MicroVM, Status> {
+        self.agent_access(principal, id, "")
+            .await
+            .map(|(agent, _)| agent)
+    }
+
+    async fn authorized_agents(
+        &self,
+        principal: &Principal,
+        microvms: &[MicroVM],
+    ) -> Result<Vec<Agent>, Status> {
+        let checks = microvms.iter().map(|agent| async {
+            match self
+                .authorization
+                .agent_access(principal, agent, "")?
+                .require()
+                .await
+            {
+                Ok(()) => Ok(Some(agent_from_microvm(agent))),
+                Err(error) if error.code() == tonic::Code::PermissionDenied => Ok(None),
+                Err(error) => Err(error),
+            }
+        });
+        let mut agents: Vec<_> = futures::future::try_join_all(checks)
+            .await?
+            .into_iter()
+            .flatten()
+            .collect();
+        agents.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        Ok(agents)
+    }
+
+    pub(crate) async fn guest(
+        &self,
+        principal: &Principal,
+        id: &str,
+        target: &str,
+    ) -> Result<GuestClient, Status> {
+        self.guest_access(principal, id, target)
+            .await
+            .map(|(_, guest, _)| guest)
+    }
+
+    async fn guest_access(
+        &self,
+        principal: &Principal,
+        id: &str,
+        target: &str,
+    ) -> Result<(MicroVM, GuestClient, WorkspaceAccess), Status> {
+        let (agent, access) = self.agent_access(principal, id, target).await?;
+        if agent.spec.desired_state != MicroVMDesiredState::Running
+            || !agent_ready_for_guest(&agent)
+        {
+            return Err(Status::failed_precondition(
+                "workspace is sleeping or unavailable; resume it explicitly",
+            ));
+        }
+        let guest = self
+            .guests
+            .for_microvm(&agent, self.guest_authority.user(access.clone()))
+            .await
+            .map_err(map_guest_error)?;
+        access.require().await?;
+        Ok((agent, guest, access))
+    }
+
+    pub fn guest_pool(&self) -> GuestPool {
+        self.guests.clone()
+    }
+
+    pub(crate) async fn workspace_removal_complete(&self, uid: &str) -> Result<bool, Status> {
+        self.authorization.removal_complete(uid).await
+    }
+}
+
+fn agent_ready_for_guest(agent: &MicroVM) -> bool {
+    let generation = agent.meta().generation.unwrap_or_default();
+    agent.status.as_ref().is_some_and(|status| {
+        status.phase == MicroVMPhase::Ready
+            && status.guest_ready
+            && status.observed_generation >= generation
+    })
+}
+
+fn apply_new_agent_metadata(microvm: &mut MicroVM, owner_hash: &str, storage_layout: &str) {
+    microvm.metadata.finalizers = Some(vec![FINALIZER_NAME.to_owned()]);
+    microvm
+        .metadata
+        .labels
+        .get_or_insert_default()
+        .insert(OWNER_LABEL.to_owned(), owner_hash[..32].to_owned());
+    microvm.metadata.annotations.get_or_insert_default().insert(
+        STORAGE_LAYOUT_ANNOTATION.to_owned(),
+        storage_layout.to_owned(),
+    );
+}
+
+#[tonic::async_trait]
+impl MicroVmControlPlane for ControlPlane {
+    async fn get_request_audience(
+        &self,
+        _: Request<Empty>,
+    ) -> Result<Response<proto::RequestAudience>, Status> {
+        Ok(Response::new(proto::RequestAudience {
+            audience: self.request_audience().into(),
+            guest_api_protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+        }))
+    }
+    async fn create_agent(
+        &self,
+        request: Request<CreateAgentRequest>,
+    ) -> Result<Response<Agent>, Status> {
+        let principal = self.authorize(&request, "CreateAgent").await?;
+        let input = request.into_inner();
+        let display_name = validate_display_name(&input.display_name)?;
+        let reservation = self
+            .authorization
+            .reservation(&principal, &input.reservation_id)
+            .await
+            .inspect_err(|error| {
+                if error.code() == tonic::Code::ResourceExhausted {
+                    crate::metrics::global().record_quota_rejection();
+                }
+            })?;
+        let id = deterministic_agent_id(&principal.owner_hash, &reservation.reservation_id);
+        let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        let agent = if let Some(existing) = api.get_opt(&id).await.map_err(map_kube_error)? {
+            validate_creation_retry(
+                &existing,
+                &principal.owner_hash,
+                &display_name,
+                &reservation,
+            )?;
+            existing
+        } else {
+            if reservation.state != "reserved" {
+                return Err(Status::failed_precondition(
+                    "workspace reservation released",
+                ));
+            }
+            let now = Utc::now();
+            let mut microvm = MicroVM::new(
+                &id,
+                MicroVMSpec {
+                    reservation_id: reservation.reservation_id.clone(),
+                    runtime_epoch: String::new(),
+                    policy_version: 0,
+                    display_name,
+                    owner_hash: principal.owner_hash.clone(),
+                    desired_state: MicroVMDesiredState::Sleeping,
+                    image: self.default_image.to_string(),
+                    architecture: self.architecture,
+                    resources: MicroVMResources::default(),
+                    power: Default::default(),
+                    created_at: now.to_rfc3339(),
+                    idle_deadline: now.to_rfc3339(),
+                    slot: None,
+                },
+            );
+            apply_new_agent_metadata(
+                &mut microvm,
+                &principal.owner_hash,
+                SINGLE_MOUNT_STORAGE_LAYOUT,
+            );
+            // The reservation is durable and quota-counted before this first Kubernetes allocation.
+            // Deterministic naming and Kubernetes admission serialize retries across all replicas.
+            match api.create(&PostParams::default(), &microvm).await {
+                Ok(created) => created,
+                Err(kube::Error::Api(response)) if response.code == 409 => {
+                    let existing = api.get(&id).await.map_err(map_kube_error)?;
+                    validate_creation_retry(
+                        &existing,
+                        &principal.owner_hash,
+                        &microvm.spec.display_name,
+                        &reservation,
+                    )?;
+                    existing
+                }
+                Err(error) => return Err(map_kube_error(error)),
+            }
+        };
+        let uid = agent
+            .uid()
+            .ok_or_else(|| Status::unavailable("workspace UID unavailable"))?;
+        let started = tokio::time::Instant::now();
+        loop {
+            match self.authorization.runtime_state(&agent).await {
+                Ok(state)
+                    if state.owner_id == principal.owner_hash
+                        && state.reservation_id == reservation.reservation_id =>
+                {
+                    break;
+                }
+                Ok(_) => {
+                    return Err(Status::permission_denied(
+                        "workspace enrollment identity changed",
+                    ));
+                }
+                Err(error)
+                    if error.code() == tonic::Code::NotFound
+                        && started.elapsed() < Duration::from_secs(30) => {}
+                Err(error) => return Err(error),
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        let mut metadata_principal = principal;
+        metadata_principal.action = crate::ofz::proto::Action::WorkspaceMetadataRead;
+        metadata_principal.context.workspace_uid = uid;
+        metadata_principal.context.deadline_unix_ms =
+            crate::ofz::now_ms()? + crate::ofz::AUDITED_REQUEST_BUDGET_MS;
+        let current = self.authorized_agent(&metadata_principal, &id).await?;
+        Ok(Response::new(agent_from_microvm(&current)))
+    }
+
+    async fn list_agents(
+        &self,
+        request: Request<ListAgentsRequest>,
+    ) -> Result<Response<ListAgentsResponse>, Status> {
+        let principal = self.authorize(&request, "ListAgents").await?;
+        let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        let microvms = api
+            .list(&ListParams::default())
+            .await
+            .map_err(map_kube_error)?
+            .items;
+        let agents = self.authorized_agents(&principal, &microvms).await?;
+        Ok(Response::new(ListAgentsResponse { agents }))
+    }
+
+    async fn get_agent(
+        &self,
+        request: Request<GetAgentRequest>,
+    ) -> Result<Response<Agent>, Status> {
+        let principal = self.authorize(&request, "GetAgent").await?;
+        let agent = self
+            .authorized_agent(&principal, &request.get_ref().id)
+            .await?;
+        Ok(Response::new(agent_from_microvm(&agent)))
+    }
+
+    type WatchAgentStream = Pin<Box<dyn Stream<Item = Result<Agent, Status>> + Send>>;
+
+    async fn watch_agent(
+        &self,
+        request: Request<WatchAgentRequest>,
+    ) -> Result<Response<Self::WatchAgentStream>, Status> {
+        let principal = self.authorize(&request, "WatchAgent").await?;
+        let id = request.into_inner().id;
+        let (initial, access) = self.agent_access(&principal, &id, "").await?;
+        let bound_uid = initial.uid();
+        let service = self.clone();
+        let stream = try_stream! {
+            let mut previous = String::new();
+            loop {
+                let api: Api<MicroVM> = Api::namespaced(service.client.clone(), &service.namespace);
+                let agent = api.get(&id).await.map_err(map_kube_error)?;
+                if agent.uid() != bound_uid || (!principal.context.runtime_epoch.is_empty() && principal.context.runtime_epoch != agent.spec.runtime_epoch) {
+                    Err(Status::permission_denied("workspace UID or runtime epoch changed"))?;
+                }
+                let current = serde_json::to_string(&agent).map_err(|error| Status::internal(error.to_string()))?;
+                if current != previous {
+                    previous = current;
+                    yield agent_from_microvm(&agent);
+                }
+                sleep(Duration::from_secs(1)).await;
+            }
+        };
+        Ok(Response::new(access.guard_stream(stream)))
+    }
+
+    async fn update_power_settings(
+        &self,
+        request: Request<UpdatePowerSettingsRequest>,
+    ) -> Result<Response<Agent>, Status> {
+        let principal = self.authorize(&request, "UpdatePowerSettings").await?;
+        let request = request.into_inner();
+        let power = power_settings_from_request(&request)?;
+        for _ in 0..3 {
+            let authorized = self.authorized_agent(&principal, &request.id).await?;
+            let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+            let agent = api.get(&request.id).await.map_err(map_kube_error)?;
+            if agent.uid() != authorized.uid()
+                || agent.spec.owner_hash != authorized.spec.owner_hash
+                || agent.spec.runtime_epoch != authorized.spec.runtime_epoch
+            {
+                return Err(Status::permission_denied("authorized workspace changed"));
+            }
+            let now = Utc::now();
+            let patch = json!({
+                "metadata": {
+                    "uid": agent.uid(),
+                    "resourceVersion": agent.resource_version(),
+                    "annotations": {crate::activity::LAST_ACTIVITY_ANNOTATION: now.to_rfc3339()},
+                },
+                "spec": {
+                    "power": power,
+                    "idleDeadline": (now + chrono::Duration::minutes(i64::from(power.idle_timeout_minutes))).to_rfc3339(),
+                },
+            });
+            match api
+                .patch(&request.id, &PatchParams::default(), &Patch::Merge(patch))
+                .await
+            {
+                Ok(updated) => return Ok(Response::new(agent_from_microvm(&updated))),
+                Err(error) if is_conflict(&error) => continue,
+                Err(error) => return Err(map_kube_error(error)),
+            }
+        }
+        Err(Status::aborted(
+            "agent settings changed concurrently; retry the request",
+        ))
+    }
+
+    async fn stat_file(
+        &self,
+        request: Request<StatFileRequest>,
+    ) -> Result<Response<FileEntry>, Status> {
+        let principal = self.authorize(&request, "StatFile").await?;
+        let request = request.into_inner();
+        let result = self
+            .guest(&principal, &request.agent_id, &request.path)
+            .await?
+            .stat_file(&request.path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(file_entry(result)))
+    }
+
+    async fn list_files(
+        &self,
+        request: Request<ListFilesRequest>,
+    ) -> Result<Response<ListFilesResponse>, Status> {
+        let principal = self.authorize(&request, "ListFiles").await?;
+        let request = request.into_inner();
+        let result = self
+            .guest(&principal, &request.agent_id, &request.path)
+            .await?
+            .list_files(&request.path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(ListFilesResponse {
+            path: result.path,
+            entries: result.entries.into_iter().map(file_entry).collect(),
+        }))
+    }
+
+    async fn read_file(
+        &self,
+        request: Request<ReadFileRequest>,
+    ) -> Result<Response<ReadFileResponse>, Status> {
+        let principal = self.authorize(&request, "ReadFile").await?;
+        let request = request.into_inner();
+        let result = self
+            .guest(&principal, &request.agent_id, &request.path)
+            .await?
+            .read_file(&request.path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(ReadFileResponse {
+            path: result.path,
+            content: result.content,
+            content_type: result.content_type,
+            revision: result.revision,
+        }))
+    }
+
+    async fn write_file(
+        &self,
+        request: Request<WriteFileRequest>,
+    ) -> Result<Response<WriteFileResponse>, Status> {
+        let principal = self.authorize(&request, "WriteFile").await?;
+        let request = request.into_inner();
+        validate_expected_revision(&request.expected_revision)?;
+        let result = self
+            .guest(&principal, &request.agent_id, &request.path)
+            .await?
+            .write_file(&request.path, &request.content, &request.expected_revision)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(WriteFileResponse {
+            path: result.path,
+            size: result.size,
+            revision: result.revision,
+        }))
+    }
+
+    async fn create_directory(
+        &self,
+        request: Request<CreateDirectoryRequest>,
+    ) -> Result<Response<FileEntry>, Status> {
+        let principal = self.authorize(&request, "CreateDirectory").await?;
+        let request = request.into_inner();
+        let entry = self
+            .guest(&principal, &request.agent_id, &request.path)
+            .await?
+            .create_directory(&request.path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(file_entry(entry)))
+    }
+
+    async fn move_file(
+        &self,
+        request: Request<MoveFileRequest>,
+    ) -> Result<Response<FileEntry>, Status> {
+        let principal = self.authorize(&request, "MoveFile").await?;
+        let request = request.into_inner();
+        let entry = self
+            .guest(&principal, &request.agent_id, &request.source_path)
+            .await?
+            .move_file(&request.source_path, &request.destination_path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(file_entry(entry)))
+    }
+
+    async fn delete_file(
+        &self,
+        request: Request<DeleteFileRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "DeleteFile").await?;
+        let request = request.into_inner();
+        self.guest(&principal, &request.agent_id, &request.path)
+            .await?
+            .delete_file(&request.path, request.recursive)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn search_files(
+        &self,
+        request: Request<SearchFilesRequest>,
+    ) -> Result<Response<SearchFilesResponse>, Status> {
+        let principal = self.authorize(&request, "SearchFiles").await?;
+        let request = request.into_inner();
+        let limit = request.limit.clamp(1, 200);
+        let result = self
+            .guest(&principal, &request.agent_id, &request.path)
+            .await?
+            .search_files(&request.query, &request.path, limit)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(SearchFilesResponse {
+            entries: result.entries.into_iter().map(file_entry).collect(),
+            truncated: result.truncated,
+        }))
+    }
+
+    type WatchFilesStream = Pin<Box<dyn Stream<Item = Result<FileEvent, Status>> + Send>>;
+
+    async fn watch_files(
+        &self,
+        request: Request<WatchFilesRequest>,
+    ) -> Result<Response<Self::WatchFilesStream>, Status> {
+        let principal = self.authorize(&request, "WatchFiles").await?;
+        let request = request.into_inner();
+        let (_, guest, access) = self
+            .guest_access(&principal, &request.agent_id, &request.path)
+            .await?;
+        let stream = guest
+            .watch_files(&request.path, request.after_sequence)
+            .await
+            .map_err(map_guest_error)?
+            .map(move |event| {
+                event
+                    .map(|event| FileEvent {
+                        sequence: event.sequence,
+                        kind: file_event_kind(&event.kind) as i32,
+                        path: event.path,
+                        previous_path: event.previous_path,
+                        entry: event.entry.map(file_entry),
+                    })
+                    .map_err(map_guest_error)
+            });
+        Ok(Response::new(access.guard_stream(stream)))
+    }
+
+    async fn create_terminal(
+        &self,
+        request: Request<CreateTerminalRequest>,
+    ) -> Result<Response<TerminalSession>, Status> {
+        let principal = self.authorize(&request, "CreateTerminal").await?;
+        let request = request.into_inner();
+        validate_terminal_creation_id(&request.creation_id)?;
+        let guest = self.guest(&principal, &request.agent_id, "").await?;
+        let agent_id = request.agent_id;
+        let creation_id = request.creation_id;
+        let cwd = request.cwd;
+        let columns = request.columns;
+        let rows = request.rows;
+        let creation_guard = self
+            .terminal_creation_locks
+            .acquire(&agent_id, &creation_id)
+            .await;
+        let create_agent_id = agent_id.clone();
+        let leases = self.provisional_terminal_leases.clone();
+        let failed_leases = leases.clone();
+        let failed_agent_id = agent_id.clone();
+        let creation = detached_terminal_creation(
+            creation_guard,
+            async move {
+                guest
+                    .create_terminal(&creation_id, &cwd, columns, rows)
+                    .await
+            },
+            move |creation| async move {
+                if creation.created {
+                    metrics::global().record_pty_created(&create_agent_id, &creation.session.id);
+                    if let Err(error) = leases
+                        .track(
+                            &create_agent_id,
+                            &creation.session.id,
+                            TERMINAL_TICKET_TIMEOUT,
+                        )
+                        .await
+                    {
+                        leases
+                            .retry_cleanup(&create_agent_id, &creation.session.id)
+                            .await;
+                        return Err(error);
+                    }
+                }
+                Ok(creation)
+            },
+            move |error| async move {
+                if let Some(terminal_id) = created_terminal_cleanup_id(&error).map(str::to_owned) {
+                    failed_leases
+                        .retry_cleanup(&failed_agent_id, &terminal_id)
+                        .await;
+                }
+                Err(map_guest_error(error))
+            },
+        )
+        .await?;
+        Ok(Response::new(terminal_session(creation.session)))
+    }
+
+    async fn list_terminals(
+        &self,
+        request: Request<ListTerminalsRequest>,
+    ) -> Result<Response<ListTerminalsResponse>, Status> {
+        let principal = self.authorize(&request, "ListTerminals").await?;
+        let request = request.into_inner();
+        let sessions = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .list_terminals()
+            .await
+            .map_err(map_guest_error)?;
+        metrics::global().replace_pty_sessions(
+            &request.agent_id,
+            sessions.iter().map(|session| session.id.clone()),
+        );
+        Ok(Response::new(ListTerminalsResponse {
+            sessions: sessions.into_iter().map(terminal_session).collect(),
+        }))
+    }
+
+    async fn terminate_terminal(
+        &self,
+        request: Request<TerminateTerminalRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "TerminateTerminal").await?;
+        let request = request.into_inner();
+        let guest = self.guest(&principal, &request.agent_id, "").await?;
+        match guest.terminate_terminal(&request.terminal_id).await {
+            Ok(()) => {}
+            Err(error) if terminal_is_absent(&error) => {}
+            Err(error) => return Err(map_guest_error(error)),
+        }
+        self.provisional_terminal_leases
+            .clear(&request.agent_id, &request.terminal_id)
+            .await?;
+        metrics::global().record_pty_terminated(&request.agent_id, &request.terminal_id);
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn issue_terminal_ticket(
+        &self,
+        request: Request<IssueTerminalTicketRequest>,
+    ) -> Result<Response<TerminalTicket>, Status> {
+        let principal = self.authorize(&request, "IssueTerminalTicket").await?;
+        let request = request.into_inner();
+        let (agent, guest, _) = self.guest_access(&principal, &request.agent_id, "").await?;
+        let terminals = guest.list_terminals().await.map_err(map_guest_error)?;
+        metrics::global().replace_pty_sessions(
+            &request.agent_id,
+            terminals.iter().map(|terminal| terminal.id.clone()),
+        );
+        let Some(_) = terminals
+            .iter()
+            .find(|terminal| terminal.id == request.terminal_id)
+        else {
+            return Err(Status::not_found("terminal session was not found"));
+        };
+        let claim = crate::slot::client::claim_for(&agent)
+            .map_err(|_| Status::unavailable("workspace runtime claim unavailable"))?;
+        let issued = self
+            .provisional_terminal_leases
+            .issue_and_confirm(&request.agent_id, &request.terminal_id, || async {
+                self.activity.admit_control(&claim).await?;
+                self.tickets
+                    .issue_terminal(&principal, &request.agent_id, &request.terminal_id)
+                    .await
+            })
+            .await?;
+        Ok(Response::new(TerminalTicket {
+            websocket_url: issued.url,
+            ticket: issued.token,
+            expires_at: issued.expires_at,
+        }))
+    }
+
+    async fn get_codex_account(
+        &self,
+        request: Request<GetCodexAccountRequest>,
+    ) -> Result<Response<CodexAccount>, Status> {
+        let principal = self.authorize(&request, "GetCodexAccount").await?;
+        let request = request.into_inner();
+        let value = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .codex_call("account/read", json!({"refreshToken": true}))
+            .await
+            .map_err(map_guest_error)?;
+        let authenticated = value
+            .pointer("/account")
+            .is_some_and(|value| !value.is_null());
+        Ok(Response::new(CodexAccount {
+            authenticated,
+            email: json_string(&value, &["/account/email", "/email"]),
+            plan: json_string(&value, &["/account/planType", "/planType", "/plan"]),
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn list_codex_models(
+        &self,
+        request: Request<ListCodexModelsRequest>,
+    ) -> Result<Response<CodexModels>, Status> {
+        let principal = self.authorize(&request, "ListCodexModels").await?;
+        let request = request.into_inner();
+        if request.cursor.len() > 4096 || request.cursor.chars().any(char::is_control) {
+            return Err(Status::invalid_argument("invalid Codex model cursor"));
+        }
+        let value = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .codex_call(
+                "model/list",
+                json!({
+                    "cursor": if request.cursor.is_empty() { None } else { Some(request.cursor) },
+                    "limit": 100,
+                    "includeHidden": false,
+                }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexModels {
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn connector_agent(
+        &self,
+        request: Request<proto::ConnectorAgentRequest>,
+    ) -> Result<Response<CodexModels>, Status> {
+        let principal = self.authorize(&request, "ConnectorAgent").await?;
+        let request = request.into_inner();
+        let method = match request.action.as_str() {
+            "identity" => "relay/identity",
+            "configure" => "relay/configure",
+            "remove" => "relay/remove",
+            _ => return Err(Status::invalid_argument("unknown connector agent action")),
+        };
+        if request.raw_json.len() > 512 * 1024 {
+            return Err(Status::invalid_argument(
+                "connector configuration is too large",
+            ));
+        }
+        let params: Value = serde_json::from_str(&request.raw_json)
+            .map_err(|_| Status::invalid_argument("invalid connector configuration"))?;
+        let result = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .codex_call(method, params)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexModels {
+            raw_json: result.to_string(),
+        }))
+    }
+
+    async fn start_codex_login(
+        &self,
+        request: Request<StartCodexLoginRequest>,
+    ) -> Result<Response<CodexLogin>, Status> {
+        let principal = self.authorize(&request, "StartCodexLogin").await?;
+        let request = request.into_inner();
+        let value = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .codex_call("account/login/start", json!({"type": "chatgptDeviceCode"}))
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(codex_login(value, Utc::now())))
+    }
+
+    async fn get_codex_login(
+        &self,
+        request: Request<GetCodexLoginRequest>,
+    ) -> Result<Response<CodexLogin>, Status> {
+        let principal = self.authorize(&request, "GetCodexLogin").await?;
+        let request = request.into_inner();
+        let snapshot = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .codex_login()
+            .await
+            .map_err(map_guest_error)?;
+        if !snapshot.active {
+            return Err(Status::not_found("no Codex device login is active"));
+        }
+        let started_at = DateTime::parse_from_rfc3339(&snapshot.started_at)
+            .map_err(|_| Status::internal("Nanoagent returned an invalid Codex login timestamp"))?
+            .with_timezone(&Utc);
+        if Utc::now() >= started_at + chrono::Duration::minutes(CODEX_LOGIN_ATTEMPT_TTL_MINUTES) {
+            return Err(Status::not_found("no Codex device login is active"));
+        }
+        Ok(Response::new(codex_login(snapshot.result, started_at)))
+    }
+
+    async fn list_codex_threads(
+        &self,
+        request: Request<ListCodexThreadsRequest>,
+    ) -> Result<Response<CodexThreads>, Status> {
+        let principal = self.authorize(&request, "ListCodexThreads").await?;
+        let request = request.into_inner();
+        if request.cursor.len() > 4096 || request.cursor.chars().any(char::is_control) {
+            return Err(Status::invalid_argument("invalid chat cursor"));
+        }
+        let value = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .codex_call(
+                "thread/list",
+                json!({
+                    "archived": request.archived,
+                    "cursor": if request.cursor.is_empty() { None } else { Some(request.cursor) },
+                    "cwd": "/workspace",
+                    "sortKey": "updated_at",
+                    "limit": 50,
+                }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexThreads {
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn set_codex_thread_archived(
+        &self,
+        request: Request<SetCodexThreadArchivedRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "SetCodexThreadArchived").await?;
+        let request = request.into_inner();
+        validate_codex_id(&request.thread_id)?;
+        let guest = self
+            .guest(&principal, &request.agent_id, &request.thread_id)
+            .await?;
+        if request.archived
+            && let Some(run) = crate::runs::active(self, &principal).await?
+            && run.agent_id == request.agent_id
+            && run.thread_id == request.thread_id
+            && !run.state.terminal()
+        {
+            return Err(Status::failed_precondition(
+                "Wait for the response to finish before archiving this chat",
+            ));
+        }
+        guest
+            .codex_call(
+                if request.archived {
+                    "thread/archive"
+                } else {
+                    "thread/unarchive"
+                },
+                json!({ "threadId": request.thread_id }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn create_codex_thread(
+        &self,
+        request: Request<CreateCodexThreadRequest>,
+    ) -> Result<Response<CodexThread>, Status> {
+        let principal = self.authorize(&request, "CreateCodexThread").await?;
+        let request = request.into_inner();
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
+        let snapshot = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .codex_call_with_sequence(
+                "thread/start",
+                json!({
+                    "model": options.model,
+                    "config": options.thread_config(),
+                    "cwd": "/workspace",
+                    "runtimeWorkspaceRoots": ["/workspace"],
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": null,
+                    "sandbox": "danger-full-access",
+                    "ephemeral": false,
+                    "experimentalRawEvents": false,
+                }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        let value = snapshot.result;
+        Ok(Response::new(CodexThread {
+            id: json_string(&value, &["/thread/id"]),
+            raw_json: value.to_string(),
+            event_sequence: snapshot.event_sequence,
+            item_event_sequences: Default::default(),
+        }))
+    }
+
+    type ResumeCodexThreadStream =
+        Pin<Box<dyn Stream<Item = Result<CodexHistoryPage, Status>> + Send>>;
+
+    async fn resume_codex_thread(
+        &self,
+        request: Request<ResumeCodexThreadRequest>,
+    ) -> Result<Response<Self::ResumeCodexThreadStream>, Status> {
+        let principal = self.authorize(&request, "ResumeCodexThread").await?;
+        let request = request.into_inner();
+        validate_codex_id(&request.thread_id)?;
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
+        let (_, guest, access) = self
+            .guest_access(&principal, &request.agent_id, &request.thread_id)
+            .await?;
+        let history = guest
+            .resume_codex_thread(&request.thread_id, &options)
+            .await
+            .map_err(map_guest_error)?;
+        access.require().await?;
+        let stream = history.map(|page| {
+            page.map(|page| CodexHistoryPage {
+                part: match page.part {
+                    GuestHistoryPart::Thread => CodexHistoryPart::Thread,
+                    GuestHistoryPart::Items => CodexHistoryPart::Items,
+                    GuestHistoryPart::Turns => CodexHistoryPart::Turns,
+                }
+                .into(),
+                raw_json: page.snapshot.result.to_string(),
+                event_sequence: page.snapshot.event_sequence,
+            })
+            .map_err(map_guest_error)
+        });
+        Ok(Response::new(access.guard_stream(stream)))
+    }
+
+    async fn send_codex_input(
+        &self,
+        request: Request<SendCodexInputRequest>,
+    ) -> Result<Response<CodexRun>, Status> {
+        let principal = self.authorize(&request, "SendCodexInput").await?;
+        let request = request.into_inner();
+        validate_codex_operation(&request.operation_id)?;
+        validate_codex_id(&request.thread_id)?;
+        validate_codex_message(&request.text, &request.images)?;
+        CodexOptions::parse(request.model.clone(), request.reasoning_effort.clone())
+            .map_err(Status::invalid_argument)?;
+        self.agent_access(&principal, &request.agent_id, &request.operation_id)
+            .await?;
+        let input = crate::runs::Input {
+            id: request.operation_id.clone(),
+            agent_id: request.agent_id.clone(),
+            thread_id: request.thread_id.clone(),
+            text: request.text.clone(),
+            model: request.model.clone(),
+            reasoning_effort: request.reasoning_effort.clone(),
+            images: request
+                .images
+                .iter()
+                .map(codex_attachment)
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        if !request.images.is_empty() {
+            match crate::runs::read(
+                self,
+                &principal,
+                &input.id,
+                Some(crate::runs::input_digest(&input)?),
+            )
+            .await
+            {
+                Ok(snapshot) => return Ok(Response::new(codex_run(snapshot)?)),
+                Err(error)
+                    if matches!(
+                        error.code(),
+                        tonic::Code::Unavailable | tonic::Code::NotFound
+                    ) => {}
+                Err(error) => return Err(error),
+            }
+            let guest = self
+                .guest(&principal, &request.agent_id, &request.thread_id)
+                .await?;
+            codex_turn_input(&guest, &request.text, &request.images).await?;
+        }
+        let snapshot = crate::runs::submit(self, principal, input).await?;
+        Ok(Response::new(codex_run(snapshot)?))
+    }
+
+    async fn get_active_codex_run(
+        &self,
+        request: Request<GetAgentRequest>,
+    ) -> Result<Response<CodexRun>, Status> {
+        let principal = self.authorize(&request, "GetActiveCodexRun").await?;
+        let request = request.into_inner();
+        self.agent_access(&principal, &request.id, "").await?;
+        let result = match crate::runs::active(self, &principal).await? {
+            Some(snapshot) if snapshot.agent_id == request.id => codex_run(snapshot)?,
+            Some(_) => return Err(Status::permission_denied("run unavailable")),
+            None => CodexRun::default(),
+        };
+        Ok(Response::new(result))
+    }
+
+    async fn get_codex_run(
+        &self,
+        request: Request<GetCodexRunRequest>,
+    ) -> Result<Response<CodexRun>, Status> {
+        let principal = self.authorize(&request, "GetCodexRun").await?;
+        let request = request.into_inner();
+        validate_codex_operation(&request.run_id)?;
+        self.agent_access(&principal, &request.agent_id, &request.run_id)
+            .await?;
+        let snapshot = crate::runs::read(self, &principal, &request.run_id, None).await?;
+        if snapshot.agent_id != request.agent_id {
+            return Err(Status::permission_denied("run unavailable"));
+        }
+        Ok(Response::new(codex_run(snapshot)?))
+    }
+
+    async fn steer_codex_input(
+        &self,
+        request: Request<SteerCodexInputRequest>,
+    ) -> Result<Response<CodexTurn>, Status> {
+        let principal = self.authorize(&request, "SteerCodexInput").await?;
+        let request = request.into_inner();
+        validate_codex_operation(&request.operation_id)?;
+        validate_codex_id(&request.thread_id)?;
+        validate_codex_id(&request.turn_id)?;
+        validate_codex_message(&request.text, &request.images)?;
+        let guest = self
+            .guest(&principal, &request.agent_id, &request.thread_id)
+            .await?;
+        let input = codex_turn_input(&guest, &request.text, &request.images).await?;
+        validate_codex_operation(&request.run_id)?;
+        let value = crate::runs::control(
+            self,
+            crate::runs::Control {
+                id: request.operation_id.clone(),
+                run_id: request.run_id,
+                agent_id: request.agent_id,
+                principal,
+                method: "turn/steer".into(),
+                params: json!({
+                    "threadId":request.thread_id,"expectedTurnId":request.turn_id,
+                    "clientUserMessageId":request.operation_id,"input":input,
+                }),
+            },
+        )
+        .await?
+        .result;
+        Ok(Response::new(CodexTurn {
+            id: json_string(&value, &["/turn/id", "/turnId"]),
+            thread_id: request.thread_id,
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn interrupt_codex_turn(
+        &self,
+        request: Request<InterruptCodexTurnRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "InterruptCodexTurn").await?;
+        let request = request.into_inner();
+        validate_codex_operation(&request.run_id)?;
+        validate_codex_operation(&request.operation_id)?;
+        self.agent_access(&principal, &request.agent_id, &request.run_id)
+            .await?;
+        crate::runs::control(
+            self,
+            crate::runs::Control {
+                id: request.operation_id,
+                run_id: request.run_id,
+                agent_id: request.agent_id,
+                principal,
+                method: "turn/interrupt".into(),
+                params: json!({}),
+            },
+        )
+        .await?;
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn resolve_codex_approval(
+        &self,
+        request: Request<ResolveCodexApprovalRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "ResolveCodexApproval").await?;
+        let request = request.into_inner();
+        validate_codex_id(&request.approval_id)?;
+        validate_codex_operation(&request.run_id)?;
+        validate_codex_operation(&request.operation_id)?;
+        self.agent_access(&principal, &request.agent_id, &request.run_id)
+            .await?;
+        let run = crate::runs::read(self, &principal, &request.run_id, None).await?;
+        let mut params = json!({"threadId":run.thread_id,"approvalId":request.approval_id,"clientUserMessageId":request.operation_id});
+        if !request.response_json.is_empty() {
+            if request.decision != CodexApprovalDecision::Unspecified as i32
+                || request.response_json.len() > 32768
+            {
+                return Err(Status::invalid_argument("invalid question response"));
+            }
+            let response: Value = serde_json::from_slice(&request.response_json)
+                .map_err(|_| Status::invalid_argument("invalid question response JSON"))?;
+            if !response.is_object() {
+                return Err(Status::invalid_argument(
+                    "question response must be an object",
+                ));
+            }
+            params["response"] = response;
+        } else {
+            params["decision"] = json!(match CodexApprovalDecision::try_from(request.decision)
+                .unwrap_or(CodexApprovalDecision::Unspecified)
+            {
+                CodexApprovalDecision::ApproveOnce => "approveOnce",
+                CodexApprovalDecision::ApproveSession => "approveSession",
+                CodexApprovalDecision::ApproveExecPolicyAmendment => "approveExecPolicyAmendment",
+                CodexApprovalDecision::ApproveNetworkPolicyAmendment =>
+                    "approveNetworkPolicyAmendment",
+                CodexApprovalDecision::Deny => "deny",
+                CodexApprovalDecision::Unspecified =>
+                    return Err(Status::invalid_argument("approval decision is required")),
+            });
+        }
+        crate::runs::control(
+            self,
+            crate::runs::Control {
+                id: request.operation_id,
+                run_id: request.run_id,
+                agent_id: request.agent_id,
+                principal,
+                method: "tengri/resolveApproval".into(),
+                params,
+            },
+        )
+        .await?;
+        Ok(Response::new(Empty {}))
+    }
+
+    type WatchCodexEventsStream = Pin<Box<dyn Stream<Item = Result<CodexEvent, Status>> + Send>>;
+
+    async fn watch_codex_events(
+        &self,
+        request: Request<WatchCodexEventsRequest>,
+    ) -> Result<Response<Self::WatchCodexEventsStream>, Status> {
+        let principal = self.authorize(&request, "WatchCodexEvents").await?;
+        let request = request.into_inner();
+        let (_, guest, access) = self.guest_access(&principal, &request.agent_id, "").await?;
+        let stream = guest
+            .watch_codex_events(request.after_sequence)
+            .await
+            .map_err(map_guest_error)?
+            .map(move |event| event.map(codex_event).map_err(map_guest_error));
+        Ok(Response::new(access.guard_stream(stream)))
+    }
+
+    async fn issue_editor_session(
+        &self,
+        request: Request<IssueDesktopSessionRequest>,
+    ) -> Result<Response<PreviewSession>, Status> {
+        let principal = self.authorize(&request, "IssueEditorSession").await?;
+        let request = request.into_inner();
+        validate_desktop_window_id(&request.window_id)?;
+        let (agent, access) = self.agent_access(&principal, &request.agent_id, "").await?;
+        if !request.renewal {
+            self.guests
+                .for_microvm(&agent, self.guest_authority.user(access))
+                .await
+                .map_err(map_guest_error)?
+                .open_editor()
+                .await
+                .map_err(map_guest_error)?;
+            self.activity.touch(&request.agent_id);
+        }
+        let issued = self
+            .tickets
+            .issue_editor(&principal, &request.agent_id, &request.window_id)
+            .await?;
+        let preview_origin = self.preview_origin.origin(&issued.id);
+        Ok(Response::new(PreviewSession {
+            id: issued.id,
+            launch_url: issued.url,
+            expires_at: issued.expires_at,
+            preview_origin,
+        }))
+    }
+
+    async fn issue_preview_session(
+        &self,
+        request: Request<IssuePreviewSessionRequest>,
+    ) -> Result<Response<PreviewSession>, Status> {
+        let principal = self.authorize(&request, "IssuePreviewSession").await?;
+        let request = request.into_inner();
+        let port = validate_preview_port(request.port)?;
+        let path = validate_preview_path(&request.path)?;
+        let fragment = validate_preview_fragment(&request.fragment)?;
+        let (agent, _, _) = self.guest_access(&principal, &request.agent_id, "").await?;
+        let claim = crate::slot::client::claim_for(&agent)
+            .map_err(|_| Status::unavailable("workspace runtime claim unavailable"))?;
+        self.activity.admit_control(&claim).await?;
+        let issued = self
+            .tickets
+            .issue_preview(&principal, &request.agent_id, port, &path, &fragment)
+            .await?;
+        metrics::global().record_preview_session();
+        let preview_origin = self.preview_origin.origin(&issued.id);
+        Ok(Response::new(PreviewSession {
+            id: issued.id,
+            launch_url: issued.url,
+            expires_at: issued.expires_at,
+            preview_origin,
+        }))
+    }
+
+    async fn issue_browser_session(
+        &self,
+        request: Request<IssueDesktopSessionRequest>,
+    ) -> Result<Response<PreviewSession>, Status> {
+        let principal = self.authorize(&request, "IssueBrowserSession").await?;
+        let request = request.into_inner();
+        validate_desktop_window_id(&request.window_id)?;
+        if request.renewal {
+            self.authorized_agent(&principal, &request.agent_id).await?;
+        } else {
+            self.guest(&principal, &request.agent_id, "")
+                .await?
+                .open_browser()
+                .await
+                .map_err(map_guest_error)?;
+        }
+        let issued = self
+            .tickets
+            .issue_browser(&principal, &request.agent_id, &request.window_id)
+            .await?;
+        let preview_origin = self.preview_origin.origin(&issued.id);
+        Ok(Response::new(PreviewSession {
+            id: issued.id,
+            launch_url: issued.url,
+            expires_at: issued.expires_at,
+            preview_origin,
+        }))
+    }
+
+    async fn revoke_editor_sessions(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "RevokeEditorSessions").await?;
+        self.tickets.revoke_desktop_previews(&principal).await?;
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn revoke_preview_session(
+        &self,
+        request: Request<RevokePreviewSessionRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "RevokePreviewSession").await?;
+        let request = request.into_inner();
+        validate_preview_session_id(&request.session_id)?;
+        self.authorized_agent(&principal, &request.agent_id).await?;
+        self.tickets
+            .revoke_preview_lease(
+                &principal,
+                &request.agent_id,
+                &request.session_id,
+                &request.revocation_token,
+            )
+            .await?;
+        Ok(Response::new(Empty {}))
+    }
+}
+
+fn validate_desktop_window_id(value: &str) -> Result<(), Status> {
+    if !(16..=128).contains(&value.len())
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(Status::invalid_argument("invalid desktop window identity"));
+    }
+    Ok(())
+}
+
+fn agent_from_microvm(microvm: &MicroVM) -> Agent {
+    let status = microvm.status.as_ref();
+    let resources = &microvm.spec.resources;
+    Agent {
+        id: microvm.name_any(),
+        uid: microvm.uid().unwrap_or_default(),
+        runtime_epoch: status
+            .map(|value| value.runtime_epoch.clone())
+            .unwrap_or_default(),
+        policy_version: status
+            .map(|value| value.observed_policy_version)
+            .unwrap_or_default(),
+        display_name: microvm.spec.display_name.clone(),
+        phase: phase_to_proto(agent_phase(microvm)) as i32,
+        architecture: architecture_to_proto(microvm.spec.architecture) as i32,
+        cpu_millis: resources.cpu_millis,
+        memory_mib: resources.memory_mib,
+        workspace_gib: resources.workspace_gib,
+        node_name: status
+            .and_then(|value| value.node_name.clone())
+            .unwrap_or_default(),
+        message: status
+            .and_then(|value| value.message.clone())
+            .unwrap_or_default(),
+        created_at: microvm.spec.created_at.clone(),
+        ready_at: status
+            .and_then(|value| value.ready_at.clone())
+            .unwrap_or_default(),
+        last_activity_at: last_activity_at(microvm)
+            .unwrap_or_else(|| microvm.spec.created_at.clone()),
+        idle_deadline: effective_idle_deadline(microvm).unwrap_or_default(),
+        idle_timeout_minutes: Some(microvm.spec.power.idle_timeout_minutes),
+        conditions: status
+            .map(|value| {
+                value
+                    .conditions
+                    .iter()
+                    .map(|condition| AgentCondition {
+                        r#type: condition.type_.clone(),
+                        status: condition.status.clone(),
+                        reason: condition.reason.clone(),
+                        message: condition.message.clone(),
+                        last_transition_at: condition.last_transition_at.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn power_settings_from_request(
+    request: &UpdatePowerSettingsRequest,
+) -> Result<MicroVMPowerSettings, Status> {
+    let idle_timeout_minutes = request
+        .idle_timeout_minutes
+        .ok_or_else(|| Status::invalid_argument("idle timeout must be supplied"))?;
+    if idle_timeout_minutes > 1440 {
+        return Err(Status::invalid_argument(
+            "idle timeout must be between 0 and 1440 minutes",
+        ));
+    }
+    Ok(MicroVMPowerSettings {
+        idle_timeout_minutes,
+    })
+}
+
+fn agent_phase(microvm: &MicroVM) -> MicroVMPhase {
+    if microvm.meta().deletion_timestamp.is_some() {
+        MicroVMPhase::Terminating
+    } else {
+        microvm
+            .status
+            .as_ref()
+            .map(|status| status.phase)
+            .unwrap_or_default()
+    }
+}
+
+fn file_entry(entry: crate::guest::FileEntry) -> FileEntry {
+    FileEntry {
+        name: entry.name,
+        path: entry.path,
+        directory: entry.directory,
+        size: entry.size,
+        modified_at: entry.modified_at,
+    }
+}
+
+fn terminal_session(session: crate::guest::TerminalSession) -> TerminalSession {
+    TerminalSession {
+        id: session.id,
+        creation_id: session.creation_id,
+        cwd: session.cwd,
+        created_at: session.created_at,
+        last_activity_at: session.last_activity_at,
+        attached: session.attached,
+    }
+}
+
+fn codex_event(event: crate::guest::CodexEvent) -> CodexEvent {
+    let method = event.method.clone();
+    let raw_json = bounded_codex_raw_json(&event);
+    CodexEvent {
+        sequence: event.sequence,
+        kind: codex_event_kind(&method, &event.approval_id, &event.raw) as i32,
+        method,
+        thread_id: json_string(
+            &event.raw,
+            &[
+                "/params/threadId",
+                "/params/thread/id",
+                "/params/conversationId",
+            ],
+        ),
+        turn_id: json_string(&event.raw, &["/params/turnId", "/params/turn/id"]),
+        item_id: json_string(&event.raw, &["/params/itemId", "/params/item/id"]),
+        text: codex_event_text(&event.raw),
+        approval_id: event.approval_id,
+        raw_json,
+    }
+}
+
+fn bounded_codex_raw_json(event: &crate::guest::CodexEvent) -> String {
+    let raw_json = event.raw.to_string();
+    if raw_json.len() <= MAX_CODEX_EVENT_TEXT_BYTES {
+        return raw_json;
+    }
+
+    let bounded = if !event.approval_id.is_empty()
+        && event.method == "mcpServer/elicitation/request"
+        && event
+            .raw
+            .pointer("/params/_meta/codex_approval_kind")
+            .and_then(Value::as_str)
+            == Some("mcp_tool_call")
+    {
+        let persist = event.raw.pointer("/params/_meta/persist");
+        let session_scope = persist.and_then(Value::as_str) == Some("session")
+            || persist
+                .and_then(Value::as_array)
+                .is_some_and(|scopes| scopes.iter().any(|scope| scope.as_str() == Some("session")));
+        let mut meta = json!({"codex_approval_kind": "mcp_tool_call"});
+        if session_scope {
+            meta["persist"] = json!("session");
+        }
+        json!({"params": {"_meta": meta}, "rawOmitted": true})
+    } else {
+        match event
+            .raw
+            .pointer("/params/availableDecisions")
+            .filter(|_| !event.approval_id.is_empty())
+        {
+            Some(available_decisions) => json!({
+                "params": {
+                    "availableDecisions": bounded_approval_decisions(available_decisions),
+                },
+                "rawOmitted": true,
+            }),
+            None => json!({"rawOmitted": true}),
+        }
+    }
+    .to_string();
+
+    debug_assert!(bounded.len() <= MAX_CODEX_EVENT_TEXT_BYTES);
+    bounded
+}
+
+fn bounded_approval_decisions(value: &Value) -> Value {
+    let Some(decisions) = value.as_array() else {
+        return Value::Null;
+    };
+    let mut bounded = Vec::new();
+    for decision in decisions.iter().take(16) {
+        let canonical = match decision.as_str() {
+            Some(value @ ("accept" | "acceptForSession" | "decline" | "cancel")) => {
+                Some(Value::String(value.to_owned()))
+            }
+            _ if decision
+                .pointer("/acceptWithExecpolicyAmendment/execpolicy_amendment")
+                .is_some() =>
+            {
+                Some(json!({
+                    "acceptWithExecpolicyAmendment": {"execpolicy_amendment": true},
+                }))
+            }
+            _ if decision
+                .pointer("/applyNetworkPolicyAmendment/network_policy_amendment")
+                .is_some() =>
+            {
+                Some(json!({
+                    "applyNetworkPolicyAmendment": {"network_policy_amendment": true},
+                }))
+            }
+            _ => None,
+        };
+        if let Some(canonical) = canonical
+            && !bounded.contains(&canonical)
+        {
+            bounded.push(canonical);
+        }
+    }
+    Value::Array(bounded)
+}
+
+fn codex_event_kind(method: &str, approval_id: &str, raw: &Value) -> CodexEventKind {
+    let normalized_method = method.to_ascii_lowercase();
+    if !approval_id.is_empty() {
+        return CodexEventKind::Approval;
+    }
+    if let Some(kind) = raw
+        .pointer("/params/item")
+        .and_then(|item| codex_thread_item_kind(&normalized_method, item))
+    {
+        kind
+    } else if normalized_method == "tengri/eventomitted" {
+        CodexEventKind::Warning
+    } else if codex_event_is_failure(&normalized_method, raw)
+        || normalized_method == "error"
+        || normalized_method.contains("error")
+    {
+        CodexEventKind::Error
+    } else if normalized_method.contains("warning") || normalized_method.contains("notice") {
+        CodexEventKind::Warning
+    } else if normalized_method.contains("tokenusage") || normalized_method.contains("ratelimits") {
+        CodexEventKind::Usage
+    } else if normalized_method.contains("filechange") || normalized_method.contains("diff") {
+        CodexEventKind::FileDiff
+    } else if normalized_method.contains("commandexecution")
+        || normalized_method.contains("tool")
+        || normalized_method.contains("mcp")
+    {
+        if normalized_method.contains("output") || normalized_method.contains("progress") {
+            CodexEventKind::ToolOutput
+        } else {
+            CodexEventKind::ToolCall
+        }
+    } else if normalized_method.contains("plan") {
+        CodexEventKind::Plan
+    } else if normalized_method.contains("reasoning") {
+        CodexEventKind::ReasoningSummary
+    } else if normalized_method.contains("agentmessage") {
+        CodexEventKind::AssistantText
+    } else {
+        CodexEventKind::ThreadState
+    }
+}
+
+fn codex_event_is_failure(normalized_method: &str, raw: &Value) -> bool {
+    if normalized_method == "turn/completed" {
+        return matches!(
+            raw.pointer("/params/turn/status").and_then(Value::as_str),
+            Some("failed")
+        ) || raw
+            .pointer("/params/turn/error")
+            .is_some_and(|error| !error.is_null());
+    }
+    normalized_method == "account/login/completed"
+        && (raw.pointer("/params/success").and_then(Value::as_bool) == Some(false)
+            || raw
+                .pointer("/params/error")
+                .is_some_and(|error| !error.is_null()))
+}
+
+fn codex_login_expires_at(now: DateTime<Utc>) -> String {
+    (now + chrono::Duration::minutes(CODEX_LOGIN_ATTEMPT_TTL_MINUTES)).to_rfc3339()
+}
+
+fn codex_login(value: Value, started_at: DateTime<Utc>) -> CodexLogin {
+    CodexLogin {
+        login_id: json_string(&value, &["/loginId"]),
+        verification_url: json_string(&value, &["/verificationUrl", "/authUrl"]),
+        user_code: json_string(&value, &["/userCode"]),
+        // App-server does not publish a device-code expiry, so Tengri bounds the UI attempt.
+        expires_at: codex_login_expires_at(started_at),
+        raw_json: value.to_string(),
+    }
+}
+
+fn codex_thread_item_kind(normalized_method: &str, item: &Value) -> Option<CodexEventKind> {
+    let item_type = item.get("type").and_then(Value::as_str)?;
+    Some(match item_type {
+        "userMessage" => CodexEventKind::UserMessage,
+        "agentMessage" => CodexEventKind::AssistantText,
+        "reasoning" => CodexEventKind::ReasoningSummary,
+        "plan" => CodexEventKind::Plan,
+        "fileChange" => CodexEventKind::FileDiff,
+        "commandExecution" => {
+            if item
+                .get("aggregatedOutput")
+                .is_some_and(|value| !value.is_null())
+                || matches!(
+                    item.get("status").and_then(Value::as_str),
+                    Some("completed" | "failed" | "declined")
+                )
+            {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        "mcpToolCall" | "dynamicToolCall" => {
+            if item.get("result").is_some_and(|value| !value.is_null())
+                || item.get("error").is_some_and(|value| !value.is_null())
+                || item
+                    .get("contentItems")
+                    .is_some_and(|value| !value.is_null())
+                || matches!(
+                    item.get("status").and_then(Value::as_str),
+                    Some("completed" | "failed")
+                )
+            {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        "webSearch" => {
+            if normalized_method == "item/completed"
+                || item.get("action").is_some_and(|value| !value.is_null())
+            {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        "imageView" | "subAgentActivity" => CodexEventKind::ToolCall,
+        "imageGeneration" => {
+            if matches!(
+                item.get("status").and_then(Value::as_str),
+                Some("completed" | "failed")
+            ) {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        "collabAgentToolCall" => {
+            if matches!(
+                item.get("status").and_then(Value::as_str),
+                Some("completed" | "failed")
+            ) {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        _ => return None,
+    })
+}
+
+fn codex_event_text(value: &Value) -> String {
+    bounded_codex_text(codex_event_text_unbounded(value))
+}
+
+fn codex_event_text_unbounded(value: &Value) -> String {
+    if let Some(outcome) = codex_collaboration_outcome(value) {
+        return outcome;
+    }
+    if let Some(outcome) = codex_command_outcome(value) {
+        return outcome;
+    }
+
+    let direct = json_string(
+        value,
+        &[
+            "/params/delta",
+            "/params/text",
+            "/params/message",
+            "/params/reason",
+            "/params/summary",
+            "/params/details",
+            "/params/diff",
+            "/params/command",
+            "/params/item/text",
+            "/params/item/aggregatedOutput",
+            "/params/item/command",
+            "/params/item/query",
+            "/params/item/path",
+            "/params/item/savedPath",
+            "/params/item/result",
+            "/params/item/revisedPrompt",
+            "/params/item/failure/message",
+            "/params/item/prompt",
+            "/params/item/agentPath",
+            "/params/error",
+            "/params/error/message",
+            "/params/turn/error/message",
+        ],
+    );
+    if !direct.is_empty() {
+        return direct;
+    }
+    for pointer in ["/params/item/summary", "/params/item/content"] {
+        let text = value
+            .pointer(pointer)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item.as_str()
+                    .or_else(|| item.get("text").and_then(Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    for pointer in [
+        "/params/item/contentItems",
+        "/params/item/result/content",
+        "/params/item/changes",
+    ] {
+        let text = value
+            .pointer(pointer)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item.as_str()
+                    .or_else(|| item.get("text").and_then(Value::as_str))
+                    .or_else(|| item.get("diff").and_then(Value::as_str))
+                    .or_else(|| item.get("path").and_then(Value::as_str))
+                    .or_else(|| match item.get("type").and_then(Value::as_str) {
+                        Some("inputImage") => Some("[Image output]"),
+                        Some("inputAudio") => Some("[Audio output]"),
+                        _ => None,
+                    })
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    for pointer in [
+        "/params/item/result/structuredContent",
+        "/params/item/result/structured_content",
+    ] {
+        if let Some(structured) = value
+            .pointer(pointer)
+            .filter(|structured| !structured.is_null())
+            && let Ok(text) = serde_json::to_string_pretty(structured)
+        {
+            return text;
+        }
+    }
+    if let Some(plan) = value.pointer("/params/plan").and_then(Value::as_array) {
+        let explanation = value
+            .pointer("/params/explanation")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let steps = plan
+            .iter()
+            .filter_map(|step| {
+                let text = step.get("step")?.as_str()?;
+                let status = step
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("pending");
+                let marker = if status == "completed" { "x" } else { " " };
+                Some(format!("- [{marker}] {text}"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return [explanation, steps.as_str()]
+            .into_iter()
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+    }
+    String::new()
+}
+
+fn codex_command_outcome(value: &Value) -> Option<String> {
+    let item = value.pointer("/params/item")?;
+    if item.get("type").and_then(Value::as_str) != Some("commandExecution") {
+        return None;
+    }
+    if item
+        .get("aggregatedOutput")
+        .and_then(Value::as_str)
+        .is_some_and(|output| !output.is_empty())
+    {
+        return None;
+    }
+
+    let status = item.get("status").and_then(Value::as_str)?;
+    let label = match status {
+        "completed" => "Command completed",
+        "failed" => "Command failed",
+        "declined" => "Command declined",
+        _ => return None,
+    };
+    Some(match item.get("exitCode").and_then(Value::as_i64) {
+        Some(exit_code) => format!("{label} (exit {exit_code})"),
+        None => label.to_owned(),
+    })
+}
+
+fn codex_collaboration_outcome(value: &Value) -> Option<String> {
+    let item = value.pointer("/params/item")?;
+    if item.get("type").and_then(Value::as_str) != Some("collabAgentToolCall") {
+        return None;
+    }
+
+    let status = item.get("status").and_then(Value::as_str)?;
+    if !matches!(status, "completed" | "failed") {
+        return None;
+    }
+
+    let tool = item
+        .get("tool")
+        .and_then(Value::as_str)
+        .filter(|tool| !tool.is_empty());
+    let mut lines = vec![match tool {
+        Some(tool) => format!("Agent collaboration {tool}: {status}"),
+        None => format!("Agent collaboration: {status}"),
+    }];
+
+    if let Some(states) = item.get("agentsStates").and_then(Value::as_object) {
+        let mut states = states.iter().collect::<Vec<_>>();
+        states.sort_by_key(|(left, _)| *left);
+        for (thread_id, state) in states {
+            let agent_status = state
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let message = state
+                .get("message")
+                .and_then(Value::as_str)
+                .filter(|message| !message.is_empty());
+            lines.push(match message {
+                Some(message) => format!("{thread_id}: {agent_status} — {message}"),
+                None => format!("{thread_id}: {agent_status}"),
+            });
+        }
+    }
+
+    Some(lines.join("\n"))
+}
+
+fn bounded_codex_text(text: String) -> String {
+    if text.len() <= MAX_CODEX_EVENT_TEXT_BYTES {
+        return text;
+    }
+    const MARKER: &str = "\n… output truncated …";
+    let mut end = MAX_CODEX_EVENT_TEXT_BYTES.saturating_sub(MARKER.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &text[..end], MARKER)
+}
+
+fn file_event_kind(kind: &str) -> FileEventKind {
+    match kind {
+        "created" => FileEventKind::Created,
+        "changed" => FileEventKind::Changed,
+        "removed" => FileEventKind::Removed,
+        "renamed" => FileEventKind::Renamed,
+        _ => FileEventKind::Reset,
+    }
+}
+
+fn phase_to_proto(phase: MicroVMPhase) -> AgentPhase {
+    match phase {
+        MicroVMPhase::Pending => AgentPhase::Pending,
+        MicroVMPhase::Booting => AgentPhase::Booting,
+        MicroVMPhase::Ready => AgentPhase::Ready,
+        MicroVMPhase::Sleeping => AgentPhase::Sleeping,
+        MicroVMPhase::Failed => AgentPhase::Failed,
+        MicroVMPhase::Terminating => AgentPhase::Terminating,
+    }
+}
+
+fn architecture_to_proto(architecture: MicroVMArchitecture) -> Architecture {
+    match architecture {
+        MicroVMArchitecture::Amd64 => Architecture::Amd64,
+        MicroVMArchitecture::Arm64 => Architecture::Arm64,
+    }
+}
+
+fn validate_creation_retry(
+    existing: &MicroVM,
+    owner_id: &str,
+    display_name: &str,
+    reservation: &crate::ofz::proto::GetWorkspaceReservationResponse,
+) -> Result<(), Status> {
+    if existing.spec.owner_hash != owner_id
+        || existing.spec.reservation_id != reservation.reservation_id
+        || existing.spec.display_name != display_name
+        || !reservation.workspace_uid.is_empty()
+            && existing.uid().as_deref() != Some(&reservation.workspace_uid)
+    {
+        return Err(Status::already_exists(
+            "workspace creation identity changed",
+        ));
+    }
+    if existing.metadata.deletion_timestamp.is_some() {
+        return Err(Status::failed_precondition(
+            "workspace reservation released",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_display_name(value: &str) -> Result<String, Status> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > 64 {
+        return Err(Status::invalid_argument(
+            "display_name must contain between 1 and 64 characters",
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn validate_resource_id(value: &str) -> Result<(), Status> {
+    if value.is_empty()
+        || value.len() > 63
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(Status::invalid_argument("invalid agent id"));
+    }
+    Ok(())
+}
+
+fn validate_terminal_creation_id(value: &str) -> Result<(), Status> {
+    if !(16..=128).contains(&value.len())
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(Status::invalid_argument(
+            "creation_id must contain 16 to 128 ASCII letters, digits, hyphens, or underscores",
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct ProvisionalTerminalLeaseManager {
+    client: Client,
+    guests: GuestPool,
+    namespace: Arc<str>,
+    registry: ProvisionalTerminalLeaseRegistry,
+    guest_authority: crate::guest::authorization::GuestAuthority,
+}
+
+impl ProvisionalTerminalLeaseManager {
+    fn new(
+        client: Client,
+        namespace: Arc<str>,
+        guests: GuestPool,
+        guest_authority: crate::guest::authorization::GuestAuthority,
+    ) -> Self {
+        Self {
+            client,
+            guests,
+            namespace,
+            registry: ProvisionalTerminalLeaseRegistry::default(),
+            guest_authority,
+        }
+    }
+
+    async fn track(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        timeout: Duration,
+    ) -> Result<(), Status> {
+        let expires_at = Utc::now()
+            + chrono::Duration::from_std(timeout)
+                .map_err(|_| Status::internal("terminal lease duration is invalid"))?;
+        self.patch_annotation(agent_id, terminal_id, Some(&expires_at.to_rfc3339()))
+            .await
+            .map_err(map_kube_error)?;
+        self.schedule(agent_id, terminal_id, timeout).await;
+        Ok(())
+    }
+
+    async fn recover(&self) -> Result<(), kube::Error> {
+        let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        let now = Utc::now();
+        for agent in agents.list(&ListParams::default()).await?.items {
+            for lease in recoverable_provisional_terminal_leases(&agent, now) {
+                self.schedule(&lease.agent_id, &lease.terminal_id, lease.delay)
+                    .await;
+            }
+        }
+        Ok(())
+    }
+
+    async fn schedule(&self, agent_id: &str, terminal_id: &str, timeout: Duration) {
+        let cleanup = self.clone();
+        let cleanup_agent_id = agent_id.to_owned();
+        self.registry
+            .register(
+                agent_id,
+                terminal_id,
+                timeout,
+                PROVISIONAL_TERMINAL_CLEANUP_RETRY,
+                move |terminal_id| {
+                    let cleanup = cleanup.clone();
+                    let agent_id = cleanup_agent_id.clone();
+                    async move { cleanup.cleanup_once(&agent_id, &terminal_id).await }
+                },
+            )
+            .await;
+    }
+
+    async fn retry_cleanup(&self, agent_id: &str, terminal_id: &str) {
+        self.schedule(agent_id, terminal_id, Duration::ZERO).await;
+    }
+
+    async fn cleanup_once(&self, agent_id: &str, terminal_id: &str) -> bool {
+        let guest = match self
+            .guests
+            .for_agent(agent_id, None, self.guest_authority.cleanup(terminal_id))
+            .await
+        {
+            Ok(guest) => Some(guest),
+            Err(error) if agent_is_absent(&error) => None,
+            Err(error) => {
+                tracing::warn!(
+                    agent_id,
+                    terminal_id,
+                    %error,
+                    "failed to connect to the guest while cleaning up an unconfirmed terminal"
+                );
+                return false;
+            }
+        };
+
+        if let Some(guest) = guest {
+            match guest.terminate_terminal(terminal_id).await {
+                Ok(()) => {}
+                Err(error) if terminal_is_absent(&error) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        agent_id,
+                        terminal_id,
+                        %error,
+                        "failed to clean up an unconfirmed terminal; retrying"
+                    );
+                    return false;
+                }
+            }
+        }
+
+        match self.patch_annotation(agent_id, terminal_id, None).await {
+            Ok(()) => {
+                metrics::global().record_pty_terminated(agent_id, terminal_id);
+                true
+            }
+            Err(error) if kube_resource_is_absent(&error) => true,
+            Err(error) => {
+                tracing::warn!(
+                    agent_id,
+                    terminal_id,
+                    %error,
+                    "failed to clear a provisional terminal lease; retrying"
+                );
+                false
+            }
+        }
+    }
+
+    async fn issue_and_confirm<T, I, IF>(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        issue: I,
+    ) -> Result<T, Status>
+    where
+        I: FnOnce() -> IF,
+        IF: Future<Output = Result<T, Status>>,
+    {
+        let manager = self.clone();
+        let confirmation_agent_id = agent_id.to_owned();
+        let confirmation_terminal_id = terminal_id.to_owned();
+        self.registry
+            .issue_and_confirm(agent_id, terminal_id, move |tracked| async move {
+                let issued = issue().await?;
+                if tracked {
+                    manager
+                        .patch_annotation(&confirmation_agent_id, &confirmation_terminal_id, None)
+                        .await
+                        .map_err(map_kube_error)?;
+                }
+                Ok(issued)
+            })
+            .await
+    }
+
+    async fn clear(&self, agent_id: &str, terminal_id: &str) -> Result<(), Status> {
+        if self.registry.clear(agent_id, terminal_id).await {
+            self.patch_annotation(agent_id, terminal_id, None)
+                .await
+                .map_err(map_kube_error)?;
+        }
+        Ok(())
+    }
+
+    async fn patch_annotation(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        value: Option<&str>,
+    ) -> Result<(), kube::Error> {
+        self.patch_annotations_for_agent(
+            agent_id,
+            vec![(
+                provisional_terminal_annotation_key(terminal_id),
+                value.map(str::to_owned),
+            )],
+        )
+        .await
+    }
+
+    async fn patch_annotations_for_agent(
+        &self,
+        agent_id: &str,
+        updates: Vec<(String, Option<String>)>,
+    ) -> Result<(), kube::Error> {
+        let annotations = updates
+            .into_iter()
+            .map(|(key, value)| (key, value.map_or(Value::Null, Value::String)))
+            .collect::<serde_json::Map<_, _>>();
+        let patch = json!({"metadata": {"annotations": annotations}});
+        let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        agents
+            .patch(agent_id, &PatchParams::default(), &Patch::Merge(&patch))
+            .await?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RecoverableProvisionalTerminalLease {
+    agent_id: String,
+    terminal_id: String,
+    delay: Duration,
+}
+
+fn recoverable_provisional_terminal_leases(
+    agent: &MicroVM,
+    now: DateTime<Utc>,
+) -> Vec<RecoverableProvisionalTerminalLease> {
+    let agent_id = agent.name_any();
+    agent
+        .metadata
+        .annotations
+        .iter()
+        .flat_map(|annotations| annotations.iter())
+        .filter_map(|(key, value)| {
+            if key.starts_with(RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX) {
+                return None;
+            }
+            let terminal_id = key.strip_prefix(PROVISIONAL_TERMINAL_ANNOTATION_PREFIX)?;
+            if terminal_id.is_empty()
+                || terminal_id.len() > 128
+                || !terminal_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            {
+                tracing::warn!(
+                    agent_id,
+                    annotation = key,
+                    "ignoring an invalid provisional terminal lease"
+                );
+                return None;
+            }
+            let expires_at = DateTime::parse_from_rfc3339(value)
+                .map(|value| value.with_timezone(&Utc))
+                .unwrap_or(now);
+            let delay = (expires_at - now).to_std().unwrap_or(Duration::ZERO);
+            Some(RecoverableProvisionalTerminalLease {
+                agent_id: agent_id.clone(),
+                terminal_id: terminal_id.to_owned(),
+                delay,
+            })
+        })
+        .collect()
+}
+
+fn provisional_terminal_annotation_key(terminal_id: &str) -> String {
+    format!("{PROVISIONAL_TERMINAL_ANNOTATION_PREFIX}{terminal_id}")
+}
+
+#[derive(Clone, Default)]
+struct TerminalCreationLockManager {
+    locks: Arc<Mutex<TerminalCreationLockMap>>,
+}
+
+type TerminalCreationLockMap = HashMap<(String, String), Weak<Mutex<()>>>;
+
+impl TerminalCreationLockManager {
+    async fn acquire(&self, agent_id: &str, creation_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let key = (agent_id.to_owned(), creation_id.to_owned());
+        let lock = {
+            let mut locks = self.locks.lock().await;
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(Mutex::new(()));
+                locks.insert(key, Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.lock_owned().await
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProvisionalTerminalLease {
+    AwaitingTicket(Uuid),
+    Expiring(Uuid),
+}
+
+#[derive(Clone, Default)]
+struct ProvisionalTerminalLeaseRegistry {
+    leases: Arc<Mutex<HashMap<(String, String), ProvisionalTerminalLease>>>,
+}
+
+impl ProvisionalTerminalLeaseRegistry {
+    async fn register<C, CF>(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        timeout: Duration,
+        retry_delay: Duration,
+        mut cleanup: C,
+    ) where
+        C: FnMut(String) -> CF + Send + 'static,
+        CF: Future<Output = bool> + Send + 'static,
+    {
+        let key = (agent_id.to_owned(), terminal_id.to_owned());
+        let token = Uuid::new_v4();
+        self.leases
+            .lock()
+            .await
+            .insert(key.clone(), ProvisionalTerminalLease::AwaitingTicket(token));
+
+        let registry = self.clone();
+        let cleanup_terminal_id = terminal_id.to_owned();
+        tokio::spawn(async move {
+            sleep(timeout).await;
+            {
+                let mut leases = registry.leases.lock().await;
+                match leases.get(&key).copied() {
+                    Some(ProvisionalTerminalLease::AwaitingTicket(current)) if current == token => {
+                        leases.insert(key.clone(), ProvisionalTerminalLease::Expiring(token));
+                    }
+                    _ => return,
+                }
+            }
+
+            loop {
+                if cleanup(cleanup_terminal_id.clone()).await {
+                    let mut leases = registry.leases.lock().await;
+                    if matches!(
+                        leases.get(&key),
+                        Some(ProvisionalTerminalLease::Expiring(current)) if *current == token
+                    ) {
+                        leases.remove(&key);
+                    }
+                    return;
+                }
+                sleep(retry_delay).await;
+                let leases = registry.leases.lock().await;
+                if !matches!(
+                    leases.get(&key),
+                    Some(ProvisionalTerminalLease::Expiring(current)) if *current == token
+                ) {
+                    return;
+                }
+            }
+        });
+    }
+
+    async fn issue_and_confirm<T, I, IF>(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        issue: I,
+    ) -> Result<T, Status>
+    where
+        I: FnOnce(bool) -> IF,
+        IF: Future<Output = Result<T, Status>>,
+    {
+        let key = (agent_id.to_owned(), terminal_id.to_owned());
+        let mut leases = self.leases.lock().await;
+        if let Some(ProvisionalTerminalLease::Expiring(_)) = leases.get(&key) {
+            return Err(Status::not_found(
+                "terminal session expired before ticket issuance",
+            ));
+        }
+        let tracked = leases.contains_key(&key);
+        let issued = issue(tracked).await?;
+        leases.remove(&key);
+        Ok(issued)
+    }
+
+    async fn clear(&self, agent_id: &str, terminal_id: &str) -> bool {
+        self.leases
+            .lock()
+            .await
+            .remove(&(agent_id.to_owned(), terminal_id.to_owned()))
+            .is_some()
+    }
+}
+
+async fn detached_terminal_creation<G, C, S, SF, F, FF>(
+    guard: G,
+    creation: C,
+    on_success: S,
+    on_failure: F,
+) -> Result<GuestTerminalCreation, Status>
+where
+    G: Send + 'static,
+    C: Future<Output = Result<GuestTerminalCreation, GuestError>> + Send + 'static,
+    S: FnOnce(GuestTerminalCreation) -> SF + Send + 'static,
+    SF: Future<Output = Result<GuestTerminalCreation, Status>> + Send + 'static,
+    F: FnOnce(GuestError) -> FF + Send + 'static,
+    FF: Future<Output = Result<GuestTerminalCreation, Status>> + Send + 'static,
+{
+    let (result_sender, result_receiver) = oneshot::channel();
+    tokio::spawn(async move {
+        let _guard = guard;
+        let result = match creation.await {
+            Ok(creation) => on_success(creation).await,
+            Err(error) => on_failure(error).await,
+        };
+        let _ = result_sender.send(result);
+    });
+
+    match result_receiver.await {
+        Ok(Ok(creation)) => Ok(creation),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err(Status::internal(
+            "terminal creation task ended without a result",
+        )),
+    }
+}
+
+fn validate_preview_session_id(value: &str) -> Result<(), Status> {
+    if value.len() != 24
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    {
+        return Err(Status::invalid_argument("invalid preview session id"));
+    }
+    Ok(())
+}
+
+fn codex_run(snapshot: crate::runs::Snapshot) -> Result<CodexRun, Status> {
+    Ok(CodexRun {
+        run_id: snapshot.run_id,
+        agent_id: snapshot.agent_id,
+        thread_id: snapshot.thread_id,
+        state_json: serde_json::to_string(&snapshot.state)
+            .map_err(|_| Status::internal("encode run state"))?,
+    })
+}
+
+fn validate_codex_operation(value: &str) -> Result<(), Status> {
+    Uuid::parse_str(value)
+        .ok()
+        .filter(|id| !id.is_nil() && id.to_string() == value)
+        .map(|_| ())
+        .ok_or_else(|| Status::invalid_argument("a canonical operation UUID is required"))
+}
+
+fn validate_codex_id(value: &str) -> Result<(), Status> {
+    if value.is_empty()
+        || value.len() > 160
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+    {
+        return Err(Status::invalid_argument("invalid Codex identifier"));
+    }
+    Ok(())
+}
+
+fn validate_codex_message(text: &str, images: &[CodexImage]) -> Result<(), Status> {
+    if (text.trim().is_empty() && images.is_empty()) || text.trim().len() > 64 << 10 {
+        return Err(Status::invalid_argument(
+            "add a message or image; message text must not exceed 64 KiB",
+        ));
+    }
+    if images.len() > 4
+        || images
+            .iter()
+            .map(|image| image.content.len())
+            .sum::<usize>()
+            > 8 << 20
+    {
+        return Err(Status::invalid_argument(
+            "attach at most 4 images and 8 MiB total",
+        ));
+    }
+    for image in images {
+        if image.content.is_empty() || image.content.len() > 4 << 20 {
+            return Err(Status::invalid_argument("each image must be at most 4 MiB"));
+        }
+        image_extension(image)?;
+    }
+    Ok(())
+}
+
+fn image_extension(image: &CodexImage) -> Result<&'static str, Status> {
+    match image.media_type.as_str() {
+        "image/png" if image.content.starts_with(b"\x89PNG\r\n\x1a\n") => Ok("png"),
+        "image/jpeg" if image.content.starts_with(b"\xff\xd8\xff") => Ok("jpg"),
+        "image/webp"
+            if image.content.starts_with(b"RIFF") && image.content.get(8..12) == Some(b"WEBP") =>
+        {
+            Ok("webp")
+        }
+        _ => Err(Status::invalid_argument(
+            "attach a valid PNG, JPEG, or WebP image",
+        )),
+    }
+}
+
+pub(crate) async fn codex_turn_input(
+    guest: &GuestClient,
+    text: &str,
+    images: &[CodexImage],
+) -> Result<Vec<Value>, Status> {
+    validate_codex_message(text, images)?;
+    let mut input = Vec::new();
+    if !text.trim().is_empty() {
+        input.push(json!({"type": "text", "text": text.trim(), "text_elements": []}));
+    }
+    if !images.is_empty() {
+        let directory = "/workspace/.tengri-attachments";
+        if let Err(error) = guest.create_directory(directory).await
+            && !matches!(&error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::CONFLICT)
+        {
+            return Err(map_guest_error(error));
+        }
+        for image in images {
+            let path = codex_attachment(image)?.path;
+            if let Err(error) = guest.write_file(&path, &image.content, "missing").await {
+                let conflict = matches!(&error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::CONFLICT);
+                if !conflict
+                    || !guest
+                        .read_file(&path)
+                        .await
+                        .is_ok_and(|existing| existing.content == image.content)
+                {
+                    return Err(map_guest_error(error));
+                }
+            }
+            input.push(json!({"type": "localImage", "path": path}));
+        }
+    }
+    Ok(input)
+}
+
+fn codex_attachment(image: &CodexImage) -> Result<crate::runs::Image, Status> {
+    let revision = format!("{:x}", Sha256::digest(&image.content));
+    Ok(crate::runs::Image {
+        path: format!(
+            "/workspace/.tengri-attachments/{revision}.{}",
+            image_extension(image)?
+        ),
+        revision,
+    })
+}
+
+fn validate_preview_port(value: u32) -> Result<u16, Status> {
+    u16::try_from(value)
+        .ok()
+        .filter(|port| {
+            *port >= 1024
+                && ![
+                    8080,
+                    crate::guest::GUEST_API_PORT,
+                    EDITOR_PORT,
+                    EDITOR_BRIDGE_PORT,
+                    BROWSER_PORT,
+                ]
+                .contains(port)
+        })
+        .ok_or_else(|| {
+            Status::invalid_argument(
+                "preview port must be between 1024 and 65535 and cannot use a reserved guest port",
+            )
+        })
+}
+
+fn validate_preview_path(value: &str) -> Result<String, Status> {
+    let value = if value.is_empty() { "/" } else { value };
+    if !value.starts_with('/') || value.len() > 4_096 || value.contains(['\0', '\r', '\n', '#']) {
+        return Err(Status::invalid_argument(
+            "preview path must be an absolute path without a fragment and at most 4096 bytes",
+        ));
+    }
+    let parsed = reqwest::Url::parse(&format!("http://guest.invalid{value}"))
+        .map_err(|_| Status::invalid_argument("preview path is invalid"))?;
+    if parsed.host_str() != Some("guest.invalid") || parsed.fragment().is_some() {
+        return Err(Status::invalid_argument("preview path is invalid"));
+    }
+    let mut normalized = parsed.path().to_owned();
+    if let Some(query) = parsed.query() {
+        normalized.push('?');
+        normalized.push_str(query);
+    }
+    Ok(normalized)
+}
+
+fn validate_preview_fragment(value: &str) -> Result<String, Status> {
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+    if !value.starts_with('#')
+        || value.len() > 4_096
+        || value
+            .chars()
+            .any(|character| character <= '\u{001f}' || character == '\u{007f}')
+    {
+        return Err(Status::invalid_argument(
+            "preview fragment must start with #, contain no control characters, and be at most 4096 bytes",
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn validate_digest_pinned_image(image: &str) -> anyhow::Result<()> {
+    let (repository, digest) = image
+        .rsplit_once("@sha256:")
+        .ok_or_else(|| anyhow::anyhow!("TENGRI_DEFAULT_IMAGE must be pinned by sha256 digest"))?;
+    anyhow::ensure!(
+        !repository.is_empty()
+            && !repository
+                .chars()
+                .any(|character| character == '@' || character.is_whitespace()),
+        "TENGRI_DEFAULT_IMAGE has an invalid image repository"
+    );
+    anyhow::ensure!(
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        "TENGRI_DEFAULT_IMAGE has an invalid sha256 digest"
+    );
+    Ok(())
+}
+
+fn json_string(value: &Value, pointers: &[&str]) -> String {
+    pointers
+        .iter()
+        .find_map(|pointer| value.pointer(pointer).and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn validate_expected_revision(value: &str) -> Result<(), Status> {
+    if value == "missing"
+        || (value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')))
+    {
+        Ok(())
+    } else {
+        Err(Status::invalid_argument(
+            "expected_revision must be a lowercase 64-character SHA-256 revision or missing",
+        ))
+    }
+}
+
+fn map_kube_error(error: kube::Error) -> Status {
+    if let kube::Error::Api(response) = &error {
+        return match response.code {
+            403 if response.message.contains("quota") => {
+                crate::metrics::global().record_quota_rejection();
+                Status::resource_exhausted(response.message.clone())
+            }
+            403 => Status::permission_denied(response.message.clone()),
+            404 => Status::not_found(response.message.clone()),
+            409 => Status::already_exists(response.message.clone()),
+            422 => Status::invalid_argument(response.message.clone()),
+            _ => Status::internal(response.message.clone()),
+        };
+    }
+    Status::internal(error.to_string())
+}
+
+fn is_conflict(error: &kube::Error) -> bool {
+    matches!(error, kube::Error::Api(response) if response.code == 409)
+}
+
+fn kube_resource_is_absent(error: &kube::Error) -> bool {
+    matches!(error, kube::Error::Api(response) if response.code == 404)
+}
+
+fn agent_is_absent(error: &GuestError) -> bool {
+    matches!(error, GuestError::Kubernetes(error) if kube_resource_is_absent(error))
+}
+
+fn terminal_is_absent(error: &GuestError) -> bool {
+    matches!(error, GuestError::Api { status, .. } if *status == reqwest::StatusCode::NOT_FOUND)
+}
+
+fn created_terminal_cleanup_id(error: &GuestError) -> Option<&str> {
+    match error {
+        GuestError::TerminalCreationIdentityMismatch {
+            created_terminal_id: Some(terminal_id),
+            ..
+        } => Some(terminal_id),
+        _ => None,
+    }
+}
+
+fn map_guest_error(error: GuestError) -> Status {
+    metrics::global().record_guest_failure();
+    match error {
+        GuestError::NotReady(message) | GuestError::MissingGuestIp(message) => {
+            Status::unavailable(message)
+        }
+        GuestError::Api { status, message } if status == reqwest::StatusCode::NOT_FOUND => {
+            Status::not_found(message)
+        }
+        GuestError::Api { status, message } if status == reqwest::StatusCode::CONFLICT => {
+            Status::already_exists(message)
+        }
+        GuestError::Api { status, message }
+            if status == reqwest::StatusCode::BAD_REQUEST
+                || status == reqwest::StatusCode::UNPROCESSABLE_ENTITY =>
+        {
+            Status::invalid_argument(message)
+        }
+        GuestError::Api { status, message } if status == reqwest::StatusCode::FORBIDDEN => {
+            Status::permission_denied(message)
+        }
+        GuestError::MissingFileRevision
+        | GuestError::InvalidFileRevision
+        | GuestError::FileRevisionMismatch => Status::failed_precondition(
+            "This guest cannot safely confirm file revisions. Sleep and resume the agent, then reopen the file.",
+        ),
+        GuestError::CodexHistoryTimeout => {
+            Status::deadline_exceeded("Conversation history retrieval timed out")
+        }
+        GuestError::InvalidCodexHistory(message) => {
+            Status::failed_precondition(format!("Invalid conversation history: {message}"))
+        }
+        other => Status::internal(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+
+    #[test]
+    fn validates_codex_images_and_image_only_messages() {
+        let png = CodexImage {
+            media_type: "image/png".into(),
+            content: b"\x89PNG\r\n\x1a\n".to_vec(),
+        };
+        assert!(validate_codex_message("", std::slice::from_ref(&png)).is_ok());
+        assert!(validate_codex_message("Inspect this", std::slice::from_ref(&png)).is_ok());
+        assert!(validate_codex_message("", &[]).is_err());
+        assert!(
+            validate_codex_message(
+                "",
+                &[CodexImage {
+                    media_type: "image/jpeg".into(),
+                    ..png.clone()
+                }]
+            )
+            .is_err()
+        );
+        assert!(validate_codex_message("", &vec![png.clone(); 5]).is_err());
+        let mut exact = png.clone();
+        exact.content.resize(4 << 20, 0);
+        assert!(validate_codex_message("", &[exact.clone(), exact.clone()]).is_ok());
+        assert!(validate_codex_message("", &[exact.clone(), exact.clone(), png]).is_err());
+        exact.content.push(0);
+        assert!(validate_codex_message("", &[exact]).is_err());
+    }
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::activity::LAST_ACTIVITY_ANNOTATION;
+    fn owner_hash(subject: &str) -> String {
+        format!("{:x}", Sha256::digest(subject))
+    }
+    use crate::crd::IDLE_MINUTES;
+    use crate::crd::MicroVMStatus;
+    use http::{Response as HttpResponse, StatusCode as HttpStatusCode};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
+    use kube::client::Body as KubeBody;
+    use sha2::{Digest, Sha256};
+
+    pub(crate) fn test_control_plane(client: Client) -> ControlPlane {
+        let namespace = "tengri".to_owned();
+        ControlPlane::new(
+            client.clone(),
+            ControlPlaneConfig {
+                identity: crate::identity::WorkloadIdentity::Fixture(8080),
+                authorization: WorkspaceAuthorization::Fixture,
+                guest_authority: crate::guest::authorization::GuestAuthority::fixture(),
+                namespace: namespace.clone(),
+                default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                database: Arc::new(crate::control::Database::unconnected_fixture()),
+                auth: Authenticator::fixture("https://proompteng.ai".into()),
+                public_url: "https://tengri.example.test".to_owned(),
+                preview_origin: PreviewOrigin::parse(
+                    "https://tengri-{session}.example.test".to_owned(),
+                    "https://tengri.example.test".to_owned(),
+                )
+                .unwrap(),
+            },
+            ActivityTracker::new(client, namespace),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn connector_rpc_requires_authentication_before_workspace_access() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let control = test_control_plane(Client::new(service, "tengri"));
+        let denied = control
+            .connector_agent(Request::new(proto::ConnectorAgentRequest {
+                agent_id: "unavailable-workspace".into(),
+                action: "identity".into(),
+                raw_json: "{}".into(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::Unauthenticated);
+    }
+
+    #[tokio::test]
+    async fn stream_admission_checks_one_workspace_and_keeps_ofz_denial() {
+        use std::sync::atomic::AtomicUsize;
+        for (method, action) in [
+            ("WatchFiles", crate::ofz::proto::Action::FilesObserve),
+            ("ResumeCodexThread", crate::ofz::proto::Action::CodexControl),
+            ("WatchCodexEvents", crate::ofz::proto::Action::CodexControl),
+        ] {
+            for denied in [false, true] {
+                let (service, mut handle) =
+                    tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+                let mut control = test_control_plane(Client::new(service, "tengri"));
+                let fixture = crate::authz::tests::OfzFixture::new().await;
+                fixture.mode.store(u8::from(denied), Ordering::SeqCst);
+                control.authorization = fixture.authorization;
+                let mut agent = provisional_terminal_test_agent(Utc::now());
+                agent.spec.desired_state = MicroVMDesiredState::Sleeping;
+                let principal =
+                    Principal::fixture(&agent.spec.owner_hash, &agent.uid().unwrap(), action);
+                let audience = control.request_audience();
+                let reads = Arc::new(AtomicUsize::new(0));
+                let observed = reads.clone();
+                let responder = tokio::spawn(async move {
+                    while let Some((request, response)) = handle.next_request().await {
+                        assert_eq!(request.method(), http::Method::GET);
+                        assert!(request.uri().path().ends_with("/microvms/agent-current"));
+                        observed.fetch_add(1, Ordering::SeqCst);
+                        response.send_response(
+                            HttpResponse::builder()
+                                .header("content-type", "application/json")
+                                .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                                .unwrap(),
+                        );
+                    }
+                });
+                let path = format!("/{CONTROL_PLANE_SERVICE}/{method}");
+                let outcome = tokio::time::timeout(Duration::from_secs(2), async {
+                    match method {
+                        "WatchFiles" => control
+                            .watch_files(crate::auth::signed_fixture_request(
+                                WatchFilesRequest {
+                                    agent_id: "agent-current".into(),
+                                    path: "/workspace".into(),
+                                    after_sequence: None,
+                                },
+                                &principal,
+                                &path,
+                                audience,
+                            ))
+                            .await
+                            .err()
+                            .unwrap()
+                            .code(),
+                        "ResumeCodexThread" => control
+                            .resume_codex_thread(crate::auth::signed_fixture_request(
+                                ResumeCodexThreadRequest {
+                                    agent_id: "agent-current".into(),
+                                    thread_id: "thread-current".into(),
+                                    ..Default::default()
+                                },
+                                &principal,
+                                &path,
+                                audience,
+                            ))
+                            .await
+                            .err()
+                            .unwrap()
+                            .code(),
+                        _ => control
+                            .watch_codex_events(crate::auth::signed_fixture_request(
+                                WatchCodexEventsRequest {
+                                    agent_id: "agent-current".into(),
+                                    after_sequence: 0,
+                                },
+                                &principal,
+                                &path,
+                                audience,
+                            ))
+                            .await
+                            .err()
+                            .unwrap()
+                            .code(),
+                    }
+                })
+                .await
+                .unwrap();
+                responder.abort();
+                assert_eq!(
+                    outcome,
+                    if denied {
+                        tonic::Code::PermissionDenied
+                    } else {
+                        tonic::Code::FailedPrecondition
+                    }
+                );
+                assert_eq!(
+                    reads.load(Ordering::SeqCst),
+                    1,
+                    "{method}: one stream submission must not open a second workspace authorization"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_capability_issuance_admits_activity_before_tickets() {
+        use crate::{
+            activity::{ACTIVE_RUN_ANNOTATION, LAST_ACTIVITY_ANNOTATION},
+            guest::rpc::{
+                proto as guest_proto,
+                test_server::{TestServer, TestService},
+            },
+        };
+        use std::sync::{Mutex, atomic::AtomicU8};
+
+        let database = Arc::new(
+            crate::control::Database::from_environment("tengri_controller")
+                .await
+                .unwrap(),
+        );
+        database.verify_schema().await.unwrap();
+        let mut agent = provisional_terminal_test_agent(Utc::now());
+        agent.metadata.resource_version = Some("11".into());
+        agent.spec.created_at = (Utc::now() - chrono::Duration::hours(3)).to_rfc3339();
+        agent.spec.idle_deadline = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        agent.spec.slot = Some(crate::crd::MicroVMSlot {
+            name: "slot-a".into(),
+            pod_uid: "55555555-5555-4555-8555-555555555555".into(),
+            pvc_name: "home-a".into(),
+            pvc_uid: "home-uid".into(),
+            epoch: 7,
+        });
+        agent.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            pod_uid: Some("55555555-5555-4555-8555-555555555555".into()),
+            pod_ip: Some("127.0.0.1".into()),
+            ..Default::default()
+        });
+        let current = Arc::new(Mutex::new(agent.clone()));
+        let state = current.clone();
+        // 1: sleep wins the CAS; 2: admission cannot reach Kubernetes.
+        let mode = Arc::new(AtomicU8::new(0));
+        let admission_mode = mode.clone();
+        let patches = Arc::new(AtomicUsize::new(0));
+        let writes = patches.clone();
+        let service = tower::service_fn(move |request: http::Request<KubeBody>| {
+            let state = state.clone();
+            let mode = admission_mode.clone();
+            let writes = writes.clone();
+            async move {
+                let mut status = HttpStatusCode::OK;
+                let body = if request.uri().path().ends_with("/secrets/slot-a-bootstrap") {
+                    json!({"apiVersion":"v1","kind":"Secret","immutable":true,"data":{"token":"Zml4dHVyZS10b2tlbg=="}})
+                } else if request.method() == http::Method::PATCH {
+                    let patch: Value =
+                        serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                            .unwrap();
+                    let mut agent = state.lock().unwrap();
+                    assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
+                    assert_eq!(
+                        patch["metadata"]["resourceVersion"],
+                        agent.resource_version().unwrap()
+                    );
+                    if mode.load(Ordering::SeqCst) == 1 {
+                        let claim = format!("idle-sleep/{}", agent.spec.runtime_epoch);
+                        agent
+                            .metadata
+                            .annotations
+                            .get_or_insert_default()
+                            .insert(ACTIVE_RUN_ANNOTATION.into(), claim);
+                        status = HttpStatusCode::CONFLICT;
+                        json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","message":"sleep won admission","code":409})
+                    } else if mode.load(Ordering::SeqCst) == 2 {
+                        status = HttpStatusCode::SERVICE_UNAVAILABLE;
+                        json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"ServiceUnavailable","message":"API unavailable","code":503})
+                    } else {
+                        let at = patch["metadata"]["annotations"][LAST_ACTIVITY_ANNOTATION]
+                            .as_str()
+                            .unwrap();
+                        agent
+                            .metadata
+                            .annotations
+                            .get_or_insert_default()
+                            .insert(LAST_ACTIVITY_ANNOTATION.into(), at.into());
+                        let version = agent.resource_version().unwrap().parse::<u64>().unwrap() + 1;
+                        agent.metadata.resource_version = Some(version.to_string());
+                        writes.fetch_add(1, Ordering::SeqCst);
+                        json!(*agent)
+                    }
+                } else {
+                    assert_eq!(request.method(), http::Method::GET);
+                    assert!(request.uri().path().ends_with("/microvms/agent-current"));
+                    json!(*state.lock().unwrap())
+                };
+                Ok::<_, std::convert::Infallible>(
+                    HttpResponse::builder()
+                        .status(status)
+                        .header("content-type", "application/json")
+                        .body(KubeBody::from(body.to_string().into_bytes()))
+                        .unwrap(),
+                )
+            }
+        });
+        let probes = Arc::new(AtomicUsize::new(0));
+        let seen = probes.clone();
+        let server = TestServer::start(TestService {
+            get_info: Some(Arc::new(move |_| {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok(guest_proto::GuestInfo {
+                    microvm_id: "55555555-5555-4555-8555-555555555555".into(),
+                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                    ..Default::default()
+                })
+            })),
+            list_terminals: Some(Arc::new(|_| {
+                Ok(guest_proto::TerminalList {
+                    sessions: vec![guest_proto::TerminalSession {
+                        id: "terminal-existing".into(),
+                        ..Default::default()
+                    }],
+                })
+            })),
+            ..Default::default()
+        })
+        .await;
+        let client = Client::new(service, "tengri");
+        let mut control = test_control_plane(client.clone());
+        let port = server
+            .guest
+            .base_url()
+            .strip_prefix("http://")
+            .unwrap()
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .port();
+        control.guests = GuestPool::new(
+            client,
+            "tengri",
+            crate::identity::WorkloadIdentity::Fixture(port),
+        );
+        control.tickets =
+            TicketStore::new("https://tengri.example.test".into(), database.clone()).unwrap();
+        let auth_mode = Arc::new(AtomicU8::new(0));
+        control.authorization = WorkspaceAuthorization::ControlledFixture(auth_mode.clone());
+        let mut principal = Principal::fixture(
+            &agent.spec.owner_hash,
+            &agent.uid().unwrap(),
+            crate::ofz::proto::Action::PreviewAccess,
+        );
+        principal.context.runtime_epoch = agent.spec.runtime_epoch.clone();
+        let issue = |terminal: bool| {
+            let control = &control;
+            let agent = &agent;
+            let mut principal = principal.clone();
+            async move {
+                if terminal {
+                    principal.action = crate::ofz::proto::Action::TerminalControl;
+                    let request = crate::auth::signed_fixture_request(
+                        IssueTerminalTicketRequest {
+                            agent_id: agent.name_any(),
+                            terminal_id: "terminal-existing".into(),
+                        },
+                        &principal,
+                        &format!("/{CONTROL_PLANE_SERVICE}/IssueTerminalTicket"),
+                        control.request_audience(),
+                    );
+                    control
+                        .issue_terminal_ticket(request)
+                        .await
+                        .map(|response| response.into_inner().websocket_url)
+                } else {
+                    let request = crate::auth::signed_fixture_request(
+                        IssuePreviewSessionRequest {
+                            agent_id: agent.name_any(),
+                            port: 3000,
+                            path: "/".into(),
+                            fragment: String::new(),
+                        },
+                        &principal,
+                        &format!("/{CONTROL_PLANE_SERVICE}/IssuePreviewSession"),
+                        control.request_audience(),
+                    );
+                    control
+                        .issue_preview_session(request)
+                        .await
+                        .map(|response| response.into_inner().launch_url)
+                }
+            }
+        };
+        let count = || async {
+            let client = database.connection().await.unwrap();
+            client
+                .query_one(
+                    "SELECT count(*) FROM tengri.tickets WHERE workspace_uid=$1",
+                    &[&Uuid::parse_str(&agent.uid().unwrap()).unwrap()],
+                )
+                .await
+                .unwrap()
+                .get::<_, i64>(0)
+        };
+        let mut admitted = 0;
+        for terminal in [false, true] {
+            mode.store(0, Ordering::SeqCst);
+            auth_mode.store(0, Ordering::SeqCst);
+            *current.lock().unwrap() = agent.clone();
+            let initial_tickets = count().await;
+            for offset in 1..=2 {
+                assert!(!issue(terminal).await.unwrap().is_empty());
+                admitted += 1;
+                assert_eq!(
+                    patches.load(Ordering::SeqCst),
+                    admitted,
+                    "cold and cached ticket issuance must admit activity before returning a capability"
+                );
+                assert_eq!(count().await, initial_tickets + offset);
+                assert!(!crate::activity::idle_deadline_passed(
+                    &current.lock().unwrap(),
+                    Utc::now()
+                ));
+            }
+            // A reservation may already exist, or win after admission's GET.
+            for already_reserved in [true, false] {
+                *current.lock().unwrap() = agent.clone();
+                if already_reserved {
+                    current
+                        .lock()
+                        .unwrap()
+                        .metadata
+                        .annotations
+                        .get_or_insert_default()
+                        .insert(
+                            ACTIVE_RUN_ANNOTATION.into(),
+                            format!("idle-sleep/{}", agent.spec.runtime_epoch),
+                        );
+                }
+                mode.store(u8::from(!already_reserved), Ordering::SeqCst);
+                assert_eq!(
+                    issue(terminal).await.unwrap_err().code(),
+                    tonic::Code::FailedPrecondition
+                );
+                assert_eq!(
+                    count().await,
+                    initial_tickets + 2,
+                    "reserved sleep must not create a capability"
+                );
+            }
+            *current.lock().unwrap() = agent.clone();
+            mode.store(2, Ordering::SeqCst);
+            assert_eq!(
+                issue(terminal).await.unwrap_err().code(),
+                tonic::Code::Unavailable
+            );
+            assert_eq!(count().await, initial_tickets + 2);
+            mode.store(0, Ordering::SeqCst);
+            auth_mode.store(1, Ordering::SeqCst);
+            assert_eq!(
+                issue(terminal).await.unwrap_err().code(),
+                tonic::Code::PermissionDenied
+            );
+            assert_eq!(patches.load(Ordering::SeqCst), admitted);
+            assert_eq!(count().await, initial_tickets + 2);
+        }
+        assert_eq!(
+            probes.load(Ordering::SeqCst),
+            1,
+            "later issuances must use the cached connection"
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_renewal_obeys_current_ofz_denial_before_tickets_or_guest_calls() {
+        for editor in [true, false] {
+            let (service, mut handle) =
+                tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+            let fixture = crate::authz::tests::OfzFixture::new().await;
+            fixture.mode.store(1, Ordering::SeqCst);
+            // The database is deliberately disconnected: denial must precede any capability write.
+            let mut control = test_control_plane(Client::new(service, "tengri"));
+            control.authorization = fixture.authorization;
+            let agent = provisional_terminal_test_agent(Utc::now());
+            let (method, action) = if editor {
+                ("IssueEditorSession", crate::ofz::proto::Action::EditorOpen)
+            } else {
+                (
+                    "IssueBrowserSession",
+                    crate::ofz::proto::Action::BrowserControl,
+                )
+            };
+            let principal =
+                Principal::fixture(&owner_hash("github:43"), &agent.uid().unwrap(), action);
+            let request = crate::auth::signed_fixture_request(
+                IssueDesktopSessionRequest {
+                    agent_id: agent.name_any(),
+                    window_id: "desktop-window-01".into(),
+                    renewal: true,
+                },
+                &principal,
+                &format!("/{CONTROL_PLANE_SERVICE}/{method}"),
+                control.request_audience(),
+            );
+            let task = tokio::spawn(async move {
+                if editor {
+                    control.issue_editor_session(request).await
+                } else {
+                    control.issue_browser_session(request).await
+                }
+            });
+            let (request, response) =
+                tokio::time::timeout(Duration::from_secs(2), handle.next_request())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            let result = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.unwrap_err().code(), tonic::Code::PermissionDenied);
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_listing_checks_the_pool_concurrently_and_keeps_fail_closed_behavior() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let mut control = test_control_plane(Client::new(service, "tengri"));
+        let microvms: Vec<_> = (0..6)
+            .map(|index| {
+                let mut agent = provisional_terminal_test_agent(Utc::now());
+                agent.metadata.name = Some(format!("workspace-{index}"));
+                agent.metadata.uid = Some(Uuid::new_v4().to_string());
+                agent.spec.created_at = format!("2026-10-12T00:00:0{index}Z");
+                agent
+            })
+            .collect();
+        let principal = Principal::fixture(
+            &owner_hash("github:43"),
+            "",
+            crate::ofz::proto::Action::WorkspaceMetadataRead,
+        );
+        control.authorization = WorkspaceAuthorization::SynchronizedFixture(Arc::new(
+            tokio::sync::Barrier::new(microvms.len()),
+        ));
+        let agents = tokio::time::timeout(
+            Duration::from_secs(3),
+            control.authorized_agents(&principal, &microvms),
+        )
+        .await
+        .expect("all workspace checks must start before waiting for their decisions")
+        .unwrap();
+        assert_eq!(agents.len(), 6);
+        assert_eq!(agents[0].id, "workspace-5");
+        assert_eq!(agents[5].id, "workspace-0");
+
+        let fixture = crate::authz::tests::OfzFixture::new().await;
+        control.authorization = fixture.authorization;
+        fixture.mode.store(1, Ordering::SeqCst);
+        assert!(
+            control
+                .authorized_agents(&principal, &microvms)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        fixture.mode.store(4, Ordering::SeqCst);
+        assert_eq!(
+            control
+                .authorized_agents(&principal, &microvms)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unavailable,
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_access_uses_ofz_instead_of_local_owner_metadata() {
+        for (mode, code) in [
+            (1, Some(tonic::Code::PermissionDenied)),
+            (4, Some(tonic::Code::Unavailable)),
+            (0, None),
+        ] {
+            let (service, mut handle) =
+                tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+            let fixture = crate::authz::tests::OfzFixture::new().await;
+            fixture.mode.store(mode, Ordering::SeqCst);
+            let mut control = test_control_plane(Client::new(service, "tengri"));
+            control.authorization = fixture.authorization;
+            let agent = provisional_terminal_test_agent(Utc::now());
+            let id = agent.name_any();
+            let principal = Principal::fixture(
+                &owner_hash("github:43"),
+                &agent.uid().unwrap(),
+                crate::ofz::proto::Action::WorkspaceMetadataRead,
+            );
+            assert_ne!(principal.owner_hash, agent.spec.owner_hash);
+            let task = tokio::spawn(async move { control.authorized_agent(&principal, &id).await });
+            let (request, response) = handle.next_request().await.unwrap();
+            assert!(request.uri().path().ends_with(&agent.name_any()));
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            let result = task.await.unwrap();
+            if let Some(code) = code {
+                assert_eq!(result.unwrap_err().code(), code);
+            } else {
+                assert_eq!(result.unwrap().uid(), agent.uid());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn power_settings_refresh_activity_changes_without_changing_authorized_workspace() {
+        for changed in ["activity", "uid", "owner", "epoch"] {
+            let (service, mut handle) =
+                tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+            let barrier = Arc::new(tokio::sync::Barrier::new(2));
+            let mut control = test_control_plane(Client::new(service, "tengri"));
+            control.authorization = WorkspaceAuthorization::SynchronizedFixture(barrier.clone());
+            let mut agent = provisional_terminal_test_agent(Utc::now());
+            agent.metadata.resource_version = Some("7".into());
+            let principal = Principal::fixture(
+                &agent.spec.owner_hash,
+                &agent.uid().unwrap(),
+                crate::ofz::proto::Action::WorkspacePowerConfigure,
+            );
+            let request = crate::auth::signed_fixture_request(
+                UpdatePowerSettingsRequest {
+                    id: agent.name_any(),
+                    idle_timeout_minutes: Some(1),
+                },
+                &principal,
+                &format!("/{CONTROL_PLANE_SERVICE}/UpdatePowerSettings"),
+                control.request_audience(),
+            );
+            let task = tokio::spawn(async move { control.update_power_settings(request).await });
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            agent.metadata.resource_version = Some("8".into());
+            agent.annotations_mut().insert(
+                crate::activity::LAST_ACTIVITY_ANNOTATION.into(),
+                Utc::now().to_rfc3339(),
+            );
+            match changed {
+                "uid" => agent.metadata.uid = Some(uuid::Uuid::new_v4().to_string()),
+                "owner" => agent.spec.owner_hash = owner_hash("github:another-owner"),
+                "epoch" => agent.spec.runtime_epoch = uuid::Uuid::new_v4().to_string(),
+                _ => {}
+            }
+            barrier.wait().await;
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            if changed != "activity" {
+                assert_eq!(
+                    task.await.unwrap().unwrap_err().code(),
+                    tonic::Code::PermissionDenied
+                );
+                continue;
+            }
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::PATCH);
+            let patch: Value =
+                serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                    .unwrap();
+            assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
+            assert_eq!(patch["metadata"]["resourceVersion"], "8");
+            assert_eq!(patch["spec"]["power"]["idleTimeoutMinutes"], 1);
+            assert!(patch["spec"].get("desiredState").is_none());
+            agent.spec.power.idle_timeout_minutes = 1;
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            assert_eq!(
+                task.await
+                    .unwrap()
+                    .unwrap()
+                    .into_inner()
+                    .idle_timeout_minutes,
+                Some(1)
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_power_settings_do_not_wake_and_obey_ofz() {
+        let database = Arc::new(
+            crate::control::Database::from_environment("tengri_controller")
+                .await
+                .unwrap(),
+        );
+        database.verify_schema().await.unwrap();
+        for allowed in [true, false] {
+            let (service, mut handle) =
+                tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+            let fixture = crate::authz::tests::OfzFixture::new().await;
+            fixture.mode.store(u8::from(!allowed), Ordering::SeqCst);
+            let mut control = test_control_plane(Client::new(service, "tengri"));
+            control.authorization = fixture.authorization;
+            control.auth = Authenticator::fixture("https://proompteng.ai".into());
+            let mut sleeping = provisional_terminal_test_agent(Utc::now());
+            sleeping.metadata.resource_version = Some("7".into());
+            sleeping.spec.desired_state = MicroVMDesiredState::Sleeping;
+            sleeping.status = Some(MicroVMStatus {
+                phase: MicroVMPhase::Sleeping,
+                ..Default::default()
+            });
+            let id = sleeping.name_any();
+            let principal = Principal::fixture(
+                &owner_hash("github:43"),
+                &sleeping.uid().unwrap(),
+                crate::ofz::proto::Action::WorkspacePowerConfigure,
+            );
+            let request = crate::auth::signed_fixture_request(
+                UpdatePowerSettingsRequest {
+                    id: id.clone(),
+                    idle_timeout_minutes: Some(0),
+                },
+                &principal,
+                &format!("/{CONTROL_PLANE_SERVICE}/UpdatePowerSettings"),
+                control.request_audience(),
+            );
+            let task = tokio::spawn(async move { control.update_power_settings(request).await });
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            assert!(request.uri().path().ends_with(&id));
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&sleeping).unwrap()))
+                    .unwrap(),
+            );
+            if !allowed {
+                assert_eq!(
+                    task.await.unwrap().unwrap_err().code(),
+                    tonic::Code::PermissionDenied
+                );
+                continue;
+            }
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&sleeping).unwrap()))
+                    .unwrap(),
+            );
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::PATCH);
+            let patch: Value =
+                serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                    .unwrap();
+            assert_eq!(patch["metadata"]["resourceVersion"], "7");
+            assert_eq!(patch["spec"]["power"]["idleTimeoutMinutes"], 0);
+            assert!(patch["spec"].get("desiredState").is_none());
+            sleeping.spec.power.idle_timeout_minutes = 0;
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&sleeping).unwrap()))
+                    .unwrap(),
+            );
+            let saved = task.await.unwrap().unwrap().into_inner();
+            assert_eq!(saved.idle_timeout_minutes, Some(0));
+            assert_eq!(saved.phase, AgentPhase::Sleeping as i32);
+            assert!(saved.idle_deadline.is_empty());
+        }
+    }
+
+    #[test]
+    fn power_settings_bound_idle_time_and_allow_disabling_automatic_sleep() {
+        let mut request = UpdatePowerSettingsRequest {
+            id: "agent".to_owned(),
+            idle_timeout_minutes: Some(0),
+        };
+        assert_eq!(
+            power_settings_from_request(&request)
+                .unwrap()
+                .idle_timeout_minutes,
+            0
+        );
+        request.idle_timeout_minutes = Some(1440);
+        assert!(power_settings_from_request(&request).is_ok());
+        request.idle_timeout_minutes = Some(1441);
+        assert_eq!(
+            power_settings_from_request(&request).unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+        request.idle_timeout_minutes = None;
+        assert_eq!(
+            power_settings_from_request(&request).unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn guest_model_failures_do_not_negotiate_an_older_guest_contract() {
+        let message = json!({"error": "Codex method is not exposed by Nanoagent"}).to_string();
+        for (status, message, expected_code) in [
+            (
+                reqwest::StatusCode::BAD_GATEWAY,
+                message.clone(),
+                tonic::Code::Internal,
+            ),
+            (
+                reqwest::StatusCode::FORBIDDEN,
+                message,
+                tonic::Code::PermissionDenied,
+            ),
+            (
+                reqwest::StatusCode::BAD_GATEWAY,
+                json!({"error": "Codex app-server is unavailable"}).to_string(),
+                tonic::Code::Internal,
+            ),
+            (
+                reqwest::StatusCode::BAD_GATEWAY,
+                "invalid response".into(),
+                tonic::Code::Internal,
+            ),
+        ] {
+            let mapped = map_guest_error(GuestError::Api {
+                status,
+                message: message.clone(),
+            });
+            assert_eq!(mapped.code(), expected_code);
+            assert!(mapped.message().contains(&message));
+        }
+    }
+
+    #[test]
+    fn file_write_revision_is_required_at_the_control_plane_boundary() {
+        assert!(validate_expected_revision("missing").is_ok());
+        assert!(validate_expected_revision(&"a".repeat(64)).is_ok());
+        let invalid = ["".to_owned(), "A".repeat(64), "a".repeat(63)];
+        for invalid in invalid {
+            assert_eq!(
+                validate_expected_revision(&invalid)
+                    .expect_err("invalid file revision must be rejected")
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+    }
+
+    #[test]
+    fn missing_guest_file_revision_requires_a_safe_resume() {
+        let status = map_guest_error(GuestError::MissingFileRevision);
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert!(status.message().contains("Sleep and resume"));
+    }
+
+    #[test]
+    fn caller_cannot_select_resource_policy() {
+        let request = CreateAgentRequest {
+            display_name: "My agent".to_owned(),
+            reservation_id: Uuid::new_v4().to_string(),
+        };
+        assert_eq!(request.display_name, "My agent");
+        assert_eq!(MicroVMResources::default().cpu_millis, 4_000);
+        assert_eq!(MicroVMResources::default().memory_mib, 8_192);
+        assert_eq!(MicroVMResources::default().workspace_gib, 32);
+    }
+
+    #[test]
+    fn deterministic_identity_binds_owner_and_capacity_reservation() {
+        assert_eq!(
+            deterministic_agent_id(
+                &owner_hash("github:424242"),
+                "33333333-3333-4333-8333-333333333333"
+            ),
+            "agent-5e468ac5d213e74d5fef86ad1275def8",
+            "browser deletion recovery and the controller share this public identity vector"
+        );
+        let first = deterministic_agent_id(
+            &owner_hash("github:42"),
+            "33333333-3333-4333-8333-333333333333",
+        );
+        let second = deterministic_agent_id(
+            &owner_hash("github:42"),
+            "33333333-3333-4333-8333-333333333333",
+        );
+        let other = deterministic_agent_id(
+            &owner_hash("github:43"),
+            "33333333-3333-4333-8333-333333333333",
+        );
+        assert_eq!(first, second);
+        assert_ne!(first, other);
+        assert_ne!(
+            first,
+            deterministic_agent_id(
+                &owner_hash("github:42"),
+                "55555555-5555-4555-8555-555555555555"
+            )
+        );
+    }
+
+    #[test]
+    fn creation_retry_retires_deleting_workspace_without_hiding_identity_conflicts() {
+        let mut agent = provisional_terminal_test_agent(Utc::now());
+        let reservation = crate::ofz::proto::GetWorkspaceReservationResponse {
+            reservation_id: agent.spec.reservation_id.clone(),
+            workspace_uid: agent.uid().unwrap(),
+            ..Default::default()
+        };
+        let owner = agent.spec.owner_hash.clone();
+        let name = agent.spec.display_name.clone();
+        assert!(validate_creation_retry(&agent, &owner, &name, &reservation).is_ok());
+        agent.metadata.deletion_timestamp = Some(Time(Utc::now().to_rfc3339().parse().unwrap()));
+        let error = validate_creation_retry(&agent, &owner, &name, &reservation).unwrap_err();
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(error.message(), "workspace reservation released");
+        for (owner, name, uid) in [
+            (
+                "another owner",
+                name.as_str(),
+                reservation.workspace_uid.as_str(),
+            ),
+            (
+                owner.as_str(),
+                "changed payload",
+                reservation.workspace_uid.as_str(),
+            ),
+            (owner.as_str(), name.as_str(), "replaced-workspace"),
+        ] {
+            let mut changed = reservation.clone();
+            changed.workspace_uid = uid.into();
+            assert_eq!(
+                validate_creation_retry(&agent, owner, name, &changed)
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::AlreadyExists
+            );
+        }
+    }
+
+    #[test]
+    fn new_agents_have_the_finalizer_and_single_mount_layout_at_creation() {
+        let hash = owner_hash("github:42");
+        let mut agent = provisional_terminal_test_agent(Utc::now());
+
+        apply_new_agent_metadata(&mut agent, &hash, SINGLE_MOUNT_STORAGE_LAYOUT);
+
+        assert_eq!(
+            agent.metadata.finalizers.as_deref(),
+            Some([FINALIZER_NAME.to_owned()].as_slice()),
+        );
+        assert_eq!(
+            agent
+                .metadata
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.get(OWNER_LABEL))
+                .map(String::as_str),
+            Some(&hash[..32]),
+        );
+        assert_eq!(
+            agent
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.get(STORAGE_LAYOUT_ANNOTATION))
+                .map(String::as_str),
+            Some(SINGLE_MOUNT_STORAGE_LAYOUT),
+        );
+    }
+
+    #[test]
+    fn default_image_must_be_digest_pinned() {
+        assert!(validate_digest_pinned_image("registry.example/nanoagent:latest").is_err());
+        assert!(validate_digest_pinned_image(&format!("@sha256:{}", "a".repeat(64))).is_err());
+        assert!(
+            validate_digest_pinned_image(&format!(
+                "registry.example/nano agent@sha256:{}",
+                "a".repeat(64)
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_digest_pinned_image(&format!(
+                "registry.example/nanoagent@staging@sha256:{}",
+                "a".repeat(64)
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_digest_pinned_image(&format!(
+                "registry.example/nanoagent@sha256:{}",
+                "a".repeat(64)
+            ))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn ready_running_agent_does_not_require_a_resume_transition() {
+        let now = Utc::now();
+        let mut agent = MicroVM::new(
+            "agent-ready",
+            MicroVMSpec {
+                reservation_id: "33333333-3333-4333-8333-333333333333".into(),
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
+                policy_version: 0,
+                display_name: "Ready agent".to_owned(),
+                owner_hash: "a".repeat(64),
+                desired_state: MicroVMDesiredState::Running,
+                image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                resources: MicroVMResources::default(),
+                power: Default::default(),
+                created_at: now.to_rfc3339(),
+                idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
+                slot: None,
+            },
+        );
+        agent.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            ..MicroVMStatus::default()
+        });
+
+        assert!(agent_ready_for_guest(&agent));
+        agent.status.as_mut().expect("status").guest_ready = false;
+        assert!(!agent_ready_for_guest(&agent));
+    }
+
+    #[test]
+    fn stale_ready_status_cannot_skip_a_sleep_or_resume_transition() {
+        let now = Utc::now();
+        let mut agent = MicroVM::new(
+            "agent-transitioning",
+            MicroVMSpec {
+                reservation_id: "33333333-3333-4333-8333-333333333333".into(),
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
+                policy_version: 0,
+                display_name: "Transitioning agent".to_owned(),
+                owner_hash: "a".repeat(64),
+                desired_state: MicroVMDesiredState::Running,
+                image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                resources: MicroVMResources::default(),
+                power: Default::default(),
+                created_at: now.to_rfc3339(),
+                idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
+                slot: None,
+            },
+        );
+        agent.metadata.generation = Some(2);
+        agent.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            observed_generation: 1,
+            ..MicroVMStatus::default()
+        });
+
+        assert!(!agent_ready_for_guest(&agent));
+        agent.status.as_mut().expect("status").observed_generation = 2;
+        assert!(agent_ready_for_guest(&agent));
+    }
+
+    #[test]
+    fn deletion_timestamp_is_exposed_as_terminating() {
+        let now = Utc::now();
+        let mut agent = MicroVM::new(
+            "agent-deleting",
+            MicroVMSpec {
+                reservation_id: "33333333-3333-4333-8333-333333333333".into(),
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
+                policy_version: 0,
+                display_name: "Deleting agent".to_owned(),
+                owner_hash: "a".repeat(64),
+                desired_state: MicroVMDesiredState::Running,
+                image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                resources: MicroVMResources::default(),
+                power: Default::default(),
+                created_at: now.to_rfc3339(),
+                idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
+                slot: None,
+            },
+        );
+        agent.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            ..MicroVMStatus::default()
+        });
+        agent.metadata.deletion_timestamp = Some(Time(k8s_openapi::jiff::Timestamp::now()));
+
+        assert_eq!(agent_phase(&agent), MicroVMPhase::Terminating);
+        assert_eq!(
+            agent_from_microvm(&agent).phase,
+            AgentPhase::Terminating as i32,
+        );
+    }
+
+    #[test]
+    fn agent_projection_reports_the_activity_extended_idle_deadline() {
+        let now = Utc::now();
+        let mut agent = MicroVM::new(
+            "agent-active",
+            MicroVMSpec {
+                reservation_id: "33333333-3333-4333-8333-333333333333".into(),
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
+                policy_version: 0,
+                display_name: "Active agent".to_owned(),
+                owner_hash: "a".repeat(64),
+                desired_state: MicroVMDesiredState::Running,
+                image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                resources: MicroVMResources::default(),
+                power: Default::default(),
+                created_at: (now - chrono::Duration::hours(1)).to_rfc3339(),
+                idle_deadline: now.to_rfc3339(),
+                slot: None,
+            },
+        );
+        let activity_at = now + chrono::Duration::minutes(15);
+        agent.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            LAST_ACTIVITY_ANNOTATION.to_owned(),
+            activity_at.to_rfc3339(),
+        )]));
+
+        let projected = agent_from_microvm(&agent);
+        assert_eq!(projected.last_activity_at, activity_at.to_rfc3339());
+        assert_eq!(
+            projected.idle_deadline,
+            (activity_at + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
+        );
+    }
+
+    #[test]
+    fn lifecycle_conflicts_are_retried_instead_of_reported_as_existing_agents() {
+        let conflict = kube::Error::Api(
+            kube::core::Status {
+                code: 409,
+                reason: "Conflict".to_owned(),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        );
+        let already_exists = kube::Error::Api(
+            kube::core::Status {
+                code: 409,
+                reason: "AlreadyExists".to_owned(),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        );
+        let invalid = kube::Error::Api(
+            kube::core::Status {
+                code: 422,
+                reason: "Invalid".to_owned(),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        );
+
+        assert!(is_conflict(&conflict));
+        assert!(is_conflict(&already_exists));
+        assert!(!is_conflict(&invalid));
+    }
+
+    #[test]
+    fn codex_events_are_typed_without_fabrication() {
+        assert_eq!(
+            codex_event_kind("item/agentMessage/delta", "", &json!({})),
+            CodexEventKind::AssistantText
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/commandExecution/requestApproval",
+                "approval-1",
+                &json!({}),
+            ),
+            CodexEventKind::Approval
+        );
+        assert_eq!(
+            codex_event_kind("item/fileChange/patchUpdated", "", &json!({})),
+            CodexEventKind::FileDiff
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "userMessage"}}}),
+            ),
+            CodexEventKind::UserMessage
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "agentMessage", "text": "done"}}}),
+            ),
+            CodexEventKind::AssistantText
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({
+                    "params": {
+                        "item": {
+                            "type": "commandExecution",
+                            "status": "completed",
+                            "aggregatedOutput": "12 pass"
+                        }
+                    }
+                }),
+            ),
+            CodexEventKind::ToolOutput
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/started",
+                "",
+                &json!({"params": {"item": {"type": "webSearch", "query": "Kata Firecracker", "action": null}}}),
+            ),
+            CodexEventKind::ToolCall
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "webSearch", "query": "Kata Firecracker", "action": null}}}),
+            ),
+            CodexEventKind::ToolOutput
+        );
+        assert_eq!(
+            codex_event_kind(
+                "thread/item",
+                "",
+                &json!({
+                    "params": {
+                        "item": {
+                            "type": "webSearch",
+                            "query": "Kata Firecracker",
+                            "action": {"type": "search", "query": "Kata Firecracker", "queries": null}
+                        }
+                    }
+                }),
+            ),
+            CodexEventKind::ToolOutput
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "imageGeneration",
+                        "status": "completed",
+                        "result": "generated-image-result"
+                    }
+                }
+            })),
+            "generated-image-result"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "imageGeneration",
+                        "status": "completed",
+                        "revisedPrompt": "refined image prompt"
+                    }
+                }
+            })),
+            "refined image prompt"
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "imageView", "path": "/workspace/image.png"}}}),
+            ),
+            CodexEventKind::ToolCall
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "imageGeneration", "status": "completed", "result": "opaque"}}}),
+            ),
+            CodexEventKind::ToolOutput
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "collabAgentToolCall",
+                        "tool": "spawnAgent",
+                        "status": "completed",
+                        "prompt": "repeat only the input",
+                        "agentsStates": {
+                            "thread-b": {"status": "failed", "message": "test failed"},
+                            "thread-a": {"status": "completed", "message": "PR opened"}
+                        }
+                    }
+                }
+            })),
+            "Agent collaboration spawnAgent: completed\nthread-a: completed — PR opened\nthread-b: failed — test failed"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {"item": {"content": [{"type": "text", "text": "actual input"}]}}
+            })),
+            "actual input"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "reasoning",
+                        "summary": ["Public reasoning summary"],
+                        "content": ["Internal reasoning content"]
+                    }
+                }
+            })),
+            "Public reasoning summary"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "commandExecution",
+                        "status": "completed",
+                        "aggregatedOutput": "",
+                        "exitCode": 0
+                    }
+                }
+            })),
+            "Command completed (exit 0)"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "status": "completed",
+                        "result": {
+                            "content": [],
+                            "structuredContent": {"id": "ENG-123", "state": "Done"}
+                        }
+                    }
+                }
+            })),
+            "{\n  \"id\": \"ENG-123\",\n  \"state\": \"Done\"\n}"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "fileChange",
+                        "changes": [{"path": "/workspace/main.rs", "diff": "+fn main() {}"}]
+                    }
+                }
+            })),
+            "+fn main() {}"
+        );
+        assert_eq!(
+            codex_event_kind("configWarning", "", &json!({})),
+            CodexEventKind::Warning
+        );
+        assert_eq!(
+            codex_event_kind("tengri/eventOmitted", "", &json!({})),
+            CodexEventKind::Warning
+        );
+        let legacy_approval = codex_event(crate::guest::CodexEvent {
+            sequence: 7,
+            method: "execCommandApproval".to_owned(),
+            approval_id: "approval-legacy".to_owned(),
+            raw: json!({"params": {"conversationId": "thread-legacy"}}),
+        });
+        assert_eq!(legacy_approval.thread_id, "thread-legacy");
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "explanation": "Implementation order",
+                    "plan": [
+                        {"step": "Build runtime", "status": "completed"},
+                        {"step": "Verify guest", "status": "inProgress"}
+                    ]
+                }
+            })),
+            "Implementation order\n\n- [x] Build runtime\n- [ ] Verify guest"
+        );
+        assert_eq!(
+            codex_event_text(&json!({"params": {"turn": {"error": {"message": "turn failed"}}}})),
+            "turn failed"
+        );
+        assert_eq!(
+            codex_event_kind(
+                "turn/completed",
+                "",
+                &json!({
+                    "params": {
+                        "turn": {
+                            "id": "turn-failed",
+                            "status": "failed",
+                            "error": {"message": "turn failed"}
+                        }
+                    }
+                }),
+            ),
+            CodexEventKind::Error
+        );
+        assert_eq!(
+            codex_event_kind(
+                "account/login/completed",
+                "",
+                &json!({"params": {"success": false, "error": "device code expired"}}),
+            ),
+            CodexEventKind::Error
+        );
+        assert_eq!(
+            codex_event_text(&json!({"params": {"error": "device code expired"}})),
+            "device code expired"
+        );
+        let login_started_at = DateTime::parse_from_rfc3339("2026-08-27T13:00:00Z")
+            .expect("login timestamp")
+            .with_timezone(&Utc);
+        assert_eq!(
+            codex_login_expires_at(login_started_at),
+            "2026-08-27T13:15:00+00:00"
+        );
+        let login = codex_login(
+            json!({
+                "loginId": "login-one",
+                "verificationUrl": "https://example.test/device",
+                "userCode": "TENG-RI01"
+            }),
+            login_started_at,
+        );
+        assert_eq!(login.login_id, "login-one");
+        assert_eq!(login.expires_at, "2026-08-27T13:15:00+00:00");
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {"item": {"contentItems": [{"type": "inputImage", "imageUrl": "opaque"}]}}
+            })),
+            "[Image output]"
+        );
+        let bounded = codex_event_text(&json!({"params": {"text": "😀".repeat(200_000)}}));
+        assert!(bounded.len() <= MAX_CODEX_EVENT_TEXT_BYTES);
+        assert!(bounded.ends_with("… output truncated …"));
+        assert!(bounded.is_char_boundary(bounded.len()));
+    }
+
+    #[test]
+    fn oversized_approvals_retain_only_supported_decision_metadata() {
+        let event = codex_event(crate::guest::CodexEvent {
+            sequence: 9,
+            method: "item/commandExecution/requestApproval".to_owned(),
+            approval_id: "approval-large".to_owned(),
+            raw: json!({
+                "params": {
+                    "threadId": "thread-large",
+                    "command": "x".repeat(MAX_CODEX_EVENT_TEXT_BYTES + 1),
+                    "availableDecisions": ["decline"]
+                }
+            }),
+        });
+
+        assert_eq!(event.thread_id, "thread-large");
+        assert!(event.raw_json.len() <= MAX_CODEX_EVENT_TEXT_BYTES);
+        let raw: Value = serde_json::from_str(&event.raw_json).expect("bounded approval JSON");
+        assert_eq!(raw.pointer("/rawOmitted"), Some(&Value::Bool(true)));
+        assert_eq!(
+            raw.pointer("/params/availableDecisions"),
+            Some(&json!(["decline"])),
+        );
+
+        assert_eq!(
+            bounded_approval_decisions(&json!([
+                "accept",
+                "acceptForSession",
+                "cancel",
+                {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": {"ignored": "x".repeat(MAX_CODEX_EVENT_TEXT_BYTES)}}},
+                {"applyNetworkPolicyAmendment": {"network_policy_amendment": {"ignored": true}}},
+                "unsupported"
+            ])),
+            json!([
+                "accept",
+                "acceptForSession",
+                "cancel",
+                {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": true}},
+                {"applyNetworkPolicyAmendment": {"network_policy_amendment": true}}
+            ]),
+        );
+        assert_eq!(bounded_approval_decisions(&Value::Null), Value::Null);
+    }
+
+    #[test]
+    fn oversized_mcp_approvals_retain_kind_and_advertised_session_scope() {
+        for persist in [
+            json!("session"),
+            json!(["session", "always"]),
+            json!("always"),
+            Value::Null,
+        ] {
+            let event = codex_event(crate::guest::CodexEvent {
+                sequence: 10,
+                method: "mcpServer/elicitation/request".to_owned(),
+                approval_id: "mcp-large".to_owned(),
+                raw: json!({"params": {
+                    "threadId": "thread-large", "message": "Allow fixture tool?",
+                    "_meta": {"codex_approval_kind": "mcp_tool_call", "persist": persist,
+                        "tool_params": {"content": "x".repeat(MAX_CODEX_EVENT_TEXT_BYTES + 1)}}
+                }}),
+            });
+            assert_eq!(event.thread_id, "thread-large");
+            assert_eq!(event.approval_id, "mcp-large");
+            assert_eq!(event.text, "Allow fixture tool?");
+            assert!(event.raw_json.len() < 256);
+            let raw: Value =
+                serde_json::from_str(&event.raw_json).expect("bounded MCP approval JSON");
+            assert_eq!(
+                raw.pointer("/params/_meta/codex_approval_kind"),
+                Some(&json!("mcp_tool_call"))
+            );
+            let session_scope =
+                persist == json!("session") || persist == json!(["session", "always"]);
+            assert_eq!(
+                raw.pointer("/params/_meta/persist").is_some(),
+                session_scope
+            );
+            assert_eq!(raw.pointer("/rawOmitted"), Some(&json!(true)));
+            assert!(raw.pointer("/params/_meta/tool_params").is_none());
+        }
+    }
+
+    #[test]
+    fn preview_path_is_normalized_and_cannot_smuggle_a_fragment() {
+        assert_eq!(
+            validate_preview_path("/app?mode=dev").expect("preview path"),
+            "/app?mode=dev",
+        );
+        assert_eq!(validate_preview_path("").expect("default path"), "/");
+        assert!(validate_preview_path("https://private.example").is_err());
+        assert!(validate_preview_path("/app#stolen").is_err());
+        assert!(validate_preview_path("/app\r\nX-Injected: 1").is_err());
+    }
+
+    #[test]
+    fn preview_ports_reject_guest_control_and_editor_listeners() {
+        for port in [0, 22, 1023, 8080, 8443, 13337, 13338, 13339, 65536] {
+            assert_eq!(
+                validate_preview_port(port).unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        for port in [1024, 3000, 65535] {
+            assert_eq!(validate_preview_port(port).unwrap(), port as u16);
+        }
+    }
+
+    #[test]
+    fn preview_fragment_is_bounded_and_kept_separate_from_the_proxy_path() {
+        assert_eq!(
+            validate_preview_fragment("#editor").expect("preview fragment"),
+            "#editor",
+        );
+        assert_eq!(validate_preview_fragment("").expect("empty fragment"), "");
+        let exact = format!("#{}x", "é".repeat(2_047));
+        assert_eq!(exact.len(), 4_096);
+        assert_eq!(
+            validate_preview_fragment(&exact).expect("maximum preview fragment"),
+            exact,
+        );
+        assert!(validate_preview_fragment("editor").is_err());
+        assert!(validate_preview_fragment("#editor\nprivate").is_err());
+        assert!(validate_preview_fragment(&format!("#{}", "é".repeat(2_048))).is_err());
+    }
+
+    #[test]
+    fn terminal_creation_requires_the_current_identity_contract() {
+        assert!(validate_terminal_creation_id("tengri-terminal-1").is_ok());
+        assert!(validate_terminal_creation_id(&"a".repeat(128)).is_ok());
+        for invalid in [
+            "",
+            "too-short",
+            "terminal creation identity",
+            "terminal/creation/identity",
+        ] {
+            assert!(
+                validate_terminal_creation_id(invalid).is_err(),
+                "{invalid:?} must be rejected"
+            );
+        }
+        assert!(validate_terminal_creation_id(&"a".repeat(129)).is_err());
+    }
+
+    #[test]
+    fn only_a_new_mismatched_terminal_is_a_cleanup_candidate() {
+        let created = GuestError::TerminalCreationIdentityMismatch {
+            expected: "terminal-creation-current".to_owned(),
+            actual: "terminal-creation-other".to_owned(),
+            created_terminal_id: Some("terminal-current".to_owned()),
+        };
+        assert_eq!(
+            created_terminal_cleanup_id(&created),
+            Some("terminal-current")
+        );
+
+        let replay = GuestError::TerminalCreationIdentityMismatch {
+            expected: "terminal-creation-current".to_owned(),
+            actual: "terminal-creation-other".to_owned(),
+            created_terminal_id: None,
+        };
+        assert_eq!(created_terminal_cleanup_id(&replay), None);
+    }
+
+    #[tokio::test]
+    async fn canceled_terminal_request_still_finishes_session_tracking() {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (tracked_sender, tracked_receiver) = oneshot::channel();
+        let creation_started = started.clone();
+        let creation_release = release.clone();
+        let request = tokio::spawn(detached_terminal_creation(
+            (),
+            async move {
+                creation_started.notify_one();
+                creation_release.notified().await;
+                Ok(GuestTerminalCreation {
+                    session: crate::guest::TerminalSession {
+                        id: "terminal-current".to_owned(),
+                        creation_id: "tengri-terminal-1".to_owned(),
+                        cwd: "/workspace".to_owned(),
+                        created_at: "2026-08-30T00:00:00Z".to_owned(),
+                        last_activity_at: "2026-08-30T00:00:00Z".to_owned(),
+                        attached: false,
+                    },
+                    created: true,
+                })
+            },
+            move |creation| async move {
+                tracked_sender
+                    .send(creation.session.id.clone())
+                    .expect("tracking receiver");
+                Ok(creation)
+            },
+            |error| async move { Err(map_guest_error(error)) },
+        ));
+
+        started.notified().await;
+        request.abort();
+        release.notify_one();
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), tracked_receiver)
+                .await
+                .expect("detached tracking timeout")
+                .expect("detached tracking result"),
+            "terminal-current"
+        );
+    }
+
+    #[tokio::test]
+    async fn replayed_terminal_creation_waits_for_prior_lease_tracking() {
+        let locks = TerminalCreationLockManager::default();
+        let first_guard = locks.acquire("agent-current", "tengri-terminal-1").await;
+        let tracking_started = Arc::new(tokio::sync::Notify::new());
+        let tracking_release = Arc::new(tokio::sync::Notify::new());
+        let first_tracking_started = tracking_started.clone();
+        let first_tracking_release = tracking_release.clone();
+        let first = tokio::spawn(detached_terminal_creation(
+            first_guard,
+            async move {
+                Ok(GuestTerminalCreation {
+                    session: crate::guest::TerminalSession {
+                        id: "terminal-current".to_owned(),
+                        creation_id: "tengri-terminal-1".to_owned(),
+                        cwd: "/workspace".to_owned(),
+                        created_at: "2026-08-30T00:00:00Z".to_owned(),
+                        last_activity_at: "2026-08-30T00:00:00Z".to_owned(),
+                        attached: false,
+                    },
+                    created: true,
+                })
+            },
+            move |creation| async move {
+                first_tracking_started.notify_one();
+                first_tracking_release.notified().await;
+                Ok(creation)
+            },
+            |error| async move { Err(map_guest_error(error)) },
+        ));
+
+        tracking_started.notified().await;
+        let second_started = Arc::new(tokio::sync::Notify::new());
+        let second_waiting = second_started.clone();
+        let second_locks = locks.clone();
+        let (second_acquired_sender, mut second_acquired_receiver) = oneshot::channel();
+        let second = tokio::spawn(async move {
+            second_waiting.notify_one();
+            let _guard = second_locks
+                .acquire("agent-current", "tengri-terminal-1")
+                .await;
+            let _ = second_acquired_sender.send(());
+        });
+        second_started.notified().await;
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), &mut second_acquired_receiver,)
+                .await
+                .is_err(),
+            "the replay must wait until the first request finishes lease tracking",
+        );
+
+        tracking_release.notify_one();
+        first
+            .await
+            .expect("first creation task")
+            .expect("first creation result");
+        tokio::time::timeout(Duration::from_secs(1), second_acquired_receiver)
+            .await
+            .expect("replayed creation lock timeout")
+            .expect("replayed creation lock result");
+        second.await.expect("replayed creation task");
+    }
+
+    pub(crate) fn provisional_terminal_test_agent(now: DateTime<Utc>) -> MicroVM {
+        let mut agent = MicroVM::new(
+            "agent-current",
+            MicroVMSpec {
+                reservation_id: "33333333-3333-4333-8333-333333333333".into(),
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
+                policy_version: 0,
+                display_name: "Current agent".to_owned(),
+                owner_hash: "a".repeat(64),
+                desired_state: MicroVMDesiredState::Running,
+                image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                resources: MicroVMResources::default(),
+                power: Default::default(),
+                created_at: now.to_rfc3339(),
+                idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
+                slot: None,
+            },
+        );
+        agent.metadata.uid = Some("33333333-3333-4333-8333-333333333333".into());
+        agent
+    }
+
+    #[tokio::test]
+    async fn provisional_terminal_lease_is_persisted_on_the_microvm() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let manager = ProvisionalTerminalLeaseManager::new(
+            client.clone(),
+            Arc::<str>::from("tengri"),
+            GuestPool::new(
+                client,
+                "tengri",
+                crate::identity::WorkloadIdentity::Fixture(8080),
+            ),
+            crate::guest::authorization::GuestAuthority::fixture(),
+        );
+        let tracking_manager = manager.clone();
+        let tracked_after = Utc::now();
+        let persistence = tokio::spawn(async move {
+            tracking_manager
+                .track("agent-current", "terminal-durable", Duration::from_secs(60))
+                .await
+        });
+
+        let (request, response) = handle.next_request().await.expect("MicroVM lease patch");
+        assert_eq!(request.method(), http::Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-current"
+        );
+        let body: Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("lease patch body"),
+        )
+        .expect("lease patch JSON");
+        let expires_at = body["metadata"]["annotations"]
+            [provisional_terminal_annotation_key("terminal-durable")]
+        .as_str()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&Utc))
+        .expect("valid terminal lease expiry");
+        assert!(expires_at > tracked_after);
+        response.send_response(
+            HttpResponse::builder()
+                .status(HttpStatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&provisional_terminal_test_agent(Utc::now()))
+                        .expect("MicroVM response JSON"),
+                ))
+                .expect("MicroVM lease patch response"),
+        );
+        persistence
+            .await
+            .expect("lease persistence task")
+            .expect("lease persistence request");
+        assert!(matches!(
+            manager
+                .registry
+                .leases
+                .lock()
+                .await
+                .get(&("agent-current".to_owned(), "terminal-durable".to_owned(),)),
+            Some(ProvisionalTerminalLease::AwaitingTicket(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn terminal_cleanup_retry_is_registered_before_returning() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let manager = ProvisionalTerminalLeaseManager::new(
+            client.clone(),
+            Arc::<str>::from("tengri"),
+            GuestPool::new(
+                client,
+                "tengri",
+                crate::identity::WorkloadIdentity::Fixture(8080),
+            ),
+            crate::guest::authorization::GuestAuthority::fixture(),
+        );
+
+        manager
+            .retry_cleanup("agent-current", "terminal-retry")
+            .await;
+
+        assert!(
+            manager
+                .registry
+                .leases
+                .lock()
+                .await
+                .contains_key(&("agent-current".to_owned(), "terminal-retry".to_owned()))
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_provisional_terminal_cleanup_is_retried() {
+        let registry = ProvisionalTerminalLeaseRegistry::default();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let cleanup_attempts = attempts.clone();
+        let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
+        registry
+            .register(
+                "agent-current",
+                "terminal-retry",
+                Duration::from_millis(1),
+                Duration::from_millis(1),
+                move |terminal_id| {
+                    let cleanup_attempts = cleanup_attempts.clone();
+                    let cleanup_sender = cleanup_sender.clone();
+                    async move {
+                        let attempt = cleanup_attempts.fetch_add(1, Ordering::SeqCst) + 1;
+                        if attempt == 1 {
+                            return false;
+                        }
+                        cleanup_sender.send(terminal_id).expect("cleanup receiver");
+                        true
+                    }
+                },
+            )
+            .await;
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver.recv())
+                .await
+                .expect("cleanup retry timeout")
+                .expect("cleanup retry result"),
+            "terminal-retry"
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn replacement_registry_recovers_a_durable_provisional_terminal_lease() {
+        let now = Utc::now();
+        let mut agent = provisional_terminal_test_agent(now);
+        agent.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            provisional_terminal_annotation_key("terminal-recovered"),
+            (now - chrono::Duration::seconds(1)).to_rfc3339(),
+        )]));
+        let recovered = recoverable_provisional_terminal_leases(&agent, now);
+        assert_eq!(
+            recovered,
+            vec![RecoverableProvisionalTerminalLease {
+                agent_id: "agent-current".to_owned(),
+                terminal_id: "terminal-recovered".to_owned(),
+                delay: Duration::ZERO,
+            }]
+        );
+
+        let replacement_registry = ProvisionalTerminalLeaseRegistry::default();
+        let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
+        replacement_registry
+            .register(
+                &recovered[0].agent_id,
+                &recovered[0].terminal_id,
+                recovered[0].delay,
+                Duration::from_millis(1),
+                move |terminal_id| {
+                    let cleanup_sender = cleanup_sender.clone();
+                    async move {
+                        cleanup_sender.send(terminal_id).expect("cleanup receiver");
+                        true
+                    }
+                },
+            )
+            .await;
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver.recv())
+                .await
+                .expect("recovered cleanup timeout")
+                .expect("recovered cleanup result"),
+            "terminal-recovered"
+        );
+    }
+
+    #[test]
+    fn replacement_registry_ignores_a_retired_terminal_creation_intent() {
+        let now = Utc::now();
+        let mut agent = provisional_terminal_test_agent(now);
+        agent.metadata.annotations = Some(std::collections::BTreeMap::from([
+            (
+                format!(
+                    "{RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX}legacy-grpc-0123456789abcdef"
+                ),
+                r#"{"expires_at":"2026-08-30T19:00:00Z","cwd":"/workspace","existing_session_ids":[]}"#
+                    .to_owned(),
+            ),
+            (
+                provisional_terminal_annotation_key("terminal-recovered"),
+                (now + chrono::Duration::seconds(30)).to_rfc3339(),
+            ),
+        ]));
+
+        assert_eq!(
+            recoverable_provisional_terminal_leases(&agent, now),
+            vec![RecoverableProvisionalTerminalLease {
+                agent_id: "agent-current".to_owned(),
+                terminal_id: "terminal-recovered".to_owned(),
+                delay: Duration::from_secs(30),
+            }],
+        );
+    }
+}

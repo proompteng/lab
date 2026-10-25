@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tengri
+  namespace: tengri
+spec:
+  hard:
+    count/leases.coordination.k8s.io: "7"
+    count/microvms.runtime.proompteng.ai: "6"
+    limits.cpu: "42"
+    limits.memory: 63Gi
+    persistentvolumeclaims: "6"
+    pods: "17"
+    requests.cpu: "27"
+    requests.memory: 57Gi
+    requests.storage: 192Gi
+    secrets: "12"

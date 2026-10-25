@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - load-balancer.yaml
+  - base/secrets.yaml
+helmCharts:
+  - name: dagster
+    repo: https://dagster-io.github.io/helm
+    version: 1.11.11
+    releaseName: dagster
+    namespace: dagster
+    includeCRDs: true
+    valuesFile: dagster-values.yaml

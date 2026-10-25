@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - secrets.yaml
+  - facteur-serviceaccount.yaml
+  - facteur-config.yaml
+  - facteur-kafka-sasl-secret.yaml
+  - facteur-service.yaml
+  - facteur-tailscale-service.yaml
+  - facteur-internal-service.yaml
+  - facteur-redis.yaml
+  - facteur-commands-kafkasource.yaml
+  - facteur-vector-cluster.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/facteur
+    newTag: f6d388f83

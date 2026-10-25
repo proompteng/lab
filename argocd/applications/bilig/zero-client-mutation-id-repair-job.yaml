@@ -1,0 +1,140 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bilig-zero-client-mutation-id-repair
+  namespace: bilig
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 900
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: repair
+          image: registry.ide-newton.ts.net/lab/bilig-app
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - --input-type=module
+            - -e
+            - |
+              import { createZeroPool, resolveZeroDatabaseUrl } from "./dist/zero/db.js";
+
+              const connectionString = resolveZeroDatabaseUrl();
+              if (!connectionString) {
+                throw new Error("DATABASE_URL missing");
+              }
+
+              const pool = createZeroPool(connectionString);
+              const client = await pool.connect();
+              try {
+                const duplicateCount = await client.query(`
+                  SELECT COUNT(*)::int AS count
+                  FROM (
+                    SELECT 1
+                    FROM workbook_event
+                    WHERE client_mutation_id IS NOT NULL
+                    GROUP BY workbook_id, client_mutation_id
+                    HAVING COUNT(*) > 1
+                  ) duplicates;
+                `);
+                const count = Number(duplicateCount.rows[0]?.count ?? 0);
+                if (count === 0) {
+                  console.log(JSON.stringify({ candidates: 0, backed_up: 0, updated: 0 }));
+                  process.exit(0);
+                }
+
+                await client.query("BEGIN");
+                await client.query(`
+                  CREATE TABLE IF NOT EXISTS workbook_event_client_mutation_id_repair_20260516 (
+                    workbook_id text NOT NULL,
+                    revision bigint NOT NULL,
+                    old_client_mutation_id text NOT NULL,
+                    new_client_mutation_id text NOT NULL,
+                    repaired_at timestamptz NOT NULL DEFAULT now(),
+                    PRIMARY KEY (workbook_id, revision)
+                  );
+                `);
+
+                const result = await client.query(`
+                  WITH duplicate_groups AS (
+                    SELECT workbook_id, client_mutation_id
+                    FROM workbook_event
+                    WHERE client_mutation_id IS NOT NULL
+                    GROUP BY workbook_id, client_mutation_id
+                    HAVING COUNT(*) > 1
+                  ), candidates AS (
+                    SELECT e.workbook_id,
+                           e.revision,
+                           e.client_mutation_id AS old_client_mutation_id,
+                           e.client_mutation_id || ':legacy-revision:' || e.revision::text AS new_client_mutation_id
+                    FROM workbook_event e
+                    JOIN duplicate_groups d
+                      ON d.workbook_id = e.workbook_id
+                     AND d.client_mutation_id = e.client_mutation_id
+                  ), backed_up AS (
+                    INSERT INTO workbook_event_client_mutation_id_repair_20260516 (
+                      workbook_id,
+                      revision,
+                      old_client_mutation_id,
+                      new_client_mutation_id
+                    )
+                    SELECT workbook_id,
+                           revision,
+                           old_client_mutation_id,
+                           new_client_mutation_id
+                    FROM candidates
+                    ON CONFLICT (workbook_id, revision) DO NOTHING
+                    RETURNING 1
+                  ), updated AS (
+                    UPDATE workbook_event e
+                    SET client_mutation_id = c.new_client_mutation_id
+                    FROM candidates c
+                    WHERE e.workbook_id = c.workbook_id
+                      AND e.revision = c.revision
+                      AND e.client_mutation_id = c.old_client_mutation_id
+                    RETURNING 1
+                  )
+                  SELECT (SELECT COUNT(*) FROM candidates) AS candidates,
+                         (SELECT COUNT(*) FROM backed_up) AS backed_up,
+                         (SELECT COUNT(*) FROM updated) AS updated;
+                `);
+                await client.query("COMMIT");
+                console.log(JSON.stringify(result.rows[0] ?? { candidates: 0, backed_up: 0, updated: 0 }));
+              } catch (error) {
+                await client.query("ROLLBACK").catch(() => undefined);
+                throw error;
+              } finally {
+                client.release();
+                await pool.end();
+              }
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

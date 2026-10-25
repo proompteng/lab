@@ -1,0 +1,285 @@
+import { expect, test, type WebSocket as PlaywrightWebSocket } from '@playwright/test'
+import { readFile, writeFile, rm, readdir } from 'node:fs/promises'
+
+test.use({ actionTimeout: 15_000, trace: 'retain-on-failure' })
+test.describe.configure({ retries: 0 })
+const diagnostics: string[] = []
+test.afterEach(async ({ page }, testInfo) => {
+  await testInfo.attach('upstream-console', { body: diagnostics.join('\n'), contentType: 'text/plain' })
+  if (testInfo.status !== testInfo.expectedStatus) {
+    await testInfo.attach('workbench-frames', {
+      body: JSON.stringify(page.frames().map((frame) => ({ url: frame.url(), name: frame.name() }))),
+      contentType: 'application/json',
+    })
+  }
+})
+
+test('runs the upstream VS Code workbench against real guest files and terminals @vscode', async ({
+  page,
+  request,
+}, testInfo) => {
+  test.skip(
+    process.env.TENGRI_EDITOR_BROWSER_FIXTURE !== '1',
+    'Run the VS Code acceptance runner with its real guest and gateway',
+  )
+  test.setTimeout(240_000)
+  const home = process.env.TENGRI_EDITOR_TEST_HOME
+  if (!home) throw new Error('TENGRI_EDITOR_TEST_HOME is required')
+  await rm(`${home}/workspace/from-terminal.txt`, { force: true })
+  await writeFile(`${home}/workspace/hello.ts`, 'export const answer = 41\n')
+  await writeFile(
+    `${home}/workspace/README.md`,
+    '# Real VS Code preview\n\nRendered by the upstream Markdown extension.\n',
+  )
+  const agent = {
+    id: 'editor-fixture',
+    displayName: 'Tengri',
+    phase: 'ready',
+    architecture: 'amd64',
+    cpuMillis: 4000,
+    memoryMib: 8192,
+    workspaceGib: 32,
+    uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    power: { idleTimeoutMinutes: 60 },
+    nodeName: 'local',
+    createdAt: '2026-09-08T00:00:00Z',
+    conditions: [],
+  }
+  let authenticated = true
+  let failRevocation = true
+  let editorOrigin = ''
+  let automaticRenewals = 0
+  const leaseExpiries: number[] = []
+  page.on('response', async (response) => {
+    if (new URL(response.url()).pathname === '/_tengri/bootstrap' && response.ok()) {
+      const lease = await response.json().catch(() => null)
+      if (lease?.expiresAt) leaseExpiries.push(Date.parse(lease.expiresAt))
+    }
+  })
+  const signOutActions: string[] = []
+  const editorSockets: PlaywrightWebSocket[] = []
+  let documentGeneration = 0
+  const eventSourceConnections = new Map<string, number>()
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) documentGeneration++
+  })
+  page.on('request', (request) => {
+    if (request.resourceType() !== 'eventsource') return
+    const stream = `${documentGeneration}:${new URL(request.url()).pathname}`
+    eventSourceConnections.set(stream, (eventSourceConnections.get(stream) ?? 0) + 1)
+  })
+  page.on('websocket', (socket) => {
+    if (new URL(socket.url()).hostname.startsWith('tengri-')) editorSockets.push(socket)
+  })
+  await page.route('**/api/auth/logout', async (route) => {
+    signOutActions.push('sign-out')
+    await expect.poll(() => editorSockets.every((socket) => socket.isClosed())).toBe(true)
+    authenticated = false
+    await route.fulfill({ json: { success: true } })
+  })
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({
+        json: {
+          authConfigured: true,
+          controlPlaneConfigured: true,
+          previewGatewayOrigin:
+            process.env.TENGRI_EDITOR_TEST_HTTPS === '1'
+              ? 'https://gateway.tengri.localhost:3443'
+              : 'http://localhost:18082',
+          authenticated,
+          user: authenticated
+            ? { id: 'editor-test-owner', name: 'Local editor test', email: 'editor@example.test', image: null }
+            : null,
+          agents: authenticated ? [agent] : [],
+        },
+      })
+      return
+    }
+    if (!authenticated) {
+      await route.fulfill({ status: 401, json: { error: 'Authentication is required' } })
+      return
+    }
+    const action = route.request().postDataJSON()
+    let result: unknown = null
+    if (action.action === 'editor-session') {
+      if (action.renewal) automaticRenewals++
+      const response = await request.get(
+        `http://127.0.0.1:18082/_test/editor?window=${encodeURIComponent(action.windowId)}`,
+        { timeout: 120_000 },
+      )
+      expect(response.ok()).toBeTruthy()
+      result = await response.json()
+      editorOrigin = (result as { previewOrigin: string }).previewOrigin
+    } else if (action.action === 'revoke-editor-sessions') {
+      signOutActions.push('revoke-editor-sessions')
+      if (failRevocation) {
+        await route.fulfill({ status: 503, json: { error: 'Editor sessions could not be revoked' } })
+        return
+      }
+      const response = await request.post('http://127.0.0.1:18082/_test/revoke-desktop-previews')
+      expect(response.ok()).toBeTruthy()
+    } else if (action.action === 'revoke-preview-session') {
+      await request.post('http://127.0.0.1:18082/_test/revoke', { data: action })
+    } else if (action.action === 'list-files') {
+      const response = await request.get(`http://127.0.0.1:18082/_test/files?path=${encodeURIComponent(action.path)}`)
+      expect(response.ok()).toBeTruthy()
+      result = await response.json()
+    } else if (action.action === 'codex-account') result = { authenticated: false, email: '', plan: '' }
+    else if (action.action === 'codex-login-status') result = null
+    else if (action.action === 'list-terminals') result = { sessions: [] }
+    await route.fulfill({ json: { result } })
+  })
+  const errors: string[] = []
+  diagnostics.length = 0
+  page.on('pageerror', (error) => errors.push(error.message))
+  page.on('console', (message) => {
+    if (message.type() === 'error') diagnostics.push(message.text())
+  })
+  page.on('requestfailed', (failed) => diagnostics.push(`${failed.url()}: ${failed.failure()?.errorText}`))
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Code', exact: true }).click()
+  const code = page.getByRole('region', { name: 'Code window', exact: true })
+  const workbench = code.getByTitle('VS Code workbench').contentFrame()
+  await expect(workbench.locator('.monaco-workbench')).toBeVisible({ timeout: 25_000 })
+  await expect(code.getByText('Connecting to VS Code…')).not.toBeVisible({ timeout: 30_000 })
+  await page.screenshot({ path: testInfo.outputPath('real-vscode-workbench.png') })
+  await workbench.getByRole('treeitem', { name: /hello.ts/ }).dblclick()
+  await expect(workbench.getByRole('tab', { name: /hello.ts/ })).toBeVisible()
+  await workbench.locator('.monaco-editor .view-lines').first().click()
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+  await page.keyboard.press(`${modifier}+a`)
+  await page.keyboard.type('export const answer = 42\n')
+  await page.keyboard.press(`${modifier}+s`)
+  await expect.poll(() => readFile(`${home}/workspace/hello.ts`, 'utf8')).toBe('export const answer = 42\n')
+  await page.keyboard.press('F1')
+  await workbench.getByRole('textbox').filter({ visible: true }).last().fill('>Terminal: Create New Terminal')
+  await page.keyboard.press('Enter')
+  const trust = workbench.getByRole('button', { name: 'Trust Folder & Continue' })
+  const runningTerminal = workbench.getByRole('textbox', { name: /^Terminal [0-9]+, (bash|zsh)/ })
+  await expect(runningTerminal).toBeVisible()
+  await expect(workbench.getByRole('textbox', { name: /^Terminal [0-9]/ })).toBeVisible()
+  const terminal = workbench.getByRole('textbox', { name: /^Terminal [0-9]/ })
+  await expect(trust).not.toBeVisible()
+  await expect(workbench.getByText('Restricted Mode', { exact: true })).not.toBeVisible()
+  await expect(runningTerminal).toBeVisible()
+  await terminal.focus()
+  await terminal.pressSequentially("printf 'VSCODE_TERMINAL_OK' > from-terminal.txt", { delay: 30 })
+  await page.keyboard.press('Enter')
+  await expect
+    .poll(() => readFile(`${home}/workspace/from-terminal.txt`, 'utf8').catch(() => ''))
+    .toBe('VSCODE_TERMINAL_OK')
+  await workbench.getByRole('tab', { name: /hello.ts/ }).click()
+  await workbench.locator('.monaco-editor .view-lines').first().click()
+  await page.keyboard.press(`${modifier}+a`)
+  await page.keyboard.type('export const answer: string = 42\n')
+  await expect(workbench.locator('.squiggly-error').first()).toBeVisible({ timeout: 30_000 })
+  await page.keyboard.press(`${modifier}+a`)
+  await page.keyboard.type('export const answer = 43\n')
+  // The disposable gateway uses a real one-minute cookie/SQL lease. Keep an unsaved buffer
+  // and the same editor document alive beyond its initial expiry, through real token rotation.
+  const editorDocument = await workbench.locator('.monaco-workbench').elementHandle()
+  await expect.poll(() => leaseExpiries[0]).toBeTruthy()
+  const initialExpiry = leaseExpiries.at(-1)!
+  const initialRenewalCount = automaticRenewals
+  const initialCookie = (await page.context().cookies(editorOrigin)).find(
+    (cookie) => cookie.name === '__Host-tengri_preview',
+  )
+  expect(initialCookie?.httpOnly).toBe(true)
+  await expect.poll(() => automaticRenewals, { timeout: 70_000 }).toBeGreaterThan(initialRenewalCount)
+  await expect.poll(() => leaseExpiries.length, { timeout: 30_000 }).toBeGreaterThan(1)
+  await expect.poll(() => Date.now(), { timeout: 70_000 }).toBeGreaterThan(initialExpiry + 1000)
+  expect(await editorDocument?.evaluate((node) => node.isConnected)).toBe(true)
+  await expect(workbench.locator('.monaco-editor .view-lines').first()).toContainText('43')
+  expect(await readFile(`${home}/workspace/hello.ts`, 'utf8')).toBe('export const answer = 42\n')
+  const renewedCookie = (await page.context().cookies(editorOrigin)).find(
+    (cookie) => cookie.name === '__Host-tengri_preview',
+  )
+  expect(renewedCookie?.value).not.toBe(initialCookie?.value)
+  expect(renewedCookie?.expires).toBeGreaterThan(initialExpiry / 1000)
+  await expect(code.getByText('Connecting to VS Code…')).not.toBeVisible()
+  await code.getByRole('button', { name: 'Close Code', exact: true }).click()
+  const saveDialog = workbench.getByRole('dialog')
+  await expect(saveDialog.getByText(/Do you want to save/)).toBeVisible()
+  await saveDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(code).toBeVisible()
+  expect(await readFile(`${home}/workspace/hello.ts`, 'utf8')).toBe('export const answer = 42\n')
+  const origin = new URL(
+    page
+      .frames()
+      .find((frame) => frame.url().includes('tengri-'))!
+      .url(),
+  ).origin
+  const backups = `${home}/.tengri/vscode/data/User/Backups`
+  await expect
+    .poll(async () => {
+      const paths = await readdir(backups, { recursive: true }).catch(() => [])
+      for (const path of paths) {
+        if ((await readFile(`${backups}/${path}`, 'utf8').catch(() => '')).includes('export const answer = 43'))
+          return true
+      }
+      return false
+    })
+    .toBe(true)
+  page.on('dialog', (dialog) => dialog.accept())
+  await page.reload()
+  await expect(workbench.locator('.monaco-workbench')).toBeVisible({ timeout: 30_000 })
+  await expect(code.getByText('Connecting to VS Code…')).not.toBeVisible({ timeout: 30_000 })
+  expect(
+    new URL(
+      page
+        .frames()
+        .find((frame) => frame.url().includes('tengri-'))!
+        .url(),
+    ).origin,
+  ).toBe(origin)
+  await expect(workbench.locator('.monaco-editor .view-lines').first()).toContainText('43')
+  await code.getByRole('button', { name: 'Close Code', exact: true }).click()
+  await saveDialog.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(code).toHaveCount(0)
+  expect(await readFile(`${home}/workspace/hello.ts`, 'utf8')).toBe('export const answer = 43\n')
+  await page.getByRole('button', { name: 'Open Finder', exact: true }).click()
+  const finder = page.getByRole('region', { name: 'Finder window', exact: true })
+  await finder.getByRole('button', { name: /README\.md/ }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
+  await expect(workbench.getByRole('tab', { name: /README.md/ })).toBeVisible({ timeout: 30_000 })
+  await page.keyboard.press('F1')
+  await workbench.getByRole('textbox').filter({ visible: true }).last().fill('>Markdown: Open Preview to the Side')
+  await page.keyboard.press('Enter')
+  const webview = workbench.locator('iframe.webview')
+  await expect(webview).toBeVisible()
+  const activePreview = webview.contentFrame().locator('#active-frame')
+  await expect(activePreview).toBeVisible({ timeout: 30_000 })
+  await expect(activePreview).toHaveCSS('visibility', 'visible')
+  await expect(
+    activePreview.contentFrame().getByRole('heading', { name: 'Real VS Code preview', exact: true }),
+  ).toBeVisible()
+  await activePreview
+    .contentFrame()
+    .locator('body')
+    .screenshot({ path: testInfo.outputPath('markdown-content.png') })
+  await page.screenshot({ path: testInfo.outputPath('real-vscode-markdown.png') })
+  await workbench.getByRole('tab', { name: /^Extensions \(/ }).click()
+  await expect(workbench.getByRole('listitem', { name: /^Tengri Desktop Integration,/ })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('real-vscode-extensions.png') })
+  const probeEditor = () => page.context().request.get(editorOrigin, { ignoreHTTPSErrors: true })
+  expect((await probeEditor()).ok()).toBe(true)
+  expect(editorSockets.some((socket) => !socket.isClosed())).toBe(true)
+  await page.getByRole('menuitem', { name: 'Tengri menu', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Sign Out', exact: true }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'Editor sessions could not be revoked' })).toBeVisible()
+  expect(signOutActions).toEqual(['revoke-editor-sessions'])
+  expect(authenticated).toBe(true)
+  expect((await probeEditor()).ok()).toBe(true)
+  failRevocation = false
+  await page.getByRole('menuitem', { name: 'Tengri menu', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Sign Out', exact: true }).click()
+  await expect(code).toHaveCount(0)
+  expect(signOutActions).toEqual(['revoke-editor-sessions', 'revoke-editor-sessions', 'sign-out'])
+  expect(authenticated).toBe(false)
+  expect((await probeEditor()).status()).toBe(401)
+  expect(eventSourceConnections.size).toBeGreaterThan(0)
+  for (const [stream, connections] of eventSourceConnections) expect(connections, stream).toBe(1)
+  expect(errors).toEqual([])
+})

@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-options-schema-gate
+  namespace: torghut
+data:
+  await-options-schema.py: |
+    import os
+    import time
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.exc import SQLAlchemyError
+
+
+    def sqlalchemy_dsn(raw_dsn: str) -> str:
+        if raw_dsn.startswith("postgresql://"):
+            return "postgresql+psycopg://" + raw_dsn.removeprefix("postgresql://")
+        if raw_dsn.startswith("postgres://"):
+            return "postgresql+psycopg://" + raw_dsn.removeprefix("postgres://")
+        return raw_dsn
+
+
+    timeout_seconds = int(os.environ.get("OPTIONS_SCHEMA_GATE_TIMEOUT_SECONDS", "3600"))
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    engine = create_engine(sqlalchemy_dsn(os.environ["DB_DSN"]), pool_pre_ping=True)
+
+    try:
+        while True:
+            attempts += 1
+            try:
+                with engine.connect() as connection:
+                    ready = connection.execute(
+                        text(
+                            """
+                            SELECT
+                              to_regclass('public.torghut_options_archive_membership') IS NOT NULL
+                              AND to_regclass('public.torghut_options_contract_archive_status') IS NOT NULL
+                              AND to_regclass('public.torghut_options_active_contract_catalog') IS NOT NULL
+                              AND COALESCE(
+                                (
+                                  SELECT index_entry.indisvalid AND index_entry.indisready
+                                  FROM pg_index AS index_entry
+                                  WHERE index_entry.indexrelid = to_regclass(
+                                    'public.ix_options_catalog_active_expiration_symbol'
+                                  )
+                                ),
+                                FALSE
+                              )
+                            """
+                        )
+                    ).scalar_one()
+                if ready:
+                    print(f"options schema gate ready after {attempts} attempt(s)")
+                    break
+                if attempts == 1 or attempts % 12 == 0:
+                    print(f"waiting for options migration 0067 schema: attempt={attempts}")
+            except SQLAlchemyError as error:
+                print(
+                    "waiting for options schema: "
+                    f"attempt={attempts} last_error={type(error).__name__}"
+                )
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SystemExit(
+                    "options migrations through 0067 were not ready within "
+                    f"{timeout_seconds} seconds after {attempts} attempt(s)"
+                )
+            time.sleep(min(5, max(1, remaining)))
+    finally:
+        engine.dispose()

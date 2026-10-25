@@ -1,0 +1,45 @@
+{
+  pkgs,
+  lib,
+  repoRoot,
+  bun,
+  nodejs,
+}:
+
+import ./bun-workspace-service.nix {
+  inherit pkgs lib repoRoot bun nodejs;
+  serviceName = "froussard";
+  packageName = "froussard";
+  depsHash = {
+    x86_64-linux = "sha256-mqTY/iASQ5Y9MkCPM0PB2v8GVOhkYwrD7RDEDh2kzSg=";
+    aarch64-linux = "sha256-dr9kxaJAhPl0QEa2u6/gI/4iT47jJTQuMgwAS27vPQw=";
+  };
+  installFilters = [
+    "@proompteng/agent-contracts"
+    "@proompteng/codex"
+    "@proompteng/discord"
+    "@proompteng/otel"
+    "froussard"
+  ];
+  sourcePaths = [
+    "apps/froussard"
+    "packages/agent-contracts"
+    "packages/codex"
+    "packages/discord"
+    "packages/otel"
+  ];
+  buildCommands = [
+    "bun --cwd=packages/agent-contracts run build"
+    "bun --cwd=packages/otel run build"
+    "bun --cwd=packages/discord run build"
+    "bun --cwd=apps/froussard run build"
+  ];
+  command = [
+    "bun"
+    "dist/index.mjs"
+  ];
+  workingDir = "/app/apps/froussard";
+  exposedPorts = {
+    "8080/tcp" = { };
+  };
+}

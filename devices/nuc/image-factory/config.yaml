@@ -1,0 +1,63 @@
+audit:
+  mode: log
+
+artifacts:
+  core:
+    registry: ghcr.io
+    components:
+      extensionManifest: proompteng/talos-extensions
+      imager: siderolabs/imager
+      installer: siderolabs/installer
+      installerBase: siderolabs/installer-base
+      overlayManifest: siderolabs/overlays
+      talosctl: siderolabs/talosctl-all
+  schematic:
+    registry: registry:5000
+    namespace: image-factory
+    repository: schematics
+    insecure: true
+  installer:
+    internal:
+      registry: registry:5000
+      namespace: image-factory
+      repository: installers
+      insecure: true
+    external: {}
+  refreshInterval: 5m
+  talosVersionRecheckInterval: 15m
+
+authentication:
+  enabled: false
+
+build:
+  maxConcurrency: 2
+  minTalosVersion: 1.13.9
+
+cache:
+  oci:
+    registry: registry:5000
+    namespace: image-factory
+    repository: cache
+    insecure: true
+  schematic:
+    capacity: 10000
+    negativeTTL: 30s
+  signingKeyPath: /run/secrets/cache-signing-key.key
+
+containerSignature:
+  disabled: false
+  issuer: ''
+  issuerRegExp: '^(https://accounts\.google\.com|https://token\.actions\.githubusercontent\.com)$'
+  subjectRegExp: '(@siderolabs\.com$|^releasemgr-svc@talos-production\.iam\.gserviceaccount\.com$|^https://github\.com/proompteng/lab/\.github/workflows/kata-firecracker-extension\.yaml@refs/heads/main$)'
+
+http:
+  allowedOrigins:
+    - https://nuc.ide-newton.ts.net
+  externalURL: http://100.100.244.148:8081/
+  httpListenAddr: :8080
+
+metrics:
+  addr: :2122
+
+registry:
+  jobs: 64

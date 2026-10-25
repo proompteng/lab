@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- deployment.yaml
+- network-policy.yaml
+- rbac.yaml
+configMapGenerator:
+- name: relay-config
+  namespace: relay
+  files:
+  - config.json
+images:
+- name: relay-main
+  newName: registry.ide-newton.ts.net/lab/relay
+  digest: sha256:f9674a5184604fe68f6e52c1a1f0fdde580b8d148e8ee92430e929c7d2c780f8

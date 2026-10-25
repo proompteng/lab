@@ -1,0 +1,75 @@
+import type { Http2Server, ServerHttp2Session } from 'node:http2'
+
+import { Data, Effect, Scope } from 'effect'
+
+export class RestateHttp2ServerError extends Data.TaggedError('RestateHttp2ServerError')<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+interface RestateHttp2ServerResource {
+  readonly server: Http2Server
+  readonly sessions: Set<ServerHttp2Session>
+  readonly onSession: (session: ServerHttp2Session) => void
+}
+
+const listen = (
+  server: Http2Server,
+  port: number,
+): Effect.Effect<RestateHttp2ServerResource, RestateHttp2ServerError> =>
+  Effect.callback((resume) => {
+    const sessions = new Set<ServerHttp2Session>()
+    const onSession = (session: ServerHttp2Session): void => {
+      sessions.add(session)
+      session.once('close', () => sessions.delete(session))
+    }
+    const onError = (cause: Error) => {
+      server.off('listening', onListening)
+      server.off('session', onSession)
+      resume(
+        Effect.fail(
+          new RestateHttp2ServerError({
+            message: 'Restate endpoint failed to listen',
+            cause,
+          }),
+        ),
+      )
+    }
+    const onListening = () => {
+      server.off('error', onError)
+      resume(Effect.succeed({ server, sessions, onSession }))
+    }
+    // Node emits listening and asynchronous bind errors after listen returns. Invoke it before installing callbacks so
+    // a synchronous argument or state defect cannot strand listeners that Effect never had a chance to finalize.
+    server.listen(port)
+    server.on('session', onSession)
+    server.once('error', onError)
+    server.once('listening', onListening)
+    return Effect.sync(() => {
+      // Keep the one-shot bind-error listener until the pending listen settles. Node can queue an asynchronous bind
+      // error before cancellation, and close() does not retract that event; removing this listener here would turn the
+      // delayed error into an uncaught process-level event. If close wins without an error, the unreachable server and
+      // listener are collected together.
+      server.off('listening', onListening)
+      server.off('session', onSession)
+      for (const session of sessions) session.destroy()
+      server.close()
+    })
+  })
+
+const close = (resource: RestateHttp2ServerResource): Effect.Effect<void> =>
+  Effect.callback((resume) => {
+    resource.server.off('session', resource.onSession)
+    for (const session of resource.sessions) session.destroy()
+    if (!resource.server.listening) {
+      resume(Effect.void)
+      return
+    }
+    resource.server.close(() => resume(Effect.void))
+  })
+
+export const acquireRestateHttp2Server = (
+  server: Http2Server,
+  port: number,
+): Effect.Effect<void, RestateHttp2ServerError, Scope.Scope> =>
+  Effect.acquireRelease(listen(server, port), close, { interruptible: true }).pipe(Effect.asVoid)

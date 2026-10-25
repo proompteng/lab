@@ -1,0 +1,30 @@
+pipeline:
+  version: v3-dag-1
+  default_mode: paper
+  deterministic_checkpoints:
+    - feature_contract_validation
+    - gate_policy_evaluation
+    - risk_firewall_authority
+  stages:
+    - id: research_intake
+      next_on_pass: candidate_build
+      next_on_fail: research_intake
+    - id: candidate_build
+      next_on_pass: backtest_robustness
+      next_on_fail: research_intake
+    - id: backtest_robustness
+      next_on_pass: gate_policy_evaluation
+      next_on_fail: research_intake
+    - id: gate_policy_evaluation
+      next_on_pass: shadow_paper_deployment
+      next_on_fail: research_intake
+    - id: shadow_paper_deployment
+      next_on_pass: live_ramp
+      next_on_fail: research_intake
+    - id: live_ramp
+      next_on_pass: continuous_governance
+      next_on_fail: rollback_incident_workflow
+    - id: continuous_governance
+      next_on_fail: rollback_incident_workflow
+    - id: rollback_incident_workflow
+      next_on_pass: research_intake

@@ -1,0 +1,124 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-path-config
+  namespace: local-path-storage
+data:
+  config.json: |-
+    {
+      "nodePathMap": [],
+      "storageClassConfigs": {
+        "local-path": {
+          "nodePathMap": [
+            {
+              "node": "talos-192-168-1-85",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "talos-192-168-1-194",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "talos-192-168-1-203",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/turin-nvme-intel",
+                "/var/mnt/turin-nvme-transcend"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": [
+                "/var/local-path-provisioner"
+              ]
+            }
+          ]
+        },
+        "local-path-ryzen": {
+          "nodePathMap": [
+            {
+              "node": "talos-192-168-1-194",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
+        },
+        "local-path-turin-nvme-intel": {
+          "nodePathMap": [
+            {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/turin-nvme-intel"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
+        },
+        "local-path-turin-nvme-transcend": {
+          "nodePathMap": [
+            {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/turin-nvme-transcend"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
+        },
+        "local-path-ci-amd64": {
+          "nodePathMap": [
+            {
+              "node": "turin",
+              "paths": [
+                "/var/mnt/turin-nvme-transcend"
+              ]
+            },
+            {
+              "node": "talos-192-168-1-194",
+              "paths": [
+                "/var/mnt/local-path-provisioner"
+              ]
+            },
+            {
+              "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+              "paths": []
+            }
+          ]
+        }
+      }
+    }
+  helperPod.yaml: |-
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: helper-pod
+    spec:
+      priorityClassName: system-node-critical
+      tolerations:
+        - key: node.kubernetes.io/disk-pressure
+          operator: Exists
+          effect: NoSchedule
+      containers:
+      - name: helper-pod
+        image: docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+        imagePullPolicy: IfNotPresent

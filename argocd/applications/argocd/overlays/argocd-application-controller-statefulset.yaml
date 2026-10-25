@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: argocd-application-controller
+spec:
+  replicas: 3
+  template:
+    metadata:
+      annotations:
+        gitops.proompteng.ai/config-revision: controller-resource-health-persist-v1
+    spec:
+      containers:
+        - name: argocd-application-controller
+          env:
+            - name: ARGOCD_CONTROLLER_REPLICAS
+              value: "3"
+          resources:
+            requests:
+              cpu: "750m"
+              memory: "1.5Gi"
+            limits:
+              cpu: "3"
+              memory: "4Gi"

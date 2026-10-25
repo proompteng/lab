@@ -1,0 +1,18 @@
+namespace:
+  create: false
+  name: inngest
+
+inngest:
+  # Intentionally blank in Git; keys come from `sealed-secret.yaml` (Secret `inngest`).
+  # The Helm chart has no existingSecret option for these keys, so we keep values empty and provide the Secret via GitOps.
+  eventKey: ''
+  signingKey: ''
+  sdkUrl:
+    - 'http://khoshut.khoshut.svc.cluster.local:3000/api/inngest'
+  logLevel: info
+
+postgresql:
+  enabled: false
+
+redis:
+  enabled: false

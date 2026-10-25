@@ -1,0 +1,44 @@
+# Example configuration for the facteur Discord to Agents bridge.
+server:
+  listen_address: ':8080'
+discord:
+  bot_token: your-discord-bot-token
+  application_id: '123456789012345678'
+  public_key: your-discord-public-key
+  guild_id: '987654321098765432'
+redis:
+  url: redis://facteur-redis:6379/0
+postgres:
+  dsn: postgres://facteur:facteur@facteur-db:5432/facteur_kb?sslmode=disable
+codex_implementation_orchestrator:
+  enabled: false
+  agents_base_url: http://agents.agents.svc.cluster.local
+  namespace: agents
+  agent_name: codex-agent
+  runtime_type: job
+  runtime_config:
+    serviceAccountName: agents-sa
+  secrets:
+    - github-token
+    - codex-auth
+  secret_binding_ref: codex-github-token
+  vcs_provider: github
+  vcs_policy_mode: read-write
+  vcs_required: true
+  goal_token_budget: 250000
+  ttl_seconds_after_finished: 86400
+  parameters:
+    head: ''
+    base: ''
+    implementation_iterations: '1'
+    iteration_cycle: '1'
+role_map:
+  plan:
+    - '123456789012345678'
+    - '234567890123456789'
+  implement:
+    - '234567890123456789'
+  review:
+    - '123456789012345678'
+    - '234567890123456789'
+    - '345678901234567890'

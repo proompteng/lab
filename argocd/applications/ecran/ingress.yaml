@@ -1,0 +1,29 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ecran
+  namespace: ecran
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`ecran.lan`)
+      priority: 10
+      services:
+        - name: ecran
+          port: 80
+    - kind: Rule
+      match: Host(`proompteng.ai`)
+      priority: 10
+      services:
+        - name: ecran
+          port: 80
+    - kind: Rule
+      match: Host(`proompteng.ai`) && PathPrefix(`/blog`)
+      priority: 20
+      services:
+        - name: riposte
+          port: 80
+  tls:
+    certResolver: default

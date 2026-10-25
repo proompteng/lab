@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ledger
+  labels:
+    app.kubernetes.io/name: ledger
+    app.kubernetes.io/part-of: bayn
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: ledger
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-execution-controller
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: ledger
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tigresse-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tigresse
+      ports:
+        - port: 3000
+          protocol: TCP

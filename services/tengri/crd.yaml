@@ -1,0 +1,257 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    argocd.argoproj.io/sync-wave: "-5"
+  name: microvms.runtime.proompteng.ai
+spec:
+  group: runtime.proompteng.ai
+  names:
+    kind: MicroVM
+    plural: microvms
+    shortNames:
+    - mvm
+    singular: microvm
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.nodeName
+      name: Node
+      type: string
+    - jsonPath: .status.guestReady
+      name: Guest Ready
+      type: boolean
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for MicroVMSpec via `CustomResource`
+        properties:
+          spec:
+            properties:
+              architecture:
+                enum:
+                - amd64
+                - arm64
+                type: string
+              createdAt:
+                format: date-time
+                type: string
+              desiredState:
+                enum:
+                - Running
+                - Sleeping
+                type: string
+              displayName:
+                maxLength: 64
+                minLength: 1
+                type: string
+              idleDeadline:
+                format: date-time
+                type: string
+              image:
+                pattern: ^[^@[:space:]]+@sha256:[a-f0-9]{64}$
+                type: string
+              ownerHash:
+                pattern: ^[a-f0-9]{64}$
+                type: string
+              policyVersion:
+                format: uint64
+                minimum: 0.0
+                type: integer
+              power:
+                default:
+                  idleTimeoutMinutes: 60
+                properties:
+                  idleTimeoutMinutes:
+                    description: Zero disables automatic sleep. Manual sleep remains available.
+                    format: uint32
+                    maximum: 1440.0
+                    minimum: 0.0
+                    type: integer
+                required:
+                - idleTimeoutMinutes
+                type: object
+              reservationId:
+                type: string
+              resources:
+                properties:
+                  cpuMillis:
+                    enum:
+                    - 4000
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  memoryMib:
+                    enum:
+                    - 8192
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  workspaceGib:
+                    enum:
+                    - 32
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                required:
+                - cpuMillis
+                - memoryMib
+                - workspaceGib
+                type: object
+              runtimeEpoch:
+                type: string
+              slot:
+                nullable: true
+                properties:
+                  epoch:
+                    format: uint64
+                    maximum: 2147483647.0
+                    minimum: 1.0
+                    type: integer
+                  name:
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  podUid:
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  pvcName:
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  pvcUid:
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                required:
+                - epoch
+                - name
+                - podUid
+                - pvcName
+                - pvcUid
+                type: object
+            required:
+            - architecture
+            - createdAt
+            - desiredState
+            - displayName
+            - idleDeadline
+            - image
+            - ownerHash
+            - policyVersion
+            - reservationId
+            - resources
+            - runtimeEpoch
+            type: object
+          status:
+            nullable: true
+            properties:
+              conditions:
+                default: []
+                items:
+                  properties:
+                    lastTransitionAt:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - lastTransitionAt
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failureReason:
+                nullable: true
+                type: string
+              guestReady:
+                default: false
+                type: boolean
+              lastActivityAt:
+                format: date-time
+                nullable: true
+                type: string
+              message:
+                nullable: true
+                type: string
+              nodeName:
+                nullable: true
+                type: string
+              observedGeneration:
+                default: 0
+                format: int64
+                type: integer
+              observedPolicyVersion:
+                default: 0
+                format: uint64
+                minimum: 0.0
+                type: integer
+              phase:
+                enum:
+                - Pending
+                - Booting
+                - Ready
+                - Sleeping
+                - Failed
+                - Terminating
+                type: string
+              podIp:
+                nullable: true
+                type: string
+              podName:
+                nullable: true
+                type: string
+              podSandboxTransitionAt:
+                format: date-time
+                nullable: true
+                type: string
+              podUid:
+                nullable: true
+                type: string
+              pvcName:
+                nullable: true
+                type: string
+              readyAt:
+                format: date-time
+                nullable: true
+                type: string
+              runtimeEpoch:
+                default: ""
+                type: string
+            required:
+            - phase
+            type: object
+        required:
+        - spec
+        title: MicroVM
+        type: object
+        x-kubernetes-validations:
+        - message: reservation identity is immutable
+          rule: self.spec.reservationId == oldSelf.spec.reservationId
+        - message: the server-selected architecture is immutable
+          rule: self.spec.architecture == oldSelf.spec.architecture
+        - message: workspace size cannot shrink
+          rule: self.spec.resources.workspaceGib >= oldSelf.spec.resources.workspaceGib
+        - message: creation time is immutable
+          rule: self.spec.createdAt == oldSelf.spec.createdAt
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: torghut-options-catalog
+  namespace: torghut
+  labels:
+    app: torghut-options-catalog
+spec:
+  selector:
+    app: torghut-options-catalog
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

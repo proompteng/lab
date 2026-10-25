@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bilig-zero-replica
+  namespace: bilig
+  labels:
+    app.kubernetes.io/name: bilig-zero
+    app.kubernetes.io/part-of: bilig
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: rook-ceph-block

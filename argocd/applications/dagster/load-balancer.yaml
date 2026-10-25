@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-webserver-lb
+  namespace: dagster
+  annotations:
+    tailscale.com/hostname: dagster
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/instance: dagster
+    app.kubernetes.io/name: dagster
+    component: dagster-webserver
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: graf-neo4j-browser
+  namespace: graf
+  annotations:
+    tailscale.com/hostname: neo4j
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app: graf
+    helm.neo4j.com/instance: graf-db
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 7474
+    - name: https
+      protocol: TCP
+      port: 443
+      targetPort: 7473
+    - name: bolt
+      protocol: TCP
+      port: 7687
+      targetPort: 7687

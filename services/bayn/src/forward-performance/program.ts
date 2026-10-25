@@ -1,0 +1,780 @@
+import { feeAccrualCohortSettled, verifyFeeAccrualRecord } from '../db/fee-accruals'
+import { quantityFromDecimal } from '../quantity'
+import { ClickhouseClient } from '@effect/sql-clickhouse'
+import { PgClient } from '@effect/sql-pg'
+import type { WriterFenceService } from '../execution/writer-fence'
+import { Data, DateTime, Effect, Option, Redacted, Result, Scope } from 'effect'
+
+import type { ForwardPerformanceConfig } from './config'
+import { verifyAccountingReceipts, type ReconciliationAlgebraFailure } from '../reconciliation/algebra'
+import { verifyCashSettlement } from '../accounting/cash-settlement'
+import type { CanonicalJsonFailure } from '../hash'
+import { canonicalHashV1Result } from '../hash'
+import type { MarketDataSnapshot, SnapshotRequest } from '../market-data/model'
+import { makeDailySnapshotQueries } from '../market-data/queries'
+import { decodeSnapshotRows, type SnapshotRows } from '../market-data/rows'
+import { verifyFinalizedSnapshot } from '../market-data/verification/snapshot'
+import type { BrokerIdentity } from '../broker/identity'
+import type { IsoDate } from '../schemas'
+import type { ForwardPerformanceDomainFailure } from './domain'
+import { makeForwardPerformanceReport, type ForwardPerformanceReport } from './report'
+import { readForwardPerformancePostgres } from './postgres/read'
+import { type ForwardPerformancePostgresEvidence, type ForwardPerformancePostgresError } from './postgres/model'
+import {
+  readForwardPerformanceLedger,
+  type ForwardPerformanceLedgerEvidence,
+  type ForwardPerformanceLedgerError,
+} from './tigerbeetle'
+import type { LedgerPlan } from '../ledger-plan'
+import type {
+  ForwardPerformanceIntradayMarketVolumeRequest,
+  ForwardPerformanceDailyMarketVolumeEvidence,
+  ForwardPerformanceDailyMarketVolumeRequest,
+  ForwardPerformanceCashYieldEvidence,
+  ForwardPerformanceExecutionEvidence,
+  ForwardPerformanceMarketVolumeEvidence,
+  ForwardPerformanceMarketVolumeRequest,
+  ForwardPerformanceEvidenceInput,
+} from './model'
+import { readForwardInferenceExpenses } from './inference-expenses'
+import type { InferenceCostError } from '../inference-costs'
+import { forwardPerformanceSnapshot } from './postgres/snapshot'
+import { postgresError } from './postgres/model'
+
+import {
+  intradayPerformanceDecisionRequest,
+  intradayPerformanceSessionQuery,
+  makeIntradayPerformanceVolumeEvidence,
+} from './intraday-volume'
+import { loadIntradayArchivePages } from '../market-data/intraday/program'
+import { makeIntradayMarketDataQueries } from '../market-data/intraday/queries'
+import { decodeIntradayBarRows } from '../market-data/intraday/rows'
+import { verifyIntradayArchiveWatermarks } from '../market-data/intraday/verification'
+import { brokerFeeCashDeltaMicros, verifyBrokerFeeRecord, type BrokerFeeEvidenceError } from '../accounting/broker-fees'
+
+export type ForwardPerformanceProgramCause =
+  | InferenceCostError
+  | CanonicalJsonFailure
+  | ForwardPerformanceDomainFailure
+  | ForwardPerformanceLedgerError
+  | ForwardPerformanceMarketVolumeError
+  | ForwardPerformancePostgresError
+  | ReconciliationAlgebraFailure
+  | BrokerFeeEvidenceError
+  | import('../accounting/cash-settlement').CashSettlementEvidenceError
+  | import('../accounting/fee-accrual').FeeAccrualError
+  | import('../ledger-plan').LedgerPlanHashFailure
+  | import('../db/reconciliation').ReconciliationStoreError
+
+export class ForwardPerformanceProgramError extends Data.TaggedError('ForwardPerformanceProgramError')<{
+  readonly operation: 'account-binding' | 'construct-receipt' | 'ledger-read' | 'market-volume-read' | 'postgres-read'
+  readonly message: string
+  readonly cause?: ForwardPerformanceProgramCause
+}> {}
+
+export class ForwardPerformanceMarketVolumeError extends Data.TaggedError('ForwardPerformanceMarketVolumeError')<{
+  readonly operation: 'read'
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
+type BoundForwardPerformanceConfig = ForwardPerformanceConfig & {
+  readonly execution: ForwardPerformanceConfig['execution'] & { readonly brokerIdentity: BrokerIdentity }
+}
+
+export interface ForwardPerformanceReaders {
+  readonly inferenceExpenses: typeof readForwardInferenceExpenses
+  readonly postgres: (
+    sql: PgClient.PgClient,
+    accountId: string,
+    authorityGenerationHash?: string,
+    writerFence?: WriterFenceService,
+  ) => Effect.Effect<ForwardPerformancePostgresEvidence, ForwardPerformancePostgresError>
+  readonly ledger: (
+    config: Pick<ForwardPerformanceConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
+    accountId: string,
+    accountPlans: readonly LedgerPlan[],
+    cashYieldEvidence?: ForwardPerformanceCashYieldEvidence,
+    generationPlans?: readonly LedgerPlan[],
+  ) => Effect.Effect<ForwardPerformanceLedgerEvidence, ForwardPerformanceLedgerError, Scope.Scope>
+  readonly marketVolume: (
+    config: Pick<ForwardPerformanceConfig, 'clickhouse' | 'historicalSignal' | 'operationTimeoutMs'>,
+    requests: readonly ForwardPerformanceMarketVolumeRequest[],
+  ) => Effect.Effect<readonly ForwardPerformanceMarketVolumeEvidence[], ForwardPerformanceMarketVolumeError>
+}
+
+export const liveForwardPerformanceReaders: ForwardPerformanceReaders = {
+  inferenceExpenses: readForwardInferenceExpenses,
+  postgres: readForwardPerformancePostgres,
+  ledger: (config, accountId, accountPlans, cashYieldEvidence, generationPlans) =>
+    readForwardPerformanceLedger(config, accountId, accountPlans, cashYieldEvidence, undefined, generationPlans),
+  marketVolume: (config, requests) => readForwardPerformanceMarketVolume(config, requests),
+}
+
+const SIGNED_I128_MAX = (1n << 127n) - 1n
+
+const marketVolumeError = (cause: unknown): ForwardPerformanceMarketVolumeError =>
+  new ForwardPerformanceMarketVolumeError({
+    operation: 'read',
+    message: 'forward-performance immutable market-volume read failed',
+    cause,
+  })
+
+const missingHistoricalMarketConfig = () =>
+  new ForwardPerformanceMarketVolumeError({
+    operation: 'read',
+    message:
+      'Legacy daily SIP evidence requires all eight BAYN_SIGNAL_* settings; native-only reports may use --authority-generation without historical settings',
+    cause: 'MISSING_HISTORICAL_SIGNAL_CONFIG',
+  })
+
+const fixedDecimalMicros = (value: string): string | undefined => {
+  const match = /^(0|[1-9][0-9]*)[.]([0-9]{8})$/.exec(value)
+  if (match === null || match[1] === undefined || match[2] === undefined || !match[2].endsWith('00')) return undefined
+  const micros = BigInt(match[1]) * 1_000_000n + BigInt(match[2].slice(0, 6))
+  return micros > 0n && micros <= SIGNED_I128_MAX ? micros.toString() : undefined
+}
+
+const finalizedInstant = (value: string): string | undefined => {
+  const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:[.]([0-9]{3}))?$/.exec(value)
+  if (match === null || match[1] === undefined || match[2] === undefined) return undefined
+  const instant = `${match[1]}T${match[2]}.${match[3] ?? '000'}Z`
+  const dateTime = DateTime.make(instant)
+  return Option.isSome(dateTime) && DateTime.formatIso(dateTime.value) === instant ? instant : undefined
+}
+
+interface ForwardPerformanceMarketSnapshotRows {
+  readonly bars: readonly unknown[]
+  readonly sessions: readonly unknown[]
+  readonly manifests: readonly unknown[]
+}
+
+interface VerifiedForwardPerformanceMarketSnapshot {
+  readonly rows: SnapshotRows
+  readonly snapshot: MarketDataSnapshot
+}
+
+const snapshotRequest = (
+  request: ForwardPerformanceDailyMarketVolumeRequest,
+  rows: SnapshotRows,
+  evaluationStart: IsoDate,
+): SnapshotRequest | undefined => {
+  const manifest = rows.manifests[0]
+  if (
+    rows.manifests.length !== 1 ||
+    manifest === undefined ||
+    manifest.snapshot_id === request.decisionSnapshotId ||
+    request.decisionSnapshotAsOfSession >= request.executionSessionDate
+  ) {
+    return undefined
+  }
+  const observedAt = finalizedInstant(manifest.finalized_at)
+  if (observedAt === undefined || observedAt < request.windowClosedAt || observedAt > request.evidenceCutoffAt) {
+    return undefined
+  }
+  return {
+    snapshotId: manifest.snapshot_id,
+    publicationAsOf: request.executionSessionDate,
+    calendarVersion: request.calendarVersion,
+    universe: request.symbols,
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: request.requestedStart,
+      dataEnd: request.executionSessionDate,
+      lookbackStart: request.requestedStart,
+      evaluationStart,
+      evaluationEnd: request.executionSessionDate,
+    },
+    observedAt,
+    universeId: request.universeId,
+    universeSymbolHash: request.universeSymbolHash,
+    historyStart: request.requestedStart,
+    evaluationStart,
+  }
+}
+
+const verifyForwardPerformanceMarketSnapshot = (
+  request: ForwardPerformanceDailyMarketVolumeRequest,
+  rawRows: ForwardPerformanceMarketSnapshotRows,
+  evaluationStart: IsoDate,
+): VerifiedForwardPerformanceMarketSnapshot | undefined => {
+  const decoded = decodeSnapshotRows(rawRows.bars, rawRows.sessions, rawRows.manifests)
+  if (Result.isFailure(decoded)) return undefined
+  const verificationRequest = snapshotRequest(request, decoded.success, evaluationStart)
+  if (verificationRequest === undefined) return undefined
+  const verified = verifyFinalizedSnapshot(decoded.success, verificationRequest)
+  if (Result.isFailure(verified)) return undefined
+  const source = verified.success.manifest.finalizedSnapshot
+  if (
+    source.snapshotId === request.decisionSnapshotId ||
+    source.source !== request.source ||
+    source.sourceFeed !== request.sourceFeed ||
+    source.adjustment !== request.adjustment ||
+    source.calendarVersion !== request.calendarVersion ||
+    source.asOfSession !== request.executionSessionDate ||
+    source.universeId !== request.universeId ||
+    source.universeSymbolHash !== request.universeSymbolHash ||
+    source.requestedStart !== request.requestedStart
+  ) {
+    return undefined
+  }
+  return { rows: decoded.success, snapshot: verified.success }
+}
+
+const projectForwardPerformanceMarketVolumeEvidence = (
+  request: ForwardPerformanceDailyMarketVolumeRequest,
+  verified: VerifiedForwardPerformanceMarketSnapshot,
+  evaluationStart: IsoDate,
+): Result.Result<ForwardPerformanceDailyMarketVolumeEvidence | undefined, ForwardPerformanceMarketVolumeError> => {
+  const matchingBars = verified.rows.bars.filter(
+    (bar) => bar.symbol === request.symbol && bar.session_date === request.executionSessionDate,
+  )
+  const row = matchingBars.length === 1 ? matchingBars[0] : undefined
+  if (row === undefined) return Result.succeed(undefined)
+  const quantity = quantityFromDecimal(row.adjusted_volume)
+  const quantityAtoms =
+    Result.isSuccess(quantity) && quantity.success > 0n && quantity.success <= SIGNED_I128_MAX
+      ? quantity.success.toString()
+      : undefined
+  const closePriceMicros = fixedDecimalMicros(row.adjusted_close)
+  if (quantityAtoms === undefined || closePriceMicros === undefined) return Result.succeed(undefined)
+  const source = verified.snapshot.manifest.finalizedSnapshot
+  const material = {
+    schemaVersion: 'bayn.forward-performance-market-volume-evidence.v1' as const,
+    cycleId: request.cycleId,
+    decisionSnapshotId: request.decisionSnapshotId,
+    decisionSnapshotAsOfSession: request.decisionSnapshotAsOfSession,
+    symbol: request.symbol,
+    executionSessionDate: request.executionSessionDate,
+    windowOpenedAt: request.windowOpenedAt,
+    windowClosedAt: request.windowClosedAt,
+    evidenceCutoffAt: request.evidenceCutoffAt,
+    quantityAtoms,
+    closePriceMicros,
+    snapshotId: source.snapshotId,
+    manifestContentHash: source.publicationId,
+    barsContentHash: source.contentHash,
+    finalizedAt: source.finalizedAt,
+    universeId: request.universeId,
+    universeSymbolHash: request.universeSymbolHash,
+    requestedStart: request.requestedStart,
+    evaluationStart,
+    calendarVersion: request.calendarVersion,
+    source: request.source,
+    sourceFeed: request.sourceFeed,
+    adjustment: request.adjustment,
+  }
+  return Result.mapError(
+    Result.map(canonicalHashV1Result(material), (contentHash) => ({ ...material, contentHash })),
+    marketVolumeError,
+  )
+}
+
+export const makeForwardPerformanceMarketVolumeEvidence = (
+  request: ForwardPerformanceDailyMarketVolumeRequest,
+  rows: ForwardPerformanceMarketSnapshotRows,
+  evaluationStart: IsoDate,
+): Result.Result<ForwardPerformanceDailyMarketVolumeEvidence | undefined, ForwardPerformanceMarketVolumeError> => {
+  const verified = verifyForwardPerformanceMarketSnapshot(request, rows, evaluationStart)
+  return verified === undefined
+    ? Result.succeed(undefined)
+    : projectForwardPerformanceMarketVolumeEvidence(request, verified, evaluationStart)
+}
+
+const requestGroupKey = (request: ForwardPerformanceDailyMarketVolumeRequest): string =>
+  JSON.stringify([
+    request.decisionSnapshotId,
+    request.decisionSnapshotAsOfSession,
+    request.executionSessionDate,
+    request.evidenceCutoffAt,
+    request.universeId,
+    request.universeSymbolHash,
+    request.symbols,
+    request.requestedStart,
+    request.calendarVersion,
+    request.source,
+    request.sourceFeed,
+    request.adjustment,
+  ])
+
+const groupMarketVolumeRequests = (
+  requests: readonly ForwardPerformanceDailyMarketVolumeRequest[],
+): readonly (readonly ForwardPerformanceDailyMarketVolumeRequest[])[] => {
+  const groups = new Map<string, ForwardPerformanceDailyMarketVolumeRequest[]>()
+  for (const request of requests) {
+    const key = requestGroupKey(request)
+    const group = groups.get(key)
+    if (group === undefined) groups.set(key, [request])
+    else group.push(request)
+  }
+  return [...groups.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([, group]) => group)
+}
+
+const readIntradayPerformanceVolume = (request: ForwardPerformanceIntradayMarketVolumeRequest) =>
+  Effect.gen(function* () {
+    const original = yield* Effect.fromResult(intradayPerformanceDecisionRequest(request))
+    const queries = makeIntradayMarketDataQueries(yield* ClickhouseClient.ClickhouseClient)
+    const query = intradayPerformanceSessionQuery(request, original)
+    const rawWatermarks = yield* queries.captureIntradayArchiveWatermarks(query)
+    const archiveWatermarks = yield* Effect.fromResult(verifyIntradayArchiveWatermarks(original, rawWatermarks))
+    const archiveRequest = { ...query, archiveWatermarks }
+    const rawBars = yield* loadIntradayArchivePages(
+      (after) => queries.loadIntradayBars(archiveRequest, after),
+      decodeIntradayBarRows,
+      (Date.parse(query.rangeEndAt) - Date.parse(query.rangeStartAt)) / 60_000,
+    )
+    return yield* Effect.fromResult(makeIntradayPerformanceVolumeEvidence(request, archiveRequest, rawBars))
+  })
+
+export const readForwardPerformanceMarketVolumeWithClient = (
+  config: Pick<ForwardPerformanceConfig, 'clickhouse' | 'historicalSignal' | 'operationTimeoutMs'>,
+  requests: readonly ForwardPerformanceMarketVolumeRequest[],
+): Effect.Effect<
+  readonly ForwardPerformanceMarketVolumeEvidence[],
+  ForwardPerformanceMarketVolumeError,
+  ClickhouseClient.ClickhouseClient
+> => {
+  if (requests.length === 0) return Effect.succeed([])
+  if (config.historicalSignal === undefined && requests.some((request) => !('decisionManifest' in request)))
+    return Effect.fail(missingHistoricalMarketConfig())
+  return Effect.gen(function* () {
+    const sql = yield* ClickhouseClient.ClickhouseClient
+    const groups = yield* Effect.forEach(
+      groupMarketVolumeRequests(
+        requests.filter(
+          (request): request is ForwardPerformanceDailyMarketVolumeRequest => !('decisionManifest' in request),
+        ),
+      ),
+      (group) =>
+        Effect.gen(function* () {
+          const request = group[0]
+          if (request === undefined) return []
+          const historicalSignal = config.historicalSignal
+          if (historicalSignal === undefined) return yield* missingHistoricalMarketConfig()
+          const queries = makeDailySnapshotQueries(sql)
+          const candidateRows = yield* sql<Record<string, unknown>>`
+            SELECT
+              snapshot_id,
+              schema_version,
+              publisher_source_revision,
+              publisher_image_repository,
+              publisher_image_digest,
+              universe_id,
+              universe_symbol_hash,
+              provider,
+              source_feed,
+              adjustment,
+              calendar_version,
+              toString(requested_start) AS requested_start,
+              toString(publication_asof) AS publication_asof,
+              toString(first_session) AS first_session,
+              toString(last_session) AS last_session,
+              symbol_count,
+              session_count,
+              bar_count,
+              bars_content_hash,
+              sessions_content_hash,
+              manifest_content_hash,
+              toString(finalized_at) AS finalized_at
+            FROM signal.snapshot_manifests_v2 AS manifest
+            WHERE manifest.universe_id = ${sql.param('String', request.universeId)}
+              AND manifest.universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
+              AND manifest.requested_start = toDate(${sql.param('String', request.requestedStart)})
+              AND manifest.publication_asof = toDate(${sql.param('String', request.executionSessionDate)})
+              AND manifest.calendar_version = ${sql.param('String', request.calendarVersion)}
+              AND manifest.provider = ${sql.param('String', request.source)}
+              AND manifest.source_feed = ${sql.param('String', request.sourceFeed)}
+              AND manifest.adjustment = ${sql.param('String', request.adjustment)}
+              AND manifest.finalized_at >= parseDateTime64BestEffort(${sql.param('String', request.windowClosedAt)})
+              AND manifest.finalized_at <= parseDateTime64BestEffort(${sql.param('String', request.evidenceCutoffAt)})
+            ORDER BY manifest.finalized_at ASC, manifest.snapshot_id ASC
+            LIMIT 1
+          `
+          const decodedCandidates = decodeSnapshotRows([], [], candidateRows)
+          if (Result.isFailure(decodedCandidates)) return []
+          const candidate = decodedCandidates.success.manifests[0]
+          if (
+            decodedCandidates.success.manifests.length !== 1 ||
+            candidate === undefined ||
+            candidate.snapshot_id === request.decisionSnapshotId
+          ) {
+            return []
+          }
+          const manifests = yield* queries.loadSnapshotPublicationManifest(candidate.snapshot_id)
+          const decodedManifests = decodeSnapshotRows([], [], manifests)
+          if (Result.isFailure(decodedManifests)) return []
+          const manifest = decodedManifests.success.manifests[0]
+          if (
+            decodedManifests.success.manifests.length !== 1 ||
+            manifest === undefined ||
+            manifest.snapshot_id !== candidate.snapshot_id ||
+            manifest.manifest_content_hash !== candidate.manifest_content_hash
+          ) {
+            return []
+          }
+          const rows = yield* Effect.all(
+            {
+              bars: queries.loadSnapshotPublicationBars(candidate.snapshot_id),
+              sessions: queries.loadPublicationSessions(candidate.snapshot_id),
+            },
+            { concurrency: 2 },
+          )
+          const verified = verifyForwardPerformanceMarketSnapshot(
+            request,
+            { bars: rows.bars, sessions: rows.sessions, manifests },
+            historicalSignal.bounds.evaluationStart,
+          )
+          if (verified === undefined) return []
+          const projected = yield* Effect.forEach(group, (item) =>
+            Effect.fromResult(
+              projectForwardPerformanceMarketVolumeEvidence(item, verified, historicalSignal.bounds.evaluationStart),
+            ),
+          )
+          return projected.filter((item): item is ForwardPerformanceDailyMarketVolumeEvidence => item !== undefined)
+        }).pipe(
+          Effect.mapError((cause) =>
+            cause instanceof ForwardPerformanceMarketVolumeError ? cause : marketVolumeError(cause),
+          ),
+        ),
+      { concurrency: 2 },
+    )
+    const intraday = yield* Effect.forEach(
+      requests.filter((request) => 'decisionManifest' in request),
+      readIntradayPerformanceVolume,
+      { concurrency: 2 },
+    )
+    const evidence: ForwardPerformanceMarketVolumeEvidence[] = [
+      ...groups.flat(),
+      ...intraday.filter((item) => item !== undefined),
+    ]
+    return evidence.sort((left, right) => {
+      const leftKey = JSON.stringify([left.executionSessionDate, left.cycleId, left.symbol])
+      const rightKey = JSON.stringify([right.executionSessionDate, right.cycleId, right.symbol])
+      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+    })
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof ForwardPerformanceMarketVolumeError ? cause : marketVolumeError(cause),
+    ),
+  )
+}
+
+export const readForwardPerformanceMarketVolume = (
+  config: Pick<ForwardPerformanceConfig, 'clickhouse' | 'historicalSignal' | 'operationTimeoutMs'>,
+  requests: readonly ForwardPerformanceMarketVolumeRequest[],
+): Effect.Effect<readonly ForwardPerformanceMarketVolumeEvidence[], ForwardPerformanceMarketVolumeError> => {
+  if (requests.length === 0) return Effect.succeed([])
+  if (config.historicalSignal === undefined && requests.some((request) => !('decisionManifest' in request)))
+    return Effect.fail(missingHistoricalMarketConfig())
+  const client = ClickhouseClient.layer({
+    url: config.clickhouse.url,
+    username: config.clickhouse.username,
+    password: Redacted.value(config.clickhouse.password),
+    database: 'signal',
+    application: 'bayn-forward-performance',
+    request_timeout: config.operationTimeoutMs,
+  })
+  return Effect.scoped(
+    // @effect-diagnostics-next-line strictEffectProvide:off -- scoped ClickHouse query boundary owns the client layer
+    readForwardPerformanceMarketVolumeWithClient(config, requests).pipe(Effect.provide(client)),
+  ).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof ForwardPerformanceMarketVolumeError ? cause : marketVolumeError(cause),
+    ),
+  )
+}
+
+const canonicalUnsigned = (value: string): bigint | undefined =>
+  /^(?:0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : undefined
+
+export const bindForwardPerformanceTerminalReferencePrices = (
+  executionEvidence: readonly ForwardPerformanceExecutionEvidence[],
+  marketVolumeEvidence: readonly ForwardPerformanceMarketVolumeEvidence[],
+): Result.Result<readonly ForwardPerformanceExecutionEvidence[], CanonicalJsonFailure> => {
+  const volumes = new Map<string, ForwardPerformanceMarketVolumeEvidence | null>()
+  for (const volume of marketVolumeEvidence) {
+    const key = JSON.stringify([volume.cycleId, volume.symbol])
+    volumes.set(key, volumes.has(key) ? null : volume)
+  }
+  return Result.all(
+    executionEvidence.map((execution) => {
+      const order = execution.terminalOrder
+      const orderQuantity = order?.quantityAtoms === undefined ? undefined : canonicalUnsigned(order.quantityAtoms)
+      const orderNotional = order?.notionalMicros === undefined ? undefined : canonicalUnsigned(order.notionalMicros)
+      const filledQuantity = order === undefined ? undefined : canonicalUnsigned(order.filledQuantityAtoms)
+      const blockedAt =
+        execution.intent?.terminalOutcome === 'BLOCKED' && order === undefined && execution.fills.length === 0
+          ? execution.intent.updatedAt
+          : undefined
+      const incompleteOrder =
+        order !== undefined &&
+        ['CANCELED', 'EXPIRED', 'REJECTED'].includes(order.status) &&
+        filledQuantity !== undefined &&
+        ((orderQuantity !== undefined && filledQuantity < orderQuantity) || orderNotional !== undefined)
+          ? order
+          : undefined
+      const terminalOccurredAt = blockedAt ?? incompleteOrder?.occurredAt
+      const terminalObservedAt = blockedAt ?? incompleteOrder?.observedAt
+      if (terminalOccurredAt === undefined || terminalObservedAt === undefined) {
+        return Result.succeed(execution)
+      }
+      const volume = volumes.get(JSON.stringify([execution.cycleId, execution.symbol]))
+      if (volume === undefined || volume === null) {
+        return Result.succeed(execution)
+      }
+      const terminalWithinExecutionWindow =
+        blockedAt === undefined
+          ? terminalOccurredAt >= volume.windowOpenedAt && terminalOccurredAt <= volume.windowClosedAt
+          : terminalOccurredAt <= volume.windowClosedAt
+      if (!terminalWithinExecutionWindow || terminalObservedAt > volume.evidenceCutoffAt) {
+        return Result.succeed(execution)
+      }
+      const material = {
+        schemaVersion: 'bayn.forward-performance-terminal-reference-price.v1' as const,
+        cycleId: execution.cycleId,
+        symbol: execution.symbol,
+        executionSessionDate: volume.executionSessionDate,
+        priceMicros: volume.closePriceMicros,
+        observedAt: volume.finalizedAt,
+        sourceEvidenceHash: volume.contentHash,
+      }
+      return Result.map(canonicalHashV1Result(material), (contentHash) => ({
+        ...execution,
+        terminalReferencePrice: { ...material, contentHash },
+      }))
+    }),
+  )
+}
+
+const programError = (
+  operation: ForwardPerformanceProgramError['operation'],
+  message: string,
+  cause?: ForwardPerformanceProgramCause,
+): ForwardPerformanceProgramError =>
+  new ForwardPerformanceProgramError({ operation, message, ...(cause === undefined ? {} : { cause }) })
+
+const requireBrokerIdentity = (
+  config: ForwardPerformanceConfig,
+): Effect.Effect<BoundForwardPerformanceConfig, ForwardPerformanceProgramError> => {
+  const brokerIdentity = config.execution.brokerIdentity
+  return brokerIdentity === undefined
+    ? Effect.fail(
+        programError('account-binding', 'forward performance requires one configured broker account identity'),
+      )
+    : Effect.succeed(config as BoundForwardPerformanceConfig)
+}
+
+const readForwardPerformanceInput = (
+  loadedConfig: ForwardPerformanceConfig,
+  readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
+  options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
+): Effect.Effect<ForwardPerformanceEvidenceInput, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
+  Effect.gen(function* () {
+    const config = yield* requireBrokerIdentity(loadedConfig)
+    const identity = config.execution.brokerIdentity
+    const sql = yield* PgClient.PgClient
+    const postgres = yield* readers
+      .postgres(sql, identity.accountId, options.authorityGenerationHash, options.writerFence)
+      .pipe(Effect.mapError((cause) => programError('postgres-read', cause.message, cause)))
+    const marketVolumeEvidence = yield* readers
+      .marketVolume(config, postgres.marketVolumeRequests)
+      .pipe(Effect.mapError((cause) => programError('market-volume-read', cause.message, cause)))
+    const executionEvidence = yield* Effect.fromResult(
+      bindForwardPerformanceTerminalReferencePrices(postgres.executionEvidence, marketVolumeEvidence),
+    ).pipe(
+      Effect.mapError((cause) =>
+        programError('construct-receipt', 'forward-performance terminal reference binding failed', cause),
+      ),
+    )
+
+    const accountingVerification = verifyAccountingReceipts(postgres.transactions, postgres.receipts, config)
+    const feeRecords = postgres.brokerFeeRecords ?? []
+    const feeLedgerEvidence = yield* Effect.forEach(feeRecords, (record) =>
+      Effect.fromResult(verifyBrokerFeeRecord(record, identity.accountId, config.tigerBeetle)).pipe(
+        Effect.mapError((cause) => programError('ledger-read', cause.message, cause)),
+      ),
+    )
+    const feePlans = feeLedgerEvidence.map((verified) => [
+      verified.originalPlan,
+      ...verified.corrections.map(({ plan }) => plan),
+    ])
+    const accruals = yield* Effect.forEach(postgres.brokerFeeAccrualRecords, (record) =>
+      Effect.fromResult(verifyFeeAccrualRecord(record, identity.accountId, config.tigerBeetle)).pipe(
+        Effect.mapError((cause) => programError('ledger-read', 'Fee accrual evidence is invalid', cause)),
+      ),
+    )
+    const generationTransactionIds = new Set(postgres.transactions.map((transaction) => transaction.transactionId))
+    const accountTransactionsById = new Map(
+      postgres.ledgerTransactions.map((transaction) => [transaction.transactionId, transaction]),
+    )
+    const cashSettlements = yield* Effect.forEach(postgres.cashSettlementRecords, (record) =>
+      Effect.gen(function* () {
+        const verified = yield* Effect.fromResult(
+          verifyCashSettlement(record, identity.accountId, config.tigerBeetle),
+        ).pipe(Effect.mapError((cause) => programError('ledger-read', 'Cash settlement evidence is invalid', cause)))
+        const source = accountTransactionsById.get(verified.data.transactionId)
+        if (
+          source === undefined ||
+          source.accountId !== verified.data.accountId ||
+          source.contentHash !== verified.data.transactionContentHash ||
+          source.brokerEventId !== verified.data.brokerEventId ||
+          source.cashDeltaMicros !== verified.data.cashDeltaMicros ||
+          source.occurredAt !== verified.data.occurredAt
+        )
+          return yield* programError('ledger-read', 'Cash settlement does not match its retained source transaction')
+        return verified
+      }),
+    )
+    const generationAccruals = accruals.filter((accrual) =>
+      accrual.data.sourceTrades.every((trade) => generationTransactionIds.has(trade.transactionId)),
+    )
+    const generationFeeIds = new Set(postgres.generationBrokerFeeIds ?? [])
+    const generationPlans = [
+      ...(Result.isSuccess(accountingVerification) ? accountingVerification.success.plans : []),
+      ...feePlans.filter((_, index) => generationFeeIds.has(feeRecords[index]?.data.activityId ?? '')).flat(),
+      ...generationAccruals.map((accrual) => accrual.plan),
+      ...cashSettlements
+        .filter((settlement) => generationTransactionIds.has(settlement.data.transactionId))
+        .map((settlement) => settlement.plan),
+    ]
+    const ledgerVerification = verifyAccountingReceipts(postgres.ledgerTransactions, postgres.ledgerReceipts, config)
+    const accountPlans = [
+      ...(Result.isSuccess(ledgerVerification) ? ledgerVerification.success.plans : []),
+      ...feePlans.flat(),
+      ...accruals.map((accrual) => accrual.plan),
+      ...cashSettlements.map((settlement) => settlement.plan),
+    ]
+    const accountingReceiptsExact =
+      Result.isSuccess(accountingVerification) &&
+      postgres.unaccountedFillCount === 0 &&
+      postgres.unaccountedCashSettlementCount === 0 &&
+      (postgres.ambiguousBrokerFeeCount ?? 0) === 0 &&
+      feeRecords.every(
+        (record) => record.posted && record.cash_match_corrections.every((correction) => correction.posted),
+      ) &&
+      accruals.every((accrual) => accrual.posted) &&
+      cashSettlements.every((settlement) => settlement.posted) &&
+      accountingVerification.success.exactReceipts.size === postgres.transactions.length &&
+      [...accountingVerification.success.exactReceipts.values()].every(Boolean)
+
+    const ledger = yield* readers
+      .ledger(config, identity.accountId, accountPlans, postgres.cashYieldEvidence, generationPlans)
+      .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
+    const reconciliation =
+      postgres.reconciliation === undefined
+        ? undefined
+        : {
+            ...postgres.reconciliation,
+            performanceExact:
+              postgres.reconciliation.performanceExact &&
+              (!postgres.reconciliation.cashYieldAdjustedExact || ledger.cashYieldEvidence !== undefined),
+            cashYieldAdjustedExact:
+              postgres.reconciliation.cashYieldAdjustedExact && ledger.cashYieldEvidence !== undefined,
+          }
+    return {
+      runtime: {
+        sourceRevision: config.build.sourceRevision,
+        imageRepository: config.build.imageRepository,
+        imageDigest: config.build.imageDigest,
+      },
+      account: {
+        accountId: identity.accountId,
+        accountReferenceHash: identity.identityHash,
+        provider: identity.provider,
+        environment: identity.environment,
+      },
+      durableExecutionBindings: postgres.durableExecutionBindings,
+      cycles: postgres.cycles,
+      ...(postgres.strategy === undefined ? {} : { strategy: postgres.strategy }),
+      ...(reconciliation === undefined ? {} : { reconciliation }),
+      ...(postgres.startingCapitalMicros === undefined
+        ? {}
+        : { startingCapitalMicros: postgres.startingCapitalMicros }),
+      transactions: postgres.transactionEvidence,
+      accountFeeAccruals: postgres.brokerFeeAccrualRecords,
+      ...(postgres.brokerFeeRecords === undefined ? {} : { accountBrokerFees: feeRecords }),
+      ...(postgres.accountReconciliation === undefined
+        ? {}
+        : {
+            accountPositionCounts: {
+              postgres: postgres.openPositionCount,
+              ledger: ledger.openPositionCount,
+              reconciledAt: postgres.accountReconciliation.reconciledAt,
+              exact: postgres.accountReconciliation.performanceExact,
+            },
+          }),
+      ...(Result.isSuccess(ledgerVerification) &&
+      ledgerVerification.success.exactReceipts.size === postgres.ledgerTransactions.length &&
+      [...ledgerVerification.success.exactReceipts.values()].every(Boolean)
+        ? { accountTransactions: postgres.ledgerTransactions }
+        : {}),
+      brokerFeeAccruals: generationAccruals.map((accrual) => ({
+        accrualId: accrual.accrualId,
+        accountId: accrual.data.accountId,
+        expenseMicros: accrual.expenseMicros,
+        settled: feeAccrualCohortSettled(accrual, accruals),
+      })),
+      brokerFees: feeRecords
+        .filter((record) => generationFeeIds.has(record.data.activityId))
+        .map((record) => ({
+          ...record.data,
+          netAmountMicros: brokerFeeCashDeltaMicros(record),
+          ...(record.coin_cost_basis_micros === null ? {} : { inventoryCostMicros: record.coin_cost_basis_micros }),
+        })),
+      executionEvidence,
+      ...(postgres.unverifiedDecisionHashes === undefined
+        ? {}
+        : { unverifiedDecisionHashes: postgres.unverifiedDecisionHashes }),
+      marketVolumeEvidence,
+      ledgerTotals: ledger.totals,
+      cashYieldEvidenceRequired: ledger.cashYieldEvidenceRequired || !postgres.cashReportingPrecisionKnown,
+      ...(ledger.cashYieldEvidence === undefined ? {} : { cashYieldEvidence: ledger.cashYieldEvidence }),
+      accountingReceiptsExact,
+      ledgerExact: ledger.ledgerExact,
+      missingLedgerAccountCount: ledger.missingLedgerAccountCount,
+      unresolvedMutationCount: postgres.unresolvedMutationCount,
+      unclosedCycleCount: postgres.unclosedCycleCount + postgres.postReconciliationActivityCount,
+      openPositionCount: Math.max(postgres.openPositionCount, ledger.openPositionCount),
+    }
+  })
+
+export const runForwardPerformanceReport = (
+  loadedConfig: ForwardPerformanceConfig,
+  readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
+  options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
+): Effect.Effect<ForwardPerformanceReport, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
+  Effect.gen(function* () {
+    const identity = yield* requireBrokerIdentity(loadedConfig)
+    const sql = yield* PgClient.PgClient
+    return yield* forwardPerformanceSnapshot(sql, options.writerFence)
+      .withTransaction(
+        Effect.gen(function* () {
+          const input = yield* readForwardPerformanceInput(loadedConfig, readers, options)
+          const expenses = yield* readers
+            .inferenceExpenses(
+              loadedConfig,
+              sql,
+              identity.execution.brokerIdentity.accountId,
+              options.authorityGenerationHash,
+              options.writerFence,
+            )
+            .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
+          return yield* Effect.fromResult(
+            makeForwardPerformanceReport(input, expenses, options.authorityGenerationHash),
+          ).pipe(
+            Effect.mapError((cause) =>
+              programError('construct-receipt', 'forward-performance report construction failed', cause),
+            ),
+          )
+        }),
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          cause instanceof ForwardPerformanceProgramError
+            ? cause
+            : programError('postgres-read', 'forward-performance report snapshot failed', postgresError(cause)),
+        ),
+      )
+  })

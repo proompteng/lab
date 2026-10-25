@@ -1,0 +1,12 @@
+---
+- name: Rancher2
+  ansible.builtin.import_playbook: start_rancher2_container.yml
+
+- name: Disable firewall
+  ansible.builtin.import_playbook: disable_firewall.yml
+
+- name: Wait for Rancher to start
+  ansible.builtin.import_playbook: wait_for_rancher.yml
+
+- name: Grab rancher bootstrap logs
+  ansible.builtin.import_playbook: rancher_bootstrap_logs.yml

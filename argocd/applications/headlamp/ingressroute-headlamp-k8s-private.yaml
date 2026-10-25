@@ -1,0 +1,17 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: headlamp-private
+  namespace: headlamp
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`headlamp.k8s.proompteng.ai`)
+      priority: 1
+      services:
+        - name: headlamp
+          port: 80
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

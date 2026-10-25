@@ -1,0 +1,20 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: synthesis-deep-alpha-agent
+  namespace: agents
+spec:
+  providerRef:
+    name: synthesis-deep-alpha
+  defaults:
+    systemPromptRef:
+      kind: ConfigMap
+      name: codex-agent-system-prompt
+      key: system-prompt.md
+  security:
+    allowedSecrets:
+      - codex-auth
+      - agents-artifacts
+      - synthesis-env
+    allowedServiceAccounts:
+      - agents-sa

@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: torghut-generated-resource-retention
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: generated-resource-retention
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: torghut-generated-resource-retention
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: generated-resource-retention
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["analysisruns"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: torghut-generated-resource-retention
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: generated-resource-retention
+subjects:
+  - kind: ServiceAccount
+    name: torghut-generated-resource-retention
+    namespace: torghut
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: torghut-generated-resource-retention

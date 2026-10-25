@@ -1,0 +1,92 @@
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
+import { Data, Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
+
+import { loadForwardPerformanceConfig } from './forward-performance/config'
+import { PostgresClientLive } from './db/postgres-client'
+import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
+import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
+import { Sha256Schema } from './schemas'
+import { evaluateAndPersistForwardPerformanceReceipt } from './db/forward-performance-receipt'
+import { WriterFenceLive } from './execution/writer-fence'
+import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
+
+export const FORWARD_PERFORMANCE_COMMAND_USAGE =
+  'Usage: bayn-forward-performance --authority-generation <sha256> [--persist-receipt] | --help'
+
+export class ForwardPerformanceCommandArgumentError extends Data.TaggedError('ForwardPerformanceCommandArgumentError')<{
+  readonly message: string
+}> {}
+
+type ForwardPerformanceCommand =
+  | { readonly _tag: 'Help' }
+  | {
+      readonly _tag: 'Run'
+      readonly options: { readonly authorityGenerationHash: string; readonly persistReceipt?: boolean }
+    }
+
+export const parseForwardPerformanceCommandArgs = (
+  args: readonly string[],
+): Result.Result<ForwardPerformanceCommand, ForwardPerformanceCommandArgumentError> => {
+  if (args.length === 1 && args[0] === '--help') return Result.succeed({ _tag: 'Help' })
+  if (args.length === 2 && args[0] === '--authority-generation') {
+    const generation = Schema.decodeUnknownResult(Sha256Schema)(args[1])
+    if (Result.isSuccess(generation)) {
+      return Result.succeed({ _tag: 'Run', options: { authorityGenerationHash: generation.success } })
+    }
+  }
+  if (args.length === 3 && args[0] === '--authority-generation' && args[2] === '--persist-receipt') {
+    const generation = Schema.decodeUnknownResult(Sha256Schema)(args[1])
+    if (Result.isSuccess(generation)) {
+      return Result.succeed({
+        _tag: 'Run',
+        options: { authorityGenerationHash: generation.success, persistReceipt: true },
+      })
+    }
+  }
+  return Result.fail(new ForwardPerformanceCommandArgumentError({ message: FORWARD_PERFORMANCE_COMMAND_USAGE }))
+}
+
+const printUsage = Effect.gen(function* () {
+  const stdio = yield* Stdio.Stdio
+  yield* Stream.run(Stream.make(`${FORWARD_PERFORMANCE_COMMAND_USAGE}\n`), stdio.stdout())
+})
+
+const runProof = (options: { readonly authorityGenerationHash: string; readonly persistReceipt?: boolean }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const config = yield* loadForwardPerformanceConfig()
+      const report = yield* Effect.gen(function* () {
+        if (options.persistReceipt === true) {
+          return yield* evaluateAndPersistForwardPerformanceReceipt(options.authorityGenerationHash, (writerFence) =>
+            runForwardPerformanceReport(config, undefined, { ...options, writerFence }),
+          ).pipe(Effect.timeout(config.operationTimeoutMs))
+        }
+        return yield* runForwardPerformanceReport(config, undefined, options)
+      }).pipe(
+        // @effect-diagnostics-next-line strictEffectProvide:off -- command subprogram owns its scoped PostgreSQL layer
+        Effect.provide(WriterFenceLive.pipe(Layer.provideMerge(PostgresClientLive(config)))),
+      )
+      const output = yield* Effect.fromResult(canonicalJsonV1Result(report)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ForwardPerformanceProgramError({
+              operation: 'construct-receipt',
+              message: `forward-performance output encoding failed: ${renderCanonicalJsonFailure(cause)}`,
+              cause,
+            }),
+        ),
+      )
+      const stdio = yield* Stdio.Stdio
+      yield* Stream.run(Stream.make(`${output}\n`), stdio.stdout())
+    }),
+  ).pipe(withObservedSpan('bayn.forward-performance.prove'))
+
+const runtime = Layer.mergeAll(makeConfiguredTelemetryRuntimeLayer('bayn-forward-performance'), NodeServices.layer)
+const main = Effect.gen(function* () {
+  const command = yield* Effect.fromResult(parseForwardPerformanceCommandArgs(process.argv.slice(2)))
+  return yield* command._tag === 'Help' ? printUsage : runProof(command.options)
+})
+// @effect-diagnostics-next-line strictEffectProvide:off -- command entry point owns the runtime layer
+const program = main.pipe(Effect.annotateLogs({ service: 'bayn-forward-performance' }), Effect.provide(runtime))
+
+if (import.meta.main) NodeRuntime.runMain(program)

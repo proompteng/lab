@@ -1,0 +1,10 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: smoke-impl
+spec:
+  contract:
+    requiredKeys:
+      - task
+  summary: 'Agents chart smoke workflow'
+  text: 'Run the smoke workflow steps for the agents chart.'

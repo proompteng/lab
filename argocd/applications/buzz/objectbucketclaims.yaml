@@ -1,0 +1,27 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: buzz-objects
+  labels:
+    app.kubernetes.io/name: buzz
+    app.kubernetes.io/component: object-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  bucketName: buzz-objects
+  storageClassName: rook-ceph-bucket
+---
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: cnpg-buzz-db
+  labels:
+    app.kubernetes.io/name: buzz-db
+    app.kubernetes.io/component: backup
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  bucketName: cnpg-buzz
+  storageClassName: rook-ceph-bucket

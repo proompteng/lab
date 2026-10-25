@@ -1,0 +1,5 @@
+machine:
+  kubelet:
+    nodeIP:
+      validSubnets:
+        - 100.100.244.128/25

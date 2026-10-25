@@ -1,0 +1,20 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: pods.defaulting.webhook.kafka.eventing.knative.dev
+webhooks:
+  - name: pods.defaulting.webhook.kafka.eventing.knative.dev
+    admissionReviewVersions:
+      - v1
+      - v1beta1
+    clientConfig:
+      service:
+        name: kafka-webhook-eventing
+        namespace: knative-eventing
+    sideEffects: None
+    namespaceSelector:
+      matchExpressions:
+        - key: webhooks.knative.dev/exclude
+          operator: DoesNotExist
+      matchLabels:
+        kubernetes.io/metadata.name: knative-eventing

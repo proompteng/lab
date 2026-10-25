@@ -1,0 +1,42 @@
+name: Semantic Pull Request
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - ready_for_review
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          allowed_types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+          title_pattern="^(${allowed_types})(\\([a-z0-9._/-]+\\))?!?: [a-z].+"
+
+          if [[ "${PR_TITLE}" =~ ${title_pattern} ]]; then
+            echo "PR title is semantic: ${PR_TITLE}"
+            exit 0
+          fi
+
+          echo "PR title must match '<type>(<optional-scope>): <lowercase subject>'."
+          echo "Allowed types: ${allowed_types//|/, }"
+          echo "Actual title: ${PR_TITLE}"
+          exit 1

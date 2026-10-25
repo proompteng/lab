@@ -1,0 +1,12 @@
+apiVersion: serving.knative.dev/v1beta1
+kind: DomainMapping
+metadata:
+  name: prt.proompteng.ai
+  namespace: prt
+  annotations:
+    networking.knative.dev/certificate-provider: cert-manager
+spec:
+  ref:
+    apiVersion: serving.knative.dev/v1
+    kind: Service
+    name: prt

@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package proompteng.facteur.v1;
+
+option go_package = "github.com/proompteng/lab/services/facteur/internal/facteurpb";
+
+message CommandEvent {
+  string provider = 1;
+  string interaction_id = 2;
+  string application_id = 3;
+  string command = 4;
+  string command_id = 5;
+  uint32 version = 6;
+  string token = 7;
+  map<string, string> options = 8;
+  string guild_id = 9;
+  string channel_id = 10;
+  DiscordUser user = 11;
+  DiscordMember member = 12;
+  string locale = 13;
+  string guild_locale = 14;
+  Response response = 15;
+  string timestamp = 16;
+  string correlation_id = 17;
+  string trace_id = 18;
+}
+
+message DiscordUser {
+  string id = 1;
+  string username = 2;
+  string global_name = 3;
+  string discriminator = 4;
+}
+
+message DiscordMember {
+  string id = 1;
+  repeated string roles = 2;
+}
+
+message Response {
+  uint32 type = 1;
+  optional uint32 flags = 2;
+}
+
+message DispatchResult {
+  string namespace = 1;
+  string agent_run_name = 2;
+  string message = 3;
+  string correlation_id = 4;
+  string trace_id = 5;
+}

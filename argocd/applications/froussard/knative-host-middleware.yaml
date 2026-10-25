@@ -1,0 +1,10 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: froussard-knative-host
+  namespace: istio-system
+spec:
+  headers:
+    customRequestHeaders:
+      Host: froussard.froussard.svc.cluster.local

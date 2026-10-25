@@ -1,0 +1,28 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: ecran-vector-cluster
+  namespace: ecran
+spec:
+  imageName: registry.ide-newton.ts.net/lab/vecteur:16
+  imagePullPolicy: Always
+  instances: 3
+  resources:
+    requests:
+      cpu: "1"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "1Gi"
+  storage:
+    storageClass: rook-ceph-block
+    size: 20Gi
+  bootstrap:
+    initdb:
+      dataChecksums: true
+      encoding: "UTF8"
+      database: ecran
+      owner: ecran
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector;
+        - CREATE EXTENSION IF NOT EXISTS age;

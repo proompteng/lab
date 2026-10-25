@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kitty-krew
+spec:
+  selector:
+    matchLabels:
+      app: kitty-krew
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: kitty-krew
+    spec:
+      serviceAccountName: kitty-krew-sa
+      containers:
+        - name: kitty-krew
+          resources:
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          env:
+            - name: NODE_ENV
+              value: "development"
+            - name: LOG_LEVEL
+              value: "debug"
+            - name: NODE_EXTRA_CA_CERTS
+              value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"

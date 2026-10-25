@@ -1,0 +1,33 @@
+#!/bin/bash -e
+#
+# S2I assemble script for the 'baozi' image.
+# The 'assemble' script builds your application source so that it is ready to run.
+#
+# For more information refer to the documentation:
+#	https://github.com/openshift/source-to-image/blob/master/docs/builder_image.md
+#
+
+# If the 'baozi' assemble script is executed with the '-h' flag, print the usage.
+if [[ "$1" == "-h" ]]; then
+  exec /usr/libexec/s2i/usage
+fi
+
+# Restore artifacts from the previous build (if they exist).
+#
+if [ -d "/tmp/artifacts/node_modules" ]; then
+  echo "---> Restoring node_modules build artifacts..."
+  mv /tmp/artifacts/node_modules ./node_modules
+fi
+
+echo "---> Installing application source..."
+# Use rsync to prevent deleting node_modules if it was restored
+rsync -a --exclude=node_modules /tmp/src/ ./
+
+echo "---> Building application from source..."
+# Install dependencies using bun only if package.json exists
+if [ -f package.json ]; then
+  echo "---> Found package.json, running bun install..."
+  bun install
+else
+  echo "---> No package.json found, skipping bun install."
+fi

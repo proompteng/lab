@@ -1,0 +1,259 @@
+apiVersion: restate.dev/v1beta1
+kind: RestateDeployment
+metadata:
+  name: bayn-execution-controller
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  labels:
+    app.kubernetes.io/name: bayn-execution-controller
+    app.kubernetes.io/part-of: bayn
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  minReadySeconds: 5
+  restate:
+    register:
+      service:
+        name: restate
+        namespace: restate
+        port: 9070
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-execution-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn-execution-controller
+        app.kubernetes.io/part-of: bayn
+    spec:
+      nodeSelector:
+        network.proompteng.ai/100g: "true"
+      serviceAccountName: bayn
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      topologySpreadConstraints:
+        - maxSkew: 1
+          minDomains: 2
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          # Restate intentionally retains older worker ReplicaSets while their
+          # deployments drain. Scope spreading to this ReplicaSet revision so
+          # those retained pods cannot make two current replicas look spread.
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-execution-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: execution-controller
+          image: registry.ide-newton.ts.net/lab/bayn:sha-ee60493eb5a9b5f8572e868b6ff31c17675501a3@sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - dist/restate-execution-server.js
+          ports:
+            - name: restate
+              containerPort: 9080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: bayn-valkey-connection
+          env:
+            - name: BAYN_CODE_REVISION
+              value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
+            - name: BAYN_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-glitchtip-dsns
+                  key: bayn-execution
+            - name: BAYN_IMAGE_REPOSITORY
+              value: registry.ide-newton.ts.net/lab/bayn
+            - name: BAYN_IMAGE_DIGEST
+              value: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
+            # Bind the replacement to the exact immutable execution generation
+            # currently owned by the active controller. The deployment stays
+            # read-only; only the sealed, validated research mandate can
+            # realize a mutation generation after startup.
+            - name: BAYN_STRATEGY_BEHAVIOR_HASH
+              value: "191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2"
+            - name: BAYN_STRATEGY_PARAMETER_HASH
+              value: "72b942692c5156c48a9fea3a0b834b96d8bebe79a334e759af87e8a27c3b7e60"
+            - name: BAYN_BROKER_ACCESS
+              value: read-only
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"c29257939cd2ace501f0e0c158204eb5840ad1b0f8f1e0689390f40e41762c92","authoredActivation":{"sourceRevision":"7964cf8faff4f784bc49473396e7e97e158e7b84","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:ce2a19bac45b03f1b8a95ea01d4291805014619d144e4595db44cb64d4aac3fb"},"activation":{"sourceRevision":"7964cf8faff4f784bc49473396e7e97e158e7b84","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:ce2a19bac45b03f1b8a95ea01d4291805014619d144e4595db44cb64d4aac3fb"}}'
+            - name: BAYN_CAPITAL_AUTHORITY
+              value: none
+            - name: BAYN_AUTHORITY_GENERATION_HASH
+              value: "0496265d4a4014357cfe8d7e5b42891c294c18e07bf9517279019a6304b4ac27"
+            - name: BAYN_BROKER_PROVIDER
+              value: alpaca
+            - name: BAYN_BROKER_ENVIRONMENT
+              value: sandbox
+            - name: BAYN_ALPACA_BASE_URL
+              value: https://paper-api.alpaca.markets
+            - name: BAYN_ALPACA_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: account-id
+            - name: BAYN_ALPACA_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: key-id
+            - name: BAYN_ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: secret-key
+            - name: BAYN_CYCLE_POLL_INTERVAL_MS
+              value: "30000"
+            - name: BAYN_RECONCILIATION_INTERVAL_MS
+              value: "30000"
+            - name: BAYN_HEALTH_INTERVAL_MS
+              value: "30000"
+            - name: BAYN_OPERATION_TIMEOUT_MS
+              value: "30000"
+            - name: BAYN_CLICKHOUSE_URL
+              value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+            - name: BAYN_CLICKHOUSE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-clickhouse-auth
+                  key: username
+            - name: BAYN_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-clickhouse-auth
+                  key: password
+            - name: BAYN_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-db-app
+                  key: fqdn-uri
+            - name: BAYN_POSTGRES_TLS
+              value: "true"
+            - name: BAYN_POSTGRES_CA_PATH
+              value: /var/run/secrets/bayn/postgres/ca.crt
+            - name: BAYN_TIGERBEETLE_CLUSTER_ID
+              value: "122731676035874920802382025803517750735"
+            - name: BAYN_TIGERBEETLE_ADDRESSES
+              value: "ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000"
+            - name: BAYN_TIGERBEETLE_LEDGER
+              value: "7001"
+            - name: BAYN_EXECUTION_ACTIVATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-execution-bootstrap
+                  key: token
+            - name: RESTATE_REQUEST_IDENTITY_KEYS
+              value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
+            - name: PORT
+              value: "9080"
+            - name: NODE_ENV
+              value: production
+            - name: BAYN_KAFKA_BROKERS
+              value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+            - name: BAYN_KAFKA_USERNAME
+              value: bayn-market-data
+            - name: BAYN_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-market-data
+                  key: password
+            - name: BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC
+              value: torghut.technical-features.v1
+            - name: BAYN_KAFKA_TIMESTAMP_POLICY
+              value: dorvud.producer-clock.v1
+            - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS
+              value: "300000"
+            - name: BAYN_JEV_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-jev-auth
+                  key: api-key
+                  optional: true
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-valkey-auth
+                  key: password
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
+          startupProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 2
+            failureThreshold: 600
+          readinessProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            # TigerBeetle's native client requires io_uring, which containerd's
+            # RuntimeDefault seccomp profile blocks. Keep every other control.
+            seccompProfile:
+              type: Unconfined
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: valkey-client-tls
+              mountPath: /var/run/secrets/bayn/valkey
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: postgres-ca
+              mountPath: /var/run/secrets/bayn/postgres
+              readOnly: true
+      volumes:
+        - name: valkey-client-tls
+          secret:
+            secretName: bayn-valkey-client-tls
+            defaultMode: 0440
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: postgres-ca
+          secret:
+            secretName: bayn-db-ca
+            defaultMode: 444
+            items:
+              - key: ca.crt
+                path: ca.crt

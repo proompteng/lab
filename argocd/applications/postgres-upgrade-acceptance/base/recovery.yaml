@@ -1,0 +1,920 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-upgrade-control-plane
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-30'
+  namespace: postgres-upgrade-acceptance
+spec:
+  podSelector:
+    matchLabels:
+      postgres.proompteng.ai/rehearsal: 18-6-v1
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cloudnative-pg
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/instance: cloudnative-pg
+          app.kubernetes.io/name: cloudnative-pg
+    ports:
+    - port: 8000
+      protocol: TCP
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  - to:
+    - ipBlock:
+        cidr: 10.96.0.1/32
+    - ipBlock:
+        cidr: 100.100.244.141/32
+    - ipBlock:
+        cidr: 100.100.244.142/32
+    - ipBlock:
+        cidr: 100.100.244.190/32
+    ports:
+    - port: 443
+      protocol: TCP
+    - port: 6443
+      protocol: TCP
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapcontent-0cc73077-46ce-4f1b-8caa-eba07e7774fe
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    volumeHandle: 0001-0009-rook-ceph-0000000000000001-61bb375b-2e28-4646-aa3d-e28baffc29eb
+  sourceVolumeMode: Filesystem
+  volumeSnapshotClassName: rook-ceph-block
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: app-db-pg18-20260909
+    namespace: app
+    resourceVersion: '601507775'
+    uid: 0cc73077-46ce-4f1b-8caa-eba07e7774fe
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: app-pg18-source-snapshot-content
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    snapshotHandle: 0001-0009-rook-ceph-0000000000000001-ae6dcb7f-c510-4ac6-b82b-12c3944b62ef
+  volumeSnapshotRef:
+    name: app-pg18-source-snapshot
+    namespace: postgres-upgrade-acceptance
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: app-pg18-source-snapshot
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    cnpg.io/backupEndTime: '2026-09-09T14:34:20Z'
+    cnpg.io/backupEndWAL: 00000003000000000000008D
+    cnpg.io/backupStartTime: '2026-09-09T14:33:47Z'
+    cnpg.io/backupStartWAL: 00000003000000000000008D
+    cnpg.io/instanceName: app-db-1
+    cnpg.io/instanceRole: primary
+    cnpg.io/nodeSerial: '1'
+    cnpg.io/onlineBackup: 'false'
+    cnpg.io/operatorVersion: 1.30.0
+    cnpg.io/pgControldata: 'pg_control version number:            1700
+
+      Catalog version number:               202406281
+
+      Database system identifier:           7615764626992107549
+
+      Database cluster state:               shut down
+
+      pg_control last modified:             Wed Sep  9 14:33:48 2026
+
+      Latest checkpoint location:           0/8D000028
+
+      Latest checkpoint''s REDO location:    0/8D000028
+
+      Latest checkpoint''s REDO WAL file:    00000003000000000000008D
+
+      Latest checkpoint''s TimeLineID:       3
+
+      Latest checkpoint''s PrevTimeLineID:   3
+
+      Latest checkpoint''s full_page_writes: on
+
+      Latest checkpoint''s NextXID:          0:824
+
+      Latest checkpoint''s NextOID:          32777
+
+      Latest checkpoint''s NextMultiXactId:  1
+
+      Latest checkpoint''s NextMultiOffset:  0
+
+      Latest checkpoint''s oldestXID:        730
+
+      Latest checkpoint''s oldestXID''s DB:   1
+
+      Latest checkpoint''s oldestActiveXID:  0
+
+      Latest checkpoint''s oldestMultiXid:   1
+
+      Latest checkpoint''s oldestMulti''s DB: 1
+
+      Latest checkpoint''s oldestCommitTsXid:0
+
+      Latest checkpoint''s newestCommitTsXid:0
+
+      Time of latest checkpoint:            Wed Sep  9 14:33:48 2026
+
+      Fake LSN counter for unlogged rels:   0/3E8
+
+      Minimum recovery ending location:     0/0
+
+      Min recovery ending loc''s timeline:   0
+
+      Backup start location:                0/0
+
+      Backup end location:                  0/0
+
+      End-of-backup record required:        no
+
+      wal_level setting:                    logical
+
+      wal_log_hints setting:                on
+
+      max_connections setting:              100
+
+      max_worker_processes setting:         32
+
+      max_wal_senders setting:              10
+
+      max_prepared_xacts setting:           0
+
+      max_locks_per_xact setting:           64
+
+      track_commit_timestamp setting:       off
+
+      Maximum data alignment:               8
+
+      Database block size:                  8192
+
+      Blocks per segment of large relation: 131072
+
+      WAL block size:                       8192
+
+      Bytes per WAL segment:                16777216
+
+      Maximum length of identifiers:        64
+
+      Maximum columns in an index:          32
+
+      Maximum size of a TOAST chunk:        1996
+
+      Size of a large-object chunk:         2048
+
+      Date/time type storage:               64-bit integers
+
+      Float8 argument passing:              by value
+
+      Data page checksum version:           1
+
+      Mock authentication nonce:            878da3e798c8fcdc28fb7c17e6f59dd28e0ce56fe72760e6df03168ef52db2e2
+
+      '
+    cnpg.io/pvcRole: PG_DATA
+    cnpg.io/pvcStatus: ready
+    cnpg.io/snapshotEndTime: '2026-09-09T14:34:20Z'
+    cnpg.io/snapshotStartTime: '2026-09-09T14:34:18Z'
+  namespace: postgres-upgrade-acceptance
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    volumeSnapshotContentName: app-pg18-source-snapshot-content
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: app-pg18-source
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-10'
+  namespace: postgres-upgrade-acceptance
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+  inheritedMetadata:
+    labels:
+      postgres.proompteng.ai/rehearsal: 18-6-v1
+  affinity:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 2Gi
+  storage:
+    size: 5Gi
+    storageClass: rook-ceph-block
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      database: app
+      owner: app
+      volumeSnapshots:
+        storage:
+          name: app-pg18-source-snapshot
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: '32'
+      max_wal_senders: '10'
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapcontent-fa5fbb66-1329-4af6-85ca-ef353121e1a9
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    volumeHandle: 0001-0009-rook-ceph-0000000000000001-00d0e7ac-95a9-488e-b082-dac67764534e
+  sourceVolumeMode: Filesystem
+  volumeSnapshotClassName: rook-ceph-block
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: bilig-db-pg18-20260909
+    namespace: bilig
+    resourceVersion: '601508848'
+    uid: fa5fbb66-1329-4af6-85ca-ef353121e1a9
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: bilig-pg18-source-snapshot-content
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    snapshotHandle: 0001-0009-rook-ceph-0000000000000001-b72319b8-e35b-490c-a271-5daf4b832dab
+  volumeSnapshotRef:
+    name: bilig-pg18-source-snapshot
+    namespace: postgres-upgrade-acceptance
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: bilig-pg18-source-snapshot
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    cnpg.io/backupEndTime: '2026-09-09T14:34:53Z'
+    cnpg.io/backupEndWAL: 00000003000000B00000005F
+    cnpg.io/backupStartTime: '2026-09-09T14:34:20Z'
+    cnpg.io/backupStartWAL: 00000003000000B00000005F
+    cnpg.io/instanceName: bilig-db-1
+    cnpg.io/instanceRole: primary
+    cnpg.io/nodeSerial: '1'
+    cnpg.io/onlineBackup: 'false'
+    cnpg.io/operatorVersion: 1.30.0
+    cnpg.io/pgControldata: 'pg_control version number:            1700
+
+      Catalog version number:               202406281
+
+      Database system identifier:           7617732132542214172
+
+      Database cluster state:               shut down
+
+      pg_control last modified:             Wed Sep  9 14:34:22 2026
+
+      Latest checkpoint location:           B0/5F000028
+
+      Latest checkpoint''s REDO location:    B0/5F000028
+
+      Latest checkpoint''s REDO WAL file:    00000003000000B00000005F
+
+      Latest checkpoint''s TimeLineID:       3
+
+      Latest checkpoint''s PrevTimeLineID:   3
+
+      Latest checkpoint''s full_page_writes: on
+
+      Latest checkpoint''s NextXID:          0:330123
+
+      Latest checkpoint''s NextOID:          251581
+
+      Latest checkpoint''s NextMultiXactId:  2030
+
+      Latest checkpoint''s NextMultiOffset:  13274
+
+      Latest checkpoint''s oldestXID:        730
+
+      Latest checkpoint''s oldestXID''s DB:   1
+
+      Latest checkpoint''s oldestActiveXID:  0
+
+      Latest checkpoint''s oldestMultiXid:   1
+
+      Latest checkpoint''s oldestMulti''s DB: 1
+
+      Latest checkpoint''s oldestCommitTsXid:0
+
+      Latest checkpoint''s newestCommitTsXid:0
+
+      Time of latest checkpoint:            Wed Sep  9 14:34:22 2026
+
+      Fake LSN counter for unlogged rels:   0/3E8
+
+      Minimum recovery ending location:     0/0
+
+      Min recovery ending loc''s timeline:   0
+
+      Backup start location:                0/0
+
+      Backup end location:                  0/0
+
+      End-of-backup record required:        no
+
+      wal_level setting:                    logical
+
+      wal_log_hints setting:                on
+
+      max_connections setting:              100
+
+      max_worker_processes setting:         32
+
+      max_wal_senders setting:              10
+
+      max_prepared_xacts setting:           0
+
+      max_locks_per_xact setting:           64
+
+      track_commit_timestamp setting:       off
+
+      Maximum data alignment:               8
+
+      Database block size:                  8192
+
+      Blocks per segment of large relation: 131072
+
+      WAL block size:                       8192
+
+      Bytes per WAL segment:                16777216
+
+      Maximum length of identifiers:        64
+
+      Maximum columns in an index:          32
+
+      Maximum size of a TOAST chunk:        1996
+
+      Size of a large-object chunk:         2048
+
+      Date/time type storage:               64-bit integers
+
+      Float8 argument passing:              by value
+
+      Data page checksum version:           1
+
+      Mock authentication nonce:            90bccc223ce2295b43ec29a0983f6fff9180d86669170186118f3de9f13a8c04
+
+      '
+    cnpg.io/pvcRole: PG_DATA
+    cnpg.io/pvcStatus: ready
+    cnpg.io/snapshotEndTime: '2026-09-09T14:34:53Z'
+    cnpg.io/snapshotStartTime: '2026-09-09T14:34:51Z'
+  namespace: postgres-upgrade-acceptance
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    volumeSnapshotContentName: bilig-pg18-source-snapshot-content
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: bilig-pg18-source
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-10'
+  namespace: postgres-upgrade-acceptance
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+  inheritedMetadata:
+    labels:
+      postgres.proompteng.ai/rehearsal: 18-6-v1
+  affinity:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 2Gi
+  storage:
+    size: 30Gi
+    storageClass: rook-ceph-block
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      database: bilig
+      owner: bilig
+      volumeSnapshots:
+        storage:
+          name: bilig-pg18-source-snapshot
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: '32'
+      max_wal_senders: '10'
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapcontent-ac8585b0-c212-4b1b-ac84-19c0acffa15e
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    volumeHandle: 0001-0009-rook-ceph-0000000000000001-67c8abb6-09fe-4dcb-b67d-b17f1ee8d19b
+  sourceVolumeMode: Filesystem
+  volumeSnapshotClassName: rook-ceph-block
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: coder-cluster-pg18-20260909
+    namespace: coder
+    resourceVersion: '601509747'
+    uid: ac8585b0-c212-4b1b-ac84-19c0acffa15e
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: coder-pg18-source-snapshot-content
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    snapshotHandle: 0001-0009-rook-ceph-0000000000000001-cc491162-d537-41d9-b1ff-2f7f2c69e91a
+  volumeSnapshotRef:
+    name: coder-pg18-source-snapshot
+    namespace: postgres-upgrade-acceptance
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: coder-pg18-source-snapshot
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    cnpg.io/backupEndTime: '2026-09-09T14:35:18Z'
+    cnpg.io/backupEndWAL: 00000012000000C70000003E
+    cnpg.io/backupStartTime: '2026-09-09T14:34:53Z'
+    cnpg.io/backupStartWAL: 00000012000000C70000003E
+    cnpg.io/instanceName: coder-cluster-3
+    cnpg.io/instanceRole: primary
+    cnpg.io/nodeSerial: '3'
+    cnpg.io/onlineBackup: 'false'
+    cnpg.io/operatorVersion: 1.30.0
+    cnpg.io/pgControldata: 'pg_control version number:            1700
+
+      Catalog version number:               202406281
+
+      Database system identifier:           7615857504488771613
+
+      Database cluster state:               shut down
+
+      pg_control last modified:             Wed Sep  9 14:34:55 2026
+
+      Latest checkpoint location:           C7/3E000028
+
+      Latest checkpoint''s REDO location:    C7/3E000028
+
+      Latest checkpoint''s REDO WAL file:    00000012000000C70000003E
+
+      Latest checkpoint''s TimeLineID:       18
+
+      Latest checkpoint''s PrevTimeLineID:   18
+
+      Latest checkpoint''s full_page_writes: on
+
+      Latest checkpoint''s NextXID:          0:7419490
+
+      Latest checkpoint''s NextOID:          25863
+
+      Latest checkpoint''s NextMultiXactId:  69
+
+      Latest checkpoint''s NextMultiOffset:  163
+
+      Latest checkpoint''s oldestXID:        730
+
+      Latest checkpoint''s oldestXID''s DB:   1
+
+      Latest checkpoint''s oldestActiveXID:  0
+
+      Latest checkpoint''s oldestMultiXid:   1
+
+      Latest checkpoint''s oldestMulti''s DB: 1
+
+      Latest checkpoint''s oldestCommitTsXid:0
+
+      Latest checkpoint''s newestCommitTsXid:0
+
+      Time of latest checkpoint:            Wed Sep  9 14:34:54 2026
+
+      Fake LSN counter for unlogged rels:   0/3E8
+
+      Minimum recovery ending location:     0/0
+
+      Min recovery ending loc''s timeline:   0
+
+      Backup start location:                0/0
+
+      Backup end location:                  0/0
+
+      End-of-backup record required:        no
+
+      wal_level setting:                    logical
+
+      wal_log_hints setting:                on
+
+      max_connections setting:              100
+
+      max_worker_processes setting:         32
+
+      max_wal_senders setting:              10
+
+      max_prepared_xacts setting:           0
+
+      max_locks_per_xact setting:           64
+
+      track_commit_timestamp setting:       off
+
+      Maximum data alignment:               8
+
+      Database block size:                  8192
+
+      Blocks per segment of large relation: 131072
+
+      WAL block size:                       8192
+
+      Bytes per WAL segment:                16777216
+
+      Maximum length of identifiers:        64
+
+      Maximum columns in an index:          32
+
+      Maximum size of a TOAST chunk:        1996
+
+      Size of a large-object chunk:         2048
+
+      Date/time type storage:               64-bit integers
+
+      Float8 argument passing:              by value
+
+      Data page checksum version:           1
+
+      Mock authentication nonce:            7d76ee24da8d648f7f482e9de9a10659929bb72e391f93252bda4c031e5611f0
+
+      '
+    cnpg.io/pvcRole: PG_DATA
+    cnpg.io/pvcStatus: ready
+    cnpg.io/snapshotEndTime: '2026-09-09T14:35:17Z'
+    cnpg.io/snapshotStartTime: '2026-09-09T14:35:16Z'
+  namespace: postgres-upgrade-acceptance
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    volumeSnapshotContentName: coder-pg18-source-snapshot-content
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: coder-pg18-source
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-10'
+  namespace: postgres-upgrade-acceptance
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+  inheritedMetadata:
+    labels:
+      postgres.proompteng.ai/rehearsal: 18-6-v1
+  affinity:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 2Gi
+  storage:
+    size: 10Gi
+    storageClass: rook-ceph-block
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      database: coder
+      owner: coder
+      volumeSnapshots:
+        storage:
+          name: coder-pg18-source-snapshot
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: '32'
+      max_wal_senders: '10'
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapcontent-45fa2475-e7b1-4b60-b541-9932037917d8
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    volumeHandle: 0001-0009-rook-ceph-0000000000000001-7a7782af-73e7-41e4-b5de-4e0331f79799
+  sourceVolumeMode: Filesystem
+  volumeSnapshotClassName: rook-ceph-block
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: forgejo-db-pg18-20260909
+    namespace: forgejo
+    resourceVersion: '601510806'
+    uid: 45fa2475-e7b1-4b60-b541-9932037917d8
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: forgejo-pg18-source-snapshot-content
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    snapshotHandle: 0001-0009-rook-ceph-0000000000000001-ba1617e3-1f08-4818-892c-b671414eea64
+  volumeSnapshotRef:
+    name: forgejo-pg18-source-snapshot
+    namespace: postgres-upgrade-acceptance
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: forgejo-pg18-source-snapshot
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    cnpg.io/backupEndTime: '2026-09-09T14:35:48Z'
+    cnpg.io/backupEndWAL: 00000003000000C6000000E0
+    cnpg.io/backupStartTime: '2026-09-09T14:35:18Z'
+    cnpg.io/backupStartWAL: 00000003000000C6000000E0
+    cnpg.io/instanceName: forgejo-db-1
+    cnpg.io/instanceRole: primary
+    cnpg.io/nodeSerial: '1'
+    cnpg.io/onlineBackup: 'false'
+    cnpg.io/operatorVersion: 1.30.0
+    cnpg.io/pgControldata: 'pg_control version number:            1700
+
+      Catalog version number:               202406281
+
+      Database system identifier:           7615849836285206557
+
+      Database cluster state:               shut down
+
+      pg_control last modified:             Wed Sep  9 14:35:19 2026
+
+      Latest checkpoint location:           C6/E0000028
+
+      Latest checkpoint''s REDO location:    C6/E0000028
+
+      Latest checkpoint''s REDO WAL file:    00000003000000C6000000E0
+
+      Latest checkpoint''s TimeLineID:       3
+
+      Latest checkpoint''s PrevTimeLineID:   3
+
+      Latest checkpoint''s full_page_writes: on
+
+      Latest checkpoint''s NextXID:          0:19830709
+
+      Latest checkpoint''s NextOID:          1046125
+
+      Latest checkpoint''s NextMultiXactId:  3
+
+      Latest checkpoint''s NextMultiOffset:  5
+
+      Latest checkpoint''s oldestXID:        730
+
+      Latest checkpoint''s oldestXID''s DB:   1
+
+      Latest checkpoint''s oldestActiveXID:  0
+
+      Latest checkpoint''s oldestMultiXid:   1
+
+      Latest checkpoint''s oldestMulti''s DB: 1
+
+      Latest checkpoint''s oldestCommitTsXid:0
+
+      Latest checkpoint''s newestCommitTsXid:0
+
+      Time of latest checkpoint:            Wed Sep  9 14:35:19 2026
+
+      Fake LSN counter for unlogged rels:   0/3E8
+
+      Minimum recovery ending location:     0/0
+
+      Min recovery ending loc''s timeline:   0
+
+      Backup start location:                0/0
+
+      Backup end location:                  0/0
+
+      End-of-backup record required:        no
+
+      wal_level setting:                    logical
+
+      wal_log_hints setting:                on
+
+      max_connections setting:              100
+
+      max_worker_processes setting:         32
+
+      max_wal_senders setting:              10
+
+      max_prepared_xacts setting:           0
+
+      max_locks_per_xact setting:           64
+
+      track_commit_timestamp setting:       off
+
+      Maximum data alignment:               8
+
+      Database block size:                  8192
+
+      Blocks per segment of large relation: 131072
+
+      WAL block size:                       8192
+
+      Bytes per WAL segment:                16777216
+
+      Maximum length of identifiers:        64
+
+      Maximum columns in an index:          32
+
+      Maximum size of a TOAST chunk:        1996
+
+      Size of a large-object chunk:         2048
+
+      Date/time type storage:               64-bit integers
+
+      Float8 argument passing:              by value
+
+      Data page checksum version:           1
+
+      Mock authentication nonce:            61b7ad33e75a8db34f6293796825b06cb9f3185c0721e901d846362be720bb11
+
+      '
+    cnpg.io/pvcRole: PG_DATA
+    cnpg.io/pvcStatus: ready
+    cnpg.io/snapshotEndTime: '2026-09-09T14:35:48Z'
+    cnpg.io/snapshotStartTime: '2026-09-09T14:35:46Z'
+  namespace: postgres-upgrade-acceptance
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    volumeSnapshotContentName: forgejo-pg18-source-snapshot-content
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: forgejo-pg18-source
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-10'
+  namespace: postgres-upgrade-acceptance
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+  inheritedMetadata:
+    labels:
+      postgres.proompteng.ai/rehearsal: 18-6-v1
+  affinity:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 2Gi
+  storage:
+    size: 10Gi
+    storageClass: rook-ceph-block
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      database: forgejo
+      owner: forgejo
+      volumeSnapshots:
+        storage:
+          name: forgejo-pg18-source-snapshot
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: '32'
+      max_wal_senders: '10'

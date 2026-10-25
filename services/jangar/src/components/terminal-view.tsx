@@ -1,0 +1,642 @@
+import '@xterm/xterm/css/xterm.css'
+
+import { Button } from '@proompteng/design/ui'
+import type { FitAddon } from '@xterm/addon-fit'
+import type { SearchAddon } from '@xterm/addon-search'
+import type { Terminal } from '@xterm/xterm'
+import * as React from 'react'
+import { cn } from '@/lib/utils'
+import { randomUuid } from '@/lib/uuid'
+
+const OUTPUT_FRAME_TYPE = 1
+const RECONNECT_STORAGE_KEY = 'jangar-terminal-reconnect'
+const EXPERIMENTAL_RENDERERS_ENABLED = false
+const TERMINAL_FONT_FAMILY =
+  '"JetBrains Mono Nerd Font", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+
+type TerminalRenderer = 'dom' | 'canvas' | 'webgl'
+
+const buildWsUrl = (
+  baseUrl: string,
+  sessionId: string,
+  reconnectToken: string,
+  since: number,
+  cols?: number,
+  rows?: number,
+  sessionToken?: string | null,
+) => {
+  const url = new URL(baseUrl)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  if (!url.pathname.endsWith('/')) {
+    url.pathname += '/'
+  }
+  url.pathname += `api/terminals/${encodeURIComponent(sessionId)}/ws`
+  url.searchParams.set('reconnect', reconnectToken)
+  if (sessionToken) url.searchParams.set('token', sessionToken)
+  if (since > 0) url.searchParams.set('since', `${since}`)
+  if (cols) url.searchParams.set('cols', `${cols}`)
+  if (rows) url.searchParams.set('rows', `${rows}`)
+  return url.toString()
+}
+
+const resolveBaseUrl = (terminalUrl?: string | null) => {
+  if (terminalUrl) return terminalUrl
+  return window.location.origin
+}
+
+const resolveRequestedRenderer = (search: string): TerminalRenderer => {
+  const params = new URLSearchParams(search)
+  const value = params.get('renderer')?.toLowerCase()
+  if (value === 'canvas' || value === 'webgl') return value
+  return 'dom'
+}
+
+const resolveEffectiveRenderer = (
+  search: string,
+  experimentalEnabled = EXPERIMENTAL_RENDERERS_ENABLED,
+): TerminalRenderer => {
+  const requested = resolveRequestedRenderer(search)
+  if (requested === 'dom') return 'dom'
+  return experimentalEnabled ? requested : 'dom'
+}
+
+const safeTerminalDispose = (terminal: Terminal, logger: Pick<typeof console, 'warn'> = console) => {
+  try {
+    terminal.dispose()
+  } catch (error) {
+    logger.warn('[terminal] terminal dispose failed', error)
+  }
+}
+
+export const __private = {
+  resolveRequestedRenderer,
+  resolveEffectiveRenderer,
+  safeTerminalDispose,
+}
+
+type TerminalViewProps = {
+  sessionId: string
+  terminalUrl?: string | null
+  variant?: 'default' | 'fullscreen'
+  reconnectToken?: string | null
+  className?: string
+}
+
+export function TerminalView({
+  sessionId,
+  terminalUrl,
+  variant = 'default',
+  reconnectToken,
+  className,
+}: TerminalViewProps) {
+  const containerRef = React.useRef<HTMLDivElement | null>(null)
+  const terminalRef = React.useRef<Terminal | null>(null)
+  const fitRef = React.useRef<FitAddon | null>(null)
+  const searchRef = React.useRef<SearchAddon | null>(null)
+  const socketRef = React.useRef<WebSocket | null>(null)
+  const reconnectTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reconnectAttemptRef = React.useRef(0)
+  const resizeObserverRef = React.useRef<ResizeObserver | null>(null)
+  const initFrameRef = React.useRef<number | null>(null)
+  const initStartedRef = React.useRef(false)
+  const lastSeqRef = React.useRef(0)
+  const messageLoggedRef = React.useRef(false)
+  const reconnectTokenRef = React.useRef('')
+  const sessionTokenRef = React.useRef<string | null>(null)
+  const statusRef = React.useRef<'connecting' | 'connected' | 'error'>('connecting')
+  const decoderRef = React.useRef(new TextDecoder())
+  const encoderRef = React.useRef(new TextEncoder())
+
+  const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
+  const [error, setError] = React.useState<string | null>(null)
+  const [searchOpen, setSearchOpen] = React.useState(false)
+  const [searchValue, setSearchValue] = React.useState('')
+
+  React.useEffect(() => {
+    reconnectTokenRef.current = ''
+    lastSeqRef.current = 0
+    sessionTokenRef.current = null
+
+    const saved = window.sessionStorage.getItem(`${RECONNECT_STORAGE_KEY}-${sessionId}`)
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as { token?: string; seq?: number; sessionToken?: string | null }
+        if (parsed.token) reconnectTokenRef.current = parsed.token
+        if (typeof parsed.seq === 'number') lastSeqRef.current = parsed.seq
+        if (parsed.sessionToken) sessionTokenRef.current = parsed.sessionToken
+      } catch {
+        // ignore
+      }
+    }
+
+    if (reconnectToken) {
+      sessionTokenRef.current = reconnectToken
+    }
+
+    if (!reconnectTokenRef.current) {
+      reconnectTokenRef.current = randomUuid()
+    }
+
+    const persist = () => {
+      window.sessionStorage.setItem(
+        `${RECONNECT_STORAGE_KEY}-${sessionId}`,
+        JSON.stringify({
+          token: reconnectTokenRef.current,
+          seq: lastSeqRef.current,
+          sessionToken: sessionTokenRef.current,
+        }),
+      )
+    }
+    persist()
+  }, [sessionId, reconnectToken])
+
+  React.useEffect(() => {
+    let disposed = false
+    let cleanup: (() => void) | undefined
+
+    const init = async () => {
+      if (disposed || initStartedRef.current) return
+      if (!containerRef.current) {
+        initFrameRef.current = window.requestAnimationFrame(() => {
+          void init()
+        })
+        return
+      }
+      initStartedRef.current = true
+
+      try {
+        const [
+          { Terminal },
+          { ClipboardAddon },
+          { FitAddon },
+          { ImageAddon },
+          { SearchAddon },
+          { SerializeAddon },
+          { Unicode11Addon },
+          { WebLinksAddon },
+          { LigaturesAddon },
+        ] = await Promise.all([
+          import('@xterm/xterm'),
+          import('@xterm/addon-clipboard'),
+          import('@xterm/addon-fit'),
+          import('@xterm/addon-image'),
+          import('@xterm/addon-search'),
+          import('@xterm/addon-serialize'),
+          import('@xterm/addon-unicode11'),
+          import('@xterm/addon-web-links'),
+          import('@xterm/addon-ligatures/lib/addon-ligatures.mjs'),
+        ])
+
+        if (disposed || !containerRef.current) return
+
+        const terminal = new Terminal({
+          allowProposedApi: true,
+          allowTransparency: true,
+          fontFamily: TERMINAL_FONT_FAMILY,
+          fontSize: 14,
+          theme: { background: 'rgba(0,0,0,0)' },
+          cursorBlink: true,
+          scrollback: 5000,
+        })
+
+        const fitAddon = new FitAddon()
+        fitRef.current = fitAddon
+        terminal.loadAddon(fitAddon)
+
+        const unicodeAddon = new Unicode11Addon()
+        terminal.loadAddon(unicodeAddon)
+        terminal.unicode.activeVersion = '11'
+
+        const clipboardAddon = new ClipboardAddon()
+        terminal.loadAddon(clipboardAddon)
+
+        const searchAddon = new SearchAddon()
+        terminal.loadAddon(searchAddon)
+        searchRef.current = searchAddon
+
+        terminal.loadAddon(new SerializeAddon())
+
+        const requestedRenderer = resolveRequestedRenderer(window.location.search)
+        const renderer = resolveEffectiveRenderer(window.location.search)
+
+        if (requestedRenderer !== renderer) {
+          console.warn(
+            `[terminal] experimental renderer "${requestedRenderer}" requested but disabled; falling back to "${renderer}"`,
+          )
+        }
+
+        if (renderer === 'webgl') {
+          try {
+            const { WebglAddon } = await import('@xterm/addon-webgl')
+            terminal.loadAddon(new WebglAddon())
+          } catch (error) {
+            console.warn('[terminal] failed to load webgl renderer addon', error)
+            try {
+              const { CanvasAddon } = await import('@xterm/addon-canvas')
+              terminal.loadAddon(new CanvasAddon())
+            } catch (canvasError) {
+              console.warn('[terminal] failed to load canvas renderer addon', canvasError)
+            }
+          }
+        } else if (renderer === 'canvas') {
+          try {
+            const { CanvasAddon } = await import('@xterm/addon-canvas')
+            terminal.loadAddon(new CanvasAddon())
+          } catch (error) {
+            console.warn('[terminal] failed to load canvas renderer addon', error)
+          }
+        }
+
+        terminal.attachCustomKeyEventHandler((event) => {
+          const isMac = navigator.platform.match('Mac')
+          const ctrlKey = isMac ? event.metaKey : event.ctrlKey
+          if (event.shiftKey && event.key === 'Enter') {
+            if (event.type === 'keydown') {
+              if (socketRef.current?.readyState === WebSocket.OPEN) {
+                socketRef.current.send(encoderRef.current.encode('\x1b\r'))
+              }
+            }
+            return false
+          }
+          if (ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
+            if (event.type === 'keydown') {
+              const selection = terminal.getSelection()
+              if (selection) {
+                navigator.clipboard?.writeText(selection).catch(() => {})
+              }
+            }
+            return false
+          }
+          if (ctrlKey && event.shiftKey && event.key.toLowerCase() === 'v') {
+            if (event.type === 'keydown') {
+              navigator.clipboard
+                ?.readText()
+                .then((text) => {
+                  if (text) {
+                    terminal.paste(text)
+                  }
+                })
+                .catch(() => {})
+            }
+            return false
+          }
+          if (ctrlKey && event.key.toLowerCase() === 'f') {
+            if (event.type === 'keydown') {
+              setSearchOpen(true)
+            }
+            return false
+          }
+          return true
+        })
+
+        terminal.onSelectionChange(() => {
+          const selection = terminal.getSelection()
+          if (selection) {
+            navigator.clipboard?.writeText(selection).catch(() => {})
+          }
+        })
+
+        terminal.open(containerRef.current)
+
+        try {
+          terminal.loadAddon(
+            new LigaturesAddon({
+              fontFeatureSettings: '"calt" on, "liga" on',
+            }),
+          )
+        } catch {
+          // ignore
+        }
+
+        try {
+          terminal.loadAddon(new ImageAddon())
+        } catch {
+          // ignore
+        }
+        containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
+        fitAddon.fit()
+        fitAddon.fit()
+        try {
+          terminal.loadAddon(
+            new WebLinksAddon((_event, uri) => {
+              window.open(uri, '_blank', 'noopener,noreferrer')
+            }),
+          )
+        } catch (err) {
+          console.warn('[terminal] failed to load WebLinks addon', err)
+        }
+        if ('fonts' in document) {
+          void document.fonts
+            .load(`14px ${TERMINAL_FONT_FAMILY}`)
+            .then(() => {
+              if (containerRef.current) {
+                containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
+              }
+              terminal.options.fontFamily = TERMINAL_FONT_FAMILY
+              fitAddon.fit()
+              terminal.refresh(0, terminal.rows - 1)
+            })
+            .catch(() => {})
+        }
+        if (containerRef.current) {
+          containerRef.current.dataset.termCols = String(terminal.cols)
+          containerRef.current.dataset.termRows = String(terminal.rows)
+        }
+        const container = containerRef.current
+        const focusTerminal = () => terminal.focus()
+        if (container) {
+          container.addEventListener('pointerdown', focusTerminal)
+          container.addEventListener('focus', focusTerminal)
+        }
+        terminalRef.current = terminal
+
+        terminal.onData((data) => {
+          if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return
+          const payload = encoderRef.current.encode(data)
+          socketRef.current.send(payload)
+        })
+
+        const resizeObserver = new ResizeObserver(() => {
+          fitAddon.fit()
+          const cols = terminal.cols
+          const rows = terminal.rows
+          if (containerRef.current) {
+            containerRef.current.dataset.termCols = String(cols)
+            containerRef.current.dataset.termRows = String(rows)
+          }
+          if (cols > 0 && rows > 0) {
+            const payload = JSON.stringify({ type: 'resize', cols, rows })
+            if (socketRef.current?.readyState === WebSocket.OPEN) {
+              socketRef.current.send(payload)
+            }
+          }
+        })
+        resizeObserver.observe(containerRef.current)
+        resizeObserverRef.current = resizeObserver
+        cleanup = () => {
+          if (container) {
+            container.removeEventListener('pointerdown', focusTerminal)
+            container.removeEventListener('focus', focusTerminal)
+          }
+          resizeObserver.disconnect()
+          safeTerminalDispose(terminal)
+          terminalRef.current = null
+          fitRef.current = null
+          searchRef.current = null
+        }
+      } catch (err) {
+        console.warn('[terminal] failed to initialize', err)
+        if (!disposed) {
+          setError('Unable to initialize terminal.')
+        }
+      }
+    }
+
+    void init()
+
+    return () => {
+      disposed = true
+      if (initFrameRef.current !== null) {
+        window.cancelAnimationFrame(initFrameRef.current)
+        initFrameRef.current = null
+      }
+      cleanup?.()
+    }
+  }, [])
+
+  React.useEffect(() => {
+    let disposed = false
+    let connectTimer: ReturnType<typeof setTimeout> | null = null
+
+    const connect = () => {
+      if (disposed) return
+      const terminal = terminalRef.current
+      const fitAddon = fitRef.current
+      if (!terminal || !fitAddon) {
+        connectTimer = setTimeout(connect, 50)
+        return
+      }
+
+      const cols = terminal.cols
+      const rows = terminal.rows
+      const baseUrl = resolveBaseUrl(terminalUrl)
+      const sessionToken = reconnectToken ?? sessionTokenRef.current
+      const wsUrl = buildWsUrl(
+        baseUrl,
+        sessionId,
+        reconnectTokenRef.current,
+        lastSeqRef.current,
+        cols,
+        rows,
+        sessionToken,
+      )
+      console.info('[terminal] connecting', sessionId, wsUrl)
+      let socket: WebSocket
+      try {
+        socket = new WebSocket(wsUrl)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn('[terminal] websocket construct failed', { sessionId, wsUrl, message })
+        setStatus('error')
+        statusRef.current = 'error'
+        setError('WebSocket error')
+        reconnectTimerRef.current = setTimeout(connect, 1500)
+        return
+      }
+      socket.binaryType = 'arraybuffer'
+      socketRef.current = socket
+
+      setStatus('connecting')
+      statusRef.current = 'connecting'
+
+      socket.onopen = () => {
+        console.info('[terminal] websocket open', sessionId)
+        reconnectAttemptRef.current = 0
+        setStatus('connected')
+        statusRef.current = 'connected'
+        setError(null)
+        decoderRef.current = new TextDecoder()
+        if (fitAddon) fitAddon.fit()
+        const payload = JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
+        socket.send(payload)
+      }
+
+      const handleBinary = (buffer: ArrayBuffer) => {
+        const data = new Uint8Array(buffer)
+        if (data.length < 6 || data[0] !== OUTPUT_FRAME_TYPE) return
+        const seq = ((data[1] << 24) | (data[2] << 16) | (data[3] << 8) | data[4]) >>> 0
+        const payload = data.subarray(5)
+        const text = decoderRef.current.decode(payload, { stream: true })
+        terminal.write(text)
+        lastSeqRef.current = seq
+        window.sessionStorage.setItem(
+          `${RECONNECT_STORAGE_KEY}-${sessionId}`,
+          JSON.stringify({
+            token: reconnectTokenRef.current,
+            seq: lastSeqRef.current,
+            sessionToken: sessionTokenRef.current,
+          }),
+        )
+      }
+
+      socket.onmessage = (event) => {
+        if (!messageLoggedRef.current) {
+          messageLoggedRef.current = true
+          const typeLabel =
+            typeof event.data === 'string'
+              ? 'string'
+              : event.data instanceof ArrayBuffer
+                ? 'arraybuffer'
+                : event.data instanceof Blob
+                  ? 'blob'
+                  : typeof event.data
+          console.info('[terminal] websocket message type', sessionId, typeLabel)
+        }
+        if (typeof event.data === 'string') {
+          try {
+            const payload = JSON.parse(event.data) as { type?: string; message?: string; token?: string }
+            if (payload.type === 'error') {
+              setError(payload.message ?? 'Terminal error')
+              setStatus('error')
+              statusRef.current = 'error'
+            }
+            if (payload.type === 'ready' && payload.token) {
+              reconnectTokenRef.current = payload.token
+              window.sessionStorage.setItem(
+                `${RECONNECT_STORAGE_KEY}-${sessionId}`,
+                JSON.stringify({
+                  token: reconnectTokenRef.current,
+                  seq: lastSeqRef.current,
+                  sessionToken: sessionTokenRef.current,
+                }),
+              )
+            }
+            if (payload.type === 'reset') {
+              terminal.reset()
+              terminal.clear()
+              lastSeqRef.current = 0
+              decoderRef.current = new TextDecoder()
+            }
+            if (payload.type === 'exit') {
+              setStatus('error')
+              statusRef.current = 'error'
+              setError('Terminal session exited.')
+            }
+          } catch {
+            // ignore
+          }
+          return
+        }
+        if (event.data instanceof Blob) {
+          void event.data
+            .arrayBuffer()
+            .then(handleBinary)
+            .catch(() => {})
+          return
+        }
+        if (event.data instanceof ArrayBuffer) {
+          handleBinary(event.data)
+        }
+      }
+
+      socket.onclose = (event) => {
+        console.info('[terminal] websocket closed', sessionId, event.code, event.reason)
+        socketRef.current = null
+        if (disposed) return
+        if (statusRef.current !== 'error') {
+          setStatus('connecting')
+          statusRef.current = 'connecting'
+        }
+        const attempt = reconnectAttemptRef.current + 1
+        reconnectAttemptRef.current = attempt
+        const delay = Math.min(8000, 600 + attempt * 500)
+        reconnectTimerRef.current = setTimeout(connect, delay)
+      }
+
+      socket.onerror = () => {
+        console.warn('[terminal] websocket error', sessionId)
+        setStatus('error')
+        statusRef.current = 'error'
+        setError('WebSocket error')
+      }
+    }
+
+    connect()
+
+    return () => {
+      disposed = true
+      if (connectTimer) {
+        clearTimeout(connectTimer)
+        connectTimer = null
+      }
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+      socketRef.current?.close()
+      socketRef.current = null
+    }
+  }, [sessionId, terminalUrl, reconnectToken])
+
+  const isConnecting = status === 'connecting'
+
+  return (
+    <div
+      className={cn(
+        'relative flex flex-col overflow-hidden h-full w-full bg-black',
+        variant === 'default' && 'rounded-none border border-border',
+        className,
+      )}
+    >
+      <div
+        ref={containerRef}
+        className="flex flex-1 min-h-0 bg-transparent outline-none focus-within:ring-2 focus-within:ring-zinc-500/70 focus-within:ring-inset"
+        data-testid="terminal-canvas"
+        role="application"
+        aria-label="Terminal"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: xterm mounts its own input; container must be focusable.
+        tabIndex={0}
+      />
+      {error ? (
+        <div className="absolute inset-x-3 top-3 rounded-none border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
+        </div>
+      ) : null}
+      {isConnecting ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+            Connecting to terminal...
+          </div>
+        </div>
+      ) : null}
+      {searchOpen ? (
+        <div className="absolute right-4 top-4 flex items-center gap-2 rounded-none border border-border bg-card px-3 py-2 text-xs shadow-lg">
+          <input
+            className="min-w-[180px] bg-transparent text-xs text-foreground outline-none"
+            placeholder="Search"
+            value={searchValue}
+            onChange={(event) => setSearchValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                searchRef.current?.findNext(searchValue)
+              }
+              if (event.key === 'Escape') {
+                setSearchOpen(false)
+              }
+            }}
+          />
+          <Button size="sm" variant="ghost" onClick={() => searchRef.current?.findPrevious(searchValue)}>
+            Prev
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => searchRef.current?.findNext(searchValue)}>
+            Next
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSearchOpen(false)}>
+            Close
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  )
+}

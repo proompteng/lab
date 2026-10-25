@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: market-data-archive-metrics
+  namespace: torghut
+  labels:
+    app: market-data-archive
+spec:
+  type: ClusterIP
+  selector:
+    app: market-data-archive
+    component: jobmanager
+    type: flink-native-kubernetes
+  ports:
+    - name: metrics
+      port: 9249
+      protocol: TCP
+      targetPort: metrics

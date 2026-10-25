@@ -1,0 +1,99 @@
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: froussard
+  namespace: froussard
+  annotations:
+    serving.knative.dev/revision-history-limit: "3"
+    serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
+    serving.knative.dev/lastModifier: system:serviceaccount:argocd:argocd-application-controller
+    argocd.argoproj.io/tracking-id: froussard:serving.knative.dev/Service:froussard/froussard
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: "1"
+        serving.knative.dev/revision-history-limit: "3"
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      containerConcurrency: 0
+      timeoutSeconds: 300
+      enableServiceLinks: false
+      containers:
+        - name: app
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:b0f6fdc28b9e0d5230352179cc4935b1dde34bc5e0b0a2bb3bb9e7d6ae21e713
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http1
+          env:
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  key: webhook-secret
+                  name: github-secret
+            - name: LINEAR_WEBHOOK_ENABLED
+              value: "false"
+            - name: KAFKA_BROKERS
+              value: kafka-kafka-bootstrap.kafka:9092
+            - name: KAFKA_TOPIC
+              value: github.webhook.events
+            - name: KAFKA_DISCORD_COMMAND_TOPIC
+              value: discord.commands.incoming
+            - name: KAFKA_USERNAME
+              value: froussard
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: password
+                  name: froussard
+            - name: KAFKAJS_NO_PARTITIONER_WARNING
+              value: "1"
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: token
+                  name: github-token
+            - name: DISCORD_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: public-key
+                  name: discord-bot
+            - name: ATLAS_BASE_URL
+              value: http://jangar.jangar.svc.cluster.local
+            - name: AGENTS_SERVICE_BASE_URL
+              value: http://agents.agents.svc.cluster.local
+            - name: AGENTS_SERVICE_CLIENT_NAME
+              value: froussard
+            - name: OTEL_SERVICE_NAME
+              value: froussard
+            - name: OTEL_SERVICE_NAMESPACE
+              value: froussard
+            - name: FROUSSARD_VERSION
+              value: v0.596.0-3471-g7bca4519e
+            - name: FROUSSARD_COMMIT
+              value: 7bca4519e3e7e39a1a55c777e750eb5db7309210
+            - name: LGTM_TEMPO_TRACES_ENDPOINT
+              value: http://observability-tempo-gateway.observability.svc.cluster.local:4317
+            - name: LGTM_MIMIR_METRICS_ENDPOINT
+              value: http://jangar-alloy.jangar.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
+              value: "20000"
+            - name: LGTM_LOKI_ENDPOINT
+              value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: http1
+            successThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: http1

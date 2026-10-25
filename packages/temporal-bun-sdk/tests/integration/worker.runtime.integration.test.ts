@@ -1,0 +1,491 @@
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { createClient } from '@connectrpc/connect'
+import { createGrpcTransport } from '@connectrpc/connect-node'
+import { Effect, Exit } from 'effect'
+import * as Schema from 'effect/Schema'
+
+import { buildTransportOptions, createTemporalClient, normalizeTemporalAddress } from '../../src/client'
+import { loadTemporalConfig } from '../../src/config'
+import { TaskQueueKind } from '../../src/proto/temporal/api/enums/v1/task_queue_pb'
+import { WorkerVersioningMode } from '../../src/proto/temporal/api/enums/v1/deployment_pb'
+import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
+import {
+  type PollWorkflowTaskQueueRequest,
+  type RespondWorkflowTaskCompletedRequest,
+} from '../../src/proto/temporal/api/workflowservice/v1/request_response_pb'
+import { WorkflowService } from '../../src/proto/temporal/api/workflowservice/v1/service_pb'
+import { WorkerRuntime } from '../../src/worker/runtime'
+import { defineWorkflow } from '../../src/workflow/definition'
+import type { IntegrationHarness } from './harness'
+import { createIntegrationHarness, findTemporalCliUnavailableError, type TemporalDevServerConfig } from './harness'
+
+const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
+const describeIntegration = shouldRunIntegration ? describe : describe.skip
+const hookTimeoutMs = 60_000
+const scenarioTimeoutMs = 30_000
+
+const devServerDefaults: TemporalDevServerConfig = {
+  address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
+  namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
+}
+
+const sanitizeTaskQueueComponent = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '-')
+
+const runTemporalCli = async (...args: string[]): Promise<{ stdout: string; stderr: string }> => {
+  const child = Bun.spawn(['temporal', ...args], { stdout: 'pipe', stderr: 'pipe' })
+  const exitCode = await child.exited
+  const stdout = child.stdout ? await new Response(child.stdout).text() : ''
+  const stderr = child.stderr ? await new Response(child.stderr).text() : ''
+  if (exitCode !== 0) {
+    throw new Error(`temporal ${args.join(' ')} failed: ${stderr || stdout}`)
+  }
+  return { stdout, stderr }
+}
+
+describeIntegration('Temporal worker runtime integration', () => {
+  let harness: IntegrationHarness | null = null
+  let cliUnavailable = false
+  const harnessConfig = devServerDefaults
+
+  beforeAll(async () => {
+    const harnessExit = await Effect.runPromiseExit(createIntegrationHarness(harnessConfig))
+    if (Exit.isFailure(harnessExit)) {
+      const unavailable = findTemporalCliUnavailableError(harnessExit.cause)
+      if (unavailable) {
+        cliUnavailable = true
+        console.warn(`[temporal-bun-sdk] skipping worker runtime integration: ${unavailable.message}`)
+        return
+      }
+      throw harnessExit.cause
+    }
+
+    harness = harnessExit.value
+    const setupExit = await Effect.runPromiseExit(harness.setup)
+    if (Exit.isFailure(setupExit)) {
+      const unavailable = findTemporalCliUnavailableError(setupExit.cause)
+      if (unavailable) {
+        cliUnavailable = true
+        console.warn(`[temporal-bun-sdk] skipping worker runtime integration: ${unavailable.message}`)
+        return
+      }
+      throw setupExit.cause
+    }
+  }, { timeout: hookTimeoutMs })
+
+  afterAll(async () => {
+    if (harness) {
+      await Effect.runPromise(harness.teardown)
+    }
+  }, { timeout: hookTimeoutMs })
+
+  test('processes workflow tasks concurrently up to configured limit', { timeout: scenarioTimeoutMs }, async () => {
+    if (cliUnavailable || !harness) {
+      console.warn('[temporal-bun-sdk] worker runtime scenario skipped (workflow concurrency)')
+      expect(true).toBeTrue()
+      return
+    }
+    const metrics = await Effect.runPromise(
+      harness.runScenario('workflow concurrency', () =>
+        Effect.tryPromise(async () => {
+          const taskQueue = `codex-concurrency-${Date.now()}-${Math.round(Math.random() * 1000)}`
+          const iterations = 60_000_000
+          const concurrencyMetrics = { active: 0, peak: 0, total: 0, completed: 0 }
+
+          const workflowDefinition = defineWorkflow('concurrencyWorkflow', ({ input, determinism }) =>
+            Effect.gen(function* () {
+              const [rawIterations] = input as [number?]
+              const loopTarget = typeof rawIterations === 'number' && rawIterations > 0 ? rawIterations : iterations
+              const start = determinism.now()
+              let acc = 0
+              for (let index = 0; index < loopTarget; index += 1) {
+                acc = (acc + (index % 97)) ^ (index & 31)
+                if (index % 50_000 === 0) {
+                  determinism.now()
+                  determinism.random()
+                }
+              }
+              yield* Effect.tryPromise(
+                () =>
+                  new Promise<void>((resolve) => {
+                    setTimeout(() => resolve(), 25)
+                  }),
+              )
+              const elapsed = determinism.now() - start
+              return `${acc}:${elapsed}`
+            }),
+          )
+
+          const config = await loadTemporalConfig({
+            defaults: {
+              address: harnessConfig.address,
+              namespace: harnessConfig.namespace,
+              taskQueue,
+              workerWorkflowConcurrency: 2,
+              workerActivityConcurrency: 1,
+            },
+          })
+          const runtime = await WorkerRuntime.create({
+            config,
+            workflows: [workflowDefinition],
+            taskQueue,
+            namespace: config.namespace,
+            concurrency: { workflow: 2 },
+            stickyScheduling: false,
+            workflowGuards: 'warn',
+            deployment: {
+              versioningMode: WorkerVersioningMode.UNVERSIONED,
+              versioningBehavior: VersioningBehavior.UNSPECIFIED,
+            },
+            schedulerHooks: {
+              onWorkflowStart: () =>
+                Effect.sync(() => {
+                  concurrencyMetrics.active += 1
+                  concurrencyMetrics.total += 1
+                  if (concurrencyMetrics.active > concurrencyMetrics.peak) {
+                    concurrencyMetrics.peak = concurrencyMetrics.active
+                  }
+                }),
+              onWorkflowComplete: () =>
+                Effect.sync(() => {
+                  concurrencyMetrics.active = Math.max(0, concurrencyMetrics.active - 1)
+                  concurrencyMetrics.completed += 1
+                }),
+            },
+          })
+
+          let runPromise: Promise<void> | null = null
+
+          try {
+            const { client: temporalClient } = await createTemporalClient({ config, taskQueue })
+            const workflowCount = 4
+            const executions: Array<{ workflowId: string; runId: string }> = []
+
+            for (let index = 0; index < workflowCount; index += 1) {
+              const workflowId = `${taskQueue}-wf-${index}`
+              const result = await temporalClient.startWorkflow({
+                workflowId,
+                workflowType: 'concurrencyWorkflow',
+                taskQueue,
+                args: [iterations],
+                workflowTaskTimeoutMs: 120_000,
+              })
+              harness.trackWorkflow(result)
+              executions.push({ workflowId: result.workflowId, runId: result.runId })
+            }
+
+            runPromise = runtime.run().catch((error) => {
+              console.error('[temporal-bun-sdk:test] worker runtime exited with error', error)
+              throw error
+            })
+
+            const waitStart = Date.now()
+            while (concurrencyMetrics.completed < workflowCount) {
+              if (Date.now() - waitStart > 60_000) {
+                throw new Error('Workflows did not complete before timeout')
+              }
+              await Bun.sleep(200)
+            }
+
+            const [firstExecution] = executions
+            if (firstExecution) {
+              try {
+                await runTemporalCli(
+                  'workflow',
+                  'show',
+                  '--workflow-id',
+                  firstExecution.workflowId,
+                  '--run-id',
+                  firstExecution.runId,
+                  '--namespace',
+                  config.namespace,
+                  '--address',
+                  config.address,
+                  '--output',
+                  'json',
+                )
+              } catch {
+                // Ignore CLI failures in test environment.
+              }
+            }
+
+            await temporalClient.shutdown()
+
+            return {
+              peak: concurrencyMetrics.peak,
+              total: concurrencyMetrics.total,
+              completed: concurrencyMetrics.completed >= workflowCount,
+              completedCount: concurrencyMetrics.completed,
+            }
+          } finally {
+            await runtime.shutdown()
+            if (runPromise) {
+              await runPromise
+            }
+          }
+        }),
+      ),
+    )
+
+    expect(metrics.total).toBeGreaterThanOrEqual(4)
+    expect(metrics.peak).toBeGreaterThanOrEqual(2)
+    expect(metrics.completed).toBeTrue()
+    expect(metrics.completedCount).toBeGreaterThanOrEqual(4)
+  })
+
+  test(
+    'attaches sticky queue metadata and deployment options to workflow responses',
+    { timeout: scenarioTimeoutMs },
+    async () => {
+    if (cliUnavailable || !harness) {
+      console.warn('[temporal-bun-sdk] worker runtime scenario skipped (sticky queue metadata)')
+      expect(true).toBeTrue()
+      return
+    }
+    const result = await Effect.runPromise(
+      harness.runScenario('sticky queue metadata', () =>
+        Effect.tryPromise(async () => {
+          const taskQueue = `codex-sticky-${Date.now()}-${Math.round(Math.random() * 1000)}`
+          const identity = 'integration-worker'
+          const deploymentName = `integration-${Date.now()}`
+          const buildId = `build-${Math.round(Math.random() * 10_000)}`
+
+          const config = await loadTemporalConfig({
+            defaults: {
+              address: harnessConfig.address,
+              namespace: harnessConfig.namespace,
+              taskQueue,
+            },
+          })
+
+          const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
+          const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
+          const transport = createGrpcTransport(buildTransportOptions(baseUrl, config))
+          const client = createClient(WorkflowService, transport)
+
+          const completions: RespondWorkflowTaskCompletedRequest[] = []
+          const polls: PollWorkflowTaskQueueRequest[] = []
+
+          const workflowService = new Proxy(client, {
+            get(target, prop, receiver) {
+              const original = Reflect.get(target, prop, receiver)
+              if (typeof original !== 'function') {
+                return original
+              }
+              if (prop === 'respondWorkflowTaskCompleted') {
+                return async function respondWorkflowTaskCompletedProxy(
+                  this: unknown,
+                  request: RespondWorkflowTaskCompletedRequest,
+                  ...rest: unknown[]
+                ) {
+                  completions.push(request)
+                  return await (original as CallableFunction).apply(target, [request, ...rest])
+                }
+              }
+              if (prop === 'pollWorkflowTaskQueue') {
+                return async function pollWorkflowTaskQueueProxy(
+                  this: unknown,
+                  request: PollWorkflowTaskQueueRequest,
+                  ...rest: unknown[]
+                ) {
+                  polls.push(request)
+                  return await (original as CallableFunction).apply(target, [request, ...rest])
+                }
+              }
+              return function passthrough(this: unknown, ...args: unknown[]) {
+                return (original as CallableFunction).apply(target, args)
+              }
+            },
+          }) as typeof client
+
+          const workflowDefinition = defineWorkflow('stickyMetadataWorkflow', ({ determinism }) =>
+            Effect.sync(() => {
+              determinism.now()
+              return 'ok'
+            }),
+          )
+
+          const runtime = await WorkerRuntime.create({
+            config,
+            workflows: [workflowDefinition],
+            taskQueue,
+            namespace: config.namespace,
+            stickyScheduling: true,
+            workflowService,
+            identity,
+            workflowGuards: 'warn',
+            deployment: {
+              name: deploymentName,
+              buildId,
+              versioningMode: WorkerVersioningMode.UNVERSIONED,
+              versioningBehavior: VersioningBehavior.UNSPECIFIED,
+            },
+          })
+
+          const runPromise = runtime.run().catch((error) => {
+            console.error('[temporal-bun-sdk:test] worker runtime exited with error', error)
+            throw error
+          })
+
+          try {
+            await Bun.sleep(500)
+            const { client: temporalClient } = await createTemporalClient({ config, taskQueue })
+            const workflowId = `${taskQueue}-sticky`
+            const execution = await temporalClient.startWorkflow({
+              workflowId,
+              workflowType: 'stickyMetadataWorkflow',
+              taskQueue,
+            })
+            harness.trackWorkflow(execution)
+
+            const waitStart = Date.now()
+            while (completions.length === 0) {
+              if (Date.now() - waitStart > 60_000) {
+                throw new Error('Workflow task completion not observed before timeout')
+              }
+              await Bun.sleep(200)
+            }
+            try {
+              await runTemporalCli(
+                'workflow',
+                'show',
+                '--workflow-id',
+                execution.workflowId,
+                '--run-id',
+                execution.runId,
+                '--namespace',
+                config.namespace,
+                '--address',
+                config.address,
+                '--output',
+                'json',
+              )
+            } catch {
+              // Ignore CLI failures; completion metadata assertions rely on recorded gRPC traffic.
+            }
+            await temporalClient.shutdown()
+          } finally {
+            await runtime.shutdown()
+            await runPromise
+            await transport.close?.()
+          }
+
+          const stickyQueueName = `${sanitizeTaskQueueComponent(taskQueue)}-sticky-${sanitizeTaskQueueComponent(identity) || 'worker'}`
+
+          return {
+            deploymentName,
+            buildId,
+            taskQueue,
+            stickyQueueName,
+            completions,
+            polls,
+          }
+        }),
+      ),
+    )
+
+    expect(result.completions.length).toBeGreaterThan(0)
+    for (const request of result.completions) {
+      const workerTaskQueue = request.stickyAttributes?.workerTaskQueue?.name ?? ''
+      if (request.stickyAttributes) {
+        expect(workerTaskQueue).toBe(result.stickyQueueName)
+        expect(request.stickyAttributes.workerTaskQueue?.kind).toBe(TaskQueueKind.STICKY)
+        expect(request.stickyAttributes.workerTaskQueue?.normalName).toBe(result.taskQueue)
+      } else {
+        expect(workerTaskQueue).toBe('')
+      }
+      expect(request.deploymentOptions).toBeUndefined()
+      expect(request.versioningBehavior).toBe(VersioningBehavior.UNSPECIFIED)
+    }
+
+    expect(result.polls.length).toBeGreaterThan(0)
+    for (const poll of result.polls) {
+      const isStickyPoll = poll.taskQueue?.name === result.stickyQueueName
+      expect(poll.taskQueue?.kind).toBe(isStickyPoll ? TaskQueueKind.STICKY : TaskQueueKind.NORMAL)
+      expect(poll.taskQueue?.normalName ?? '').toBe(isStickyPoll ? result.taskQueue : '')
+      expect(poll.deploymentOptions).toBeUndefined()
+    }
+    },
+  )
+
+  test('replays with sticky cache when workflow history omits start event', { timeout: 15_000 }, async () => {
+    if (cliUnavailable || !harness) {
+      console.warn('[temporal-bun-sdk] worker runtime scenario skipped (sticky cache workflow args)')
+      expect(true).toBeTrue()
+      return
+    }
+    await Effect.runPromise(
+      harness.runScenario('sticky cache workflow args', () =>
+        Effect.tryPromise(async () => {
+          const taskQueue = `codex-sticky-args-${Date.now()}-${Math.round(Math.random() * 1000)}`
+          const workflowDefinition = defineWorkflow({
+            name: 'stickyArgsWorkflow',
+            schema: Schema.Struct({ initial: Schema.String }),
+            handler: ({ input, activities }) =>
+              activities
+                .schedule('stickyArgs.echo', [input.initial])
+                .pipe(Effect.map((value) => `${value}:done`)),
+          })
+
+          const config = await loadTemporalConfig({
+            defaults: {
+              address: harnessConfig.address,
+              namespace: harnessConfig.namespace,
+              taskQueue,
+              workerWorkflowConcurrency: 2,
+              workerActivityConcurrency: 1,
+              workerStickyCacheSize: 4,
+              workerStickyTtlMs: 60_000,
+            },
+          })
+
+          const runtime = await WorkerRuntime.create({
+            config,
+            workflows: [workflowDefinition],
+            activities: {
+              'stickyArgs.echo': async (value: string) => value,
+            },
+            taskQueue,
+            namespace: config.namespace,
+            stickyScheduling: true,
+            workflowGuards: 'warn',
+            deployment: {
+              versioningMode: WorkerVersioningMode.UNVERSIONED,
+              versioningBehavior: VersioningBehavior.UNSPECIFIED,
+            },
+          })
+
+          let runPromise: Promise<void> | null = null
+          try {
+            const { client: temporalClient } = await createTemporalClient({ config, taskQueue })
+            runPromise = runtime.run().catch((error) => {
+              console.error('[temporal-bun-sdk:test] worker runtime exited with error', error)
+              throw error
+            })
+
+            const started = await temporalClient.startWorkflow({
+              workflowId: `${taskQueue}-wf`,
+              workflowType: 'stickyArgsWorkflow',
+              taskQueue,
+              args: [{ initial: 'boot' }],
+            })
+            harness.trackWorkflow(started)
+
+            const result = await temporalClient.workflow.result(started.handle)
+            expect(result).toBe('boot:done')
+
+            await temporalClient.shutdown()
+          } finally {
+            await runtime.shutdown()
+            if (runPromise) {
+              await runPromise
+            }
+          }
+        }),
+      ),
+    )
+  })
+})
+
+if (!shouldRunIntegration) {
+  test.skip('Temporal CLI integration suite disabled (set TEMPORAL_INTEGRATION_TESTS=1 to enable)', () => {})
+}

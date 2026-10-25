@@ -1,0 +1,54 @@
+---
+# Version pinned to align with current stable channel; adjust as needed.
+k3s_version: v1.33.4+k3s1
+
+# IMPORTANT: replace this token (or vault/encrypt it) before running the playbook.
+token: 'CHANGE_ME_WITH_SECURE_TOKEN'
+
+# Default to the first master host for the API endpoint; override if using an LB.
+api_endpoint: "{{ hostvars[groups['master'][0]]['ansible_host'] | default(groups['master'][0]) }}"
+
+# Create /etc/rancher/k3s/config.yaml on servers with performance-minded defaults.
+server_config_yaml: |
+  write-kubeconfig-mode: "0640"
+  disable:
+    - servicelb
+  flannel-backend: host-gw
+  etcd-arg:
+    - experimental-initial-corrupt-check=true
+    - auto-compaction-mode=periodic
+    - auto-compaction-retention=24h
+    - quota-backend-bytes=8589934592
+  kube-proxy-arg:
+    - proxy-mode=ipvs
+    - ipvs-scheduler=wrr
+    - ipvs-strict-arp=true
+  kubelet-arg:
+    - feature-gates=CPUManagerPolicyOptions=true,CPUManagerPolicyAlphaOptions=true
+    - cpu-manager-policy=static
+    - cpu-manager-policy-options=strict-cpu-reservation=true,full-pcpus-only=true
+    - topology-manager-policy=single-numa-node
+    - system-reserved=cpu=1000m,memory=1Gi,ephemeral-storage=5Gi
+    - kube-reserved=cpu=500m,memory=512Mi,ephemeral-storage=2Gi
+    - eviction-hard=memory.available<500Mi,nodefs.available<10%,imagefs.available<10%
+    - reserved-cpus=0-1
+    - container-log-max-size=10Mi
+    - container-log-max-files=3
+
+# Create /etc/rancher/k3s/config.yaml on agents with matching kube-proxy/kubelet args.
+agent_config_yaml: |
+  kube-proxy-arg:
+    - proxy-mode=ipvs
+    - ipvs-scheduler=wrr
+    - ipvs-strict-arp=true
+  kubelet-arg:
+    - feature-gates=CPUManagerPolicyOptions=true,CPUManagerPolicyAlphaOptions=true
+    - cpu-manager-policy=static
+    - cpu-manager-policy-options=strict-cpu-reservation=true,full-pcpus-only=true
+    - topology-manager-policy=single-numa-node
+    - system-reserved=cpu=1000m,memory=1Gi,ephemeral-storage=5Gi
+    - kube-reserved=cpu=500m,memory=512Mi,ephemeral-storage=2Gi
+    - eviction-hard=memory.available<500Mi,nodefs.available<10%,imagefs.available<10%
+    - reserved-cpus=0
+    - container-log-max-size=10Mi
+    - container-log-max-files=3

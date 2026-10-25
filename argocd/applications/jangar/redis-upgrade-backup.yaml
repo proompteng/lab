@@ -1,0 +1,389 @@
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: openwebui-redis-before-8-10-1
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: jangar-openwebui-redis-jangar-openwebui-redis-0
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: open-webui-before-0-11-3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: open-webui
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jangar-openwebui-redis-8-10-1-v2-save
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 240
+  template:
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: save
+          image: redis:8.10.1-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+          command:
+            - sh
+            - -ec
+            - |
+              set -eu
+              attempt=0
+              until [ "$(redis-cli -e --raw -h "$REDIS_HOST" PING 2>/dev/null)" = PONG ]; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 90 ]; then
+                  echo 'Redis did not become reachable before the backup deadline' >&2
+                  exit 1
+                fi
+                sleep 2
+              done
+              test "$(redis-cli -e --raw -h "$REDIS_HOST" SAVE)" = OK
+              redis-cli -e --raw -h "$REDIS_HOST" INFO persistence | tr -d '\r' | grep -qx 'rdb_last_bgsave_status:ok'
+              echo 'Redis SAVE completed before the retained volume snapshot'
+          env:
+            - name: REDIS_HOST
+              value: jangar-openwebui-redis
+            - name: REDISCLI_AUTH
+              value: ""
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: jangar-openwebui-redis-8-10-1-v2-snapshot
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: jangar-openwebui-redis-jangar-openwebui-redis-0
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jangar-openwebui-redis-8-10-1-v2-rehearsal
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 2Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: jangar-openwebui-redis-8-10-1-v2-snapshot
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jangar-openwebui-redis-8-10-1-v2-rehearsal
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  redis.conf: |
+    bind 127.0.0.1
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jangar-openwebui-redis-8-10-1-v2-rehearsal
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        upgrade.proompteng.ai/redis-rehearsal: jangar-openwebui-redis
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: copy-pristine-snapshot
+          image: redis:8.10.1-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+          command:
+            - sh
+            - -ec
+            - |
+              set -eu
+              test -d "$SNAPSHOT_DIR"
+              test -z "$(ls -A "$DATA_DIR")"
+              cp -R "$SNAPSHOT_DIR/." "$DATA_DIR/"
+              echo "Copied the pristine snapshot into fresh disposable rehearsal storage"
+          env:
+            - name: SNAPSHOT_DIR
+              value: /snapshot
+            - name: DATA_DIR
+              value: /data
+          volumeMounts:
+            - name: snapshot
+              mountPath: /snapshot
+              readOnly: true
+            - name: data
+              mountPath: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+              ephemeral-storage: 2Gi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+              ephemeral-storage: 2Gi
+        - name: restore-old-format
+          image: quay.io/opstree/redis:v7.0.15@sha256:284c5a51803da9483d66d4f458b1fa9e8b8a67a6e55b9793a0b005cd39239356
+          command:
+            - sh
+            - -ec
+            - |
+              set -eu
+              export REDISCLI_AUTH="${REDIS_PASSWORD:-}"
+              /usr/bin/entrypoint.sh > /proof/redis-old.log 2>&1 &
+              server_pid=$!
+              trap 'kill "$server_pid" 2>/dev/null || true' EXIT INT TERM
+              attempt=0
+              until [ "$(redis-cli -e --raw PING 2>/dev/null)" = PONG ]; do
+                kill -0 "$server_pid"
+                attempt=$((attempt + 1))
+                test "$attempt" -lt 90
+                sleep 2
+              done
+              redis-cli -e --raw INFO persistence | tr -d '\r' | grep -qx 'aof_enabled:1'
+              redis-cli -e --raw INFO persistence | tr -d '\r' | grep -qx 'aof_last_write_status:ok'
+              redis-cli -e --raw DBSIZE > /proof/restored-dbsize
+              # Only this isolated snapshot clone receives the proof key.
+              test "$(redis-cli -e --raw SET __lab_upgrade_8_10_1_old snapshot-restored NX)" = OK
+              test "$(redis-cli -e --raw SAVE)" = OK
+              redis-cli -e --raw SHUTDOWN SAVE
+              wait "$server_pid"
+              trap - EXIT INT TERM
+              printf 'Old Redis loaded the retained snapshot; original key count: '
+              cat /proof/restored-dbsize
+          env:
+            - name: PERSISTENCE_ENABLED
+              value: "true"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: SETUP_MODE
+              value: standalone
+            - name: SERVER_MODE
+              value: standalone
+            - name: REDIS_PASSWORD
+              value: ""
+            - name: EXTERNAL_CONFIG_FILE
+              value: /probe-config/redis.conf
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: proof
+              mountPath: /proof
+            - name: config
+              mountPath: /probe-config
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+        - name: redis-eight
+          image: quay.io/opstree/redis:v8.10.1@sha256:d3ef5a7f11eb501034b6612b842c864e1946088c52c04b29a22f38b1fe37c99b
+          restartPolicy: Always
+          env:
+            - name: PERSISTENCE_ENABLED
+              value: "true"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: SETUP_MODE
+              value: standalone
+            - name: SERVER_MODE
+              value: standalone
+            - name: REDIS_PASSWORD
+              value: ""
+            - name: EXTERNAL_CONFIG_FILE
+              value: /probe-config/redis.conf
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: proof
+              mountPath: /proof
+            - name: config
+              mountPath: /probe-config
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -ec
+                - test "$(REDISCLI_AUTH="${REDIS_PASSWORD:-}" redis-cli -e --raw PING)" = PONG
+            periodSeconds: 2
+            failureThreshold: 90
+        - name: exporter
+          image: oliver006/redis_exporter:v1.91.1@sha256:c67a432dba6b4ae30f471e3c77cf14a289133bbeeb89abb0bb03e6092efb2836
+          restartPolicy: Always
+          env:
+            - name: REDIS_ADDR
+              value: redis://127.0.0.1:6379
+            - name: REDIS_PASSWORD
+              value: ""
+            - name: REDIS_EXPORTER_WEB_LISTEN_ADDRESS
+              value: 127.0.0.1:9121
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+      containers:
+        - name: verify
+          image: redis:8.10.1-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+          command:
+            - sh
+            - -ec
+            - |
+              set -eu
+              redis-cli -e --raw INFO server | tr -d '\r' | grep -qx 'redis_version:8.10.1'
+              test "$(redis-cli -e --raw GET __lab_upgrade_8_10_1_old)" = snapshot-restored
+              redis-cli -e --raw INFO persistence | tr -d '\r' | grep -qx 'aof_enabled:1'
+              redis-cli -e --raw INFO persistence | tr -d '\r' | grep -qx 'aof_last_write_status:ok'
+              test "$(redis-cli -e --raw SET __lab_upgrade_8_10_1_new redis-eight NX)" = OK
+              test "$(redis-cli -e --raw GET __lab_upgrade_8_10_1_new)" = redis-eight
+              test "$(redis-cli -e --raw SAVE)" = OK
+              attempt=0
+              until wget -q -O /proof/metrics http://127.0.0.1:9121/metrics; do
+                attempt=$((attempt + 1))
+                test "$attempt" -lt 30
+                sleep 2
+              done
+              grep -qx 'redis_up 1' /proof/metrics
+              grep -q '^redis_exporter_build_info{.*version="v1.91.1"' /proof/metrics
+              printf 'Redis 8.10.1 read the old-format AOF, passed writes and SAVE; exporter 1.91.1 reports redis_up=1; key count: '
+              redis-cli -e --raw DBSIZE
+          env:
+            - name: REDISCLI_AUTH
+              value: ""
+          volumeMounts:
+            - name: proof
+              mountPath: /proof
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: snapshot
+          persistentVolumeClaim:
+            claimName: jangar-openwebui-redis-8-10-1-v2-rehearsal
+            readOnly: true
+        - name: proof
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: jangar-openwebui-redis-8-10-1-v2-rehearsal
+        - name: data
+          emptyDir:
+            sizeLimit: 2Gi

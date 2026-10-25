@@ -1,0 +1,13 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: github-token
+  namespace: arc
+spec:
+  encryptedData:
+    github_token: AgBrgrvVoZr1wBdOKla8UcAK19aNOq8+TD0yj5MBKZ0RTlL3nTeYO2PtD1QRDfz4eObkwEPqVstYPc9u8VPhT4Hwso9SBBhqjzMG8gGlqd9szmHeOf1nt/QPoslwUUB6dM6AY7+bLbzvrKYaW70k5pv5uof66UMTb7VYgpDC+3PtrX/UqPm/Yesjmer0VEEBKlqyPAo9IwMRlUgbVQu+ORf0Wh9Yk4A4xABTYP8YVeDdGotiBZrBAbh6geJIK/0Y9hrYWqr81lkrKdxJKD47rWPNlBC6KlySx86DsoBO8KSou/C/LerO3/w8Q84SFgQMXoXAej2Xur45biRPYStH4VN9LRtMW8W2wf39TXwVV+ejjXQrk+Ytx/+chp53/bhEZ6sR33Lg2l2NEQSGnNW0/VQh0D7sUXh66om7ldyW9g6EgSWgD+MtCKxfMTsLArXKLJWxAmqfWsMob86Qcdn2QDg2JvK7fnKh/nfkJ/PwFAJG8bMyC75SDu9Qg0LsTC6IO4Nbkrb4hrGbAo7QDKYXIeZjeVKsMrtlWV5yC6CWJ2NJ1Z4bObXH3yKe/0rRNT6Sx8BZp+Ui68VcNa9Kp/k2fkr8KAIJtdJK9oRwBxoHrgkRoWbexrKof0SIQMSs4+DE7pYqnhK7Opt3g7PfcWezDq59SvxRERh1J2QKqnXfeHbotyJuxzNcQRklUsLtbPwjzAJIFRxvwIS9g3VS6IfY3J5fFQjow0iwQtGQuCw6b+hkm4gOxAN11lG2
+  template:
+    metadata:
+      name: github-token
+      namespace: arc

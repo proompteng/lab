@@ -1,0 +1,1249 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+type recordingWriteCloser struct {
+	content []byte
+}
+
+func (writer *recordingWriteCloser) Write(content []byte) (int, error) {
+	writer.content = append(writer.content, content...)
+	return len(content), nil
+}
+
+func (writer *recordingWriteCloser) Close() error {
+	return nil
+}
+
+func (writer *recordingWriteCloser) Len() int {
+	return len(writer.content)
+}
+
+type codexWireWriter struct {
+	messages chan []byte
+}
+
+func (writer *codexWireWriter) Write(content []byte) (int, error) {
+	writer.messages <- append([]byte(nil), content...)
+	return len(content), nil
+}
+
+func (writer *codexWireWriter) Close() error {
+	return nil
+}
+
+func readyCodexSupervisor(t *testing.T) (*codexSupervisor, *codexWireWriter) {
+	t.Helper()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	writer := &codexWireWriter{messages: make(chan []byte, 1)}
+	supervisor.mu.Lock()
+	generation := supervisor.generation
+	supervisor.stdin = writer
+	supervisor.mu.Unlock()
+	closeSignal(generation.ready)
+	t.Cleanup(supervisor.close)
+	return supervisor, writer
+}
+
+func readCodexWireRequest(t *testing.T, writer *codexWireWriter) codexRPCMessage {
+	t.Helper()
+	select {
+	case content := <-writer.messages:
+		var message codexRPCMessage
+		if err := json.Unmarshal(content, &message); err != nil {
+			t.Fatalf("decode Codex wire request: %v", err)
+		}
+		return message
+	case <-time.After(time.Second):
+		t.Fatal("Codex supervisor did not write the request")
+		return codexRPCMessage{}
+	}
+}
+
+func respondToCodexWireRequest(t *testing.T, supervisor *codexSupervisor, request codexRPCMessage, rpcError json.RawMessage) {
+	t.Helper()
+	message, err := json.Marshal(codexRPCMessage{ID: request.ID, Error: rpcError})
+	if err != nil {
+		t.Fatalf("encode Codex wire response: %v", err)
+	}
+	supervisor.mu.Lock()
+	generation := supervisor.generation
+	supervisor.mu.Unlock()
+	supervisor.readMessagesWithLimit(nil, generation, strings.NewReader(string(message)+"\n"), codexProtocolLineMaxBytes)
+}
+
+func TestCodexThreadsDisableInheritedApps(t *testing.T) {
+	for _, method := range []string{"thread/start", "thread/resume"} {
+		for _, config := range []string{"null", `{"model_reasoning_effort":"high","features.apps":true,"features":{"apps":true,"shell_snapshot":true}}`} {
+			t.Run(method+"/"+config, func(t *testing.T) {
+				supervisor, writer := readyCodexSupervisor(t)
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				params := json.RawMessage(`{"threadId":"thread-1","cwd":"/workspace","model":"fixture","config":` + config + `}`)
+				done := make(chan error, 1)
+				go func() {
+					_, err := supervisor.call(ctx, method, params)
+					done <- err
+				}()
+				request := readCodexWireRequest(t, writer)
+				var actual struct {
+					Cwd    string         `json:"cwd"`
+					Model  string         `json:"model"`
+					Config map[string]any `json:"config"`
+				}
+				if json.Unmarshal(request.Params, &actual) != nil || actual.Config["features.apps"] != false {
+					t.Fatalf("%s retained inherited app tools: %s", method, request.Params)
+				}
+				if actual.Cwd != "/workspace" || actual.Model != "fixture" {
+					t.Fatalf("%s changed the native workspace or model: %s", method, request.Params)
+				}
+				if config != "null" {
+					features, ok := actual.Config["features"].(map[string]any)
+					if !ok || features["apps"] != false || features["shell_snapshot"] != true || actual.Config["model_reasoning_effort"] != "high" {
+						t.Fatalf("%s changed unrelated settings or retained a nested apps override: %s", method, request.Params)
+					}
+				}
+				respondToCodexWireRequest(t, supervisor, request, nil)
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestCodexRejectsInvalidThreadConfigBeforeDispatch(t *testing.T) {
+	for _, params := range []string{`null`, `{"config":[]}`, `{"config":{"features":true}}`} {
+		supervisor, writer := readyCodexSupervisor(t)
+		if _, err := supervisor.call(context.Background(), "thread/start", json.RawMessage(params)); err == nil {
+			t.Fatalf("invalid thread configuration was accepted: %s", params)
+		}
+		select {
+		case request := <-writer.messages:
+			t.Fatalf("invalid thread configuration reached Codex: %s", request)
+		default:
+		}
+	}
+}
+
+func TestCodexSupervisorPreservesTypedRPCError(t *testing.T) {
+	t.Parallel()
+	supervisor, writer := readyCodexSupervisor(t)
+	threadID := "00000000-0000-4000-8000-000000000000"
+	params := json.RawMessage(`{"threadId":"00000000-0000-4000-8000-000000000000"}`)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := supervisor.call(context.Background(), "thread/resume", params)
+		errCh <- err
+	}()
+
+	request := readCodexWireRequest(t, writer)
+	var wireParams struct {
+		ThreadID string `json:"threadId"`
+	}
+	if request.Method != "thread/resume" || json.Unmarshal(request.Params, &wireParams) != nil || wireParams.ThreadID != threadID {
+		t.Fatalf("Codex wire request = method %q params %s", request.Method, request.Params)
+	}
+	respondToCodexWireRequest(t, supervisor, request, json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id 00000000-0000-4000-8000-000000000000"}`))
+
+	select {
+	case err := <-errCh:
+		var rpcError *codexRPCError
+		if !errors.As(err, &rpcError) {
+			t.Fatalf("Codex RPC error type = %T, want *codexRPCError", err)
+		}
+		if rpcError.code != -32600 || rpcError.message != "no rollout found for thread id "+threadID {
+			t.Fatalf("Codex RPC error = code %d message %q", rpcError.code, rpcError.message)
+		}
+		want := `Codex app-server request failed: {"code":-32600,"message":"no rollout found for thread id 00000000-0000-4000-8000-000000000000"}`
+		if err.Error() != want {
+			t.Fatalf("Codex RPC error message = %q, want %q", err, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Codex supervisor did not resolve the RPC error")
+	}
+}
+
+func TestMissingCodexConversationClassificationRejectsUnrelatedErrors(t *testing.T) {
+	t.Parallel()
+	params := json.RawMessage(`{"threadId":"thread-1"}`)
+	validError := &codexRPCError{
+		code:    -32600,
+		message: "no rollout found for thread id thread-1",
+	}
+	for _, test := range []struct {
+		name   string
+		method string
+		params json.RawMessage
+		err    error
+	}{
+		{name: "transport", method: "thread/resume", params: params, err: errors.New("connection reset")},
+		{name: "wrong method", method: "thread/start", params: params, err: validError},
+		{name: "wrong code", method: "thread/resume", params: params, err: &codexRPCError{code: -32602, message: validError.message}},
+		{name: "different thread", method: "thread/resume", params: params, err: &codexRPCError{code: -32600, message: "no rollout found for thread id thread-2"}},
+		{name: "missing thread ID", method: "thread/resume", params: json.RawMessage(`{}`), err: validError},
+		{name: "non-string thread ID", method: "thread/resume", params: json.RawMessage(`{"threadId":123}`), err: validError},
+		{name: "malformed params", method: "thread/resume", params: json.RawMessage(`{"threadId":`), err: validError},
+		{name: "non-object params", method: "thread/resume", params: json.RawMessage(`[]`), err: validError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if isMissingCodexConversation(test.method, test.params, test.err) {
+				t.Fatal("unrelated error was classified as a missing Codex conversation")
+			}
+		})
+	}
+}
+
+func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
+	t.Parallel()
+	allowed := []string{
+		"model/list",
+		"mcpServerStatus/list",
+		"account/read",
+		"account/login/start",
+		"thread/start",
+		"thread/list",
+		"thread/archive",
+		"thread/unarchive",
+		"thread/read",
+		"thread/resume",
+		"thread/turns/list",
+		"thread/items/list",
+		"turn/start",
+		"turn/steer",
+		"turn/interrupt",
+	}
+	for _, method := range allowed {
+		if !allowedCodexMethod(method) {
+			t.Fatalf("expected %q to be allowed", method)
+		}
+	}
+	for _, method := range []string{"config/write", "shell/exec", "mcpServer/add", ""} {
+		if allowedCodexMethod(method) {
+			t.Fatalf("expected %q to be rejected", method)
+		}
+	}
+}
+
+func TestCodexResponseCapturesAtomicEventSequence(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	response := make(chan codexPendingResult, 1)
+	supervisor.pending["7"] = response
+
+	supervisor.publish("item/agentMessage/delta", "", json.RawMessage(`{"params":{"delta":"included"}}`))
+	supervisor.resolveResponse(codexRPCMessage{ID: json.RawMessage(`7`), Result: json.RawMessage(`{"thread":{"id":"thread-1"}}`)})
+	supervisor.publish("item/agentMessage/delta", "", json.RawMessage(`{"params":{"delta":"after-snapshot"}}`))
+
+	result := <-response
+	if result.eventSequence != 1 {
+		t.Fatalf("snapshot event sequence = %d, want 1", result.eventSequence)
+	}
+	if supervisor.sequence != 2 {
+		t.Fatalf("current event sequence = %d, want 2", supervisor.sequence)
+	}
+}
+
+func TestCodexBlockedWriteDoesNotHoldSupervisorStateLock(t *testing.T) {
+	reader, writer := io.Pipe()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	supervisor.stdin = writer
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := supervisor.request(ctx, "account/read", json.RawMessage(`{}`), false, nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("blocked request error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocked Codex write ignored request cancellation")
+	}
+	select {
+	case <-supervisor.writePermit:
+		supervisor.writePermit <- struct{}{}
+	case <-time.After(time.Second):
+		t.Fatal("canceled Codex write retained the process write permit")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		supervisor.close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("blocked Codex write prevented supervisor shutdown")
+	}
+}
+
+func TestCodexFailedStartupReturnsFailureToCurrentGenerationWaiters(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	waitingOn := supervisor.generation
+	failure := errors.New("initialization failed")
+
+	supervisor.failProcess(failure)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := supervisor.waitForGeneration(ctx, waitingOn); !errors.Is(err, failure) {
+		t.Fatalf("failed generation waiter error = %v, want initialization failure", err)
+	}
+	if supervisor.generation == waitingOn {
+		t.Fatal("failed process generation was not replaced")
+	}
+	select {
+	case <-supervisor.generation.ready:
+		t.Fatal("replacement process generation was released before initialization")
+	default:
+	}
+	if supervisor.isReady() {
+		t.Fatal("replacement process generation was reported ready before initialization")
+	}
+}
+
+func TestApprovalResolutionRejectsUnknownApproval(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	if err := supervisor.resolveApproval(context.Background(), "missing", "approveOnce"); err == nil {
+		t.Fatal("resolveApproval() accepted an unknown request")
+	}
+}
+
+func TestApprovalResponseCannotCrossProcessGenerations(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	failedGeneration := supervisor.generation
+	approval := codexApproval{
+		generation: failedGeneration,
+		method:     "applyPatchApproval",
+		decisions:  defaultCodexApprovalDecisions(),
+		rawID:      json.RawMessage(`7`),
+		resolving:  true,
+	}
+	supervisor.approvals["7"] = approval
+
+	supervisor.failProcess(errors.New("process exited"))
+	replacement := &recordingWriteCloser{}
+	supervisor.mu.Lock()
+	supervisor.stdin = replacement
+	supervisor.approvals["7"] = codexApproval{
+		generation: supervisor.generation,
+		method:     "item/fileChange/requestApproval",
+		resolving:  true,
+	}
+	supervisor.mu.Unlock()
+
+	result, err := codexApprovalResult(approval, "approveOnce")
+	if err != nil {
+		t.Fatalf("approval result: %v", err)
+	}
+	if err := supervisor.respondRawForGeneration(context.Background(), failedGeneration, approval.rawID, result); err == nil {
+		t.Fatal("failed generation approval was written to the replacement process")
+	}
+	if replacement.Len() != 0 {
+		t.Fatalf("replacement process received %d approval response bytes", replacement.Len())
+	}
+
+	supervisor.resetApproval("7", approval)
+	supervisor.finishApproval("7", approval)
+	supervisor.mu.Lock()
+	current := supervisor.approvals["7"]
+	supervisor.mu.Unlock()
+	if current.generation != supervisor.generation || current.method != "item/fileChange/requestApproval" {
+		t.Fatalf("old approval mutated replacement request: %#v", current)
+	}
+}
+
+func TestCodexMessageReaderContinuesAfterOversizedLine(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	valid := `{"method":"item/agentMessage/delta","params":{"delta":"ok"}}`
+	input := strings.Repeat("x", 257) + "\n" + valid + "\n"
+
+	supervisor.readMessagesWithLimit(nil, supervisor.generation, strings.NewReader(input), 256)
+
+	if len(supervisor.buffer) != 2 {
+		t.Fatalf("Codex event count = %d, want oversized warning and following event", len(supervisor.buffer))
+	}
+	if supervisor.buffer[0].Method != "tengri/eventOmitted" {
+		t.Fatalf("oversized protocol event = %q", supervisor.buffer[0].Method)
+	}
+	if supervisor.buffer[1].Method != "item/agentMessage/delta" {
+		t.Fatalf("event after oversized line = %q", supervisor.buffer[1].Method)
+	}
+}
+
+func TestApprovalCancellationRestartsBlockedProcessWriter(t *testing.T) {
+	t.Parallel()
+	reader, writer := io.Pipe()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	supervisor.stdin = writer
+	supervisor.approvals["9"] = codexApproval{
+		generation: supervisor.generation,
+		method:     "applyPatchApproval",
+		decisions:  defaultCodexApprovalDecisions(),
+		rawID:      json.RawMessage(`9`),
+	}
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := supervisor.resolveApproval(ctx, "9", "approveOnce")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocked approval error = %v, want deadline exceeded", err)
+	}
+	select {
+	case <-supervisor.writePermit:
+		supervisor.writePermit <- struct{}{}
+	case <-time.After(time.Second):
+		t.Fatal("canceled approval retained the process write permit")
+	}
+}
+
+func TestCodexMCPElicitationPublishesUnsupportedError(t *testing.T) {
+	for _, mode := range []string{"form", "url"} {
+		t.Run(mode, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			params, err := json.Marshal(map[string]string{
+				"threadId": "thread-1", "turnId": "turn-1", "mode": mode,
+				"message": "private MCP request content", "serverName": "fixture",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: params}
+			raw, err := json.Marshal(message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+
+			response := readCodexWireRequest(t, writer)
+			if string(response.ID) != "17" || string(response.Result) != `{"action":"cancel"}` || len(response.Error) != 0 {
+				t.Fatalf("MCP request must still fail closed, got %+v", response)
+			}
+			if len(supervisor.approvals) != 0 {
+				t.Fatal("unsupported MCP request created an actionable approval")
+			}
+			if len(supervisor.buffer) != 1 {
+				t.Fatalf("got %d events, want an explicit integration error", len(supervisor.buffer))
+			}
+			event := supervisor.buffer[0]
+			if event.Method != "error" || event.ApprovalID != "" {
+				t.Fatalf("unsupported request event = %+v", event)
+			}
+			var notification struct {
+				Method string `json:"method"`
+				Params struct {
+					ThreadID string `json:"threadId"`
+					TurnID   string `json:"turnId"`
+					Message  string `json:"message"`
+				} `json:"params"`
+			}
+			if err := json.Unmarshal(event.Raw, &notification); err != nil {
+				t.Fatal(err)
+			}
+			if notification.Method != "error" || notification.Params.ThreadID != "thread-1" || notification.Params.TurnID != "turn-1" {
+				t.Fatalf("integration error lost its thread/turn scope: %s", event.Raw)
+			}
+			if !strings.Contains(notification.Params.Message, "No user decision was submitted") || strings.Contains(string(event.Raw), "private MCP request content") {
+				t.Fatalf("integration error should identify the adapter failure without request content: %s", event.Raw)
+			}
+		})
+	}
+}
+
+func TestCodexMCPElicitationFromStaleGenerationIsIgnored(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	message := codexRPCMessage{
+		ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request",
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1"}`),
+	}
+	supervisor.handleServerMessage(&codexProcessGeneration{}, message, nil)
+	if len(supervisor.buffer) != 0 || len(supervisor.approvals) != 0 || len(writer.messages) != 0 {
+		t.Fatal("stale MCP request affected the current process or event stream")
+	}
+}
+
+const testCodexMCPToolApprovalParams = `{"threadId":"thread-1","turnId":"turn-1","serverName":"fixture","mode":"form","message":"Allow the fixture tool?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session","always"],"tool_params":{"command":"fixture"}}}`
+
+func TestCodexMCPToolApprovalWaitsForExplicitDecision(t *testing.T) {
+	for _, decision := range []string{"approveOnce", "approveSession", "deny"} {
+		t.Run(decision, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: json.RawMessage(testCodexMCPToolApprovalParams)}
+			raw, err := json.Marshal(message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			if len(writer.messages) != 0 || len(supervisor.approvals) != 1 {
+				t.Fatal("MCP confirmation did not wait for an explicit user decision")
+			}
+			if len(supervisor.buffer) != 1 || supervisor.buffer[0].ApprovalID != approvalKey(supervisor.generation, json.RawMessage(`17`)) || string(supervisor.buffer[0].Raw) != string(raw) {
+				t.Fatal("MCP confirmation was not published with its original scope and arguments")
+			}
+			if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), decision); err != nil {
+				t.Fatal(err)
+			}
+			response := readCodexWireRequest(t, writer)
+			var result struct {
+				Action  string         `json:"action"`
+				Content map[string]any `json:"content"`
+				Meta    struct {
+					Persist string `json:"persist"`
+				} `json:"_meta"`
+			}
+			if err := json.Unmarshal(response.Result, &result); err != nil {
+				t.Fatal(err)
+			}
+			wantAction := "accept"
+			if decision == "deny" {
+				wantAction = "decline"
+			}
+			if result.Action != wantAction || (result.Content != nil) != (wantAction == "accept") {
+				t.Fatalf("MCP result = %s", response.Result)
+			}
+			if (result.Meta.Persist == "session") != (decision == "approveSession") || len(supervisor.approvals) != 0 {
+				t.Fatalf("MCP decision changed scope or remained pending: %s", response.Result)
+			}
+		})
+	}
+}
+
+func TestCodexMCPToolApprovalRejectsUnadvertisedScopeAndInputForms(t *testing.T) {
+	params := strings.Replace(testCodexMCPToolApprovalParams, `["session","always"]`, `"always"`, 1)
+	decisions := codexApprovalDecisions("mcpServer/elicitation/request", json.RawMessage(params))
+	approval := codexApproval{method: "mcpServer/elicitation/request", decisions: decisions}
+	if _, err := codexApprovalResult(approval, "approveSession"); err == nil {
+		t.Fatal("unadvertised session scope was accepted")
+	}
+	for _, params := range []string{
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{"token":{"type":"string"}}`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"required":["token"]`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"mcp_tool_call"`, `"new_access"`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"mode":"form"`, `"mode":"url"`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"required":true`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"$schema":42`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"additionalProperties":true`, 1),
+	} {
+		if codexApprovalDecisions("mcpServer/elicitation/request", json.RawMessage(params)) != nil {
+			t.Fatal("input/access elicitation was treated as a tool-use confirmation")
+		}
+	}
+}
+
+func TestCodexMCPToolApprovalAcceptsOptionalEmptySchemaMetadata(t *testing.T) {
+	for _, optional := range []string{`"required":[]`, `"$schema":"https://json-schema.org/draft/2020-12/schema"`, `"required":null,"$schema":null`, `"required":[],"$schema":"fixture"`} {
+		params := strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},`+optional, 1)
+		decisions := codexApprovalDecisions("mcpServer/elicitation/request", json.RawMessage(params))
+		if len(decisions) != 3 {
+			t.Fatalf("valid empty schema metadata rejected: %s", optional)
+		}
+	}
+}
+
+func TestCodexOversizedMCPApprovalPreservesDisplayAndScope(t *testing.T) {
+	for _, persist := range []string{`"always"`, `"session"`, `["session","always"]`} {
+		t.Run(persist, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			params := strings.Replace(testCodexMCPToolApprovalParams, `["session","always"]`, persist, 1)
+			params = strings.Replace(params, `"command":"fixture"`, `"command":"`+strings.Repeat("x", codexEventMaxBytes)+`"`, 1)
+			params = strings.Replace(params, `"tool_params":`, `"tool_description":"Harmless fixture tool.","tool_params":`, 1)
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: json.RawMessage(params)}
+			raw, _ := json.Marshal(message)
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			if len(writer.messages) != 0 || len(supervisor.approvals) != 1 || len(supervisor.buffer) != 1 {
+				t.Fatal("oversized confirmation did not wait for an explicit decision")
+			}
+			event := supervisor.buffer[0]
+			if event.Method != message.Method || event.ApprovalID != approvalKey(supervisor.generation, json.RawMessage(`17`)) || len(event.Raw) > 16<<10 {
+				t.Fatal("oversized confirmation lost its method, approval ID, or size bound")
+			}
+			var bounded struct {
+				RawOmitted bool `json:"rawOmitted"`
+				Params     struct {
+					ThreadID   string `json:"threadId"`
+					TurnID     string `json:"turnId"`
+					ServerName string `json:"serverName"`
+					Message    string `json:"message"`
+					Meta       struct {
+						Description string          `json:"tool_description"`
+						Arguments   json.RawMessage `json:"tool_params"`
+					} `json:"_meta"`
+				} `json:"params"`
+			}
+			if err := json.Unmarshal(event.Raw, &bounded); err != nil {
+				t.Fatal(err)
+			}
+			if !bounded.RawOmitted || bounded.Params.ThreadID != "thread-1" || bounded.Params.TurnID != "turn-1" ||
+				bounded.Params.ServerName != "fixture" || bounded.Params.Message != "Allow the fixture tool?" ||
+				bounded.Params.Meta.Description != "Harmless fixture tool." || len(bounded.Params.Meta.Arguments) != 0 {
+				t.Fatalf("bounded confirmation lost display metadata or retained arguments: %s", event.Raw)
+			}
+			var replay codexRPCMessage
+			if err := json.Unmarshal(event.Raw, &replay); err != nil {
+				t.Fatal(err)
+			}
+			decisions := codexApprovalDecisions(replay.Method, replay.Params)
+			_, session := decisions["approveSession"]
+			if len(decisions) < 2 || session != strings.Contains(persist, "session") || strings.Contains(string(event.Raw), "always") {
+				t.Fatalf("bounded confirmation changed advertised scopes: %s", event.Raw)
+			}
+			if !session {
+				if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "approveSession"); err == nil || len(writer.messages) != 0 {
+					t.Fatal("bounded confirmation accepted an unadvertised scope")
+				}
+			}
+			if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "deny"); err != nil {
+				t.Fatal(err)
+			}
+			if response := readCodexWireRequest(t, writer); string(response.Result) != `{"action":"decline"}` {
+				t.Fatalf("bounded confirmation changed Deny: %s", response.Result)
+			}
+		})
+	}
+}
+
+func TestCodexOversizedMCPApprovalBoundsDisplayAndCancelsUnboundedIdentity(t *testing.T) {
+	for _, field := range []string{"message", "tool_description", "threadId", "turnId", "serverName"} {
+		t.Run(field, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			var params map[string]any
+			if err := json.Unmarshal([]byte(testCodexMCPToolApprovalParams), &params); err != nil {
+				t.Fatal(err)
+			}
+			large := strings.Repeat("界", codexEventMaxBytes/3+1)
+			if field == "tool_description" {
+				params["_meta"].(map[string]any)[field] = large
+			} else {
+				params[field] = large
+			}
+			encoded, _ := json.Marshal(params)
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: encoded}
+			raw, _ := json.Marshal(message)
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			if field == "message" || field == "tool_description" {
+				if len(writer.messages) != 0 || len(supervisor.approvals) != 1 || len(supervisor.buffer) != 1 {
+					t.Fatal("bounded display did not remain pending")
+				}
+				event := supervisor.buffer[0]
+				if event.Method != message.Method || len(event.Raw) > 16<<10 || !json.Valid(event.Raw) ||
+					!strings.Contains(string(event.Raw), "… (truncated)") || strings.Contains(string(event.Raw), "�") {
+					t.Fatal("display text was not bounded with valid UTF-8 and an explicit truncation notice")
+				}
+				return
+			}
+			if len(supervisor.approvals) != 0 || len(writer.messages) != 1 {
+				t.Fatal("unbounded identity created a hidden actionable approval")
+			}
+			if response := readCodexWireRequest(t, writer); string(response.Result) != `{"action":"cancel"}` {
+				t.Fatalf("unbounded identity did not cancel safely: %s", response.Result)
+			}
+		})
+	}
+}
+
+func TestCodexResolvedMCPRequestCannotBeApprovedAfterCancellation(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	request := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: json.RawMessage(testCodexMCPToolApprovalParams)}
+	raw, _ := json.Marshal(request)
+	supervisor.handleServerMessage(supervisor.generation, request, raw)
+	resolved := codexRPCMessage{Method: "serverRequest/resolved", Params: json.RawMessage(`{"threadId":"thread-1","requestId":17}`)}
+	raw, _ = json.Marshal(resolved)
+	supervisor.handleServerMessage(supervisor.generation, resolved, raw)
+	if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "approveOnce"); err == nil || len(writer.messages) != 0 {
+		t.Fatal("canceled MCP request was allowed to execute from a stale approval card")
+	}
+}
+
+func TestAutomaticCodexResponsesRestartBlockedProcessWriter(t *testing.T) {
+	tests := []struct {
+		name    string
+		message codexRPCMessage
+	}{
+		{
+			name:    "current time",
+			message: codexRPCMessage{ID: json.RawMessage(`10`), Method: "currentTime/read"},
+		},
+		{
+			name:    "unsupported request",
+			message: codexRPCMessage{ID: json.RawMessage(`11`), Method: "unsupported/request"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reader, writer := io.Pipe()
+			supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+			supervisor.stdin = writer
+			supervisor.responseTimeout = 50 * time.Millisecond
+			t.Cleanup(func() {
+				_ = reader.Close()
+				_ = writer.Close()
+			})
+
+			done := make(chan struct{})
+			go func() {
+				supervisor.handleServerMessage(supervisor.generation, test.message, nil)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("automatic Codex response remained blocked after its write deadline")
+			}
+			select {
+			case <-supervisor.writePermit:
+				supervisor.writePermit <- struct{}{}
+			case <-time.After(time.Second):
+				t.Fatal("automatic Codex response retained the process write permit")
+			}
+		})
+	}
+}
+
+func TestCodexSupervisorCompletesInitializationHandshake(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a local fake app-server process")
+	}
+	directory := t.TempDir()
+	marker := filepath.Join(directory, "initialized.json")
+	arguments := filepath.Join(directory, "arguments.txt")
+	binary := filepath.Join(directory, "fake-codex")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
+IFS= read -r initialize
+printf '%%s\n' '{"id":1,"result":{}}'
+IFS= read -r initialized
+printf '%%s' "$initialized" > %q
+sleep 30
+`, arguments, marker)
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake app-server: %v", err)
+	}
+
+	supervisor := newCodexSupervisor(binary, directory)
+	supervisor.browserMCP = true
+	supervisor.start()
+	t.Cleanup(supervisor.close)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		content, err := os.ReadFile(marker)
+		if err == nil {
+			var notification struct {
+				Method string `json:"method"`
+			}
+			if json.Unmarshal(content, &notification) != nil || notification.Method != "initialized" {
+				t.Fatalf("initialization notification = %q", strings.TrimSpace(string(content)))
+			}
+			if !supervisor.isReady() {
+				t.Fatal("Codex supervisor was not ready after the initialization handshake")
+			}
+			args, err := os.ReadFile(arguments)
+			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.1-sol\n") {
+				t.Fatalf("Codex default model arguments = %q, error = %v", args, err)
+			}
+			if !strings.Contains(string(args), "-c\nfeatures.apps=false\n") {
+				t.Fatalf("Codex inherited app tools are not disabled: %q", args)
+			}
+			for _, browserOption := range []string{`mcp_servers.tengri_browser.args=["browser-mcp"]`, "mcp_servers.tengri_browser.tool_timeout_sec=300", "mcp_servers.tengri_browser.required=true"} {
+				if !strings.Contains(string(args), browserOption+"\n") {
+					t.Fatalf("Codex browser configuration missing %s: %q", browserOption, args)
+				}
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("Codex app-server did not receive the initialized notification")
+}
+
+func TestCodexSupervisorDoesNotPublishReadyWhenInitializationFails(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a local fake app-server process")
+	}
+	directory := t.TempDir()
+	binary := filepath.Join(directory, "fake-codex")
+	script := `#!/bin/sh
+IFS= read -r initialize
+printf '%s\n' '{"id":1,"error":{"code":-32600,"message":"initialization rejected"}}'
+sleep 30
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake app-server: %v", err)
+	}
+	supervisor := newCodexSupervisor(binary, directory)
+	_, events, err := supervisor.subscribe(0)
+	if err != nil {
+		t.Fatalf("subscribe to Codex lifecycle: %v", err)
+	}
+	supervisor.start()
+	t.Cleanup(supervisor.close)
+	select {
+	case event := <-events:
+		if event.Method != "error" || supervisor.isReady() {
+			t.Fatalf("rejected initialization reported a ready runtime: %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Codex did not report failed initialization")
+	}
+}
+
+func TestCodexSupervisorRestartsAfterProcessExit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts local fake app-server processes")
+	}
+	directory := t.TempDir()
+	marker := filepath.Join(directory, "starts")
+	binary := filepath.Join(directory, "fake-codex")
+	script := fmt.Sprintf(`#!/bin/sh
+IFS= read -r initialize
+id=$(printf '%%s\n' "$initialize" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"id":%%s,"result":{}}\n' "$id"
+IFS= read -r initialized
+printf 'started\n' >> %q
+exit 17
+`, marker)
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake app-server: %v", err)
+	}
+
+	supervisor := newCodexSupervisor(binary, directory)
+	subscription, events, err := supervisor.subscribe(0)
+	if err != nil {
+		t.Fatalf("subscribe to Codex lifecycle: %v", err)
+	}
+	t.Cleanup(func() { supervisor.unsubscribe(subscription) })
+	supervisor.start()
+	t.Cleanup(supervisor.close)
+
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	var restartingSequence uint64
+	for {
+		select {
+		case event := <-events:
+			if event.Method == "error" {
+				restartingSequence = event.Sequence
+			}
+			if event.Method == "tengri/runtimeReady" && restartingSequence > 0 {
+				if event.Sequence <= restartingSequence || !strings.Contains(string(event.Raw), `"generationId":`) {
+					t.Fatalf("invalid recovered lifecycle event: %+v", event)
+				}
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("Codex restart never published successful initialization after its restart notice")
+		}
+	}
+}
+
+func TestCodexDeviceLoginRestartCancelsThePreviousAttempt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a local fake app-server process")
+	}
+	directory := t.TempDir()
+	marker := filepath.Join(directory, "cancel.json")
+	binary := filepath.Join(directory, "fake-codex")
+	script := fmt.Sprintf(`#!/bin/sh
+IFS= read -r initialize
+id=$(printf '%%s\n' "$initialize" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"id":%%s,"result":{}}\n' "$id"
+IFS= read -r initialized
+IFS= read -r first_login
+id=$(printf '%%s\n' "$first_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"id":%%s,"result":{"type":"chatgptDeviceCode","loginId":"login-one","verificationUrl":"https://example.test/one","userCode":"ONE"}}\n' "$id"
+IFS= read -r cancel_login
+printf '%%s' "$cancel_login" > %q
+id=$(printf '%%s\n' "$cancel_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"method":"account/login/completed","params":{"loginId":"login-one"}}\n'
+printf '{"id":%%s,"result":{}}\n' "$id"
+IFS= read -r second_login
+id=$(printf '%%s\n' "$second_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"id":%%s,"result":{"type":"chatgptDeviceCode","loginId":"login-two","verificationUrl":"https://example.test/two","userCode":"TWO"}}\n' "$id"
+sleep 30
+`, marker)
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake app-server: %v", err)
+	}
+
+	supervisor := newCodexSupervisor(binary, directory)
+	supervisor.start()
+	t.Cleanup(supervisor.close)
+	deadline := time.Now().Add(3 * time.Second)
+	for !supervisor.isReady() && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !supervisor.isReady() {
+		t.Fatal("Codex supervisor did not become ready")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	params := json.RawMessage(`{"type":"chatgptDeviceCode"}`)
+	if _, err := supervisor.call(ctx, "account/login/start", params); err != nil {
+		t.Fatalf("start first device login: %v", err)
+	}
+	result, err := supervisor.call(ctx, "account/login/start", params)
+	if err != nil {
+		t.Fatalf("restart device login: %v", err)
+	}
+	if !strings.Contains(string(result.result), `"loginId":"login-two"`) {
+		t.Fatalf("restarted login result = %s", result.result)
+	}
+	snapshot := supervisor.loginSnapshot()
+	if !snapshot.Active || !strings.Contains(string(snapshot.Result), `"loginId":"login-two"`) || snapshot.StartedAt == "" {
+		t.Fatalf("active login snapshot = %#v", snapshot)
+	}
+	cancelRequest, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read cancellation request: %v", err)
+	}
+	var request struct {
+		Method string `json:"method"`
+		Params struct {
+			LoginID string `json:"loginId"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(cancelRequest, &request) != nil || request.Method != "account/login/cancel" ||
+		request.Params.LoginID != "login-one" {
+		t.Fatalf("device login cancellation = %s", cancelRequest)
+	}
+}
+
+func TestCodexDeviceLoginRestartRetainsPreviousAttemptWhenCancellationFails(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a local fake app-server process")
+	}
+	directory := t.TempDir()
+	binary := filepath.Join(directory, "fake-codex")
+	script := `#!/bin/sh
+IFS= read -r initialize
+id=$(printf '%s\n' "$initialize" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"id":%s,"result":{}}\n' "$id"
+IFS= read -r initialized
+IFS= read -r first_login
+id=$(printf '%s\n' "$first_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"id":%s,"result":{"type":"chatgptDeviceCode","loginId":"login-one","verificationUrl":"https://example.test/one","userCode":"ONE"}}\n' "$id"
+IFS= read -r cancel_login
+id=$(printf '%s\n' "$cancel_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"id":%s,"error":{"code":-32000,"message":"cannot cancel"}}\n' "$id"
+sleep 30
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake app-server: %v", err)
+	}
+
+	supervisor := newCodexSupervisor(binary, directory)
+	supervisor.start()
+	t.Cleanup(supervisor.close)
+	deadline := time.Now().Add(3 * time.Second)
+	for !supervisor.isReady() && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !supervisor.isReady() {
+		t.Fatal("Codex supervisor did not become ready")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	params := json.RawMessage(`{"type":"chatgptDeviceCode"}`)
+	if _, err := supervisor.call(ctx, "account/login/start", params); err != nil {
+		t.Fatalf("start first device login: %v", err)
+	}
+	if _, err := supervisor.call(ctx, "account/login/start", params); err == nil ||
+		!strings.Contains(err.Error(), "cancel previous Codex device login") {
+		t.Fatalf("restart device login error = %v", err)
+	}
+
+	supervisor.mu.Lock()
+	activeLoginID := supervisor.activeLoginID
+	supervisor.mu.Unlock()
+	if activeLoginID != "login-one" {
+		t.Fatalf("active login ID = %q, want login-one", activeLoginID)
+	}
+	if snapshot := supervisor.loginSnapshot(); !snapshot.Active ||
+		!strings.Contains(string(snapshot.Result), `"loginId":"login-one"`) {
+		t.Fatalf("retained login snapshot = %#v", snapshot)
+	}
+}
+
+func TestCodexLoginSnapshotRejectsAnotherAppServerGeneration(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	supervisor.mu.Lock()
+	supervisor.activeLoginID = "login-one"
+	supervisor.activeLogin = json.RawMessage(`{"loginId":"login-one"}`)
+	supervisor.loginStartedAt = time.Now().UTC()
+	supervisor.loginGeneration = supervisor.generation
+	supervisor.generation = newCodexProcessGeneration()
+	supervisor.mu.Unlock()
+
+	if snapshot := supervisor.loginSnapshot(); snapshot.Active {
+		t.Fatalf("stale login snapshot = %#v", snapshot)
+	}
+}
+
+func TestCodexReplayDoesNotBlockWhenBufferExceedsSubscriberBurst(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	for index := 0; index < 1_000; index++ {
+		supervisor.publish("item/agentMessage/delta", "", map[string]any{"params": map[string]string{"delta": "x"}})
+	}
+	id, events, err := supervisor.subscribe(0)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer supervisor.unsubscribe(id)
+	for expected := uint64(1); expected <= 1_000; expected++ {
+		select {
+		case event := <-events:
+			if event.Sequence != expected {
+				t.Fatalf("replayed sequence = %d, want %d", event.Sequence, expected)
+			}
+		default:
+			t.Fatalf("replay stopped before sequence %d", expected)
+		}
+	}
+}
+
+func TestCodexReplaySignalsExpiredCursorAndDisconnectsSlowSubscriber(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	for index := 0; index < codexEventBufferSize+10; index++ {
+		supervisor.publish("item/agentMessage/delta", "", map[string]any{"params": map[string]string{"delta": "x"}})
+	}
+	id, events, err := supervisor.subscribe(1)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	warning := <-events
+	if warning.Method != "tengri/replayWarning" || warning.Sequence != supervisor.buffer[0].Sequence-1 {
+		t.Fatalf("replay warning = %#v", warning)
+	}
+	supervisor.unsubscribe(id)
+
+	id, events, err = supervisor.subscribe(supervisor.sequence)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	for index := 0; index < 257; index++ {
+		supervisor.publish("item/agentMessage/delta", "", map[string]any{"params": map[string]string{"delta": "x"}})
+	}
+	if _, found := supervisor.subscriptions[id]; found {
+		t.Fatal("slow Codex subscriber remained registered after its bounded queue filled")
+	}
+	for range events {
+	}
+}
+
+func TestCodexReplaySignalsCursorFromPreviousProcess(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	id, events, err := supervisor.subscribe(42)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer supervisor.unsubscribe(id)
+
+	warning := <-events
+	if warning.Method != "tengri/replayWarning" || warning.Sequence != 0 {
+		t.Fatalf("replay warning = %#v", warning)
+	}
+}
+
+func TestCodexReplayIsBoundedByBytesAndSubscribers(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	payload := strings.Repeat("x", codexEventMaxBytes/2)
+	for range 40 {
+		supervisor.publish("item/agentMessage/delta", "", map[string]string{"delta": payload})
+	}
+	if supervisor.bufferBytes > codexEventBufferBytes {
+		t.Fatalf("buffer bytes = %d, want at most %d", supervisor.bufferBytes, codexEventBufferBytes)
+	}
+
+	ids := make([]uint64, 0, codexSubscriberLimit)
+	for range codexSubscriberLimit {
+		id, _, err := supervisor.subscribe(supervisor.sequence)
+		if err != nil {
+			t.Fatalf("subscribe within limit: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if _, _, err := supervisor.subscribe(supervisor.sequence); err == nil {
+		t.Fatal("subscriber limit was not enforced")
+	}
+	for _, id := range ids {
+		supervisor.unsubscribe(id)
+	}
+}
+
+func TestCodexOversizedEventIsReplacedWithTruthfulWarning(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	supervisor.publish("item/tool/output", "approval", json.RawMessage(`{"value":"`+strings.Repeat("x", codexEventMaxBytes)+`"}`))
+	if len(supervisor.buffer) != 1 || supervisor.buffer[0].Method != "tengri/eventOmitted" {
+		t.Fatalf("oversized event = %#v", supervisor.buffer)
+	}
+	if !strings.Contains(string(supervisor.buffer[0].Raw), "item/tool/output") {
+		t.Fatalf("warning does not identify omitted method: %s", supervisor.buffer[0].Raw)
+	}
+	if supervisor.buffer[0].ApprovalID != "approval" {
+		t.Fatalf("oversized approval ID = %q, want preserved approval", supervisor.buffer[0].ApprovalID)
+	}
+}
+
+func TestCodexReplayProjectsOnlyToolResultImages(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, item string
+		projected  bool
+	}{
+		{"mcp", `{"type":"mcpToolCall","result":{"content":[{"type":"image","data":"image-data","mimeType":"image/png"},{"type":"text","text":"tool output"}],"structuredContent":{"type":"image","data":"keep-structured-data"}}}`, true},
+		{"dynamic", `{"type":"dynamicToolCall","contentItems":[{"type":"inputImage","imageUrl":"data:image/png;base64,image-data"},{"type":"inputText","text":"tool output"}]}`, true},
+		{"user", `{"type":"userMessage","content":[{"type":"inputImage","imageUrl":"data:image/png;base64,image-data"}]}`, false},
+		{"text", `{"type":"mcpToolCall","result":{"content":[{"type":"text","text":"tool output"}]}}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw := json.RawMessage(`{"method":"item/completed","emittedAtMs":9007199254740993,"params":{"threadId":"thread","turnId":"turn","item":` + test.item + `}}`)
+			original := string(raw)
+			supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+			supervisor.publish("item/completed", "", raw)
+			projected := string(supervisor.buffer[0].Raw)
+			if test.projected {
+				if !strings.Contains(projected, "[Image output]") || strings.Contains(projected, "image-data") || !strings.Contains(projected, "tool output") || !strings.Contains(projected, "9007199254740993") {
+					t.Fatalf("incorrect desktop projection: %s", projected)
+				}
+				if test.name == "mcp" && !strings.Contains(projected, "keep-structured-data") {
+					t.Fatal("desktop projection altered structured tool output")
+				}
+				if test.name == "dynamic" {
+					var event struct {
+						Params struct {
+							Item struct {
+								ContentItems []struct{ Type string } `json:"contentItems"`
+							} `json:"item"`
+						} `json:"params"`
+					}
+					if err := json.Unmarshal([]byte(projected), &event); err != nil || len(event.Params.Item.ContentItems) != 2 || event.Params.Item.ContentItems[0].Type != "inputText" {
+						t.Fatalf("projected dynamic image violates the app-server content schema: %s, %v", projected, err)
+					}
+				}
+			} else if projected != original {
+				t.Fatalf("non-image tool output or user input changed: %s", projected)
+			}
+			if string(raw) != original {
+				t.Fatal("desktop projection mutated the original Codex message")
+			}
+		})
+	}
+}
+
+func TestPermissionApprovalReturnsOnlyRequestedPermissions(t *testing.T) {
+	t.Parallel()
+	requested := json.RawMessage(`{"fileSystem":{"write":["/workspace"]}}`)
+	approval := codexApproval{method: "item/permissions/requestApproval", permissions: requested}
+
+	once, err := codexApprovalResult(approval, "approveOnce")
+	if err != nil {
+		t.Fatalf("approve once: %v", err)
+	}
+	if once["scope"] != "turn" || string(once["permissions"].(json.RawMessage)) != string(requested) {
+		t.Fatalf("unexpected turn grant: %#v", once)
+	}
+
+	session, err := codexApprovalResult(approval, "approveSession")
+	if err != nil {
+		t.Fatalf("approve session: %v", err)
+	}
+	if session["scope"] != "session" || string(session["permissions"].(json.RawMessage)) != string(requested) {
+		t.Fatalf("unexpected session grant: %#v", session)
+	}
+
+	denied, err := codexApprovalResult(approval, "deny")
+	if err != nil {
+		t.Fatalf("deny: %v", err)
+	}
+	if denied["scope"] != "turn" || string(denied["permissions"].(json.RawMessage)) != `{}` {
+		t.Fatalf("unexpected denied grant: %#v", denied)
+	}
+}
+
+func TestCommandApprovalHonorsAvailableDecisions(t *testing.T) {
+	t.Parallel()
+	decisions := codexApprovalDecisions(
+		"item/commandExecution/requestApproval",
+		json.RawMessage(`{"availableDecisions":["accept","decline"]}`),
+	)
+	approval := codexApproval{method: "item/commandExecution/requestApproval", decisions: decisions}
+	if _, err := codexApprovalResult(approval, "approveSession"); err == nil {
+		t.Fatal("session approval was accepted when app-server did not offer it")
+	}
+	once, err := codexApprovalResult(approval, "approveOnce")
+	if err != nil || once["decision"] != "accept" {
+		t.Fatalf("approve once = %#v, %v", once, err)
+	}
+	denied, err := codexApprovalResult(approval, "deny")
+	if err != nil || denied["decision"] != "decline" {
+		t.Fatalf("deny = %#v, %v", denied, err)
+	}
+
+	cancelOnly := codexApproval{
+		method:    "item/commandExecution/requestApproval",
+		decisions: map[string]json.RawMessage{"deny": encodedCodexDecision("cancel")},
+	}
+	cancelled, err := codexApprovalResult(cancelOnly, "deny")
+	if err != nil || cancelled["decision"] != "cancel" {
+		t.Fatalf("cancel denial = %#v, %v", cancelled, err)
+	}
+
+	structured := codexApprovalDecisions(
+		"item/commandExecution/requestApproval",
+		json.RawMessage(`{"availableDecisions":[{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["git status"]}},{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"github.com","action":"allow"}}},"decline"]}`),
+	)
+	structuredApproval := codexApproval{method: "item/commandExecution/requestApproval", decisions: structured}
+	execPolicy, err := codexApprovalResult(structuredApproval, "approveExecPolicyAmendment")
+	if err != nil {
+		t.Fatalf("exec-policy amendment: %v", err)
+	}
+	execDecision := execPolicy["decision"].(map[string]any)
+	if _, found := execDecision["acceptWithExecpolicyAmendment"]; !found {
+		t.Fatalf("exec-policy decision = %#v", execDecision)
+	}
+	networkPolicy, err := codexApprovalResult(structuredApproval, "approveNetworkPolicyAmendment")
+	if err != nil {
+		t.Fatalf("network-policy amendment: %v", err)
+	}
+	networkDecision := networkPolicy["decision"].(map[string]any)
+	if _, found := networkDecision["applyNetworkPolicyAmendment"]; !found {
+		t.Fatalf("network-policy decision = %#v", networkDecision)
+	}
+}

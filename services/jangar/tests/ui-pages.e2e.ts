@@ -1,0 +1,44 @@
+import { expect, test } from '@playwright/test'
+
+test.describe('ui pages', () => {
+  test('home', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.getByText('PR reviews')).toBeVisible()
+    await expect(page.getByText('Atlas search')).toBeVisible()
+  })
+
+  test('atlas search', async ({ page }) => {
+    await page.goto('/atlas/search')
+    await expect(page.getByRole('heading', { name: 'Search', level: 1 })).toBeVisible()
+  })
+
+  test('atlas indexed', async ({ page }) => {
+    await page.goto('/atlas/indexed')
+    await expect(page.getByRole('heading', { name: 'Indexed files', level: 1 })).toBeVisible()
+  })
+
+  test('atlas enrich', async ({ page }) => {
+    await page.goto('/atlas/enrich')
+    await expect(page.getByRole('heading', { name: 'Enrichment', level: 1 })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Repository enrichment', level: 2 })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Enrich repository files' })).toBeVisible()
+  })
+
+  test('torghut symbols', async ({ page }) => {
+    await page.goto('/torghut/symbols')
+    await expect(page.getByRole('heading', { name: 'Symbols', level: 1 })).toBeVisible()
+    const assetClassSelect = page.locator('#torghut-symbol-asset-class')
+    await expect(assetClassSelect).toBeVisible()
+    const colorScheme = await assetClassSelect.evaluate((element) => getComputedStyle(element).colorScheme)
+    expect(colorScheme).toContain('dark')
+  })
+
+  test('torghut charts', async ({ page }) => {
+    await page.goto('/torghut/charts')
+    await expect(page.getByRole('heading', { name: 'Charts', level: 1 })).toBeVisible()
+    const symbolSelect = page.locator('#torghut-symbol')
+    await expect(symbolSelect).toBeVisible()
+    const tagName = await symbolSelect.evaluate((element) => element.tagName)
+    expect(tagName).toBe('BUTTON')
+  })
+})

@@ -1,0 +1,19 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: sag-db
+  labels:
+    app.kubernetes.io/name: sag
+    app.kubernetes.io/part-of: lab
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    storageClass: rook-ceph-block
+    size: 5Gi
+  bootstrap:
+    initdb:
+      database: sag
+      owner: sag
+      encoding: UTF8
+      dataChecksums: true

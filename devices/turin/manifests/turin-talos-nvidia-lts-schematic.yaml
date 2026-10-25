@@ -1,0 +1,6 @@
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/tailscale
+      - siderolabs/nvidia-open-gpu-kernel-modules-lts
+      - siderolabs/nvidia-container-toolkit-lts

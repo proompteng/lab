@@ -1,0 +1,940 @@
+import { Buffer } from 'node:buffer'
+
+import { Effect } from 'effect'
+import * as Duration from 'effect/Duration'
+import * as Schedule from 'effect/Schedule'
+import { loadGithubReviewConfig } from './github-review-config'
+
+const MIN_REQUEST_SPACING_MS = loadGithubReviewConfig(process.env).minRequestSpacingMs
+
+const DEFAULT_RATE_LIMIT_BACKOFF_MS = 60_000
+const RATE_LIMIT_JITTER_MS = 1_000
+const RATE_LIMIT_RETRY_MAX_ATTEMPTS = 5
+
+export type GitHubClientOptions = {
+  token: string | null
+  apiBaseUrl: string
+  userAgent?: string
+}
+
+export type PullRequest = {
+  number: number
+  url: string
+  htmlUrl: string
+  headSha: string
+  headRef: string
+  baseRef: string
+  state: string
+  title: string
+  body: string | null
+  mergeableState: string | null
+}
+
+export type CheckRunSummary = {
+  status: 'pending' | 'success' | 'failure'
+  url?: string
+}
+
+export type ReviewThreadComment = {
+  author: string | null
+  body: string | null
+  path: string | null
+  line: number | null
+}
+
+export type ReviewSummaryComment = {
+  author: string | null
+  body: string | null
+  state: string | null
+  submittedAt: string | null
+  url: string | null
+}
+
+export type ReviewSummary = {
+  status: 'pending' | 'approved' | 'changes_requested' | 'commented'
+  unresolvedThreads: Array<{ id: string; author: string | null; comments: ReviewThreadComment[] }>
+  requestedChanges: boolean
+  reviewComments: ReviewSummaryComment[]
+  issueComments: Array<{ author: string | null; body: string | null; createdAt: string | null; url: string | null }>
+}
+
+type NormalizedReviewState = {
+  author: string | null
+  state: string
+  submittedAt: string | null
+}
+
+export const summarizeLatestReviewStates = (
+  reviews: readonly NormalizedReviewState[],
+): Pick<ReviewSummary, 'status' | 'requestedChanges'> => {
+  const latestByAuthor = new Map<string, { review: NormalizedReviewState; index: number }>()
+  let hasCommentedReview = false
+
+  reviews.forEach((review, index) => {
+    if (review.state === 'COMMENTED') {
+      hasCommentedReview = true
+      return
+    }
+    if (!['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) return
+    const key = review.author ?? `anonymous:${index}`
+    const current = latestByAuthor.get(key)
+    if (!current) {
+      latestByAuthor.set(key, { review, index })
+      return
+    }
+
+    const currentTime = current.review.submittedAt ? Date.parse(current.review.submittedAt) : Number.NaN
+    const candidateTime = review.submittedAt ? Date.parse(review.submittedAt) : Number.NaN
+    const candidateIsLater =
+      Number.isFinite(candidateTime) && Number.isFinite(currentTime)
+        ? candidateTime >= currentTime
+        : index > current.index
+    if (candidateIsLater) {
+      latestByAuthor.set(key, { review, index })
+    }
+  })
+
+  const latestStates = [...latestByAuthor.values()].map(({ review }) => review.state)
+  const requestedChanges = latestStates.includes('CHANGES_REQUESTED')
+  if (requestedChanges) return { status: 'changes_requested', requestedChanges: true }
+  if (latestStates.includes('APPROVED')) return { status: 'approved', requestedChanges: false }
+  if (hasCommentedReview) return { status: 'commented', requestedChanges: false }
+  return { status: 'pending', requestedChanges: false }
+}
+
+export type IssueSummary = {
+  number: number
+  title: string
+  body: string | null
+  htmlUrl: string | null
+  labels: string[]
+  updatedAt: string | null
+}
+
+export type CreateIssueInput = {
+  owner: string
+  repo: string
+  title: string
+  body?: string | null
+  labels?: string[]
+}
+
+export type CreatedIssue = {
+  number: number
+  title: string
+  body: string | null
+  htmlUrl: string | null
+}
+
+export type FileContent = {
+  content: string
+  sha: string
+}
+
+export type CreatePullRequestInput = {
+  owner: string
+  repo: string
+  head: string
+  base: string
+  title: string
+  body: string
+}
+
+export type PullRequestFile = {
+  path: string
+  status: string | null
+  additions: number | null
+  deletions: number | null
+  changes: number | null
+  patch: string | null
+  blobUrl: string | null
+  rawUrl: string | null
+  sha: string | null
+  previousFilename: string | null
+}
+
+export type SubmitReviewInput = {
+  owner: string
+  repo: string
+  number: number
+  event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
+  body?: string | null
+  comments?: Array<{
+    path: string
+    line: number
+    side: 'LEFT' | 'RIGHT'
+    body: string
+    startLine?: number
+    startSide?: 'LEFT' | 'RIGHT'
+  }>
+}
+
+export type ResolveReviewThreadInput = {
+  threadId: string
+  resolve: boolean
+}
+
+export type MergePullRequestInput = {
+  owner: string
+  repo: string
+  number: number
+  method: 'merge' | 'squash' | 'rebase'
+  commitTitle?: string
+  commitMessage?: string
+}
+
+export type DeleteBranchInput = {
+  owner: string
+  repo: string
+  branch: string
+}
+
+export type ReviewThreadLookup = {
+  threadId: string | null
+  isResolved: boolean | null
+}
+
+export type CreateBranchInput = {
+  owner: string
+  repo: string
+  branch: string
+  baseSha: string
+}
+
+export type UpdateFileInput = {
+  owner: string
+  repo: string
+  path: string
+  branch: string
+  message: string
+  content: string
+  sha?: string
+}
+
+const encodeBase64 = (value: string) => Buffer.from(value, 'utf8').toString('base64')
+const decodeBase64 = (value: string) => Buffer.from(value, 'base64').toString('utf8')
+
+export class GitHubRateLimitError extends Error {
+  readonly status: number
+  readonly retryAt: number
+  readonly remaining: number | null
+  readonly resetAt: number | null
+
+  constructor(
+    message: string,
+    options: { status: number; retryAt: number; remaining: number | null; resetAt: number | null },
+  ) {
+    super(message)
+    this.name = 'GitHubRateLimitError'
+    this.status = options.status
+    this.retryAt = options.retryAt
+    this.remaining = options.remaining
+    this.resetAt = options.resetAt
+  }
+}
+
+const unwrapEffectError = (error: unknown): unknown => {
+  if (error && typeof error === 'object') {
+    const candidate = error as { _tag?: string; cause?: unknown; error?: unknown }
+    if (candidate._tag === 'UnknownException') {
+      return candidate.cause ?? candidate.error ?? error
+    }
+    if ('cause' in candidate && candidate.cause) {
+      return candidate.cause as unknown
+    }
+  }
+  return error
+}
+
+const shouldRetryRateLimit = (error: unknown) => unwrapEffectError(error) instanceof GitHubRateLimitError
+
+const rateLimitSchedule = (() => {
+  const backoff = Schedule.exponential(Duration.millis(1_000), 2)
+  const capped = Schedule.delayed(backoff, (delay) => Duration.min(delay, Duration.millis(300_000)))
+  const jittered = Schedule.jitteredWith({ min: 0.8, max: 1.2 })(capped)
+  const limited = Schedule.intersect(Schedule.recurs(RATE_LIMIT_RETRY_MAX_ATTEMPTS))(jittered)
+  const normalized = Schedule.map(limited, ([delay]) => delay)
+  return Schedule.whileInput<unknown>(shouldRetryRateLimit)(normalized)
+})()
+
+const buildHeaders = (token: string | null, userAgent = 'jangar-github-client') => {
+  const headers: Record<string, string> = {
+    'user-agent': userAgent,
+    accept: 'application/vnd.github+json',
+  }
+  if (token) headers.authorization = `Bearer ${token}`
+  return headers
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+let requestQueue = Promise.resolve()
+let lastRequestAt = 0
+let nextAllowedAt = 0
+
+const enqueueRequest = async <T>(work: () => Promise<T>): Promise<T> => {
+  const run = async () => {
+    const now = Date.now()
+    if (nextAllowedAt > now) {
+      await sleep(nextAllowedAt - now)
+    }
+    const sinceLast = Date.now() - lastRequestAt
+    if (sinceLast < MIN_REQUEST_SPACING_MS) {
+      await sleep(MIN_REQUEST_SPACING_MS - sinceLast)
+    }
+    const result = await work()
+    lastRequestAt = Date.now()
+    return result
+  }
+  const next = requestQueue.then(run, run)
+  requestQueue = next.then(
+    () => undefined,
+    () => undefined,
+  )
+  return next
+}
+
+const parseIntHeader = (value: string | null) => {
+  if (!value) return null
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const parseRateLimitHeaders = (response: Response) => {
+  const remaining = parseIntHeader(response.headers.get('x-ratelimit-remaining'))
+  const resetEpoch = parseIntHeader(response.headers.get('x-ratelimit-reset'))
+  const retryAfterSeconds = parseIntHeader(response.headers.get('retry-after'))
+  const resetAt = resetEpoch ? resetEpoch * 1000 : null
+  const retryAfterMs = retryAfterSeconds ? retryAfterSeconds * 1000 : null
+  return { remaining, resetAt, retryAfterMs }
+}
+
+const isRateLimitResponse = (status: number, text: string, remaining: number | null, retryAfterMs: number | null) => {
+  if (status === 429) return true
+  if (status !== 403) return false
+  if (remaining === 0) return true
+  if (retryAfterMs && retryAfterMs > 0) return true
+  return /rate limit exceeded|abuse detection/i.test(text)
+}
+
+const updateRateLimitThrottle = (resetAt: number | null) => {
+  const base = resetAt ?? Date.now() + DEFAULT_RATE_LIMIT_BACKOFF_MS
+  nextAllowedAt = Math.max(nextAllowedAt, base + RATE_LIMIT_JITTER_MS)
+  return nextAllowedAt
+}
+
+const requestJson = async (url: string, init: RequestInit) => {
+  const effect = Effect.tryPromise(() =>
+    enqueueRequest(async () => {
+      const response = await fetch(url, init)
+      const text = await response.text()
+      if (!response.ok) {
+        const { remaining, resetAt, retryAfterMs } = parseRateLimitHeaders(response)
+        if (isRateLimitResponse(response.status, text, remaining, retryAfterMs)) {
+          const retryAt = updateRateLimitThrottle(resetAt ?? (retryAfterMs ? Date.now() + retryAfterMs : null))
+          throw new GitHubRateLimitError(`GitHub API ${response.status}: ${text}`, {
+            status: response.status,
+            retryAt,
+            remaining,
+            resetAt,
+          })
+        }
+        throw new Error(`GitHub API ${response.status}: ${text}`)
+      }
+      return text ? (JSON.parse(text) as unknown) : null
+    }),
+  )
+  return Effect.runPromise(Effect.retry(effect, rateLimitSchedule))
+}
+
+const requestText = async (url: string, init: RequestInit) => {
+  const effect = Effect.tryPromise(() =>
+    enqueueRequest(async () => {
+      const response = await fetch(url, init)
+      const text = await response.text()
+      if (!response.ok) {
+        const { remaining, resetAt, retryAfterMs } = parseRateLimitHeaders(response)
+        if (isRateLimitResponse(response.status, text, remaining, retryAfterMs)) {
+          const retryAt = updateRateLimitThrottle(resetAt ?? (retryAfterMs ? Date.now() + retryAfterMs : null))
+          throw new GitHubRateLimitError(`GitHub API ${response.status}: ${text}`, {
+            status: response.status,
+            retryAt,
+            remaining,
+            resetAt,
+          })
+        }
+        throw new Error(`GitHub API ${response.status}: ${text}`)
+      }
+      return text
+    }),
+  )
+  return Effect.runPromise(Effect.retry(effect, rateLimitSchedule))
+}
+
+export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClientOptions) => {
+  const headers = buildHeaders(token, userAgent)
+
+  const rest = async (path: string, init: RequestInit = {}) => {
+    return requestJson(`${apiBaseUrl}${path}`, {
+      ...init,
+      headers: {
+        ...headers,
+        ...init.headers,
+      },
+    })
+  }
+
+  const restText = async (path: string, init: RequestInit = {}) => {
+    return requestText(`${apiBaseUrl}${path}`, {
+      ...init,
+      headers: {
+        ...headers,
+        ...init.headers,
+      },
+    })
+  }
+
+  const graphql = async (query: string, variables: Record<string, unknown>) => {
+    return requestJson(`${apiBaseUrl.replace('/v3', '')}/graphql`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ query, variables }),
+    })
+  }
+
+  const getPullRequestByHead = async (owner: string, repo: string, head: string): Promise<PullRequest | null> => {
+    const data = (await rest(
+      `/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(head)}&state=all&per_page=1`,
+    )) as Array<Record<string, unknown>>
+    const pr = data?.[0]
+    if (!pr) return null
+    return {
+      number: Number(pr.number),
+      url: String(pr.url),
+      htmlUrl: String(pr.html_url),
+      headSha: String((pr.head as Record<string, unknown>).sha),
+      headRef: String((pr.head as Record<string, unknown>).ref),
+      baseRef: String((pr.base as Record<string, unknown>).ref),
+      state: String(pr.state),
+      title: String(pr.title),
+      body: typeof pr.body === 'string' ? pr.body : null,
+      mergeableState: typeof pr.mergeable_state === 'string' ? pr.mergeable_state : null,
+    }
+  }
+
+  const getPullRequest = async (owner: string, repo: string, number: number): Promise<PullRequest> => {
+    const pr = (await rest(`/repos/${owner}/${repo}/pulls/${number}`)) as Record<string, unknown>
+    return {
+      number: Number(pr.number),
+      url: String(pr.url),
+      htmlUrl: String(pr.html_url),
+      headSha: String((pr.head as Record<string, unknown>).sha),
+      headRef: String((pr.head as Record<string, unknown>).ref),
+      baseRef: String((pr.base as Record<string, unknown>).ref),
+      state: String(pr.state),
+      title: String(pr.title),
+      body: typeof pr.body === 'string' ? pr.body : null,
+      mergeableState: typeof pr.mergeable_state === 'string' ? pr.mergeable_state : null,
+    }
+  }
+
+  const getCheckRuns = async (owner: string, repo: string, sha: string): Promise<CheckRunSummary> => {
+    const data = (await rest(`/repos/${owner}/${repo}/commits/${sha}/check-runs`)) as Record<string, unknown>
+    const runs = Array.isArray(data.check_runs) ? data.check_runs : []
+    if (runs.length === 0) {
+      return { status: 'pending' }
+    }
+    let hasFailure = false
+    let hasPending = false
+    let detailsUrl: string | undefined
+    for (const run of runs) {
+      const status = String(run.status ?? '')
+      const conclusion = run.conclusion ? String(run.conclusion) : null
+      detailsUrl = detailsUrl ?? (typeof run.html_url === 'string' ? run.html_url : undefined)
+      if (status !== 'completed') {
+        hasPending = true
+      } else if (conclusion && conclusion !== 'success' && conclusion !== 'skipped') {
+        hasFailure = true
+      }
+    }
+    if (hasFailure) return { status: 'failure', url: detailsUrl }
+    if (hasPending) return { status: 'pending', url: detailsUrl }
+    return { status: 'success', url: detailsUrl }
+  }
+
+  const getPullRequestDiff = async (owner: string, repo: string, number: number) => {
+    return restText(`/repos/${owner}/${repo}/pulls/${number}`, {
+      headers: {
+        accept: 'application/vnd.github.v3.diff',
+      },
+    })
+  }
+
+  const getReviewSummary = async (
+    owner: string,
+    repo: string,
+    number: number,
+    reviewers: string[],
+  ): Promise<ReviewSummary> => {
+    const normalizeLogin = (value: unknown) => {
+      if (typeof value !== 'string') return null
+      const trimmed = value.trim()
+      if (!trimmed) return null
+      return trimmed.toLowerCase().replace(/^@/, '')
+    }
+
+    const reviewerSet = new Set(reviewers.map((value) => normalizeLogin(value)).filter(Boolean) as string[])
+    const includeAll = reviewerSet.size === 0
+
+    const getPullRequestFromResponse = (response: Record<string, unknown>) =>
+      ((response.data as Record<string, unknown> | undefined)?.repository as Record<string, unknown> | undefined)
+        ?.pullRequest as Record<string, unknown> | undefined
+
+    const reviewNodes: Array<Record<string, unknown>> = []
+    const reviewQuery = `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviews(first: 50, after: $cursor) {
+            nodes { author { login } state submittedAt body url }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`
+
+    let reviewCursor: string | null = null
+    let reviewHasNext = true
+    while (reviewHasNext) {
+      const response = (await graphql(reviewQuery, { owner, repo, number, cursor: reviewCursor })) as Record<
+        string,
+        unknown
+      >
+      const pr = getPullRequestFromResponse(response)
+      const reviewConnection = pr?.reviews as Record<string, unknown> | undefined
+      const nodes = Array.isArray(reviewConnection?.nodes)
+        ? (reviewConnection?.nodes as Array<Record<string, unknown>>)
+        : []
+      reviewNodes.push(...nodes)
+      const pageInfo = reviewConnection?.pageInfo as Record<string, unknown> | undefined
+      reviewHasNext = Boolean(pageInfo?.hasNextPage)
+      reviewCursor = typeof pageInfo?.endCursor === 'string' ? pageInfo.endCursor : null
+      if (!reviewHasNext || !reviewCursor) break
+    }
+
+    const threadQuery = `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 50, after: $cursor) {
+            nodes {
+              id
+              isResolved
+              comments(first: 50) {
+                nodes { author { login } body path line originalLine }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`
+
+    const threadCommentsQuery = `query($id: ID!, $cursor: String) {
+      node(id: $id) {
+        ... on PullRequestReviewThread {
+          comments(first: 50, after: $cursor) {
+            nodes { author { login } body path line originalLine }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`
+
+    const threadNodes: Array<{ id: string; isResolved: boolean; comments: Array<Record<string, unknown>> }> = []
+    let threadCursor: string | null = null
+    let threadHasNext = true
+    while (threadHasNext) {
+      const response = (await graphql(threadQuery, { owner, repo, number, cursor: threadCursor })) as Record<
+        string,
+        unknown
+      >
+      const pr = getPullRequestFromResponse(response)
+      const threadConnection = pr?.reviewThreads as Record<string, unknown> | undefined
+      const nodes = Array.isArray(threadConnection?.nodes)
+        ? (threadConnection?.nodes as Array<Record<string, unknown>>)
+        : []
+      for (const thread of nodes) {
+        const threadId = typeof thread.id === 'string' ? thread.id : String(thread.id ?? '')
+        if (!threadId) continue
+        const isResolved = Boolean(thread.isResolved)
+        if (isResolved) continue
+        const commentsConnection = thread.comments as Record<string, unknown> | undefined
+        const commentNodes = Array.isArray(commentsConnection?.nodes)
+          ? (commentsConnection?.nodes as Array<Record<string, unknown>>)
+          : []
+        const comments = [...commentNodes]
+        const commentPageInfo = commentsConnection?.pageInfo as Record<string, unknown> | undefined
+        let commentHasNext = Boolean(commentPageInfo?.hasNextPage)
+        let commentCursor = typeof commentPageInfo?.endCursor === 'string' ? commentPageInfo.endCursor : null
+        while (commentHasNext && commentCursor) {
+          const commentResponse = (await graphql(threadCommentsQuery, {
+            id: threadId,
+            cursor: commentCursor,
+          })) as Record<string, unknown>
+          const node = (commentResponse.data as Record<string, unknown> | undefined)?.node as
+            | Record<string, unknown>
+            | undefined
+          const connection = node?.comments as Record<string, unknown> | undefined
+          const extraNodes = Array.isArray(connection?.nodes)
+            ? (connection?.nodes as Array<Record<string, unknown>>)
+            : []
+          comments.push(...extraNodes)
+          const pageInfo = connection?.pageInfo as Record<string, unknown> | undefined
+          commentHasNext = Boolean(pageInfo?.hasNextPage)
+          commentCursor = typeof pageInfo?.endCursor === 'string' ? pageInfo.endCursor : null
+          if (!commentHasNext) break
+        }
+        threadNodes.push({ id: threadId, isResolved, comments })
+      }
+
+      const pageInfo = threadConnection?.pageInfo as Record<string, unknown> | undefined
+      threadHasNext = Boolean(pageInfo?.hasNextPage)
+      threadCursor = typeof pageInfo?.endCursor === 'string' ? pageInfo.endCursor : null
+      if (!threadHasNext || !threadCursor) break
+    }
+
+    const reviews = reviewNodes
+
+    const normalizedReviews: NormalizedReviewState[] = []
+    const reviewComments = reviews
+      .map((review) => {
+        const reviewRecord = review as Record<string, unknown>
+        const author = reviewRecord.author as Record<string, unknown> | null
+        const login = normalizeLogin(author?.login ?? null)
+        if (!includeAll && login && !reviewerSet.has(login)) {
+          return null
+        }
+        const rawState = String(reviewRecord.state ?? '').toUpperCase()
+        const body = typeof reviewRecord.body === 'string' ? reviewRecord.body : null
+        const submittedAt = typeof reviewRecord.submittedAt === 'string' ? reviewRecord.submittedAt : null
+        const url = typeof reviewRecord.url === 'string' ? reviewRecord.url : null
+        normalizedReviews.push({ author: login, state: rawState, submittedAt })
+
+        const shouldIncludeBody = body && body.trim().length > 0
+        const shouldIncludeState = rawState === 'CHANGES_REQUESTED' || rawState === 'COMMENTED'
+        if (!shouldIncludeBody && !shouldIncludeState) {
+          return null
+        }
+
+        return {
+          author: login,
+          body,
+          state: rawState ? rawState.toLowerCase() : null,
+          submittedAt,
+          url,
+        }
+      })
+      .filter((comment): comment is ReviewSummaryComment => comment !== null)
+    let { status, requestedChanges } = summarizeLatestReviewStates(normalizedReviews)
+
+    const rawComments: Array<Record<string, unknown>> = []
+    for (let page = 1; page <= 10; page += 1) {
+      const pageComments = (await rest(
+        `/repos/${owner}/${repo}/issues/${number}/comments?per_page=100&page=${page}`,
+      )) as Array<Record<string, unknown>>
+      if (!Array.isArray(pageComments) || pageComments.length === 0) break
+      rawComments.push(...pageComments)
+      if (pageComments.length < 100) break
+    }
+    const issueComments = rawComments
+      .map((comment) => {
+        const author = (comment.user as Record<string, unknown> | undefined)?.login
+        const login = normalizeLogin(author ?? null)
+        return {
+          author: login,
+          body: typeof comment.body === 'string' ? comment.body : null,
+          createdAt: typeof comment.created_at === 'string' ? comment.created_at : null,
+          url: typeof comment.html_url === 'string' ? comment.html_url : null,
+        }
+      })
+      .filter((comment) => {
+        if (includeAll) return true
+        if (!comment.author) return false
+        return reviewerSet.has(comment.author)
+      })
+
+    const unresolvedThreads = threadNodes
+      .map((thread) => {
+        const comments = thread.comments.map((comment) => {
+          const author = (comment.author as Record<string, unknown> | undefined)?.login
+          const login = normalizeLogin(author ?? null)
+          const lineValue =
+            typeof comment.line === 'number'
+              ? comment.line
+              : typeof comment.originalLine === 'number'
+                ? comment.originalLine
+                : null
+          return {
+            author: login,
+            body: typeof comment.body === 'string' ? comment.body : null,
+            path: typeof comment.path === 'string' ? comment.path : null,
+            line: lineValue,
+          }
+        })
+        const relevantComments = includeAll
+          ? comments
+          : comments.filter((comment) => comment.author && reviewerSet.has(comment.author))
+        const authorLogin = relevantComments.find((comment) => comment.author)?.author ?? comments[0]?.author ?? null
+        return {
+          id: String(thread.id),
+          author: authorLogin,
+          comments: relevantComments,
+        }
+      })
+      .filter((thread) => {
+        if (includeAll) return true
+        return thread.comments.length > 0
+      })
+
+    if (requestedChanges) {
+      status = 'changes_requested'
+    } else if (unresolvedThreads.length > 0) {
+      status = 'commented'
+    } else if (normalizedReviews.length === 0 && issueComments.length > 0) {
+      status = 'commented'
+    } else if (normalizedReviews.length === 0) {
+      status = 'pending'
+    }
+
+    return { status, unresolvedThreads, requestedChanges, reviewComments, issueComments }
+  }
+
+  const getPullRequestFiles = async (owner: string, repo: string, number: number): Promise<PullRequestFile[]> => {
+    const files: PullRequestFile[] = []
+    for (let page = 1; page <= 20; page += 1) {
+      const data = (await rest(`/repos/${owner}/${repo}/pulls/${number}/files?per_page=100&page=${page}`)) as Array<
+        Record<string, unknown>
+      >
+      if (!Array.isArray(data) || data.length === 0) break
+      for (const entry of data) {
+        const path = typeof entry.filename === 'string' ? entry.filename : ''
+        if (!path) continue
+        files.push({
+          path,
+          status: typeof entry.status === 'string' ? entry.status : null,
+          additions: typeof entry.additions === 'number' ? entry.additions : null,
+          deletions: typeof entry.deletions === 'number' ? entry.deletions : null,
+          changes: typeof entry.changes === 'number' ? entry.changes : null,
+          patch: typeof entry.patch === 'string' ? entry.patch : null,
+          blobUrl: typeof entry.blob_url === 'string' ? entry.blob_url : null,
+          rawUrl: typeof entry.raw_url === 'string' ? entry.raw_url : null,
+          sha: typeof entry.sha === 'string' ? entry.sha : null,
+          previousFilename: typeof entry.previous_filename === 'string' ? entry.previous_filename : null,
+        })
+      }
+      if (data.length < 100) break
+    }
+    return files
+  }
+
+  const submitReview = async ({ owner, repo, number, event, body, comments }: SubmitReviewInput) => {
+    const payload: Record<string, unknown> = { event }
+    if (body) payload.body = body
+    if (comments && comments.length > 0) {
+      payload.comments = comments.map((comment) => ({
+        path: comment.path,
+        line: comment.line,
+        side: comment.side,
+        body: comment.body,
+        ...(comment.startLine ? { start_line: comment.startLine } : {}),
+        ...(comment.startSide ? { start_side: comment.startSide } : {}),
+      }))
+    }
+    return rest(`/repos/${owner}/${repo}/pulls/${number}/reviews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  }
+
+  const resolveReviewThread = async ({ threadId, resolve }: ResolveReviewThreadInput) => {
+    const mutation = resolve
+      ? `mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved } } }`
+      : `mutation($threadId: ID!) { unresolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved } } }`
+    const response = (await graphql(mutation, { threadId })) as Record<string, unknown>
+    const data = response.data as Record<string, unknown> | undefined
+    const node = resolve
+      ? (data?.resolveReviewThread as Record<string, unknown> | undefined)
+      : (data?.unresolveReviewThread as Record<string, unknown> | undefined)
+    const thread = node?.thread as Record<string, unknown> | undefined
+    return {
+      id: typeof thread?.id === 'string' ? thread.id : null,
+      isResolved: typeof thread?.isResolved === 'boolean' ? thread.isResolved : null,
+    }
+  }
+
+  const getReviewThreadForComment = async (commentId: string): Promise<ReviewThreadLookup> => {
+    const query = `query($id: ID!) { node(id: $id) { ... on PullRequestReviewComment { pullRequestReviewThread { id isResolved } } } }`
+    const response = (await graphql(query, { id: commentId })) as Record<string, unknown>
+    const data = response.data as Record<string, unknown> | undefined
+    const node = data?.node as Record<string, unknown> | undefined
+    const thread = node?.pullRequestReviewThread as Record<string, unknown> | undefined
+    return {
+      threadId: typeof thread?.id === 'string' ? thread.id : null,
+      isResolved: typeof thread?.isResolved === 'boolean' ? thread.isResolved : null,
+    }
+  }
+
+  const mergePullRequest = async ({
+    owner,
+    repo,
+    number,
+    method,
+    commitTitle,
+    commitMessage,
+  }: MergePullRequestInput) => {
+    const payload: Record<string, unknown> = { merge_method: method }
+    if (commitTitle) payload.commit_title = commitTitle
+    if (commitMessage) payload.commit_message = commitMessage
+    return rest(`/repos/${owner}/${repo}/pulls/${number}/merge`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  }
+
+  const deleteBranch = async ({ owner, repo, branch }: DeleteBranchInput) => {
+    const ref = encodeURIComponent(`heads/${branch}`)
+    return rest(`/repos/${owner}/${repo}/git/refs/${ref}`, { method: 'DELETE' })
+  }
+
+  const getRefSha = async (owner: string, repo: string, ref: string) => {
+    const data = (await rest(`/repos/${owner}/${repo}/git/ref/${encodeURIComponent(ref)}`)) as Record<string, unknown>
+    const object = data.object as Record<string, unknown>
+    return String(object.sha)
+  }
+
+  const createBranch = async ({ owner, repo, branch, baseSha }: CreateBranchInput) => {
+    return rest(`/repos/${owner}/${repo}/git/refs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseSha }),
+    })
+  }
+
+  const getFile = async (owner: string, repo: string, path: string, ref: string): Promise<FileContent> => {
+    const data = (await rest(
+      `/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(ref)}`,
+    )) as Record<string, unknown>
+    const content = typeof data.content === 'string' ? data.content.replace(/\n/g, '') : ''
+    const sha = String(data.sha)
+    return { content: decodeBase64(content), sha }
+  }
+
+  const updateFile = async ({ owner, repo, path, branch, message, content, sha }: UpdateFileInput) => {
+    const body: Record<string, unknown> = { message, content: encodeBase64(content), branch }
+    if (sha) {
+      body.sha = sha
+    }
+    return rest(`/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  }
+
+  const createPullRequest = async ({ owner, repo, head, base, title, body }: CreatePullRequestInput) => {
+    return rest(`/repos/${owner}/${repo}/pulls`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title, head, base, body }),
+    })
+  }
+
+  const createIssue = async ({ owner, repo, title, body, labels }: CreateIssueInput): Promise<CreatedIssue> => {
+    const payload: Record<string, unknown> = { title }
+    if (typeof body === 'string' && body.trim().length > 0) {
+      payload.body = body
+    }
+    if (Array.isArray(labels) && labels.length > 0) {
+      payload.labels = labels
+    }
+    const data = (await rest(`/repos/${owner}/${repo}/issues`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })) as Record<string, unknown>
+    return {
+      number: Number(data.number),
+      title: typeof data.title === 'string' ? data.title : title,
+      body: typeof data.body === 'string' ? data.body : (body ?? null),
+      htmlUrl: typeof data.html_url === 'string' ? data.html_url : null,
+    }
+  }
+
+  const listIssues = async ({
+    owner,
+    repo,
+    labels,
+    since,
+  }: {
+    owner: string
+    repo: string
+    labels?: string[]
+    since?: string
+  }): Promise<IssueSummary[]> => {
+    const issues: IssueSummary[] = []
+    let page = 1
+    while (true) {
+      const params = new URLSearchParams({ state: 'all', per_page: '100', page: String(page) })
+      if (since) params.set('since', since)
+      if (labels && labels.length > 0) params.set('labels', labels.join(','))
+      const data = (await rest(`/repos/${owner}/${repo}/issues?${params.toString()}`)) as Array<Record<string, unknown>>
+      if (!Array.isArray(data) || data.length === 0) break
+      const pageIssues = data
+        .filter((item) => !item.pull_request)
+        .map((item) => {
+          const labelNodes = Array.isArray(item.labels) ? item.labels : []
+          const labelNames = labelNodes
+            .map((label) => (label as Record<string, unknown>).name)
+            .filter((value): value is string => typeof value === 'string')
+          return {
+            number: Number(item.number),
+            title: String(item.title ?? ''),
+            body: typeof item.body === 'string' ? item.body : null,
+            htmlUrl: typeof item.html_url === 'string' ? item.html_url : null,
+            labels: labelNames,
+            updatedAt: typeof item.updated_at === 'string' ? item.updated_at : null,
+          }
+        })
+      issues.push(...pageIssues)
+      if (data.length < 100) break
+      page += 1
+    }
+    return issues
+  }
+
+  return {
+    getPullRequestByHead,
+    getPullRequest,
+    getCheckRuns,
+    getPullRequestDiff,
+    getReviewSummary,
+    getPullRequestFiles,
+    submitReview,
+    resolveReviewThread,
+    getReviewThreadForComment,
+    mergePullRequest,
+    deleteBranch,
+    getRefSha,
+    getFile,
+    updateFile,
+    createBranch,
+    createPullRequest,
+    createIssue,
+    listIssues,
+  }
+}

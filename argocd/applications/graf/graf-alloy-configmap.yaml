@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: graf-alloy
+  namespace: graf
+data:
+  config.river: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    discovery.kubernetes "graf" {
+      role = "pod"
+
+      namespaces {
+        names = ["graf"]
+      }
+    }
+
+    loki.source.kubernetes "graf" {
+      targets    = discovery.kubernetes.graf.targets
+      forward_to = [loki.process.graf.receiver]
+    }
+
+    loki.process "graf" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          job = "graf",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
+      }
+    }

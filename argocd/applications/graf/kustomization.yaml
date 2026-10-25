@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: graf
+resources:
+  - service-account.yaml
+  - knative-service.yaml
+  - graf-api-secret.yaml
+  - graf-auth-secret.yaml
+  - ingressroute.yaml
+  - graf-metallb-service.yaml
+  - neo4j-browser-service.yaml
+  - tailscale-service.yaml
+  - graf-otel-configmap.yaml
+  - graf-quarkus-configmap.yaml
+  - graf-alloy-configmap.yaml
+  - graf-alloy-rbac.yaml
+  - graf-alloy-deployment.yaml
+helmCharts:
+  - name: neo4j
+    repo: https://helm.neo4j.com/neo4j
+    version: 2025.10.1
+    releaseName: graf-db
+    namespace: graf
+    includeCRDs: true
+    valuesFile: neo4j-values.yaml

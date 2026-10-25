@@ -1,0 +1,211 @@
+---
+title: Agents Helm Chart
+description: Install the Agents control plane (Jangar) and run an AgentRun end-to-end on kind.
+---
+
+# Agents Helm Chart
+
+The Agents chart deploys the Jangar control plane plus the full Agents CRD suite. It is
+production-minded by default (RBAC, optional PDB/HPA/NetworkPolicy) while still supporting
+fast local iteration.
+
+## What you get
+
+- Jangar API and controllers for Agents, Orchestration, Tools, Signals, Schedules, Artifacts, Workspaces
+- Native runtime that executes AgentRuns as Jobs/Pods in the cluster
+- A full CRD suite with examples you can apply immediately
+
+## Requirements
+
+- Kubernetes 1.25+
+- Helm 3.12+
+- `kind`, `kubectl`, `helm` installed locally
+
+## Kind quickstart (end-to-end)
+
+This flow spins up a kind cluster, installs Postgres, deploys the chart, and runs a smoke
+AgentRun so you can verify the control plane is operational.
+
+```bash
+scripts/agents/kind-e2e.sh
+```
+
+The first run may take a while because the script builds a local Jangar image. If the
+`services/jangar/.output` bundle is missing, it will run `bun install` and `bun run build`
+to generate it before building the container.
+
+Expected output:
+
+- `deployment/agents` becomes ready
+- `agentrun/agents-workflow-smoke` reaches `Succeeded`
+
+Verify manually:
+
+```bash
+kubectl -n agents get agentruns
+kubectl -n agents describe agentrun agents-workflow-smoke
+kubectl -n agents get jobs
+```
+
+Access the control plane UI locally:
+
+```bash
+kubectl -n agents port-forward svc/agents 8080:80
+```
+
+Then open `http://127.0.0.1:8080`.
+
+## What the script does
+
+The `scripts/agents/kind-e2e.sh` script performs the following steps:
+
+1. Creates a kind cluster (or reuses the existing one).
+2. Builds a local Jangar image and loads it into kind.
+3. Installs Postgres via the Bitnami chart in the `agents` namespace.
+4. Creates the `jangar-db-app` Secret with the database URL.
+5. Installs the Agents chart using `charts/agents/values-kind.yaml`.
+6. Applies the smoke AgentProvider/Agent/ImplementationSpec/AgentRun examples.
+7. Waits for the AgentRun to succeed.
+
+## Codex PR end-to-end (optional)
+
+This flow runs a Codex agent inside the cluster and creates a GitHub PR. It requires a Codex auth session and a
+GitHub token with repo write access.
+
+Create the secrets:
+
+```bash
+kubectl -n agents create secret generic codex-auth \
+  --from-file=auth.json="$HOME/.codex/auth.json"
+
+kubectl -n agents create secret generic codex-github-token \
+  --from-literal=GITHUB_TOKEN="$(gh auth token)" \
+  --from-literal=GH_TOKEN="$(gh auth token)"
+```
+
+Mount the auth secret so the controller can set up a writable Codex home directory:
+
+```bash
+helm upgrade agents charts/agents --namespace agents --reuse-values \
+  --set controller.authSecret.name=codex-auth \
+  --set controller.authSecret.key=auth.json
+```
+
+Apply the Codex provider + agent, then run an AgentRun with an inline ImplementationSpec:
+
+```bash
+kubectl -n agents apply -f charts/agents/examples/agentprovider-native-workflow.yaml
+kubectl -n agents apply -f charts/agents/examples/agent-native-workflow.yaml
+
+cat <<'EOF' | kubectl -n agents apply -f -
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: codex-e2e-proof
+spec:
+  source:
+    provider: manual
+    externalId: manual:codex-e2e-proof
+    url: https://example.com/agents/codex-e2e-proof
+  summary: "Codex E2E proof"
+  text: |
+    Create a new file docs/agents/codex-e2e-proof.md with the single line:
+    "Codex E2E test ran on 2026-02-03."
+  acceptanceCriteria:
+    - File exists with the note
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: codex-e2e-pr
+spec:
+  agentRef:
+    name: codex-native-workflow
+  implementationSpecRef:
+    name: codex-e2e-proof
+  runtime:
+    type: workflow
+    config:
+      ttlSecondsAfterFinished: 900
+  workflow:
+    steps:
+      - name: implement
+        parameters:
+          stage: implement
+  workload:
+    image: jangar-local:kind
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  secrets:
+    - codex-github-token
+  parameters:
+    repository: proompteng/lab
+    base: main
+    issueTitle: "Codex E2E proof"
+    issueUrl: "https://github.com/proompteng/lab"
+EOF
+```
+
+Wait for the run and confirm the PR:
+
+```bash
+kubectl -n agents wait --for=condition=Succeeded agentrun/codex-e2e-pr --timeout=1800s
+kubectl -n agents get jobs
+kubectl -n agents logs job/codex-e2e-pr-step-1-attempt-1
+```
+
+## Configuration knobs
+
+The kind script supports the following environment overrides:
+
+- `CLUSTER_NAME` (default: `agents`)
+- `NAMESPACE` (default: `agents`)
+- `POSTGRES_RELEASE` (default: `agents-postgres`)
+- `POSTGRES_USER` (default: `agents`)
+- `POSTGRES_PASSWORD` (default: `agents`)
+- `POSTGRES_DB` (default: `agents`)
+- `CHART_PATH` (default: `charts/agents`)
+- `VALUES_FILE` (default: `charts/agents/values-kind.yaml`)
+- `SECRET_NAME` (default: `jangar-db-app`)
+- `SECRET_KEY` (default: `uri`)
+- `KUBECTL_CONTEXT` (default: `kind-<cluster>`)
+- `IMAGE_REPOSITORY` (default: `jangar-local`)
+- `IMAGE_TAG` (default: `kind`)
+- `BUILD_IMAGE` (default: `1`, set to `0` to skip the Docker build)
+
+## Production checklist
+
+For production deployments, keep the same chart but switch to production values:
+
+- Use an external Postgres with `database.secretRef`.
+- Prefer image digests (`values-prod.yaml` already does this).
+- Enable `podDisruptionBudget` and `networkPolicy` as needed.
+- Consider `autoscaling.enabled` for the control plane.
+- Scope controllers via `controller.namespaces` or enable cluster scope explicitly.
+
+## Troubleshooting
+
+If the AgentRun does not complete:
+
+```bash
+kubectl -n agents logs deployment/agents
+kubectl -n agents get agentruns
+kubectl -n agents describe agentrun agents-workflow-smoke
+kubectl -n agents get jobs
+```
+
+Common fixes:
+
+- Ensure the cluster has enough CPU/memory for Jobs.
+- Re-run the script to reinstall the chart and smoke resources.
+- If using a custom image registry, ensure image pull secrets are configured.
+
+## Clean up
+
+```bash
+helm uninstall agents -n agents
+helm uninstall agents-postgres -n agents
+kind delete cluster --name agents
+```

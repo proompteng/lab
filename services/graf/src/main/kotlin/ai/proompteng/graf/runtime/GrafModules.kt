@@ -1,0 +1,223 @@
+package ai.proompteng.graf.runtime
+
+import ai.proompteng.graf.autoresearch.AutoResearchConfig
+import ai.proompteng.graf.autoresearch.AutoResearchLauncher
+import ai.proompteng.graf.autoresearch.AutoResearchPromptBuilder
+import ai.proompteng.graf.autoresearch.AutoResearchService
+import ai.proompteng.graf.codex.AgentRunClient
+import ai.proompteng.graf.codex.CodexResearchActivities
+import ai.proompteng.graf.codex.CodexResearchActivitiesImpl
+import ai.proompteng.graf.codex.CodexResearchService
+import ai.proompteng.graf.codex.MinioArtifactFetcher
+import ai.proompteng.graf.codex.MinioArtifactFetcherImpl
+import ai.proompteng.graf.config.AgentsConfig
+import ai.proompteng.graf.config.MinioConfig
+import ai.proompteng.graf.config.MinioEndpointTarget
+import ai.proompteng.graf.config.Neo4jConfig
+import ai.proompteng.graf.config.TemporalConfig
+import ai.proompteng.graf.config.resolveMinioEndpoint
+import ai.proompteng.graf.neo4j.Neo4jClient
+import ai.proompteng.graf.services.GraphPersistence
+import ai.proompteng.graf.services.GraphService
+import ai.proompteng.graf.telemetry.GrafTelemetry
+import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import io.minio.MinioClient
+import io.temporal.authorization.AuthorizationGrpcMetadataProvider
+import io.temporal.authorization.AuthorizationTokenSupplier
+import io.temporal.client.WorkflowClient
+import io.temporal.client.WorkflowClientOptions
+import io.temporal.common.converter.DefaultDataConverter
+import io.temporal.common.converter.JacksonJsonPayloadConverter
+import io.temporal.serviceclient.WorkflowServiceStubs
+import io.temporal.serviceclient.WorkflowServiceStubsOptions
+import io.temporal.worker.WorkerFactory
+import org.koin.core.qualifier.named
+import org.koin.dsl.bind
+import org.koin.dsl.module
+import org.neo4j.driver.AuthTokens
+import org.neo4j.driver.GraphDatabase
+import java.io.FileInputStream
+import java.net.http.HttpClient
+
+private const val REQUEST_SCOPE = "graf.request"
+private const val QUALIFIER_JSON = "graf.json"
+private const val QUALIFIER_AGENTS_TOKEN = "graf.agents.token"
+
+object GrafQualifiers {
+  val Json = named(QUALIFIER_JSON)
+  val AgentsToken = named(QUALIFIER_AGENTS_TOKEN)
+}
+
+object GrafScopes {
+  val Request = named(REQUEST_SCOPE)
+}
+
+fun grafLifecycleModule() =
+  module {
+    single { GrafLifecycleRegistry() }
+  }
+
+fun grafConfigModule() =
+  module {
+    single { Neo4jConfig.fromEnvironment() }
+    single { TemporalConfig.fromEnvironment() }
+    single { AgentsConfig.fromEnvironment() }
+    single { MinioConfig.fromEnvironment() }
+    single { AutoResearchConfig.fromEnvironment() }
+    single(qualifier = GrafQualifiers.Json) { grafJson() }
+  }
+
+fun grafClientModule() =
+  module {
+    single {
+      provideNeo4jClient(
+        neo4jConfig = get(),
+        lifecycle = get(),
+      )
+    }
+    single {
+      provideMinioClient(
+        config = get(),
+        lifecycle = get(),
+      )
+    }
+    single {
+      provideWorkflowServiceStubs(
+        config = get(),
+        lifecycle = get(),
+      )
+    }
+    single {
+      provideWorkflowClient(
+        config = get(),
+        stubs = get(),
+      )
+    }
+    single { WorkerFactory.newInstance(get()) }
+    single(qualifier = GrafQualifiers.AgentsToken) { loadOptionalServiceAccountToken(get<AgentsConfig>().tokenPath) }
+    single { HttpClient.newHttpClient() }
+  }
+
+fun grafServiceModule() =
+  module {
+    single { GraphService(get()) } bind GraphPersistence::class
+    single<MinioArtifactFetcher> { MinioArtifactFetcherImpl(get()) }
+    single {
+      AgentRunClient(
+        config = get(),
+        httpClient = get(),
+        minioConfig = get(),
+        json = get(GrafQualifiers.Json),
+        serviceAccountToken = get(GrafQualifiers.AgentsToken),
+      )
+    }
+    single<CodexResearchActivities> {
+      CodexResearchActivitiesImpl(
+        agentRunClient = get(),
+        graphPersistence = get(),
+        artifactFetcher = get(),
+        json = get(GrafQualifiers.Json),
+      )
+    }
+    single {
+      CodexResearchService(
+        workflowClient = get(),
+        workflowServiceStubs = get(),
+        taskQueue = get<TemporalConfig>().taskQueue,
+        agentRunPollTimeoutSeconds = get<AgentsConfig>().pollTimeoutSeconds,
+      )
+    }
+    single { AutoResearchPromptBuilder(get()) }
+    single<AutoResearchLauncher> { AutoResearchService(get(), get()) }
+  }
+
+fun grafRequestScopeModule() =
+  module {
+    scope(GrafScopes.Request) {
+      scoped { GrafRequestContext() }
+    }
+  }
+
+private fun provideNeo4jClient(
+  neo4jConfig: Neo4jConfig,
+  lifecycle: GrafLifecycleRegistry,
+): Neo4jClient {
+  val driver =
+    GraphDatabase.driver(
+      neo4jConfig.uri,
+      AuthTokens.basic(neo4jConfig.username, neo4jConfig.password),
+      neo4jConfig.toDriverConfig(),
+    )
+  val client = Neo4jClient(driver, neo4jConfig.database)
+  lifecycle.register { client.close() }
+  return client
+}
+
+private fun provideMinioClient(
+  config: MinioConfig,
+  lifecycle: GrafLifecycleRegistry,
+): MinioClient {
+  val builder =
+    MinioClient
+      .builder()
+      .credentials(config.accessKey, config.secretKey)
+  when (val target = resolveMinioEndpoint(config)) {
+    is MinioEndpointTarget.Url -> builder.endpoint(target.value)
+    is MinioEndpointTarget.HostPort -> builder.endpoint(target.host, target.port, target.secure)
+  }
+  config.region?.let { builder.region(it) }
+  val client = builder.build()
+  lifecycle.register { client.close() }
+  return client
+}
+
+private fun provideWorkflowServiceStubs(
+  config: TemporalConfig,
+  lifecycle: GrafLifecycleRegistry,
+): WorkflowServiceStubs {
+  val builder = WorkflowServiceStubsOptions.newBuilder().setTarget(config.address)
+  config.authToken?.takeIf(String::isNotBlank)?.let { token ->
+    val bearerToken = if (token.startsWith("Bearer ", ignoreCase = true)) token else "Bearer $token"
+    builder.addGrpcMetadataProvider(
+      AuthorizationGrpcMetadataProvider(
+        AuthorizationTokenSupplier { bearerToken },
+      ),
+    )
+  }
+  val stubs = WorkflowServiceStubs.newServiceStubs(builder.build())
+  lifecycle.register { stubs.shutdown() }
+  return stubs
+}
+
+private fun provideWorkflowClient(
+  config: TemporalConfig,
+  stubs: WorkflowServiceStubs,
+): WorkflowClient {
+  val objectMapper =
+    jacksonObjectMapper()
+      .findAndRegisterModules()
+      .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+  val dataConverter =
+    DefaultDataConverter
+      .newDefaultInstance()
+      .withPayloadConverterOverrides(JacksonJsonPayloadConverter(objectMapper))
+  val options =
+    WorkflowClientOptions
+      .newBuilder()
+      .setNamespace(config.namespace)
+      .setIdentity(config.identity)
+      .setDataConverter(dataConverter)
+      .setContextPropagators(listOf(GrafTelemetry.openTelemetryContextPropagator()))
+      .build()
+  return WorkflowClient.newInstance(stubs, options)
+}
+
+private fun loadOptionalServiceAccountToken(path: String?): String? =
+  path?.let {
+    runCatching {
+      FileInputStream(it).use { stream ->
+        stream.bufferedReader().readText().trim()
+      }
+    }.getOrNull()
+  }

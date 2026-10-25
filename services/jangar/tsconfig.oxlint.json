@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "~/*": ["./src/*"],
+      "@proompteng/agent-contracts": ["../../packages/agent-contracts/src/index.ts"],
+      "@proompteng/codex": ["../../packages/codex/src/index.ts"],
+      "@proompteng/codex/*": ["../../packages/codex/src/*"],
+      "@proompteng/otel": ["../../packages/otel/src/index.ts"],
+      "@proompteng/otel/*": ["../../packages/otel/src/*.ts"]
+    }
+  },
+  "include": ["./src/**/*"]
+}

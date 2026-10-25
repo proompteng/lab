@@ -1,0 +1,10 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: workflows-canonical-host
+  namespace: argo-workflows
+spec:
+  redirectRegex:
+    regex: ^https?://workflows\\.proompteng\\.ai(.*)
+    replacement: https://workflows.k8s.proompteng.ai$1
+    permanent: true

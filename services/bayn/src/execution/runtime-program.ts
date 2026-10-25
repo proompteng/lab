@@ -1,0 +1,338 @@
+import { Effect, Result } from 'effect'
+import type { CryptoTakerFeeBps } from '../broker/crypto-fees'
+import { instrumentMarket, MarketKind } from '../instruments'
+import { OrderSide } from './contracts'
+import type { JevExitTarget } from '../jev/exit'
+
+import { BrokerRead, type Account, type BrokerReadShape } from '../broker/alpaca/model'
+import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations/model'
+import { unknownOutcome } from '../broker/alpaca-mutations/model'
+import type { PersistedCapitalGrantStoreShape } from '../db/persisted-capital-grant'
+import { canonicalHashV1Result } from '../hash'
+import type { Policy } from '../risk'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { cancel, dryRunSubmit, recover, submit } from './coordinator'
+import { selectStoredIntent, validateStartedSubmitRiskDecision } from './coordinator-decisions'
+import type { Intent } from './contracts'
+import {
+  BrokerAccess,
+  type ExecutionCapitalLimits,
+  type ExecutionAuthority,
+  type GrantedCapitalAuthority,
+  type MutationExecutionAuthority,
+} from './authority'
+import { IntentStore, type IntentStoreService, type StoredIntent } from './intents/domain'
+import { MutationStore, type MutationStoreShape } from './mutations/model'
+import {
+  makeAuthorityGuardedBrokerMutation,
+  constrainExecutionCapitalLimits,
+  executionCapitalLimitsFromPolicy,
+  confirmExecutionBrokerState,
+  validateExecutionBrokerSubmitSnapshot,
+  validateCryptoEntryFeeCeiling,
+  validatePersistedCapitalGrantForSubmit,
+  type FinalSubmitAuthorizationFailure,
+} from './mutation-authority'
+import { WriterFenceError, type WriterFenceService } from './writer-fence'
+
+import type { BrokerStateCache, BrokerStateVersion } from './broker-state-cache'
+import { withObservedStage } from '../telemetry'
+
+export interface ExecutionProgramDependencies {
+  readonly brokerStateCache: BrokerStateCache
+  readonly verifyBrokerStateVersion: (
+    version: BrokerStateVersion,
+    intentId: string,
+    requireCryptoEntryFeeBound: boolean,
+  ) => Effect.Effect<CryptoTakerFeeBps | null, FinalSubmitAuthorizationFailure>
+  readonly brokerRead: BrokerReadShape
+  readonly brokerMutation: BrokerMutationShape
+  readonly intentStore: IntentStoreService
+  readonly mutationStore: MutationStoreShape
+  readonly writerFence: WriterFenceService
+  readonly persistedCapitalGrants: Pick<PersistedCapitalGrantStoreShape, 'lockForSubmit' | 'read'>
+  readonly riskPolicy: Policy
+  readonly readFinalExecutionRiskContext: (
+    observedAt: string,
+  ) => Effect.Effect<
+    { readonly dailyTradedNotionalMicros: string; readonly peakEquityMicros: string },
+    FinalSubmitAuthorizationFailure
+  >
+  readonly currentUtcInstant: Effect.Effect<string, FinalSubmitAuthorizationFailure>
+  /** The reviewed entry lease, checked at the final writer fence. */
+  readonly entrySubmitExpiresAt?: string
+  /** Close-only intents may finish recovery until this separate close lease expires. */
+  readonly closeSubmitExpiresAt?: string
+  readonly isCloseOnlyIntent?: (intentId: string) => Effect.Effect<boolean, FinalSubmitAuthorizationFailure>
+}
+
+interface FinalExecutionCapitalAuthorization {
+  readonly limits: ExecutionCapitalLimits
+  readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
+  readonly persistedAuthority?: GrantedCapitalAuthority
+}
+
+const executionPolicyLimits = (
+  authority: MutationExecutionAuthority,
+  intent: Intent,
+  dependencies: ExecutionProgramDependencies,
+): Result.Result<ExecutionCapitalLimits, FinalSubmitAuthorizationFailure> => {
+  const policyHash = canonicalHashV1Result(dependencies.riskPolicy)
+  if (Result.isFailure(policyHash)) {
+    return Result.fail({ _tag: 'ExecutionRiskPolicyInvalid' as const })
+  }
+  if (policyHash.success !== intent.policyHash) {
+    return Result.fail({
+      _tag: 'ExecutionRiskPolicyHashMismatch' as const,
+      expected: intent.policyHash,
+      observed: policyHash.success,
+    })
+  }
+  if (dependencies.riskPolicy.accountId !== authority.brokerIdentity.accountId) {
+    return Result.fail({
+      _tag: 'ExecutionRiskPolicyAccountMismatch' as const,
+      expected: authority.brokerIdentity.accountId,
+      observed: dependencies.riskPolicy.accountId,
+    })
+  }
+  return Result.succeed(executionCapitalLimitsFromPolicy(dependencies.riskPolicy))
+}
+
+const finalExecutionGrantAuthorization = (
+  authority: MutationExecutionAuthority,
+  intent: Intent,
+  dependencies: ExecutionProgramDependencies,
+): Effect.Effect<FinalExecutionCapitalAuthorization, FinalSubmitAuthorizationFailure> => {
+  const policyLimits = executionPolicyLimits(authority, intent, dependencies)
+  if (Result.isFailure(policyLimits)) return Effect.fail(policyLimits.failure)
+  const capital = authority.capitalAuthority
+  if (capital.persistedGrant === undefined) return Effect.succeed({ limits: policyLimits.success })
+  const grantHash = capital.persistedGrant.grant.grantHash
+  return Effect.gen(function* () {
+    const persisted = yield* dependencies.persistedCapitalGrants.lockForSubmit(grantHash)
+    if (persisted === undefined) {
+      return yield* Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const, grantHash })
+    }
+    const observedAt = yield* dependencies.currentUtcInstant
+    const validated = validatePersistedCapitalGrantForSubmit(authority, persisted, observedAt)
+    if (Result.isFailure(validated)) return yield* Effect.fail(validated.failure)
+    const grantLimits = validated.success.capitalAuthority.persistedGrant.grant.limits
+    return {
+      limits: constrainExecutionCapitalLimits(policyLimits.success, grantLimits),
+      hardCloseLimits: grantLimits,
+      persistedAuthority: persisted,
+    }
+  })
+}
+
+const finalBrokerAuthorization = (
+  authority: MutationExecutionAuthority,
+  capital: FinalExecutionCapitalAuthorization,
+  intent: Intent,
+  closeOnly: boolean,
+  dependencies: ExecutionProgramDependencies,
+): Effect.Effect<
+  { readonly account: Account; readonly entryCryptoFeeBound: CryptoTakerFeeBps | null },
+  FinalSubmitAuthorizationFailure
+> => {
+  return Effect.gen(function* () {
+    const cached = yield* dependencies.brokerStateCache.take(
+      yield* dependencies.currentUtcInstant,
+      dependencies.riskPolicy.maxBrokerStateAgeMs,
+    )
+    const entryCryptoFeeBound = yield* dependencies.verifyBrokerStateVersion(
+      cached.version,
+      intent.intentId,
+      !closeOnly && intent.side === OrderSide.Buy && instrumentMarket(intent.symbol) === MarketKind.Crypto,
+    )
+    const snapshot = yield* confirmExecutionBrokerState(cached, intent, dependencies.brokerRead).pipe(
+      withObservedStage('bayn.execution.broker-state-confirmation', { dependency: 'broker' }),
+    )
+    const riskContext = yield* dependencies.readFinalExecutionRiskContext(yield* dependencies.currentUtcInstant)
+    const observedAt = yield* dependencies.currentUtcInstant
+    const refreshedAuthority =
+      capital.persistedAuthority === undefined
+        ? Result.succeed(authority)
+        : validatePersistedCapitalGrantForSubmit(authority, capital.persistedAuthority, observedAt)
+    if (Result.isFailure(refreshedAuthority)) return yield* Effect.fail(refreshedAuthority.failure)
+    const validation = validateExecutionBrokerSubmitSnapshot(
+      refreshedAuthority.success,
+      capital.limits,
+      intent,
+      snapshot,
+      observedAt,
+      {
+        closeOnly,
+        maximumCryptoEntryTakerFeeBps: entryCryptoFeeBound,
+        maxBrokerStateAgeMs: dependencies.riskPolicy.maxBrokerStateAgeMs,
+        maxNetExposureMicros: dependencies.riskPolicy.maxNetExposureMicros,
+        currentDailyTradedNotionalMicros: riskContext.dailyTradedNotionalMicros,
+        maxDailyTradedNotionalMicros: dependencies.riskPolicy.maxDailyTradedNotionalMicros,
+        peakEquityMicros: riskContext.peakEquityMicros,
+        maxDrawdownMicros: dependencies.riskPolicy.maxDrawdownMicros,
+        ...(capital.hardCloseLimits === undefined ? {} : { hardCloseLimits: capital.hardCloseLimits }),
+      },
+    )
+    if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
+    return { account: snapshot.account, entryCryptoFeeBound }
+  })
+}
+
+const readFinalSubmitRisk = (intentId: string, dependencies: ExecutionProgramDependencies) =>
+  dependencies.intentStore
+    .read(intentId)
+    .pipe(Effect.flatMap((stored) => Effect.fromResult(selectStoredIntent(MutationOperation.Submit, intentId, stored))))
+
+const validateFinalSubmitTime = (
+  stored: StoredIntent,
+  dependencies: ExecutionProgramDependencies,
+  closeOnly: boolean,
+): Effect.Effect<string, FinalSubmitAuthorizationFailure> =>
+  Effect.gen(function* () {
+    const observedAt = yield* dependencies.currentUtcInstant
+    yield* Effect.fromResult(validateStartedSubmitRiskDecision(stored, Date.parse(observedAt)))
+    const expiresAt = closeOnly ? dependencies.closeSubmitExpiresAt : dependencies.entrySubmitExpiresAt
+    if (expiresAt === undefined || observedAt < expiresAt) return observedAt
+    return yield* Effect.fail({ _tag: 'ExecutionWindowExpired' as const, expiresAt, observedAt })
+  })
+
+export const authorizeFinalBrokerSubmit = <A, E, R>(
+  authority: MutationExecutionAuthority,
+  intent: Intent,
+  transmit: Effect.Effect<A, E, R>,
+  dependencies: ExecutionProgramDependencies,
+): Effect.Effect<A, E | FinalSubmitAuthorizationFailure, R> => {
+  let transmissionStarted = false
+  return dependencies.writerFence
+    .transaction(
+      Effect.gen(function* () {
+        const closeOnly =
+          dependencies.isCloseOnlyIntent !== undefined ? yield* dependencies.isCloseOnlyIntent(intent.intentId) : false
+        yield* dependencies.mutationStore.authorizeSubmit(intent.intentId, closeOnly)
+        // The writer-fence transaction owns Bayn's PostgreSQL writer for this interval, so the started intent bytes are
+        // stable until commit. Reuse them and re-evaluate only the time-bound risk decision after broker I/O.
+        const startedIntent = yield* readFinalSubmitRisk(intent.intentId, dependencies)
+        yield* validateFinalSubmitTime(startedIntent, dependencies, closeOnly)
+        const capital = yield* finalExecutionGrantAuthorization(authority, intent, dependencies)
+        yield* validateFinalSubmitTime(startedIntent, dependencies, closeOnly)
+        const broker = yield* finalBrokerAuthorization(authority, capital, intent, closeOnly, dependencies)
+        const transmitAt = yield* validateFinalSubmitTime(startedIntent, dependencies, closeOnly)
+        yield* Effect.fromResult(
+          validateCryptoEntryFeeCeiling(intent, broker.account, broker.entryCryptoFeeBound, closeOnly, transmitAt),
+        )
+        transmissionStarted = true
+        return yield* transmit
+      }),
+    )
+    .pipe(
+      Effect.mapError((cause) =>
+        transmissionStarted && cause instanceof WriterFenceError
+          ? unknownOutcome({
+              operation: MutationOperation.Submit,
+              message: 'final submit transaction failed after broker transmission began',
+              cause,
+            })
+          : cause,
+      ),
+    )
+}
+
+const provideCoordinatorDependencies = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  dependencies: ExecutionProgramDependencies,
+) =>
+  effect.pipe(
+    Effect.provideService(BrokerRead, dependencies.brokerRead),
+    Effect.provideService(BrokerMutation, dependencies.brokerMutation),
+    Effect.provideService(IntentStore, dependencies.intentStore),
+    Effect.provideService(MutationStore, dependencies.mutationStore),
+  )
+
+const earlierDefinedInstant = (left: string | undefined, right: string | undefined): string | undefined => {
+  if (left === undefined) return right
+  if (right === undefined) return left
+  return left < right ? left : right
+}
+
+const scopeSubmitDeadline = (
+  dependencies: ExecutionProgramDependencies,
+  submitExpiresAt: string | undefined,
+): ExecutionProgramDependencies => {
+  if (submitExpiresAt === undefined) return dependencies
+  const entrySubmitExpiresAt = earlierDefinedInstant(dependencies.entrySubmitExpiresAt, submitExpiresAt)
+  const closeSubmitExpiresAt = earlierDefinedInstant(dependencies.closeSubmitExpiresAt, submitExpiresAt)
+  return {
+    ...dependencies,
+    ...(entrySubmitExpiresAt === undefined ? {} : { entrySubmitExpiresAt }),
+    ...(closeSubmitExpiresAt === undefined ? {} : { closeSubmitExpiresAt }),
+  }
+}
+
+export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies: ExecutionProgramDependencies) => {
+  if (authority.brokerAccess !== BrokerAccess.Mutation) {
+    return Result.fail({
+      _tag: 'ExecutionProgramRequiresMutationAuthority' as const,
+      brokerAccess: authority.brokerAccess,
+    })
+  }
+  const mutationAuthority: MutationExecutionAuthority = authority
+  const coordinatorDependencies = (submitExpiresAt?: string): ExecutionProgramDependencies => {
+    const scoped = scopeSubmitDeadline(dependencies, submitExpiresAt)
+    return {
+      ...scoped,
+      brokerMutation: makeAuthorityGuardedBrokerMutation(authority, {
+        brokerMutation: scoped.brokerMutation,
+        finalSubmitAuthorization: (intent, transmit) =>
+          authorizeFinalBrokerSubmit(mutationAuthority, intent, transmit, scoped),
+      }),
+    }
+  }
+  const defaultCoordinatorDependencies = coordinatorDependencies()
+  const isCloseOnlyIntent = (intentId: string) =>
+    dependencies.isCloseOnlyIntent === undefined ? Effect.succeed(false) : dependencies.isCloseOnlyIntent(intentId)
+  return Result.succeed({
+    _tag: 'ExecutionProgram' as const,
+    schemaVersion: 'bayn.execution-program.v1' as const,
+    authority,
+    recordReconciliation: dependencies.brokerStateCache.record,
+    invalidateBrokerState: dependencies.brokerStateCache.invalidate,
+    dryRunSubmit: (intentId: string) =>
+      provideCoordinatorDependencies(dryRunSubmit(intentId), defaultCoordinatorDependencies),
+    submit: (intentId: string, consistencyDelayMs: number, submitExpiresAt: string) => {
+      const submissionDependencies = coordinatorDependencies(submitExpiresAt)
+      return isCloseOnlyIntent(intentId).pipe(
+        Effect.flatMap((closeOnly) =>
+          provideCoordinatorDependencies(submit(intentId, consistencyDelayMs, closeOnly), submissionDependencies),
+        ),
+      )
+    },
+    cancelProtectionOrder: (intentId: string, brokerOrderId: string, exitTarget: JevExitTarget | undefined) =>
+      dependencies.brokerStateCache.invalidate.pipe(
+        Effect.andThen(
+          Effect.gen(function* () {
+            const observedAt = yield* dependencies.currentUtcInstant
+            const allowed = yield* dependencies.intentStore.beginProtectionCancel(
+              intentId,
+              brokerOrderId,
+              observedAt,
+              exitTarget,
+            )
+            if (allowed) yield* defaultCoordinatorDependencies.brokerMutation.cancel(brokerOrderId)
+            return allowed
+          }),
+        ),
+      ),
+    cancel: (intentId: string, consistencyDelayMs: number) =>
+      dependencies.brokerStateCache.invalidate.pipe(
+        Effect.andThen(
+          provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), defaultCoordinatorDependencies),
+        ),
+      ),
+    recover: (intentId: string, operation: MutationOperation) =>
+      dependencies.brokerStateCache.invalidate.pipe(
+        Effect.andThen(provideCoordinatorDependencies(recover(intentId, operation), defaultCoordinatorDependencies)),
+      ),
+  })
+}
+
+export type ExecutionProgram = Result.Result.Success<ReturnType<typeof makeExecutionProgram>>

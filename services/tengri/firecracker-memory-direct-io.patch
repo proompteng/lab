@@ -1,0 +1,18 @@
+--- a/src/vmm/src/vstate/vm.rs
++++ b/src/vmm/src/vstate/vm.rs
+@@ -8,6 +8,7 @@
+ use std::collections::HashMap;
+ use std::fs::OpenOptions;
+ use std::io::Write;
++use std::os::unix::fs::OpenOptionsExt;
+ use std::path::Path;
+ use std::sync::atomic::{AtomicU32, Ordering};
+ use std::sync::{Arc, Barrier, Mutex, MutexGuard};
+@@ -582,6 +583,7 @@
+             .write(true)
+             .create(true)
+             .truncate(false)
++            .custom_flags(libc::O_DIRECT)
+             .open(mem_file_path)
+             .map_err(|err| MemoryBackingFile("open", err))?;
+ 

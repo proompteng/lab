@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-workflows-alloy
+  namespace: argo-workflows
+data:
+  config.river: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    discovery.kubernetes "argo_workflows" {
+      role = "pod"
+
+      namespaces {
+        names = ["argo-workflows"]
+      }
+
+      selectors {
+        role  = "pod"
+        field = "metadata.namespace=argo-workflows"
+      }
+    }
+
+    discovery.kubernetes "argo_workflows_endpoints" {
+      role = "endpoints"
+
+      namespaces {
+        names = ["argo-workflows"]
+      }
+
+      selectors {
+        role  = "endpoints"
+        field = "metadata.namespace=argo-workflows"
+      }
+    }
+
+    discovery.relabel "argo_workflows_metrics" {
+      targets = discovery.kubernetes.argo_workflows_endpoints.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_endpoint_port_name"]
+        regex         = "(?i)metrics"
+        action        = "keep"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_service_name"]
+        target_label  = "service"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+    }
+
+    prometheus.remote_write "mimir" {
+      endpoint {
+        url = "http://observability-mimir-gateway.observability.svc.cluster.local/api/v1/push"
+      }
+    }
+
+    prometheus.scrape "argo_workflows" {
+      job_name        = "argo-workflows"
+      scrape_interval = "30s"
+      targets         = discovery.relabel.argo_workflows_metrics.output
+      forward_to      = [prometheus.remote_write.mimir.receiver]
+    }
+
+    loki.source.kubernetes "argo_workflows" {
+      targets              = discovery.kubernetes.argo_workflows.targets
+      forward_to           = [loki.process.argo_workflows.receiver]
+    }
+
+    loki.process "argo_workflows" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          job = "argo-workflows",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
+      }
+    }

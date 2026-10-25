@@ -1,0 +1,680 @@
+import {
+  Cause,
+  Context,
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Metric,
+  Option,
+  Ref,
+  Result,
+  Scope,
+  ScopedRef,
+  type Tracer,
+} from 'effect'
+
+import { prepareAutonomousApplication, type ApplicationPlan } from '../app'
+import {
+  maximumRetainedJevObservationReferences,
+  type RetainedAutonomousCyclePassObservation,
+} from '../cycle/runner/pass-observation'
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import {
+  ExecutionControllerOutcome,
+  ExecutionControllerStatusStore,
+  executionControllerStatusHasCompletion,
+  type ExecutionControllerStatus,
+  type ExecutionControllerStatusStoreError,
+  type ExecutionControllerStatusStoreShape,
+} from '../execution/controller-status'
+import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
+import {
+  decodeExecutionAdvanceStepResult,
+  type ExecutionAdvanceStepResult,
+  type ExecutionControllerState,
+} from '../execution/controller'
+import { sha256 } from '../hash'
+import {
+  type RecoveryFirstCycleAdvance,
+  type RecoveryFirstCycleDriver,
+  type RecoveryFirstCycleDriverOwner,
+  type RecoveryFirstRuntime,
+} from '../observe-composition/model'
+import { currentOpenTelemetryLogAnnotations, currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
+import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate/restate-execution-controller'
+import { currentUtcInstant } from '../time'
+import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
+import { makeAutonomousServiceRuntime } from './autonomous-runtime'
+import {
+  AutonomousWorkerApplicationResourcesLive,
+  ExecutionControllerStatusResourceLive,
+  WorkerMarketProjectionLive,
+} from './resources'
+import { KafkaMarketProjection } from '../market-data/streaming/kafka'
+
+export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
+  readonly operation: 'binding' | 'dispose' | 'initialize'
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+export interface NativeExecutionRuntimeResource {
+  readonly config: ExecutionControllerConfig
+  readonly runtime: NativeExecutionRuntime
+}
+
+export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs: number): number =>
+  operationTimeoutMs * 5
+
+/**
+ * Restate's durable controller identity describes the orchestration protocol, not a deployable worker revision.
+ * Trading authority, strategy, market-data and risk bindings remain validated by each execution pass.
+ */
+export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v3')
+
+export type BoundRecoveryFirstCycleDriver = {
+  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner/model').CycleRunnerError>
+  readonly nextDelayMs: number
+}
+
+export class PublishedExecutionCycleDriver extends Context.Service<
+  PublishedExecutionCycleDriver,
+  RecoveryFirstCycleDriverSlot
+>()('@proompteng/bayn/composition/native-execution-runtime/PublishedExecutionCycleDriver') {}
+
+export type RecoveryFirstCycleDriverSlotState =
+  | { readonly _tag: 'Pending' }
+  | { readonly _tag: 'Ready'; readonly driver: BoundRecoveryFirstCycleDriver }
+  | { readonly _tag: 'Failed'; readonly error: NativeExecutionRuntimeError }
+
+export interface RecoveryFirstCycleDriverSlot {
+  readonly state: Ref.Ref<RecoveryFirstCycleDriverSlotState>
+  readonly ready: Deferred.Deferred<void, NativeExecutionRuntimeError>
+}
+
+interface ExecutionEffectRunner {
+  readonly runPromise: <A, E>(effect: Effect.Effect<A, E>, options?: { readonly signal?: AbortSignal }) => Promise<A>
+}
+
+const runtimeError = (
+  operation: NativeExecutionRuntimeError['operation'],
+  message: string,
+  cause?: unknown,
+): NativeExecutionRuntimeError => new NativeExecutionRuntimeError({ operation, message, cause })
+
+export const executionControllerConfig = (
+  plan: ApplicationPlan,
+): Result.Result<ExecutionControllerConfig, NativeExecutionRuntimeError> =>
+  Result.succeed({
+    controllerKey: plan.config.alpaca.identity.identityHash,
+    operationTimeoutMs: plan.config.operationTimeoutMs,
+    planHash: executionControllerPlanHash,
+    sourceRevision: plan.config.build.sourceRevision,
+  })
+
+const bindRecoveryFirstCycleDriver = (
+  driver: RecoveryFirstCycleDriver,
+): Effect.Effect<BoundRecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
+  Effect.context<RecoveryFirstRuntime>().pipe(
+    Effect.map((context) => ({
+      advance: Effect.gen(function* () {
+        const hashes = new Set<string>()
+        let complete = true
+        const observe = <A, E, R>(effect: Effect.Effect<A, E, R>, reference: (value: A) => string | null) =>
+          effect.pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                try {
+                  if (Exit.isFailure(exit)) {
+                    complete = false
+                    return
+                  }
+                  const hash = reference(exit.value)
+                  if (hash === null) return
+                  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
+                    complete = false
+                    return
+                  }
+                  if (hashes.has(hash)) return
+                  if (hashes.size === maximumRetainedJevObservationReferences) {
+                    complete = false
+                    return
+                  }
+                  hashes.add(hash)
+                } catch {
+                  // Evidence collection must not change the store result or trading behavior.
+                  complete = false
+                }
+              }),
+            ),
+          )
+        let observedContext = context
+        const observations = Context.getOption(context, CandidateObservationStore)
+        if (Option.isSome(observations)) {
+          const store = observations.value
+          observedContext = Context.add(observedContext, CandidateObservationStore, {
+            record: (observation) =>
+              observe(store.record(observation), () =>
+                observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,
+              ),
+            latestJevWindowEnd: (input) => observe(store.latestJevWindowEnd(input), () => null),
+          })
+        } else complete = false
+        const batches = Context.getOption(context, JevBatchStore)
+        if (Option.isSome(batches)) {
+          const store = batches.value
+          observedContext = Context.add(observedContext, JevBatchStore, {
+            read: (batchId) =>
+              observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
+            pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
+            begin: (plan, observation) =>
+              observe(store.begin(plan, observation), (batch) => batch.plan.observationHash),
+            finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
+          })
+        } else complete = false
+        const advanced = yield* Effect.provideContext(driver.advance, observedContext)
+        return {
+          ...advanced,
+          observation: {
+            ...advanced.observation,
+            jevObservationReferences: { hashes: [...hashes].sort(), complete },
+          },
+        }
+      }),
+      nextDelayMs: driver.nextDelayMs,
+    })),
+  )
+
+export const captureRecoveryFirstCycleDriver =
+  (slot: RecoveryFirstCycleDriverSlot): RecoveryFirstCycleDriverOwner =>
+  (driver) =>
+    bindRecoveryFirstCycleDriver(driver).pipe(
+      Effect.flatMap((bound) =>
+        Ref.set(slot.state, { _tag: 'Ready', driver: bound }).pipe(
+          Effect.andThen(Deferred.succeed(slot.ready, undefined)),
+          Effect.andThen(Effect.never),
+          Effect.ensuring(
+            Ref.update(slot.state, (state) =>
+              state._tag === 'Ready' && state.driver === bound ? ({ _tag: 'Pending' } as const) : state,
+            ),
+          ),
+        ),
+      ),
+    )
+
+export const failRecoveryFirstCycleDriverSlot = (
+  slot: RecoveryFirstCycleDriverSlot,
+  error: NativeExecutionRuntimeError,
+): Effect.Effect<void> =>
+  Ref.set(slot.state, { _tag: 'Failed', error }).pipe(Effect.andThen(Deferred.fail(slot.ready, error)), Effect.asVoid)
+
+export const readRecoveryFirstCycleDriverSlot = (
+  slot: RecoveryFirstCycleDriverSlot,
+): Effect.Effect<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError> =>
+  Ref.get(slot.state).pipe(
+    Effect.flatMap((state) => {
+      switch (state._tag) {
+        case 'Ready':
+          return Effect.succeed(state.driver)
+        case 'Failed':
+          return Effect.fail(state.error)
+        case 'Pending':
+          return Effect.fail(runtimeError('initialize', 'native execution runtime driver is unavailable'))
+      }
+    }),
+  )
+
+const projectionFailure = (cause: unknown): TransientExecutionFailure =>
+  new TransientExecutionFailure({
+    operation: 'advance',
+    message: 'execution controller status projection did not complete',
+    cause,
+  })
+
+const controllerOutcome = (outcome: 'Blocked' | 'Completed' | 'Waiting'): ExecutionControllerOutcome => {
+  switch (outcome) {
+    case 'Completed':
+      return ExecutionControllerOutcome.Completed
+    case 'Blocked':
+      return ExecutionControllerOutcome.Blocked
+    case 'Waiting':
+      return ExecutionControllerOutcome.Waiting
+  }
+}
+
+const persistControllerStatus = (
+  statusStore: ExecutionControllerStatusStoreShape,
+  status: ExecutionControllerStatus,
+): Effect.Effect<void, TransientExecutionFailure> =>
+  statusStore.project(status).pipe(
+    Effect.flatMap((projection) =>
+      projection._tag === 'Stale'
+        ? Effect.fail(projectionFailure('controller status rejected a stale execution projection'))
+        : Effect.void,
+    ),
+    Effect.mapError(projectionFailure),
+  )
+
+const retainedProjectedPass = (
+  controllerKey: string,
+  state: ExecutionControllerState,
+  stored: ExecutionControllerStatus | null,
+): RetainedAutonomousCyclePassObservation | undefined => {
+  const completion = state.lastCompletion
+  if (
+    completion === undefined ||
+    stored === null ||
+    !executionControllerStatusHasCompletion(stored) ||
+    stored.controllerKey !== controllerKey ||
+    stored.planHash !== state.planHash ||
+    stored.lastSequence !== completion.sequence ||
+    stored.lastOutcome !== completion.outcome ||
+    stored.lastReceiptHash !== completion.receiptHash ||
+    stored.completedAt !== completion.completedAt
+  ) {
+    return undefined
+  }
+  return stored.lastPass
+}
+
+export const projectExecutionControllerState = (
+  controllerKey: string,
+  state: ExecutionControllerState,
+  statusStore: ExecutionControllerStatusStoreShape,
+): Effect.Effect<void, TransientExecutionFailure> =>
+  statusStore.read(controllerKey).pipe(
+    Effect.mapError(projectionFailure),
+    Effect.flatMap((stored) => {
+      const completion = state.lastCompletion
+      const lastPass = retainedProjectedPass(controllerKey, state, stored)
+      return persistControllerStatus(statusStore, {
+        schemaVersion: 1,
+        controllerKey,
+        planHash: state.planHash,
+        active: state.active,
+        epoch: state.epoch,
+        nextSequence: state.nextSequence,
+        ...(completion === undefined
+          ? {}
+          : {
+              lastSequence: completion.sequence,
+              lastOutcome: completion.outcome,
+              lastReceiptHash: completion.receiptHash,
+              completedAt: completion.completedAt,
+              ...(state.nextDueAt === undefined ? {} : { nextDueAt: state.nextDueAt }),
+              ...(lastPass === undefined ? {} : { lastPass }),
+            }),
+      })
+    }),
+  )
+
+const replayProjectedAdvance = (
+  command: AdvanceExecutionCommand,
+  status: ExecutionControllerStatus | null,
+  planHash: string,
+): Result.Result<ExecutionAdvanceStepResult | null, TransientExecutionFailure> => {
+  if (status === null || status.epoch < command.epoch) return Result.succeed(null)
+  if (
+    status.controllerKey !== command.controllerKey ||
+    status.planHash !== planHash ||
+    status.epoch !== command.epoch
+  ) {
+    return Result.fail(projectionFailure('controller status has already advanced beyond this execution command'))
+  }
+  if (status.nextSequence <= command.sequence) return Result.succeed(null)
+  if (
+    status.nextSequence !== command.sequence + 1 ||
+    !executionControllerStatusHasCompletion(status) ||
+    status.lastSequence !== command.sequence
+  ) {
+    return Result.fail(projectionFailure('controller status has already advanced beyond this execution command'))
+  }
+  if (status.nextDueAt === undefined) {
+    return Result.fail(projectionFailure('replayed controller status does not retain its next due time'))
+  }
+  return Result.mapError(
+    decodeExecutionAdvanceStepResult({
+      completedAt: status.completedAt,
+      ...(status.lastPass === undefined ? {} : { observation: status.lastPass }),
+      outcome: {
+        _tag: status.lastOutcome,
+        receiptHash: status.lastReceiptHash,
+        nextDelayMs: Date.parse(status.nextDueAt) - Date.parse(status.completedAt),
+        ...(status.lastPass?.result === 'SUCCESS' && status.lastPass.nextWakeAt !== undefined
+          ? { nextWakeAt: status.lastPass.nextWakeAt }
+          : {}),
+      },
+    }),
+    projectionFailure,
+  )
+}
+
+const readProjectedAdvance = (
+  command: AdvanceExecutionCommand,
+  statusStore: ExecutionControllerStatusStoreShape,
+  planHash: string,
+): Effect.Effect<ExecutionAdvanceStepResult | null, TransientExecutionFailure> =>
+  statusStore.read(command.controllerKey).pipe(
+    Effect.mapError(projectionFailure),
+    Effect.flatMap((status) => Effect.fromResult(replayProjectedAdvance(command, status, planHash))),
+  )
+
+const recoverPersistedProjectionWinner = (
+  command: AdvanceExecutionCommand,
+  statusStore: ExecutionControllerStatusStoreShape,
+  planHash: string,
+  cause: ExecutionControllerStatusStoreError,
+): Effect.Effect<ExecutionAdvanceStepResult, TransientExecutionFailure> => {
+  if (cause.failure !== 'conflict' && cause.failure !== 'query') {
+    return Effect.fail(projectionFailure(cause))
+  }
+  return readProjectedAdvance(command, statusStore, planHash).pipe(
+    Effect.flatMap((replayed) =>
+      replayed === null
+        ? Effect.fail(projectionFailure(cause))
+        : Effect.logWarning('Bayn execution replay adopted the persisted completion winner').pipe(
+            Effect.annotateLogs({
+              controllerKey: command.controllerKey,
+              epoch: command.epoch,
+              sequence: command.sequence,
+              sourceRevision: command.sourceRevision,
+              receiptHash: replayed.outcome.receiptHash,
+            }),
+            Effect.as(replayed),
+          ),
+    ),
+  )
+}
+
+const advanceAndProject = (
+  command: AdvanceExecutionCommand,
+  driver: BoundRecoveryFirstCycleDriver,
+  statusStore: ExecutionControllerStatusStoreShape,
+  planHash: string,
+): Effect.Effect<ExecutionAdvanceStepResult, TransientExecutionFailure> =>
+  advanceExecutionOnce(command, driver).pipe(
+    Effect.bindTo('outcome'),
+    Effect.bind('completedAt', () => currentUtcInstant.pipe(Effect.mapError(projectionFailure))),
+    Effect.let(
+      'step',
+      ({ completedAt, outcome }): ExecutionAdvanceStepResult => ({
+        completedAt,
+        observation: outcome.observation,
+        outcome: {
+          _tag: controllerOutcome(outcome._tag),
+          receiptHash: outcome.receiptHash,
+          nextDelayMs:
+            outcome.nextWakeAt === undefined
+              ? outcome.nextDelayMs
+              : Math.min(outcome.nextDelayMs, Math.max(1, Date.parse(outcome.nextWakeAt) - Date.parse(completedAt))),
+          ...(outcome.nextWakeAt === undefined ? {} : { nextWakeAt: outcome.nextWakeAt }),
+        },
+      }),
+    ),
+    Effect.flatMap(({ completedAt, outcome, step }) =>
+      statusStore
+        .project({
+          schemaVersion: 1,
+          controllerKey: command.controllerKey,
+          planHash,
+          active: true,
+          epoch: command.epoch,
+          nextSequence: command.sequence + 1,
+          lastSequence: command.sequence,
+          lastOutcome: controllerOutcome(outcome._tag),
+          lastReceiptHash: outcome.receiptHash,
+          completedAt,
+          nextDueAt: new Date(Date.parse(completedAt) + step.outcome.nextDelayMs).toISOString(),
+          lastPass: outcome.observation,
+        })
+        .pipe(
+          Effect.flatMap((projection) =>
+            projection._tag === 'Stale'
+              ? Effect.fail(projectionFailure('controller status rejected a stale execution completion'))
+              : Effect.succeed(step),
+          ),
+          Effect.catchTag('ExecutionControllerStatusStoreError', (cause) =>
+            recoverPersistedProjectionWinner(command, statusStore, planHash, cause),
+          ),
+        ),
+    ),
+  )
+
+export const executeNativeExecutionAdvance = (
+  command: AdvanceExecutionCommand,
+  driver: BoundRecoveryFirstCycleDriver,
+  statusStore: ExecutionControllerStatusStoreShape,
+  planHash: string,
+): Effect.Effect<ExecutionAdvanceStepResult, TransientExecutionFailure> =>
+  readProjectedAdvance(command, statusStore, planHash).pipe(
+    Effect.flatMap((replayed) =>
+      replayed === null ? advanceAndProject(command, driver, statusStore, planHash) : Effect.succeed(replayed),
+    ),
+  )
+
+const logEffect = (
+  level: Parameters<NativeExecutionRuntime['log']>[0],
+  message: string,
+  annotations: Readonly<Record<string, string | number | boolean>>,
+): Effect.Effect<void> => {
+  const log = level === 'info' ? Effect.logInfo : level === 'warning' ? Effect.logWarning : Effect.logError
+  return log(message).pipe(
+    Effect.annotateLogs({
+      ...annotations,
+      ...currentOpenTelemetryLogAnnotations(),
+      service: 'bayn-execution-controller',
+    }),
+  )
+}
+
+const startRuntimePreparation = (plan: ApplicationPlan, slot: RecoveryFirstCycleDriverSlot) =>
+  makeAutonomousServiceRuntime(plan, {
+    ownCycleDriver: captureRecoveryFirstCycleDriver(slot),
+  }).pipe(
+    Effect.flatMap(({ runtime }) => prepareAutonomousApplication(runtime)),
+    Effect.flatMap(({ cycleFiber }) =>
+      Fiber.await(cycleFiber).pipe(
+        Effect.flatMap((exit) =>
+          failRecoveryFirstCycleDriverSlot(
+            slot,
+            runtimeError('initialize', 'native execution cycle stopped before the worker was disposed', exit),
+          ),
+        ),
+      ),
+    ),
+    Effect.scoped,
+    Effect.catchCause((cause) =>
+      failRecoveryFirstCycleDriverSlot(
+        slot,
+        runtimeError('initialize', 'native execution runtime preparation failed', cause),
+      ),
+    ),
+  )
+
+export const awaitNativeExecutionRuntimeDriver = (
+  slot: RecoveryFirstCycleDriverSlot,
+  operationTimeoutMs: number,
+): Effect.Effect<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError> =>
+  Deferred.await(slot.ready).pipe(
+    Effect.timeoutOrElse({
+      duration: nativeExecutionRuntimeInitializationTimeoutMs(operationTimeoutMs),
+      orElse: () =>
+        Effect.fail(runtimeError('initialize', 'native execution runtime did not publish its cycle driver in time')),
+    }),
+    Effect.andThen(readRecoveryFirstCycleDriverSlot(slot)),
+  )
+
+export const makePublishedExecutionCycleDriverLive = <R>(
+  operationTimeoutMs: number,
+  prepare: (slot: RecoveryFirstCycleDriverSlot) => Effect.Effect<void, never, R>,
+) =>
+  Layer.effect(
+    PublishedExecutionCycleDriver,
+    Effect.gen(function* () {
+      const slot: RecoveryFirstCycleDriverSlot = {
+        state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
+        ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
+      }
+      yield* prepare(slot).pipe(Effect.forkScoped({ startImmediately: true }))
+      yield* awaitNativeExecutionRuntimeDriver(slot, operationTimeoutMs)
+      return slot
+    }),
+  )
+
+export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlan) =>
+  makePublishedExecutionCycleDriverLive(plan.config.operationTimeoutMs, (slot) => startRuntimePreparation(plan, slot))
+
+type NativeExecutionManagedServices = PublishedExecutionCycleDriver | ExecutionControllerStatusStore
+
+type NativeExecutionManagedRuntime<R, E> = ManagedRuntime.ManagedRuntime<R | NativeExecutionManagedServices, E>
+type NativeExecutionProjectionRuntime<R, E> = ManagedRuntime.ManagedRuntime<R | ExecutionControllerStatusStore, E>
+
+const runManagedNativeExecutionAdvance = <R, E>(
+  executionRunner: NativeExecutionManagedRuntime<R, E>,
+  command: AdvanceExecutionCommand,
+  signal: AbortSignal,
+  planHash: string,
+  parent: Tracer.ExternalSpan | undefined,
+): Promise<ExecutionAdvanceStepResult> => {
+  const advance = Effect.all({
+    driverSlot: PublishedExecutionCycleDriver,
+    statusStore: ExecutionControllerStatusStore,
+  }).pipe(
+    Effect.flatMap(({ driverSlot, statusStore }) =>
+      readRecoveryFirstCycleDriverSlot(driverSlot).pipe(
+        Effect.flatMap((driver) => executeNativeExecutionAdvance(command, driver, statusStore, planHash)),
+      ),
+    ),
+  )
+  return executionRunner.runPromise(parent === undefined ? advance : advance.pipe(Effect.withParentSpan(parent)), {
+    signal,
+  })
+}
+
+const runManagedControllerStateProjection = <R, E>(
+  projectionRunner: NativeExecutionProjectionRuntime<R, E>,
+  controllerKey: string,
+  state: ExecutionControllerState,
+  signal: AbortSignal,
+): Promise<void> =>
+  projectionRunner.runPromise(
+    ExecutionControllerStatusStore.pipe(
+      Effect.flatMap((statusStore) => projectExecutionControllerState(controllerKey, state, statusStore)),
+    ),
+    { signal },
+  )
+
+const ownManagedRuntime = <R, E>(
+  managed: ManagedRuntime.ManagedRuntime<R, E>,
+): Effect.Effect<ManagedRuntime.ManagedRuntime<R, E>, never, Scope.Scope> =>
+  Effect.acquireRelease(Effect.succeed(managed), (runtime) => runtime.disposeEffect)
+
+export const initializeNativeExecutionProjectionRuntime = <R, E>(
+  projectionRunner: NativeExecutionProjectionRuntime<R, E>,
+): Effect.Effect<void, NativeExecutionRuntimeError> =>
+  Effect.promise((signal) =>
+    projectionRunner.runPromiseExit(ExecutionControllerStatusStore.pipe(Effect.asVoid), { signal }),
+  ).pipe(
+    Effect.flatMap((exit) =>
+      Exit.isSuccess(exit)
+        ? Effect.void
+        : Effect.failCause(
+            Cause.map(exit.cause, (cause) =>
+              runtimeError('initialize', 'native execution controller persistence bootstrap failed', cause),
+            ),
+          ),
+    ),
+  )
+
+export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, ProjectionR, ProjectionE>(
+  executionRuntimes: ScopedRef.ScopedRef<NativeExecutionManagedRuntime<R, E>>,
+  executionResources: Layer.Layer<R | NativeExecutionManagedServices, E>,
+  projectionRunner: NativeExecutionProjectionRuntime<ProjectionR, ProjectionE>,
+  hostRunner: ExecutionEffectRunner,
+  planHash: string,
+): NativeExecutionRuntime => {
+  const replaceFailedRuntime = (cause: unknown): Promise<never> =>
+    hostRunner
+      .runPromise(
+        ScopedRef.set(executionRuntimes, ownManagedRuntime(ManagedRuntime.make(executionResources))).pipe(
+          Effect.uninterruptible,
+        ),
+      )
+      .then(() => {
+        throw cause
+      })
+
+  return {
+    advance: (command, signal) => {
+      const parent = currentOpenTelemetryParentSpan()
+      const executionRunner = ScopedRef.getUnsafe(executionRuntimes)
+      return executionRunner
+        .runPromise(Effect.void, { signal })
+        .catch(replaceFailedRuntime)
+        .then(() =>
+          runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash, parent).catch((cause: unknown) =>
+            cause instanceof NativeExecutionRuntimeError && cause.operation === 'initialize'
+              ? replaceFailedRuntime(cause)
+              : Promise.reject(cause),
+          ),
+        )
+    },
+    log: (level, message, annotations) => hostRunner.runPromise(logEffect(level, message, annotations)),
+    projectState: (controllerKey, state, signal) =>
+      runManagedControllerStateProjection(projectionRunner, controllerKey, state, signal),
+  }
+}
+
+export const prewarmNativeMarketProjection = <E, R>(projection: Layer.Layer<KafkaMarketProjection, E, R>) =>
+  Layer.build(projection).pipe(
+    Effect.map((context) => Layer.succeed(KafkaMarketProjection, Context.get(context, KafkaMarketProjection))),
+    Effect.mapError((cause) => runtimeError('initialize', 'read-only market projection prewarm failed', cause)),
+  )
+
+export const acquireNativeExecutionRuntime = (
+  plan: ApplicationPlan,
+): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const config = yield* Effect.fromResult(executionControllerConfig(plan))
+    const metricIdentity = Layer.mergeAll(
+      Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
+      Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
+    )
+    const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan))
+    const sharedResources = Layer.merge(
+      AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
+      ExecutionControllerStatusResourceLive(plan.config),
+    ).pipe(
+      Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+      Layer.provideMerge(metricIdentity),
+    )
+    const executionResources = Layer.merge(
+      sharedResources,
+      PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
+    )
+    // Kafka is independently supervised in the server scope; bootstrap readiness still gates signal reads.
+    // Bootstrap publishes the independent broker observation before activating this lazy execution driver.
+    // Endpoint registration itself neither acquires trading state nor grants execution authority.
+    const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
+
+    const projectionManaged = yield* ownManagedRuntime(
+      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config).pipe(Layer.provideMerge(metricIdentity))),
+    )
+    yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
+    const logManaged = yield* ownManagedRuntime(
+      ManagedRuntime.make(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+    )
+    const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+      managed,
+      executionResources,
+      projectionManaged,
+      logManaged,
+      config.planHash,
+    )
+    return { config, runtime }
+  })

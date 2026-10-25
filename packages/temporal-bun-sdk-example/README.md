@@ -1,0 +1,96 @@
+# temporal-bun-sdk-example
+
+Sample project maintained inside the `proompteng/lab` monorepo. It demonstrates
+how to run the pure TypeScript Temporal Bun SDK with the deterministic workflow
+context, Effect-powered activities, and CLI tooling.
+
+This package uses monorepo-only `workspace:*` dependencies. External users
+should scaffold a standalone project with:
+
+```bash
+bunx @proompteng/temporal-bun-sdk init hello-worker
+cd hello-worker
+bun install
+```
+
+## Requirements
+
+- **Runtime:** Bun ≥ 1.4.0 with `effect` dependency available (installed via `bun install`).
+- **Temporal access:** Temporal CLI ≥ 1.4 (install via `curl -sSfL https://temporal.download/cli.sh | bash -s -- -b /usr/local/bin`).
+- **Configuration:** Environment variables consumed by `loadTemporalConfig` (see below).
+- **Effect-first integration:** The worker and sample workflows rely on the
+  Effect runtime:
+  - Do not disable the deterministic context unless explicitly testing legacy paths.
+  - Activities/workflows should remain within Effect handlers to preserve replay guarantees.
+- **Runtime boundary:** The example targets the Bun/TypeScript runtime
+  exclusively; legacy native bridge flags are not supported.
+
+## Quickstart
+
+1. Install dependencies:
+   ```bash
+   bun install
+   ```
+2. Export your Temporal connection details (or create an `.env` file):
+   ```bash
+   export TEMPORAL_ADDRESS=127.0.0.1:7233
+   export TEMPORAL_NAMESPACE=default
+   export TEMPORAL_TASK_QUEUE=prix
+   # optional heartbeat tuning
+    export TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000
+    export TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000
+   ```
+3. (Optional) Start the Temporal CLI dev server:
+   ```bash
+   temporal server start-dev --headless
+   ```
+4. Run the worker:
+   ```bash
+   bun run dev
+   ```
+   The worker loads workflows from `src/workflows/index.ts` and activities from `src/activities/index.ts`.
+
+5. Trigger the sample workflow using the Temporal CLI while the worker is running:
+   ```bash
+   temporal workflow start \
+     --task-queue "$TEMPORAL_TASK_QUEUE" \
+     --workflow-type helloWorkflow \
+     --input '"Codex"'
+   ```
+   The worker logs the request and completes after a short delay.
+
+## TLS & API Keys
+- Provide `TEMPORAL_API_KEY=<secret>` when targeting Temporal Cloud.
+- For mTLS, set `TEMPORAL_TLS_CA_PATH`, `TEMPORAL_TLS_CERT_PATH`, and `TEMPORAL_TLS_KEY_PATH` to PEM-encoded files.
+- Use `TEMPORAL_TLS_SERVER_NAME=<hostname>` if the certificate requires an SNI override.
+- Allow self-signed certificates during testing with `TEMPORAL_ALLOW_INSECURE=1`.
+- Deterministic context stays enabled by default; there is no legacy bypass mode.
+
+## Effect Patterns in the Example
+
+- `src/workflows/index.ts` exports workflows built with `defineWorkflow` and Effect
+  combinators. Verify all asynchronous logic is expressed through `Effect` to keep
+  replay deterministic.
+- Activities (`src/activities/index.ts`) should use the lifecycle helpers
+  (`currentActivityContext().heartbeat`, `throwIfCancelled`) described in
+  `packages/temporal-bun-sdk/src/activities/lifecycle.ts`.
+- Advanced usage (replay, sticky cache, diagnostics) will require the shared Effect
+  layers documented in `packages/temporal-bun-sdk/docs/production-design.md`.
+  Track TODO markers (`TBS-001`, `TBS-002`, etc.) before extending the example.
+
+## Activity lifecycle & retries
+
+Activities can inspect `currentActivityContext()` to emit heartbeats, observe cancellation, and read attempt metadata. Heartbeats are throttled via `TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS` and retried until `TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS` elapses, so long-running handlers simply call `await ctx.heartbeat({ progress })` inside their loops. When you configure `retry` on `activities.schedule(...)`, WorkerRuntime now enforces the policy locally (initial interval, backoff coefficient, maximum interval, maximum attempts, and non-retryable error types) before surfacing a terminal failure, and the last heartbeat payload is attached to cancellation/failure responses for richer diagnostics.
+
+## Packaging a Docker Image
+```bash
+bun run docker:build --tag temporal-bun-sdk-example:latest
+```
+The script produces a multi-stage image that runs `bun install`, bundles the TypeScript runtime artefacts from `@proompteng/temporal-bun-sdk`, and sets up the worker entrypoint.
+
+## Cleanup
+- Stop the worker with `Ctrl+C`.
+- Shut down the dev server (if started) with `temporal server stop-dev`.
+
+## Troubleshooting
+See [`../temporal-bun-sdk/docs/troubleshooting.md`](../temporal-bun-sdk/docs/troubleshooting.md) for bridge loading, TLS, and CI tips.

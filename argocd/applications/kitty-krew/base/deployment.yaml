@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kitty-krew
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kitty-krew
+  template:
+    metadata:
+      labels:
+        app: kitty-krew
+    spec:
+      containers:
+        - name: kitty-krew
+          image: registry.ide-newton.ts.net/lab/kitty-krew
+          ports:
+            - containerPort: 3000
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+          envFrom:
+            - configMapRef:
+                name: kitty-krew-config
+          volumeMounts:
+            - name: logs-volume
+              mountPath: /app/logs
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: logs-volume
+          emptyDir: {}

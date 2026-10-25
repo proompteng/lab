@@ -1,0 +1,134 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: torghut.hyperliquid.raw.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 604800000
+    cleanup.policy: delete
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: torghut.hyperliquid.markets.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 2592000000
+    cleanup.policy: compact,delete
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: torghut.hyperliquid.trades.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 3024000000
+    cleanup.policy: delete
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: torghut.hyperliquid.books.l2.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 604800000
+    cleanup.policy: delete
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: torghut.hyperliquid.bbo.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 3024000000
+    cleanup.policy: delete
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: torghut.hyperliquid.candles.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 3024000000
+    cleanup.policy: delete
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: torghut.hyperliquid.asset-ctx.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 3024000000
+    cleanup.policy: delete
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: torghut.hyperliquid.funding.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 3024000000
+    cleanup.policy: delete
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: torghut.hyperliquid.status.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    compression.type: lz4
+    retention.ms: 604800000
+    cleanup.policy: compact,delete

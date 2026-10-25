@@ -1,0 +1,601 @@
+{
+  "sdkVersion": "0.11.5",
+  "effectVersion": "3.22.1",
+  "sourceCommit": "d5e3304fbf53672b8a5faec9097ca3c6e0eaed72",
+  "scenarios": {
+    "parallelFirst": {
+      "commands": [
+        {
+          "$typeName": "temporal.api.command.v1.Command",
+          "commandType": 1,
+          "eventGroupMarkers": [],
+          "attributes": {
+            "case": "scheduleActivityTaskCommandAttributes",
+            "value": {
+              "$typeName": "temporal.api.command.v1.ScheduleActivityTaskCommandAttributes",
+              "activityId": "A",
+              "activityType": {
+                "$typeName": "temporal.api.common.v1.ActivityType",
+                "name": "A"
+              },
+              "taskQueue": {
+                "$typeName": "temporal.api.taskqueue.v1.TaskQueue",
+                "name": "test",
+                "kind": 0,
+                "normalName": ""
+              },
+              "scheduleToCloseTimeout": {
+                "$typeName": "google.protobuf.Duration",
+                "seconds": "10",
+                "nanos": 0
+              },
+              "startToCloseTimeout": {
+                "$typeName": "google.protobuf.Duration",
+                "seconds": "10",
+                "nanos": 0
+              },
+              "requestEagerExecution": false,
+              "useWorkflowBuildId": true
+            }
+          }
+        },
+        {
+          "$typeName": "temporal.api.command.v1.Command",
+          "commandType": 1,
+          "eventGroupMarkers": [],
+          "attributes": {
+            "case": "scheduleActivityTaskCommandAttributes",
+            "value": {
+              "$typeName": "temporal.api.command.v1.ScheduleActivityTaskCommandAttributes",
+              "activityId": "B",
+              "activityType": {
+                "$typeName": "temporal.api.common.v1.ActivityType",
+                "name": "B"
+              },
+              "taskQueue": {
+                "$typeName": "temporal.api.taskqueue.v1.TaskQueue",
+                "name": "test",
+                "kind": 0,
+                "normalName": ""
+              },
+              "scheduleToCloseTimeout": {
+                "$typeName": "google.protobuf.Duration",
+                "seconds": "10",
+                "nanos": 0
+              },
+              "startToCloseTimeout": {
+                "$typeName": "google.protobuf.Duration",
+                "seconds": "10",
+                "nanos": 0
+              },
+              "requestEagerExecution": false,
+              "useWorkflowBuildId": true
+            }
+          }
+        }
+      ],
+      "intents": [
+        {
+          "id": "schedule-activity-0",
+          "kind": "schedule-activity",
+          "sequence": 0,
+          "activityType": "A",
+          "activityId": "A",
+          "taskQueue": "test",
+          "input": [],
+          "timeouts": {
+            "scheduleToCloseTimeoutMs": 10000,
+            "startToCloseTimeoutMs": 10000
+          }
+        },
+        {
+          "id": "schedule-activity-1",
+          "kind": "schedule-activity",
+          "sequence": 1,
+          "activityType": "B",
+          "activityId": "B",
+          "taskQueue": "test",
+          "input": [],
+          "timeouts": {
+            "scheduleToCloseTimeoutMs": 10000,
+            "startToCloseTimeoutMs": 10000
+          }
+        }
+      ],
+      "determinismState": {
+        "commandHistory": [
+          {
+            "intent": {
+              "id": "schedule-activity-0",
+              "kind": "schedule-activity",
+              "sequence": 0,
+              "activityType": "A",
+              "activityId": "A",
+              "taskQueue": "test",
+              "input": [],
+              "timeouts": {
+                "scheduleToCloseTimeoutMs": 10000,
+                "startToCloseTimeoutMs": 10000
+              }
+            }
+          },
+          {
+            "intent": {
+              "id": "schedule-activity-1",
+              "kind": "schedule-activity",
+              "sequence": 1,
+              "activityType": "B",
+              "activityId": "B",
+              "taskQueue": "test",
+              "input": [],
+              "timeouts": {
+                "scheduleToCloseTimeoutMs": 10000,
+                "startToCloseTimeoutMs": 10000
+              }
+            }
+          }
+        ],
+        "randomValues": [],
+        "timeValues": [
+          1791156597121,
+          1791156597123,
+          1791156597125,
+          1791156597125
+        ],
+        "signals": [],
+        "queries": []
+      },
+      "completion": "pending",
+      "queryResults": []
+    },
+    "parallelSecond": {
+      "commands": [
+        {
+          "$typeName": "temporal.api.command.v1.Command",
+          "commandType": 1,
+          "eventGroupMarkers": [],
+          "attributes": {
+            "case": "scheduleActivityTaskCommandAttributes",
+            "value": {
+              "$typeName": "temporal.api.command.v1.ScheduleActivityTaskCommandAttributes",
+              "activityId": "C",
+              "activityType": {
+                "$typeName": "temporal.api.common.v1.ActivityType",
+                "name": "C"
+              },
+              "taskQueue": {
+                "$typeName": "temporal.api.taskqueue.v1.TaskQueue",
+                "name": "test",
+                "kind": 0,
+                "normalName": ""
+              },
+              "scheduleToCloseTimeout": {
+                "$typeName": "google.protobuf.Duration",
+                "seconds": "10",
+                "nanos": 0
+              },
+              "startToCloseTimeout": {
+                "$typeName": "google.protobuf.Duration",
+                "seconds": "10",
+                "nanos": 0
+              },
+              "requestEagerExecution": false,
+              "useWorkflowBuildId": true
+            }
+          }
+        }
+      ],
+      "intents": [
+        {
+          "id": "schedule-activity-2",
+          "kind": "schedule-activity",
+          "sequence": 2,
+          "activityType": "C",
+          "activityId": "C",
+          "taskQueue": "test",
+          "input": [],
+          "timeouts": {
+            "scheduleToCloseTimeoutMs": 10000,
+            "startToCloseTimeoutMs": 10000
+          }
+        }
+      ],
+      "determinismState": {
+        "commandHistory": [
+          {
+            "intent": {
+              "id": "schedule-activity-0",
+              "kind": "schedule-activity",
+              "sequence": 0,
+              "activityType": "A",
+              "activityId": "A",
+              "taskQueue": "test",
+              "input": [],
+              "timeouts": {
+                "scheduleToCloseTimeoutMs": 10000,
+                "startToCloseTimeoutMs": 10000
+              }
+            }
+          },
+          {
+            "intent": {
+              "id": "schedule-activity-1",
+              "kind": "schedule-activity",
+              "sequence": 1,
+              "activityType": "B",
+              "activityId": "B",
+              "taskQueue": "test",
+              "input": [],
+              "timeouts": {
+                "scheduleToCloseTimeoutMs": 10000,
+                "startToCloseTimeoutMs": 10000
+              }
+            }
+          },
+          {
+            "intent": {
+              "id": "schedule-activity-2",
+              "kind": "schedule-activity",
+              "sequence": 2,
+              "activityType": "C",
+              "activityId": "C",
+              "taskQueue": "test",
+              "input": [],
+              "timeouts": {
+                "scheduleToCloseTimeoutMs": 10000,
+                "startToCloseTimeoutMs": 10000
+              }
+            }
+          }
+        ],
+        "randomValues": [],
+        "timeValues": [
+          1791156597121,
+          1791156597123,
+          1791156597125,
+          1791156597125
+        ],
+        "signals": [],
+        "queries": []
+      },
+      "completion": "pending",
+      "queryResults": []
+    },
+    "parallelFinal": {
+      "commands": [
+        {
+          "$typeName": "temporal.api.command.v1.Command",
+          "commandType": 4,
+          "eventGroupMarkers": [],
+          "attributes": {
+            "case": "completeWorkflowExecutionCommandAttributes",
+            "value": {
+              "$typeName": "temporal.api.command.v1.CompleteWorkflowExecutionCommandAttributes",
+              "result": {
+                "$typeName": "temporal.api.common.v1.Payloads",
+                "payloads": [
+                  {
+                    "$typeName": "temporal.api.common.v1.Payload",
+                    "metadata": {
+                      "encoding": {
+                        "0": 106,
+                        "1": 115,
+                        "2": 111,
+                        "3": 110,
+                        "4": 47,
+                        "5": 112,
+                        "6": 108,
+                        "7": 97,
+                        "8": 105,
+                        "9": 110
+                      }
+                    },
+                    "data": {
+                      "0": 91,
+                      "1": 34,
+                      "2": 67,
+                      "3": 34,
+                      "4": 44,
+                      "5": 34,
+                      "6": 66,
+                      "7": 34,
+                      "8": 93
+                    },
+                    "externalPayloads": []
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "intents": [],
+      "determinismState": {
+        "commandHistory": [
+          {
+            "intent": {
+              "id": "schedule-activity-0",
+              "kind": "schedule-activity",
+              "sequence": 0,
+              "activityType": "A",
+              "activityId": "A",
+              "taskQueue": "test",
+              "input": [],
+              "timeouts": {
+                "scheduleToCloseTimeoutMs": 10000,
+                "startToCloseTimeoutMs": 10000
+              }
+            }
+          },
+          {
+            "intent": {
+              "id": "schedule-activity-1",
+              "kind": "schedule-activity",
+              "sequence": 1,
+              "activityType": "B",
+              "activityId": "B",
+              "taskQueue": "test",
+              "input": [],
+              "timeouts": {
+                "scheduleToCloseTimeoutMs": 10000,
+                "startToCloseTimeoutMs": 10000
+              }
+            }
+          },
+          {
+            "intent": {
+              "id": "schedule-activity-2",
+              "kind": "schedule-activity",
+              "sequence": 2,
+              "activityType": "C",
+              "activityId": "C",
+              "taskQueue": "test",
+              "input": [],
+              "timeouts": {
+                "scheduleToCloseTimeoutMs": 10000,
+                "startToCloseTimeoutMs": 10000
+              }
+            }
+          }
+        ],
+        "randomValues": [
+          0.8362003998039286
+        ],
+        "timeValues": [
+          1791156597121,
+          1791156597123,
+          1791156597125,
+          1791156597125,
+          1791156597135,
+          1791156597136,
+          1791156597136,
+          1791156597138
+        ],
+        "signals": [],
+        "queries": []
+      },
+      "completion": "completed",
+      "result": [
+        "C",
+        "B"
+      ],
+      "queryResults": []
+    },
+    "signalFirst": {
+      "commands": [
+        {
+          "$typeName": "temporal.api.command.v1.Command",
+          "commandType": 1,
+          "eventGroupMarkers": [],
+          "attributes": {
+            "case": "scheduleActivityTaskCommandAttributes",
+            "value": {
+              "$typeName": "temporal.api.command.v1.ScheduleActivityTaskCommandAttributes",
+              "activityId": "echo",
+              "activityType": {
+                "$typeName": "temporal.api.common.v1.ActivityType",
+                "name": "echo"
+              },
+              "taskQueue": {
+                "$typeName": "temporal.api.taskqueue.v1.TaskQueue",
+                "name": "test",
+                "kind": 0,
+                "normalName": ""
+              },
+              "input": {
+                "$typeName": "temporal.api.common.v1.Payloads",
+                "payloads": [
+                  {
+                    "$typeName": "temporal.api.common.v1.Payload",
+                    "metadata": {
+                      "encoding": {
+                        "0": 106,
+                        "1": 115,
+                        "2": 111,
+                        "3": 110,
+                        "4": 47,
+                        "5": 112,
+                        "6": 108,
+                        "7": 97,
+                        "8": 105,
+                        "9": 110
+                      }
+                    },
+                    "data": {
+                      "0": 91,
+                      "1": 34,
+                      "2": 65,
+                      "3": 34,
+                      "4": 93
+                    },
+                    "externalPayloads": []
+                  }
+                ]
+              },
+              "scheduleToCloseTimeout": {
+                "$typeName": "google.protobuf.Duration",
+                "seconds": "10",
+                "nanos": 0
+              },
+              "startToCloseTimeout": {
+                "$typeName": "google.protobuf.Duration",
+                "seconds": "10",
+                "nanos": 0
+              },
+              "requestEagerExecution": false,
+              "useWorkflowBuildId": true
+            }
+          }
+        }
+      ],
+      "intents": [
+        {
+          "id": "schedule-activity-0",
+          "kind": "schedule-activity",
+          "sequence": 0,
+          "activityType": "echo",
+          "activityId": "echo",
+          "taskQueue": "test",
+          "input": [
+            [
+              "A"
+            ]
+          ],
+          "timeouts": {
+            "scheduleToCloseTimeoutMs": 10000,
+            "startToCloseTimeoutMs": 10000
+          }
+        }
+      ],
+      "determinismState": {
+        "commandHistory": [
+          {
+            "intent": {
+              "id": "schedule-activity-0",
+              "kind": "schedule-activity",
+              "sequence": 0,
+              "activityType": "echo",
+              "activityId": "echo",
+              "taskQueue": "test",
+              "input": [
+                [
+                  "A"
+                ]
+              ],
+              "timeouts": {
+                "scheduleToCloseTimeoutMs": 10000,
+                "startToCloseTimeoutMs": 10000
+              }
+            }
+          }
+        ],
+        "randomValues": [],
+        "timeValues": [
+          1791156597138
+        ],
+        "signals": [
+          {
+            "signalName": "item",
+            "handlerName": "drain",
+            "payloadHash": "\"A\"",
+            "eventId": "2",
+            "workflowTaskCompletedEventId": null,
+            "identity": null
+          }
+        ],
+        "queries": []
+      },
+      "completion": "pending",
+      "queryResults": []
+    },
+    "signalFinal": {
+      "commands": [
+        {
+          "$typeName": "temporal.api.command.v1.Command",
+          "commandType": 4,
+          "eventGroupMarkers": [],
+          "attributes": {
+            "case": "completeWorkflowExecutionCommandAttributes",
+            "value": {
+              "$typeName": "temporal.api.command.v1.CompleteWorkflowExecutionCommandAttributes",
+              "result": {
+                "$typeName": "temporal.api.common.v1.Payloads",
+                "payloads": [
+                  {
+                    "$typeName": "temporal.api.common.v1.Payload",
+                    "metadata": {
+                      "encoding": {
+                        "0": 106,
+                        "1": 115,
+                        "2": 111,
+                        "3": 110,
+                        "4": 47,
+                        "5": 112,
+                        "6": 108,
+                        "7": 97,
+                        "8": 105,
+                        "9": 110
+                      }
+                    },
+                    "data": {
+                      "0": 34,
+                      "1": 101,
+                      "2": 99,
+                      "3": 104,
+                      "4": 111,
+                      "5": 34
+                    },
+                    "externalPayloads": []
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "intents": [],
+      "determinismState": {
+        "commandHistory": [
+          {
+            "intent": {
+              "id": "schedule-activity-0",
+              "kind": "schedule-activity",
+              "sequence": 0,
+              "activityType": "echo",
+              "activityId": "echo",
+              "taskQueue": "test",
+              "input": [
+                [
+                  "A"
+                ]
+              ],
+              "timeouts": {
+                "scheduleToCloseTimeoutMs": 10000,
+                "startToCloseTimeoutMs": 10000
+              }
+            }
+          }
+        ],
+        "randomValues": [],
+        "timeValues": [
+          1791156597138,
+          1791156597141
+        ],
+        "signals": [
+          {
+            "signalName": "item",
+            "handlerName": "drain",
+            "payloadHash": "\"A\"",
+            "eventId": "2",
+            "workflowTaskCompletedEventId": null,
+            "identity": null
+          }
+        ],
+        "queries": []
+      },
+      "completion": "completed",
+      "result": "echo",
+      "queryResults": []
+    }
+  }
+}

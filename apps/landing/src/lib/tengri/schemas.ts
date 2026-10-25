@@ -1,0 +1,259 @@
+import { codexInputResponseSchema } from './codex-input'
+import { z } from 'zod'
+import { codexModelIdSchema, codexReasoningEffortSchema } from './codex-models'
+import {
+  CODEX_IMAGE_MEDIA_TYPES,
+  MAX_CODEX_IMAGE_BYTES,
+  MAX_CODEX_IMAGES,
+  MAX_CODEX_TOTAL_IMAGE_BYTES,
+  codexImageMatchesMediaType,
+} from './codex-images'
+
+const agentId = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/)
+export const MAX_EDITABLE_FILE_BYTES = 4 * 1024 * 1024
+export const MAX_CODEX_PROMPT_BYTES = 64 * 1024
+export const MAX_FILE_SEARCH_QUERY_BYTES = 256
+
+export const tengriPowerSettingsSchema = z.strictObject({
+  idleTimeoutMinutes: z.number().int().min(0).max(1440),
+})
+
+export type TengriPowerSettings = z.infer<typeof tengriPowerSettingsSchema>
+
+export const workspaceFilePathSchema = z
+  .string()
+  .regex(/^\/workspace(?:\/[^/]+)*$/)
+  .max(4096)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= 4096, 'Workspace path exceeds 4096 bytes')
+  .refine((value) => !value.split('/').some((segment) => segment === '.' || segment === '..'), 'Invalid workspace path')
+  .refine((value) => !value.includes('\u0000') && !value.includes('\r') && !value.includes('\n'), 'Invalid file path')
+const fileContent = z
+  .string()
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_EDITABLE_FILE_BYTES, 'File content exceeds 4 MiB')
+const fileRevision = z.string().regex(/^(?:[a-f0-9]{64}|missing)$/, 'A valid base file revision is required')
+const codexPrompt = z
+  .string()
+  .trim()
+  .max(MAX_CODEX_PROMPT_BYTES)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_CODEX_PROMPT_BYTES, 'Prompt exceeds 64 KiB')
+const codexImages = z
+  .array(
+    z.strictObject({
+      mediaType: z.enum(CODEX_IMAGE_MEDIA_TYPES),
+      data: z
+        .string()
+        .min(1)
+        .max(Math.ceil(MAX_CODEX_IMAGE_BYTES / 3) * 4)
+        .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+    }),
+  )
+  .max(MAX_CODEX_IMAGES)
+  .default([])
+  .refine((images) => {
+    let total = 0
+    return images.every((image) => {
+      const bytes = Buffer.from(image.data, 'base64')
+      total += bytes.length
+      return (
+        bytes.length > 0 &&
+        bytes.length <= MAX_CODEX_IMAGE_BYTES &&
+        total <= MAX_CODEX_TOTAL_IMAGE_BYTES &&
+        bytes.toString('base64') === image.data &&
+        codexImageMatchesMediaType(image.mediaType, bytes)
+      )
+    })
+  }, 'Invalid image or images exceed 8 MiB total')
+const codexId = z
+  .string()
+  .trim()
+  .min(1)
+  .max(160)
+  .regex(/^[a-zA-Z0-9._:-]+$/)
+const codexOptions = {
+  model: codexModelIdSchema.optional(),
+  reasoningEffort: codexReasoningEffortSchema.optional(),
+}
+const terminalCreationId = z
+  .string()
+  .min(16)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/)
+const previewPort = z
+  .number()
+  .int()
+  .min(1024)
+  .max(65535)
+  .refine((value) => ![8080, 13337, 13338, 13339].includes(value), 'This port is reserved for Nanoagent')
+const previewSessionId = z.string().regex(/^[a-z0-9]{24}$/)
+const previewPath = z
+  .string()
+  .startsWith('/')
+  .max(4096)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= 4096, 'Preview path exceeds 4096 bytes')
+  .refine(
+    (value) => !value.includes('\u0000') && !value.includes('\r') && !value.includes('\n') && !value.includes('#'),
+    'Invalid preview path',
+  )
+const previewFragment = z
+  .string()
+  .max(4096)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= 4096, 'Preview fragment exceeds 4096 bytes')
+  .refine(
+    (value) =>
+      value === '' ||
+      (value.startsWith('#') &&
+        !Array.from(value).some((character) => {
+          const codePoint = character.codePointAt(0) ?? 0
+          return codePoint <= 0x1f || codePoint === 0x7f
+        })),
+    'Invalid preview fragment',
+  )
+
+export const tengriCreateAgentSchema = z.strictObject({
+  action: z.literal('create-agent'),
+  operationId: z.uuid(),
+  displayName: z.string().trim().min(1).max(64),
+})
+
+export const tengriActionSchema = z.discriminatedUnion('action', [
+  tengriCreateAgentSchema,
+  z.strictObject({ action: z.literal('delete-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
+  z.strictObject({ action: z.literal('sleep-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
+  z.strictObject({ action: z.literal('resume-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
+  z.strictObject({ action: z.literal('update-power-settings'), agentId, power: tengriPowerSettingsSchema }),
+  z.strictObject({ action: z.literal('stat-file'), agentId, path: workspaceFilePathSchema }),
+  z.strictObject({ action: z.literal('list-files'), agentId, path: workspaceFilePathSchema }),
+  z.strictObject({ action: z.literal('read-file'), agentId, path: workspaceFilePathSchema }),
+  z.strictObject({
+    action: z.literal('write-file'),
+    agentId,
+    path: workspaceFilePathSchema,
+    content: fileContent,
+    expectedRevision: fileRevision,
+  }),
+  z.strictObject({ action: z.literal('create-directory'), agentId, path: workspaceFilePathSchema }),
+  z.strictObject({
+    action: z.literal('move-file'),
+    agentId,
+    sourcePath: workspaceFilePathSchema,
+    destinationPath: workspaceFilePathSchema,
+  }),
+  z.strictObject({ action: z.literal('delete-file'), agentId, path: workspaceFilePathSchema, recursive: z.boolean() }),
+  z.strictObject({
+    action: z.literal('search-files'),
+    agentId,
+    path: workspaceFilePathSchema,
+    query: z
+      .string()
+      .trim()
+      .min(1)
+      .max(MAX_FILE_SEARCH_QUERY_BYTES)
+      .refine(
+        (value) => Buffer.byteLength(value, 'utf8') <= MAX_FILE_SEARCH_QUERY_BYTES,
+        'Search query exceeds 256 bytes',
+      ),
+  }),
+  z.strictObject({ action: z.literal('list-terminals'), agentId }),
+  z.strictObject({
+    action: z.literal('create-terminal'),
+    agentId,
+    creationId: terminalCreationId,
+    cwd: workspaceFilePathSchema,
+    columns: z.number().int().min(20).max(400),
+    rows: z.number().int().min(6).max(200),
+  }),
+  z.strictObject({ action: z.literal('terminate-terminal'), agentId, terminalId: codexId }),
+  z.strictObject({ action: z.literal('terminal-ticket'), agentId, terminalId: codexId }),
+  z.strictObject({ action: z.literal('codex-account'), agentId }),
+  z.strictObject({ action: z.literal('codex-login-status'), agentId }),
+  z.strictObject({ action: z.literal('codex-login'), agentId }),
+  z.strictObject({ action: z.literal('codex-models'), agentId, cursor: z.string().min(1).max(4096).optional() }),
+  z.strictObject({ action: z.literal('active-codex-run'), agentId }),
+  z.strictObject({ action: z.literal('codex-run'), agentId, runId: z.uuid() }),
+  z.strictObject({
+    action: z.literal('list-threads'),
+    agentId,
+    archived: z.boolean(),
+    cursor: z.string().min(1).max(4096).optional(),
+  }),
+  z.strictObject({ action: z.literal('set-thread-archived'), agentId, threadId: codexId, archived: z.boolean() }),
+  z.strictObject({ action: z.literal('create-thread'), agentId, ...codexOptions }),
+  z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId, ...codexOptions }),
+  z
+    .strictObject({
+      action: z.literal('send-turn'),
+      agentId,
+      operationId: z.uuid(),
+      threadId: codexId,
+      text: codexPrompt,
+      images: codexImages,
+      ...codexOptions,
+    })
+    .refine((input) => Boolean(input.text || input.images.length), 'Add a message or image'),
+  z
+    .strictObject({
+      action: z.literal('steer-turn'),
+      runId: z.uuid(),
+      agentId,
+      operationId: z.uuid(),
+      threadId: codexId,
+      turnId: codexId,
+      text: codexPrompt,
+      images: codexImages,
+    })
+    .refine((input) => Boolean(input.text || input.images.length), 'Add a message or image'),
+  z.strictObject({
+    action: z.literal('interrupt-turn'),
+    agentId,
+    runId: z.uuid(),
+    operationId: z.uuid(),
+  }),
+  z.strictObject({
+    action: z.literal('answer-questions'),
+    runId: z.uuid(),
+    operationId: z.uuid(),
+    agentId,
+    approvalId: codexId,
+    response: codexInputResponseSchema,
+  }),
+  z.strictObject({
+    action: z.literal('resolve-approval'),
+    runId: z.uuid(),
+    operationId: z.uuid(),
+    agentId,
+    approvalId: codexId,
+    decision: z.enum([
+      'approve-once',
+      'approve-session',
+      'approve-exec-policy-amendment',
+      'approve-network-policy-amendment',
+      'deny',
+    ]),
+  }),
+  z.strictObject({
+    action: z.literal('preview-session'),
+    agentId,
+    port: previewPort,
+    path: previewPath,
+    fragment: previewFragment,
+  }),
+  z.strictObject({
+    action: z.literal('editor-session'),
+    agentId,
+    windowId: z.string().regex(/^[a-zA-Z0-9_-]{16,128}$/),
+    renewal: z.boolean(),
+  }),
+  z.strictObject({ action: z.literal('revoke-editor-sessions') }),
+  z.strictObject({
+    action: z.literal('browser-session'),
+    agentId,
+    windowId: z.string().regex(/^[a-zA-Z0-9_-]{16,128}$/),
+    renewal: z.boolean(),
+  }),
+  z.strictObject({
+    action: z.literal('revoke-preview-session'),
+    agentId,
+    sessionId: previewSessionId,
+    revocationToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  }),
+])

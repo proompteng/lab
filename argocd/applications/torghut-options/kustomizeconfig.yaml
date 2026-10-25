@@ -1,0 +1,7 @@
+images:
+  # FlinkDeployment stores the runtime image at spec.image rather than in a
+  # standard PodSpec, so declare it for Kargo's root-level image override.
+  - path: spec/image
+    group: flink.apache.org
+    version: v1beta1
+    kind: FlinkDeployment

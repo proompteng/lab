@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-standby-pool
+  namespace: ecran
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-standby
+  template:
+    metadata:
+      labels:
+        app: python-standby
+    spec:
+      containers:
+        - name: python-executor
+          image: python:3.12-alpine
+          command: ["/bin/sh", "-c"]
+          args: ["while true; do sleep 30; done"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

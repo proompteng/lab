@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: juge
+  namespace: ecran
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: juge
+  template:
+    metadata:
+      labels:
+        app: juge
+    spec:
+      containers:
+        - name: juge
+          image: registry.ide-newton.ts.net/lab/juge
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 9090
+          resources:
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+            requests:
+              cpu: "500m"
+              memory: "512Mi"

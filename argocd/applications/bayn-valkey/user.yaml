@@ -1,0 +1,15 @@
+apiVersion: valkey.buf.red/v1alpha1
+kind: User
+metadata:
+  name: replica-acl-bayn-valkey-default
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accountType: custom
+  arch: replica
+  instanceName: bayn-valkey
+  username: default
+  passwordSecrets:
+    - bayn-valkey-auth
+  aclRules: "+@read +@write +@connection -@dangerous +wait -flushall -flushdb ~bayn:* &bayn:*"

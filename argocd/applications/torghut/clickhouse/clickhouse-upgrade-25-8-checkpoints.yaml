@@ -1,0 +1,45 @@
+{
+  'apiVersion': 'snapshot.storage.k8s.io/v1',
+  'kind': 'VolumeSnapshot',
+  'metadata':
+    {
+      'name': 'clickhouse-production-25-8-20260910-0',
+      'namespace': 'torghut',
+      'annotations':
+        {
+          'argocd.argoproj.io/sync-wave': '-20',
+          'argocd.argoproj.io/sync-options': 'Prune=false,Delete=false',
+          'clickhouse.proompteng.ai/backup-id': '6b0b0070-2445-49a7-9774-5ea934192ef3',
+          'clickhouse.proompteng.ai/backup-manifest-sha256': '2c6a50d334119a8b8052aa854601c1521ff36b2e5acc20e09dbd47ab1450fab9',
+          'clickhouse.proompteng.ai/source-pvc-uid': '005f750c-4a4c-4dd8-894d-1e80df5dc0e7',
+        },
+    },
+  'spec':
+    {
+      'volumeSnapshotClassName': 'rook-ceph-block',
+      'source': { 'persistentVolumeClaimName': 'chi-data-chi-torghut-clickhouse-default-0-0-0' },
+    },
+}
+---
+{
+  'apiVersion': 'snapshot.storage.k8s.io/v1',
+  'kind': 'VolumeSnapshot',
+  'metadata':
+    {
+      'name': 'clickhouse-production-25-8-20260910-1',
+      'namespace': 'torghut',
+      'annotations':
+        {
+          'argocd.argoproj.io/sync-wave': '-20',
+          'argocd.argoproj.io/sync-options': 'Prune=false,Delete=false',
+          'clickhouse.proompteng.ai/backup-id': '7e032eea-83a1-4e3e-a0e1-6d7a8eb77037',
+          'clickhouse.proompteng.ai/backup-manifest-sha256': '7ea9318218e43602da5a2270a9dc43499bb83751861f2252cd982337518805f0',
+          'clickhouse.proompteng.ai/source-pvc-uid': '915d4491-6020-4d3c-a7ff-d2be320acef0',
+        },
+    },
+  'spec':
+    {
+      'volumeSnapshotClassName': 'rook-ceph-block',
+      'source': { 'persistentVolumeClaimName': 'chi-data-chi-torghut-clickhouse-default-0-1-0' },
+    },
+}
