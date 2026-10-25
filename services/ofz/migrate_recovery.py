@@ -12,10 +12,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
-import boto3
-from botocore.config import Config
-from botocore.exceptions import ClientError
-
 BUCKETS = ("ofz-database-backups", "keycloak-database-backups", "ofz-audit")
 CONTEXT = "galactic-tailscale"
 
@@ -54,6 +50,9 @@ def source_credentials():
 
 
 def client(endpoint, identity):
+    import boto3
+    from botocore.config import Config
+
     return boto3.client(
         "s3",
         endpoint_url=endpoint,
@@ -82,7 +81,25 @@ def versions(storage, bucket):
         result.extend(
             dict(item, DeleteMarker=True) for item in page.get("DeleteMarkers", [])
         )
-    return sorted(result, key=lambda item: (item["Key"], item["LastModified"]))
+    # S3 lists equal-timestamp versions newest first, separately from delete markers.
+    return sorted(
+        reversed(result),
+        key=lambda item: (item["Key"], item["LastModified"], item["IsLatest"]),
+    )
+
+
+def verify_inventory(source, target, ledger):
+    target_versions = {(item["Key"], item["VersionId"]): item for item in target}
+    current = {item["Key"]: item["VersionId"] for item in target if item["IsLatest"]}
+    for item in source:
+        record = ledger[json.dumps([item["Key"], item["VersionId"]])]
+        copied = target_versions.get((item["Key"], record["version_id"]))
+        if copied is None or copied["DeleteMarker"] != item["DeleteMarker"]:
+            raise RuntimeError(
+                "Destination version or delete marker is missing or differs"
+            )
+        if item["IsLatest"] and current.get(item["Key"]) != record["version_id"]:
+            raise RuntimeError("Destination current version differs from source")
 
 
 def admin(*args, data=None, optional=False):
@@ -140,11 +157,13 @@ def provision(endpoint, identities, directory):
             credentials[uid] = [key["access_key"], key["secret_key"]]
             path.touch(mode=0o600, exist_ok=True)
             path.write_text(json.dumps(credentials))
+        if uid != "ofz-recovery-custodian":
+            admin("user", "modify", f"--uid={uid}", "--max-buckets=0")
     destination = client(endpoint, credentials["ofz-recovery-custodian"])
     for bucket in BUCKETS:
         try:
             destination.head_bucket(Bucket=bucket)
-        except ClientError as error:
+        except destination.exceptions.ClientError as error:
             if error.response["ResponseMetadata"]["HTTPStatusCode"] not in {403, 404}:
                 raise
             destination.create_bucket(Bucket=bucket, ObjectLockEnabledForBucket=True)
@@ -161,6 +180,7 @@ def provision(endpoint, identities, directory):
         )
         uid = "ofz-audit-export" if bucket == "ofz-audit" else bucket.removesuffix("s")
         actions = [
+            "s3:ListBucket",
             "s3:GetBucketVersioning",
             "s3:GetBucketObjectLockConfiguration",
             "s3:GetObject",
@@ -172,7 +192,6 @@ def provision(endpoint, identities, directory):
             actions += ["s3:PutObjectRetention"]
         else:
             actions += [
-                "s3:ListBucket",
                 "s3:ListBucketVersions",
                 "s3:GetBucketLocation",
                 "s3:ListBucketMultipartUploads",
@@ -180,6 +199,20 @@ def provision(endpoint, identities, directory):
                 "s3:AbortMultipartUpload",
                 "s3:ListMultipartUploadParts",
             ]
+            destination.put_bucket_lifecycle_configuration(
+                Bucket=bucket,
+                LifecycleConfiguration={
+                    "Rules": [
+                        {
+                            "ID": "database-retention",
+                            "Status": "Enabled",
+                            "Filter": {"Prefix": ""},
+                            "Expiration": {"Days": 40},
+                            "NoncurrentVersionExpiration": {"NoncurrentDays": 45},
+                        }
+                    ]
+                },
+            )
         destination.put_bucket_policy(
             Bucket=bucket,
             Policy=json.dumps(
@@ -377,6 +410,7 @@ def migrate_bucket(source, destination, bucket, directory, verify):
                 )
     if len(ledger) != len(inventory):
         raise RuntimeError("Source inventory changed; reconcile before retiring it")
+    verify_inventory(inventory, versions(destination, bucket), ledger)
     temporary = ledger_path.with_suffix(".tmp")
     temporary.write_text(json.dumps(ledger, default=str))
     temporary.replace(ledger_path)

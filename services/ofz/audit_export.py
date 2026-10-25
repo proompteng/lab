@@ -12,6 +12,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
+from xml.etree import ElementTree
 
 import psycopg
 import urllib3
@@ -51,6 +52,25 @@ PENDING_AUDIT_QUERY = """
 
 class ArchiveError(Exception):
     pass
+
+
+class CephArchive(Minio):
+    def get_object_retention(self, bucket_name, object_name, version_id=None):
+        query = {"retention": ""}
+        if version_id:
+            query["versionId"] = version_id
+        response = self._execute(
+            "GET", bucket_name, object_name=object_name, query_params=query
+        )
+        retention = ElementTree.fromstring(response.data)
+        value = retention.findtext("{*}RetainUntilDate")
+        if not value:
+            raise ArchiveError("archive retention deadline missing")
+        # Ceph returns nanosecond precision, which Minio's timestamp decoder rejects.
+        until = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if until.tzinfo is None:
+            raise ArchiveError("archive retention deadline requires an offset")
+        return Retention(retention.findtext("{*}Mode"), until)
 
 
 def failure_report(failure: Exception, event: str) -> dict:
@@ -113,7 +133,7 @@ class Receipt:
 
 
 class Exporter:
-    def __init__(self, database: psycopg.Connection, storage: Minio):
+    def __init__(self, database: psycopg.Connection, storage: CephArchive):
         self.database = database
         self.storage = storage
 
@@ -303,7 +323,7 @@ def from_environment() -> Exporter:
         options="-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c idle_session_timeout=15000",
     )
     database = psycopg.connect(**config, autocommit=True, row_factory=dict_row)
-    storage = Minio(
+    storage = CephArchive(
         ENDPOINT,
         access_key=credential(os.environ["OFZ_ARCHIVE_ACCESS_KEY_FILE"]),
         secret_key=credential(os.environ["OFZ_ARCHIVE_SECRET_KEY_FILE"]),

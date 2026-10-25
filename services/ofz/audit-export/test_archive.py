@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -59,6 +60,25 @@ class StoredBeforeCrash(archive.Exporter):
 
 
 class ArchiveBoundaries(unittest.TestCase):
+    def test_ceph_retention_uses_rfc3339_nanosecond_precision(self):
+        storage = archive.CephArchive(
+            "localhost:9000",
+            access_key="fixture",
+            secret_key="fixture-secret",
+            secure=False,
+        )
+        response = SimpleNamespace(
+            data=b'<Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Mode>COMPLIANCE</Mode><RetainUntilDate>2030-01-02T03:04:05.934000000Z</RetainUntilDate></Retention>'
+        )
+        with patch.object(storage, "_execute", return_value=response):
+            retention = storage.get_object_retention(
+                "ofz-audit", "batches/fixture", version_id="ceph-version"
+            )
+        self.assertEqual(retention.mode, COMPLIANCE)
+        self.assertEqual(
+            retention.retain_until_date, datetime(2030, 1, 2, 3, 4, 5, 934000, UTC)
+        )
+
     def test_ceph_archive_verifies_bytes_and_retention_without_sse(self):
         payload = b"Ceph archive payload"
         digest = hashlib.sha256(payload).hexdigest()
@@ -458,7 +478,7 @@ class RealArchive(unittest.TestCase):
                     timeout=urllib3.Timeout(total=8, connect=2, read=5), retries=False
                 ),
             )
-            storage = Minio(
+            storage = archive.CephArchive(
                 endpoint,
                 access_key=archive.credential(str(credentials / "archive_access_key")),
                 secret_key=archive.credential(str(credentials / "archive_secret_key")),
