@@ -218,7 +218,8 @@ def phase(name):
     ):
         return "publish"
     if re.search(
-        r"build.*(?:image|runtime|native)|^build$|nix build|docker build", name
+        r"build.*(?:image|runtime|native|installer)|^build$|nix build|docker build",
+        name,
     ):
         return "build"
     if re.search(r"test|verif|validat|proof|inspect|checksum|heartbeat", name):
@@ -332,11 +333,12 @@ def job_record(run, job, families=()):
         else "unknown",
         "job_role": "build"
         if {"build", "build_and_publish"} & durations.keys()
-        or re.search(r"\bbuild\b", job["name"], re.I)
         else "publish"
         if "publish" in durations
         else "validate"
         if "verify" in durations
+        else "build"
+        if re.search(r"\bbuild\b", job["name"], re.I)
         else "other",
         "architecture": architecture(job),
         "runner_pool": pool(job),

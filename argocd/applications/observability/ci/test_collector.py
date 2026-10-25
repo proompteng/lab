@@ -186,6 +186,7 @@ class CollectorTests(unittest.TestCase):
             "Run ./.github/actions/setup-buildkit": "toolchain",
             "Build Nix image archive": "build",
             "Build runtime": "build",
+            "Build installer": "build",
             "Push platform image without Docker": "publish",
             "Assemble and validate the immutable release index": "publish",
             "Retain SDK heartbeat proof": "verify",
@@ -194,6 +195,32 @@ class CollectorTests(unittest.TestCase):
         for name, value in expected.items():
             with self.subTest(name=name):
                 self.assertEqual(phase(name), value)
+
+    def test_installer_build_collects_cache_and_build_duration(self):
+        value = job()
+        value["name"] = "Build kata installer"
+        value["steps"][0]["name"] = "Build installer"
+        api = FakeGitHub({}, {})
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        with patch.object(api, "log", wraps=api.log) as download:
+            observer.collect_job(run(), value, float("inf"))
+        download.assert_called_once_with(value["id"])
+        record = json.loads(
+            self.store.db.execute("SELECT record FROM jobs").fetchone()[0]
+        )
+        self.assertEqual(record["durations"]["build"], 16)
+        self.assertEqual(record["cache"]["state"], "warm")
+
+    def test_measured_publishing_phase_overrides_reusable_caller_build_name(self):
+        value = job()
+        value["name"] = "build-app / publish-index"
+        value["steps"][0]["name"] = "Create OCI image index"
+        record = job_record(run(), value)
+        self.assertEqual(record["job_role"], "publish")
+        self.assertEqual(record["durations"]["publish"], 16)
+        self.assertNotIn("build", record["durations"])
 
     def test_idempotency_survives_process_restart_and_keeps_ids_out_of_metrics(self):
         record = job_record(run(), job())
