@@ -968,6 +968,44 @@ describe('position episodes', () => {
   })
 
   test.each([
+    { priceAtoms: '100000000001' },
+    { notionalMicros: '200001' },
+    { feeMicros: '0' },
+    { realizedPnlMicros: '1000000' },
+  ])('rejects conflicting scoped financial evidence %j', (override) => {
+    const history = roundTrip()
+    const input = evidence(history)
+    const report = success(
+      makeForwardPerformanceReport(
+        { ...input, transactions: input.transactions.map((item) => ({ ...item, ...override })) },
+        [],
+      ),
+    )
+    expect(report.positionEpisodes).toMatchObject({
+      status: 'UNDETERMINED',
+      reason: PositionEpisodeReason.ScopeMismatch,
+    })
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
+    expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+  })
+
+  test('retains matching partial scopes and historical projections without optional pricing', () => {
+    const history = roundTrip()
+    for (const selected of [history, history.slice(1)]) {
+      const input = evidence(history, selected)
+      const projection = input.transactions.map(({ priceAtoms: _price, notionalMicros: _notional, ...item }) => item)
+      const report = success(makeForwardPerformanceReport({ ...input, transactions: projection }, []))
+      expect(report.positionEpisodes).toMatchObject({
+        status: 'MEASURED',
+        completedCount: selected.length === history.length ? 1 : 0,
+        crossScopeCount: selected.length === history.length ? 0 : 1,
+      })
+      expect(report.receipt.profitability).toBe('UNDETERMINED')
+      expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+    }
+  })
+
+  test.each([
     { ledgerExact: false },
     { accountingReceiptsExact: false },
     { unresolvedMutationCount: 1 },
