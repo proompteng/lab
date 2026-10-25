@@ -149,12 +149,20 @@ class CollectorTests(unittest.TestCase):
         record = job_record(
             run(),
             value,
-            [{"id": "bilig", "prefix": "bilig"}, {"id": "tengri", "prefix": "tengri"}],
+            [
+                {"id": "bilig", "pattern": r"bilig /.*"},
+                {"id": "tengri", "pattern": r"tengri /.*"},
+            ],
         )
         self.assertEqual(record["job_family"], "bilig")
+        duplicate = [
+            {"id": "first", "pattern": r"bilig /.*"},
+            {"id": "second", "pattern": r"bilig /.*"},
+        ]
+        self.assertEqual(job_record(run(), value, duplicate)["job_family"], "unknown")
         value["name"] = "unknown dynamically named target"
         self.assertEqual(
-            job_record(run(), value, [{"id": "bilig", "prefix": "bilig"}])[
+            job_record(run(), value, [{"id": "bilig", "pattern": r"bilig /.*"}])[
                 "job_family"
             ],
             "unknown",
@@ -407,6 +415,38 @@ class CollectorTests(unittest.TestCase):
             "SELECT count FROM aggregates WHERE metric='ci_job_phase_duration_seconds'"
         ).fetchall()
         self.assertTrue(all(row[0] == 1 for row in counts))
+
+    def test_slow_historical_discovery_cannot_starve_pending_attempts(self):
+        api = FakeGitHub({1: run()}, {1: [job()]})
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        self.store.discover(run(), self.now)
+        clock = [self.now]
+
+        def slow_history(_now):
+            clock[0] += 46
+
+        with (
+            patch("time.time", side_effect=lambda: clock[0]),
+            patch("time.sleep", side_effect=StopIteration),
+            patch.object(observer, "poll"),
+            patch.object(observer, "history", side_effect=slow_history),
+            patch.object(
+                observer, "flush", side_effect=RuntimeError("Loki unavailable")
+            ),
+        ):
+            with self.assertRaises(StopIteration):
+                observer.run()
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1
+        )
+        self.assertEqual(
+            self.store.db.execute(
+                "SELECT COUNT(*) FROM attempts WHERE state='complete'"
+            ).fetchone()[0],
+            1,
+        )
 
     def test_search_over_1000_results_is_split_without_silently_truncating(self):
         api = GitHub("unused")

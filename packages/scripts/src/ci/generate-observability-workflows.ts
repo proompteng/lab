@@ -52,8 +52,8 @@ export const imageWorkflows = (root: string): string[] => {
   return [...selected].sort()
 }
 
-export const imageWorkflowCatalog = (root: string): Record<string, { id: string; prefix: string }[]> => {
-  const catalog: Record<string, { id: string; prefix: string }[]> = {}
+export const imageWorkflowCatalog = (root: string): Record<string, { id: string; pattern: string }[]> => {
+  const catalog: Record<string, { id: string; pattern: string }[]> = {}
   for (const name of imageWorkflows(root)) {
     const document: unknown = YAML.parse(readFileSync(resolve(root, '.github/workflows', name), 'utf8'))
     if (!document || typeof document !== 'object' || !('jobs' in document)) continue
@@ -62,8 +62,13 @@ export const imageWorkflowCatalog = (root: string): Record<string, { id: string;
     for (const [id, job] of Object.entries(document.jobs)) {
       if (!job || typeof job !== 'object') continue
       const display = 'name' in job && typeof job.name === 'string' ? job.name : id
-      const prefix = display.split(/\s*\(|\s*\$\{\{/)[0]?.trim()
-      if (prefix) catalog[name].push({ id, prefix })
+      const literal = display
+        .split(/\$\{\{[\s\S]*?\}\}/)
+        .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('.*')
+      const nested = 'uses' in job ? '(?: /.*)?' : ''
+      const pattern = `^${literal}(?: \\(.*\\))?${nested}$`
+      catalog[name].push({ id, pattern })
     }
   }
   return catalog

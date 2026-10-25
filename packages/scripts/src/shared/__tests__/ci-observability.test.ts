@@ -38,6 +38,15 @@ describe('CI build observability', () => {
     })
   })
 
+  test('retains static suffixes that distinguish dynamic matrix job names', () => {
+    const families = imageWorkflowCatalog(repoRoot)['kata-firecracker-extension.yaml']
+    if (!families) throw new Error('Kata workflow is missing from enrollment')
+    const match = (name: string) =>
+      families.filter((family) => new RegExp(family.pattern).test(name)).map((family) => family.id)
+    expect(match('Build amd64 extension')).toEqual(['build'])
+    expect(match('Build cloud-hypervisor installer')).toEqual(['installers'])
+  })
+
   test('keeps the provisioned dashboard in sync with its source', () => {
     const result = Bun.spawnSync(['python3', 'argocd/applications/observability/ci/dashboard.py', '--check'], {
       cwd: repoRoot,

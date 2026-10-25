@@ -306,6 +306,9 @@ def job_record(run, job, families=()):
         durations["unattributed"] = max(0.0, execution - measured)
     workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
     outcome = job.get("conclusion") or "unknown"
+    matched_families = {
+        f["id"] for f in families if re.fullmatch(f["pattern"], job["name"])
+    }
     return {
         "kind": "job",
         "repository": "proompteng/lab",
@@ -314,15 +317,9 @@ def job_record(run, job, families=()):
         "attempt": run["run_attempt"],
         "job_id": job["id"],
         "job_name": job["name"],
-        "job_family": next(
-            (
-                f["id"]
-                for f in sorted(families, key=lambda f: len(f["prefix"]), reverse=True)
-                if job["name"] == f["prefix"]
-                or job["name"].startswith(f["prefix"] + " ")
-            ),
-            "unknown",
-        ),
+        "job_family": next(iter(matched_families))
+        if len(matched_families) == 1
+        else "unknown",
         "job_role": "build"
         if {"build", "build_and_publish"} & durations.keys()
         or re.search(r"\bbuild\b", job["name"], re.I)
@@ -1142,7 +1139,7 @@ class Collector:
             try:
                 self.poll(begin)
                 self.history(begin)
-                deadline = begin + 45
+                deadline = time.time() + 30
                 while time.time() < deadline:
                     pending = self.store.pending()
                     if pending is None:
