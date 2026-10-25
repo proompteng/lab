@@ -66,7 +66,8 @@ execution. Existing plan-path and coverage reports are not recalculated or upgra
 From `services/bayn`, run:
 
 ```sh
-bun tools/jev-abstention-report.ts /private/path/decision.json
+bun run build:research
+node dist/research/jev-abstention-report.js /private/path/decision.json
 ```
 
 The input is an existing persisted PAPER decision document containing `bindings.cycleId`
@@ -74,6 +75,9 @@ and `strategyDecision`, the same envelope used by `verify-jev-plan.ts`. The tool
 one local file and prints JSON. It makes no model, database, broker, or network calls.
 Keep input and output private: output includes source identifiers and position-sized
 hypothetical profit/loss estimates. Do not commit production evidence.
+
+Use the pinned Node runtime that produces native chart receipts. Bun's PNG compression produces different image bytes
+and cannot reproduce retained production request hashes.
 
 The current source must reproduce the decision, including the sealed chart handoff and both provider stages,
 before diagnostics are emitted. Unsupported historical contracts and tampered evidence fail. Protocol
@@ -107,7 +111,7 @@ separately against the original sealed manifest; they matched. Do not generalize
 that one-cohort readback to other historical inputs.
 
 ```sh
-bun tools/jev-abstention-report.ts /private/decision.json /private/assumptions.json /private/native-bundle.json
+node dist/research/jev-abstention-report.js /private/decision.json /private/assumptions.json /private/native-bundle.json
 ```
 
 The optional two-file extension invokes `auditNativeArrivalCoverage` directly on

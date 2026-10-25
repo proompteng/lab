@@ -2713,6 +2713,16 @@ fn created_terminal_cleanup_id(error: &GuestError) -> Option<&str> {
 fn map_guest_error(error: GuestError) -> Status {
     metrics::global().record_guest_failure();
     match error {
+        GuestError::IncompatibleProtocol { .. } => {
+            let mut status = Status::failed_precondition(
+                "This workspace needs a runtime upgrade before it can reconnect.",
+            );
+            status.metadata_mut().insert(
+                "x-tengri-error-code",
+                tonic::metadata::MetadataValue::from_static("runtime_upgrade_required"),
+            );
+            status
+        }
         GuestError::NotReady(message) | GuestError::MissingGuestIp(message) => {
             Status::unavailable(message)
         }
@@ -2748,6 +2758,39 @@ fn map_guest_error(error: GuestError) -> Status {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
+    #[tokio::test]
+    async fn incompatible_guest_reports_required_runtime_upgrade() {
+        use crate::guest::rpc::{
+            proto::GuestInfo,
+            test_server::{TestServer, TestService},
+        };
+
+        let fixture = TestServer::start(TestService {
+            get_info: Some(std::sync::Arc::new(|_| {
+                Ok(GuestInfo {
+                    microvm_id: "expected".into(),
+                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION - 1,
+                    ..Default::default()
+                })
+            })),
+            ..Default::default()
+        })
+        .await;
+        let error = fixture
+            .guest
+            .rpc
+            .verify_identity("expected")
+            .await
+            .unwrap_err();
+        let status = map_guest_error(error);
+
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            status.metadata().get("x-tengri-error-code").unwrap(),
+            "runtime_upgrade_required"
+        );
+    }
 
     #[test]
     fn validates_codex_images_and_image_only_messages() {
