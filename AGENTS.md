@@ -4,13 +4,14 @@ Complete the requested change, prove it at the requested boundary, and stop.
 
 ## Keep it simple
 
-- Make the smallest complete change that solves the current problem.
-- Reuse what exists. Add dependencies, infrastructure, abstractions, and configuration only when a concrete current
-  requirement needs them.
+- Make the smallest complete, readable change. Clever compression is not simplicity.
+- Reuse repository code and conventions first, then platform or standard-library features, then installed dependencies.
+  Add dependencies, infrastructure, abstractions, and configuration only for a concrete current requirement.
 - Keep one implementation. Hard-migrate callers and remove the replaced path. Preserve compatibility only when
   explicitly requested.
-- Challenge unnecessary scope. Future flexibility and hypothetical scale do not justify more complexity.
-- Preserve correctness, security, and data. Prove the requested behavior, remove your temporary resources, and stop.
+- Prefer deletion and direct code. Future flexibility and hypothetical scale do not justify more complexity.
+- Optimize the core workflow for its users and maintainers. Extra options must improve that workflow.
+- Preserve correctness, security, accessibility, and data. Remove your temporary resources when finished.
 
 ## Scope and authority
 
@@ -43,8 +44,10 @@ conflict remains, link and quote the exact instruction and explain its effect.
    worktree or repository copy unless requested. Continue an assigned branch; start new work on `codex/` from fresh
    `origin/main`, or local `main` when no remote is configured, without overwriting local changes.
 2. Identify expected behavior, the responsible code path, affected callers and contracts, and the validation needed
-   to prove the change. Keep a short plan only when dependent steps need tracking.
-3. Use `rg` and `rg --files` for focused discovery. Batch independent reads. Begin implementation once the affected
+   to prove the change. Inspect or run the system to settle factual questions before asking the user. Keep a short
+   plan only when dependent steps need tracking.
+3. Use `rg` and `rg --files` for focused discovery. Batch independent reads and bound outputs to the question.
+   Prefer a small rerunnable tool to repetitive, error-prone manual work. Begin implementation once the affected
    files and validation path are clear; expand investigation only when evidence exposes an unresolved question.
 4. Use source and configuration for intended behavior, runtime readback for deployed behavior, and
    [documentation authority](docs/documentation-authority.md) when sources disagree. Historical designs, memory,
@@ -71,9 +74,15 @@ Trust results only when relevant, without degradation, and matching the requeste
 
 ## Make the responsible change
 
-- Fix the owning code path with types and control flow that fit the component.
-- Update affected callers, configuration, documentation, and generated contracts together. Validate at trust
-  boundaries and retain useful error context.
+- Trace a defect through its callers and fix the cause in the owning code path. Remove changes whose hypotheses the
+  evidence disproves.
+- Model valid states before control flow. Derive values from one source of truth instead of synchronizing copies.
+  Keep mutable state local and collapse layers that only forward calls.
+- Parse external inputs at trust boundaries and derive internal types from authoritative schemas. Retain useful
+  error context.
+- Give independent writers separate state; use atomic updates or one owner when sharing is required. Reconcile
+  uncertain outcomes before retrying side effects.
+- Update affected callers, configuration, documentation, tests, and generated contracts together.
 - Handle failure paths. Do not hide failures with fabricated data, silent fallbacks, disabled checks, or weaker
   assertions. Keep secrets and personal data out of logs and committed artifacts.
 - Follow the configured formatter and linter. TypeScript uses [.oxfmtrc.json](.oxfmtrc.json) and
@@ -84,26 +93,33 @@ Trust results only when relevant, without degradation, and matching the requeste
   `zodResolver`, and inline validation errors.
 - Edit generator inputs, then regenerate outputs. Use the owning package manager for lockfiles. Do not hand-edit
   `dist/`, `build/`, `_generated`, generated routes, or dependency lockfiles.
+- Comments explain non-obvious reasons. Document deliberate limits and the condition that would require a different
+  design.
 
 ## Prove the result
 
-- Reproduce a defect when practical. Add regression coverage for behavior fixes that fails before the fix and passes
-  afterward. If automation is impractical, give the reason and exact manual evidence.
+- Capture expected behavior before a refactor. Reproduce defects when practical and add regression coverage that
+  fails before the fix and passes afterward. Test the real failure pattern and affected callers. If automation is
+  impractical, give the reason and exact manual evidence.
 - Run the smallest meaningful checks for affected behavior and failure paths, plus required component and CI checks.
   Documentation and low-impact edits need relevant validation, not tests that restate the edit.
 - Inspect the final files and diff. Keep unrelated and unnecessary generated changes out of the patch. Repeat or
   broaden checks only after a change, failure, or unresolved concern justifies it.
 - Separate product failures from missing dependencies, denied network operations, and unavailable environments.
   Report what passed, what failed, and what remains unverified. A blocked check has not passed.
+- Measure performance against a representative baseline. Change one variable at a time and report only observed
+  improvements, with their limits.
 - For authorized deployment, migration, recovery, or live verification, verify the exact remote commit, required CI,
   deployed revision/image, and requested live behavior. Argo `Synced`/`Healthy` and readiness endpoints establish infrastructure
   state; exercise the product behavior before claiming the release is complete.
 
 ## Code Review Rules
 
-Flag actionable defects introduced by the change, especially incorrect behavior, broken contracts, authorization
-errors, data loss, exposed secrets, and personal data in logs. Explain the concrete trigger and consequence. Leave
-formatting and lint enforcement to configured tools. Do not expand a focused review into unrelated cleanup.
+Flag actionable defects introduced by the change, including broken contracts, authorization errors, data loss, and
+exposed secrets or personal data. Prioritize correctness, safety, and expected load, then tests, performance, and
+simplicity. Verify findings against connected code and a concrete trigger and consequence. Treat automated review
+comments as claims to check. Leave formatting and lint enforcement to configured tools. Keep findings within the
+requested scope.
 
 ## Deliver through the existing gates
 
@@ -202,12 +218,13 @@ validate manifests before an authorized apply.
 
 ## Communication and maintenance
 
-Lead updates with the result, decision, or blocker. Keep them concise and omit routine tool narration. Final responses
-state what changed, the validation result, and any remaining blocker; link relevant files and distinguish implemented,
-tested, pushed, merged, and deployed claims.
+Lead updates with the result, decision, or blocker in plain language. Explain user impact and evidence; omit routine
+narration and filler. Final responses state what changed, the validation result, and any remaining blocker; link
+relevant files and distinguish implemented, tested, pushed, merged, and deployed claims.
 
 Keep this file focused on repository-wide decisions and constraints. Put component procedures in their owning docs and
-link them here. Verify changes against fresh `main` so a rewrite does not discard newer contracts. Model and reasoning
+link them here. Encode mechanical rules in types, tests, generators, or existing lint; keep prose for decisions these
+cannot enforce. Verify changes against fresh `main` so a rewrite does not discard newer contracts. Model and reasoning
 settings belong in runtime configuration, not application defaults changed by this guide.
 
 Instruction scoping follows [Codex AGENTS.md guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md),
