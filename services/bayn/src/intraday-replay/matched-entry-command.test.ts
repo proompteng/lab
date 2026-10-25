@@ -791,6 +791,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
+      if (report === undefined) return yield* Effect.die('Expected a completed study report')
       expect(report.schemaVersion).toBe('bayn.matched-entry-study.v8')
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev?.fills[0]?.symbol).toBe(report.pairs[0]?.delayedMomentum?.fills[0]?.symbol)

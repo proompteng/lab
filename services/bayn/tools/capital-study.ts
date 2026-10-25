@@ -4,10 +4,17 @@ import { Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect
 import { sha256 } from '../src/hash'
 import { SignalStudyFailure } from '../src/intraday-replay/signal-study'
 import { CapitalStudyInputSchema, runCapitalStudy } from '../src/intraday-replay/capital-study'
-import { verifyRegisteredCheckout } from './matched-entry-study'
+import { verifyRegisteredCheckout } from '../src/intraday-replay/registered-checkout'
+
+const capitalStudyUsage =
+  'Usage: node dist/research/capital-study.js --input <json> --input-sha256 <sha256> --output <new-json> | --help'
 
 const main = Effect.gen(function* () {
   const args = process.argv.slice(2)
+  if (args.length === 1 && args[0] === '--help') {
+    const stdio = yield* Stdio.Stdio
+    return yield* Stream.run(Stream.make(`${capitalStudyUsage}\n`), stdio.stdout())
+  }
   const flags = new Map<string, string>()
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index]
@@ -21,7 +28,7 @@ const main = Effect.gen(function* () {
   const outputPath = flags.get('--output')
   if (flags.size !== 3 || inputPath === undefined || inputHash === undefined || outputPath === undefined)
     return yield* new SignalStudyFailure({
-      message: 'Usage: bun tools/capital-study.ts --input <json> --input-sha256 <sha256> --output <new-json>',
+      message: capitalStudyUsage,
     })
   const fs = yield* FileSystem.FileSystem
   const inputText = yield* fs.readFileString(inputPath)

@@ -120,7 +120,10 @@ jobs:
       oxlint-command: bun run --cwd services/bayn lint:oxlint
       oxlint-type-command: bun run --cwd services/bayn lint:oxlint:type
       test-command: bun run --cwd services/bayn tsc && bun test packages/scripts/src/bayn packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts && bash packages/scripts/src/bayn/verify-egress-proxy-restart.sh
-      build-command: bun run --cwd services/bayn build
+      build-command: >-
+        bun run --cwd services/bayn build &&
+        bun run --cwd services/bayn build:research &&
+        bash packages/scripts/src/bayn/verify-research-commands.sh
     secrets: inherit
 
   gepa:
@@ -140,7 +143,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.bayn == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
