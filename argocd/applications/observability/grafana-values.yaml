@@ -99,6 +99,7 @@ testFramework:
   enabled: false
 
 dashboardsConfigMaps:
+  ci-build-performance-dashboard: ci-build-performance-dashboard
   graf-graf-dashboard: graf-graf-dashboard
   graf-bumba-dashboard: graf-bumba-dashboard
   codex-pipeline-dashboard: codex-pipeline-dashboard
@@ -111,6 +112,14 @@ dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
     providers:
+      - name: ci-build-performance-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/ci-build-performance-dashboard
       - name: graf-graf-dashboard
         orgId: 1
         folder: ''
