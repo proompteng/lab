@@ -30,6 +30,9 @@ become successful results. The immutable audit contains request/result digests a
 or returned log bodies. Reusing an execution ID cannot issue a second cluster request. An interrupted start remains
 visible; callers must not treat it as confirmed completion.
 
+The durable start is an exclusive claim across Relay replicas. Even an identical start retry is rejected; only the
+transaction that first creates the execution may dispatch it. Terminal outcome retries return their original receipt.
+
 Ofz supplies Relay's enrolled clients. Relay refreshes that roster every two seconds, clears it on a failed refresh,
 and rejects a roster older than ten seconds. The same roster guards TLS handshakes and every RPC, including existing
 connections. Adding a client requires no second identity allowlist in Relay.

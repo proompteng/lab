@@ -488,7 +488,7 @@ pub async fn record_execution(
     }
     let previous=tx.query_opt("SELECT authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id FROM ofz.platform_executions WHERE operation_id=$1 FOR UPDATE", &[&operation]).await.map_err(sql_error)?;
     if let Some(row) = &previous {
-        if row.get::<_, Uuid>(0) != authorization {
+        if row.get::<_, Uuid>(0) != authorization || request.outcome == "started" {
             return Err(Status::already_exists("execution ID already used"));
         }
         if row.get::<_, String>(1) == request.outcome
@@ -503,9 +503,7 @@ pub async fn record_execution(
             && request.outcome == "withheld"
             && row.get::<_, i32>(2) == request.upstream_status as i32
             && row.get::<_, Vec<u8>>(3) == request.result_hash;
-        if (!withheld_after_success && row.get::<_, String>(1) != "started")
-            || request.outcome == "started"
-        {
+        if !withheld_after_success && row.get::<_, String>(1) != "started" {
             return Err(Status::already_exists("execution already completed"));
         }
     } else if request.outcome != "started" {
@@ -524,7 +522,28 @@ pub async fn record_execution(
     let target = serde_json::to_string(&(&request.authorization_receipt_id, &request.result_hash))
         .map_err(|_| Status::internal("encode execution audit target"))?;
     store::record_audit(&*tx, &receipt, &target).await?;
-    tx.execute("INSERT INTO ofz.platform_executions(operation_id,authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(operation_id) DO UPDATE SET outcome=EXCLUDED.outcome,upstream_status=EXCLUDED.upstream_status,result_hash=EXCLUDED.result_hash,audit_receipt_id=EXCLUDED.audit_receipt_id", &[&operation,&authorization,&request.outcome,&(request.upstream_status as i32),&request.result_hash,&decision::parse_uuid(&receipt.id)?]).await.map_err(sql_error)?;
+    let statement = if request.outcome == "started" {
+        "INSERT INTO ofz.platform_executions(operation_id,authorization_receipt_id,outcome,upstream_status,result_hash,audit_receipt_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(operation_id) DO NOTHING"
+    } else {
+        "UPDATE ofz.platform_executions SET outcome=$3,upstream_status=$4,result_hash=$5,audit_receipt_id=$6 WHERE operation_id=$1 AND authorization_receipt_id=$2"
+    };
+    let changed = tx
+        .execute(
+            statement,
+            &[
+                &operation,
+                &authorization,
+                &request.outcome,
+                &(request.upstream_status as i32),
+                &request.result_hash,
+                &decision::parse_uuid(&receipt.id)?,
+            ],
+        )
+        .await
+        .map_err(sql_error)?;
+    if changed != 1 {
+        return Err(Status::already_exists("execution ID already used"));
+    }
     tx.commit().await.map_err(sql_error)?;
     Ok(proto::RecordPlatformExecutionResponse {
         audit_receipt_id: receipt.id,

@@ -285,6 +285,77 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .code(),
         Code::PermissionDenied
     );
+    let execution = check(&resource_id);
+    let authorized = authorization::check(&database, &native, RELAY, execution.clone())
+        .await
+        .unwrap();
+    let start = p::RecordPlatformExecutionRequest {
+        operation_id: execution.operation_id.clone(),
+        authorization_receipt_id: authorized.audit_receipt_id,
+        request_hash: execution.request_hash.clone(),
+        outcome: "started".into(),
+        ..Default::default()
+    };
+    authorization::record_execution(&database, RELAY, start.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        authorization::record_execution(&database, RELAY, start.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::AlreadyExists
+    );
+    // An interrupted start owns the operation forever; outcome retries remain idempotent.
+    let completed = p::RecordPlatformExecutionRequest {
+        outcome: "succeeded".into(),
+        upstream_status: 200,
+        result_hash: Sha256::digest(b"isolated result").to_vec(),
+        ..start
+    };
+    let first = authorization::record_execution(&database, RELAY, completed.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        authorization::record_execution(&database, RELAY, completed)
+            .await
+            .unwrap()
+            .audit_receipt_id,
+        first.audit_receipt_id
+    );
+    let concurrent = check(&resource_id);
+    let first = authorization::check(&database, &native, RELAY, concurrent.clone())
+        .await
+        .unwrap();
+    let second = authorization::check(&database, &native, RELAY, concurrent.clone())
+        .await
+        .unwrap();
+    connection.batch_execute("CREATE FUNCTION ofz.fixture_pause_execution_start() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.2); RETURN NEW; END $$; CREATE TRIGGER fixture_pause_execution_start BEFORE INSERT ON ofz.platform_executions FOR EACH ROW EXECUTE FUNCTION ofz.fixture_pause_execution_start();").await.unwrap();
+    let start = p::RecordPlatformExecutionRequest {
+        operation_id: concurrent.operation_id.clone(),
+        authorization_receipt_id: first.audit_receipt_id,
+        request_hash: concurrent.request_hash,
+        outcome: "started".into(),
+        ..Default::default()
+    };
+    let other = p::RecordPlatformExecutionRequest {
+        authorization_receipt_id: second.audit_receipt_id,
+        ..start.clone()
+    };
+    let (first, second) = tokio::join!(
+        authorization::record_execution(&database, RELAY, start),
+        authorization::record_execution(&database, RELAY, other)
+    );
+    connection.batch_execute("DROP TRIGGER fixture_pause_execution_start ON ofz.platform_executions; DROP FUNCTION ofz.fixture_pause_execution_start();").await.unwrap();
+    assert!(
+        first.is_ok() ^ second.is_ok(),
+        "only one executor may own the start"
+    );
+    assert_eq!(
+        first.err().or_else(|| second.err()).unwrap().code(),
+        Code::AlreadyExists
+    );
+    assert_eq!(connection.query_one("SELECT count(*) FROM ofz.audit WHERE receipt->>'operation_id'=$1 AND receipt->>'platform_action'='relay.execution.started'", &[&concurrent.operation_id]).await.unwrap().get::<_,i64>(0), 1);
     let entered = std::sync::Arc::new(tokio::sync::Notify::new());
     let resume = std::sync::Arc::new(tokio::sync::Notify::new());
     let delayed = native
