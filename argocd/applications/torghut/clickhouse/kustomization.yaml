@@ -22,5 +22,5 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-2a367bcd72e6cf1c168762d7973acaa1e1c284fa
-    digest: sha256:04af1a8d0aa71b94b69d556c9ab14508ff7a54fe6f2d9eacd25b95b9c2d1b02f
+    newTag: kargo-sha-b2fd58e08391a804a18e26355c16476a91f05968
+    digest: sha256:c5f06780055d30168e8b4ecd172bab6a0242507f029d81e6233bf7fbc3ece543

@@ -86,27 +86,18 @@ spec:
             - name: BAYN_IMAGE_DIGEST
               value: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2"
+              value: "60c3149349abb7bbfb763c7418d4c12065cb56c3554ea9cbbf1667bc720379c5"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "72b942692c5156c48a9fea3a0b834b96d8bebe79a334e759af87e8a27c3b7e60"
+              value: "897ff8cb54a059b08a4d5b79da5d05a9d08605f3c42b6e50fce05aa3600c5662"
             # Runtime verifies the reviewed activation identity against its compiled strategy contract.
             - name: BAYN_STRATEGY_NAME
               value: jev
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "64baeede37bbf9e9b9777ccb2746578705661a5a70f8e971a25427611fea4cd4"
+              value: "616099d14e8cad145ca103a36e9afce5d7865b6e857b4d3981fccc3d0058b82e"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
               value: "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab"
             - name: BAYN_BROKER_ACCESS
               value: read-only
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"c29257939cd2ace501f0e0c158204eb5840ad1b0f8f1e0689390f40e41762c92","authoredActivation":{"sourceRevision":"7964cf8faff4f784bc49473396e7e97e158e7b84","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:ce2a19bac45b03f1b8a95ea01d4291805014619d144e4595db44cb64d4aac3fb"},"activation":{"sourceRevision":"7964cf8faff4f784bc49473396e7e97e158e7b84","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:ce2a19bac45b03f1b8a95ea01d4291805014619d144e4595db44cb64d4aac3fb"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             # sha256("bayn/authority-generation/autonomous-observe-v15")

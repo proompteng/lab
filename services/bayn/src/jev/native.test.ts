@@ -23,7 +23,7 @@ const batchFor = (fixture: ReturnType<typeof nativeJevFixture>) =>
       expiresAt: new Date(
         Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
       ).toISOString(),
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V7,
     }),
   )
 
@@ -31,11 +31,11 @@ describe('native Jev entry and position observations', () => {
   test('complete recorded responses determine one capped target and reproduce without a model', () => {
     const evidence = nativeJevDecisionEvidence()
     const target = Result.getOrThrow(decideJevEntry(evidence))
-    expect(target.selectedSymbols).toEqual(['AAPL'])
-    expect(target.targetWeights['AAPL']).toBeGreaterThan(0)
-    expect(target.targetWeights['AAPL']).toBeLessThanOrEqual(0.2)
+    expect(target.selectedSymbols).toEqual(['AMD'])
+    expect(target.targetWeights['AMD']).toBeGreaterThan(0)
+    expect(target.targetWeights['AMD']).toBeLessThanOrEqual(0.2)
     expect(Object.values(target.targetWeights).reduce((sum, weight) => sum + weight, 0)).toBe(
-      target.targetWeights['AAPL'] ?? 0,
+      target.targetWeights['AMD'] ?? 0,
     )
     expect(
       Result.getOrThrow(Schema.decodeUnknownResult(JevEntryTargetSchema)(JSON.parse(JSON.stringify(target)))),
@@ -46,19 +46,19 @@ describe('native Jev entry and position observations', () => {
       { decidedAt: evidence.observation.observedAt },
     ])
       expect(Result.isFailure(Schema.decodeUnknownResult(JevEntryTargetSchema)({ ...target, ...change }))).toBe(true)
-    expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, 'wait'))).selectedSymbols).toEqual([])
-    expect(
-      Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, 'enter', 0.42))).selectedSymbols,
-    ).toEqual(['AAPL'])
+    expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, false))).selectedSymbols).toEqual([])
+    expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, true, 0.42))).selectedSymbols).toEqual(
+      [],
+    )
   })
 
-  test.each(['wait', 'avoid'])('a chosen %s action remains an abstention', (action) => {
-    const target = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, action, 0.42)))
+  test.each([0.1, 0.42, 0.69])('unsupported or uncertain judgments at %s cannot authorize an entry', (probability) => {
+    const target = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, true, probability)))
     expect(target.selectedSymbols).toEqual([])
     expect(Object.values(target.targetWeights).every((weight) => weight === 0)).toBe(true)
   })
 
-  test('sunk entry cash fees cannot change the management judgment input', () => {
+  test('held positions reject entry inference even when sunk entry cash fees change', () => {
     const fixture = nativeJevFixture(JevPurpose.Manage)
     const portfolio = fixture.portfolio
     if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected management fixture')
@@ -72,19 +72,18 @@ describe('native Jev entry and position observations', () => {
       }),
     )
     expect(changed.contentHash).not.toBe(fixture.observation.contentHash)
-    const original = batchFor(fixture)
-    const other = Result.getOrThrow(
-      makeJevTradingSignalBatch({
-        observation: changed.payload,
-        expiresAt: original.expiresAt,
-        planVersion: JevBatchPlanVersion.V6,
-      }),
-    )
-    const a = original.candidates[0]
-    const b = other.candidates[0]
-    if (a?.status !== JevCandidatePlanStatus.Requested || b?.status !== JevCandidatePlanStatus.Requested)
-      throw new Error('Expected management requests')
-    expect(a.request.request).toEqual(b.request.request)
+    expect(() => batchFor(fixture)).toThrow()
+    expect(
+      Result.isFailure(
+        makeJevTradingSignalBatch({
+          observation: changed.payload,
+          expiresAt: new Date(
+            Date.parse(changed.payload.observedAt) + fixture.protocol.inferenceValidityMs,
+          ).toISOString(),
+          planVersion: JevBatchPlanVersion.V7,
+        }),
+      ),
+    ).toBe(true)
   })
 
   test('entry cannot reuse expired, partial, or another portfolio decision evidence', () => {
@@ -99,7 +98,9 @@ describe('native Jev entry and position observations', () => {
       ),
     ).toBe(true)
     expect(
-      Result.isFailure(decideJevEntry(nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Manage), 'hold'))),
+      Result.isFailure(
+        decideJevEntry({ ...evidence, observation: nativeJevFixture(JevPurpose.Manage).observation.payload }),
+      ),
     ).toBe(true)
   })
 
@@ -111,7 +112,7 @@ describe('native Jev entry and position observations', () => {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(observed + 10_000).toISOString(),
-        planVersion: JevBatchPlanVersion.V6,
+        planVersion: JevBatchPlanVersion.V7,
       }),
     )
     const decidedAt = new Date(observed + 7_000).toISOString()
@@ -123,7 +124,7 @@ describe('native Jev entry and position observations', () => {
         decidedAt,
       }),
     )
-    expect(target.selectedSymbols).toEqual(['AAPL'])
+    expect(target.selectedSymbols).toEqual(['AMD'])
     const quoteEventAt = new Date(observed + 7_100).toISOString()
     const maximumAgeMs = jevEntryQuoteMaximumAgeMs(target, quoteEventAt, fixture.protocol.maximumQuoteAgeMs)
     expect(maximumAgeMs).toBe(10_000)
@@ -214,33 +215,19 @@ describe('native Jev entry and position observations', () => {
     ).toEqual([...equityMarketProfile.candidateSymbols])
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
-      expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v21',
-        position: null,
+      expect(candidate.request.request.numericalState).toMatchObject({
+        schemaVersion: 'bayn.jev-entry-state.v22',
         task: { decisionPurpose: JevPurpose.Entry },
       })
     }
   })
 
-  test('management uses actual partial fills and remaining horizon for the held symbol', () => {
+  test('management retains actual partial fills and rejects entry-inference batches', () => {
     const fixture = nativeJevFixture(JevPurpose.Manage)
-    const batch = batchFor(fixture)
-    expect(batch.candidates.map(({ symbol }) => symbol)).toEqual(['AAPL'])
-    const candidate = batch.candidates[0]
-    if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected a management request')
-    expect(candidate.request.request.state).toMatchObject({
-      task: { decisionPurpose: JevPurpose.Manage },
-      position: {
-        symbol: 'AAPL',
-        quantityUnits: 5,
-        heldForMinutes: 3,
-        remainingHoldingMinutes: 12,
-      },
-    })
-    expect(candidate.request.request.questions['action']?.criteria).toHaveProperty('hold')
-    expect(candidate.request.request.questions['action']?.criteria).toHaveProperty('exit')
-    expect(Object.keys(candidate.request.request.questions)).toEqual(['action'])
-    expect(Result.getOrThrow(reproduceJevTradingSignalBatch(fixture.observation.payload, batch))).toEqual(batch)
+    expect(fixture.portfolio.purpose).toBe(JevPurpose.Manage)
+    expect(fixture.portfolio.brokerState.positions[0]?.quantityAtoms).toBe('5000000000')
+    expect(fixture.entryFills.map((fill) => fill.quantityAtoms)).toEqual(['3000000000', '2000000000'])
+    expect(() => batchFor(fixture)).toThrow()
   })
 
   test('rejects wrong quantities, missing fills, a held entry and substituted reconciled positions', () => {
@@ -275,7 +262,7 @@ describe('native Jev entry and position observations', () => {
           expiresAt: new Date(
             Date.parse(payload.observedAt) + fixture.protocol.inferenceValidityMs + 1000,
           ).toISOString(),
-          planVersion: JevBatchPlanVersion.V6,
+          planVersion: JevBatchPlanVersion.V7,
         }),
       ),
     ).toBe(true)
@@ -331,7 +318,7 @@ describe('native Jev entry and position observations', () => {
       makeJevTradingSignalBatch({
         observation: observation.payload,
         expiresAt: '2026-09-04T14:30:12.000Z',
-        planVersion: JevBatchPlanVersion.V6,
+        planVersion: JevBatchPlanVersion.V7,
       }),
     )
     expect(batch.candidates.find((entry) => entry.symbol === 'AAPL')?.status).toBe(JevCandidatePlanStatus.Requested)

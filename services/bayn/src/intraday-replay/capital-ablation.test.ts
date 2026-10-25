@@ -52,7 +52,7 @@ const terms: CapitalTerms = Schema.decodeUnknownSync(CapitalTermsSchema)({
     schemaVersion: executionRiskPolicySchemaVersion,
     accountId: 'jev-native-test',
     brokerMode: BrokerMode.Execution,
-    allowedSymbols: ['AAPL', 'AMZN', 'BTC/USD', 'ETH/USD', 'SOL/USD'],
+    allowedSymbols: defaultJevProtocolDocument.candidateSymbols,
     allowedOrderTypes: [OrderType.Limit],
     allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
     maxOrderNotionalMicros: '40000000000',
@@ -73,9 +73,21 @@ const terms: CapitalTerms = Schema.decodeUnknownSync(CapitalTermsSchema)({
   costHurdleMarginBps: 0,
   scenarios: [scenario],
 })
-const opportunity = (offsetMs = 0, action = 'enter', probability = 0.8): CapitalOpportunity => {
-  const native = nativeJevFixture(undefined, new Date(baseAt - 100 + offsetMs).toISOString())
-  const { decidedAt, ...evidence } = nativeJevDecisionEvidence(native, action, probability)
+const opportunity = (
+  offsetMs = 0,
+  supportsEntry = true,
+  probability = 0.8,
+  returns?: Readonly<Record<string, number>>,
+): CapitalOpportunity => {
+  const native = nativeJevFixture(
+    undefined,
+    new Date(baseAt - 100 + offsetMs).toISOString(),
+    undefined,
+    undefined,
+    undefined,
+    returns,
+  )
+  const { decidedAt, ...evidence } = nativeJevDecisionEvidence(native, supportsEntry, probability)
   return {
     batch: Result.getOrThrow(prepareSignalStudyBatch(evidence)),
     committedAtMs: Date.parse(decidedAt),
@@ -92,7 +104,7 @@ const cryptoOpportunity = (symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD'): CapitalOp
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + 10_000).toISOString(),
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V7,
     }),
   )
   const completedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
@@ -163,7 +175,7 @@ const evaluate = (
 }
 
 test('both arms retain every identical current native opportunity, abstention and capital overlap', () => {
-  const opps = [opportunity(60_000), opportunity(), opportunity(120_000, 'wait')]
+  const opps = [opportunity(60_000), opportunity(), opportunity(120_000, false)]
   const reports = evaluate(opps)
   expect(reports[0]?.eligibleOpportunityIds).toEqual(reports[1]?.eligibleOpportunityIds)
   expect(reports[0]?.metrics).toMatchObject({
@@ -329,13 +341,13 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
   ).toBe(true)
 })
 
-test('current chosen-model-action baseline retains an enter choice below the retired probability floor', () => {
-  const opp = opportunity(0, 'enter', 0.6)
+test('uncertain proposal judgments stay outside both funded populations', () => {
+  const opp = opportunity(0, true, 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v23')
-  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('supported-setup-and-economic-plan')
-  expect(baseline?.metrics.filledEntries).toBe(1)
-  expect(baseline?.opportunities[0]?.status).toBe(CapitalAdmission.Admitted)
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v24')
+  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('source-anchored-proposal-judgments')
+  expect(baseline?.metrics.filledEntries).toBe(0)
+  expect(candidate?.metrics.filledEntries).toBe(0)
   expect(baseline?.eligibleOpportunityIds).toEqual(candidate?.eligibleOpportunityIds)
 })
 
@@ -442,7 +454,7 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(equityAt + 9900).toISOString(),
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V7,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, new Date(equityAt).toISOString())
@@ -583,7 +595,9 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
 }, 60_000)
 
 test('an unrelated missing mark is counted once and withholds the net comparison after both portfolios close', () => {
-  const reports = evaluate([opportunity(), opportunity(2000, 'wait')], scenario, terms, (symbol, at) =>
+  const risingReturns = Object.fromEntries(defaultJevProtocolDocument.candidateSymbols.map((symbol) => [symbol, 0.02]))
+  const rising = () => opportunity(0, true, 0.8, risingReturns)
+  const reports = evaluate([rising(), opportunity(2000, false)], scenario, terms, (symbol, at) =>
     at === baseAt + 2000 ? undefined : quoteAt(symbol, at),
   )
   expect(reports.every((report) => report.metrics.executionComplete)).toBe(true)
@@ -591,7 +605,7 @@ test('an unrelated missing mark is counted once and withholds the net comparison
   expect(reports.map((report) => report.metrics.missingMarks)).toEqual([1, 1])
   expect(reports.every((report) => report.metrics.maximumDrawdownAfterAllCostsMicros === null)).toBe(true)
   expect(capitalNetDifference(true, reports)).toBeNull()
-  const complete = evaluate([opportunity()])
+  const complete = evaluate([rising()])
   expect(capitalNetDifference(true, complete)).toBe('0')
   expect(capitalNetDifference(false, complete)).toBeNull()
 })

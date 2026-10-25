@@ -1,3 +1,5 @@
+import { defaultJevProtocolDocument } from './protocol'
+import { entryInferenceFixtureLayer } from './entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -21,13 +23,16 @@ import {
 import { makeJevTradingSignalBatch } from './trading-signals'
 
 const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSize = 100, quoteAt?: string) => {
-  const fixture = nativeJevFixture()
+  const fixture = nativeJevFixture(undefined, undefined, undefined, {
+    ...defaultJevProtocolDocument,
+    candidateSymbols: ['AAPL'],
+  })
   const retained = nativeJevDecisionEvidence(fixture)
   const batchPlan = Result.getOrThrow(
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V7,
     }),
   )
   const decision = Result.getOrThrow(
@@ -193,6 +198,7 @@ describe('Jev entry execution quote eligibility', () => {
           abandon: () => unused,
         }),
         Effect.provideService(JevClient, { evaluate: () => unused }),
+        Effect.provide(entryInferenceFixtureLayer),
         Effect.provide(TestClock.layer()),
       ),
     )

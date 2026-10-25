@@ -1,3 +1,4 @@
+import { entryInferenceFixtureLayer } from './entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Fiber, Logger, Option, References, Result, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -158,6 +159,7 @@ const scenario = (
                 return yield* Fiber.join(fiber)
               }),
         ),
+        Effect.provide(entryInferenceFixtureLayer),
         Effect.provide(TestClock.layer()),
         Effect.provide(NodeServices.layer),
       ),
@@ -264,7 +266,6 @@ describe('entry-bound native position exits', () => {
 describe('entry observation admission', () => {
   test.each([
     [JevPurpose.Entry, 'current', defaultJevProtocolDocument],
-    [JevPurpose.Manage, 'current', defaultJevProtocolDocument],
     [JevPurpose.Entry, 'single-candidate', { ...defaultJevProtocolDocument, candidateSymbols: ['AAPL'] }],
   ] as const)(
     '%s %s retains typed expiry and structured admission diagnostics',
@@ -325,6 +326,7 @@ describe('entry observation admission', () => {
             abandon: () => Effect.die('No inference can be abandoned'),
           }),
           Effect.provideService(JevClient, { evaluate: () => Effect.die('No provider call is allowed') }),
+          Effect.provide(entryInferenceFixtureLayer),
           Effect.provide(TestClock.layer()),
           Effect.provide(Logger.layer([logger])),
           Effect.provide(NodeServices.layer),
