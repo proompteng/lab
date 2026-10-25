@@ -5,8 +5,15 @@ import { sha256 } from '../src/hash'
 import { SignalStudyFailure, runSignalStudy } from '../src/intraday-replay/signal-study'
 import { validateBacktestSourceReceipt } from '../src/intraday-replay/source'
 
+const signalStudyUsage =
+  'Usage: node dist/research/jev-signal-study.js --input <json> --input-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json> | --help'
+
 const main = Effect.gen(function* () {
   const args = process.argv.slice(2)
+  if (args.length === 1 && args[0] === '--help') {
+    const stdio = yield* Stdio.Stdio
+    return yield* Stream.run(Stream.make(`${signalStudyUsage}\n`), stdio.stdout())
+  }
   const flags = new Map<string, string>()
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index]
@@ -31,8 +38,7 @@ const main = Effect.gen(function* () {
     outputPath === undefined
   )
     return yield* new SignalStudyFailure({
-      message:
-        'Usage: bun tools/jev-signal-study.ts --input <json> --input-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json>',
+      message: signalStudyUsage,
     })
   const fs = yield* FileSystem.FileSystem
   const inputText = yield* fs.readFileString(inputPath)

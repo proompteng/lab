@@ -63,9 +63,14 @@ export const verifyJevPlan = (input: unknown) => {
   }
 }
 
+const usage = 'Usage: node dist/research/verify-jev-plan.js <private-decision.json> | --help'
+
 if (import.meta.main) {
-  const path = process.argv[2]
-  if (path === undefined) throw new Error('Usage: bun tools/verify-jev-plan.ts <private-decision.json>')
-  const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
-  console.log(JSON.stringify(verifyJevPlan(raw)))
+  if (process.argv.length === 3 && process.argv[2] === '--help') process.stdout.write(`${usage}\n`)
+  else {
+    const path = process.argv[2]
+    if (path === undefined) throw new Error(usage)
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    console.log(JSON.stringify(verifyJevPlan(raw)))
+  }
 }
