@@ -37,12 +37,7 @@ jobs:
         run: skopeo --version
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-        with:
-          buildkitd-config-inline: |
-            [registry."registry.registry.svc.cluster.local"]
-              http = true
-              insecure = true
+        uses: ./.github/actions/setup-buildkit
 
       - name: Verify pinned upstream release
         id: upstream

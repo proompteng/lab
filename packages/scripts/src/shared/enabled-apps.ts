@@ -100,7 +100,6 @@ const appToNixAttr = new Map<string, string>([
 ])
 
 const appToBuildScriptPath = new Map<string, string>([
-  ['arc', 'packages/scripts/src/arc-runner/build-image.ts'],
   ['symphony-jangar', 'packages/scripts/src/symphony/build-image.ts'],
   ['symphony-torghut', 'packages/scripts/src/symphony/build-image.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts'],
@@ -109,7 +108,6 @@ const appToBuildScriptPath = new Map<string, string>([
 ])
 
 const appToDeployScriptPath = new Map<string, string>([
-  ['arc', 'packages/scripts/src/arc-runner/deploy-service.ts'],
   ['symphony-jangar', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['symphony-torghut', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'],

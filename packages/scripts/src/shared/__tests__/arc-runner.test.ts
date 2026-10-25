@@ -54,7 +54,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
   })
 
-  it('places AMD64 Nix, Docker, and workspace writes on one disposable local NVMe volume', () => {
+  it('places AMD64 Nix and workspace writes on one disposable local NVMe volume', () => {
     const application = YAML.parseDocument(arcApplication)
     for (const [index, name, storageClass] of [[2, 'arc-amd64', 'local-path-ci-amd64']] as const) {
       const valuesPath = ['spec', 'sources', index, 'helm', 'valuesObject']
@@ -92,14 +92,6 @@ describe('ARC Nix runner toolchain', () => {
               { name: 'scratch', mountPath: '/home/runner/.cache', subPath: 'cache' },
               { name: 'scratch', mountPath: '/tmp', subPath: 'tmp' },
               workMount,
-            ]),
-          }),
-          expect.objectContaining({
-            name: 'dind',
-            volumeMounts: expect.arrayContaining([
-              workMount,
-              { name: 'scratch', mountPath: '/var/lib/docker', subPath: 'docker' },
-              { name: 'scratch', mountPath: '/var/lib/containerd', subPath: 'containerd' },
             ]),
           }),
         ]),
@@ -155,7 +147,7 @@ describe('ARC Nix runner toolchain', () => {
         },
       },
     ])
-    const request = [0, 1].reduce((total, index) => {
+    const request = [0].reduce((total, index) => {
       const memory = pod.getIn(['containers', index, 'resources', 'requests', 'memory'])
       if (typeof memory !== 'string' || !/^\d+Gi$/.test(memory)) throw new Error('Expected explicit Gi memory request')
       return total + Number.parseInt(memory, 10)
@@ -185,19 +177,41 @@ describe('ARC Nix runner toolchain', () => {
     ])
   })
 
-  it('serializes registry uploads from every runner scale set', () => {
-    for (const scaleSet of ['arc-arm64', 'arc-amd64', 'analysis-arm64']) {
-      const block = runnerScaleSetBlock(scaleSet)
-      expect(block).toContain('--max-concurrent-uploads=1')
-      expect(block).not.toContain('--max-concurrent-uploads=8')
+  it('uses standalone native BuildKit workers without a sidecar or host runtime on lab runners', () => {
+    const application = YAML.parse(arcApplication)
+    for (const index of [1, 2]) {
+      const pod = application.spec.sources[index].helm.valuesObject.template.spec
+      expect(pod.containers.map((container: { name: string }) => container.name)).toEqual(['runner'])
+      expect(JSON.stringify(pod)).not.toMatch(/DOCKER_HOST|podman|hostPath|dind/)
+      expect(pod.containers[0].command).toEqual(['/home/runner/run.sh'])
     }
+    const workers = YAML.parseAllDocuments(readRepoFile('argocd/applications/arc/buildkit.yaml')).map((doc) =>
+      doc.toJSON(),
+    )
+    const builds = workers.filter((resource) => resource.kind === 'StatefulSet')
+    expect(builds).toHaveLength(2)
+    for (const worker of builds) {
+      const pod = worker.spec.template.spec
+      expect(pod.containers).toHaveLength(1)
+      expect(pod.containers[0].image).toMatch(/^moby\/buildkit:v[0-9.]+@sha256:[a-f0-9]{64}$/)
+      expect(pod.containers[0].args).toContain('--containerd-worker=false')
+      expect(pod.automountServiceAccountToken).toBe(false)
+      expect(JSON.stringify(pod)).not.toContain('hostPath')
+    }
+    expect(builds.map((worker) => worker.spec.template.spec.nodeSelector['kubernetes.io/arch']).sort()).toEqual([
+      'amd64',
+      'arm64',
+    ])
+    const policy = workers.find((resource) => resource.kind === 'NetworkPolicy')
+    expect(policy.spec.ingress[0].from[0].podSelector.matchExpressions[0].values).toEqual(['arc-amd64', 'arc-arm64'])
+    const setup = YAML.parse(readRepoFile('.github/actions/setup-buildkit/action.yml'))
+    expect(setup.runs.steps[1].with.driver).toBe('remote')
   })
 
   it('keeps lab ARC ephemeral-storage requests small enough for the configured runner scale', () => {
     for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
       const block = runnerScaleSetBlock(scaleSet)
       expect(block).toContain('ephemeral-storage: "4Gi"')
-      expect(block).toContain('ephemeral-storage: "6Gi"')
       expect(block).not.toContain('storage: 20Gi')
     }
 

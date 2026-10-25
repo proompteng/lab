@@ -6,7 +6,7 @@ import YAML from 'yaml'
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 
-test('Restate image promotion requires both native fault proofs and uploaded release evidence', () => {
+test('Restate image promotion requires native build proofs and uploaded release evidence', () => {
   const workflow = YAML.parse(readRepoFile('.github/workflows/restate-images.yml'))
   const build = workflow.jobs.build
   const publish = workflow.jobs.publish
@@ -23,11 +23,9 @@ test('Restate image promotion requires both native fault proofs and uploaded rel
     'amd64',
     'arm64',
   ])
-  const platformPush = build.steps.find((step: { name?: string }) => step.name === 'Publish tested platform image')
-  expect(platformPush.if).toBe(mainOnly)
-  expect(platformPush.run).toBe(
-    'bun packages/scripts/src/shared/docker.ts push "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"',
-  )
+  const runtime = build.steps.find((step: { name?: string }) => step.name === 'Build runtime')
+  expect(runtime.with.push).toBe("${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}")
+  expect(runtime.with.load).toBeUndefined()
   expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/cli.ts')
   expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/docker.ts')
   expect(publish.if).toBe(mainOnly)
