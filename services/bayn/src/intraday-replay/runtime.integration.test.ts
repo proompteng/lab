@@ -1163,6 +1163,7 @@ durableTest.each(
             ),
           )
           let lostResponses = 0
+          const submitResponseLost = yield* Deferred.make<void>()
           const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
             Effect.gen(function* () {
               const generation = yield* store.authorityGeneration.readResearchAuthorityGeneration(generationHash)
@@ -1205,6 +1206,7 @@ durableTest.each(
                                 lostResponses += 1
                               }),
                             ),
+                            Effect.andThen(Deferred.succeed(submitResponseLost, undefined)),
                             Effect.andThen(Effect.never),
                           ),
                       }
@@ -1235,17 +1237,21 @@ durableTest.each(
               const owned = yield* Deferred.await(published)
               return { owner, advance: owned.advance.pipe(Effect.provideContext(resources)) }
             })
-          const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+          const deadlineClock = yield* TestClock.make()
+          yield* Deferred.await(submitResponseLost).pipe(
+            Effect.andThen(deadlineClock.adjust(3000)),
+            Effect.forkChild({ startImmediately: true }),
+          )
           const healthy = yield* openOwner(runtime.authorityGenerationHash, 'Mutation', true)
           const recoveryAdvances = []
           for (let attempt = 0; attempt < 20 && lostResponses === 0; attempt++) {
             yield* advanceBy(1000)
-            const advance = yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
+            const advance = yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
             recoveryAdvances.push(advance.observation)
           }
           expect(lostResponses, JSON.stringify(recoveryAdvances)).toBe(1)
           yield* advanceBy(1000)
-          yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
+          yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
           expect(healthy.owner.pollUnsafe()).toBeDefined()
           yield* Fiber.join(healthy.owner)
           const restricted = yield* readAuthority
@@ -1255,6 +1261,7 @@ durableTest.each(
             kill: KillState.Active,
           })
           expect((yield* broker.snapshot).fills).toHaveLength(scenario === 'recovery-filled' ? 1 : 0)
+          const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
           const recovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
           const concurrentRecovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
           let lastRecovery

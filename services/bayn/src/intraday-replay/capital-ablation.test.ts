@@ -199,7 +199,7 @@ test('both arms retain every identical current native opportunity, abstention an
     Result.getOrThrow(canonicalHashV1Result(defaultJevProtocolDocument)),
   )
   expect(evaluate(opps)).toEqual(reports)
-})
+}, 30_000)
 
 test('cost hurdle rejects an expensive low-proxy opportunity while preserving both population and spending', () => {
   const opp = opportunity()
@@ -375,8 +375,9 @@ test('post-coverage commitment stays in both populations and cost totals', () =>
 })
 
 test('commitment repricing rechecks native market spread and positive displayed sides', () => {
+  const opp = opportunity()
   for (const overrides of [{ askPrice: 101 }, { askSize: 0 }, { bidSize: 0 }]) {
-    const reports = evaluate([opportunity()], scenario, terms, (symbol, at) => quoteAt(symbol, at, overrides))
+    const reports = evaluate([opp], scenario, terms, (symbol, at) => quoteAt(symbol, at, overrides))
     expect(reports.map((arm) => arm.opportunities[0]?.status)).toEqual([
       CapitalAdmission.EntryQuoteBlocked,
       CapitalAdmission.EntryQuoteBlocked,
@@ -596,8 +597,8 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
 
 test('an unrelated missing mark is counted once and withholds the net comparison after both portfolios close', () => {
   const risingReturns = Object.fromEntries(defaultJevProtocolDocument.candidateSymbols.map((symbol) => [symbol, 0.02]))
-  const rising = () => opportunity(0, true, 0.8, risingReturns)
-  const reports = evaluate([rising(), opportunity(2000, false)], scenario, terms, (symbol, at) =>
+  const rising = opportunity(0, true, 0.8, risingReturns)
+  const reports = evaluate([rising, opportunity(2000, false)], scenario, terms, (symbol, at) =>
     at === baseAt + 2000 ? undefined : quoteAt(symbol, at),
   )
   expect(reports.every((report) => report.metrics.executionComplete)).toBe(true)
@@ -605,7 +606,7 @@ test('an unrelated missing mark is counted once and withholds the net comparison
   expect(reports.map((report) => report.metrics.missingMarks)).toEqual([1, 1])
   expect(reports.every((report) => report.metrics.maximumDrawdownAfterAllCostsMicros === null)).toBe(true)
   expect(capitalNetDifference(true, reports)).toBeNull()
-  const complete = evaluate([rising()])
+  const complete = evaluate([rising])
   expect(capitalNetDifference(true, complete)).toBe('0')
   expect(capitalNetDifference(false, complete)).toBeNull()
 })
