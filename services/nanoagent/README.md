@@ -55,7 +55,10 @@ failures stop immediately; closing the viewer cancels any retry without reportin
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
-[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Nanoagent serves HTTP/2 gRPC and preview
+[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 8 adds `StatFile`,
+which reads one path's metadata without listing its siblings. It uses the existing file-observation authority and
+workspace confinement. The controller rejects older guest API versions; roll out the paired controller and guest
+images together. The signed Ofz request protocol remains version 4. Nanoagent serves HTTP/2 gRPC and preview
 HTTP over private vsock port 1024. Every RPC checks the slot's unique bootstrap credential. Only the host supervisor
 can reach this transport, after authenticating the exact Tengri SPIFFE identity and current owner/epoch headers.
 The binding includes the Ofz runtime epoch. Guest init requires that canonical epoch on every resume and returns its
@@ -158,6 +161,9 @@ Unsupported and oversized question schemas still fail explicitly without fabrica
 
 The allowed Codex calls include account, model, conversation and turn operations, and read-only MCP server status
 for verifying the browser computer tool.
+Session discovery and archiving use the pinned native `thread/list`, `thread/archive`, and `thread/unarchive` APIs.
+Archiving retains the session's history. It shares the native operation mutex with turn admission and rejects an
+active turn before calling the app-server. The controller also rejects archiving a session with an unfinished durable run.
 
 ## Firecracker rootfs and persistent tools
 
@@ -249,8 +255,8 @@ The operating-system root is the private 1.5 GiB Firecracker disk. Snapshot slee
 processes. An explicitly fenced cold replacement resets the root from the image. The 32 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
-`/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
-real guest through the isolated [KVM test](../tengri/test-kvm.sh) to exercise mounts and network administration.
+`/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Its `--runtime` mode requires an independently provisioned real guest to exercise mounts and network administration;
+the container-based KVM fixture has been removed.
 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.164.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 32 GiB PVC-backed

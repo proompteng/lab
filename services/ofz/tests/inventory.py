@@ -240,6 +240,32 @@ def codex_cases(source):
 
 
 def main():
+    guest_protocol_versions = {}
+    for name, source, pattern in [
+        (
+            "bff",
+            "apps/landing/src/lib/tengri/grpc.ts",
+            r"binding\.guestApiProtocolVersion\s*!==\s*(\d+)",
+        ),
+        (
+            "controller",
+            "services/tengri/src/lib.rs",
+            r"pub\s+const\s+GUEST_API_PROTOCOL_VERSION\s*:\s*u32\s*=\s*(\d+)",
+        ),
+        (
+            "guest",
+            "services/nanoagent/grpc.go",
+            r"const\s+guestProtocolVersion\s*=\s*(\d+)",
+        ),
+    ]:
+        versions = re.findall(pattern, without_comments((ROOT / source).read_text()))
+        assert len(versions) == 1, (
+            f"{name}: guest API version requires inventory review"
+        )
+        guest_protocol_versions[name] = int(versions[0])
+    assert len(set(guest_protocol_versions.values())) == 1, (
+        f"guest API version drift: {guest_protocol_versions}"
+    )
     catalog = json.loads((OFZ / "operations.json").read_text())
     actions = set(
         re.findall(
@@ -332,9 +358,26 @@ def main():
             f"{surface}: unclassified={sorted(operations - classified)}, "
             f"stale={sorted(classified - operations)}"
         )
+    admission = (ROOT / "services/tengri/src/slot/admission.rs").read_text()
+    target_parser = admission[admission.index("fn request_target(") :]
+    target_parser = target_parser[: target_parser.index("\n}\n")]
+    forwarded = set(
+        re.findall(r'"([A-Z][A-Za-z0-9]+)"', without_comments(target_parser))
+    )
+    assert forwarded == actual["guest"], (
+        f"supervisor guest RPC target parser drift: missing={sorted(actual['guest'] - forwarded)}, "
+        f"stale={sorted(forwarded - actual['guest'])}"
+    )
     counts = {surface: len(operations) for surface, operations in actual.items()}
     print(
-        json.dumps({"classified_operations": counts, "result": "PASS"}, sort_keys=True)
+        json.dumps(
+            {
+                "classified_operations": counts,
+                "guest_api_protocol_version": guest_protocol_versions["controller"],
+                "result": "PASS",
+            },
+            sort_keys=True,
+        )
     )
 
 

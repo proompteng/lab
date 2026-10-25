@@ -169,7 +169,8 @@ export const nativeJevFixture = (
   }))
   const material = {
     account: {
-      schemaVersion: 'bayn.paper-account-snapshot.v1' as const,
+      schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
+      cryptoFeeTier: null,
       accountId,
       status: AccountStatus.Active,
       currency: 'USD' as const,
@@ -211,6 +212,8 @@ export const nativeJevFixture = (
             exitPolicy: (() => {
               const economics = Result.getOrThrow(
                 jevEntryEconomics({
+                  cryptoFeeTier: null,
+
                   protocol,
                   symbol: 'AAPL',
                   bidMicros: 102_000_000n,

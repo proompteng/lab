@@ -67,6 +67,7 @@ const evidence = (identity: string): ReadEvidence => ({
 
 const account: BrokerAccount = {
   cryptoStatus: null,
+  cryptoFeeTier: null,
   cashReportingQuantumMicros: '1' as const,
   nonMarginableBuyingPowerMicros: null,
 

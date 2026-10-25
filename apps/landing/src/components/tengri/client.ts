@@ -95,6 +95,7 @@ export async function runTengriAction<Result>(
   scope.active.set(controller, {
     blocksLifecycle:
       action.action !== 'codex-models' &&
+      action.action !== 'list-threads' &&
       action.action !== 'resume-thread' &&
       action.action !== 'active-codex-run' &&
       action.action !== 'codex-run',

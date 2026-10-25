@@ -20,6 +20,7 @@ import {
   issueTerminalTicket,
   listAgents,
   listCodexModels,
+  listCodexThreads,
   listFiles,
   listTerminals,
   moveFile,
@@ -31,7 +32,9 @@ import {
   resumeCodexThread,
   searchFiles,
   sendCodexTurn,
+  setCodexThreadArchived,
   sleepAgent,
+  statFile,
   startCodexLogin,
   steerCodexTurn,
   terminateTerminal,
@@ -120,6 +123,9 @@ async function runAction(request: Request) {
       case 'update-power-settings':
         result = await updatePowerSettings(identity, action.agentId, action.power)
         break
+      case 'stat-file':
+        result = await statFile(identity, action.agentId, action.path, request.signal)
+        break
       case 'list-files':
         result = await listFiles(identity, action.agentId, action.path)
         break
@@ -193,6 +199,13 @@ async function runAction(request: Request) {
           model: action.model,
           reasoningEffort: action.reasoningEffort,
         })
+        break
+      case 'list-threads':
+        result = await listCodexThreads(identity, action.agentId, action.archived, action.cursor, request.signal)
+        break
+      case 'set-thread-archived':
+        await setCodexThreadArchived(identity, action.agentId, action.threadId, action.archived)
+        result = null
         break
       case 'resume-thread':
         return await resumeCodexThread(

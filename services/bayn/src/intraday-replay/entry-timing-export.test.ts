@@ -70,7 +70,12 @@ const fixture = (abstain = false) => {
     kind: 'SPAN_KIND_INTERNAL',
     startTimeUnixNano: String(start),
     endTimeUnixNano: String(end),
-    attributes,
+    attributes: [
+      attribute('bayn.native_wall.clock', 'effect.Clock.currentTimeMillis'),
+      attribute('bayn.native_wall.started_at', instant(start)),
+      attribute('bayn.native_wall.finished_at', instant(end)),
+      ...attributes,
+    ],
     status: { code: 'STATUS_CODE_OK' },
   })
   const spans = [
@@ -131,7 +136,17 @@ const fixture = (abstain = false) => {
   return { decision, target, observed, created, commitNanos, trace, spans, byName, set, input, encode }
 }
 
-test.each([false, true])('exports exact native timing and a conservative v1 receipt, abstention=%s', (abstain) => {
+test.each([-500n, 500n])('keeps native wall timing independent of a %sms trace-clock offset', (offsetMs) => {
+  const f = fixture()
+  for (const span of f.spans) {
+    span.startTimeUnixNano = String(BigInt(span.startTimeUnixNano) + offsetMs * ms)
+    span.endTimeUnixNano = String(BigInt(span.endTimeUnixNano) + offsetMs * ms)
+  }
+  const result = Result.getOrThrow(buildEntryTimingExport(f.input()))
+  expect(result.timing.decisionCommittedAt).toBe(new Date(Number(f.commitNanos / ms + 1n)).toISOString())
+})
+
+test.each([false, true])('exports exact native timing and a conservative v2 receipt, abstention=%s', (abstain) => {
   const f = fixture(abstain)
   const result = Result.getOrThrow(buildEntryTimingExport(f.input()))
   expect(Result.isSuccess(Schema.decodeUnknownResult(EntryTimingReceiptSchema)(result.timing))).toBeTrue()
@@ -143,10 +158,11 @@ test.each([false, true])('exports exact native timing and a conservative v1 rece
   expect(receiptNanos - f.commitNanos).toBeGreaterThanOrEqual(0n)
   expect(receiptNanos - f.commitNanos).toBeLessThan(ms)
   expect(result.receipt.commitment).toEqual({
-    policy: 'CEIL_TO_MILLISECOND',
-    acknowledgedUnixNano: String(f.commitNanos),
-    receiptUnixNano: String(receiptNanos),
-    addedNanoseconds: '248266',
+    policy: 'UPPER_BOUND_NATIVE_MILLISECOND',
+    clock: 'effect.Clock.currentTimeMillis',
+    observedAt: new Date(Number(f.commitNanos / ms)).toISOString(),
+    receiptAt: result.timing.decisionCommittedAt,
+    addedMilliseconds: 1,
   })
   expect(result.receipt.spans.commit.endTimeUnixNano).toBe(String(f.commitNanos))
   expect(result.receipt.timing.sha256).toBe(sha256(result.timingText))
@@ -156,13 +172,13 @@ test.each([false, true])('exports exact native timing and a conservative v1 rece
   expect(result.receipt.scope).toBe('OBSERVED_ENTRY_TIMING_ONLY')
 })
 
-test('does not add a millisecond when acknowledged commitment is already exact', () => {
+test('bounds the entire native millisecond bucket even when the trace end is exact', () => {
   const f = fixture()
   const commit = f.byName('bayn.postgres.commit')
   commit.endTimeUnixNano = String(f.commitNanos - 751_734n)
   const result = Result.getOrThrow(buildEntryTimingExport(f.input()))
-  expect(result.receipt.commitment.addedNanoseconds).toBe('0')
-  expect(intradayInstantNanos(result.timing.decisionCommittedAt)).toBe(BigInt(commit.endTimeUnixNano))
+  expect(result.receipt.commitment.addedMilliseconds).toBe(1)
+  expect(intradayInstantNanos(result.timing.decisionCommittedAt)).toBe(BigInt(commit.endTimeUnixNano) + ms)
 })
 
 test.each([
@@ -303,15 +319,44 @@ test('checks raw nanosecond containment before millisecond quantization', () => 
   expect(Result.isFailure(buildEntryTimingExport(f.input()))).toBeTrue()
 })
 
-test('requires readiness within its native cycle-pass clock while preserving the millisecond interval', () => {
+test('requires readiness within its explicit native cycle-pass interval', () => {
   const f = fixture()
   const cyclePass = f.byName('bayn.execution.cycle-pass')
-  // Readiness is observed + 1 ms; the native millisecond interval ends just before observed + 2 ms.
-  cyclePass.startTimeUnixNano = String(f.observed + 2n * ms - 1n)
+  f.set(cyclePass, 'bayn.native_wall.started_at', { stringValue: new Date(Number(f.observed / ms + 1n)).toISOString() })
   expect(Result.isSuccess(buildEntryTimingExport(f.input()))).toBeTrue()
-  cyclePass.startTimeUnixNano = String(f.observed + 2n * ms)
+  f.set(cyclePass, 'bayn.native_wall.started_at', { stringValue: new Date(Number(f.observed / ms + 2n)).toISOString() })
   expect(Result.isFailure(buildEntryTimingExport(f.input()))).toBeTrue()
 })
+
+test.each(['missing', 'foreign-clock', 'reversed', 'outside-parent', 'fractional-millisecond'])(
+  'rejects invalid native wall provenance: %s',
+  (scenario) => {
+    const f = fixture()
+    const commit = f.byName('bayn.postgres.commit')
+    switch (scenario) {
+      case 'missing':
+        commit.attributes = commit.attributes.filter(({ key }) => key !== 'bayn.native_wall.clock')
+        break
+      case 'foreign-clock':
+        f.set(commit, 'bayn.native_wall.clock', { stringValue: 'trace-unix-nanos' })
+        break
+      case 'reversed':
+        f.set(commit, 'bayn.native_wall.finished_at', { stringValue: new Date(Number(f.created / ms)).toISOString() })
+        break
+      case 'outside-parent':
+        f.set(commit, 'bayn.native_wall.finished_at', {
+          stringValue: new Date(Number(f.commitNanos / ms + 1n)).toISOString(),
+        })
+        break
+      case 'fractional-millisecond':
+        f.set(commit, 'bayn.native_wall.finished_at', {
+          stringValue: new Date(Number(f.commitNanos / ms)).toISOString().replace('Z', '001Z'),
+        })
+        break
+    }
+    expect(Result.isFailure(buildEntryTimingExport(f.input()))).toBeTrue()
+  },
+)
 
 test('rejects clock reversals and a selection annotation outside its actual planning span', () => {
   const f = fixture()

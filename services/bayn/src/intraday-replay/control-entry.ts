@@ -24,7 +24,8 @@ export const makeControlEntryObservation = (input: {
     const accountId = `research-control-${runId}`
     const material: Parameters<typeof reconciledStateHash>[0] = {
       account: {
-        schemaVersion: 'bayn.paper-account-snapshot.v1',
+        schemaVersion: 'bayn.paper-account-snapshot.v2',
+        cryptoFeeTier: null,
         accountId,
         status: AccountStatus.Active,
         currency: 'USD',
