@@ -10,10 +10,12 @@ runs:
         set -euo pipefail
         state="$(mktemp -d "$RUNNER_TEMP/buildkit.XXXXXX")"
         endpoint="unix://$state/buildkitd.sock"
-        sudo -n -E "$(command -v buildkitd)" \
-          --addr "$endpoint" --root "$state/cache" --group "$(id -g)" \
-          --oci-worker=true --containerd-worker=false \
-          --allow-insecure-entitlement network.host > "$state/buildkitd.log" 2>&1 &
+        {
+          sudo -n -E env "PATH=$PATH" "$(command -v buildkitd)" \
+            --addr "$endpoint" --root "$state/cache" --group "$(id -g)" \
+            --oci-worker=true --containerd-worker=false \
+            --allow-insecure-entitlement network.host
+        } > "$state/buildkitd.log" 2>&1 &
         for _ in $(seq 1 60); do
           if buildctl --addr "$endpoint" debug workers >/dev/null 2>&1; then
             echo "endpoint=$endpoint" >> "$GITHUB_OUTPUT"
