@@ -224,6 +224,12 @@ const expected = {
     apps: ['opencode'],
     includePaths: [],
   },
+  relay: {
+    creationCriteria: 'image-revision',
+    images: [imageRepo('relay')],
+    apps: ['relay'],
+    includePaths: [],
+  },
   bayn: {
     creationCriteria: 'image-revision',
     images: [imageRepo('bayn')],

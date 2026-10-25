@@ -48,6 +48,10 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
         yield* requestMigration
         yield* resolutionMigration
         yield* expenseMigration
+        yield* sql`CREATE TABLE jev_inference_handoffs (request_id text PRIMARY KEY, handoff_hash text NOT NULL, payload jsonb NOT NULL)`
+        yield* sql`ALTER TABLE inference_expense_quotes
+          ADD COLUMN provider_stage text GENERATED ALWAYS AS (COALESCE(payload #>> '{line,stage}', 'JEV')) STORED,
+          ADD COLUMN handoff_hash text GENERATED ALWAYS AS (payload #>> '{line,handoffHash}') STORED`
       }),
     )
   })

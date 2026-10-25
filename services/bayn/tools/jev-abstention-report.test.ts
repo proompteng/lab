@@ -1,3 +1,5 @@
+import { defaultJevProtocolDocument } from '../src/jev/protocol'
+import { entryProposalExitPlan } from '../src/jev/strategy-exit-plan'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import { StrategySnapshotManifestSchema } from '../src/market-data/streaming/manifest-schema'
@@ -23,7 +25,6 @@ import {
   reportJevAbstention,
   reportJevRealizedEvidence,
   reportJevPlanPath,
-  summarizeJevChoiceMass,
 } from './jev-abstention-report'
 
 const joinFixture = (crypto = false) => {
@@ -35,16 +36,17 @@ const joinFixture = (crypto = false) => {
   const evidence =
     observation === null
       ? null
-      : nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, 'enter')
+      : nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, true)
   const decision =
     evidence === null
-      ? documentFor('enter')
+      ? documentFor(true)
       : {
           mode: 'PAPER',
           bindings: { cycleId: evidence.observation.cycleId },
           strategyDecision: Result.getOrThrow(decideJevEntry(evidence)),
         }
-  const symbol = crypto ? 'SOL/USD' : 'AAPL'
+  const symbol = decision.strategyDecision.selectedSymbols[0]
+  if (symbol === undefined) throw Error('Fixture requires a selected symbol')
   const cycleId = decision.bindings.cycleId
   const strategyDecisionHash = Result.getOrThrow(canonicalHashV1Result(decision.strategyDecision))
   const accountId = decision.strategyDecision.evidence.observation.portfolio.brokerState.account.accountId
@@ -232,8 +234,12 @@ test('realized join preserves imported crypto accrued costs once and rejects res
   expect(() => reportJevRealizedEvidence(withOutcome())).toThrow('Imported attributed net is inconsistent')
 })
 
-const documentFor = (action = 'wait') => {
-  const evidence = nativeJevDecisionEvidence(undefined, action)
+const documentFor = (supportsEntry = false) => {
+  const fixture = nativeJevFixture(undefined, undefined, undefined, {
+    ...defaultJevProtocolDocument,
+    candidateSymbols: ['AAPL'],
+  })
+  const evidence = nativeJevDecisionEvidence(fixture, supportsEntry)
   return {
     mode: 'PAPER',
     bindings: { cycleId: evidence.observation.cycleId },
@@ -246,17 +252,22 @@ const pathFixture = () => {
   const target = document.strategyDecision
   const candidate = target.evidence.batchPlan.candidates.find((value) => value.symbol === 'AAPL')
   if (candidate?.status !== 'REQUESTED') throw new Error('Missing requested fixture')
-  const question = candidate.request.request.questions['action']
-  if (question?.type !== 'choice') throw new Error('Missing fixture question')
+  const result = target.evidence.batchResult.candidates.find((value) => value.symbol === 'AAPL')
+  const disposition =
+    result?.status === 'RESOLVED' && result.receipt?.outcome.status === 'COMPLETED'
+      ? result.receipt.outcome.completion.handoff.disposition
+      : null
+  const proposal = disposition?.status === 'READY' ? disposition.evaluation.proposals[0] : undefined
+  if (proposal === undefined) throw Error('Fixture requires a funded proposal')
   const original = nativeJevFixture().snapshot.latestQuotes['AAPL']
   if (original === undefined) throw new Error('Missing native fixture quote')
   const at = Date.parse(target.observedAt)
   const assumptions = {
-    schemaVersion: 'bayn.jev-plan-path-assumptions.v1',
+    schemaVersion: 'bayn.jev-plan-path-assumptions.v2',
     decisionHash: Result.getOrThrow(canonicalHashV1Result(target)),
     sourceEvidenceSha256: 'a'.repeat(64),
     symbol: 'AAPL',
-    choice: 'plan_0',
+    proposalId: proposal.proposalId,
     windowAnchor: 'OBSERVATION',
     windowStartAt: target.observedAt,
     entryLatencyMs: 10,
@@ -265,9 +276,7 @@ const pathFixture = () => {
     instruments: replayTestInstruments,
     fillAssumption: 'NOT_SIMULATED',
   }
-  const plan = (
-    question.criteria['plan_0'] as { plan: { levels: { stopPriceMicros: string; profitLimitPriceMicros: string } } }
-  ).plan
+  const plan = entryProposalExitPlan(proposal)
   const quote = (delay: number, sequence: number, bid: number, eventDelay = delay) => ({
     value: {
       ...original,
@@ -486,7 +495,7 @@ for (const patch of [
   { decisionHash: 'b'.repeat(64) },
   { sourceEvidenceSha256: 'b'.repeat(64) },
   { entryLatencyMs: 60000 },
-  { choice: 'plan_999' },
+  { proposalId: 'f'.repeat(64) },
   { fillAssumption: 'FILLED' },
   { unsupportedExecutionAssumption: 'instant-fill' },
 ])
@@ -550,22 +559,20 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   const report = reportJevAbstention(document)
   expect(report).toMatchObject({
     diagnosticOnly: true,
-    schemaVersion: 'bayn.jev-abstention-report.v2',
-    protocol: 'bayn.jev.protocol.v23',
-    inputDefinition: 'bayn.jev-trading-signal-state.v21',
+    schemaVersion: 'bayn.jev-abstention-report.v3',
+    protocol: 'bayn.jev.protocol.v24',
+    inputDefinition: 'bayn.jev-entry-state.v22',
     selectedSymbols: [],
     profitableEdgeProven: false,
   })
   const candidate = report.candidates.find((value) => value.symbol === 'AAPL')
   expect(candidate).toMatchObject({
-    chosenAction: 'wait',
-    chosenSetup: 'upward',
-    setupProbabilities: { upward: 0.8 },
-    planChoiceCondition: 'SUPPORTED_LONG_SETUP_ASSUMED',
-    rejection: 'MODEL_WAIT',
-    fundedPlanCount: 16,
+    pipelineStatus: 'READY',
+    jevStatus: 'RECEIVED',
+    selectedProposalId: null,
+    rejection: 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS',
+    fundedPlanCount: 1,
     horizonMinutes: 15,
-    choiceMass: { waitMass: 0.8 },
     coverage: { suppliedBarCount: 30 },
   })
   expect(JSON.stringify(document)).toBe(original)
@@ -573,43 +580,38 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
 })
 
 test('reports accepted plans without altering selection and rejects tampered decisions or source requests', () => {
-  const document = documentFor('enter')
+  const document = documentFor(true)
   expect(reportJevAbstention(document).selectedSymbols).toEqual(document.strategyDecision.selectedSymbols)
   expect(() => reportJevAbstention({ ...document, bindings: { cycleId: 'f'.repeat(64) } })).toThrow()
   expect(() =>
     reportJevAbstention({ ...document, strategyDecision: { ...document.strategyDecision, selectedSymbols: [] } }),
   ).toThrow()
   const altered = JSON.parse(JSON.stringify(document))
-  altered.strategyDecision.evidence.batchPlan.candidates[0].request.request.state.task.horizonMinutes = 60
+  altered.strategyDecision.evidence.batchPlan.candidates[0].request.request.numericalState.task.horizonMinutes = 60
   expect(() => reportJevAbstention(altered)).toThrow()
 })
 
-test('fragmented categorical plan mass is not a profit probability or permission to override argmax', () => {
-  const probabilities = {
-    wait: 0.3,
-    avoid: 0.1,
-    ...Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`plan_${i}`, 0.6 / 16])),
-  }
-  const summary = summarizeJevChoiceMass(probabilities)
-  expect(summary.interpretation).toBe('CATEGORICAL_CHOICE_MASS_NOT_PROFIT_PROBABILITY')
-  expect(summary.aggregatePlanMass).toBeCloseTo(0.6)
-  expect(summary.maximumPlanMass).toBe(0.0375)
-  expect(Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0]?.[0]).toBe('wait')
-  expect(summarizeJevChoiceMass({ wait: 0.7, avoid: 0.3 })).toMatchObject({
-    aggregatePlanMass: 0,
-    maximumPlanMass: null,
-  })
-
-  expect(
-    summarizeJevChoiceMass(Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`plan_${i}`, 0.063])))
-      .aggregatePlanMass,
-  ).toBeCloseTo(1.008)
+test('diagnostics retain atomic judgments and source identities without inventing profit probabilities', () => {
+  const report = reportJevAbstention(documentFor())
+  const candidate = report.candidates.find((value) => value.symbol === 'AAPL')
+  if (candidate === undefined || !('judgments' in candidate) || candidate.judgments === null)
+    throw Error('Missing atomic judgments')
+  expect(Object.keys(candidate.judgments)).toEqual([
+    'support_recovery_confirmed',
+    'support_recovery_stop_invalidates',
+    'support_recovery_target_obstructed',
+  ])
+  expect(Object.values(candidate.judgments).every((judgment) => judgment.type === 'noul')).toBe(true)
+  expect(candidate.plans.every((plan) => /^[a-f0-9]{64}$/.test(plan.proposalId))).toBe(true)
+  expect(candidate).not.toHaveProperty('choiceMass')
+  expect(candidate).not.toHaveProperty('chosenAction')
+  expect(report.profitableEdgeProven).toBe(false)
 })
 
 test('crypto economics and coverage are measured from sealed source rather than choice mass', () => {
   const { snapshot } = cryptoMarketFixture('SOL/USD', { observedPriceChoices: true })
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot))
-  const evidence = nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, 'wait')
+  const evidence = nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, false)
   const strategyDecision = Result.getOrThrow(decideJevEntry(evidence))
   const report = reportJevAbstention({
     mode: 'PAPER',

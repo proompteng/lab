@@ -20,7 +20,7 @@ test('stdio tools expose mutation hints and unconfirmed writes never invite auto
       JSON.stringify({
         keyFile,
         credential: 'a'.repeat(43),
-        endpoint: 'https://proompteng.ai/api/tengri/connectors/agent',
+        endpoint: 'https://proompteng.ai/api/platform/relay/agent',
         operations: [{ name: 'write', description: 'Write', inputSchema: { type: 'object' }, readOnly: false }],
       }),
       { mode: 0o600 },
@@ -59,7 +59,7 @@ test('agent proof binds its key, grant credential, endpoint, method, and exact b
     await assert.rejects(generateIdentity(keyFile))
     const privateKey = await readFile(keyFile, 'utf8')
     const credential = 'a'.repeat(43)
-    const endpoint = 'https://proompteng.ai/api/tengri/connectors/agent'
+    const endpoint = 'https://proompteng.ai/api/platform/relay/agent'
     const body = Buffer.from('{"arguments":{"number":1e20},"connectionId":"fixture","operation":"search"}')
     const proof = proofFor({ endpoint, credential, privateKey, body })
     const [header, claims, signature] = proof.split('.')
@@ -103,34 +103,58 @@ test('direct API invocation sends a scoped grant and preserves signed bytes; uns
     await generateIdentity(keyFile)
     const config = {
       keyFile,
-      endpoint: 'https://proompteng.ai/api/tengri/connectors/agent',
+      endpoint: 'https://proompteng.ai/api/platform/relay/agent',
       credential: 'a'.repeat(43),
-      grantId: '11111111-1111-4111-8111-111111111111',
-      connectionId: '22222222-2222-4222-8222-222222222222',
+      delegationId: '11111111-1111-4111-8111-111111111111',
+      connectorId: 'galactic',
+      clientService: 'tengri-web',
+      binding: {
+        service: 'tengri',
+        id: '22222222-2222-4222-8222-222222222222',
+        generation: '33333333-3333-4333-8333-333333333333',
+      },
     }
     let calls = 0
     const fetcher = async (_url, options) => {
       calls += 1
       assert.equal(options.redirect, 'error')
       assert.equal(options.headers.authorization, `DPoP ${config.credential}`)
-      assert.equal(options.headers['x-tengri-grant'], config.grantId)
+      assert.equal(options.headers['x-relay-delegation'], config.delegationId)
       const raw = Buffer.from(JSON.parse(options.body).body, 'base64')
       const claims = JSON.parse(Buffer.from(options.headers.dpop.split('.')[1], 'base64url'))
       assert.equal(claims.bht, createHash('sha256').update(raw).digest('base64url'))
-      assert.deepEqual(JSON.parse(raw), {
-        connectionId: config.connectionId,
+      const payload = JSON.parse(raw)
+      assert.match(payload.operationId, /^[0-9a-f-]{36}$/)
+      assert.deepEqual(payload, {
+        operationId: payload.operationId,
+        clientService: config.clientService,
+        binding: config.binding,
+        delegationId: config.delegationId,
+        connectorId: config.connectorId,
         operation: 'search',
         arguments: { query: 'hello' },
       })
       assert(!options.body.includes(config.credential))
-      return new Response(JSON.stringify({ result: { found: true } }), { status: 200 })
+      return new Response(
+        JSON.stringify({
+          operationId: payload.operationId,
+          result: '{"found":true}',
+          contentType: 'application/json',
+          authorizationReceiptId: '44444444-4444-4444-8444-444444444444',
+          executionReceiptId: '55555555-5555-4555-8555-555555555555',
+        }),
+        { status: 200 },
+      )
     }
-    assert.deepEqual(await invoke(config, 'search', { query: 'hello' }, fetcher), { found: true })
+    assert.deepEqual(await invoke(config, 'search', { query: 'hello' }, fetcher), {
+      content: [{ type: 'text', text: '{"found":true}' }],
+      isError: false,
+    })
     await chmod(keyFile, 0o644)
     await assert.rejects(invoke(config, 'search', {}, fetcher), /owner-only/)
     assert.equal(calls, 1)
     await assert.rejects(
-      invoke({ ...config, endpoint: 'http://proompteng.ai/api/tengri/connectors/agent' }, 'search', {}, fetcher),
+      invoke({ ...config, endpoint: 'http://proompteng.ai/api/platform/relay/agent' }, 'search', {}, fetcher),
       /HTTPS/,
     )
     assert.equal(calls, 1)

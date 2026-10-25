@@ -19,15 +19,14 @@ const sessionDate = entry.observation.manifest.sessionDate
 const accountId = entry.observation.portfolio.brokerState.account.accountId
 
 describe('retained Jev study evidence', () => {
-  test('reproduces the complete native entry and management evidence', () => {
+  test('reproduces complete native entry evidence and rejects model management', () => {
     const row = rowFor(entry)
     expect(Result.getOrThrow(verifyJevStudyExportRow(row, sessionDate, accountId))).toEqual({
       ...row,
       purpose: JevPurpose.Entry,
     })
-    const management = rowFor(nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Manage), 'hold'))
-    expect(Result.getOrThrow(verifyJevStudyExportRow(management, sessionDate, accountId)).purpose).toBe(
-      JevPurpose.Manage,
+    expect(() => nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Manage), false)).toThrow(
+      'restricted to flat entry',
     )
   })
 
@@ -35,7 +34,7 @@ describe('retained Jev study evidence', () => {
     expect(
       Result.getOrThrow(verifyJevStudyExportRow({ ...rowFor(entry), result: null }, sessionDate, accountId)).result,
     ).toBeNull()
-    const waiting = rowFor(nativeJevDecisionEvidence(undefined, 'wait'))
+    const waiting = rowFor(nativeJevDecisionEvidence(undefined, false))
     expect(Result.getOrThrow(verifyJevStudyExportRow(waiting, sessionDate, accountId)).result).toEqual(waiting.result)
   })
 

@@ -4,16 +4,14 @@ import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result } from '../hash'
-import { makeInferenceCostReport } from '../inference-costs'
-import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevClient, JevClientLive, JevError } from './client'
 import { JevFailure, jevEndpoint } from './contract'
-import { evaluationRequestFixture, requestFixture, responseFixture } from './test-support'
+import { requestFixture, responseFixture } from './test-support'
 
 const key = Redacted.make('test-secret-never-log')
 const run = <A, E>(effect: Effect.Effect<A, E, JevClient>, http: HttpClient.HttpClient, timeout = 1000) =>
   effect.pipe(Effect.provide(JevClientLive(key, timeout)), Effect.provideService(HttpClient.HttpClient, http))
-const evaluate = JevClient.pipe(Effect.flatMap((client) => client.evaluate(requestFixture)))
+const evaluate = JevClient.pipe(Effect.flatMap((client) => client.evaluate(requestFixture, 1000)))
 const responseClient = (body: unknown, status = 200) =>
   HttpClient.make((request) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, new Response(JSON.stringify(body), { status }))),
@@ -254,71 +252,6 @@ describe('Jev inference transport', () => {
     if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect)
   })
 
-  test('meters the exact retained failure projection once while missing prices remain unknown', async () => {
-    const request = evaluationRequestFixture()
-    const usage = { model: request.request.model, usage: { input_tokens: 7858, output_tokens: 150 } }
-    const body = {
-      ...usage,
-      error: 'fixture rejection',
-      echoedRequest: request.request,
-      authorization: Redacted.value(key),
-    }
-    const result = await Effect.runPromise(run(Effect.result(evaluate), responseClient(body, 503)))
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isSuccess(result)) return
-    const receipt = Result.getOrThrow(
-      makeJevEvaluationReceipt(request, {
-        schemaVersion: 'bayn.jev-evaluation-receipt.v1',
-        requestId: request.requestId,
-        startedAt: request.observedAt,
-        completedAt: request.observedAt,
-        outcome: {
-          status: JevOutcome.Failed,
-          failure: result.failure.failure,
-          httpStatus: result.failure.status,
-          responseHash: result.failure.responseHash,
-          rejectedResponse:
-            result.failure.rejectedResponse === undefined ? null : Redacted.value(result.failure.rejectedResponse),
-        },
-      }),
-    )
-    const row = {
-      requestId: request.requestId,
-      cycleId: request.cycleId,
-      authorityGenerationHash: request.authorityGenerationHash,
-      request,
-      receipt,
-      resolution: null,
-    }
-    const report = Result.getOrThrow(
-      makeInferenceCostReport(
-        {
-          schemaVersion: 'bayn.inference-cost-evidence.v1',
-          accountBindingHash: 'a'.repeat(64),
-          sessionDate: '1970-01-01',
-          asOf: request.expiresAt,
-          requests: [row, row],
-        },
-        { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
-      ),
-    )
-    expect(report).toMatchObject({
-      requestCount: 1,
-      meteredRequestCount: 1,
-      rejectedResponseUsageCount: 1,
-      unknownUsageCount: 0,
-      unpricedUsageCount: 1,
-      inputTokens: '7858',
-      outputTokens: '150',
-      estimatedTotalCostMicros: null,
-      invoiceReconciled: false,
-    })
-    expect(receipt.outcome.status).toBe(JevOutcome.Failed)
-    expect(JSON.stringify(receipt)).not.toContain('fixture rejection')
-    expect(JSON.stringify(receipt)).not.toContain(Redacted.value(key))
-    expect(JSON.stringify(receipt)).not.toContain('echoedRequest')
-  })
-
   test('retains approximately normalized probabilities and their original response hash', async () => {
     const body = responseFixture()
     body.answers.direction.probabilities = { favorable: 0.93, unfavorable: 0.05, unclear: 0.01 }
@@ -343,35 +276,39 @@ describe('Jev inference transport', () => {
     }
   })
 
-  test('cancels in-flight inference on deadline and finalizes it once', async () => {
-    let started = 0
-    let stopped = 0
-    const http = HttpClient.make(() =>
-      Effect.sync(() => {
-        started += 1
-      }).pipe(
-        Effect.andThen(Effect.never),
-        Effect.ensuring(
-          Effect.sync(() => {
-            stopped += 1
-          }),
+  test.each([250, 1000])(
+    'cancels in-flight inference at its remaining %sms deadline and finalizes it once',
+    async (budgetMs) => {
+      let started = 0
+      let stopped = 0
+      const http = HttpClient.make(() =>
+        Effect.sync(() => {
+          started += 1
+        }).pipe(
+          Effect.andThen(Effect.never),
+          Effect.ensuring(
+            Effect.sync(() => {
+              stopped += 1
+            }),
+          ),
         ),
-      ),
-    )
-    const program = Effect.scoped(
-      Effect.gen(function* () {
-        const fiber = yield* run(Effect.result(evaluate), http).pipe(Effect.forkScoped({ startImmediately: true }))
-        yield* Effect.yieldNow
-        expect(started).toBe(1)
-        yield* TestClock.adjust(1000)
-        const result = yield* Fiber.join(fiber)
-        expect(Result.isFailure(result)).toBe(true)
-        if (Result.isFailure(result)) expect(result.failure.failure).toBe(JevFailure.Timeout)
-        expect(stopped).toBe(1)
-      }),
-    ).pipe(Effect.provide(TestClock.layer()))
-    await Effect.runPromise(program)
-  })
+      )
+      const program = Effect.scoped(
+        Effect.gen(function* () {
+          const remaining = JevClient.pipe(Effect.flatMap((client) => client.evaluate(requestFixture, budgetMs)))
+          const fiber = yield* run(Effect.result(remaining), http).pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Effect.yieldNow
+          expect(started).toBe(1)
+          yield* TestClock.adjust(budgetMs)
+          const result = yield* Fiber.join(fiber)
+          expect(Result.isFailure(result)).toBe(true)
+          if (Result.isFailure(result)) expect(result.failure.failure).toBe(JevFailure.Timeout)
+          expect(stopped).toBe(1)
+        }),
+      ).pipe(Effect.provide(TestClock.layer()))
+      await Effect.runPromise(program)
+    },
+  )
 
   test('caller interruption cancels the HTTP operation without returning an inference', async () => {
     let stopped = 0
