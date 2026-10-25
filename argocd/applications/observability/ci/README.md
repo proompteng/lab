@@ -62,8 +62,8 @@ then the job name; it remains unknown when neither reports it.
 Step names map to bounded phases. `runner_setup` measures GitHub's "Set up job" step, not Pod scheduling or bootstrap.
 `unattributed` covers time between steps and steps without complete timestamps. A build-and-push action remains a combined phase where it does not expose
 separate top-level timings. BuildKit image/cache exporter durations are auxiliary observations that can overlap
-the main phase partition. Container filesystem metrics depend on cAdvisor coverage of the backing filesystem;
-missing filesystem samples do not establish free scratch capacity.
+the main phase partition. Runner resource panels cover CPU, working-set memory and throttling. The filesystem panel was removed after the
+live build showed no cAdvisor filesystem samples; it did not measure runner scratch capacity.
 
 BuildKit cache evidence counts cached Dockerfile `RUN` vertices, scoped separately for each build in a multi-image
 job, including verification builds. `warm`, `cold`, and `mixed` describe those instructions, not every layer or all

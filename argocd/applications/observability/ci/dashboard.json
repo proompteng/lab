@@ -1448,13 +1448,15 @@
         "defaults": {
           "decimals": 1,
           "noValue": "Choose a runner from a build record",
-          "unit": "percentunit"
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 24,
         "x": 0,
         "y": 70
       },
@@ -1477,47 +1479,6 @@
         }
       ],
       "title": "Runner CPU throttling",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prom"
-      },
-      "description": "cAdvisor container filesystem coverage depends on the backing filesystem. Runner scratch is not inferred from missing samples.",
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 1,
-          "noValue": "Choose a runner from a build record",
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 70
-      },
-      "id": 21,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom"
-          },
-          "expr": "container_fs_usage_bytes{namespace=\"arc\",pod=~\"$runner_pod\",container=\"runner\"}",
-          "legendFormat": "{{pod}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Runner filesystem use",
       "type": "timeseries"
     },
     {
