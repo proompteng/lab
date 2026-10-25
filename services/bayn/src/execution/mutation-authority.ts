@@ -2,7 +2,7 @@ import { equityClockSession } from '../equity-hours'
 import { instrumentMarket, MarketKind, validateInstrumentOrder, InstrumentError } from '../instruments'
 import { quantityFromDecimal, quantityScale } from '../quantity'
 import { orderPriceBoundaryMicros, orderRequestBody } from '../broker/alpaca-mutations/decisions'
-import { Effect, Result } from 'effect'
+import { Cause, Effect, Result } from 'effect'
 
 import {
   AccountStatus,
@@ -1157,10 +1157,14 @@ export const makeAuthorityGuardedBrokerMutation = (
     dependencies
       .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent))
       .pipe(
-        Effect.mapError((cause) =>
-          cause instanceof BrokerMutationError
-            ? cause
-            : mutationAuthorizationError('final broker submit authorization failed', cause),
+        Effect.catchCause((failure) =>
+          Effect.failCause(
+            Cause.map(failure, (cause) =>
+              cause instanceof BrokerMutationError
+                ? cause
+                : mutationAuthorizationError('final broker submit authorization failed', cause),
+            ),
+          ),
         ),
       )
   const submit = (intent: Intent) => {

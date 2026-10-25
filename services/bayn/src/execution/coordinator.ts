@@ -1,4 +1,4 @@
-import { Clock, Data, Effect, Match, Result } from 'effect'
+import { Cause, Clock, Data, Effect, Match, Result } from 'effect'
 
 import { BrokerMutation, MutationOperation } from '../broker/alpaca-mutations/model'
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
@@ -223,8 +223,27 @@ const submitToBroker = (
 ) => {
   const submittedIntent: Intent = { ...stored.intent, state: IntentState.IoStarted }
   return services.broker.submit(submittedIntent).pipe(
-    Effect.matchEffect({
-      onFailure: (error) => persistSubmitDecision(services, started, decideSubmitFailure(started.requestHash, error)),
+    Effect.matchCauseEffect({
+      onFailure: (cause): Effect.Effect<MutationEvent, ExecutionError | MutationStoreError | WriterFenceError> => {
+        const reason = cause.reasons.length === 1 ? cause.reasons[0] : undefined
+        if (reason !== undefined && Cause.isFailReason(reason)) {
+          return persistSubmitDecision(services, started, decideSubmitFailure(started.requestHash, reason.error))
+        }
+        // A failed cleanup or interruption cannot be reduced to a known broker outcome. Keep SUBMIT_STARTED
+        // for lookup-only recovery rather than terminalizing the intent from the first failure alone.
+        return Effect.failCause(
+          Cause.map(
+            cause,
+            (error) =>
+              new ExecutionError({
+                operation: MutationOperation.Submit,
+                failure: ExecutionFailure.InvalidState,
+                message: 'broker submission failed without one recoverable outcome',
+                cause: error,
+              }),
+          ),
+        )
+      },
       onSuccess: (receipt) =>
         persistSubmitDecision(
           services,
