@@ -77,6 +77,7 @@ const readResult = <A>(value: A, observedAt: string = evidence.observedAt): Read
 
 const account = (overrides: Partial<Account> = {}): Account => ({
   cryptoStatus: null,
+  cryptoFeeTier: null,
   cashReportingQuantumMicros: '1' as const,
   nonMarginableBuyingPowerMicros: null,
 
@@ -259,6 +260,7 @@ interface ScenarioInput {
   readonly peakEquityMicros?: string
   readonly maxDrawdownMicros?: string
   readonly closeOnly?: boolean
+  readonly maximumCryptoEntryTakerFeeBps?: 18 | 25 | null
 }
 
 const runLiveSubmit = async (input: ScenarioInput = {}) => {
@@ -367,6 +369,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
           observedAt,
           {
             closeOnly: input.closeOnly ?? false,
+            maximumCryptoEntryTakerFeeBps:
+              input.maximumCryptoEntryTakerFeeBps === undefined ? 25 : input.maximumCryptoEntryTakerFeeBps,
             maxBrokerStateAgeMs: 300_000,
             maxNetExposureMicros: input.maxNetExposureMicros ?? '1000000000',
             currentDailyTradedNotionalMicros: input.currentDailyTradedNotionalMicros ?? '0',
@@ -392,6 +396,56 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
   const failure = exit.cause.reasons.find(Cause.isFailReason)?.error
   return failure?.cause?.['tag']
 }
+
+test.each([
+  [4, 18, 1],
+  [3, 18, 0],
+  [null, 18, 0],
+  [5, 18, 1],
+  [4, null, 0],
+  [null, 25, 1],
+] as const)('final crypto entry tier %s with fee ceiling %s transmits %s times', async (tier, ceiling, expected) => {
+  const result = await runLiveSubmit({
+    maximumCryptoEntryTakerFeeBps: ceiling,
+    brokerAccount: account({
+      cryptoStatus: 'ACTIVE',
+      cryptoFeeTier: tier,
+      nonMarginableBuyingPowerMicros: '1000000000',
+    }),
+    proposedIntent: intent({
+      symbol: 'BTC/USD',
+      quantityAtoms: '1000000',
+      limitPriceMicros: '80000000000',
+      notionalLimitMicros: '80000000',
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    }),
+  })
+  expect(result.submits).toBe(expected)
+  expect(Exit.isSuccess(result.exit)).toBe(expected === 1)
+})
+
+test('a cached crypto fee discount cannot cross the daily tier reset into transmission', async () => {
+  const result = await runLiveSubmit({
+    maximumCryptoEntryTakerFeeBps: 18,
+    brokerAccount: account({
+      cryptoStatus: 'ACTIVE',
+      cryptoFeeTier: 4,
+      nonMarginableBuyingPowerMicros: '1000000000',
+      observedAt: '2026-07-28T07:59:59.000Z',
+    }),
+    proposedIntent: intent({
+      symbol: 'BTC/USD',
+      quantityAtoms: '1000000',
+      limitPriceMicros: '80000000000',
+      notionalLimitMicros: '80000000',
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    }),
+  })
+  expect(result.submits).toBe(0)
+  expect(Exit.isFailure(result.exit)).toBe(true)
+  if (Exit.isFailure(result.exit))
+    expect(Cause.pretty(result.exit.cause)).toContain('exceeds the sealed entry estimate')
+})
 
 test('final submission admits a covered crypto protective stop through all capital and instrument checks', async () => {
   const scenario: ScenarioInput = {
