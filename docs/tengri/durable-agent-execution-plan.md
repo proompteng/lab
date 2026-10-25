@@ -1,253 +1,147 @@
 # Tengri durable agent execution
 
-Status: The final guest API 7 cohort is deployed through Kargo and Argo at source
-`bcc3e2105210b65c0aa8a2b20546ec1b2c492d9d`. Its retained-home replacement is prepared and filesystem continuity is
-verified. Earlier-cohort authenticated run recovery passed. Final-cohort cancellation, approval, restart recovery,
-and latency checks await normal saved-passkey sign-in. Goal `01a15d3d-a9f2-7320-a38a-473615e3425c` remains active.
+Production acceptance passed on 2026-10-25 for source `4523865de9a8178826b60322086a43b47918eba7`.
+The exact four-image cohort is deployed through Kargo and Argo, with guest API 8, native Codex 0.164.0,
+and Restate service revision 7. Authenticated checks passed in the owner's built-in browser, including
+replacement of both original workers during one foreground command. The original home, native history,
+saved login, and authorization policy remain intact. Normal publication is restored and automatic sleep is 60 minutes.
 
-The scope is the execution gaps identified in [the research](durable-agent-execution-research.md). It includes lost
-submission responses, interrupted Codex processes, pending controls, workspace concurrency, active-run sleep,
-deployment compatibility, and authoritative UI recovery. Ofz authorization and runtime fencing remain mandatory.
+This closes the implementation and production acceptance work identified in
+[the research](durable-agent-execution-research.md). [The audit](../../.audit/tengri-durable-execution.tsv)
+retains failed attempts and earlier releases separately. Runtime source and GitOps define current behavior;
+the observations below are dated evidence for this release.
 
-## Completion predicate
+## Execution contract
 
-An authenticated user can submit one identified run, disconnect, recover its exact execution, resolve an exact pending
-approval, and cancel it after controller or worker replacement. Duplicate submissions never dispatch duplicate turns.
-Unknown shell or browser outcomes remain visible and block automatic replay. Automatic sleep cannot interrupt an
-active run. The reviewed commit must pass required CI, publish immutable paired images, follow Kargo and Argo, and
-pass authenticated live acceptance. Source, fixtures, merge, deployment, and product verification are separate gates.
+Restate owns accepted orchestration. Ofz and shared SQL retain authority and generation fences. Nanoagent owns
+interaction with the exact native Codex process. There is one dispatch path and no competing SQL run scheduler.
 
-## Execution units
+The identities are run ID, operation ID, workspace UID, runtime epoch, thread ID, turn ID, and approval ID.
+Lost responses retain the operation and its original input. Native Codex persists `userMessage.clientId`,
+allowing acceptance correlation through metadata-only history pages. An ambiguous dispatch is reconciled
+before another effect is issued. History alone cannot prove that an interrupted process stopped.
 
-| Unit | Contract                                                                                                                    | Evidence and state                                                                                                                                                |
-| ---- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | Stable operation IDs through browser, BFF, controller, and guest; dispatch journal and read-only acceptance reconciliation. | Concurrent duplicate, changed payload, lost response, process replacement, and pinned native Codex correlation fixtures passed. Production acceptance is pending. |
-| 2    | Restate Rust worker outside the guest; durable accepted input, terminal outcomes, and workspace exclusion.                  | Disposable Restate 1.7.9 crash/replay and exclusion fixtures passed. Both production workers are ready and all three services are registered.                     |
-| 3    | Identified approvals, steering, and cancellation with exact generation, scope, and fresh Ofz authority.                     | Duplicate and stale controls, restart, policy denial, and cancellation fixtures passed. Production acceptance is pending.                                         |
-| 4    | Desktop recovery across retries and reloads; active work excludes automatic sleep.                                          | Browser recovery and idle-boundary regressions passed. Production acceptance is pending.                                                                          |
-| 5    | One dispatch path, immutable worker versions, paired release, network isolation, and finite retention.                      | Consumer, manifest, and worker-version replay checks passed. The qualified cohort is deployed.                                                                    |
-| 6    | Review, CI, merge, publication, Kargo, Argo, and authenticated acceptance.                                                  | Release gates passed. The remaining product checks below keep the goal open.                                                                                      |
+Signed admission enters retryable workspace handlers before a private run or control workflow is allocated.
+Rejected old-key envelopes do not consume an operation UUID. Accepted work retains the original journal and
+native generation across retries. A newer signed Stop may refresh authority after login or explicit sleep;
+an older delayed context cannot overwrite it.
 
-## Execution contracts
+The run acquires its sleep fence before guest preparation. Preparation and dispatch are separate durable steps.
+Exact native terminal evidence releases the fence. Cancellation requires the version 2 terminal receipt with
+`processesStopped: true`, including cleanup of that turn's owned background terminals. UI completion without
+cleanup evidence keeps cancellation pending.
 
-The core identities are run ID, operation ID, workspace UID, runtime epoch, thread ID, turn ID, and approval ID.
-A transport failure cannot create a fresh operation identity or imply that execution stopped. Run state distinguishes
-accepted work, execution, pending controls, recovery, uncertain outcomes, and terminal outcomes.
+Status reads retain a two-second signed admission lifetime and allow five seconds for an accepted response.
+Read recovery has one total fifteen-second budget shared by active lookup and snapshot. Each transient retry
+signs a new query. Admission expiry uses HTTP 408; signature and authority denials fail immediately.
+This recovery does not replay submissions or controls. Power settings re-fetch the MicroVM after authorization,
+verify its UID, owner, and runtime epoch, then patch against its current Kubernetes revision.
 
-Restate owns orchestration. Ofz and shared SQL retain authority and fencing. Nanoagent owns the exact Codex process
-interaction. A separate versioned worker in the existing Rust codebase keeps durable execution independent of the
-controller's elected reconciliation future. No independent SQL run scheduler or outbox competes with Restate.
+An arbitrary shell or browser action is not made transactional by a workflow wrapper. Authoritative readback
+or an explicit uncertain outcome remains necessary when an external effect cannot be proved.
 
-The guest journal records uncertain dispatch rather than treating a local record and an external Codex request as
-one transaction. Pinned Codex 0.159.2 persists `userMessage.clientId` and exposes metadata-only turn pages. Its native
-fixture recovers the same accepted turn after removing the committed response receipt. Native terminal receipts bind
-the outcome to the accepting process generation. A reconstructed history entry alone does not prove the outcome.
+## Workspace experience
 
-The active-run pin excludes automatic sleep. Explicit sleep, removal, and revocation retain Ofz authority.
+[The OpenCode source study](opencode-ui-patterns.md) records the inspected revision and applied mechanisms.
+Native thread metadata is authoritative for the session list. Archive and Restore require native acknowledgement.
+Browser state retains tabs, pins, and selection; per-chat drafts survive navigation in memory. It does not maintain
+a competing chat index. Historical archive notifications refresh the native index without clearing a restored
+selection. Only the acknowledged Archive action changes the current chat.
 
-Accepted runs acquire their sleep fence before guest availability is required. Preparation and native dispatch use
-separate durable steps. A replay after possible native acceptance retains the original operation identity and
-reconciles its outcome. It cannot reinterpret a changed image or expired authority as proof that no effect occurred.
+Native completion is reconciled with the exact run and client operation when history, acknowledgement, or the
+Restate receipt arrives late. Completion clears Thinking and Stop for that turn. It cannot clear another live
+turn or bypass cancellation cleanup. Composer focus and newer drafts survive submission. Sidebar navigation
+remains available during pending and running work. Human and agent messages have distinct vertical spacing.
 
-Signed run and control attempts enter through retryable shared handlers on the workspace object. Signature
-verification precedes either private workflow. A request rejected after key rotation does not consume its operation
-UUID; a freshly signed retry can recover that operation. Accepted workflow and workspace-claim calls do not revalidate
-an old envelope against a newly projected key.
+Conversation hydration uses skeletons and paginated native turns/items with `excludeTurns: true`. Developer
+deprecation notices do not become product alerts. The send control remains unambiguous. Folder previews use
+signed `StatFile` metadata before reading contents. Opening a file does not enumerate its siblings. Directories
+support child/parent navigation, tabs, and pins. Ordinary repository tools execute inside the owner's VM;
+thread start and resume disable external shared app tools that could carry another subject's repository session.
 
-Controls retain their exact approval scope and expose the original result on retry. The browser retires an identity
-only after an exact `control_not_dispatched` response. Ambiguous failures keep that identity. Auto-approval waits for
-an accepted run with a native turn. A stale approval generation cannot authorize another request.
+The protocol contract is guest API 8; signed Ofz guest requests remain protocol 4. The operation inventory
+compares the BFF, controller, and guest versions and fails CI on a mismatch. Incompatible controller versions
+are rejected before signed workspace effects are dispatched.
 
-Cancellation retains the latest authenticated Stop in the workspace object. A new login can supply fresh authority
-after explicit sleep; an older delayed Stop cannot replace that context. Only the run workflow interrupts and
-observes the exact turn. Snapshot sleep preserves running processes, so Stop remains pending until interruption is
-confirmed. Workspace removal requires the final Ofz receipt; Kubernetes absence is insufficient.
+## Reviewed source and exact release
 
-The live cancellation check exposed a native Codex 0.159.2 distinction: `turn/interrupt` ends the turn while a yielded
-`exec_command` process can continue. Guest API 7 requires Nanoagent's version 2 terminal receipt with confirmed
-command cleanup. It records command item ownership before interruption, terminates only that turn's native background
-terminals, and verifies their absence before releasing activity or the run's sleep pin. Interrupted history alone
-retains cancellation. The pinned native fixture must prove that the real command exits. The API 7 migration requires
-a fenced cold replacement retaining the current home, Codex identity, and conversation history before live acceptance.
+[PR #15362](https://github.com/proompteng/lab/pull/15362) fixes bounded read recovery and the post-authorization
+settings revision race. Both targeted regressions failed before the fix and passed afterward. Validation included
+237 controller tests, 48 environment or child-process skips, Clippy, formatting, all four component gates, and
+both automatic reviews before merge. [PR #15363](https://github.com/proompteng/lab/pull/15363) removes one
+archive-notification selection reset. Its new browser regression failed before the fix; four focused browser
+cases, 436 web unit tests with 3,416 assertions, types, lint, formatting, both affected component gates, and
+both automatic reviews passed before merge. Earlier implementation and protocol fixes are recorded in the audit.
 
-Arbitrary shell or browser effects require authoritative readback or an explicit uncertain outcome. A workflow wrapper
-cannot make every external action transactional. Automatic replay must stop when the outcome cannot be proved.
+All four exact-source main workflows passed: native `40155267137`, Ofz `40155267173`, web `40155267163`,
+and desktop `40155267144`. Qualification completed on attempt 1. The original native and web publisher jobs
+were rerun on attempt 2 to release their unchanged immutable indexes after retained-home preparation.
+No operator-created alias, digest bump, or worktree deployment substituted for publication.
 
-## Qualification and version retention
+| Image      | Deployed index digest                                                     |
+| ---------- | ------------------------------------------------------------------------- |
+| Tengri     | `sha256:0353b5ecfb5a2acc2202b70c0a018cb1b7d88a4afe5a4743e15ad219e756fc8d` |
+| Nanoagent  | `sha256:030cf023e3ff379589130ac80d1d1f90809f86580078a4c4dc0372c22264b540` |
+| Ofz        | `sha256:4281bf6e85e3479e2094300428a2f8a55f8eecf4e2ced1956d125f82a2567788` |
+| Proompteng | `sha256:262ed0de4014a52c25f3c68263041a768ba99a5f5ad8ccc044c1cc756896b13b` |
 
-The disposable Restate fixture uses the pinned server and SDK, two registered worker versions, and actual worker
-`SIGKILL`/restart. It covers duplicate and changed controls, workspace exclusion, newer Stop authority, queued signed
-requests across HMAC rotation, and recovery under the same operation UUID. Its guest is sleeping. This proves
-orchestration recovery, not recovery of an executing production shell command.
+All images name source `4523865d` and schema `a0e81e7a9e92a191cbe80b79ddda7019ae2aaac7a90173f83515a2e82256bb9f`.
+Freight `8c24f0a08f87de7d1a24a24fcb50731b2d813b3a` produced Ofz GitOps commit
+`f437d812915903269209b29ee338ac5ae4bb1f0b`, Tengri `6672caa202debc1e64fa7562872ea0b22567e6f7`,
+and Proompteng `15efa342f3a6a76e0426f11ba77a711a018245e5`. All three promotions are Verified and
+their Argo Applications Synced and Healthy. Running child digests and SPIRE registrations were checked.
+Restate deployment `dp_12vC9IBY1vvZuVsalRjvrYR` registers all three services at revision 7.
 
-The final source passed the [desktop browser workflow](https://github.com/proompteng/lab/actions/runs/39848768010),
-including the real Chromium/CUA/VS Code gates. Component fixtures cover Codex acceptance, runtime SQL contracts,
-Rust/Go authorization transport, BFF identity replacement, and the automatic-sleep CAS boundary.
+## Retained home and identity
 
-Restate retains versions with pinned invocations. The rollback history limit does not cap live draining versions.
-The namespace allows six slots, three controller Pods including surge, and eight worker Pods. Limits including
-sidecars are 42 CPU / 63 GiB; requests remain within 27 CPU / 57 GiB. Controller pools reserve at most 30 SQL
-connections during surge, and eight workers use eight more, below the existing controller-role limit of 42.
-Additional versions wait for a verified drain. Pinned workers and acceptance evidence cannot be force-deleted.
+The original MicroVM UID is `a8cd3a6e-9e60-4ed3-98e3-a080d35a457f`, Lease UID
+`9bdc053c-cd84-42c6-8403-7ef8e37fb56a`, and 32 GiB home PVC UID
+`bb8ec4a4-fbfe-453e-b70a-a3f44d23d464`. The filesystem UUID remains
+`8d55d060-5ed0-4d13-ab0c-978b15b982e1`. Six continuity file hashes and native history inode `1842945`
+matched after cold preparation and again through the authenticated guest Terminal after final Sleep/Resume.
 
-## Deployed cohort
+The installed authorization policy hash remains
+`2fcbcce4779cfb95afeb338a8e51e2092be5c780941b2f082a4ca6e5e82e708a`. Ofz bootstrap and activation
+replayed their original receipts without changing recovery generation or authority. The existing saved
+1Password passkey and native login remain usable. No credential or private operation payload was copied into evidence.
 
-The release observation at 2026-10-22 21:53 UTC matched the running images, generated GitOps revisions, registered
-Restate worker, and retained slot to source `bcc3e2105210b65c0aa8a2b20546ec1b2c492d9d` and schema
-`a0e81e7a9e92a191cbe80b79ddda7019ae2aaac7a90173f83515a2e82256bb9f`. Required source CI and the four main
-publication workflows passed. [PR #15280](https://github.com/proompteng/lab/pull/15280) had 29 terminal successful or
-skipped checks before merge. The image indexes and running architecture digests were read back independently.
+See [the retained-home procedure](operations.md#replacing-a-claimed-guest-while-retaining-its-home).
+Normal automatic Sleep's exact `idle-sleep/<runtime epoch>` reservation is accepted only after stopped-writer
+and drained-invocation checks. Prepared vacant slots require the unchanged allocation, positive snapshot
+generation, and no VMM or native runtime claimant. Retire only the stopped exact Pod with UID/resourceVersion
+preconditions and normal grace; preserve the home and allocation. Never restore older memory against an advanced home.
 
-| Image            | Immutable index digest                                                    | Publication                                                                        |
-| ---------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `lab/tengri`     | `sha256:0227b465f8e30ac31ff3733b396d8bad044ac19e6e0e342dd71f3027b436b8b1` | [Tengri images](https://github.com/proompteng/lab/actions/runs/39848767998)        |
-| `lab/nanoagent`  | `sha256:2f9e2cbc8c85249a1b52ece0ca472e17932ebc22c3e2f259c5a392a9fbe770dd` | [Paired native images](https://github.com/proompteng/lab/actions/runs/39848767998) |
-| `lab/ofz`        | `sha256:ebdbedd44bea021b7ca816ac4b657d1f80fb5ac0d17a3673cbcbbe4e1cfeac66` | [Ofz authorization](https://github.com/proompteng/lab/actions/runs/39848768121)    |
-| `lab/proompteng` | `sha256:9f1dbe38cf31dd1a53c7f846f1f1215150f0967c3763f2ba46d7d440b2165c7c` | [Product images](https://github.com/proompteng/lab/actions/runs/39848768178)       |
+## Exact-source production acceptance
 
-Both native architectures passed the unchanged lifecycle gates. The first final-source ARM64 attempt passed
-functionality but failed the 1,000 ms maximum resume limit, with samples of 1,092, 1,005, and 828 ms. One controlled
-failed-job retry passed, with prepared creation at 820 ms and three resume samples of 653, 654, and 707 ms. The failed
-and successful attempt artifacts remain retained. The cause of the timing variation remains unproven.
+These checks used the owner's signed-in built-in browser on the deployed `4523865d` release. They establish
+product behavior separately from image qualification and workload health.
 
-These three-cycle results are smoke qualification. They cover the slot mTLS request through files, PTY, and initialized
-Codex RPC. They exclude browser authentication, Kubernetes latency, raw PVC allocation, six concurrent guests, and a
-creation-latency distribution. They do not establish end-to-end chat latency or a p95.
+| Boundary                   | Observed result                                                                                                                                                                                                                                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Send and completion        | Actual reply, terminal Ready, composer focus retained, and a newer draft typed without refocusing.                                                                                                                                                                                                   |
+| Navigation and hydration   | Sidebar/New and return during pending work preserved the draft; loading skeleton rendered.                                                                                                                                                                                                           |
+| Archive                    | Native Archive/Restore completed; the restored chat stayed selected automatically after reload. Only the disposable probe was archived afterward.                                                                                                                                                    |
+| Resources and native tools | VM-local Git created an empty main-branch repository as nanoagent; folder children and file contents rendered; two pins and three tabs survived reload. Original Chat-only layout and user selection were restored.                                                                                  |
+| Worker recovery            | Run `840d7a6b-4ede-4d32-8ec9-65793410290e`, invocation `inv_1jqihHbNmts90svs6rDOzRBzIrU13Ex4ZR`, retained the same deployment and journal after both original worker UIDs were replaced sequentially. New journal commands followed both replacements.                                               |
+| Effect identity            | Foreground PID `1100`, start ticks `101625`, and native generation matched before and after worker replacement. One unconditional fsynced append remained exactly one.                                                                                                                               |
+| Active-run sleep           | Actual one-minute setting saved; the same Ready VM and run pin survived beyond the configured deadline plus 60 seconds. Current activity extended the effective deadline, so this alone does not isolate the pin as the cause. The focused unit regression covers that branch.                       |
+| Stop                       | One actual UI Stop before the 300-second test deadline produced Restate Cancelled and the exact native v2 interrupted/processesStopped receipt. Original PID was gone, append count one, run pin released, UI Ready.                                                                                 |
+| Approval                   | Run `86db8471-e82c-4351-bf4b-bd88addc8011` retained turn `01a17132-66a0-7302-9dd7-8e435c51dcc2` and approval `758b53cc6e33ec17661cf2e5cf6a3adb:0` across reload. One Approve once click increased the existing counter from 3 to 4; Succeeded and Ready followed. No counter reset or policy change. |
+| Native recovery            | Same-user app-server PIDfd SIGTERM replaced PID `813`/start `3987` with `1151`/start `125561`. The same thread produced `TENGRI_NATIVE_RESTART_452386_OK` and reached Ready.                                                                                                                         |
+| Sleep/Resume               | Authenticated Sleep left the sleeping journal and no VMM. Resume retained the same VM/Pod/Lease/PVC/filesystem and files, then produced `TENGRI_SLEEP_RESUME_452386_OK` and Ready.                                                                                                                   |
+| Restoration                | Saved and read back 60 minutes after the bounded test and after final Resume. No active run remained. Normal publication restored to true after checking for competing native publishers.                                                                                                            |
 
-The original native publisher released attempt 3 after qualification at attempt 2. The original web publisher
-released attempt 2 after qualification at attempt 1. All four immutable digests remained unchanged, and the retained
-native index artifacts matched exactly. The bounded publication window closed afterward.
+## Qualification limits
 
-Kargo Freight `61b6337bd9eee9547f0d94a251be0f53ff840b02` completed Ofz, Tengri, and Proompteng promotion in that order.
-Ofz migration and rollout verified before either consumer promoted. All three Applications were synced and healthy:
+Final native qualification measured AMD64 prepared creation at 596 ms, with resumes of 583, 560, and 542 ms.
+ARM64 creation was 666 ms, with resumes of 670, 605, and 545 ms. Both passed the unchanged 1,000 ms limit,
+signed metadata and guest-administration checks, and disk-only Sleep with zero resident snapshot bytes and no VMM.
+Heartbeat maxima were 0.578 ms on AMD64 and 6.058 ms on ARM64 under the fixture load. Resource diagnostics
+were retained outside the timing window.
 
-| Application | Generated GitOps revision                  |
-| ----------- | ------------------------------------------ |
-| Ofz         | `cabba6ae99378cccbd2e9a7135417183d45e9595` |
-| Tengri      | `9af97786541e0a11c5eb277548828850cb4fb69b` |
-| Proompteng  | `1f7413db6ab876913614a03a5a25687d4bbbc1ab` |
-
-[PR #15261](https://github.com/proompteng/lab/pull/15261) supplies the workers' SPIRE registration. Its application
-and proxy selectors retain the existing namespace, service account, container, and identity constraints. Registration
-counts were checked against the actual selected Pod UIDs, including retained worker versions. Unregistered-workload
-denial passed in the earlier rollout.
-
-Restate registered `TengriAgentRun`, `TengriRunControl`, and `TengriWorkspaceRuns` against deployment
-`dp_11hbpmw7qcn7tckcaKuH1E5`, matching the new RestateDeployment generation and exact running worker images.
-Run and control journals retain seven days; the workspace object retains one day. Registration and readiness do not
-prove authenticated product behavior.
-
-## Retained-home API 7 replacement
-
-The [claimed-guest replacement procedure](operations.md#replacing-a-claimed-guest-while-retaining-its-home) replaced
-only the stopped API 6 slot. The current home contains the fresh native login, conversations, and earlier acceptance
-evidence. It was retained through the API 7 replacement.
-
-Authenticated sleep committed before controller quiescence. The exact old Pod was deleted with UID and
-resourceVersion preconditions and normal termination grace; volume detachment was verified. The home and allocation
-remained intact while the qualified image was enrolled and the original publishers released. The generated Tengri
-commit was rendered and checked before removing only the temporary reconciliation pause. Argo restored the reviewed
-controller replicas. The controller then prepared the new slot and recorded its actual Pod UID.
-
-| Identity         | Retained or replacement value          |
-| ---------------- | -------------------------------------- |
-| MicroVM UID      | `a8cd3a6e-9e60-4ed3-98e3-a080d35a457f` |
-| Lease UID        | `9bdc053c-cd84-42c6-8403-7ef8e37fb56a` |
-| Home PVC UID     | `bb8ec4a4-fbfe-453e-b70a-a3f44d23d464` |
-| Filesystem UUID  | `8d55d060-5ed0-4d13-ab0c-978b15b982e1` |
-| New slot Pod UID | `ccbe9cc1-658a-43de-9c50-ac0d82951683` |
-
-After preparation, the VMM was absent and no runtime was authorized. Read-only disk inspection verified the same
-32 GiB capacity, filesystem UUID, all five representative public-file hashes, and the same native conversation-store
-inode. No authentication file or stored private operation payload was read. Authenticated resume and conversation
-readback remain acceptance gates. An older memory snapshot cannot be restored against the advanced current home.
-
-## Authenticated acceptance
-
-The following runs used the earlier source `1c0b856fa820407c29a6869476ff0af4f2b5f32d`.
-
-Normal owner sign-in through the existing saved 1Password passkey passed without new enrollment or manual unlock.
-The fresh workspace also completed normal Codex sign-in. Run `7d4d6f0a-e574-4df2-adb9-5c7153fc2856` returned
-`TENGRI_RECOVERY_OK` through the desktop.
-
-Run `de18e396-2a5a-49b5-9dbf-21cc27fe9809` survived browser reload and one exact worker Pod replacement. Its
-original foreground process completed with one unconditional, fsynced append. The accepted Restate invocation
-retried under the same pinned deployment and native turn. This establishes running-command recovery across a worker
-replacement, without an application deduplication guard hiding duplicate dispatch.
-
-Run `05321bc8-32bd-4f19-aca5-34e88a66e77d` exposed a cancellation defect. Native interruption ended the turn but left
-its yielded command running. [PR #15278](https://github.com/proompteng/lab/pull/15278), merged as
-`8e9d418f44e0e61b61de0bf412d1b80a32c4f471`, adds command cleanup and the API 7 receipt contract. Its pinned native
-regression passes. The API 7 image and retained-home replacement are deployed. The final live Stop check is pending
-normal owner sign-in.
-
-The following acceptance sequence applies to the new release. Completed checks above remain evidence for the earlier
-cohort; they do not establish the final cohort's product behavior:
-
-1. Sign in with the saved passkey and resume the retained workspace through authenticated lifecycle control. Verify
-   that the existing native Codex login and conversation survive the replacement.
-2. Submit one bounded foreground append-and-fsync command with a unique nonce and recorded PID/start ticks. Record
-   its run ID, native thread/turn IDs, generation, and dispatch receipt. Do not add an application deduplication guard.
-3. Reload during execution and replace one exact worker Pod with UID/resourceVersion preconditions and normal grace.
-   Retain its RestateDeployment, pinned version, and image. Observe the same invocation retry or replay, the same
-   running guest process, and one append.
-4. Stop that exact command before its bounded wait expires. Require the durable Stop result, a version 2 native
-   terminal receipt with `processesStopped: true`, the process absent, one append, and release of the active-run pin.
-   Uncertainty remains pending cancellation or reconciliation.
-5. Reload an actual pending native approval. Approve its exact ID, generation, operation, and scope once through the
-   desktop. Verify its durable control receipt and one effect. Stale-generation rejection also retains its real native
-   fixture proof; do not forge production authorization to manufacture a negative case.
-6. With all runs terminal, terminate only the identified native Codex app-server process. Verify a new process, the
-   replayed Ready state, and a usable reply without a stale restart banner.
-7. Verify authenticated sleep/resume, retained file and conversation identities, and terminal pin release. Retain the
-   existing automatic-sleep policy. The real wall-clock idle expiry remains distinct from the tested CAS boundary.
-
-The local append-only decision trail is `.audit/tengri-durable-execution.tsv`. Native run artifacts retain qualification
-attempts and image indexes. These artifacts, release readback, and the remaining product receipts have distinct scopes.
-
-## Dispatch latency and activity messages
-
-At 19:25 UTC, run `948e959b-8873-4c32-9cec-320a85b40090` took 14.405 seconds from durable acceptance to native
-dispatch. Its initial workspace claim took 4.335 seconds and the separate initial Stop lookup took 3.833 seconds.
-Tempo recorded a 20.535-second send request. Failed status reads exhausted their two-second Restate deadline after
-authorization, returning HTTP 503 while the native turn continued.
-
-The repair returns the initial Stop from the workspace claim and removes the redundant call. It retains the final
-Stop check after preparation and before dispatch. Status handlers retain journaled signature and expiry verification.
-An isolated pinned-engine worker-kill probe reproduced a journal mismatch when query expiry was rechecked before
-replaying the state read, so that attempted optimization was rejected. The private claim response changes require
-active run and control invocations to drain before worker registration. Old pinned versions remain available for
-retained history.
-
-The desktop uses concise activity labels and retries transient status failures with a reconnect message. A successful
-read clears that failure. The focused browser regressions and real Restate crash/rotation/expiry fixture pass locally.
-The repair is deployed; post-deployment latency remains unmeasured. The observed mean durable append was 328
-milliseconds, so removing serial calls does not resolve the separate shared-storage bottleneck. No durability or
-authorization setting was weakened.
-
-## Settings passkey enrollment
-
-Desktop authentication has an eight-hour absolute limit and a 30-minute idle limit. Only permitted control activity
-renews the idle deadline; background status polling and stream rechecks do not. A maintenance window longer than the
-idle limit can therefore require normal sign-in again. Reuse the saved passkey, then explicitly resume the retained
-workspace when it is prepared. This expiry does not require another passkey enrollment or a home reset.
-
-[PR #15215](https://github.com/proompteng/lab/pull/15215) is included in the deployed cohort. Its entry point is
-**Settings → Access → Add another passkey**. The Keycloak theme is deployed. The virtual Keycloak/browser/Ofz fixture passed
-165 assertions. The owner saved the additional passkey in 1Password. Subsequent same-identity sign-in through that
-saved passkey passed against the deployed product. Keep the original credentials, GitHub subject, broker links, RP ID,
-and WebAuthn verification policy. No further enrollment is needed. The merged sign-in cleanup in
-[PR #15269](https://github.com/proompteng/lab/pull/15269) is included in the deployed API 7 cohort.
-
-Verification leaves credential selection to the browser or password manager. The page omits the noninteractive
-inventory of opaque credential labels and transport names. While verification is pending, its disabled button says
-"Check your passkey dialog". The hidden credential allow-list and one-click request protection remain intact.
-The real Keycloak fixture rejects the old inventory, verifies the pending state and reload recovery with two saved
-credentials, and retains its exact-challenge failover, identity, enrollment, and mobile accessibility checks.
-
-## Observed limits
-
-SPIRE's full HA verifier failed because its three existing server Pods share one node. Workload issuance and denial
-for an unregistered workload passed. The worker registration fix does not establish survival of that node failing.
-The native resume timing variation also lacks a proven root cause. Neither limitation is hidden by successful release
-or readiness checks.
+These measurements cover slot mTLS through real files, PTY, and initialized Codex RPC. Three samples do not
+establish a p95. They exclude browser authentication, Kubernetes latency, raw PVC allocation, six concurrent
+guests, and fresh-creation distributions. The actual authenticated lifecycle check is separate and is not a
+subsecond browser-resume claim. Earlier failed timing artifacts and inconclusive worker trials remain in the audit;
+a later successful release does not convert them into passes. Arbitrary external tool effects still require
+their own idempotency or reconciliation contract.

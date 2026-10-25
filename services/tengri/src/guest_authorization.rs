@@ -91,7 +91,9 @@ pub fn rpc_action(method: &str) -> Option<GuestAction> {
         "GetInfo" => GuestAction::WorkspaceMetadataRead,
         "OpenEditor" => GuestAction::EditorOpen,
         "OpenBrowser" => GuestAction::BrowserControl,
-        "ListFiles" | "ReadFile" | "SearchFiles" | "WatchFiles" => GuestAction::FilesObserve,
+        "StatFile" | "ListFiles" | "ReadFile" | "SearchFiles" | "WatchFiles" => {
+            GuestAction::FilesObserve
+        }
         "WriteFile" | "CreateDirectory" | "MoveFile" | "DeleteFile" => GuestAction::FilesWrite,
         "ListTerminals" => GuestAction::TerminalObserve,
         "CreateTerminal" | "TerminateTerminal" | "AttachTerminal" => GuestAction::TerminalControl,

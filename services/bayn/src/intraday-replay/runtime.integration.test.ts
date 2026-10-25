@@ -1198,8 +1198,8 @@ durableTest.each(
                   mutationStore: mutations,
                   writerFence: fence,
                   persistedCapitalGrants: grants,
-                  verifyBrokerStateVersion: (version, intentId) =>
-                    verifyBrokerStateVersion(sql, accountId, version, intentId),
+                  verifyBrokerStateVersion: (version, intentId, requireCryptoEntryFeeBound) =>
+                    verifyBrokerStateVersion(sql, accountId, version, intentId, requireCryptoEntryFeeBound),
                   readFinalExecutionRiskContext: (at) => readFinalExecutionRiskContext(sql, accountId, at),
                 },
               })

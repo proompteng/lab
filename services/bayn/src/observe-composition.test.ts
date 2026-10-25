@@ -640,7 +640,8 @@ const cycle = Effect.runSync(
 )
 
 const account: AccountSnapshot = {
-  schemaVersion: 'bayn.paper-account-snapshot.v1',
+  schemaVersion: 'bayn.paper-account-snapshot.v2',
+  cryptoFeeTier: null,
   accountId,
   status: AccountStatus.Active,
   currency: 'USD',
@@ -1013,6 +1014,7 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
   })
   const brokerAccount: BrokerAccount = {
     cryptoStatus: null,
+    cryptoFeeTier: null,
     cashReportingQuantumMicros: '1' as const,
     nonMarginableBuyingPowerMicros: null,
 
@@ -5453,6 +5455,7 @@ describe('OBSERVE runtime composition', () => {
     })
     const brokerAccount: BrokerAccount = {
       cryptoStatus: null,
+      cryptoFeeTier: null,
       cashReportingQuantumMicros: '1' as const,
       nonMarginableBuyingPowerMicros: null,
 

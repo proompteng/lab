@@ -162,6 +162,12 @@ export interface IntradayMomentumExactRatio {
   readonly denominator: bigint
 }
 
+export const deriveIntradayBidBreakoutBps = (
+  prices: Pick<IntradayMomentumSignalPrices, 'bid' | 'high'>,
+  symbol: string,
+): Result.Result<number, IntradayMomentumFailure> =>
+  safeInteger(floorDivide((prices.bid - prices.high) * 10_000n, prices.high), 'bid-breakout-bps', symbol)
+
 export const deriveIntradayMomentumSignalMetrics = (
   prices: IntradayMomentumSignalPrices,
   symbol: string,

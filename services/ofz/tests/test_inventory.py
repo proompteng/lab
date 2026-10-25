@@ -14,6 +14,21 @@ class InventoryTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             inventory.main()
 
+    def test_supervisor_cannot_omit_a_classified_guest_rpc(self):
+        read_text = Path.read_text
+
+        def omit_metadata(path, *args, **kwargs):
+            content = read_text(path, *args, **kwargs)
+            if str(path).endswith("slot/admission.rs"):
+                content = content.replace('"StatFile" | ', "", 1)
+            return content
+
+        with patch.object(Path, "read_text", omit_metadata):
+            with self.assertRaisesRegex(
+                AssertionError, "target parser drift: missing=.*StatFile"
+            ):
+                inventory.main()
+
     def test_browser_prevalidation_actions_are_classified(self):
         read_text = Path.read_text
         for branch in [

@@ -202,10 +202,10 @@ home. Restart requires revoking or rotating exposed credentials and rebuilding a
 Keep original history and homes retained. An API revoke cannot erase copied credentials or stop an existing root process.
 Complete IdP disable/sign-out as part of the workflow and reconcile out-of-band identity changes.
 
-Use an independent S3-compatible destination for WAL, tested base backups, immutable audit, home mappings, and retained
-homes. Keep 30 days of database point-in-time recovery. A physical Ofz backup includes its three application/datastore
-databases at one recovery point. Keep decryption and identity-recovery authority outside cluster-administrator
-credentials. Current Ceph-local backups do not satisfy this boundary.
+Ofz and Keycloak use the Ceph S3 object store for WAL, tested base backups and immutable audit. Keep 30 days of database
+point-in-time recovery. A physical Ofz backup includes its three application/datastore databases at one recovery point.
+The October 25 recovery migration explicitly replaces the NUC destination with Ceph. These copies share the live
+databases' Ceph failure domain and do not provide recovery from loss of that cluster. Home recovery is a separate scope.
 
 Restore with application access fenced. Reconcile policy versions, complete command receipts, pending operations,
 current membership, and workspace/home UIDs. Invalidate restored sessions, tickets, and agent credentials through a new

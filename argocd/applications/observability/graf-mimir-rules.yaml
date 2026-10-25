@@ -3908,9 +3908,12 @@ data:
             severity: warning
           annotations:
             summary: Bayn could not publish a replicated broker cache value
-            description: Inspect failure category, replica acknowledgement duration, server memory and the matching publication
-              trace.
-            runbook_url: docs/runbooks/bayn-cache-observability.md
+            description: >-
+              Failed replicated puts in the last five minutes by category/cause:
+              {{ range query `sum by (category, cause_category) (increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m])) > 0` | sortByLabel "cause_category" | sortByLabel "category" }}{{ if .Labels.category }}{{ .Labels.category }}{{ else }}unknown{{ end }}/{{ if .Labels.cause_category }}{{ .Labels.cause_category }}{{ else }}unknown{{ end }}; {{ else }}unavailable; {{ end }}Inspect replica acknowledgement duration, server memory and the matching publication trace.
+              Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.
+            runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
+            dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
         - alert: BaynValkeyLatencyHigh
           expr: (histogram_quantile(0.99, sum by (le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace="bayn",service=~"bayn|bayn-execution-controller",stage=~"bayn.valkey.get|bayn.valkey.put",outcome="succeeded"}[5m])))
             > 0.25) and on(stage) (sum by (stage) (increase(bayn_operation_duration_seconds_count{namespace="bayn",service=~"bayn|bayn-execution-controller",stage=~"bayn.valkey.get|bayn.valkey.put",outcome="succeeded"}[5m]))

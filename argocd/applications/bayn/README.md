@@ -34,6 +34,12 @@ command is **not** run automatically from the trading service at startup.
 
 # Bayn GitOps rollout notes
 
+Protocol v23 retains the broker account's crypto fee tier in v2 account observations. Entry pricing uses that
+account-bound taker rate; future sells retain the maximum fee. Migration 146 requires flat, settled, fully accounted
+inventory and fresh exact reconciliation. The source rollout removes the prior PAPER request and activates OBSERVE.
+The v23 request below restores PAPER with the same account, limits and risk policy, bound to the verified published image.
+Keep the existing financial history and acceptance cohort. Release health and modeled economics do not prove a natural trade.
+
 ## Isolated Jev instruction research
 
 The same immutable image includes `bayn-gepa` for bounded native Jev question optimization. Use the
@@ -185,26 +191,30 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The implementation uses `bayn.jev.protocol.v20`, `bayn.jev.executable-profit-limit.behavior.v1`,
-trading-signal state v17, batch v6 and pinned `jev-1.13.0`. Jev separately classifies the current setup and judges a complete funded entry/stop/target trade after costs within its holding deadline. Both answers must support entry; either judgment can abstain. Its options label hypothetical future order prices
+The implementation uses `bayn.jev.protocol.v23`, `bayn.jev.executable-profit-limit.behavior.v1`,
+trading-signal state v21, batch v6 and pinned `jev-1.13.0`, with the existing 15-minute holding limit.
+Crypto candidate and benchmark relative returns use matching completed-bar endpoints. Current candidate quote
+indicators remain separate, and fresh executable quotes still determine pricing, funding and fees. Crypto breakout
+uses the fresh bid against the completed range high; an older contextual trade cannot cap that current quote metric.
+Jev separately classifies the current setup and judges a complete funded entry/stop/target trade after costs within its holding deadline. Both answers must support entry; either judgment can abstain. Its options label hypothetical future order prices
 separately from observed market evidence. The selected complete plan binds those terms to the order and existing account
 limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
 and remaining economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
 
-Migration 143 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
+Migration 146 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
-history. The strategy protocol hash is `f4a4ea1fff4aaba7ebfeb7a2a40b7a1823880f948bd8000cbb99db29187fbd5e`.
-The protocol cutover uses OBSERVE authority. The source cutover intentionally removes the retired request and its runtime lineages. After the v20 image is
-published and verified, the matching same-account PAPER request is sealed and reviewed through GitOps against that image. Its sealed identity, activation generation and all three runtime build lineages move
-together through Kargo. The request retains the existing broker account, monetary limits and risk-policy hash;
-account losses, peak equity and turnover history remain in place.
+history. The strategy protocol hash is `64baeede37bbf9e9b9777ccb2746578705661a5a70f8e971a25427611fea4cd4`.
+The v23 source cutover completed through native OBSERVE recovery. The reviewed PAPER request is authored against
+source `7964cf8faff4f784bc49473396e7e97e158e7b84` and immutable digest
+`sha256:ce2a19bac45b03f1b8a95ea01d4291805014619d144e4595db44cb64d4aac3fb`. Its request hash is
+`c29257939cd2ace501f0e0c158204eb5840ad1b0f8f1e0689390f40e41762c92`. Its sealed identity, activation generation
+and all three build lineages move together through Kargo. The account, monetary limits and risk policy remain unchanged.
 
-The authored v20 PAPER request is `933a611d7eebc8a1348cb615550b3374eddec41f64cb90b3a2be23ea39ea838a`.
-It binds reviewed source `0bd754692dc5c281fb77725ddd47d704237c9098` and verified image
-`sha256:b015e9ec3c22dfda4c21b19a4278c79938a8440a76d942b9c16c292dcdda828a` after the completed OBSERVE cutover.
-The native hook still requires fresh flat/exact accounting before PAPER activation.
+The native hook requires fresh flat/exact accounting before realizing v23 PAPER authority. Correct signal arithmetic
+and successful activation do not establish profitable entries or a natural round trip. Those require subsequent
+runtime broker fills, posted fees and accounting evidence. Previous v21 grants and execution records remain in history.
 
-Image promotion does not grant capital authority. The existing sealed PAPER request carries its authored activation
+Image promotion does not grant capital authority. A reviewed sealed PAPER request carries its authored activation
 through subsequent compatible image promotions; it does not require another rotation after each build. A future
 strategy or risk-policy change requires a fresh OBSERVE cutover and a new reviewed same-account mandate.
 The new mandate retains the reviewed $1,000,000 daily gross-turnover budget and exposure limits. The PAPER-only

@@ -39,6 +39,67 @@ test('native candidate and benchmark features reproduce a Sunday snapshot crossi
   expect(reproduced.manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
 })
 
+test('crypto requests keep executable quote signals separate from completed-bar relative returns', () => {
+  const { snapshot, rows } = cryptoMarketFixture()
+  const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'BTC/USD')).body).state
+  expect(state.relativeSignals.pricingBasis).toBe('COMPLETED_BAR_CLOSE')
+  expect(state.relativeSignals.comparisonAt).toBe(snapshot.manifest.rangeEndAt)
+  expect(state.relativeSignals.lookbackMinutes).toBe(30)
+  expect(state.relativeSignals).not.toHaveProperty('spreadBps')
+  expect(state.candidate.currentPriceSignals.lookbackReturnBps).toBeGreaterThan(0)
+  expect(state.candidate.currentPriceSignals.spreadBps).toBeGreaterThan(0)
+  expect(state.candidate.currentPriceSignals.observedAt).toBe(snapshot.manifest.observedAt)
+  expect(state.candidate.quote.bid).toBe(snapshot.latestQuotes['BTC/USD']?.bidPrice)
+  expect(state.benchmark.pricingBasis).toBe('COMPLETED_BAR_CLOSE')
+  expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows)).manifest.snapshotId).toBe(
+    snapshot.manifest.snapshotId,
+  )
+})
+
+test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
+  '%s current quote signals cannot be capped by an old contextual trade',
+  (symbol) => {
+    const fresh = cryptoMarketFixture(symbol)
+    const oldPrint = cryptoMarketFixture(symbol, { tradeLagMs: 12 * 60_000, tradePrice: 100 })
+    const freshState = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(fresh.snapshot, symbol)).body).state
+    const oldPrintState = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(oldPrint.snapshot, symbol)).body).state
+    expect(oldPrintState.candidate.currentPriceSignals.breakoutBps).toBe(
+      freshState.candidate.currentPriceSignals.breakoutBps,
+    )
+    expect(oldPrintState.candidate.currentPriceSignals.breakoutPricingBasis).toBe('CURRENT_BID')
+    expect(oldPrintState.candidate.latestTrade.ageMs).toBe(721000)
+    expect(oldPrintState.candidate.latestTrade.price).toBe(100)
+    expect(oldPrintState.candidate.quote).toEqual(freshState.candidate.quote)
+    expect(oldPrintState.relativeSignals).toEqual(freshState.relativeSignals)
+    expect(oldPrintState.entryEconomics).toEqual(freshState.entryEconomics)
+    expect(
+      Result.getOrThrow(reproduceStreamingSnapshot(oldPrint.snapshot.manifest, oldPrint.rows)).manifest.snapshotId,
+    ).toBe(oldPrint.snapshot.manifest.snapshotId)
+  },
+)
+
+test('a wider current crypto quote changes funded entry costs without changing completed-bar outperformance', () => {
+  const narrow = cryptoMarketFixture('BTC/USD', { quoteSpreadBps: 1 })
+  const wide = cryptoMarketFixture('BTC/USD', { quoteSpreadBps: 20 })
+  const narrowState = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(narrow.snapshot, 'BTC/USD')).body).state
+  const wideState = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(wide.snapshot, 'BTC/USD')).body).state
+  expect(wideState.relativeSignals).toEqual(narrowState.relativeSignals)
+  expect(wideState.candidate.currentPriceSignals.breakoutBps).toBe(
+    narrowState.candidate.currentPriceSignals.breakoutBps,
+  )
+  expect(wideState.candidate.currentPriceSignals.spreadBps).toBeGreaterThan(
+    narrowState.candidate.currentPriceSignals.spreadBps,
+  )
+  expect(wideState.entryEconomics.maximumEntryPriceUsd).toBeGreaterThan(narrowState.entryEconomics.maximumEntryPriceUsd)
+  expect(BigInt(wideState.entryEconomics.maximumQuantityAtoms)).toBeLessThan(
+    BigInt(narrowState.entryEconomics.maximumQuantityAtoms),
+  )
+  for (const fixture of [narrow, wide])
+    expect(
+      Result.getOrThrow(reproduceStreamingSnapshot(fixture.snapshot.manifest, fixture.rows)).manifest.snapshotId,
+    ).toBe(fixture.snapshot.manifest.snapshotId)
+})
+
 test('crypto replay rejects a normalized price substituted beneath an unchanged native payload', () => {
   const { snapshot, rows } = cryptoMarketFixture()
   const changed = {

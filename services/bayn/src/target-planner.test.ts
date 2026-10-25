@@ -163,7 +163,8 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
   ]
   const orders = options.orders ?? []
   const account: AccountSnapshot = {
-    schemaVersion: 'bayn.paper-account-snapshot.v1',
+    schemaVersion: 'bayn.paper-account-snapshot.v2',
+    cryptoFeeTier: null,
     accountId: inputAccountId,
     status: options.accountStatus ?? AccountStatus.Active,
     currency: 'USD',
@@ -819,8 +820,8 @@ describe('causal target planner', () => {
 
     expect(replay).toEqual(first)
     expect(reordered).toEqual(first)
-    expect(first.inputHash).toBe('ad86145b39c445ea7e132f6d9809a35fa512c1385489b5377fd516740d42a190')
-    expect(first.outputHash).toBe('31adde8a5432297d7a51fcf0b18d46fb9a9fb6a3f98d1a6e2c42d8512dd86b1f')
+    expect(first.inputHash).toBe('0716076c92ec9f3fb0261b1aab72ae37e3376dc25aa39f690b112184501d88ba')
+    expect(first.outputHash).toBe('371fac767af074391ae9059615242e8f86f91421727f675e6c69991f2926592f')
     expect(changedDecision.inputHash).not.toBe(first.inputHash)
     expect(changedDecision.outputHash).not.toBe(first.outputHash)
     expect(changedDecision.intentTargets.every((intent) => intent.decisionHash === hash('4'))).toBe(true)
