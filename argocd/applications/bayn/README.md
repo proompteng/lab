@@ -37,7 +37,7 @@ command is **not** run automatically from the trading service at startup.
 Protocol v23 retains the broker account's crypto fee tier in v2 account observations. Entry pricing uses that
 account-bound taker rate; future sells retain the maximum fee. Migration 146 requires flat, settled, fully accounted
 inventory and fresh exact reconciliation. The source rollout removes the prior PAPER request and activates OBSERVE.
-Restore PAPER only with the same account, limits and risk policy in a new mandate bound to the verified published image.
+The v23 request below restores PAPER with the same account, limits and risk policy, bound to the verified published image.
 Keep the existing financial history and acceptance cohort. Release health and modeled economics do not prove a natural trade.
 
 ## Isolated Jev instruction research
@@ -204,9 +204,11 @@ and remaining economic assumptions. Native children and protective disposals sha
 Migration 146 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
 history. The strategy protocol hash is `64baeede37bbf9e9b9777ccb2746578705661a5a70f8e971a25427611fea4cd4`.
-The v23 source release first activates OBSERVE. A new same-account PAPER request must be authored against its verified
-published source and immutable image. Its sealed identity, activation generation and all three build lineages move
-together through Kargo. The account, monetary limits and risk policy remain unchanged.
+The v23 source cutover completed through native OBSERVE recovery. The reviewed PAPER request is authored against
+source `7964cf8faff4f784bc49473396e7e97e158e7b84` and immutable digest
+`sha256:ce2a19bac45b03f1b8a95ea01d4291805014619d144e4595db44cb64d4aac3fb`. Its request hash is
+`c29257939cd2ace501f0e0c158204eb5840ad1b0f8f1e0689390f40e41762c92`. Its sealed identity, activation generation
+and all three build lineages move together through Kargo. The account, monetary limits and risk policy remain unchanged.
 
 The native hook requires fresh flat/exact accounting before realizing v23 PAPER authority. Correct signal arithmetic
 and successful activation do not establish profitable entries or a natural round trip. Those require subsequent
