@@ -187,10 +187,8 @@ Cache correctness is proven by real Nix image workflows:
 
 - pull requests consume the public Attic cache without `ATTIC_TOKEN`
 - `main` builds real image derivations such as `.#atticd-image`
-- `main` pushes only those real image output paths to Attic
-- `main` also pushes the real OCI helper closures used by that workflow, such
-  as `.#inspect-oci-archive`, `.#oci-push`, `.#create-oci-index`,
-  `.#assert-oci-platforms`, `.#write-oci-release-contract`, and `.#cache-push`
+- `main` pushes final image archives up to 256 MiB, without their dependency
+  closures; larger archives are reported as size skips
 - registry publication is handled by Skopeo from the Nix-built tarball, not by
   Docker Buildx
 - the workflow summary records Attic substitutions, `cache.nixos.org`
@@ -211,6 +209,20 @@ nix run .#cache-push -- ./result
 ```
 
 Pull request workflows must not receive `ATTIC_TOKEN`.
+
+The repository's `ATTIC_TOKEN` belongs to the `lab-ci` subject and grants only
+pull and push access to `lab`. Renew it with the existing Attic signing key,
+verify both cache reads and push authorization, then replace the existing
+GitHub Actions secret in `proompteng/lab`. The standard validity is one year;
+the token has no cache administration or deletion permissions. The signing key
+continues to come from `ExternalSecret/attic-secrets`; renewing the CI token
+does not require rotating that key.
+
+Cache-upload failures appear as warnings and in the cache summary. Registry
+publication remains authoritative, so a successful image build alone does not
+prove that Attic was populated. Verify a successful upload followed by an Attic
+substitution on a fresh runner. A diagnostic dispatch on a non-main branch
+builds and reads caches without publishing images or exposing Kargo aliases.
 
 ## Container Build Boundary
 

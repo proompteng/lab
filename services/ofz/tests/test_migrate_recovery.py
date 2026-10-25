@@ -23,15 +23,16 @@ def version(identifier, *, latest=False, marker=False):
 
 
 class MigrationTests(unittest.TestCase):
-    def test_receipt_rebinding_does_not_contact_the_retired_nuc(self):
+    def test_receipt_rebinding_uses_the_audit_writer_without_contacting_nuc(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "destination-identities.json").write_text(
-                json.dumps({"ofz-recovery-custodian": ["fixture", "fixture-secret"]})
+                json.dumps({"ofz-audit-export": ["fixture", "fixture-secret"]})
             )
             rebind = Mock()
             source = Mock(side_effect=AssertionError("NUC is retired"))
             target = Mock()
+            client = Mock(return_value=target)
             with (
                 patch(
                     "sys.argv",
@@ -40,12 +41,15 @@ class MigrationTests(unittest.TestCase):
                 patch.dict(
                     migration["main"].__globals__,
                     source_credentials=source,
-                    client=Mock(return_value=target),
+                    client=client,
                     rebind_audit=rebind,
                 ),
             ):
                 migration["main"]()
             source.assert_not_called()
+            client.assert_called_once_with(
+                "http://10.98.171.42", ["fixture", "fixture-secret"]
+            )
             rebind.assert_called_once_with(target, root)
 
     def test_source_metadata_has_one_case_insensitive_hash_header(self):
