@@ -47,13 +47,6 @@ describe('CI build observability', () => {
     expect(match('Build cloud-hypervisor installer')).toEqual(['installers'])
   })
 
-  test('keeps the provisioned dashboard in sync with its source', () => {
-    const result = Bun.spawnSync(['python3', 'argocd/applications/observability/ci/dashboard.py', '--check'], {
-      cwd: repoRoot,
-    })
-    expect({ exitCode: result.exitCode, error: result.stderr.toString() }).toEqual({ exitCode: 0, error: '' })
-  })
-
   test('evaluates alerts and dashboard queries with native Prometheus', () => {
     const directory = mkdtempSync(resolve(tmpdir(), 'ci-build-promql-'))
     try {
@@ -71,7 +64,7 @@ describe('CI build observability', () => {
         [
           'python3',
           '-c',
-          'import json,sys; sys.path.insert(0,"argocd/applications/observability/ci"); from dashboard import dashboard; print(json.dumps([t["expr"] for p in dashboard()["panels"] if p["datasource"]["uid"]=="prom" for t in p["targets"]]))',
+          'import json; model=json.load(open("argocd/applications/observability/ci/dashboard.json")); print(json.dumps([t["expr"] for p in model["panels"] if p.get("datasource",{}).get("uid")=="prom" for t in p["targets"]]))',
         ],
         { cwd: repoRoot },
       )

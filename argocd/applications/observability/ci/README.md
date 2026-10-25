@@ -106,12 +106,13 @@ failure does not stop builds. Recover code through a reviewed Git revert and Arg
 python3 -m unittest discover -s argocd/applications/observability/ci -p test_collector.py
 ruff check argocd/applications/observability/ci
 ruff format --check argocd/applications/observability/ci
-python3 argocd/applications/observability/ci/dashboard.py --check
 bun test packages/scripts/src/shared/__tests__/ci-observability.test.ts
 ```
 
-`dashboard.py` owns the generated dashboard ConfigMap. Edit that source and regenerate with
-`python3 argocd/applications/observability/ci/dashboard.py`. The behavioral suite covers attempt isolation, queue and
+`dashboard.json` is the native Grafana model; Kustomize embeds it directly in the dashboard ConfigMap. Import a
+preview through Grafana's manual JSON upload first. Verify live data, readable labels, units, table order and links
+in the UI, then export the verified model, retain the canonical `ci-build-performance` UID and commit it. Remove the
+temporary preview after the provisioned dashboard is verified. The behavioral suite covers attempt isolation, queue and
 execution calculations, cache parsing, cancellation, restart idempotency, failed outbox delivery, API search overflow,
 and stale collection. Promtool checks alert behavior and dashboard PromQL during scripts CI.
 
