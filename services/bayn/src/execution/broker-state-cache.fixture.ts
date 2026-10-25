@@ -49,7 +49,8 @@ export const cachedBrokerStateFixture = (
       unknownOrderCount: 0,
       accountingHash: '8'.repeat(64),
       account: {
-        schemaVersion: 'bayn.paper-account-snapshot.v1',
+        schemaVersion: 'bayn.paper-account-snapshot.v2',
+        cryptoFeeTier: account.cryptoFeeTier,
         accountId: account.id,
         status: AccountStatus.Active,
         currency: account.currency,

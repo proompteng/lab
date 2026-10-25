@@ -454,11 +454,19 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         let power = power_settings_from_request(&request)?;
         for _ in 0..3 {
-            let agent = self.authorized_agent(&principal, &request.id).await?;
-            let now = Utc::now();
+            let authorized = self.authorized_agent(&principal, &request.id).await?;
             let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+            let agent = api.get(&request.id).await.map_err(map_kube_error)?;
+            if agent.uid() != authorized.uid()
+                || agent.spec.owner_hash != authorized.spec.owner_hash
+                || agent.spec.runtime_epoch != authorized.spec.runtime_epoch
+            {
+                return Err(Status::permission_denied("authorized workspace changed"));
+            }
+            let now = Utc::now();
             let patch = json!({
                 "metadata": {
+                    "uid": agent.uid(),
                     "resourceVersion": agent.resource_version(),
                     "annotations": {crate::activity::LAST_ACTIVITY_ANNOTATION: now.to_rfc3339()},
                 },
@@ -3352,6 +3360,93 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn power_settings_refresh_activity_changes_without_changing_authorized_workspace() {
+        for changed in ["activity", "uid", "owner", "epoch"] {
+            let (service, mut handle) =
+                tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+            let barrier = Arc::new(tokio::sync::Barrier::new(2));
+            let mut control = test_control_plane(Client::new(service, "tengri"));
+            control.authorization = WorkspaceAuthorization::SynchronizedFixture(barrier.clone());
+            let mut agent = provisional_terminal_test_agent(Utc::now());
+            agent.metadata.resource_version = Some("7".into());
+            let principal = Principal::fixture(
+                &agent.spec.owner_hash,
+                &agent.uid().unwrap(),
+                crate::ofz::proto::Action::WorkspacePowerConfigure,
+            );
+            let request = crate::auth::signed_fixture_request(
+                UpdatePowerSettingsRequest {
+                    id: agent.name_any(),
+                    idle_timeout_minutes: Some(1),
+                },
+                &principal,
+                &format!("/{CONTROL_PLANE_SERVICE}/UpdatePowerSettings"),
+                control.request_audience(),
+            );
+            let task = tokio::spawn(async move { control.update_power_settings(request).await });
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            agent.metadata.resource_version = Some("8".into());
+            agent.annotations_mut().insert(
+                crate::activity::LAST_ACTIVITY_ANNOTATION.into(),
+                Utc::now().to_rfc3339(),
+            );
+            match changed {
+                "uid" => agent.metadata.uid = Some(uuid::Uuid::new_v4().to_string()),
+                "owner" => agent.spec.owner_hash = owner_hash("github:another-owner"),
+                "epoch" => agent.spec.runtime_epoch = uuid::Uuid::new_v4().to_string(),
+                _ => {}
+            }
+            barrier.wait().await;
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            if changed != "activity" {
+                assert_eq!(
+                    task.await.unwrap().unwrap_err().code(),
+                    tonic::Code::PermissionDenied
+                );
+                continue;
+            }
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::PATCH);
+            let patch: Value =
+                serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                    .unwrap();
+            assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
+            assert_eq!(patch["metadata"]["resourceVersion"], "8");
+            assert_eq!(patch["spec"]["power"]["idleTimeoutMinutes"], 1);
+            assert!(patch["spec"].get("desiredState").is_none());
+            agent.spec.power.idle_timeout_minutes = 1;
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            assert_eq!(
+                task.await
+                    .unwrap()
+                    .unwrap()
+                    .into_inner()
+                    .idle_timeout_minutes,
+                Some(1)
+            );
+        }
+    }
+
+    #[tokio::test]
     #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
     async fn runtime_shared_state_power_settings_do_not_wake_and_obey_ofz() {
         let database = Arc::new(
@@ -3407,6 +3502,14 @@ pub(crate) mod tests {
                 );
                 continue;
             }
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&sleeping).unwrap()))
+                    .unwrap(),
+            );
             let (request, response) = handle.next_request().await.unwrap();
             assert_eq!(request.method(), http::Method::PATCH);
             let patch: Value =
