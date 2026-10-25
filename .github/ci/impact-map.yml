@@ -232,7 +232,6 @@ targets:
       - flake.lock
       - flake.nix
       - nix/images/agents.nix
-      - nix/verify-agents-shell-image-lifecycle.sh
       - nix/images/bun-workspace-service.nix
       - nix/images/openai-codex-cli.nix
       - nix/packages.nix

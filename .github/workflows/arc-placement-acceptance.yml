@@ -24,7 +24,9 @@ jobs:
     env:
       SLOT: ${{ matrix.slot }}
     steps:
-      - name: Verify local scratch, Nix, and Docker
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-buildkit
+      - name: Verify local scratch, Nix, and BuildKit
         shell: bash
         run: |
           set -euo pipefail
@@ -37,8 +39,7 @@ jobs:
           done
           test "$(nix eval --offline --expr '40 + 2')" = 42
           nix --version
-          docker version
-          test "$(docker info --format '{{.DockerRootDir}}')" = /var/lib/docker
+          buildctl debug workers
           proof_dir="$(mktemp -d "$RUNNER_TEMP/arc-local-proof.XXXXXX")"
           trap 'rm -rf "$proof_dir"' EXIT
           dd if=/dev/zero of="$proof_dir/payload" bs=1M count=16 conv=fsync
@@ -47,10 +48,12 @@ jobs:
           FROM busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
           COPY payload /payload
           RUN test "$(wc -c < /payload)" = 16777216
-          CMD ["wc", "-c", "/payload"]
+          FROM scratch
+          COPY --from=0 /payload /payload
           DOCKERFILE
-          docker build --tag "arc-local-proof:$SLOT" "$proof_dir"
-          test "$(docker run --rm "arc-local-proof:$SLOT" | awk '{print $1}')" = 16777216
+          buildctl build --frontend dockerfile.v0 --local "context=$proof_dir" --local "dockerfile=$proof_dir" \
+            --output "type=local,dest=$proof_dir/output"
+          test "$(wc -c < "$proof_dir/output/payload")" = 16777216
           jq -n --arg node "$ARC_RUNNER_NODE_NAME" --arg pod "$ACTIONS_RUNNER_POD_NAME" --arg slot "$SLOT" \
             '{node:$node,pod:$pod,slot:$slot}' > "$RUNNER_TEMP/arc-ready.json"
       - name: Publish ready slot

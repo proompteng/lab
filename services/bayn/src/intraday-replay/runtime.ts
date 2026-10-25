@@ -273,8 +273,8 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           executionMode: mode,
           execution: {
             currentUtcInstant: input.currentUtcInstant,
-            verifyBrokerStateVersion: (version, intentId) =>
-              verifyBrokerStateVersion(sql, identity.accountId, version, intentId),
+            verifyBrokerStateVersion: (version, intentId, requireCryptoEntryFeeBound) =>
+              verifyBrokerStateVersion(sql, identity.accountId, version, intentId, requireCryptoEntryFeeBound),
             brokerRead: input.broker.read,
             brokerMutation: input.broker.mutation,
             intentStore,

@@ -183,6 +183,21 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
+  test('retains the broker crypto fee tier with its account response evidence', async () => {
+    const raw = { ...accountResponse, crypto_status: 'ACTIVE', crypto_tier: 4 }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const result = await Effect.runPromise(withClient(client, (read) => read.account))
+    expect(result.value).toMatchObject({ id: accountId, cryptoStatus: 'ACTIVE', cryptoFeeTier: 4 })
+    expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(raw)))
+  })
+
+  test.each([0, 9, '4'])('rejects an unrecognized broker crypto fee tier %s', async (cryptoTier) => {
+    const raw = { ...accountResponse, crypto_status: 'ACTIVE', crypto_tier: cryptoTier }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.account)))
+    expect(failure.kind).toBe(BrokerReadErrorKind.InvalidResponse)
+  })
+
   test.each([
     ['ETHUSD', 'us_equity'],
     ['ETH/USD', 'us_equity'],

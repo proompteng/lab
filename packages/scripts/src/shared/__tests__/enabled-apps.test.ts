@@ -731,14 +731,14 @@ describe('enabled app inventory', () => {
     expect(entry('attic').workflowPaths).toContain('.github/workflows/attic-build-push.yaml')
   })
 
-  it('tracks ARC runner images through both GitHub Actions and manual Nix image paths', () => {
+  it('tracks ARC runner images through the single GitHub Actions and Kargo path', () => {
     expect(entry('arc')).toMatchObject({
       class: 'nix-image',
       nixImageAttr: 'arc-runner-image',
-      buildScriptPath: 'packages/scripts/src/arc-runner/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/arc-runner/deploy-service.ts',
     })
     expect(entry('arc').workflowPaths).toContain('.github/workflows/arc-runner-build-push.yml')
+    expect(entry('arc').buildScriptPath).toBeUndefined()
+    expect(entry('arc').deployScriptPath).toBeUndefined()
   })
 
   it('tracks Froussard through both GitHub Actions and manual Nix image paths', () => {
