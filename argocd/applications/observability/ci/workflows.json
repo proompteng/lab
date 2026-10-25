@@ -1,0 +1,452 @@
+{
+  "agents-build-push.yml": [
+    {
+      "id": "controller-image",
+      "prefix": "controller-image"
+    },
+    {
+      "id": "control-plane-image",
+      "prefix": "control-plane-image"
+    },
+    {
+      "id": "agents-shell-image",
+      "prefix": "agents-shell-image"
+    },
+    {
+      "id": "runner-image",
+      "prefix": "runner-image"
+    },
+    {
+      "id": "write-values",
+      "prefix": "write-values"
+    }
+  ],
+  "arc-placement-acceptance.yml": [
+    {
+      "id": "local-build",
+      "prefix": "Slot"
+    },
+    {
+      "id": "verify-placement",
+      "prefix": "verify-placement"
+    }
+  ],
+  "arc-runner-build-push.yml": [
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "attic-build-push.yaml": [
+    {
+      "id": "build-and-push",
+      "prefix": "build-and-push"
+    }
+  ],
+  "bayn-build-push.yml": [
+    {
+      "id": "image",
+      "prefix": "image"
+    }
+  ],
+  "bayn-ci.yml": [
+    {
+      "id": "changes",
+      "prefix": "changes"
+    },
+    {
+      "id": "pr-checks",
+      "prefix": "pr-checks"
+    },
+    {
+      "id": "gepa",
+      "prefix": "gepa"
+    },
+    {
+      "id": "unit-tests",
+      "prefix": "unit-tests"
+    },
+    {
+      "id": "market-data-replay",
+      "prefix": "market-data-replay"
+    },
+    {
+      "id": "postgres-integration",
+      "prefix": "postgres-integration"
+    },
+    {
+      "id": "archive-integration",
+      "prefix": "archive-integration"
+    },
+    {
+      "id": "ledger-integration",
+      "prefix": "ledger-integration"
+    },
+    {
+      "id": "dependency-input-invariant",
+      "prefix": "dependency-input-invariant"
+    },
+    {
+      "id": "image",
+      "prefix": "image"
+    },
+    {
+      "id": "required",
+      "prefix": "Bayn release gate"
+    }
+  ],
+  "bumba-ci.yml": [
+    {
+      "id": "changes",
+      "prefix": "changes"
+    },
+    {
+      "id": "pr-checks",
+      "prefix": "pr-checks"
+    },
+    {
+      "id": "atlas-integration",
+      "prefix": "atlas-integration"
+    },
+    {
+      "id": "dependency-closure",
+      "prefix": "dependency-closure"
+    },
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "buzz-relay-build-push.yml": [
+    {
+      "id": "verify",
+      "prefix": "verify"
+    },
+    {
+      "id": "build",
+      "prefix": "build"
+    },
+    {
+      "id": "publish-index",
+      "prefix": "publish-index"
+    }
+  ],
+  "codex-devbox.yml": [
+    {
+      "id": "validate",
+      "prefix": "validate"
+    },
+    {
+      "id": "build",
+      "prefix": "build"
+    },
+    {
+      "id": "publish",
+      "prefix": "publish"
+    }
+  ],
+  "dernier-build-push.yaml": [
+    {
+      "id": "build-and-push",
+      "prefix": "build-and-push"
+    }
+  ],
+  "docker-build-common.yaml": [
+    {
+      "id": "build",
+      "prefix": "build"
+    }
+  ],
+  "forgejo-image-publish.yml": [
+    {
+      "id": "publish",
+      "prefix": "publish"
+    }
+  ],
+  "froussard-ci.yml": [
+    {
+      "id": "changes",
+      "prefix": "changes"
+    },
+    {
+      "id": "test",
+      "prefix": "test"
+    },
+    {
+      "id": "dependency-closure",
+      "prefix": "dependency-closure"
+    },
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "graf-build-push.yaml": [
+    {
+      "id": "build-and-push",
+      "prefix": "build-and-push"
+    }
+  ],
+  "headlamp-ci.yml": [
+    {
+      "id": "validate-manifests",
+      "prefix": "validate-manifests"
+    },
+    {
+      "id": "nix-image-pr",
+      "prefix": "nix-image-pr"
+    },
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "hermes-agent-mirror.yml": [
+    {
+      "id": "mirror",
+      "prefix": "mirror"
+    }
+  ],
+  "hermes-toolchain-build-push.yml": [
+    {
+      "id": "verify-agent-mirror",
+      "prefix": "verify-agent-mirror"
+    },
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "jangar-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "kata-firecracker-extension.yaml": [
+    {
+      "id": "changes",
+      "prefix": "Select Kata and catalog jobs"
+    },
+    {
+      "id": "catalog",
+      "prefix": "Validate Talos 1.14 catalog"
+    },
+    {
+      "id": "publish-catalog",
+      "prefix": "Publish signed Talos 1.14 catalog"
+    },
+    {
+      "id": "build",
+      "prefix": "Build"
+    },
+    {
+      "id": "publish",
+      "prefix": "Publish signed multi-architecture extension"
+    },
+    {
+      "id": "installers",
+      "prefix": "Build"
+    }
+  ],
+  "manual-docker-build-push.yaml": [
+    {
+      "id": "mirror",
+      "prefix": "mirror"
+    }
+  ],
+  "nix-oci-build-common.yml": [
+    {
+      "id": "build-platform",
+      "prefix": "build-platform"
+    },
+    {
+      "id": "publish-index",
+      "prefix": "publish-index"
+    }
+  ],
+  "ofz.yaml": [
+    {
+      "id": "validate",
+      "prefix": "validate"
+    },
+    {
+      "id": "build-ofz",
+      "prefix": "build-ofz"
+    }
+  ],
+  "oirat-ci.yml": [
+    {
+      "id": "changes",
+      "prefix": "changes"
+    },
+    {
+      "id": "pr-checks",
+      "prefix": "pr-checks"
+    },
+    {
+      "id": "dependency-closure",
+      "prefix": "dependency-closure"
+    },
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "opencode-build-push.yml": [
+    {
+      "id": "image",
+      "prefix": "image"
+    }
+  ],
+  "opencode-ci.yml": [
+    {
+      "id": "migration",
+      "prefix": "migration"
+    },
+    {
+      "id": "image",
+      "prefix": "image"
+    }
+  ],
+  "product-nix-images.yml": [
+    {
+      "id": "changes",
+      "prefix": "changes"
+    },
+    {
+      "id": "build-proompteng",
+      "prefix": "build-proompteng"
+    },
+    {
+      "id": "verify-app-dependency-closure",
+      "prefix": "Verify App dependency closure"
+    },
+    {
+      "id": "build-app",
+      "prefix": "build-app"
+    },
+    {
+      "id": "build-synthesis",
+      "prefix": "build-synthesis"
+    },
+    {
+      "id": "build-docs",
+      "prefix": "build-docs"
+    }
+  ],
+  "relay.yml": [
+    {
+      "id": "validate",
+      "prefix": "validate"
+    },
+    {
+      "id": "image",
+      "prefix": "image"
+    }
+  ],
+  "restate-images.yml": [
+    {
+      "id": "changes",
+      "prefix": "changes"
+    },
+    {
+      "id": "build",
+      "prefix": "Restate build and fault tests"
+    },
+    {
+      "id": "publish",
+      "prefix": "publish"
+    }
+  ],
+  "sag-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "signal-publisher-build-push.yml": [
+    {
+      "id": "changes",
+      "prefix": "changes"
+    },
+    {
+      "id": "dependency-closure",
+      "prefix": "dependency-closure"
+    },
+    {
+      "id": "image",
+      "prefix": "image"
+    }
+  ],
+  "symphony-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "temporal-worker-images.yml": [
+    {
+      "id": "build",
+      "prefix": "Temporal worker build and heartbeat tests"
+    },
+    {
+      "id": "publish",
+      "prefix": "publish"
+    }
+  ],
+  "tengri-images.yml": [
+    {
+      "id": "validate-tengri",
+      "prefix": "Validate Tengri"
+    },
+    {
+      "id": "validate-nanoagent",
+      "prefix": "Validate Nanoagent"
+    },
+    {
+      "id": "build",
+      "prefix": "Build native"
+    },
+    {
+      "id": "publish",
+      "prefix": "publish"
+    }
+  ],
+  "torghut-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "torghut-hyperliquid-feed-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "torghut-notebook-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "torghut-ta-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "torghut-ws-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "prefix": "nix-image"
+    }
+  ],
+  "vecteur-manual-build-push.yaml": [
+    {
+      "id": "build-and-push",
+      "prefix": "build-and-push"
+    }
+  ]
+}

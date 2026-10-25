@@ -641,6 +641,110 @@ data:
                 AgentRun step pods are active while agents-alloy has no available replicas.
                 Logs can be lost once Job pods terminate.
               runbook_url: docs/runbooks/agents-log-observability.md
+      - name: ci-build-performance.rules
+        rules:
+          - alert: CiObservabilityUnavailable
+            expr: |
+              absent(up{job="ci-observability"}) or up{job="ci-observability"} == 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            annotations:
+              summary: CI observability metrics are unavailable
+              description: Alloy cannot scrape the central CI collector. Existing build runners are independent of this collector.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
+              runbook_url: https://github.com/proompteng/lab/blob/main/argocd/applications/observability/ci/README.md
+          - alert: CiObservabilityCollectionStale
+            expr: |
+              time() - max(ci_observability_last_poll_timestamp_seconds) > 180
+            for: 2m
+            labels:
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            annotations:
+              summary: CI timing collection is stale
+              description: No successful GitHub poll has completed for at least five minutes. Check API authorization, rate-limit headroom and collector logs.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
+          - alert: CiObservabilityHistoryScanStale
+            expr: |
+              time() - max(ci_observability_last_history_scan_timestamp_seconds) > 600
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            annotations:
+              summary: CI historical rerun discovery is stale
+              description: The 90-day run index has not completed a scan in 15 minutes. A fast rerun of an older workflow may not be discovered promptly.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
+          - alert: CiObservabilityCompletionDelayed
+            expr: |
+              max(ci_observability_oldest_live_pending_seconds) > 180
+            for: 2m
+            labels:
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            annotations:
+              summary: New build attempts are waiting for telemetry collection
+              description: A newly completed attempt has waited at least five minutes for collection. Historical bootstrap samples are excluded from this gate.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
+          - alert: CiObservabilityRecordsDelayed
+            expr: |
+              max(ci_observability_oldest_loki_pending_seconds) > 300
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            annotations:
+              summary: CI build records are not reaching Loki
+              description: A durable build record has waited at least ten minutes for Loki acknowledgement. Metrics remain independent of the record outbox.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
+          - alert: CiBuildQueueDelay
+            expr: |
+              ci_job_oldest_queue_seconds > 600
+              and on() (time() - max(ci_observability_last_poll_timestamp_seconds) < 180)
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            annotations:
+              summary: Image build jobs have sustained queue delays
+              description: "{{ $labels.workflow }} on {{ $labels.architecture }} has a job queued for more than ten minutes across five minutes of fresh observations."
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
+          - alert: CiBuildDurationRegression
+            expr: |
+              (
+                ci_job_duration_percentile_seconds{phase="execution",percentile="50",window="1h",outcome="success",event="push",job_role="build",job_family!="unknown",cache_state!="unknown"}
+                > on(workflow,architecture,runner_pool,job_role,job_family,event,outcome,phase,cache_state,percentile)
+                (ci_job_duration_percentile_seconds{phase="execution",percentile="50",window="7d_baseline",outcome="success",event="push",job_role="build",job_family!="unknown",cache_state!="unknown"} * 1.5 + 60)
+              )
+              and on(workflow,architecture,runner_pool,job_role,job_family,event,outcome,phase,cache_state)
+              (ci_job_duration_samples{window="1h"} >= 5)
+              and on(workflow,architecture,runner_pool,job_role,job_family,event,outcome,phase,cache_state)
+              (ci_job_duration_samples{window="7d_baseline"} >= 10)
+              and on() (time() - max(ci_observability_last_poll_timestamp_seconds) < 180)
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            annotations:
+              summary: Image build median duration has regressed
+              description: "{{ $labels.workflow }} on {{ $labels.architecture }} has a median above 1.5 times its prior seven-day baseline plus 60 seconds, with at least five recent and ten baseline samples in the same runner pool and cache class. Investigate source changes and cache evidence before attributing a cause."
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
       - name: arc-runner-capacity.rules
         rules:
           - alert: ArcRunnerResourceMetricsMissing

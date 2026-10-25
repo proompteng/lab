@@ -16,6 +16,8 @@ generatorOptions:
   disableNameSuffixHash: true
 
 resources:
+  - ci
+  - ci-build-performance-dashboard-configmap.yaml
   - loki-compatibility-service.yaml
   - loki-v3-config-check.yaml
   - tempo-compatibility-services.yaml

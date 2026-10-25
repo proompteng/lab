@@ -1,5 +1,7 @@
 # Observability object storage (Ceph RGW)
 
+For image-build timing, cache evidence, dashboards and alerts, see [CI performance observability](ci/README.md).
+
 Observability uses Ceph RGW object storage, not MinIO.
 Loki, Mimir, and Tempo read S3 access credentials from secret `rook-ceph-rgw-loki` in the `observability`
 namespace.
