@@ -1,21 +1,29 @@
 name: Set up direct BuildKit
-description: Connect Buildx to the native architecture's standalone BuildKit worker.
+description: Start an isolated BuildKit OCI worker inside this ephemeral ARC runner.
 runs:
   using: composite
   steps:
-    - name: Select native BuildKit worker
+    - name: Start private BuildKit process
       id: worker
       shell: bash
       run: |
         set -euo pipefail
-        case "$RUNNER_ARCH" in
-          X64) architecture=amd64 ;;
-          ARM64) architecture=arm64 ;;
-          *) echo "Unsupported native architecture $RUNNER_ARCH" >&2; exit 1 ;;
-        esac
-        endpoint="tcp://arc-buildkit-${architecture}.arc.svc.cluster.local:1234"
-        echo "endpoint=$endpoint" >> "$GITHUB_OUTPUT"
-        echo "BUILDKIT_HOST=$endpoint" >> "$GITHUB_ENV"
+        state="$(mktemp -d "$RUNNER_TEMP/buildkit.XXXXXX")"
+        endpoint="unix://$state/buildkitd.sock"
+        sudo -n -E "$(command -v buildkitd)" \
+          --addr "$endpoint" --root "$state/cache" --group "$(id -g)" \
+          --oci-worker=true --containerd-worker=false \
+          --allow-insecure-entitlement network.host > "$state/buildkitd.log" 2>&1 &
+        for _ in $(seq 1 60); do
+          if buildctl --addr "$endpoint" debug workers >/dev/null 2>&1; then
+            echo "endpoint=$endpoint" >> "$GITHUB_OUTPUT"
+            echo "BUILDKIT_HOST=$endpoint" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          sleep 1
+        done
+        cat "$state/buildkitd.log" >&2
+        exit 1
     - uses: docker/setup-buildx-action@v3
       with:
         driver: remote

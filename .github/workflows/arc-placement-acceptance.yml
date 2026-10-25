@@ -24,6 +24,8 @@ jobs:
     env:
       SLOT: ${{ matrix.slot }}
     steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-buildkit
       - name: Verify local scratch, Nix, and BuildKit
         shell: bash
         run: |

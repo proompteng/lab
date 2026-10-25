@@ -57,16 +57,18 @@ spec:
               containers:
                 - name: runner
                   image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  securityContext:
+                    privileged: true
                   command: [ "/home/runner/run.sh" ]
                   resources:
                     requests:
-                      cpu: "2"
+                      cpu: "4"
                       memory: "16Gi"
-                      ephemeral-storage: "4Gi"
+                      ephemeral-storage: "10Gi"
                     limits:
-                      cpu: "8"
-                      memory: "16Gi"
-                      ephemeral-storage: "80Gi"
+                      cpu: "20"
+                      memory: "32Gi"
+                      ephemeral-storage: "130Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -74,8 +76,6 @@ spec:
                       valueFrom:
                         fieldRef:
                           fieldPath: metadata.name
-                    - name: BUILDKIT_HOST
-                      value: tcp://arc-buildkit-arm64.arc.svc.cluster.local:1234
                     - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
                       value: "false"
                   volumeMounts:
@@ -84,7 +84,7 @@ spec:
               volumes:
                 - name: work
                   emptyDir:
-                    sizeLimit: 80Gi
+                    sizeLimit: 130Gi
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.14.2
@@ -242,16 +242,18 @@ spec:
               containers:
                 - name: runner
                   image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  securityContext:
+                    privileged: true
                   command: [ "/home/runner/run.sh" ]
                   resources:
                     requests:
-                      cpu: "2"
+                      cpu: "4"
                       memory: "16Gi"
-                      ephemeral-storage: "4Gi"
+                      ephemeral-storage: "10Gi"
                     limits:
-                      cpu: "8"
-                      memory: "16Gi"
-                      ephemeral-storage: "80Gi"
+                      cpu: "20"
+                      memory: "32Gi"
+                      ephemeral-storage: "130Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -263,8 +265,6 @@ spec:
                       valueFrom:
                         fieldRef:
                           fieldPath: metadata.name
-                    - name: BUILDKIT_HOST
-                      value: tcp://arc-buildkit-amd64.arc.svc.cluster.local:1234
                     - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
                       value: "false"
                   volumeMounts:

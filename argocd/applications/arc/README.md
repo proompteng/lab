@@ -10,16 +10,15 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - The architecture-neutral controller and listener pods run on AMD64 capacity; runner pods retain their scale set's
   explicit AMD64 or ARM64 selector.
 - Upgrading from ≤0.9.x requires deleting the legacy `actions.github.com` CRDs and reinstalling the controller/runner charts before letting Argo CD reconcile.
-- Lab runner Pods contain only the runner container. Dockerfile workflows use `.github/actions/setup-buildkit` to
-  connect Buildx's remote driver to a standalone native AMD64 or ARM64 BuildKit worker. Nix image builds retain their
-  archive/Skopeo path. No Docker Engine, Podman service, builder sidecar, host runtime socket, or node configuration is
-  needed by lab runners. The external `analysis-arm64` scale set retains its independently owned Docker contract.
-- `buildkit.yaml` pins the worker image by digest and gives each native worker its own local cache PVC. AMD64 runs on
-  Turin and ARM64 uses ARM64 capacity. Workers use BuildKit's OCI executor in a privileged Pod. Garbage collection
-  reserves 10GB, targets at most 40GB of unused cache, and keeps 45GB free. Active builds can exceed the cache target.
-- BuildKit's gRPC services are private cluster endpoints. Their ingress NetworkPolicy admits only lab ARC runner Pods
-  in the same namespace. Worker Pods do not mount a Kubernetes service-account token. There are no new credentials,
-  cluster permissions, host runtime mounts, or custom daemon wrappers.
+- Lab runner Pods contain only the runner container. `.github/actions/setup-buildkit` starts a rootful BuildKit OCI
+  worker inside the current ephemeral runner and connects Buildx's remote driver to its private Unix socket. The
+  daemon and its scratch cache belong to that one job and disappear with its runner Pod. There is no shared builder
+  service or persistent cache that a pull request can poison for a later release. Existing registry and GitHub cache
+  scopes retain their policies.
+- The runner keeps UID 1001. Its existing sudo access starts BuildKit as root in the privileged container. This moves
+  the existing rootful build capability out of DinD without adding a sidecar, Docker Engine, Podman, host runtime
+  socket, node configuration, new credential, or cluster permission. Nix-only jobs never start a builder. The external
+  `analysis-arm64` scale set retains its independently owned Docker contract.
 - Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
   signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
@@ -55,10 +54,11 @@ Separate ARC sets with a duplicate label do not provide a reliable combined queu
 existing registered set's labels. This migration adds neither a second AMD64 set nor a host-specific GitHub label.
 
 Ryzen has 128GiB installed, but its current 64GiB GPU reservation leaves 61.82GiB allocatable. Three runners reserve
-48Gi and six logical CPUs. The 2026-10-12 native inventory measured 11.94GiB and 6.57 logical CPUs
+48Gi and twelve logical CPUs. The 2026-10-12 native inventory measured 11.94GiB and 6.57 logical CPUs
 for retained workloads after application Ceph clients and Bayn left Ryzen. The resulting request total is about
-59.94GiB and 12.57 logical CPUs. Require fresh non-runner requests below 13.82GiB before promotion. Runner memory limits match the 16Gi reservation.
-Standalone BuildKit workers account for build memory separately from runner Pods. Check node pressure and etcd latency during actual builds. No BIOS change or
+59.94GiB and 18.57 logical CPUs. Require fresh non-runner requests below 13.82GiB before promotion. Each single-container runner requests 4 CPUs and 16Gi and permits 20 CPUs and 32Gi, matching the former aggregate
+runner/DinD envelope. The existing memory overcommit policy remains; simultaneous limit-sized bursts can exceed
+Ryzen capacity. Check node pressure and etcd latency during actual builds. No BIOS change or
 reboot is needed now.
 A future all-five Ryzen move requires the [Bosgame memory procedure](../../../devices/ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation)
 and a reviewed revision of the two-host spread.
