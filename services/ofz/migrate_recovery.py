@@ -306,7 +306,7 @@ def migrate_bucket(source, destination, bucket, directory, verify):
                 if not record:
                     if verify:
                         raise RuntimeError("Uncopied object version")
-                    for candidate in existing.get(key, []):
+                    for candidate in reversed(existing.get(key, [])):
                         target = destination.head_object(
                             Bucket=bucket, Key=key, VersionId=candidate
                         )
@@ -572,9 +572,10 @@ def main():
     parser.add_argument("--evidence", type=Path, default=Path("/tmp/ofz-ceph-recovery"))
     args = parser.parse_args()
     args.evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
-    identities = source_credentials()
-    owner = identities["ofz-recovery-custodian"]
-    source = client("https://nuc.ide-newton.ts.net:9444", owner)
+    if args.mode in {"inventory", "provision", "copy", "verify"}:
+        identities = source_credentials()
+        owner = identities["ofz-recovery-custodian"]
+        source = client("https://nuc.ide-newton.ts.net:9444", owner)
     if args.mode == "provision":
         provision(args.destination, identities, args.evidence)
     elif args.mode == "inventory":

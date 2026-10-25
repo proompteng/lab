@@ -23,6 +23,31 @@ def version(identifier, *, latest=False, marker=False):
 
 
 class MigrationTests(unittest.TestCase):
+    def test_receipt_rebinding_does_not_contact_the_retired_nuc(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "destination-identities.json").write_text(
+                json.dumps({"ofz-recovery-custodian": ["fixture", "fixture-secret"]})
+            )
+            rebind = Mock()
+            source = Mock(side_effect=AssertionError("NUC is retired"))
+            target = Mock()
+            with (
+                patch(
+                    "sys.argv",
+                    ["migrate_recovery.py", "rebind-audit", "--evidence", directory],
+                ),
+                patch.dict(
+                    migration["main"].__globals__,
+                    source_credentials=source,
+                    client=Mock(return_value=target),
+                    rebind_audit=rebind,
+                ),
+            ):
+                migration["main"]()
+            source.assert_not_called()
+            rebind.assert_called_once_with(target, root)
+
     def test_source_metadata_has_one_case_insensitive_hash_header(self):
         value = migration["copied_metadata"](
             {"Sha256": "old", "Other-Field": "kept"}, "version", "verified"

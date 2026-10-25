@@ -42,3 +42,10 @@ real Tengri file, terminal and chat operations before declaring recovery complet
 Only after those checks, stop the old `ofz-recovery-archive-1` container, remove its dedicated Tailscale port 9444,
 and remove `/var/lib/ofz-recovery` and the old `ofz-releases` source archives from NUC. Do not remove Omni, image-factory,
 other containers or their data. Preserve the Ceph custodian Secret and its version ledger as the cutover evidence.
+
+Store the final version ledgers in `ofz-audit/migration-receipts/2026-10-25-nuc-to-ceph/` with COMPLIANCE retention.
+An Ofz database backup taken before receipt rebinding contains the old object version IDs. After restoring such a
+backup, use that ledger and `rebind-audit` before starting Ofz consumers. This mode requires only Ceph and SQL access;
+it does not contact NUC. Retrieve the destination credentials from `ofz/ofz-recovery-owner` into a private operator
+directory. Take the final Ofz qualification backup after receipt rebinding, then restore that exact backup ID to
+verify that new backups contain the Ceph receipt bindings.
