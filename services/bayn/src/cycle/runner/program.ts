@@ -5,6 +5,7 @@ import { Cause, Effect, Option, pipe, Schema } from 'effect'
 import { BrokerRead } from '../../broker/alpaca/model'
 import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
+import { withObservedStage } from '../../telemetry'
 import { IsoDateSchema } from '../../schemas'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
 import { selectCycleRecovery } from './recovery-selection'
@@ -340,7 +341,7 @@ const recoverCycle = <R>(
                             }),
                           ),
                           Effect.annotateSpans(timingAttributes),
-                          Effect.withSpan('bayn.jev.entry-decision-binding', { attributes: timingAttributes }),
+                          withObservedStage('bayn.jev.entry-decision-binding', { attributes: timingAttributes }),
                         )
                       }),
                       Effect.catchCause((failure) =>

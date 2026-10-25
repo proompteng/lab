@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const guestProtocolVersion = 7
+const guestProtocolVersion = 8
 const maxGuestRPCBytes = 10 << 20
 
 type guestRPCServer struct {
@@ -135,6 +135,17 @@ func (server *guestRPCServer) OpenEditor(ctx context.Context, _ *pb.Empty) (*pb.
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
 	return &pb.Editor{Port: editorPort}, nil
+}
+func (server *guestRPCServer) StatFile(_ context.Context, req *pb.Path) (*pb.FileEntry, error) {
+	relative, err := server.api.workspace.relative(req.Path)
+	if err != nil {
+		return nil, rpcOperationError(err)
+	}
+	result, err := server.api.fileEntryRelative(relative)
+	if err != nil {
+		return nil, rpcOperationError(err)
+	}
+	return protoFile(result), nil
 }
 func (server *guestRPCServer) ListFiles(_ context.Context, req *pb.Path) (*pb.FileList, error) {
 	result, err := server.api.listFiles(req.Path)
@@ -281,6 +292,9 @@ func (server *guestRPCServer) CodexCall(ctx context.Context, req *pb.CodexReques
 		}
 		if errors.Is(err, errCodexOperationConflict) {
 			return nil, status.Error(codes.AlreadyExists, errCodexOperationConflict.Error())
+		}
+		if errors.Is(err, errCodexThreadActive) {
+			return nil, status.Error(codes.FailedPrecondition, errCodexThreadActive.Error())
 		}
 		if errors.Is(err, errCodexOperationUnknown) {
 			return nil, status.Error(codes.FailedPrecondition, errCodexOperationUnknown.Error())

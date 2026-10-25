@@ -265,7 +265,7 @@ const seedAccountSnapshots = (
               event_id, account_id, schema_version, status, currency,
               cash_micros, equity_micros, buying_power_micros
             ) VALUES (
-              ${snapshot.eventId}, ${accountId}, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+              ${snapshot.eventId}, ${accountId}, 'bayn.paper-account-snapshot.v2', 'ACTIVE', 'USD',
               ${snapshot.cashMicros}, ${snapshot.cashMicros}, ${snapshot.cashMicros}
             )
           `
@@ -792,7 +792,7 @@ describePostgres('PostgreSQL intraday observability projection', () => {
                   event_id, account_id, schema_version, status, currency,
                   cash_micros, equity_micros, buying_power_micros
                 ) VALUES (
-                  ${eventId}, ${accountId}, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                  ${eventId}, ${accountId}, 'bayn.paper-account-snapshot.v2', 'ACTIVE', 'USD',
                   ${cashMicros}, ${cashMicros}, ${cashMicros}
                 )
               `

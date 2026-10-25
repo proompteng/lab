@@ -46,7 +46,32 @@ writes, with no charged output. These are **not invoice-reconciled costs** and d
 
 The Bayn Squid CONNECT allowlist includes `api.openai.com` on HTTPS port 443. Kubernetes still restricts
 application traffic to the existing `bayn-egress-proxy` Service (port 3128), and the proxy blocks private
-destinations. This is network access only: no OpenAI credential is configured on the research workload, so
-deploying the binary **does not launch live visual calls**. A separate sealed API key and explicit research
-execution remain prerequisites for a production shadow trial. Do not enable autonomous provider spending or
-alter trading authority as part of the network rule rollout.
+destinations. Bayn opts into the validated `ClusterSecretStore/onepassword-infra`. The GitOps-managed
+`ExternalSecret/bayn-openai-auth` maps the **future** 1Password item `infra/bayn-openai` field `api-key`
+(`remoteRef.key: bayn-openai/api-key`) to Kubernetes `Secret/bayn-openai-auth` key `api-key`.
+
+**Dark by default:** No API key, example value, or Kubernetes Secret is created by this change. Until the
+1Password item/field is populated, the ExternalSecret may legitimately report `SecretSyncedError`/`Ready=False`;
+that is a credential-absent state, not a functioning OpenAI connection. It is assigned sync wave `3` (after
+the research worker) and deliberately opts out of Argo's child health aggregation and sync-wave wait while the
+remote value is absent. Do not mistake Argo `Healthy` for a synced OpenAI credential. Remove those two
+health-override annotations when activating the external Secret, so later sync failures become release blockers.
+The research worker references
+`BAYN_OPENAI_API_KEY` using `secretKeyRef.optional: true`, so it remains healthy without the Secret.
+Only the research worker receives this reference; execution and public status workloads receive none. No
+automatic dual-signal dispatch or trading authority is enabled by having a key in a Secret.
+
+To activate a **manual shadow research run** later:
+
+1. Add a real scoped OpenAI project API key to the `infra` vault item `bayn-openai`, field `api-key`.
+   Never add a dummy provider key or plaintext credential to Git.
+2. Check `kubectl -n bayn get externalsecret bayn-openai-auth` reports `Ready=True`, and the target
+   Kubernetes Secret has the named key (do not print its value).
+3. Roll out the Bayn research worker so its **environment** receives the new Secret value; a running pod
+   does not dynamically reload environment-based secret references.
+4. Run `bayn-dual-signal` explicitly with a sealed private request and a fresh output path. Verify successful
+   real provider usage, latency, report hash, and the `tradingAuthority: NONE` invariant before any scheduling.
+
+The store uses the existing `infra` 1Password service-account identity; this opt-in does not mint a new
+service account or isolate access to only the OpenAI item. Keep `ExternalSecret` write permissions restricted
+to trusted GitOps operators. Revoking or rotating a key requires verification and a research-worker restart.

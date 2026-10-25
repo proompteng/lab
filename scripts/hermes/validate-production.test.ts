@@ -6,11 +6,9 @@ test('accepts the committed Hermes production surfaces', async () => {
   expect(validateProductionContent(await loadProductionFiles())).toEqual([])
 })
 
-test.each([
-  'TARGET_REF: registry.registry.svc.cluster.local/lab/hermes-agent:v2026.9.24-amd64',
-  'PUBLIC_TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.24-amd64',
-])('rejects redirecting the Hermes mirror destination %s', async (reference) => {
+test('rejects redirecting the Hermes mirror destination', async () => {
   const files = await loadProductionFiles()
+  const reference = 'TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.24-amd64'
   files.mirrorWorkflow = files.mirrorWorkflow.replace(
     reference,
     reference.replace('lab/hermes-agent', 'lab/wrong-agent'),

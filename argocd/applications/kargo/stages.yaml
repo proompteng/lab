@@ -694,8 +694,6 @@ spec:
           config:
             path: ./out/argocd/applications/arc/application.yaml
             updates:
-              - key: spec.sources.1.helm.valuesObject.template.spec.initContainers.0.image
-                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.1.helm.valuesObject.template.spec.containers.0.image
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.2.helm.valuesObject.template.spec.initContainers.0.image

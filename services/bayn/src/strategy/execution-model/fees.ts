@@ -1,4 +1,5 @@
 import { Result, pipe } from 'effect'
+import type { CryptoTakerFeeBps } from '../../broker/crypto-fees'
 
 import { instrumentMarket, MarketKind } from '../../instruments'
 import type { ExecutionModel } from '../../execution-model-contract'
@@ -44,10 +45,10 @@ export const cryptoTakerFeeSchedule = Object.freeze({
   sellDebit: 'received-USD',
 } as const)
 
-export const receivedCryptoFee = (fill: FeeInput, multiplier: bigint) => {
+export const receivedCryptoFee = (fill: FeeInput, multiplier: bigint, takerFeeBps: CryptoTakerFeeBps) => {
   if (instrumentMarket(fill.symbol) !== MarketKind.Crypto) return { quantityAtoms: 0n, valueMicros: 0n, cashMicros: 0n }
   const denominator = BPS * MICROS
-  const rate = BigInt(cryptoTakerFeeSchedule.takerBps) * multiplier
+  const rate = BigInt(takerFeeBps) * multiplier
   if (fill.side === 'sell') {
     const increment = BigInt(cryptoTakerFeeSchedule.cashRoundingMicros)
     const cashMicros =
@@ -66,11 +67,12 @@ export const calculateSessionFees = (
   fills: readonly FeeInput[],
   model: ExecutionModel,
   costMultiplierMicros: bigint,
+  takerFeeBps: CryptoTakerFeeBps,
 ): ExecutionResult<FeeBreakdown> => {
   if (costMultiplierMicros <= 0n) {
     return fail({ _tag: 'InvalidFeeCostMultiplier', costMultiplierMicros, minimum: 1n })
   }
-  const crypto = fills.map((fill) => receivedCryptoFee(fill, costMultiplierMicros))
+  const crypto = fills.map((fill) => receivedCryptoFee(fill, costMultiplierMicros, takerFeeBps))
   const cryptoMicros = crypto.reduce((sum, fee) => sum + fee.valueMicros, 0n)
   const cryptoCashMicros = crypto.reduce((sum, fee) => sum + fee.cashMicros, 0n)
   const equityFills = fills.filter((fill) => instrumentMarket(fill.symbol) === MarketKind.Equity)
