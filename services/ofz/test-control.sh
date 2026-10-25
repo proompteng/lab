@@ -102,7 +102,7 @@ for attempt in $(seq 1 60); do
       cargo build --locked
       OFZ_BOOTSTRAP_CLI_FIXTURE="$PWD/target/debug/ofz" \
         uv run --locked --project audit-export python audit-export/test_archive.py 2>&1 | tee "$fixture_dir/archive-test.log"
-      grep -Fq 'PASS: independent versioned compliance archive;' "$fixture_dir/archive-test.log"
+      grep -Fq 'PASS: versioned compliance archive;' "$fixture_dir/archive-test.log"
     elif [[ "$fixture_mode" == runtime || "$fixture_mode" == kvm || "$fixture_mode" == editor || "$fixture_mode" == failover ]]; then
       if [[ "$fixture_mode" == failover ]]; then
         cargo test --locked --lib control_integration -- --ignored --nocapture

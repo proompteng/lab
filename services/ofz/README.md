@@ -156,10 +156,12 @@ permission response, including a failure that occurs while the request is in fli
 fresh state after workload authorization and cannot install new access during archive loss; stop/release remain available.
 
 The image also packages `/bin/ofz-audit-export`, which exports bounded batches from the durable outbox to the
-[independent NUC archive](../../devices/nuc/ofz-recovery/README.md). It requires the separate `ofz_archiver` SQL role
-and verifies database TLS and the native S3 certificate. Configure `OFZ_DATABASE_DSN`,
+[Ceph recovery store](recovery.md). It requires the separate `ofz_archiver` SQL role
+and verifies database TLS. Configure `OFZ_DATABASE_DSN`,
 `OFZ_DATABASE_PASSWORD_FILE`, `OFZ_DATABASE_CA_FILE`, `OFZ_ARCHIVE_ACCESS_KEY_FILE` and
-`OFZ_ARCHIVE_SECRET_KEY_FILE` with mounted files. The destination is the approved private NUC endpoint on port 9444.
+`OFZ_ARCHIVE_SECRET_KEY_FILE` with mounted files. The destination is the private Ceph object gateway on port 80.
+This deployment uses the existing Ceph storage configuration without SSE or a separate key manager. Versioning,
+COMPLIANCE retention, payload hashes, version-specific readback and archive freshness gates remain required.
 
 The exporter holds a PostgreSQL session lease. Standbys wait for that lease; keepalives and a fifteen-second database
 idle-session limit bound abandoned connections. Every batch records ordered sequences, original receipts, target
