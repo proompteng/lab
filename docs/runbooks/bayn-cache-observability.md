@@ -93,6 +93,19 @@ This source-bound indicator remains available when the separate OTLP metrics pat
 each API-advertised source revision; retained older workers cannot satisfy it. Within a revision, the newest exporter
 per service is observed; existing replica alerts cover missing workers/APIs. No notification test is sent by acceptance.
 
+Publication notifications include the observed bounded `category/cause_category` pairs from the same five-minute
+failed-put window, deduplicated across API and execution-worker replicas. Missing labels are reported as `unknown`,
+not inferred from a timeout. The annotation does not change the single alert identity, one-minute hold or trigger.
+It describes recent failures, not necessarily a failure still in progress. A resolved notification only means no
+failure increase is currently observed in that window; missing telemetry or aged-out samples do not prove a successful
+publication. Verify a subsequent successful replicated put and fresh telemetry before declaring recovery.
+
+Follow the notification's dashboard link, expand broker/cache diagnostics and inspect **Cache failures per second**.
+The alert covers both services across source revisions, while the dashboard's source picker selects one API-advertised
+revision. Select the relevant revision and incident time range; a quiet current-source panel cannot dismiss a failure
+from a retained worker. The category/cause pairs in the notification remain the bounded incident evidence, not a
+claim about which revision failed or its underlying root cause. Never weaken WAIT or trading fences to clear it.
+
 ## Verify a rollout
 
 Verify the reviewed source, immutable image, Kargo Freight/promotion and generated `kargo/bayn` revision using
@@ -119,7 +132,9 @@ hours. An empty window remains unobserved because healthy servers can be quiet; 
 Inspect Grafana's loaded
 dashboard and its panel queries after acceptance. Notification delivery and a long-term latency SLO are separate evidence.
 
-Validate the fifteen alert cases and twenty-six dashboard query cases with the native PromQL test harness.
+Validate the twenty alert cases and twenty-six dashboard query cases with the native PromQL test harness.
+Publication cases cover multiple diagnostic categories, replica deduplication, unrelated streams, counter resets,
+missing labels, stale series and resolution without asserting recovered publication.
 The dashboard cases cover replica observations, missing telemetry, clock skew, database waits, snapshot freshness
 and top-level operation outcomes without child-operation duplication.
 Use `promtool` 3.5.0 on `PATH`, or set `PROMTOOL` to its executable; CI already provisions the pinned checker.
