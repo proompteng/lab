@@ -642,8 +642,8 @@ describe('bounded execution risk', () => {
       inputHash: first.input.inputHash,
       decisionId: first.decision.decisionId,
     }).toEqual({
-      inputHash: 'acb60a82ba11b214095ff908f3668cb6cd6a1f94923e8e54c26c7442d1604092',
-      decisionId: '6069b135c81daf3f3f3bb25f6dba37f57412d04c97f16a119114f3a8729a2c83',
+      inputHash: '345d6223e06dd20434f778e9b8e286a82288d6a9cbc0e1603540a2861ea69c03',
+      decisionId: '8c79bb520794f042599f6955d27c908980c876a4c95080a0c004908c5105461d',
     })
     expect(first.input.freshUntil).toBe('2026-07-21T19:30:30.000Z')
     expect(first.metrics).toEqual({

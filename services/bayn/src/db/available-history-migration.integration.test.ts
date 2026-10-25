@@ -357,13 +357,13 @@ for (const { label, id, protocol, migration } of [
         await runtime.runPromise(
           Effect.gen(function* () {
             const sql = yield* PgClient.PgClient
-            const event = (eventId: string) => sql`INSERT INTO broker_events
+            const event = (eventId: string, sequence: number) => sql`INSERT INTO broker_events
               (event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,occurred_at,observed_at)
-              VALUES (${eventId},'bayn.paper-broker-event.v1',${eventId},'ACCOUNT','ALPACA','fee-account',${eventId},1,clock_timestamp(),clock_timestamp())`
+              VALUES (${eventId},'bayn.paper-broker-event.v1',${eventId},'ACCOUNT','ALPACA','fee-account',${eventId},${sequence},clock_timestamp(),clock_timestamp())`
             const oldId = '1'.repeat(64)
             yield* sql.withTransaction(
               Effect.gen(function* () {
-                yield* event(oldId)
+                yield* event(oldId, 1)
                 yield* sql`INSERT INTO account_snapshots
                 (event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros)
                 VALUES (${oldId},'fee-account','bayn.paper-account-snapshot.v1','ACTIVE','USD',100,100,100)`
@@ -378,7 +378,7 @@ for (const { label, id, protocol, migration } of [
             const insert = (version: string, tier: number | null) =>
               sql.withTransaction(
                 Effect.gen(function* () {
-                  yield* event(newId)
+                  yield* event(newId, 2)
                   yield* sql`INSERT INTO account_snapshots
                 (event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros,crypto_fee_tier)
                 VALUES (${newId},'fee-account',${version},'ACTIVE','USD',100,100,100,${tier})`

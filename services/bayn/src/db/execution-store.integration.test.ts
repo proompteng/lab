@@ -1310,8 +1310,13 @@ describePostgres('PostgreSQL execution persistence', () => {
             loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < (overreleased ? 106 : 105)))),
             table: 'schema_migrations',
           }).pipe(Effect.provide(NodeServices.layer))
-          // Keep the historical fee migration under test while satisfying the current cash store contract.
+          // Retain the historical fee migration while using the current cash and account writers.
           yield* sql.withTransaction(cashSettlementMigration)
+          yield* sql`ALTER TABLE account_snapshots
+            ADD COLUMN crypto_fee_tier integer CHECK (crypto_fee_tier BETWEEN 1 AND 8),
+            DROP CONSTRAINT account_snapshots_schema_version_check`
+          yield* sql`ALTER TABLE account_snapshots ADD CONSTRAINT account_snapshots_schema_version_check
+            CHECK (schema_version = 'bayn.paper-account-snapshot.v2') NOT VALID`
         }
         const fence = yield* WriterFence
         const postRetainedAccrual = (kind: 'COIN' | 'CASH') =>
