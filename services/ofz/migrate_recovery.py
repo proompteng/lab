@@ -63,7 +63,7 @@ def client(endpoint, identity):
         config=Config(
             signature_version="s3v4",
             retries={"max_attempts": 2},
-            connect_timeout=3,
+            connect_timeout=10,
             read_timeout=60,
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
@@ -259,6 +259,7 @@ def migrate_bucket(source, destination, bucket, directory, verify):
     if any(item["DeleteMarker"] for item in inventory):
         raise RuntimeError("Source delete markers are outside this migration")
     from botocore.exceptions import HTTPClientError
+    from botocore.exceptions import ConnectionError as S3ConnectionError
     from urllib3.exceptions import ProtocolError
 
     ledger_path = directory / f"{bucket}.json"
@@ -385,7 +386,7 @@ def migrate_bucket(source, destination, bucket, directory, verify):
         for attempt in range(3):
             try:
                 return copy_key(items)
-            except (HTTPClientError, ProtocolError) as error:
+            except (HTTPClientError, S3ConnectionError, ProtocolError) as error:
                 if attempt == 2:
                     raise
                 print(
