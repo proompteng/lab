@@ -151,7 +151,8 @@ const brokerState = (
   brokerObservedAt = '2026-08-18T16:00:00.000Z',
 ) => {
   const account: AccountSnapshot = {
-    schemaVersion: 'bayn.paper-account-snapshot.v1',
+    schemaVersion: 'bayn.paper-account-snapshot.v2',
+    cryptoFeeTier: null,
     accountId: selectedAccountId,
     status: AccountStatus.Active,
     currency: 'USD',
@@ -1070,7 +1071,7 @@ describe('intraday shadow decision', () => {
         ) VALUES (${hash('6')}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${hash('1')}, ${Authority.Execution}, 2, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${hash('4')}`}, 'jev', ${hash('5')}, ${hash('7')},
-          'bayn.jev.protocol.v20', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
+          'bayn.jev.protocol.v23', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
           'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
           ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
             yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)

@@ -147,7 +147,8 @@ const accountEvent = (
   sourceEventId = 'account-response-1',
 ): Extract<BrokerEventInput, { readonly _tag: 'Account' }> => {
   const account = {
-    schemaVersion: 'bayn.paper-account-snapshot.v1' as const,
+    schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
+    cryptoFeeTier: null,
     accountId,
     status: AccountStatus.Active,
     currency: 'USD' as const,
@@ -515,6 +516,7 @@ describePostgres('PostgreSQL execution persistence', () => {
               buyingPowerMicros: '1000000000',
               cashReportingQuantumMicros: '1' as const,
               cryptoStatus: null,
+              cryptoFeeTier: null,
               nonMarginableBuyingPowerMicros: null,
               accountBlocked: false,
               tradingBlocked: false,
@@ -1141,7 +1143,7 @@ describePostgres('PostgreSQL execution persistence', () => {
               FROM generate_series(0, 16383) AS n`
             yield* sql`INSERT INTO account_snapshots
               (event_id, account_id, schema_version, status, currency, cash_micros, equity_micros, buying_power_micros)
-              SELECT event_id, account_id, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+              SELECT event_id, account_id, 'bayn.paper-account-snapshot.v2', 'ACTIVE', 'USD',
                 CASE WHEN source_sequence = 2 THEN 1000000000 ELSE 999000000 END,
                 CASE WHEN source_sequence = 2 THEN 1000000000 ELSE 999000000 END, 2000000000
               FROM broker_events WHERE event_kind = 'ACCOUNT' AND source_sequence <> 1`
@@ -1308,8 +1310,13 @@ describePostgres('PostgreSQL execution persistence', () => {
             loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < (overreleased ? 106 : 105)))),
             table: 'schema_migrations',
           }).pipe(Effect.provide(NodeServices.layer))
-          // Keep the historical fee migration under test while satisfying the current cash store contract.
+          // Retain the historical fee migration while using the current cash and account writers.
           yield* sql.withTransaction(cashSettlementMigration)
+          yield* sql`ALTER TABLE account_snapshots
+            ADD COLUMN crypto_fee_tier integer CHECK (crypto_fee_tier BETWEEN 1 AND 8),
+            DROP CONSTRAINT account_snapshots_schema_version_check`
+          yield* sql`ALTER TABLE account_snapshots ADD CONSTRAINT account_snapshots_schema_version_check
+            CHECK (schema_version = 'bayn.paper-account-snapshot.v2') NOT VALID`
         }
         const fence = yield* WriterFence
         const postRetainedAccrual = (kind: 'COIN' | 'CASH') =>
@@ -2135,23 +2142,25 @@ describePostgres('PostgreSQL execution persistence', () => {
           authorityGenerationHash: generationHash,
           authorityVersion: state.version,
         }
-        yield* verifyBrokerStateVersion(sql, accountId, version, hash('current-intent'))
+        yield* verifyBrokerStateVersion(sql, accountId, version, hash('current-intent'), false)
         const newer = yield* reconcileSnapshot(store, { ...snapshot, reconciledAt: '2026-08-28T14:33:00.000Z' })
         expect(
-          (yield* verifyBrokerStateVersion(sql, accountId, version, hash('current-intent')).pipe(Effect.flip)).failure,
+          (yield* verifyBrokerStateVersion(sql, accountId, version, hash('current-intent'), false).pipe(Effect.flip))
+            .failure,
         ).toBe('invariant')
         const latestVersion = {
           ...version,
           reconciliationId: newer.reconciliation.reconciliationId,
           reconciledAt: newer.reconciliation.reconciledAt,
         }
-        yield* verifyBrokerStateVersion(sql, accountId, latestVersion, hash('current-intent'))
+        yield* verifyBrokerStateVersion(sql, accountId, latestVersion, hash('current-intent'), false)
         expect(
           (yield* verifyBrokerStateVersion(
             sql,
             accountId,
             { ...latestVersion, authorityVersion: state.version + 1 },
             hash('current-intent'),
+            false,
           ).pipe(Effect.flip)).failure,
         ).toBe('invariant')
         expect(
@@ -2160,6 +2169,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             accountId,
             { ...latestVersion, reconciledAt: '2026-08-28T14:35:00.000Z' },
             hash('current-intent'),
+            false,
           ).pipe(Effect.flip)).failure,
         ).toBe('invariant')
         const laterAt = '2026-08-28T14:34:00.000Z'
@@ -2170,8 +2180,9 @@ describePostgres('PostgreSQL execution persistence', () => {
           account: { ...account.account, observedAt: laterAt },
         })
         expect(
-          (yield* verifyBrokerStateVersion(sql, accountId, latestVersion, hash('current-intent')).pipe(Effect.flip))
-            .failure,
+          (yield* verifyBrokerStateVersion(sql, accountId, latestVersion, hash('current-intent'), false).pipe(
+            Effect.flip,
+          )).failure,
         ).toBe('invariant')
         yield* (yield* AuthorityRestrictionStore).restrictAuthority('cache test restriction', laterAt)
         expect(
@@ -2180,6 +2191,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             accountId,
             { ...latestVersion, reconciledAt: laterAt },
             hash('current-intent'),
+            false,
           ).pipe(Effect.flip)).failure,
         ).toBe('invariant')
       }),

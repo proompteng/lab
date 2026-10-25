@@ -1732,12 +1732,12 @@ identityTest(
     await browserExpect(page.getByRole('button', { name: 'Check your passkey dialog', exact: true })).toBeDisabled()
     if (themeScreenshots)
       await page.screenshot({ path: path.join(themeScreenshots, 'verify-pending.png'), fullPage: true })
+    await page.reload()
+    await browserExpect(page.getByRole('button', { name: 'Continue with passkey', exact: true })).toBeEnabled()
     await cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
       authenticatorId: platformAuthenticatorId,
       enabled: true,
     })
-    await page.reload()
-    await browserExpect(page.getByRole('button', { name: 'Continue with passkey', exact: true })).toBeEnabled()
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
     const phoneSession = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')

@@ -42,7 +42,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcApplication).toContain('image: docker:dind')
     const armBlock = runnerScaleSetBlock('arc-arm64')
     expect(armBlock).toContain('emptyDir:')
-    expect(armBlock).toContain('sizeLimit: 80Gi')
+    expect(armBlock).toContain('sizeLimit: 130Gi')
     expect(armBlock).not.toContain('volumeClaimTemplate:')
     expect(arcApplication).not.toMatch(/storageClassName:\s*["']?rook-ceph/)
     const analysisBlock = runnerScaleSetBlock('analysis-arm64')
@@ -54,7 +54,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
   })
 
-  it('places AMD64 Nix, Docker, and workspace writes on one disposable local NVMe volume', () => {
+  it('places AMD64 Nix and workspace writes on one disposable local NVMe volume', () => {
     const application = YAML.parseDocument(arcApplication)
     for (const [index, name, storageClass] of [[2, 'arc-amd64', 'local-path-ci-amd64']] as const) {
       const valuesPath = ['spec', 'sources', index, 'helm', 'valuesObject']
@@ -92,14 +92,6 @@ describe('ARC Nix runner toolchain', () => {
               { name: 'scratch', mountPath: '/home/runner/.cache', subPath: 'cache' },
               { name: 'scratch', mountPath: '/tmp', subPath: 'tmp' },
               workMount,
-            ]),
-          }),
-          expect.objectContaining({
-            name: 'dind',
-            volumeMounts: expect.arrayContaining([
-              workMount,
-              { name: 'scratch', mountPath: '/var/lib/docker', subPath: 'docker' },
-              { name: 'scratch', mountPath: '/var/lib/containerd', subPath: 'containerd' },
             ]),
           }),
         ]),
@@ -155,7 +147,7 @@ describe('ARC Nix runner toolchain', () => {
         },
       },
     ])
-    const request = [0, 1].reduce((total, index) => {
+    const request = [0].reduce((total, index) => {
       const memory = pod.getIn(['containers', index, 'resources', 'requests', 'memory'])
       if (typeof memory !== 'string' || !/^\d+Gi$/.test(memory)) throw new Error('Expected explicit Gi memory request')
       return total + Number.parseInt(memory, 10)
@@ -185,23 +177,36 @@ describe('ARC Nix runner toolchain', () => {
     ])
   })
 
-  it('serializes registry uploads from every runner scale set', () => {
-    for (const scaleSet of ['arc-arm64', 'arc-amd64', 'analysis-arm64']) {
-      const block = runnerScaleSetBlock(scaleSet)
-      expect(block).toContain('--max-concurrent-uploads=1')
-      expect(block).not.toContain('--max-concurrent-uploads=8')
+  it('isolates each job in a private BuildKit process without a sidecar or shared cache', () => {
+    const application = YAML.parse(arcApplication)
+    for (const index of [1, 2]) {
+      const pod = application.spec.sources[index].helm.valuesObject.template.spec
+      expect(pod.containers.map((container: { name: string }) => container.name)).toEqual(['runner'])
+      expect(JSON.stringify(pod)).not.toMatch(/DOCKER_HOST|podman|hostPath|dind|tcp:\/\//)
+      expect(pod.containers[0].command).toEqual(['/home/runner/run.sh'])
+      expect(pod.containers[0].securityContext.privileged).toBe(true)
     }
+    const setup = YAML.parse(readRepoFile('.github/actions/setup-buildkit/action.yml'))
+    const start = setup.runs.steps.find((step: { id?: string }) => step.id === 'worker').run
+    expect(start).toContain('mktemp -d "$RUNNER_TEMP/buildkit.XXXXXX"')
+    expect(start).toContain('endpoint="unix://$state/buildkitd.sock"')
+    expect(start).toContain('--root "$state/cache"')
+    expect(start).toContain('--containerd-worker=false')
+    expect(start).not.toContain('tcp://')
+    expect(
+      setup.runs.steps.find((step: { uses?: string }) => step.uses === 'docker/setup-buildx-action@v3').with.driver,
+    ).toBe('remote')
+    expect(existsSync(new URL('argocd/applications/arc/buildkit.yaml', repoRoot))).toBe(false)
   })
 
   it('keeps lab ARC ephemeral-storage requests small enough for the configured runner scale', () => {
     for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
       const block = runnerScaleSetBlock(scaleSet)
-      expect(block).toContain('ephemeral-storage: "4Gi"')
-      expect(block).toContain('ephemeral-storage: "6Gi"')
+      expect(block).toContain('ephemeral-storage: "10Gi"')
       expect(block).not.toContain('storage: 20Gi')
     }
 
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('sizeLimit: 80Gi')
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('sizeLimit: 130Gi')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('sizeLimit: 20Gi')
     expect(runnerScaleSetBlock('analysis-arm64')).not.toContain('volumeClaimTemplate:')
   })
