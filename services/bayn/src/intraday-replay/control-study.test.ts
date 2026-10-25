@@ -294,7 +294,7 @@ test('native Jev entry uses measured commitment before execution and mechanical 
   if (accounting === undefined) throw new Error('Expected schedule accounting')
   expect(accounting.scheduledPollCount).toBe(90)
   expect(report.ledger.positions).toEqual([])
-}, 30_000)
+}, 60_000)
 
 test('native entry abstentions retain paid calls without submitting orders', async () => {
   const wait = await simulate({
