@@ -6,24 +6,9 @@ export const workspaceUidSchema = z
 export const githubLoginSchema = z
   .string()
   .regex(/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/, 'Enter a GitHub username')
-export const diagnosticActions = [
-  'metadata',
-  'files',
-  'terminal',
-  'codex',
-  'browser',
-  'preview',
-  'kube-status',
-  'kube-logs',
-  'kube-events',
-  'connector',
-] as const
+export const diagnosticActions = ['metadata', 'files', 'terminal', 'codex', 'browser', 'preview'] as const
 export const diagnosticActionSchema = z.enum(diagnosticActions)
-export const accessResourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('workspace'), id: workspaceUidSchema }).strict(),
-  z.object({ kind: z.literal('namespace'), id: z.string().regex(/^galactic\/[0-9a-f-]{36}$/) }).strict(),
-  z.object({ kind: z.literal('connector'), id: workspaceUidSchema }).strict(),
-])
+export const accessResourceSchema = z.object({ kind: z.literal('workspace'), id: workspaceUidSchema }).strict()
 const utf8 = new TextEncoder()
 export const MAX_ACCESS_COMMAND_BYTES = 64 * 1024
 const credentialSegments = new Set([
@@ -125,16 +110,6 @@ const commandSchema = z.discriminatedUnion('action', [
       total: z.number().int().min(0).max(6),
       active: z.number().int().min(0).max(6),
       retainedGiB: z.number().int().min(0).max(192),
-    })
-    .strict(),
-  z
-    .object({
-      ...common,
-      action: z.literal('target'),
-      login: githubLoginSchema,
-      resource: accessResourceSchema,
-      permission: z.enum(['kube-status', 'kube-logs', 'kube-events', 'connector']),
-      enabled: z.boolean(),
     })
     .strict(),
   z

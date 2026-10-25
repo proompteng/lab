@@ -22,6 +22,7 @@ export const cryptoMarketFixture = (
   timing: {
     readonly firstMinute?: boolean
     readonly tradeLagMs?: number
+    readonly tradePrice?: number
     readonly quoteLagMs?: number
     readonly benchmarkQuoteLagMs?: number
     readonly quoteSpreadBps?: number
@@ -120,7 +121,7 @@ export const cryptoMarketFixture = (
                     ap: ask,
                     as: timing.quoteAskSize ?? 0.031234567,
                   }
-                : { T: 't', S: symbol, t: at, p: bid, s: 0.000000001 },
+                : { T: 't', S: symbol, t: at, p: timing.tradePrice ?? bid, s: 0.000000001 },
           }),
         },
         source,

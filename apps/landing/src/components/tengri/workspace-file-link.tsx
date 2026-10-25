@@ -3,11 +3,12 @@
 import { createContext, memo, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { FileText, Pin, PinOff, X } from 'lucide-react'
+import { ArrowUp, FileText, Folder, Pin, PinOff, RotateCw, X } from 'lucide-react'
+import type { TengriFileEntry, TengriFileList } from '@/lib/tengri/types'
 import { remarkWorkspaceImageBudget } from './markdown-image-budget'
 import { isWorkspaceImagePath } from '@/lib/tengri/codex-images'
 import { runTengriAction } from './client'
-import { finderCanPreviewText } from './finder-model'
+import { FINDER_WORKSPACE_PATH, finderCanPreviewText } from './finder-model'
 import { parseWorkspaceFileLink, type WorkspaceFileTarget as FileTarget } from './workspace-file-link-model'
 import {
   emptyWorkspaceResources,
@@ -300,47 +301,66 @@ const FilePreview = memo(function FilePreview({
   file: FileTarget
   active: boolean
 }) {
-  const { pins, togglePin } = useWorkspaceResources()
+  const { pins, togglePin, openFile } = useWorkspaceResources()
   const pinned = pins.some((item) => item.path === file.path)
-  const [result, setResult] = useState<{ content: string; contentType: string } | null>(null)
+  const [result, setResult] = useState<
+    | { kind: 'directory'; entries: TengriFileEntry[] }
+    | { kind: 'file'; content: string; contentType: string }
+    | { kind: 'image' }
+    | null
+  >(null)
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [source, setSource] = useState(false)
   const selectedLine = useRef<HTMLSpanElement>(null)
   const markdown = /\.(md|markdown|mdown)$/i.test(file.path)
-  const image = isWorkspaceImagePath(file.path)
+  const image = result?.kind === 'image'
+  const directory = result?.kind === 'directory'
+  const parentPath = file.path.slice(0, file.path.lastIndexOf('/'))
   useEffect(() => {
-    if (image || !active || result || error) return
+    if (!active || result || error) return
     const controller = new AbortController()
-    setResult(null)
-    setError('')
-    void runTengriAction<{ content: string; contentType: string }>(
-      { action: 'read-file', agentId, path: file.path },
-      controller.signal,
-    )
-      .then((value) => {
+    async function load() {
+      const metadata = await runTengriAction<TengriFileEntry>(
+        { action: 'stat-file', agentId, path: file.path },
+        controller.signal,
+      )
+      if (metadata.directory) {
+        const folder = await runTengriAction<TengriFileList>(
+          { action: 'list-files', agentId, path: file.path },
+          controller.signal,
+        )
+        if (!controller.signal.aborted) setResult({ kind: 'directory', entries: folder.entries })
+      } else if (isWorkspaceImagePath(file.path)) {
+        if (!controller.signal.aborted) setResult({ kind: 'image' })
+      } else {
+        const value = await runTengriAction<{ content: string; contentType: string }>(
+          { action: 'read-file', agentId, path: file.path },
+          controller.signal,
+        )
         if (controller.signal.aborted) return
         if (!finderCanPreviewText(value.contentType)) throw new Error('This file type cannot be previewed as text.')
-        setResult(value)
-      })
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not read this file.')
-      })
+        setResult({ kind: 'file', ...value })
+      }
+    }
+    void load().catch((cause: unknown) => {
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not open this resource.')
+    })
     return () => controller.abort()
-  }, [agentId, file.path, attempt, image, active, result, error])
+  }, [agentId, file.path, attempt, active, result, error])
   useEffect(() => {
     selectedLine.current?.scrollIntoView({ block: 'nearest' })
   }, [result, source, active])
   if (!active) return null
-  const content = result?.content.slice(0, MAX_PREVIEW_CHARACTERS) ?? ''
+  const content = result?.kind === 'file' ? result.content.slice(0, MAX_PREVIEW_CHARACTERS) : ''
   const lines = content.split('\n')
   const truncated =
-    (result?.content.length ?? 0) > MAX_PREVIEW_CHARACTERS ||
+    (result?.kind === 'file' && result.content.length > MAX_PREVIEW_CHARACTERS) ||
     ((source || !markdown) && lines.length > MAX_PREVIEW_LINES)
   const showSource = source || !markdown
   return (
     <section
-      aria-label="File preview"
+      aria-label={directory ? 'Folder preview' : 'File preview'}
       className="flex h-full min-h-0 flex-col border-t border-zinc-700 bg-zinc-950 text-copy-14 text-zinc-200"
     >
       <div className="flex items-center gap-3 border-b border-zinc-800 px-3 py-1.5">
@@ -354,7 +374,7 @@ const FilePreview = memo(function FilePreview({
           title={
             !pinned && pins.length >= MAX_WORKSPACE_RESOURCES
               ? 'Unpin a resource to add another'
-              : `${pinned ? 'Unpin' : 'Pin'} this file`
+              : `${pinned ? 'Unpin' : 'Pin'} this resource`
           }
           disabled={!pinned && pins.length >= MAX_WORKSPACE_RESOURCES}
           onClick={() => togglePin(file)}
@@ -362,7 +382,19 @@ const FilePreview = memo(function FilePreview({
         >
           <Pin className={`size-3.5 ${pinned ? 'fill-current text-zinc-200' : ''}`} aria-hidden="true" />
         </button>
-        {markdown ? (
+        <button
+          type="button"
+          aria-label="Refresh resource"
+          onClick={() => {
+            setResult(null)
+            setError('')
+            setAttempt((value) => value + 1)
+          }}
+          className="grid size-7 shrink-0 place-items-center rounded text-zinc-400 outline-none hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400"
+        >
+          <RotateCw className="size-3.5" aria-hidden="true" />
+        </button>
+        {markdown && result?.kind === 'file' ? (
           <div role="group" aria-label="Markdown view" className="inline-flex shrink-0 items-center gap-2">
             {[
               { label: 'Preview', value: false },
@@ -383,7 +415,50 @@ const FilePreview = memo(function FilePreview({
       </div>
       <div className="min-h-0 overflow-auto p-3">
         {image && active ? <WorkspaceImage src={file.path} alt={file.path.split('/').at(-1)} /> : null}
-        {!image && !result && !error ? <p role="status">Loading file…</p> : null}
+        {!result && !error ? <p role="status">Loading resource…</p> : null}
+        {result?.kind === 'directory' ? (
+          <>
+            {file.path !== FINDER_WORKSPACE_PATH ? (
+              <button
+                type="button"
+                aria-label="Parent folder"
+                onClick={() => openFile({ path: parentPath })}
+                className="mb-2 inline-flex items-center gap-2 rounded px-2 py-1 text-zinc-400 outline-none hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400"
+              >
+                <ArrowUp className="size-3.5" aria-hidden="true" />
+                Parent folder
+              </button>
+            ) : null}
+            {result.entries.length ? (
+              <ul aria-label="Folder contents" className="space-y-0.5">
+                {[...result.entries]
+                  .sort(
+                    (left, right) =>
+                      Number(right.directory) - Number(left.directory) || left.name.localeCompare(right.name),
+                  )
+                  .map((entry) => (
+                    <li key={entry.path}>
+                      <button
+                        type="button"
+                        aria-label={`Open ${entry.path}`}
+                        onClick={() => openFile({ path: entry.path })}
+                        className="flex w-full min-w-0 items-center gap-2 rounded px-2 py-2 text-left outline-none hover:bg-white/[0.06] focus-visible:ring-1 focus-visible:ring-blue-400"
+                      >
+                        {entry.directory ? (
+                          <Folder className="size-4 shrink-0 text-zinc-400" aria-hidden="true" />
+                        ) : (
+                          <FileText className="size-4 shrink-0 text-zinc-400" aria-hidden="true" />
+                        )}
+                        <span className="truncate">{entry.name}</span>
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            ) : (
+              <p className="px-2 py-3 text-zinc-400">This folder is empty.</p>
+            )}
+          </>
+        ) : null}
         {error ? (
           <div role="alert">
             <p>{error}</p>
@@ -399,7 +474,7 @@ const FilePreview = memo(function FilePreview({
             </button>
           </div>
         ) : null}
-        {result ? (
+        {result?.kind === 'file' ? (
           showSource ? (
             <pre className="text-copy-13-mono">
               <code>

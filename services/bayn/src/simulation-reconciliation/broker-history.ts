@@ -362,8 +362,10 @@ export const decideStableHistory = (
       filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityAtoms))
     }
     if (
-      after.orders.rows.some(
-        ({ value: order }) => BigInt(order.filledQuantityAtoms) !== (filledByOrder.get(order.brokerOrderId) ?? 0n),
+      after.orders.rows.some(({ value: order }) =>
+        [order, ...(order.legs ?? [])].some(
+          (member) => BigInt(member.filledQuantityAtoms) !== (filledByOrder.get(member.brokerOrderId) ?? 0n),
+        ),
       )
     ) {
       return yield* Result.fail(

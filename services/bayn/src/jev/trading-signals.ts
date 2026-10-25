@@ -1,5 +1,6 @@
 import { jevBatchQuestionSetHash } from './batch'
 import { exchangeSessions } from '../market-hours'
+import { effectiveCryptoFeeTier } from '../broker/crypto-fees'
 import { jevBenchmarkSymbol, jevMarketForSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
 import { rollingValues } from '../market-data/features/native-feature'
@@ -8,7 +9,10 @@ import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import { BigDecimal, Result } from 'effect'
 
 import { numberToMicros, priceNumberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
-import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
+import {
+  deriveIntradayBidBreakoutBps,
+  deriveIntradayMomentumSignalMetrics,
+} from '../strategy/intraday-momentum/decision-core'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 
 import {
@@ -237,12 +241,44 @@ export const commonMomentumPrices = (
     const benchmarkReference = benchmarkBars.find((bar) => bar.eventAt === reference?.eventAt)
     if (reference === undefined || benchmarkReference === undefined)
       return yield* unavailable('Relative momentum requires a common actual observed minute')
+    const completedBars = snapshot.manifest.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars
+    const candidatePrices = {
+      ...candidate.prices,
+      reference: yield* signalPriceMicros(reference.open, 'signal reference'),
+    }
+    const benchmarkPrices = {
+      ...benchmark.prices,
+      reference: yield* signalPriceMicros(benchmarkReference.open, 'signal reference'),
+    }
+    if (!completedBars)
+      return {
+        referenceAt: reference.eventAt,
+        comparisonAt: snapshot.manifest.observedAt,
+        pricingBasis: 'CURRENT_QUOTES' as const,
+        candidate: candidatePrices,
+        benchmark: benchmarkPrices,
+      }
+    const latestMinute = Date.parse(snapshot.manifest.rangeEndAt) - 60_000
+    const candidateClose = candidateBars.find((bar) => Date.parse(bar.eventAt) === latestMinute)
+    const benchmarkClose = benchmarkBars.find((bar) => Date.parse(bar.eventAt) === latestMinute)
+    if (candidateClose === undefined || benchmarkClose === undefined)
+      return yield* unavailable('Relative momentum requires the same completed ending minute')
+    const candidateClosingPrice = yield* signalPriceMicros(candidateClose.close, 'relative candidate close')
+    const benchmarkClosingPrice = yield* signalPriceMicros(benchmarkClose.close, 'relative benchmark close')
     return {
       referenceAt: reference.eventAt,
-      candidate: { ...candidate.prices, reference: yield* signalPriceMicros(reference.open, 'signal reference') },
+      comparisonAt: snapshot.manifest.rangeEndAt,
+      pricingBasis: 'COMPLETED_BAR_CLOSE' as const,
+      candidate: {
+        ...candidatePrices,
+        bid: candidateClosingPrice,
+        ask: candidateClosingPrice,
+        trade: candidateClosingPrice,
+      },
       benchmark: {
-        ...benchmark.prices,
-        reference: yield* signalPriceMicros(benchmarkReference.open, 'signal reference'),
+        ...benchmarkPrices,
+        bid: benchmarkClosingPrice,
+        ask: benchmarkClosingPrice,
       },
     }
   })
@@ -272,6 +308,11 @@ const requestFromSnapshot = (
     const benchmark = yield* jevBenchmarkSignalFor(snapshot, benchmarkSymbol)
     const common = yield* commonMomentumPrices(snapshot, symbol, benchmarkSymbol, candidate, benchmark)
     const { metrics } = yield* deriveIntradayMomentumSignalMetrics(common.candidate, symbol, common.benchmark)
+    const { metrics: currentPriceMetrics } = yield* deriveIntradayMomentumSignalMetrics(
+      { ...candidate.prices, reference: common.candidate.reference },
+      symbol,
+      { ...benchmark.prices, reference: common.benchmark.reference },
+    )
     const continuous = isContinuousMarket(snapshot.manifest.calendar)
     const session = continuous
       ? undefined
@@ -300,6 +341,12 @@ const requestFromSnapshot = (
     const economics =
       native.portfolio.purpose === JevPurpose.Entry
         ? yield* jevEntryEconomics({
+            cryptoFeeTier: effectiveCryptoFeeTier(
+              native.portfolio.brokerState.account.cryptoFeeTier,
+              native.portfolio.brokerState.account.observedAt,
+              snapshot.manifest.observedAt,
+            ),
+
             protocol: native.protocol,
             symbol,
             bidMicros: candidate.prices.bid,
@@ -326,8 +373,11 @@ const requestFromSnapshot = (
           extendedHours: !continuous,
           sizingPolicy: native.protocol.entrySizingPolicy,
           maximumEntrySpreadBps: jevMarketForSymbol(symbol).maximumEntrySpreadBps,
-          estimatedFeeBpsPerSide: jevMarketForSymbol(symbol).estimatedTakerFeeBps,
-          estimatedRoundTripFeesBps: 2 * jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+          maximumEntryFeeBps: economics?.entryTakerFeeBps ?? jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+          maximumExitFeeBps: jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+          estimatedRoundTripFeesBps:
+            (economics?.entryTakerFeeBps ?? jevMarketForSymbol(symbol).estimatedTakerFeeBps) +
+            jevMarketForSymbol(symbol).estimatedTakerFeeBps,
         },
         units: {
           prices: 'USD per unit',
@@ -353,12 +403,32 @@ const requestFromSnapshot = (
           feed: snapshot.manifest.feed,
           coverage: continuous ? 'Alpaca crypto US venue' : 'exchange-only; not the consolidated market',
         },
-        candidate: candidate.state,
+        candidate: {
+          ...candidate.state,
+          currentPriceSignals: {
+            lookbackReturnBps: currentPriceMetrics.lookbackReturnBps,
+            breakoutBps: usesWindowTradeEvidence(snapshot.manifest, symbol)
+              ? yield* deriveIntradayBidBreakoutBps(candidate.prices, symbol)
+              : currentPriceMetrics.breakoutBps,
+            breakoutPricingBasis: usesWindowTradeEvidence(snapshot.manifest, symbol)
+              ? 'CURRENT_BID'
+              : 'CURRENT_ASK_AND_FRESH_TRADE',
+            spreadBps: currentPriceMetrics.spreadBps,
+            rangeLocationPpm: currentPriceMetrics.rangeLocationPpm,
+            referenceAt: common.referenceAt,
+            observedAt: snapshot.manifest.observedAt,
+            lookbackMinutes: (observed - Date.parse(common.referenceAt)) / 60_000,
+          },
+        },
         benchmark: benchmark.state,
         relativeSignals: {
-          ...metrics,
+          lookbackReturnBps: metrics.lookbackReturnBps,
+          benchmarkReturnBps: metrics.benchmarkReturnBps,
+          excessReturnBps: metrics.excessReturnBps,
+          pricingBasis: common.pricingBasis,
           referenceAt: common.referenceAt,
-          lookbackMinutes: (observed - Date.parse(common.referenceAt)) / 60_000,
+          comparisonAt: common.comparisonAt,
+          lookbackMinutes: (Date.parse(common.comparisonAt) - Date.parse(common.referenceAt)) / 60_000,
           candidateReferencePriceUsd: Number(common.candidate.reference) / 1_000_000,
           benchmarkReferencePriceUsd: Number(common.benchmark.reference) / 1_000_000,
         },
