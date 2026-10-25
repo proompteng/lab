@@ -54,42 +54,21 @@ spec:
                 # block on dynamic PVC provisioning before the runner can accept a job.
                 fsGroup: 1001
                 fsGroupChangePolicy: OnRootMismatch
-              initContainers:
-                - name: init-dind-externals
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:1bc878c9ffc6152de22addf0ed78dbe73273bd0d4257dc324a91fe4cd1a6e0e0
-                  command: [ "cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/" ]
-                  resources:
-                    requests:
-                      cpu: "100m"
-                      memory: "128Mi"
-                    limits:
-                      cpu: "200m"
-                      memory: "256Mi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:1bc878c9ffc6152de22addf0ed78dbe73273bd0d4257dc324a91fe4cd1a6e0e0
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:eee8895ab16113521fb577981610941894087fba2d6169be25bf144f7f2f2682
                   securityContext:
                     privileged: true
-                  command: [ "/bin/bash", "-lc" ]
-                  args:
-                    - |
-                      set -euo pipefail
-                      for attempt in $(seq 1 60); do
-                        if docker version >/dev/null 2>&1; then
-                          exec /home/runner/run.sh
-                        fi
-                        sleep 2
-                      done
-                      docker version
+                  command: [ "/home/runner/run.sh" ]
                   resources:
                     requests:
-                      cpu: "2"
-                      memory: "8Gi"
-                      ephemeral-storage: "4Gi"
-                    limits:
-                      cpu: "8"
+                      cpu: "4"
                       memory: "16Gi"
-                      ephemeral-storage: "80Gi"
+                      ephemeral-storage: "10Gi"
+                    limits:
+                      cpu: "20"
+                      memory: "32Gi"
+                      ephemeral-storage: "130Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -97,54 +76,15 @@ spec:
                       valueFrom:
                         fieldRef:
                           fieldPath: metadata.name
-                    - name: DOCKER_HOST
-                      value: unix:///var/run/docker.sock
                     - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
                       value: "false"
                   volumeMounts:
                     - name: work
                       mountPath: /home/runner/_work
-                    - name: dind-sock
-                      mountPath: /var/run
-                - name: dind
-                  image: docker:dind
-                  # The private registry is a single filesystem writer on shared Ceph RBD.
-                  # Serialize daemon-driven uploads so direct Docker pushes cannot burst
-                  # fsync traffic into Kafka's pool.
-                  args:
-                    - dockerd
-                    - --host=unix:///var/run/docker.sock
-                    - --group=$(DOCKER_GROUP_GID)
-                    - --max-concurrent-uploads=1
-                  resources:
-                    requests:
-                      cpu: "2"
-                      memory: "8Gi"
-                      ephemeral-storage: "6Gi"
-                    limits:
-                      cpu: "12"
-                      memory: "16Gi"
-                      ephemeral-storage: "50Gi"
-                  env:
-                    - name: DOCKER_GROUP_GID
-                      value: "123"
-                  securityContext:
-                    privileged: true
-                  volumeMounts:
-                    - name: work
-                      mountPath: /home/runner/_work
-                    - name: dind-sock
-                      mountPath: /var/run
-                    - name: dind-externals
-                      mountPath: /home/runner/externals
               volumes:
                 - name: work
                   emptyDir:
-                    sizeLimit: 80Gi
-                - name: dind-sock
-                  emptyDir: {}
-                - name: dind-externals
-                  emptyDir: {}
+                    sizeLimit: 130Gi
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.14.2
@@ -182,8 +122,8 @@ spec:
                 fsGroup: 1001
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
-                - name: init-dind-externals
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:1bc878c9ffc6152de22addf0ed78dbe73273bd0d4257dc324a91fe4cd1a6e0e0
+                - name: init-scratch
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:eee8895ab16113521fb577981610941894087fba2d6169be25bf144f7f2f2682
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
@@ -209,7 +149,7 @@ spec:
                       # A terminated init can leave a partial staging tree on the same ephemeral volume.
                       # Remove old attempts before measuring/copying so retries cannot consume capacity.
                       find "$scratch" -mindepth 1 -maxdepth 1 -type d -name '.arc-bootstrap.*' -exec rm -rf -- {} +
-                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work" "$scratch/docker" "$scratch/containerd" "$scratch/.arc-bootstrap-complete"
+                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work" "$scratch/.arc-bootstrap-complete"
                       scratch_available_kib="$(df -P -k "$scratch" | awk 'NR == 2 {print $4}')"
                       [[ "$scratch_available_kib" =~ ^[0-9]+$ ]] ||
                         fail "scratch volume has no readable capacity"
@@ -231,9 +171,9 @@ spec:
 
                       stage="$scratch/.arc-bootstrap.$$"
                       trap 'rm -rf "$stage"' EXIT
-                      mkdir -p "$stage/nix" "$stage/cache" "$stage/tmp" "$stage/work" "$stage/docker" "$stage/containerd"
+                      mkdir -p "$stage/nix" "$stage/cache" "$stage/tmp" "$stage/work"
 
-                      # Keep /nix visible from the image while copying. The main containers mount the
+                      # Keep /nix visible from the image while copying. The runner mounts the
                       # completed subdirectory only after this init container exits successfully.
                       cp -a /nix/. "$stage/nix/"
                       cp -a /home/runner/.cache/. "$stage/cache/"
@@ -273,25 +213,15 @@ spec:
                       chmod 1777 "$stage/tmp"
                       chown 0:1001 "$stage/work"
                       chmod 2777 "$stage/work"
-                      chown 0:0 "$stage/docker" "$stage/containerd"
-                      chmod 711 "$stage/docker" "$stage/containerd"
-
-                      # Keep the existing dind externals bootstrap, now on its declared shared volume.
-                      test -d /home/runner/externals || fail "runner image is missing /home/runner/externals"
-                      mkdir -p /home/runner/tmpDir
-                      find /home/runner/tmpDir -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-                      cp -a /home/runner/externals/. /home/runner/tmpDir/
 
                       # Install only after all validation and copies have succeeded. A failed init leaves
                       # no runnable main container and the next retry rebuilds from the image again.
-                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work" "$scratch/docker" "$scratch/containerd"
+                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work"
                       mv "$stage/nix" "$scratch/nix"
                       mv "$stage/cache" "$scratch/cache"
                       mv "$stage/tmp" "$scratch/tmp"
                       mv "$stage/work" "$scratch/work"
-                      mv "$stage/docker" "$scratch/docker"
-                      mv "$stage/containerd" "$scratch/containerd"
-                      printf 'version=4\nnix_file_bytes=%s\nnix_files=%s\nnix_symlinks=%s\ncache_file_bytes=%s\ncache_files=%s\ncache_symlinks=%s\n' \
+                      printf 'version=5\nnix_file_bytes=%s\nnix_files=%s\nnix_symlinks=%s\ncache_file_bytes=%s\ncache_files=%s\ncache_symlinks=%s\n' \
                         "$nix_file_bytes" "$nix_files" "$nix_links" "$cache_file_bytes" "$cache_files" "$cache_links" > "$scratch/.arc-bootstrap-complete"
                       chown 1001:1001 "$scratch/.arc-bootstrap-complete"
                       rm -rf "$stage"
@@ -302,8 +232,6 @@ spec:
                   volumeMounts:
                     - name: scratch
                       mountPath: /scratch
-                    - name: dind-externals
-                      mountPath: /home/runner/tmpDir
                   resources:
                     requests:
                       cpu: "1"
@@ -313,29 +241,19 @@ spec:
                       memory: "8Gi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:1bc878c9ffc6152de22addf0ed78dbe73273bd0d4257dc324a91fe4cd1a6e0e0
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:eee8895ab16113521fb577981610941894087fba2d6169be25bf144f7f2f2682
                   securityContext:
                     privileged: true
-                  command: [ "/bin/bash", "-lc" ]
-                  args:
-                    - |
-                      set -euo pipefail
-                      for attempt in $(seq 1 60); do
-                        if docker version >/dev/null 2>&1; then
-                          exec /home/runner/run.sh
-                        fi
-                        sleep 2
-                      done
-                      docker version
+                  command: [ "/home/runner/run.sh" ]
                   resources:
                     requests:
-                      cpu: "2"
-                      memory: "8Gi"
-                      ephemeral-storage: "4Gi"
-                    limits:
-                      cpu: "8"
+                      cpu: "4"
                       memory: "16Gi"
-                      ephemeral-storage: "80Gi"
+                      ephemeral-storage: "10Gi"
+                    limits:
+                      cpu: "20"
+                      memory: "32Gi"
+                      ephemeral-storage: "130Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -347,8 +265,6 @@ spec:
                       valueFrom:
                         fieldRef:
                           fieldPath: metadata.name
-                    - name: DOCKER_HOST
-                      value: unix:///var/run/docker.sock
                     - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
                       value: "false"
                   volumeMounts:
@@ -364,46 +280,6 @@ spec:
                     - name: scratch
                       mountPath: /home/runner/_work
                       subPath: work
-                    - name: dind-sock
-                      mountPath: /var/run
-                - name: dind
-                  image: docker:dind
-                  # The private registry is a single filesystem writer on shared Ceph RBD.
-                  # Serialize daemon-driven uploads so direct Docker pushes cannot burst
-                  # fsync traffic into Kafka's pool.
-                  args:
-                    - dockerd
-                    - --host=unix:///var/run/docker.sock
-                    - --group=$(DOCKER_GROUP_GID)
-                    - --max-concurrent-uploads=1
-                  resources:
-                    requests:
-                      cpu: "2"
-                      memory: "8Gi"
-                      ephemeral-storage: "6Gi"
-                    limits:
-                      cpu: "12"
-                      memory: "16Gi"
-                      ephemeral-storage: "50Gi"
-                  env:
-                    - name: DOCKER_GROUP_GID
-                      value: "123"
-                  securityContext:
-                    privileged: true
-                  volumeMounts:
-                    - name: scratch
-                      mountPath: /home/runner/_work
-                      subPath: work
-                    - name: scratch
-                      mountPath: /var/lib/docker
-                      subPath: docker
-                    - name: scratch
-                      mountPath: /var/lib/containerd
-                      subPath: containerd
-                    - name: dind-sock
-                      mountPath: /var/run
-                    - name: dind-externals
-                      mountPath: /home/runner/externals
               volumes:
                 - name: scratch
                   ephemeral:
@@ -420,10 +296,6 @@ spec:
                         resources:
                           requests:
                             storage: 45Gi
-                - name: dind-sock
-                  emptyDir: {}
-                - name: dind-externals
-                  emptyDir: {}
               affinity:
                 nodeAffinity:
                   requiredDuringSchedulingIgnoredDuringExecution:
@@ -494,7 +366,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-dind-externals
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:1bc878c9ffc6152de22addf0ed78dbe73273bd0d4257dc324a91fe4cd1a6e0e0
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:eee8895ab16113521fb577981610941894087fba2d6169be25bf144f7f2f2682
                   command: [ "cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/" ]
                   resources:
                     requests:
@@ -505,7 +377,7 @@ spec:
                       memory: "256Mi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:1bc878c9ffc6152de22addf0ed78dbe73273bd0d4257dc324a91fe4cd1a6e0e0
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:eee8895ab16113521fb577981610941894087fba2d6169be25bf144f7f2f2682
                   command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
