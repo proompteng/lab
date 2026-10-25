@@ -10,8 +10,7 @@ readonly source_sha=$GITHUB_SHA
 source_timestamp=$(git show -s --format=%cI HEAD)
 readonly source_timestamp
 readonly source_url=https://github.com/proompteng/lab
-readonly image_repo=registry.registry.svc.cluster.local/lab/forgejo
-readonly public_repo=registry.ide-newton.ts.net/lab/forgejo
+readonly image_repo=registry.ide-newton.ts.net/lab/forgejo
 readonly release=argocd/applications/forgejo/upstream-image.json
 source_repo=$(jq -er .repository "$release")
 source_digest=$(jq -er .indexDigest "$release")
@@ -29,7 +28,7 @@ mkdir -p "$evidence"
 # A registry failure is not evidence that a tag is absent.
 assert_absent_or_matching() {
   local reference=$1 expected=$2 actual
-  if actual=$(crane digest --insecure "$reference" 2>"$evidence/probe.error"); then
+  if actual=$(crane digest "$reference" 2>"$evidence/probe.error"); then
     [[ "$actual" == "$expected" ]] || return 1
   elif ! grep -Eiq 'MANIFEST_UNKNOWN|NAME_UNKNOWN|404 Not Found|manifest unknown|name unknown' "$evidence/probe.error"; then
     cat "$evidence/probe.error" >&2
@@ -60,28 +59,28 @@ if [[ "$mode" == prepare ]]; then
   # Preserve the entire reviewed upstream index, including its attestations.
   # Serialize blob transfers because this registry admits one blob writer.
   skopeo --policy "$policy" copy --all --preserve-digests --image-parallel-copies 1 \
-    --src-tls-verify=true --dest-tls-verify=false "docker://$source_ref" "docker://$mirror_ref"
-  [[ "$(crane digest --insecure "$mirror_ref")" == "$source_digest" ]] || exit 1
+    --src-tls-verify=true --dest-tls-verify=true "docker://$source_ref" "docker://$mirror_ref"
+  [[ "$(crane digest "$mirror_ref")" == "$source_digest" ]] || exit 1
   rm -f "$policy"
   trap - EXIT
 
   for architecture in amd64 arm64; do
     platform_digest=$(jq -er --arg arch "$architecture" '.platforms[$arch]' "$release")
     candidate=$image_repo:prepared-$source_sha-$architecture
-    crane mutate --insecure "$image_repo@$platform_digest" \
+    crane mutate "$image_repo@$platform_digest" \
       --label "org.opencontainers.image.created=$source_timestamp" \
       --label "org.opencontainers.image.revision=$source_sha" \
       --label "org.opencontainers.image.source=$source_url" \
       --label "org.opencontainers.image.base.name=$source_repo" \
       --label "org.opencontainers.image.base.digest=$platform_digest" \
       --tag "$candidate" >/dev/null
-    crane config --insecure "$candidate" > "$evidence/release-$architecture-config.json"
+    crane config "$candidate" > "$evidence/release-$architecture-config.json"
     # Only release metadata may change; rootfs, user, entrypoint and all other settings stay exact.
     python3 scripts/forgejo/verify-image-config.py \
       "$evidence/upstream-$architecture-config.json" "$evidence/release-$architecture-config.json" \
       "$source_sha" "$source_timestamp" "$platform_digest"
-    crane manifest --insecure "$candidate" > "$evidence/release-$architecture-manifest.json"
-    crane manifest --insecure "$image_repo@$platform_digest" > "$evidence/upstream-$architecture-manifest.json"
+    crane manifest "$candidate" > "$evidence/release-$architecture-manifest.json"
+    crane manifest "$image_repo@$platform_digest" > "$evidence/upstream-$architecture-manifest.json"
     jq -e --slurpfile upstream "$evidence/upstream-$architecture-manifest.json" \
       '.layers == $upstream[0].layers' "$evidence/release-$architecture-manifest.json" >/dev/null
   done
@@ -93,7 +92,7 @@ if [[ "$mode" == prepare ]]; then
     --annotation "index:org.opencontainers.image.base.name=$source_repo" \
     --annotation "index:org.opencontainers.image.base.digest=$source_digest" \
     --tag "$preparation_ref" "$image_repo:prepared-$source_sha-amd64" "$image_repo:prepared-$source_sha-arm64"
-  crane manifest --insecure "$preparation_ref" > "$evidence/release-index.json"
+  crane manifest "$preparation_ref" > "$evidence/release-index.json"
   jq -e --arg sha "$source_sha" --arg source "$source_url" --arg upstream "$source_digest" '
     .annotations["org.opencontainers.image.revision"] == $sha and
     .annotations["org.opencontainers.image.source"] == $source and
@@ -102,20 +101,20 @@ if [[ "$mode" == prepare ]]; then
     any(.manifests[]; .platform.os == "linux" and .platform.architecture == "amd64") and
     any(.manifests[]; .platform.os == "linux" and .platform.architecture == "arm64")
   ' "$evidence/release-index.json" >/dev/null
-  digest=$(crane digest --insecure "$preparation_ref")
+  digest=$(crane digest "$preparation_ref")
   [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
-  [[ "$(crane digest --insecure "$image_repo@$digest")" == "$digest" ]] || exit 1
+  [[ "$(crane digest "$image_repo@$digest")" == "$digest" ]] || exit 1
   assert_absent_or_matching "$publication_ref" "$digest"
   jq -n --arg revision "$source_sha" --arg digest "$digest" --arg upstream "$source_ref" \
-    --arg image "$public_repo@$digest" '{revision:$revision,digest:$digest,upstream:$upstream,image:$image}' > "$evidence/receipt.json"
+    --arg image "$image_repo@$digest" '{revision:$revision,digest:$digest,upstream:$upstream,image:$image}' > "$evidence/receipt.json"
   exit 0
 fi
 
 # The workflow invokes this only after terminal validation and artifact upload.
 digest=$(jq -er --arg sha "$source_sha" 'select(.revision == $sha) | .digest' "$evidence/receipt.json")
 [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
-[[ "$(crane digest --insecure "$preparation_ref")" == "$digest" ]] || exit 1
+[[ "$(crane digest "$preparation_ref")" == "$digest" ]] || exit 1
 assert_absent_or_matching "$publication_ref" "$digest"
-crane tag --insecure "$image_repo@$digest" "kargo-sha-$source_sha"
-[[ "$(crane digest --insecure "$publication_ref")" == "$digest" ]] || exit 1
-printf 'Published immutable Forgejo image %s@%s\n' "$public_repo" "$digest"
+crane tag "$image_repo@$digest" "kargo-sha-$source_sha"
+[[ "$(crane digest "$publication_ref")" == "$digest" ]] || exit 1
+printf 'Published immutable Forgejo image %s@%s\n' "$image_repo" "$digest"

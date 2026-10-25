@@ -38,7 +38,8 @@ const observedAt = '2026-07-22T15:30:00.000Z'
 const reconciledAt = '2026-07-22T15:30:01.000Z'
 
 const account: AccountSnapshot = {
-  schemaVersion: 'bayn.paper-account-snapshot.v1',
+  schemaVersion: 'bayn.paper-account-snapshot.v2',
+  cryptoFeeTier: null,
   accountId: 'paper-account',
   status: AccountStatus.Active,
   currency: 'USD',

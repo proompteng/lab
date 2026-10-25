@@ -121,6 +121,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('sleep-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
   z.strictObject({ action: z.literal('resume-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
   z.strictObject({ action: z.literal('update-power-settings'), agentId, power: tengriPowerSettingsSchema }),
+  z.strictObject({ action: z.literal('stat-file'), agentId, path: workspaceFilePathSchema }),
   z.strictObject({ action: z.literal('list-files'), agentId, path: workspaceFilePathSchema }),
   z.strictObject({ action: z.literal('read-file'), agentId, path: workspaceFilePathSchema }),
   z.strictObject({
@@ -169,6 +170,13 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('codex-models'), agentId, cursor: z.string().min(1).max(4096).optional() }),
   z.strictObject({ action: z.literal('active-codex-run'), agentId }),
   z.strictObject({ action: z.literal('codex-run'), agentId, runId: z.uuid() }),
+  z.strictObject({
+    action: z.literal('list-threads'),
+    agentId,
+    archived: z.boolean(),
+    cursor: z.string().min(1).max(4096).optional(),
+  }),
+  z.strictObject({ action: z.literal('set-thread-archived'), agentId, threadId: codexId, archived: z.boolean() }),
   z.strictObject({ action: z.literal('create-thread'), agentId, ...codexOptions }),
   z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId, ...codexOptions }),
   z

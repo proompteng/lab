@@ -194,8 +194,12 @@ old memory snapshot.
    no other main native workflow occupies its publisher concurrency before taking the workspace offline.
    Finish active work and reconcile uncertain external effects.
    An idle browser, a transcript, or a sleeping snapshot alone does not establish that work completed.
-2. Use authenticated workspace sleep. Verify the exact runtime claim in the committed sleeping journal, the reaped
-   Firecracker process, and the absence of another storage writer. Capture a fresh baseline after the work finishes:
+2. Finish authenticated workspace sleep, or verify that normal automatic Sleep has completed. Require desired and
+   observed Sleep, the reaped Firecracker process, and no other storage writer. A sleeping journal must name the exact
+   runtime claim. A prepared vacant journal must have a positive snapshot generation, no runtime claim, and the same
+   MicroVM and Lease allocation, image, Pod and home identities. It does not prove native execution acceptance.
+   Accept only an absent activity pin or `idle-sleep/<exact runtime epoch>`; another pin blocks the migration.
+   Require all Restate run and control invocations to be terminal. Capture a fresh baseline after work finishes:
    MicroVM, Lease, Pod and PVC UIDs; filesystem UUID; representative file hashes; and native conversation identities.
 3. Record the Tengri Application's UID, source, and sync policy. Confirm its owning ApplicationSet preserves
    [`argocd.argoproj.io/skip-reconcile`](https://argo-cd.readthedocs.io/en/release-3.4/user-guide/skip_reconcile/),
@@ -209,9 +213,9 @@ old memory snapshot.
    MicroVM's image to the qualified Nanoagent digest. Verify the home initialization annotation remains `complete`.
    Retain the old Lease Pod UID and MicroVM slot binding for now. These references prevent pool recreation while the
    old controller is absent. Use fresh resourceVersion preconditions for each change.
-6. Release the original successful publishers through the existing hold. Rerun only the native publisher against its
-   unchanged architecture artifacts, verify both index digests remain exact, and require successful signing and
-   artifact retention before aliases appear. Retain a queued publisher: cancelling a latest attempt with no jobs can
+6. Release the original successful publishers through the existing hold. Rerun only the native publisher and web
+   index publisher against their unchanged architecture artifacts. Verify all four index digests remain exact, and
+   require successful signing and artifact retention before aliases appear. Retain a queued publisher: cancelling a latest attempt with no jobs can
    prevent rerunning its original job. Do not rebuild or substitute a guest digest after enrollment.
 7. Follow the same Freight through Ofz migration and rollout, then the generated `kargo/tengri` commit. Verify that
    commit selects the qualified controller and guest digests before removing the Application's temporary
@@ -224,6 +228,10 @@ old memory snapshot.
    Proompteng promotion. Resume through authenticated Ofz lifecycle control. Read back the unchanged filesystem UUID,
    retained files and conversations. Exercise run recovery, approval, cancellation, worker replacement, and active-run
    sleep exclusion before reopening normal work.
+
+After product acceptance, verify that no competing unqualified native publisher is active, then restore
+`TENGRI_PREPARED_SLOT_CUTOVER_READY=true` for normal delivery. Keep the Application unpaused and its source, sync policy
+and Kargo metadata intact. Set the publication hold again before a future incompatible guest API or snapshot change.
 
 If the replacement fails, keep traffic closed and retain the home and claim for repair. Once the new guest writes,
 never restore its older memory snapshot against the advanced disk. Recovery must use a reviewed compatible image

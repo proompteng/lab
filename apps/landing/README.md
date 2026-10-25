@@ -96,9 +96,10 @@ weight, and spacing together. Fonts are self-hosted with `next/font/local`; sour
 [the font directory](public/tengri/fonts/README.md).
 An explicit symbol fallback preserves monospace columns for glyphs Geist Mono does not contain, such as checkmarks.
 The Codex view uses a near-black canvas, quiet zinc typography, and blue for primary actions. User messages sit on the
-right with a soft background; agent responses stay on the left without speaker headings. A left conversation sidebar (~240–260px) lists
-browser-local conversations for the agent (newest first) with an active highlight and **New** control; the active
-thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. Saved history
+right with a soft background; agent responses stay on the left without speaker headings. A left sidebar (~240–260px) reads
+the native paginated session index, with an active highlight and **New chat** control. Session menus provide **Archive**;
+**Archived chats** provides **Restore**. Archive state survives reloads and is shared across browsers through the
+retained native history. The browser-only session registry is removed; the selected ID remains `tengri-thread:${agentId}`. Saved history
 loads behind a message-shaped skeleton instead of flashing the empty-conversation suggestions. The animation respects
 reduced motion, and failures show the existing recovery controls. You can start or
 switch conversations while another response runs or its submission is pending. Late thread creation and send replies
@@ -119,9 +120,10 @@ the pending startup retry. Manual conversation recovery cancels the automatic re
 Catalog and conversation-history reads keep lifecycle controls available and are cancelled when a transition starts.
 Browser cancellation propagates to the gRPC request. A rejected transition lets these reads recover without closing chat.
 The event buffer bounds ordinary history while retaining pending approvals
-until resolution or completion. Successful recovery merges the persisted registry and clears unavailable markers
-from this tab or another tab with a newer timestamp;
-ordinary selection preserves row order. The header is
+until resolution or completion. Successful recovery clears the selected session's unavailable marker;
+native metadata owns sidebar names and ordering. A matching completed native turn, including one recovered from history,
+ends response activity even if a durable status poll is late. Cancellation keeps its Stopping state until cleanup is confirmed.
+The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
 no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
 send/stop button. Approval, model, and reasoning selectors share the same trigger and menu styles.
@@ -291,13 +293,16 @@ Local `/workspace/...` links in agent messages open file tabs above the conversa
 and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source
 shows numbered lines and highlights an optional `:line:column` or `#LlineCcolumn` reference. Other text files show source.
 File reads use the authenticated file API, with loading, retry, and bounded previews. Web links still open externally.
-Use the pin button in a file preview to keep the file in **Pinned** in the conversation sidebar. Pins retain an
+Resource previews use the authenticated `stat-file` metadata lookup without enumerating siblings. Folder resources
+open a directory listing, with child navigation, parent navigation,
+an empty-folder state, and refresh. The workspace root and folder links with trailing slashes are supported.
+Use the pin button in a resource preview to keep it in **Pinned** in the sidebar. Pins retain an
 optional line and column and remain available after closing their tabs. Open a pin to restore that location, or
 unpin it without closing the preview. Each window restores its own tabs and selected view after reload; workspace
-pins are shared across windows. Selecting a conversation returns to Chat without closing resource tabs.
-Tabs and pins each retain up to 20 files. Persistence contains validated `/workspace` paths and locations only,
-with no file contents or credentials. Restored inactive tabs do not read files until selected. Deleting the workspace
-clears its resource metadata along with its conversation state.
+pins are shared across windows. Selecting a session returns to Chat without closing resource tabs.
+Tabs and pins each retain up to 20 resources. Persistence contains validated `/workspace` paths and locations only,
+with no file contents or credentials. Restored inactive tabs do not read resources until selected. Deleting the workspace
+clears its resource metadata along with its selected-session state.
 Sent image attachments appear in user messages, including restored history. Agent replies render local workspace
 PNG, JPEG and WebP images inline; generated-image tool outputs with saved workspace paths also show thumbnails.
 Local image links can open image file tabs. Retained image reads use the authenticated,
