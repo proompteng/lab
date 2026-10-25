@@ -161,8 +161,11 @@ export const decodeEntryHandoffForChart = ({
 
 export const decodeEntryInferenceCompletion = (source: EntrySource, input: unknown) =>
   Result.gen(function* () {
-    const completion = yield* Schema.decodeUnknownResult(EntryInferenceCompletionSchema, strictParseOptions)(input)
-    const handoff = yield* decodeEntryHandoff(source, completion.handoff)
+    const { handoff: rawHandoff, ...completion } = yield* Schema.decodeUnknownResult(
+      EntryInferenceCompletionSchema,
+      strictParseOptions,
+    )(input)
+    const handoff = yield* decodeEntryHandoff(source, rawHandoff)
     return yield* verifyEntryCompletion(source, completion, handoff)
   }).pipe(
     Result.mapError(
@@ -172,28 +175,27 @@ export const decodeEntryInferenceCompletion = (source: EntrySource, input: unkno
 
 export const verifyEntryCompletion = (
   source: Pick<EntrySource, 'expiresAt'>,
-  completion: typeof EntryInferenceCompletionSchema.Type,
+  completion: Omit<typeof EntryInferenceCompletionSchema.Type, 'handoff'>,
   handoff: typeof EntryHandoffSchema.Type,
 ) =>
   Result.gen(function* () {
-    if ((yield* canonicalHashV1Result(completion.handoff)) !== (yield* canonicalHashV1Result(handoff)))
-      return yield* invalid('Inference completion differs from its verified provider handoff')
+    const verified = { ...completion, handoff }
     if (completion.completedAt < handoff.recordedAt)
       return yield* invalid('Inference completion precedes its provider handoff')
     const outcome = completion.jev
     if (handoff.disposition.status !== 'READY') {
       if (outcome.status !== 'NOT_REQUESTED')
         return yield* invalid('Jev cannot be dispatched without a prepared funded proposal')
-      return completion
+      return verified
     }
     if (outcome.status === 'NOT_REQUESTED')
       return yield* invalid('A prepared Jev request must retain its dispatch disposition')
     if (outcome.status === 'NOT_DISPATCHED') {
       if (completion.completedAt < source.expiresAt)
         return yield* invalid('Undispatched Jev evidence must prove original deadline expiry')
-      return completion
+      return verified
     }
-    if (outcome.status === 'FAILED') return completion
+    if (outcome.status === 'FAILED') return verified
     const inference = outcome.inference
     const prepared = yield* prepareJevRequest(handoff.disposition.jevRequest)
     if (
@@ -206,7 +208,7 @@ export const verifyEntryCompletion = (
       Result.isFailure(decodeJevResponse(prepared.request, inference.response))
     )
       return yield* invalid('Dependent Jev inference differs from the committed request or response')
-    return completion
+    return verified
   }).pipe(
     Result.mapError(
       (cause) => new JevContractError({ message: 'Entry inference completion does not reproduce', cause }),

@@ -92,8 +92,14 @@ export const readSequentialInferenceCostEvidence = (row: {
       )
         return yield* invalid('Retained chart receipt identity or clocks do not reproduce')
       if (receipt.outcome.status === JevOutcome.Completed) {
-        const completion = receipt.outcome.completion
-        if (handoff === null) return yield* invalid('Retained chart receipt requires its committed handoff')
+        const { handoff: receiptHandoff, ...completion } = receipt.outcome.completion
+        const { handoffHash, ...handoffMaterial } = receiptHandoff
+        if (
+          handoff === null ||
+          handoffHash !== handoff.handoffHash ||
+          (yield* canonicalHashV1Result(handoffMaterial)) !== handoffHash
+        )
+          return yield* invalid('Retained chart receipt differs from its committed handoff')
         yield* verifyEntryCompletion(source, completion, handoff)
         if (
           completion.completedAt > receipt.completedAt ||

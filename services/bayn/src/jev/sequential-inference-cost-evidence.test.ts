@@ -132,3 +132,12 @@ test('keeps an uncompleted dependent provider as an unknown expense', () => {
     quotes.find((quote) => 'stage' in quote.line && quote.line.stage === InferenceStage.Jev)?.line.estimatedCostPicoUsd,
   ).toBeNull()
 })
+
+test('rejects substituted completion handoff material after the outer receipt is rehashed', () => {
+  const row = retained()
+  const changed = structuredClone(row.receipt)
+  changed.outcome.completion.handoff.visualRequestHash = 'f'.repeat(64)
+  const { receiptHash: _, ...material } = changed
+  const receipt = { ...material, receiptHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  expect(Result.isFailure(readSequentialInferenceCostEvidence({ ...row, receipt }))).toBe(true)
+})
