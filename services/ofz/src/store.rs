@@ -131,6 +131,18 @@ impl Database {
                 "control database schema mismatch",
             ));
         }
+        let row = client
+            .query_one(
+                "SELECT checksum FROM ofz.platform_schema_version WHERE version=1",
+                &[],
+            )
+            .await
+            .map_err(sql_error)?;
+        if row.get::<_, Vec<u8>>(0) != platform_migration_checksum() {
+            return Err(Status::failed_precondition(
+                "platform database schema mismatch",
+            ));
+        }
         Ok(())
     }
 
@@ -173,6 +185,38 @@ impl Database {
         {
             return Err(Status::failed_precondition(
                 "control schema migration checksum mismatch",
+            ));
+        }
+        let platform_exists: bool = tx
+            .query_one(
+                "SELECT to_regclass('ofz.platform_schema_version') IS NOT NULL",
+                &[],
+            )
+            .await
+            .map_err(sql_error)?
+            .get(0);
+        if !platform_exists {
+            tx.batch_execute(include_str!("../migrations/0002_platform.sql"))
+                .await
+                .map_err(sql_error)?;
+            tx.execute(
+                "INSERT INTO ofz.platform_schema_version(version,checksum) VALUES(1,$1)",
+                &[&platform_migration_checksum()],
+            )
+            .await
+            .map_err(sql_error)?;
+        }
+        let checksum: Vec<u8> = tx
+            .query_one(
+                "SELECT checksum FROM ofz.platform_schema_version WHERE version=1",
+                &[],
+            )
+            .await
+            .map_err(sql_error)?
+            .get(0);
+        if checksum != platform_migration_checksum() {
+            return Err(Status::failed_precondition(
+                "platform migration checksum mismatch",
             ));
         }
         tx.commit().await.map_err(sql_error)?;
@@ -547,6 +591,10 @@ pub fn receipt(
         recovery_generation: 0,
         policy_command: None,
         revision: String::new(),
+        platform_action: String::new(),
+        platform_resources: Vec::new(),
+        platform_client: String::new(),
+        platform_request_hash: Vec::new(),
     }
 }
 
@@ -560,4 +608,8 @@ pub fn decode<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, Status>
 
 fn migration_checksum() -> Vec<u8> {
     Sha256::digest(include_bytes!("../migrations/0001_control.sql")).to_vec()
+}
+
+fn platform_migration_checksum() -> Vec<u8> {
+    Sha256::digest(include_bytes!("../migrations/0002_platform.sql")).to_vec()
 }

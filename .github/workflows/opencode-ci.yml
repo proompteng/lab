@@ -5,6 +5,11 @@ on:
   pull_request:
     paths:
       - 'services/opencode/**'
+      - 'services/relay/**'
+      - 'packages/platform-client/**'
+      - 'proto/proompteng/authz/**'
+      - 'proto/proompteng/relay/**'
+      - 'nix/packages/relay.nix'
       - 'services/bayn/src/opencode*'
       - 'services/bayn/src/opencode/**'
       - 'nix/images/opencode*.nix'
