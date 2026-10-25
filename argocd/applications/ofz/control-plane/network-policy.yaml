@@ -24,7 +24,13 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [tengri, tengri-kube-broker, tengri-connector-broker]
+                values: [tengri]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: relay
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: relay
       ports:
         - protocol: TCP
           port: 9443
@@ -130,11 +136,15 @@ spec:
         - protocol: TCP
           port: 5432
     - to:
-        - ipBlock:
-            cidr: 100.78.240.108/32
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rook-ceph
+          podSelector:
+            matchLabels:
+              app: rook-ceph-rgw
       ports:
         - protocol: TCP
-          port: 9444
+          port: 8080
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

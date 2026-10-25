@@ -5,7 +5,10 @@ use ofz::{
     bootstrap::{self, Manifest, Operation},
     commands,
     native::Native,
-    proto::authorization_service_server::AuthorizationServiceServer,
+    proto::{
+        platform_authorization_service_server::PlatformAuthorizationServiceServer,
+        tengri_authorization_service_server::TengriAuthorizationServiceServer,
+    },
     service::Service,
     sessions::Issuer,
     store::Database,
@@ -33,6 +36,16 @@ async fn main() -> anyhow::Result<()> {
             database.migrate_runtime().await?;
             return Ok(());
         }
+        Some("onboard-policies") => {
+            database.verify_schema().await?;
+            let native = Native::new(
+                &env::var("OFZ_SPICEDB_ENDPOINT")?,
+                PathBuf::from(env::var("OFZ_SPICEDB_KEY_FILE")?),
+            )?;
+            let revision = ofz::platform::onboarding::execute(&database, &native).await?;
+            println!("{}", serde_json::json!({"policy_revision":revision}));
+            return Ok(());
+        }
         Some(command @ ("bootstrap" | "activate")) => {
             if env::args().len() != 3 {
                 bail!("bootstrap and activate require one protected manifest path");
@@ -52,7 +65,9 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Some("serve") | None => {}
-        _ => bail!("expected serve, migrate, migrate-runtime, bootstrap or activate"),
+        _ => bail!(
+            "expected serve, migrate, migrate-runtime, onboard-policies, bootstrap or activate"
+        ),
     }
     database.verify_schema().await?;
     tracing::debug!("control database schema verified");
@@ -81,9 +96,20 @@ async fn main() -> anyhow::Result<()> {
                 .on_failure(ofz::telemetry::grpc_failure),
         )
         .add_service(
-            AuthorizationServiceServer::new(Service::new(database, native, issuer))
-                .max_decoding_message_size(128 * 1024)
-                .max_encoding_message_size(1_048_576),
+            TengriAuthorizationServiceServer::new(Service::new(
+                database.clone(),
+                native.clone(),
+                issuer,
+            ))
+            .max_decoding_message_size(128 * 1024)
+            .max_encoding_message_size(1_048_576),
+        )
+        .add_service(
+            PlatformAuthorizationServiceServer::new(ofz::platform::service::Service::new(
+                database, native,
+            ))
+            .max_decoding_message_size(128 * 1024)
+            .max_encoding_message_size(1_048_576),
         )
         .serve_with_incoming_shutdown(transport::incoming(listener, tls), async {
             let _ = tokio::signal::ctrl_c().await;

@@ -1,0 +1,84 @@
+name: Relay platform
+on:
+  pull_request:
+    paths:
+      - 'services/relay/**'
+      - 'apps/landing/src/lib/platform/**'
+      - 'apps/landing/src/lib/tengri/spiffe.fixture.ts'
+      - 'packages/platform-client/**'
+      - 'services/ofz/**'
+      - 'proto/proompteng/authz/**'
+      - 'proto/proompteng/relay/**'
+      - 'argocd/applications/relay/**'
+      - 'nix/packages/relay.nix'
+      - 'nix/images/relay.nix'
+      - '.github/workflows/relay.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'services/relay/**'
+      - 'apps/landing/src/lib/platform/**'
+      - 'apps/landing/src/lib/tengri/spiffe.fixture.ts'
+      - 'packages/platform-client/**'
+      - 'services/ofz/**'
+      - 'proto/proompteng/authz/**'
+      - 'proto/proompteng/relay/**'
+      - 'argocd/applications/relay/**'
+      - 'argocd/applications/kargo/**'
+      - 'argocd/applicationsets/platform.yaml'
+      - 'nix/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/workflows/relay.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/actions/setup-nix-toolchain/**'
+permissions:
+  contents: read
+concurrency:
+  group: relay-platform-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            services/relay -> target
+            services/ofz -> target
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler
+      - name: Validate executor and SDK
+        run: |
+          cargo fmt --manifest-path services/relay/Cargo.toml --check
+          cargo clippy --manifest-path services/relay/Cargo.toml --locked --all-targets -- -D warnings
+          cargo test --manifest-path services/relay/Cargo.toml --locked --all-targets
+      - name: Qualify native policy package
+        run: bash services/ofz/qualify-platform.sh
+      - name: Execute both platform clients through Ofz and Relay
+        run: bash services/ofz/test-control.sh platform
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install client fixture dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
+      - name: Verify standalone MCP client with attested TLS peers
+        run: bash services/relay/test-client.sh
+  image:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: relay
+      package_attr: relay-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      source_revision: ${{ github.sha }}
+      publish_on_dispatch: false
+    secrets: inherit

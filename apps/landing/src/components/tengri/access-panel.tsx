@@ -25,7 +25,7 @@ import {
 } from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
 
 type View = 'workspace' | 'platform' | 'audit'
-const actions = ['membership', 'collaborator', 'quota', 'target', 'grant', 'revoke', 'transfer', 'emergency'] as const
+const actions = ['membership', 'collaborator', 'quota', 'grant', 'revoke', 'transfer', 'emergency'] as const
 const lines = (value: string) => value.split('\n').filter(Boolean)
 const formSchema = z
   .object({
@@ -41,9 +41,6 @@ const formSchema = z
     total: z.number().int().min(0).max(6),
     active: z.number().int().min(0).max(6),
     retainedGiB: z.number().int().min(0).max(192),
-    resourceKind: z.enum(['workspace', 'namespace', 'connector']),
-    resourceId: z.string(),
-    permission: z.enum(['kube-status', 'kube-logs', 'kube-events', 'connector']),
     permissions: z.array(z.enum(diagnosticActions)).min(1),
     agentId: z.string(),
     grantId: z.string(),
@@ -61,7 +58,7 @@ const formSchema = z
   })
   .superRefine((value, context) => {
     if (
-      ['membership', 'collaborator', 'quota', 'target', 'transfer', 'emergency'].includes(value.action) &&
+      ['membership', 'collaborator', 'quota', 'transfer', 'emergency'].includes(value.action) &&
       !githubLoginSchema.safeParse(value.login).success
     )
       context.addIssue({ code: 'custom', path: ['login'], message: 'Enter a GitHub username' })
@@ -128,9 +125,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       total: 2,
       active: 1,
       retainedGiB: 64,
-      resourceKind: 'workspace',
-      resourceId: workspaceUid || '',
-      permission: 'kube-status',
       permissions: ['metadata'],
       agentId: '',
       grantId: '',
@@ -148,7 +142,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     },
   })
   const action = form.watch('action')
-  const resourceKind = form.watch('resourceKind')
   const role = form.watch('role')
   const enabled = form.watch('enabled')
   const login = form.watch('login')
@@ -225,10 +218,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       expectedVersion: roster.version.toString(),
       reason: value.reason,
     }
-    const resource = {
-      kind: value.resourceKind,
-      id: value.resourceKind === 'workspace' ? workspaceUid || '' : value.resourceId,
-    }
+    const resource = { kind: 'workspace', id: workspaceUid || '' }
     const scope = {
       fileRoots: lines(value.fileRoots),
       threadIds: lines(value.threadIds),
@@ -261,16 +251,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
           total: value.total,
           active: value.active,
           retainedGiB: value.retainedGiB,
-        }
-        break
-      case 'target':
-        draft = {
-          ...common,
-          action: value.action,
-          login: value.login,
-          resource,
-          permission: value.permission,
-          enabled: value.enabled,
         }
         break
       case 'grant':
@@ -313,16 +293,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     await execute(parsed.data)
   })
   const field = (
-    name:
-      | 'login'
-      | 'reason'
-      | 'agentId'
-      | 'grantId'
-      | 'proofKeyThumbprint'
-      | 'expiresAt'
-      | 'resourceId'
-      | 'incidentId'
-      | 'approvalId',
+    name: 'login' | 'reason' | 'agentId' | 'grantId' | 'proofKeyThumbprint' | 'expiresAt' | 'incidentId' | 'approvalId',
     label: string,
     help?: string,
   ) => (
@@ -380,7 +351,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       </div>
       <p className="text-xs leading-5 text-zinc-400">
         Owners manage workspace collaborators and bounded diagnostic grants. Platform administrators manage membership,
-        quotas and broker permissions. Developer access includes a root shell. Removing it quarantines the retained
+        quotas and platform policy. Developer access includes a root shell. Removing it quarantines the retained
         workspace until credentials and the guest are recovered. Viewers see metadata unless the owner explicitly
         approves bounded content access.
       </p>
@@ -508,14 +479,14 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                     const next = z.enum(actions).parse(event.target.value)
                     form.setValue('action', next)
                     form.setValue('role', next === 'collaborator' ? 'viewer' : 'member')
-                    form.setValue('resourceKind', next === 'target' ? 'namespace' : 'workspace')
+
                     if (['grant', 'emergency'].includes(next))
                       form.setValue('expiresAt', new Date(Date.now() + 15 * 60_000).toISOString())
                   }}
                 >
                   {(view === 'workspace'
                     ? ['collaborator', 'grant', 'revoke', 'transfer', 'emergency']
-                    : ['membership', 'quota', 'target']
+                    : ['membership', 'quota']
                   ).map((option) => (
                     <option key={option} value={option}>
                       {option}
@@ -523,7 +494,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                   ))}
                 </select>
               </label>
-              {['membership', 'collaborator', 'quota', 'target', 'transfer', 'emergency'].includes(action)
+              {['membership', 'collaborator', 'quota', 'transfer', 'emergency'].includes(action)
                 ? field('login', 'GitHub username', 'The server verifies its numeric GitHub ID before changing policy.')
                 : null}
               {['membership', 'collaborator'].includes(action) ? (
@@ -539,7 +510,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                   </select>
                 </label>
               ) : null}
-              {['membership', 'collaborator', 'target'].includes(action) ? (
+              {['membership', 'collaborator'].includes(action) ? (
                 <label className="flex items-center gap-2 text-xs">
                   <input type="checkbox" {...form.register('enabled')} /> Enable this access
                 </label>
@@ -567,37 +538,6 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                     </label>
                   ))}
                 </div>
-              ) : null}
-              {['target', 'grant'].includes(action) ? (
-                <>
-                  <label className="flex items-center gap-2 text-xs">
-                    Resource
-                    <select aria-label="Resource" className={selectClass} {...form.register('resourceKind')}>
-                      {(action === 'target' ? ['namespace', 'connector'] : ['workspace', 'namespace', 'connector']).map(
-                        (kind) => (
-                          <option key={kind}>{kind}</option>
-                        ),
-                      )}
-                    </select>
-                  </label>
-                  {resourceKind !== 'workspace'
-                    ? field(
-                        'resourceId',
-                        'Reviewed target identity',
-                        'Use the namespace or connector identity from the reviewed broker catalog.',
-                      )
-                    : null}
-                </>
-              ) : null}
-              {action === 'target' ? (
-                <label className="flex items-center gap-2 text-xs">
-                  Permission
-                  <select aria-label="Permission" className={selectClass} {...form.register('permission')}>
-                    {['kube-status', 'kube-logs', 'kube-events', 'connector'].map((permission) => (
-                      <option key={permission}>{permission}</option>
-                    ))}
-                  </select>
-                </label>
               ) : null}
               {action === 'grant' ? (
                 <>

@@ -62,6 +62,7 @@ const earlyNixImageApps = new Set([
   'olden',
   'opencode',
   'proompteng',
+  'relay',
   'sag',
   'symphony',
   'symphony-jangar',
@@ -87,6 +88,7 @@ const appToNixAttr = new Map<string, string>([
   ['olden', 'olden-image'],
   ['opencode', 'opencode-image'],
   ['proompteng', 'proompteng-image'],
+  ['relay', 'relay-image'],
   ['sag', 'sag-image'],
   ['symphony', 'symphony-image'],
   ['symphony-jangar', 'symphony-image'],
@@ -100,7 +102,6 @@ const appToNixAttr = new Map<string, string>([
 ])
 
 const appToBuildScriptPath = new Map<string, string>([
-  ['arc', 'packages/scripts/src/arc-runner/build-image.ts'],
   ['symphony-jangar', 'packages/scripts/src/symphony/build-image.ts'],
   ['symphony-torghut', 'packages/scripts/src/symphony/build-image.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts'],
@@ -109,7 +110,6 @@ const appToBuildScriptPath = new Map<string, string>([
 ])
 
 const appToDeployScriptPath = new Map<string, string>([
-  ['arc', 'packages/scripts/src/arc-runner/deploy-service.ts'],
   ['symphony-jangar', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['symphony-torghut', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'],
@@ -118,10 +118,12 @@ const appToDeployScriptPath = new Map<string, string>([
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
+  ['arc', ['.github/workflows/arc-runner-build-push.yml', 'argocd/applications/kargo']],
   ['ofz', ['.github/workflows/ofz.yaml', 'argocd/applications/kargo']],
   ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
   ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
   ['opencode', ['.github/workflows/opencode-build-push.yml', 'argocd/applications/kargo']],
+  ['relay', ['.github/workflows/relay.yml', 'argocd/applications/kargo']],
   ['tengri', ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo']],
   ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
   ['symphony-torghut', ['.github/workflows/symphony-build-push.yaml']],

@@ -85,3 +85,6 @@ spec:
     - stageSelector:
         name: opencode
       autoPromotionEnabled: true
+    - stageSelector:
+        name: relay
+      autoPromotionEnabled: true

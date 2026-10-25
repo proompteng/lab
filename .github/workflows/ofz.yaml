@@ -4,9 +4,13 @@ on:
   pull_request:
     paths:
       - 'services/ofz/**'
-      - 'devices/nuc/ofz-recovery/**'
       - 'argocd/applications/ofz/**'
       - 'proto/proompteng/authz/**'
+      - 'services/relay/**'
+      - 'packages/platform-client/**'
+      - 'proto/proompteng/relay/**'
+      - 'apps/landing/src/lib/platform/**'
+      - 'apps/landing/src/app/api/platform/**'
       - 'services/tengri/**'
       - 'services/nanoagent/**'
       - 'apps/landing/src/app/api/tengri/**'
@@ -55,7 +59,6 @@ on:
       - 'argocd/applications/tengri/crd.yaml'
       - 'bun.lock'
       - 'devices/galactic/omni/tengri-runner-*.json'
-      - 'devices/nuc/ofz-recovery/**'
       - 'flake.lock'
       - 'flake.nix'
       - 'nix/cache-push.sh'
@@ -75,6 +78,11 @@ on:
       - 'packages/scripts/src/shared/oci.ts'
       - 'packages/scripts/src/tengri/**'
       - 'proto/proompteng/authz/**'
+      - 'services/relay/**'
+      - 'packages/platform-client/**'
+      - 'proto/proompteng/relay/**'
+      - 'apps/landing/src/lib/platform/**'
+      - 'apps/landing/src/app/api/platform/**'
       - 'services/nanoagent/**'
       - 'services/ofz/**'
       - 'services/ofz/Cargo.*'
@@ -121,8 +129,8 @@ jobs:
       - name: Validate typed contract and inventory
         run: |
           set -euo pipefail
-          buf lint --path proto/proompteng/authz/v1/authz.proto
-          buf format --path proto/proompteng/authz/v1/authz.proto --diff --exit-code
+          buf lint --path proto/proompteng/authz --path proto/proompteng/relay
+          buf format --path proto/proompteng/authz --path proto/proompteng/relay --diff --exit-code
           python3 services/ofz/tests/inventory.py
           python3 -m unittest discover -s services/ofz/tests -p 'test_*.py'
       - name: Validate Ofz
@@ -135,10 +143,11 @@ jobs:
           bash test-policy.sh
       - name: Verify initial bootstrap and archive-gated activation
         run: bash services/ofz/test-control.sh bootstrap
-      - name: Verify opt-in connector authority in the isolated fixture
-        env:
-          TENGRI_CONNECTORS_ENABLED: 'true'
-        run: bash services/ofz/test-control.sh control
+      - name: Verify control authority and platform clients in isolated fixtures
+        run: |
+          bash services/ofz/test-control.sh control
+          bash services/ofz/test-control.sh platform
+          bash services/ofz/qualify-platform.sh
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: '0.9.15'
@@ -162,7 +171,7 @@ jobs:
           echo "KEYCLOAK_FIXTURE_BIN=$(bash services/ofz/tests/keycloak-runtime.sh "$RUNNER_TEMP/ofz-keycloak")" >> "$GITHUB_ENV"
       - name: Verify generated authorization client
         run: |
-          buf generate --template services/ofz/buf.gen.yaml --path proto/proompteng/authz
+          buf generate --template services/ofz/buf.gen.yaml --path proto/proompteng/authz --path proto/proompteng/relay
           git diff --exit-code -- apps/landing/src/lib/tengri/generated
       - name: Verify real browser identity and shared sessions
         run: bash services/ofz/test-control.sh identity

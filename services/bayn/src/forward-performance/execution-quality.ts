@@ -151,6 +151,7 @@ const emptyObservedCapacity = (
 const identityMatches = (
   input: ForwardPerformanceEvidenceInput,
   evidence: ForwardPerformanceExecutionEvidence,
+  completedCycleIds: ReadonlySet<string>,
 ): boolean => {
   const intent = evidence.intent
   if (intent === undefined) return false
@@ -159,7 +160,7 @@ const identityMatches = (
     SHA256_PATTERN.test(evidence.decisionDocumentHash) &&
     SHA256_PATTERN.test(evidence.decisionHash) &&
     SHA256_PATTERN.test(evidence.intentId) &&
-    input.cycles.some((cycle) => cycle.cycleId === evidence.cycleId && cycle.state === 'COMPLETED') &&
+    completedCycleIds.has(evidence.cycleId) &&
     evidence.accountId === input.account.accountId &&
     intent.intentId === evidence.intentId &&
     intent.accountId === evidence.accountId &&
@@ -340,6 +341,10 @@ const measureExecutionQuality = (
   const evidenceHash = sourceEvidenceHash(input, executions, transactions)
   if (Result.isFailure(evidenceHash)) return Result.fail(evidenceHash.failure)
 
+  const completedCycleIds = new Set<string>()
+  for (const cycle of input.cycles) {
+    if (cycle.state === 'COMPLETED') completedCycleIds.add(cycle.cycleId)
+  }
   const reasons = new Set<ForwardPerformanceExecutionQualityReasonCode>()
   const seenIntents = new Set<string>()
   const seenFillEvents = new Set<string>()
@@ -388,7 +393,7 @@ const measureExecutionQuality = (
     const referencePrice = parseUnsigned(evidence.referencePriceMicros, true)
     if (planned === undefined) reasons.add('PLANNED_DECISION_EVIDENCE_GAP')
     if (referencePrice === undefined) reasons.add('REFERENCE_PRICE_EVIDENCE_GAP')
-    if (!identityMatches(input, evidence)) reasons.add('FILL_IDENTITY_DRIFT')
+    if (!identityMatches(input, evidence, completedCycleIds)) reasons.add('FILL_IDENTITY_DRIFT')
 
     const order = evidence.terminalOrder
     const blocked = blockedIntentMatches(evidence)

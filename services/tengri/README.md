@@ -1,9 +1,8 @@
 # Tengri control plane
 
-The additive `ConnectorAgent` RPC is [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
-Without the exact server-side setting `TENGRI_CONNECTORS_ENABLED=true`, it returns
-`UNIMPLEMENTED` before authentication, workspace lookups or guest calls. Existing
-workspace and conversation requests do not call Relay.
+Relay client installation is an authenticated guest-control operation. It uses the shared
+[Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit
+installation acknowledgement before activation. The former dormant connector gate and contract are removed.
 
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
 `internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
@@ -218,9 +217,7 @@ The short-lived TAP init container receives NET_ADMIN inside the Pod network nam
 10.250.0.0/30 addressing, NAT, and protected-destination filtering. It asserts CNI forwarding is already enabled and
 never changes node sysctls, routes, bridges, scheduling, or machine configuration.
 The TAP uses the smaller of the Pod interface MTU and 1500 bytes. TCP SYN and SYN-ACK packets cap their advertised
-segment size in both directions without raising an existing smaller value. The isolated KVM fixture also inherits
-its execution network MTU inside its private Docker interface, so a 1400-byte CNI path is exercised correctly.
-The Linux browser acceptance fixture also uses an ephemeral Docker bridge with that MTU and removes it after the test.
+segment size in both directions without raising an existing smaller value. The Linux browser acceptance fixture also uses an ephemeral Docker bridge with that MTU and removes it after the test.
 
 The runner briefly starts as root with MKNOD/SETUID/SETGID. It creates a private device inode in its container's `/dev`
 for the allocated raw home device, then drops to UID/GID 65532 with no effective, permitted, inheritable, or ambient
@@ -325,7 +322,7 @@ as ready to accept agent operations.
 ## Workspace authorization
 
 Ofz owns authorization for the controller and BFF. Tengri calls the canonical
-[AuthorizationService](../../proto/proompteng/authz/v1/authz.proto) over exact-peer SPIFFE mutual TLS; it never
+[TengriAuthorizationService](../../proto/proompteng/authz/v1/authz.proto) over exact-peer SPIFFE mutual TLS; it never
 receives a SpiceDB administrative key, installs schema, or creates owner tuples directly. The canonical
 [operation catalog](../ofz/operations.json) maps each runtime RPC to an explicit action. Local Kubernetes labels,
 names and owner fields locate resources; Ofz checks the actual MicroVM UID and current runtime epoch.
@@ -408,9 +405,8 @@ same chain. Observer operations do not renew idle activity.
 Run `bash services/tengri/test-runtime.sh` for real TLS PostgreSQL 18.6 and SpiceDB 1.56.2 fixtures. It exercises
 replica-wide redemption/replay, preview binding and rotation, capacity/expiry, leadership CAS and lease expiry,
 supervisor SQL restrictions and protected cleanup. `bash services/ofz/test-control.sh` additionally proves typed
-reservation/runtime reads and the two-stage removal contract. For native KVM acceptance, set the documented image,
-output and sample variables and run `bash services/ofz/test-control.sh kvm`; this provisions the real shared SQL
-fixture and invokes `test-kvm.sh`. Unit fixtures do not establish production authority or fleet acceptance.
+reservation/runtime reads and the two-stage removal contract. The container-based KVM acceptance fixture has been
+removed. Source checks do not establish production authority or fleet acceptance.
 
 These source contracts are held behind `TENGRI_PREPARED_SLOT_CUTOVER_READY=false` until the coordinated release.
 See [implementation status](../../docs/tengri/ofz-implementation-status.md) for the remaining production gates.
@@ -466,65 +462,15 @@ Pull requests run source, authorization, database, browser, and editor validatio
 and Proompteng release images build only from `main`. PRs do not build unused native image archives or export
 PR-specific registry caches. Main publication retains both native architectures, paired guest checksum validation,
 and the KVM lifecycle gates before exposing either image to Kargo.
-Each architecture builds its guest, controller, and native fixture in one job with the same BuildKit builder, then runs
-native qualification. The runtime and harness builds both import the existing per-architecture Tengri cache: a cache
-hit in the runtime request does not materialize every intermediate build result for the later harness request.
-Guest test binaries stay local to that job. Native qualification does not create a separate registry cache or wait for
-the other architecture. Publication still requires both architectures and the full controller and guest source validation.
-`TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
-select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
-`bash services/tengri/test-kvm.sh`. The native job extracts the runner seccomp profile from its architecture-specific
-Omni configuration.
-The guest receives a separate resolver file. Docker's network resolver at `127.0.0.11` stays in the fixture container
-for shared SQL discovery; copying it into the VM would send DNS requests to the guest's own loopback.
-Routine main publication runs
-three real sleep/resume cycles on each architecture. Every resume must finish below one second, and publication still
-requires file and same-shell continuity, initialized Codex, host identity rotation, VMM termination, snapshot page
-eviction, guest administration, and browser startup. It also requires terminal first output below 300 ms, managed
-Neovim first screen below one second, and 50 heartbeat samples with p95 below 100 ms during eight seconds of guest
-disk writes and flushes. It checks io_uring worker bounds, cgroup attribution and the PID limit, then injects a read
-error into only the disposable fixture home disk and requires the guest to report it while remaining responsive.
-The retained `io-responsiveness.json` aligns heartbeat windows with bounded samples of the VMM main thread and four
-vCPUs. It records public scheduler, page-fault and wait-state counters so a failed responsiveness gate can be traced
-without capturing guest memory, RPC payloads or credentials. Sampling stops after the I/O probe, with a twelve-second
-upper bound. The latency limits and fifty heartbeat samples remain unchanged.
-The first sleep lasts three minutes so the previous host SVID
-expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
-`validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
-Resume replies report monotonic time spent after applying the host clock. The host excludes that readiness work
-when bounding clock-transfer delay, and repeats the same idempotent resume if the timestamp arrived too late.
-Missing or inconsistent clock timing rejects the resume; the controller and guest images must be promoted together.
-The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful
-container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
+Each architecture builds its guest and controller through the standalone BuildKit worker. The production image
+builds retain their source unit tests and guest filesystem checks. The native build job verifies the guest kernel and
+root filesystem against the checksum manifest by exporting image contents with Crane. Container-based KVM lifecycle
+qualification, runtime image loading, and fixture-only image stages have been removed.
 
-The native terminal probe answers foreground/background color queries and the device-status barrier used by the
-pinned Neovim startup. Query parsing retains split sequences. Editor readiness requires a marker rendered in the
-managed editor's buffer, rather than a separate stderr message. The command constructs the marker from character
-codes so shell echo cannot satisfy the probe. The one-second screen limit and all other performance limits remain unchanged.
-
-For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
-`TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
-and fixture builds share the Dockerfile's real-source release compilation. A pinned `cargo-chef` recipe caches Rust
-dependencies independently of application source. The image build runs the controller binary's release unit tests and
-retains the exact native test binary in its build stage. The source validation job owns all-target tests, generated CRD
-checks, database integration, and RPC interoperability. The `kvm-test` target copies the native binary from the same stage;
-the production runtime excludes fixture binaries. Native validation reuses the runtime's local compilation and the
-same source-revision build argument. Cache exports are best effort;
-BuildKit reports export errors without canceling required image publication
-or native validation.
-
-The fixture uses a private Docker
-network/PID namespace, the production four-CPU quota, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts. It verifies and records the cgroup CPU quota before booting the guest.
-It checks real files, the same PTY shell, initialized Codex, stop/page-eviction, and rotating host identities, preserving
-diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared
-creation and repeated slot resumes do not prove the full authenticated BFF/Kubernetes creation distribution or six
-concurrent guests.
-
-`creation-resources.json` retains fixture-cgroup CPU, memory (including major faults), I/O and pressure counters
-before and after prepared creation. These bounded, fixed-file reads run outside the unchanged creation timer and
-are saved before later lifecycle checks, so a later failure does not erase the creation evidence. Missing counters
-are reported as unavailable, not zero. Cgroup-wide deltas can identify contention or paging evidence but do not
-attribute individual guest operations or prove a performance improvement.
+Publication requires both native builds, the complete controller and Nanoagent source validation jobs, paired image
+checksums, signed immutable indexes, and successful release-artifact uploads before exposing either image to Kargo.
+These gates no longer prove guest sleep/resume, snapshot page eviction, runtime editor latency, live KVM device
+behavior, or the removed fixture's performance bounds.
 
 ## Editor sessions
 
