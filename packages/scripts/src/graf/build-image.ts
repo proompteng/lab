@@ -16,7 +16,6 @@ export type BuildImageOptions = {
   gradleTasks?: string
   gradleArgs?: string
   cacheRef?: string
-  useBuildx?: boolean
 }
 
 export const buildImage = async (options: BuildImageOptions = {}) => {
@@ -30,10 +29,6 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const gradleTasks = options.gradleTasks ?? process.env.GRAF_GRADLE_TASKS
   const gradleArgs = options.gradleArgs ?? process.env.GRAF_GRADLE_ARGS
   const cacheRef = options.cacheRef ?? process.env.GRAF_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
-  const useBuildx =
-    options.useBuildx ??
-    (process.env.GRAF_USE_BUILDX ? ['1', 'true', 'yes', 'y', 'on'].includes(process.env.GRAF_USE_BUILDX) : undefined)
-
   const result = await buildAndPushDockerImage({
     registry,
     repository,
@@ -41,7 +36,6 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     context,
     dockerfile,
     cacheRef,
-    useBuildx,
     buildArgs: {
       GRAF_VERSION: version,
       GRAF_COMMIT: commit,

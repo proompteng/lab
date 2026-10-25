@@ -418,6 +418,51 @@ func TestFileWatcherCorrelatesRawAndPairedRenameInEitherOrder(t *testing.T) {
 	}
 }
 
+func TestFileWatcherKeepsOrderedRenameFencePastFallbackDeadline(t *testing.T) {
+	t.Parallel()
+	workspace, err := newWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("new workspace: %v", err)
+	}
+	defer workspace.close()
+	files := &fileWatcher{
+		workspace:     workspace,
+		subscriptions: make(map[uint64]fileSubscription),
+	}
+	id, events, err := files.subscribe(0, "/workspace", "")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer files.unsubscribe(id)
+	source := filepath.Join(workspace.realRoot, "source.txt")
+	destination := filepath.Join(workspace.realRoot, "destination.txt")
+	generation, err := files.beginPairedRename(source, destination)
+	if err != nil {
+		t.Fatalf("begin paired rename: %v", err)
+	}
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
+	if event := <-events; event.Kind != "renamed" {
+		t.Fatalf("paired event = %#v, want renamed", event)
+	}
+
+	// The kernel's ordered rename echoes can be queued longer than the fallback deadline.
+	files.expireCompletedRename(generation)
+	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
+	files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Create})
+	select {
+	case extra := <-events:
+		t.Fatalf("delayed rename echo escaped its ordered fence: %#v", extra)
+	default:
+	}
+	if len(files.completedRenames) != 0 {
+		t.Fatalf("completed fence remained after both ordered echoes: %#v", files.completedRenames)
+	}
+	files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Create})
+	if event := <-events; event.Kind != "created" || event.Path != "/workspace/destination.txt" {
+		t.Fatalf("next generation event = %#v, want created", event)
+	}
+}
+
 func TestFileWatcherPublishesObservedRawRenameWhenPairedRenameIsCanceled(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -1124,5 +1169,78 @@ func TestFileWatcherSubscriberLimit(t *testing.T) {
 	}
 	for _, id := range ids {
 		files.unsubscribe(id)
+	}
+}
+
+func TestFileWatcherReleasesMoveResourcesAfterSubscribersClose(t *testing.T) {
+	for _, outcome := range []string{"rename", "cancel", "overflow", "pending-overflow"} {
+		t.Run(outcome, func(t *testing.T) {
+			t.Parallel()
+			workspace, err := newWorkspace(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer workspace.close()
+			left := filepath.Join(workspace.realRoot, "left")
+			right := filepath.Join(workspace.realRoot, "right")
+			for _, directory := range []string{left, right} {
+				if err := os.Mkdir(directory, 0o750); err != nil {
+					t.Fatal(err)
+				}
+			}
+			source := filepath.Join(left, "source.txt")
+			destination := filepath.Join(right, "destination.txt")
+			if err := os.WriteFile(source, []byte("move"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			files, err := newFileWatcher(workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer files.close()
+			first, _, err := files.subscribe(0, "/workspace/left", left)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, _, err := files.subscribe(0, "/workspace/right", right)
+			if err != nil {
+				t.Fatal(err)
+			}
+			generation, err := files.beginPairedRename(source, destination)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files.unsubscribe(first)
+			files.unsubscribe(second)
+			if outcome == "cancel" {
+				files.cancelPairedRename(source, generation)
+			} else {
+				if outcome == "pending-overflow" {
+					files.handleWatcherError(fsnotify.ErrEventOverflow)
+				}
+				if outcome == "rename" {
+					if err := os.Rename(source, destination); err != nil {
+						t.Fatal(err)
+					}
+				}
+				files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/right/destination.txt"})
+				if outcome == "overflow" {
+					files.handleWatcherError(fsnotify.ErrEventOverflow)
+				}
+			}
+			deadline := time.Now().Add(time.Second)
+			for {
+				files.mu.Lock()
+				pending, completed, watched := len(files.expectedRenames), len(files.completedRenames), len(files.watched)
+				files.mu.Unlock()
+				if pending == 0 && completed == 0 && watched == 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("move retained resources: pending=%d completed=%d watched=%d", pending, completed, watched)
+				}
+				time.Sleep(time.Millisecond)
+			}
+		})
 	}
 }

@@ -215,7 +215,7 @@ func (supervisor *codexSupervisor) dispatchOperation(ctx context.Context, method
 			!errors.As(err, &rpcError) || rpcError.code != -32600 || rpcError.message != "thread not found: "+input.Thread {
 			return result, err
 		}
-		resume, _ := json.Marshal(map[string]any{"threadId": input.Thread, "historyMode": "paginated"})
+		resume, _ := json.Marshal(map[string]any{"threadId": input.Thread, "historyMode": "paginated", "excludeTurns": true})
 		if _, err := supervisor.request(ctx, "thread/resume", resume, true, result.generation); err != nil {
 			return result, err
 		}

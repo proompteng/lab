@@ -107,19 +107,11 @@ envelope can still cause failover. See the pinned [Raft loop](https://github.com
 [gossip options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/gossip.rs) and
 [networking options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/networking.rs).
 
-`bun packages/scripts/src/restate/verify-resilience.ts <image> <evidence-directory>` creates an isolated three-node Docker
-cluster with the manifest's settings and two active partition processors. It tests distributed SQL, 3s delays in both
-directions, a 38s whole-process pause, and actual leader loss. Delays must preserve metadata leadership, avoid metadata
-transport timeouts, and avoid false gossip death transitions. The fixture restarts its isolated proxy to clear latency
-without waiting for Toxiproxy's live-stream removal to drain. Actual loss must elect a replacement within 100s, produce
-a gossip death observation for the lost peer, and restore queries. Status requests use a 1s deadline after node loss so
-waiting for the dead member does not delay the surviving members' observations. Artifacts retain Raft logs and metadata
-samples with request start and end times. Observation can continue to 200s to record a late election, which still fails
-the 100s acceptance check. Containers and their disposable volumes are removed afterward.
-Never point this fixture at production or run its fault injection against a live member.
+The container runtime fault-injection fixture has been removed. CI no longer establishes the delayed-message,
+process-pause or node-loss acceptance behavior described by the runtime settings above.
 
-The `Restate images` workflow tests the metadata regression and runtime on both native architectures. PR runs publish
-no images. After a reviewed `main` merge, the workflow uploads proof, publishes both tested platform images, validates
+The `Restate images` workflow builds both native architectures and runs the metadata regression during the image build. PR runs publish
+no images. After a reviewed `main` merge, the workflow uploads proof, publishes both built platform images, validates
 and signs the final index, uploads its receipt, then exposes its immutable run-qualified Kargo alias. Warehouse and
 Stage `lab-delivery/restate` write the selected digest to the `restate-runtime` Kustomize input on `kargo/restate`.
 The ApplicationSet follows that branch under the [release contract](../../../docs/release-automation.md).

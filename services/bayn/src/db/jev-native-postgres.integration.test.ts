@@ -24,6 +24,7 @@ import { utcInstantFromEpochMillis } from '../time'
 import { NodeServices } from '@effect/platform-node'
 
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
+import { CryptoFeeTier } from '../broker/crypto-fees'
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
 import { Authority, KillState, OrderSide } from '../execution/contracts'
@@ -79,6 +80,7 @@ import { JevEvaluationStoreLive, makeJevEvaluationStore } from './jev-evaluation
 import { JevPositionStoreLive } from './jev-position-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { verifyBrokerStateVersion } from './reconciliation'
 
 setDefaultTimeout(30_000)
 
@@ -1133,7 +1135,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* insert('jev', '9'.repeat(64), 2)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v20' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v23' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
@@ -1834,7 +1836,21 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
 
   const nativeExitPersistence = async (scenario: string) => {
     const providerClock = await Effect.runPromise(Clock.clockWith(Effect.succeed))
-    const state = fixture.portfolio.brokerState
+    const source = fixture.portfolio.brokerState
+    const material = { ...source, account: { ...source.account, cryptoFeeTier: CryptoFeeTier.Four } }
+    const hash = Result.getOrThrow(reconciledStateHash(material))
+    const state =
+      scenario === 'fee-source'
+        ? {
+            ...material,
+            reconciliation: {
+              ...source.reconciliation,
+              reconciliationId: 'f'.repeat(64),
+              expectedHash: hash,
+              observedHash: hash,
+            },
+          }
+        : source
     const at = fixture.observation.payload.observedAt
     let reconciliations = 0
     let calls = 0
@@ -1889,6 +1905,13 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     }
     await runtime.runPromise(
       Effect.gen(function* () {
+        if (scenario === 'fee-source') {
+          const sql = yield* PgClient.PgClient
+          const r = state.reconciliation
+          yield* sql`INSERT INTO reconciliations
+            (reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+            VALUES (${r.reconciliationId},${r.schemaVersion},${r.accountId},${r.expectedHash},${r.observedHash},${r.contentHash},'EXACT','[]'::jsonb,${r.reconciledAt})`
+        }
         yield* acquireEntryCycle(at)
         const active = yield* (yield* CycleStore).activate(nativeInput.cycleId, at)
         const document = yield* buildMutationShadowCycleDecision({
@@ -1959,6 +1982,30 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           entryDocument: document,
           observedAt: new Date(Date.parse(document.createdAt) + 3 * 60_000 + 2000).toISOString(),
         })
+        if (scenario === 'fee-source') {
+          const sql = yield* PgClient.PgClient
+          yield* sql`INSERT INTO authority_state
+            (schema_version,generation_hash,maximum,effective,kill_state,reason,version,updated_at)
+            VALUES ('bayn.paper-authority.v1',${nativeInput.authorityGenerationHash},'OBSERVE','OBSERVE','CLEAR',NULL,1,
+              ${fixture.observation.payload.observedAt})`
+          const [authority] = yield* sql<{ version: string }>`SELECT version::text FROM authority_state WHERE singleton`
+          if (authority === undefined) throw new Error('Expected authority state')
+          const version = {
+            reconciliationId: portfolio.brokerState.reconciliation.reconciliationId,
+            reconciledAt: portfolio.brokerState.reconciliation.reconciledAt,
+            authorityGenerationHash: nativeInput.authorityGenerationHash,
+            authorityVersion: Number(authority.version),
+          }
+          const intentId = document.orderedIntentIds[0]
+          if (intentId === undefined) throw new Error('Expected the sealed entry intent')
+          expect(yield* verifyBrokerStateVersion(sql, replayAccountId, version, intentId, true)).toBe(18)
+          const missing = yield* verifyBrokerStateVersion(sql, replayAccountId, version, '0'.repeat(64), true).pipe(
+            Effect.exit,
+          )
+          expect(Exit.isFailure(missing)).toBe(true)
+          if (Exit.isFailure(missing)) expect(Cause.pretty(missing.cause)).toContain('ReconciliationStoreError')
+          return
+        }
         yield* TestClock.setTime(Date.parse(managed.observation.payload.observedAt))
         const bound = yield* (yield* CycleStore).read(nativeInput.cycleId)
         if (Option.isNone(bound)) throw new Error('Expected bound entry')
@@ -2255,6 +2302,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     )
   }
   test.each([
+    'fee-source',
     'recovery',
     'expires-during-insert',
     'expires-before-commit',

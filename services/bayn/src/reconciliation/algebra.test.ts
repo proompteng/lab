@@ -105,7 +105,8 @@ const receipt: AccountingReceipt = {
 }
 
 const account: AccountSnapshot = {
-  schemaVersion: 'bayn.paper-account-snapshot.v1',
+  schemaVersion: 'bayn.paper-account-snapshot.v2',
+  cryptoFeeTier: null,
   accountId,
   status: AccountStatus.Active,
   currency: 'USD',

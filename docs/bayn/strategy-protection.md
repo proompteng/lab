@@ -1,7 +1,7 @@
 # Jev-selected trade plans and broker protection
 
 Jev judges the current setup and whether a complete entry, stop loss and take profit justify an actual trade before execution.
-Protocol v20 / signal state v17, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
+Protocol v23 / signal state v21, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
 Broker protection, sizing, cost, account-risk and holding/session safeguards remain enforced.
 
 ## Model contract
@@ -54,6 +54,16 @@ Quantity retains existing capital allocation and instrument precision. The funde
 refreshed ask from expanding it. Account loss, drawdown, turnover, notional, exposure, open-order, authority and reconciliation
 limits remain enforced. The maximum holding/session deadlines and five-second protection cadence remain safeguards.
 Model probabilities compare supplied alternatives; they are not calibrated probabilities of profitable trades.
+
+Crypto entry inventory uses the taker rate for the broker account's reported `crypto_tier`, retained in the sealed
+v2 account snapshot and its reconciled state hash. An unknown tier uses the maximum 25 basis points. Every future
+sell continues to use that maximum, including stop and holding-time liquidation. The final writer fence reads the
+entry's original sealed account evidence and refuses transmission when the freshly observed account's fee bound
+exceeds that estimate. The transport clock checks the bound again immediately before submission. Observations expire
+at the next 07:00 or 08:00 UTC boundary, conservatively covering both interpretations of the documented daily
+03:00 Eastern tier reset. A refreshed account observation is required to retain a discount after either boundary.
+See [Alpaca's crypto fee schedule](https://docs.alpaca.markets/us/docs/crypto-trading) and
+[fee disclosure](https://files.alpaca.markets/disclosures/library/AlpacaCryptoLLCFeeDisclosure.pdf).
 
 ## Venue behavior
 
@@ -112,9 +122,10 @@ Existing quote/risk expiration and cancel-confirm-reconcile requirements still a
 
 ## Hard cutover
 
-Migration 143 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
-immutable financial and model history, restricts new Jev authority to v20, and accepts only current batch and
+Migration 146 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
+immutable financial and model history, restricts new Jev authority to v23, and accepts only current account, batch and
 native protection contracts for new writes. It retires prior PAPER authority through the established OBSERVE
 recovery path. A new same-account mandate is bound to the verified published image before PAPER restoration.
+Historical v1 account snapshots retain their original values; new observations require v2 and a nullable broker fee tier.
 No legacy strategy evaluator or geometric exit fallback remains executable. Replay checkpoint v10 rejects
 pre-cutover checkpoints. Broker order, fill and accounting history are preserved.
