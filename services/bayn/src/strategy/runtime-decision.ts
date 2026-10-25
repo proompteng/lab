@@ -35,7 +35,7 @@ export type RuntimeStrategyDecision = typeof RuntimeStrategyDecisionSchema.Type
 
 export const runtimeDecisionMatchesStrategy = (decision: RuntimeStrategyDecision, strategyName: string): boolean => {
   switch (decision.schemaVersion) {
-    case 'bayn.jev-entry-target.v6':
+    case 'bayn.jev-entry-target.v7':
     case 'bayn.jev-exit-target.v5':
       return strategyName === 'jev'
     case 'bayn.intraday-momentum.target.v3':

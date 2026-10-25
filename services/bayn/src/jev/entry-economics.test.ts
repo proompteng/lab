@@ -1,3 +1,4 @@
+import { EntrySetup } from './entry-proposals'
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -62,7 +63,7 @@ test('the sealed model state uses the account tier for entry and the maximum fut
     }),
   )
   const request = Result.getOrThrow(makeJevTradingSignalRequest(observation.payload, 'BTC/USD'))
-  const context = JSON.parse(request.body).state
+  const context = JSON.parse(request.body).numericalState
   expect(context.execution).toMatchObject({
     maximumEntryFeeBps: 18,
     maximumExitFeeBps: 25,
@@ -91,8 +92,15 @@ test('funding values a native take-profit at its submitted minimum sell price', 
   )
   if (economics === null) throw new Error('Expected a funded equity quantity')
   const levels = {
-    schemaVersion: 'bayn.jev-strategy-exit-plan.v3' as const,
-    rule: 'model-selected-complete-plan' as const,
+    schemaVersion: 'bayn.jev-strategy-exit-plan.v4' as const,
+    rule: 'source-anchored-complete-plan' as const,
+    proposalId: '1'.repeat(64),
+    source: {
+      setup: EntrySetup.SupportRecovery as const,
+      supportBarId: 'bar-1',
+      resistanceBarId: 'bar-2',
+      targetBasis: 'OBSERVED_RESISTANCE' as const,
+    },
     symbol: 'AAPL',
     sourceStartAt: '2026-10-23T14:00:00.000Z',
     sourceEndAt: '2026-10-23T14:30:00.000Z',
@@ -142,14 +150,15 @@ test('funding values a native take-profit at its submitted minimum sell price', 
   )
 })
 
-test('typed entry and protection choices support an entry without a confidence gate', () => {
+test('supported atomic judgments admit a funded proposal while uncertain judgments abstain', () => {
   const fixture = nativeJevFixture()
   const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
-  expect(
-    Object.fromEntries(Object.entries(request.request.questions).map(([name, question]) => [name, question.type])),
-  ).toEqual({ action: 'choice', setup: 'choice' })
-  const evidence = nativeJevDecisionEvidence(fixture, 'enter', 0.4)
-  expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
+  expect(request.input.numericalState).toHaveProperty('entryEconomics')
+  expect(request.input).not.toHaveProperty('questions')
+  expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(fixture, true, 0.9))).selectedSymbols).toHaveLength(
+    1,
+  )
+  expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(fixture, true, 0.4))).selectedSymbols).toEqual([])
 })
 
 test('an unfunded whole-equity target abstains even when the model chooses enter', () => {
@@ -168,10 +177,10 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
     const { snapshot } = cryptoMarketFixture(symbol)
     const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const request = Result.getOrThrow(makeJevTradingSignalRequest(native, symbol))
-    const state = JSON.parse(request.body).state
+    const state = JSON.parse(request.body).numericalState
     expect(state.entryEconomics).not.toBeNull()
-    expect(request.request.questions['action']).toBeDefined()
-    expect(request.request.questions['net_economics']).toBeUndefined()
+    expect(request.input.funding.cryptoFeeTier).toBe(native.portfolio.brokerState.account.cryptoFeeTier)
+    expect(request.input).not.toHaveProperty('questions')
   },
 )
 
@@ -245,14 +254,21 @@ test('a cheaper refreshed crypto ask preserves the funded cap used by durable re
         ...input,
         plans: {
           'BTC/USD': {
-            schemaVersion: 'bayn.jev-funded-exit-plan.v3',
+            schemaVersion: 'bayn.jev-funded-exit-plan.v4',
             maximumQuantityAtoms: economics.maximumQuantityAtoms,
             acquisitionCostMicros: economics.acquisitionCostMicros,
             estimatedStopNetMicros: '1',
             estimatedTargetNetMicros: String(BigInt(economics.acquisitionCostMicros) + 1n),
             levels: {
-              schemaVersion: 'bayn.jev-strategy-exit-plan.v3',
-              rule: 'model-selected-complete-plan',
+              schemaVersion: 'bayn.jev-strategy-exit-plan.v4',
+              rule: 'source-anchored-complete-plan',
+              proposalId: '1'.repeat(64),
+              source: {
+                setup: EntrySetup.SupportRecovery,
+                supportBarId: 'bar-1',
+                resistanceBarId: 'bar-2',
+                targetBasis: 'OBSERVED_RESISTANCE',
+              },
               symbol: 'BTC/USD',
               sourceStartAt: '2026-10-19T14:59:00.000Z',
               sourceEndAt: '2026-10-19T15:00:00.000Z',

@@ -1,4 +1,7 @@
-import type { JevRequest } from './contract'
+import type { EntryInferenceInput } from './entry-inference-input'
+import { makeNativeChartEvidence } from './chart-evidence'
+import { makeChartDecisionsRequest } from './chart-questions'
+import { entryJudgmentPolicy } from './entry-questions'
 import { Result, Schema } from 'effect'
 import { jevBenchmarkSymbol } from './markets'
 
@@ -36,7 +39,7 @@ export enum JevEntryExclusion {
 }
 
 export enum JevBatchPlanVersion {
-  V6 = 'bayn.jev-batch-plan.v6',
+  V7 = 'bayn.jev-batch-plan.v7',
 }
 
 export const JevCandidateExclusionSchema = Schema.Struct({
@@ -231,18 +234,19 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
   })
 
 export const jevBatchQuestionSetHash = (
-  candidates: readonly { readonly symbol: string; readonly request?: { readonly request: JevRequest } }[],
+  candidates: readonly { readonly symbol: string; readonly request?: { readonly request: EntryInferenceInput } }[],
 ) =>
-  hash(
-    candidates.flatMap((candidate) =>
-      candidate.request === undefined
-        ? []
-        : [
-            {
-              symbol: candidate.symbol,
-              model: candidate.request.request.model,
-              questions: candidate.request.request.questions,
-            },
-          ],
-    ),
-  )
+  Result.gen(function* () {
+    const specifications = []
+    for (const candidate of candidates) {
+      if (candidate.request === undefined) continue
+      const chart = yield* makeNativeChartEvidence(candidate.request.request.chartSource)
+      const visual = yield* makeChartDecisionsRequest(chart)
+      specifications.push({
+        symbol: candidate.symbol,
+        visual: { model: visual.request.model, questions: visual.request.questions },
+        jev: entryJudgmentPolicy,
+      })
+    }
+    return yield* hash(specifications)
+  })

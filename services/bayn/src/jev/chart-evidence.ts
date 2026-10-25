@@ -1,8 +1,9 @@
 import { deflateSync } from 'node:zlib'
 import { Result, Schema } from 'effect'
 
-import { sha256 } from '../hash'
-import { JevContractError, type JevRequest } from './contract'
+import { canonicalHashV1Result, sha256 } from '../hash'
+import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { JevContractError } from './contract'
 
 const Bar = Schema.Struct({
   minuteBeforeWindowEnd: Schema.Finite,
@@ -13,26 +14,29 @@ const Bar = Schema.Struct({
   volume: Schema.Finite,
 })
 export type VisualBar = typeof Bar.Type
-const VisualState = Schema.Struct({
-  candidate: Schema.Struct({ symbol: Schema.NonEmptyString, bars1m: Schema.Array(Bar) }),
+export const ChartSourceSchema = Schema.Struct({
+  symbol: SymbolSchema,
+  windowEndAt: UtcInstantSchema,
+  bars: Schema.Array(Bar).check(Schema.isMinLength(1), Schema.isMaxLength(120)),
 })
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
 
-/** Validate only a projection; native Jev state includes additional sealed signals. */
-export const verifiedVisualBars = (request: JevRequest) =>
+export const decodeChartSource = (input: unknown) =>
   Result.gen(function* () {
-    const state = yield* Schema.decodeUnknownResult(VisualState)(request.state).pipe(
-      Result.mapError(() => new JevContractError({ message: 'Visual research requires native candidate OHLCV state' })),
+    const source = yield* Schema.decodeUnknownResult(
+      ChartSourceSchema,
+      strictParseOptions,
+    )(input).pipe(
+      Result.mapError(() => new JevContractError({ message: 'Chart source requires identified completed OHLCV bars' })),
     )
-    const bars = state.candidate.bars1m
-    if (bars.length < 5 || bars.length > 120)
-      return yield* invalid('Visual research requires between 5 and 120 completed bars')
+    const { bars } = source
     let previousMinute = Number.POSITIVE_INFINITY
     for (const bar of bars) {
       if (
         !Object.values(bar).every(Number.isFinite) ||
         !Number.isInteger(bar.minuteBeforeWindowEnd) ||
         bar.minuteBeforeWindowEnd < 1 ||
+        bar.minuteBeforeWindowEnd > 120 ||
         bar.minuteBeforeWindowEnd >= previousMinute ||
         bar.open <= 0 ||
         bar.close <= 0 ||
@@ -41,14 +45,12 @@ export const verifiedVisualBars = (request: JevRequest) =>
         bar.low > Math.min(bar.open, bar.close) ||
         bar.volume < 0
       )
-        return yield* invalid('Visual research rejected malformed, unordered or impossible OHLCV bars')
+        return yield* invalid('Chart source contains malformed, unordered or impossible completed bars')
       previousMinute = bar.minuteBeforeWindowEnd
     }
-    const first = bars[0]
-    const last = bars.at(-1)
-    if (first === undefined || last === undefined || first.minuteBeforeWindowEnd - last.minuteBeforeWindowEnd > 120)
-      return yield* invalid('Visual research observation exceeds 120 elapsed minutes')
-    return { symbol: state.candidate.symbol, bars }
+    if (Date.parse(source.windowEndAt) % 60_000 !== 0)
+      return yield* invalid('Chart source requires a completed minute boundary')
+    return source
   })
 
 const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
@@ -67,13 +69,25 @@ const pngChunk = (kind: string, payload: Buffer): Buffer => {
   return Buffer.concat([length, data, check])
 }
 
-/** Reproducible PNG: no clock, external renderer, additional data or hidden indicators. */
+const digits = [
+  '111101101101111',
+  '010110010010111',
+  '111001111100111',
+  '111001111001111',
+  '101101111001001',
+  '111100111001111',
+  '111100111101111',
+  '111001001001001',
+  '111101111101111',
+  '111101111001111',
+]
+
 export const renderNativeCandlesPng = (bars: readonly VisualBar[]): Buffer => {
   const first = bars[0]
   const last = bars.at(-1)
   if (first === undefined || last === undefined) throw new RangeError('Cannot render empty OHLCV')
   const width = 640
-  const height = 360
+  const height = 384
   const pixels = Buffer.alloc(width * height * 4, 255)
   const pixel = (x: number, y: number, color: readonly [number, number, number]) => {
     if (x < 0 || x >= width || y < 0 || y >= height) return
@@ -84,6 +98,19 @@ export const renderNativeCandlesPng = (bars: readonly VisualBar[]): Buffer => {
   }
   const vertical = (x: number, top: number, bottom: number, color: readonly [number, number, number]) => {
     for (let y = Math.max(0, top); y <= Math.min(height - 1, bottom); y++) pixel(x, y, color)
+  }
+  const number = (value: number, x: number, y: number, color: readonly [number, number, number]) => {
+    const text = String(value)
+    for (let index = 0; index < text.length; index++) {
+      const glyph = digits[Number(text[index])]
+      if (glyph === undefined) continue
+      for (let row = 0; row < 5; row++)
+        for (let column = 0; column < 3; column++) {
+          if (glyph[row * 3 + column] !== '1') continue
+          for (let dx = 0; dx < 2; dx++)
+            for (let dy = 0; dy < 2; dy++) pixel(x + index * 8 + column * 2 + dx, y + row * 2 + dy, color)
+        }
+    }
   }
   const minimum = Math.min(...bars.map((bar) => bar.low))
   const maximum = Math.max(...bars.map((bar) => bar.high))
@@ -96,7 +123,7 @@ export const renderNativeCandlesPng = (bars: readonly VisualBar[]): Buffer => {
   const down: readonly [number, number, number] = [190, 64, 69]
   for (let x = 8; x < width - 8; x++) pixel(x, 273, ink)
   const bodyWidth = Math.max(1, Math.min(5, Math.floor(616 / timeRange / 3)))
-  for (const bar of bars) {
+  for (const [index, bar] of bars.entries()) {
     const x = 12 + Math.round(((first.minuteBeforeWindowEnd - bar.minuteBeforeWindowEnd) / timeRange) * 616)
     const color = bar.close >= bar.open ? up : down
     vertical(x, yFor(bar.high), yFor(bar.low), ink)
@@ -106,6 +133,8 @@ export const renderNativeCandlesPng = (bars: readonly VisualBar[]): Buffer => {
       vertical(column, top, bottom, color)
       vertical(column, 349 - Math.round((bar.volume / volumeMax) * 67), 349, color)
     }
+    if (index % Math.max(1, Math.ceil(bars.length / 20)) === 0 || index === bars.length - 1)
+      number(bar.minuteBeforeWindowEnd, Math.max(0, x - String(bar.minuteBeforeWindowEnd).length * 4), 365, ink)
   }
   const raw = Buffer.alloc(height * (width * 4 + 1))
   for (let y = 0; y < height; y++) pixels.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4)
@@ -122,17 +151,43 @@ export const renderNativeCandlesPng = (bars: readonly VisualBar[]): Buffer => {
   ])
 }
 
-export const nativeCandlestickEvidence = (request: JevRequest) =>
-  verifiedVisualBars(request).pipe(
-    Result.map(({ symbol, bars }) => {
-      const png = renderNativeCandlesPng(bars)
-      return {
-        symbol,
-        barCount: bars.length,
-        barsHash: sha256(JSON.stringify(bars)),
-        pngHash: sha256(png),
-        image: `data:image/png;base64,${png.toString('base64')}`,
-        provenance: 'DERIVED_FROM_SAME_NATIVE_OHLCV' as const,
-      }
-    }),
+const chartImages = new Map<string, { readonly pngHash: string; readonly image: string }>()
+const chartImage = (barsHash: string, bars: readonly VisualBar[]) => {
+  const existing = chartImages.get(barsHash)
+  if (existing !== undefined) return existing
+  const png = renderNativeCandlesPng(bars)
+  const rendered = { pngHash: sha256(png), image: `data:image/png;base64,${png.toString('base64')}` }
+  if (chartImages.size >= 64) {
+    const oldest = chartImages.keys().next()
+    if (oldest.done === false) chartImages.delete(oldest.value)
+  }
+  chartImages.set(barsHash, rendered)
+  return rendered
+}
+
+export const makeNativeChartEvidence = (input: unknown) =>
+  decodeChartSource(input).pipe(
+    Result.flatMap((source) =>
+      Result.gen(function* () {
+        const { symbol, bars, windowEndAt } = source
+        const barsHash = yield* canonicalHashV1Result(source).pipe(
+          Result.mapError((cause) => new JevContractError({ message: 'Chart source cannot be hashed', cause })),
+        )
+        const identifiedBars = bars.map((bar) => {
+          const timestamp = new Date(Date.parse(windowEndAt) - bar.minuteBeforeWindowEnd * 60_000).toISOString()
+          return { ...bar, id: `bar_${timestamp}`, timestamp, chartLabel: String(bar.minuteBeforeWindowEnd) }
+        })
+        return {
+          symbol,
+          windowEndAt,
+          bars: identifiedBars,
+          barCount: bars.length,
+          barsHash,
+          ...chartImage(barsHash, bars),
+          provenance: 'DERIVED_FROM_SAME_NATIVE_OHLCV' as const,
+        }
+      }),
+    ),
   )
+
+export type NativeChartEvidence = Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>

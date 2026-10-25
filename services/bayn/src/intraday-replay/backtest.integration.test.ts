@@ -1,3 +1,6 @@
+import { DecisionsClient } from '../jev/decisions'
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
+import { makeReplayInferenceBudget } from './inference-timing'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 
@@ -39,7 +42,7 @@ import {
 } from '../market-data/streaming/projection'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeSimulatedExecutionClock } from './clock'
-import { makeReplayJevTiming } from './jev-timing'
+import { makeReplayInferenceTiming } from './inference-timing'
 import { makeReplayTimeline } from './session'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
@@ -164,8 +167,12 @@ durableTest(
           createdAt: new Date(startMs).toISOString(),
         })
         yield* advanceTo(closeMs - 200)
-        const timing = yield* makeReplayJevTiming({
-          provider: { evaluate: () => Effect.die('Closing-cut regression does not infer') },
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
+          providers: {
+            jev: { evaluate: () => Effect.die('Closing-cut regression does not infer') },
+            chart: chartProviderFixture,
+          },
           providerClock,
           advanceTo,
           advanceDeadlineTo,
@@ -240,15 +247,23 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v5',
+          schemaVersion: 'bayn.backtest.v6',
           jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
           replicate: `measured-bootstrap-${randomUUID()}`,
           inference: {
-            mode: 'measured-provider',
+            mode: 'measured-providers',
             maximumCalls: 1000,
-            model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v21',
-            costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+            models: { jev: jevModel, chart: 'gpt-6-luna' },
+            inputDefinition: 'bayn.jev-entry-state.v22',
+            costs: {
+              jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+              chart: {
+                inputMicrosPerMillionTokens: '100000',
+                outputMicrosPerMillionTokens: '0',
+                cachedInputMicrosPerMillionTokens: '10000',
+                cacheWriteInputMicrosPerMillionTokens: '125000',
+              },
+            },
           },
           allocatedDataCostPerSessionMicros: boundary === 'unknown-data-cost' ? null : '0',
           interval: { startAt: new Date(openMs).toISOString(), endAt: new Date(closeMs).toISOString() },
@@ -342,6 +357,7 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
               Effect.tap(() => Effect.sleep('25 millis').pipe(Effect.provideService(Clock.Clock, providerClock))),
             ),
           }),
+          Effect.provideService(DecisionsClient, chartProviderFixture),
           Effect.provideService(JevClient, { evaluate: () => Effect.die('A quiet opening fixture must not infer') }),
         )
         expect(Date.parse(passes[0]?.observedAt ?? '')).toBeGreaterThanOrEqual(openMs)
