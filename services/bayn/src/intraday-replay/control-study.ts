@@ -32,7 +32,7 @@ import { BacktestInputSchema, prepareBacktest } from './backtest'
 import { replayQuoteRejection } from './broker-execution-evidence'
 import { makeControlJev, type ControlJevBinding } from './control-jev'
 import { makeControlJevJournal } from './control-jev-journal'
-import { calculateReplayJevCosts, type ReplayJevCostModelSchema } from './jev-costs'
+import { calculateReplayInferenceCosts, type ReplayInferenceCostModelSchema } from './inference-costs'
 import {
   applyControlOrder,
   controlCandidates,
@@ -68,7 +68,8 @@ export type ControlStudyManagement =
   | {
       readonly mode: ControlManagementMode
       readonly evidenceDirectory: string
-      readonly provider: ControlJevBinding['provider']
+      readonly providers: ControlJevBinding['providers']
+      readonly budget: ControlJevBinding['budget']
       readonly providerClock: Clock.Clock
     }
 
@@ -249,12 +250,12 @@ export const runControlSession = (input: {
   readonly management: null | {
     readonly runId: string
     readonly binding: ControlJevBinding
-    readonly costs: typeof ReplayJevCostModelSchema.Type
+    readonly costs: typeof ReplayInferenceCostModelSchema.Type
   }
   readonly entry?: {
     readonly runId: string
     readonly binding: ControlJevBinding
-    readonly costs: typeof ReplayJevCostModelSchema.Type
+    readonly costs: typeof ReplayInferenceCostModelSchema.Type
   }
 }) =>
   Effect.gen(function* () {
@@ -384,7 +385,7 @@ export const runControlSession = (input: {
                 Date.parse(call.providerStartedAt) <=
               atMs,
           )
-        return calculateReplayJevCosts(calls, jevBinding.costs)
+        return calculateReplayInferenceCosts(calls, jevBinding.costs)
       })
     let portfolio = yield* Effect.fromResult(createControlPortfolio(String(openingCash)))
     let peakBrokerEquity = BigInt(input.openingCapital.peakBrokerEquityMicros)
@@ -964,7 +965,7 @@ export const runControlStudy = (
     )
     if (input.management !== management.mode)
       return yield* new ControlStudyFailure({ message: 'Control management binding differs from its frozen input' })
-    if ((input.entry === ControlEntryMode.Jev) !== 'provider' in management)
+    if ((input.entry === ControlEntryMode.Jev) !== 'providers' in management)
       return yield* new ControlStudyFailure({
         message: 'Native Jev entry requires exactly one measured provider binding',
       })
@@ -998,7 +999,7 @@ export const runControlStudy = (
     const runId = yield* Effect.fromResult(
       canonicalHashV1Result({ input, receiptHash: receipt.contentHash, definition, risk }),
     )
-    if ('provider' in management) {
+    if ('providers' in management) {
       const fs = yield* FileSystem.FileSystem
       yield* fs.makeDirectory(management.evidenceDirectory)
       yield* Effect.gen(function* () {
@@ -1025,12 +1026,13 @@ export const runControlStudy = (
         yield* TestClock.setTime(prepared.openMs)
         const controlRunId = yield* Effect.fromResult(canonicalHashV1Result({ runId, policy }))
         const binding =
-          'provider' in management && policy === ControlPolicy.JevEntry
+          'providers' in management && policy === ControlPolicy.JevEntry
             ? {
                 runId: controlRunId,
                 costs: prepared.input.inference.costs,
                 binding: {
-                  provider: management.provider,
+                  providers: management.providers,
+                  budget: management.budget,
                   providerClock: management.providerClock,
                   journal: yield* makeControlJevJournal(`${management.evidenceDirectory}/${policy}`, controlRunId),
                 },

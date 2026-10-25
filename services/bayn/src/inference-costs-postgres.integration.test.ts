@@ -3,7 +3,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, ManagedRuntime, Redacted, Result } from 'effect'
 
 import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
-import { makeInferenceCostReport } from './inference-costs'
+import { InferenceStage, makeInferenceCostReport } from './inference-costs'
 import { evaluationRequestFixture } from './jev/test-support'
 import { baynTestPostgresUrl } from './test-environment.test-support'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
@@ -40,6 +40,7 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
         )`
         yield* sql`CREATE TABLE IF NOT EXISTS jev_evaluation_receipts (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
         yield* sql`CREATE TABLE IF NOT EXISTS jev_evaluation_resolutions (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_inference_handoffs (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
       }),
     )
   })
@@ -124,7 +125,11 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     const report = Result.getOrThrow(
       makeInferenceCostReport(result.evidence, { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] }),
     )
-    expect(report.unknownUsageCount).toBe(1)
+    expect(report.unknownUsageCount).toBe(2)
+    expect(report.requests.flatMap((line) => ('stage' in line ? [line.stage] : [])).sort()).toEqual([
+      InferenceStage.Chart,
+      InferenceStage.Jev,
+    ])
     expect(report.estimatedTotalCostMicros).toBeNull()
   })
 

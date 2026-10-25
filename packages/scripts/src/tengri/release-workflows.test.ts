@@ -71,7 +71,7 @@ describe('Tengri image workflow', () => {
       expect(build?.['continue-on-error']).not.toBe(true)
     }
     const pairedBoot = steps.find((step) => step.name === 'Verify paired boot artifact checksums')
-    expect(pairedBoot?.run).toContain('crane export "$guest"')
+    expect(pairedBoot?.run).toContain('crane export --platform "linux/${ARCHITECTURE}" "$guest"')
     expect(pairedBoot?.run).toContain('sha256sum --check SHA256SUMS')
     expect(steps.some((step) => step.name === 'Build native KVM test harness')).toBe(false)
 

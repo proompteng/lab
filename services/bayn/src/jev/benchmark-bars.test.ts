@@ -15,7 +15,7 @@ const batch = (snapshot: ReturnType<typeof cryptoMarketFixture>['snapshot']) => 
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V7,
     }),
   )
 }
@@ -26,7 +26,7 @@ test('BTC can use verified ETH benchmark bars without authorizing an ETH trade',
   expect(plan.candidates).toHaveLength(1)
   expect(plan.candidates[0]?.status).toBe(JevCandidatePlanStatus.Requested)
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
-  const state = Result.getOrThrow(makeJevTradingSignalRequest(observation, 'BTC/USD')).request.state
+  const state = Result.getOrThrow(makeJevTradingSignalRequest(observation, 'BTC/USD')).input.numericalState
   expect(state).toHaveProperty('benchmark.pricingBasis', 'COMPLETED_BAR_CLOSE')
   expect(state).not.toHaveProperty('benchmark.latestTrade')
   expect(state).not.toHaveProperty('benchmark.quote')

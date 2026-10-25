@@ -1,3 +1,5 @@
+import { makeReplayInferenceBudget } from './inference-timing'
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { equityMarketProfile } from '../jev/markets'
 
 import { expect, test } from 'bun:test'
@@ -24,7 +26,7 @@ import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from '
 import { fillObservation, positionSnapshot } from '../broker/observations'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
 import { ReplayQuoteRejection } from './broker-execution-evidence'
-import { makeReplayJevTiming } from './jev-timing'
+import { makeReplayInferenceTiming } from './inference-timing'
 import {
   emptyStreamingProjection,
   incorporateRecordedMarketValue,
@@ -503,9 +505,13 @@ test.each([0, 100])(
         const providerClock = yield* TestClock.make()
         yield* providerClock.setTime(0)
         let excludedSourceMillis = 0
-        const timing = yield* makeReplayJevTiming({
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
           measureDatabaseTime: (operation) => operation,
-          provider: { evaluate: () => Effect.die('This timing case does not need inference') },
+          providers: {
+            jev: { evaluate: () => Effect.die('This timing case does not need inference') },
+            chart: chartProviderFixture,
+          },
           providerClock,
           retain: () => Effect.void,
           advanceTo: (at) =>

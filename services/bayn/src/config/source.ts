@@ -111,6 +111,7 @@ export const runtimeConfigSource = Config.all({
   alpacaAccountId: Config.option(nonEmptyString('BAYN_ALPACA_ACCOUNT_ID')),
   alpacaKey: Config.option(secretString('BAYN_ALPACA_KEY_ID')),
   jevKey: Config.option(secretString('BAYN_JEV_API_KEY')),
+  openAiKey: Config.option(secretString('BAYN_OPENAI_API_KEY')),
   alpacaSecret: Config.option(secretString('BAYN_ALPACA_SECRET_KEY')),
   alpacaProxyUrl: nonEmptyString('BAYN_ALPACA_PROXY_URL').pipe(Config.withDefault('http://bayn-egress-proxy:3128')),
   alpacaRetryAttempts: Config.schema(RetryAttempts, 'BAYN_ALPACA_RETRY_ATTEMPTS').pipe(Config.withDefault(2)),
@@ -133,6 +134,7 @@ export const runtimeConfigSource = Config.all({
     (config): ParsedRuntimeConfig => ({
       kafka: config.kafka,
       jevKey: Option.getOrUndefined(config.jevKey),
+      openAiKey: Option.getOrUndefined(config.openAiKey),
       host: config.host,
       port: config.port,
       capitalActivationRequestJson: Option.getOrUndefined(config.capitalActivationRequestJson),

@@ -1,6 +1,7 @@
 import { jevPositionExitPolicy } from './exit-policy'
 import { jevEntryEconomics, fundJevTradePlan } from './entry-economics'
-import { JevEntrySetup } from './trade-plan-choices'
+import { entryCompletionFixture } from './entry-inference.test-support'
+import { EntrySetup } from './entry-proposals'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { equityMarketProfile } from './markets'
@@ -227,8 +228,15 @@ export const nativeJevFixture = (
                   protocol,
                   economics,
                   levels: {
-                    schemaVersion: 'bayn.jev-strategy-exit-plan.v3',
-                    rule: 'model-selected-complete-plan',
+                    schemaVersion: 'bayn.jev-strategy-exit-plan.v4',
+                    rule: 'source-anchored-complete-plan',
+                    proposalId: Result.getOrThrow(canonicalHashV1Result({ fixture: 'historical-managed-entry' })),
+                    source: {
+                      setup: EntrySetup.SupportRecovery,
+                      supportBarId: 'historical-support',
+                      resistanceBarId: 'historical-resistance',
+                      targetBasis: 'OBSERVED_RESISTANCE',
+                    },
                     symbol: 'AAPL',
                     sourceStartAt: new Date(Date.parse(at) - 30 * 60000).toISOString(),
                     sourceEndAt: new Date(Date.parse(at) - 3 * 60000).toISOString(),
@@ -289,43 +297,13 @@ export const nativeJevFixture = (
   return { protocol, portfolio, observation, snapshot, cut, query: snapshotQuery, entryFills, draft, input }
 }
 
-export const nativeJevInference = (input: unknown, at: string, action = 'enter', probability = 0.8) => {
+export const nativeJevInference = (input: unknown, at: string, supportsEntry = true, probability = 0.9) => {
   const { request, requestHash } = Result.getOrThrow(prepareJevRequest(input))
   const answers: Record<string, JevResponse['answers'][string]> = {}
   for (const [key, question] of Object.entries(request.questions)) {
-    if (question.type === 'noul') answers[key] = { type: 'noul', noul: 0.8 }
-    else if (question.type === 'choice') {
-      const choices = Object.keys(question.criteria)
-      const selected =
-        key === 'setup'
-          ? JevEntrySetup.Upward
-          : key === 'action' && action === 'enter'
-            ? (choices.find((choice) => choice.startsWith('plan_')) ?? 'wait')
-            : key === 'action'
-              ? action
-              : choices[0]
-      const choiceProbability = key === 'action' || key === 'setup' ? probability : 0.8
-      if (selected === undefined || !choices.includes(selected)) throw new Error('Invalid fixture choice')
-      answers[key] = {
-        type: 'choice',
-        choice: selected,
-        confidence: choiceProbability,
-        probabilities: Object.fromEntries(
-          choices.map((choice) => [
-            choice,
-            choice === selected ? choiceProbability : (1 - choiceProbability) / (choices.length - 1),
-          ]),
-        ),
-      }
-    } else {
-      answers[key] = {
-        type: 'score',
-        score: 0,
-        confidence: 1,
-        probabilities: Object.fromEntries(question.criteria.map((_, index) => [String(index), index === 0 ? 1 : 0])),
-        legend: Object.fromEntries(question.criteria.map((label, index) => [String(index), label])),
-      }
-    }
+    if (question.type !== 'noul') throw new Error('Native entry judgments must be atomic Nouls')
+    const support = supportsEntry ? probability : 1 - probability
+    answers[key] = { type: 'noul', noul: key.endsWith('_target_obstructed') ? 1 - support : support }
   }
   const response = Result.getOrThrow(
     decodeJevResponse(request, { model: request.model, answers, usage: { input_tokens: 100, output_tokens: 25 } }),
@@ -341,8 +319,8 @@ export const nativeJevInference = (input: unknown, at: string, action = 'enter',
 
 export const nativeJevDecisionEvidence = (
   fixture: Pick<ReturnType<typeof nativeJevFixture>, 'observation' | 'protocol'> = nativeJevFixture(),
-  action = 'enter',
-  probability = 0.8,
+  supportsEntry = true,
+  probability = 0.9,
 ) => {
   const observation = fixture.observation.payload
   const at = new Date(Date.parse(observation.observedAt) + 100).toISOString()
@@ -350,18 +328,18 @@ export const nativeJevDecisionEvidence = (
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V7,
     }),
   )
-  const batchResult = nativeJevBatchResult(batchPlan, at, () => action, probability)
+  const batchResult = nativeJevBatchResult(batchPlan, at, () => supportsEntry, probability)
   return { observation, batchPlan, batchResult, decidedAt: at }
 }
 
 export const nativeJevBatchResult = (
   batchPlan: JevBatchPlan,
   at: string,
-  action: (symbol: string) => string = () => 'enter',
-  probability = 0.8,
+  supportsEntry: (symbol: string) => boolean = () => true,
+  probability = 0.9,
 ) =>
   Result.getOrThrow(
     makeJevBatchResult(batchPlan, {
@@ -373,13 +351,17 @@ export const nativeJevBatchResult = (
           return { status: JevCandidateResultStatus.Excluded, symbol: candidate.symbol }
         const receipt = Result.getOrThrow(
           makeJevEvaluationReceipt(candidate.request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
             requestId: candidate.request.requestId,
             startedAt: at,
             completedAt: at,
             outcome: {
-              status: JevOutcome.Received,
-              inference: nativeJevInference(candidate.request.request, at, action(candidate.symbol), probability),
+              status: JevOutcome.Completed,
+              completion: entryCompletionFixture(
+                candidate.request,
+                at,
+                supportsEntry(candidate.symbol) ? probability : 1 - probability,
+              ),
             },
           }),
         )

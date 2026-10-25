@@ -24,6 +24,7 @@ const files = [
   'src/db/streaming-snapshot.integration.test.ts',
   'src/db/native-arrival-postgres.integration.test.ts',
   'src/db/jev-evaluation-postgres.integration.test.ts',
+  'src/db/entry-inference-postgres.integration.test.ts',
   'src/db/jev-batch-postgres.integration.test.ts',
   'src/db/jev-study-export.integration.test.ts',
   'src/db/jev-native-postgres.integration.test.ts',
