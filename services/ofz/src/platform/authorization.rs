@@ -82,6 +82,13 @@ pub fn caller<'a>(
             "caller cannot assert another client identity",
         ));
     }
+    if !registry.has_role(peer, "relay.executor")
+        && matches!(subject.identity.as_ref(), Some(platform_subject::Identity::WorkloadId(identity)) if identity != peer)
+    {
+        return Err(Status::permission_denied(
+            "workload subject must match its attested caller",
+        ));
+    }
     Ok(client)
 }
 
@@ -548,4 +555,32 @@ pub async fn record_execution(
     Ok(proto::RecordPlatformExecutionResponse {
         audit_receipt_id: receipt.id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_workloads_cannot_assert_another_identity_in_the_same_service() {
+        let first = "spiffe://proompteng.ai/ns/example/sa/first";
+        let second = "spiffe://proompteng.ai/ns/example/sa/second";
+        let executor = "spiffe://proompteng.ai/ns/relay/sa/relay";
+        let registry = registry::Registry::parse(
+            &serde_json::to_vec(&serde_json::json!({"version":1,"services":[
+                {"id":"example","identities":[first,second],"roles":["platform.client","relay.client"]},
+                {"id":"relay","identities":[executor],"roles":["relay.executor"]}
+            ]})).unwrap(),
+        ).unwrap();
+        let subject = proto::PlatformSubject {
+            client_service: "example".into(),
+            identity: Some(platform_subject::Identity::WorkloadId(second.into())),
+        };
+        assert_eq!(
+            caller(first, &subject, &registry).unwrap_err().code(),
+            tonic::Code::PermissionDenied
+        );
+        assert!(caller(second, &subject, &registry).is_ok());
+        assert!(caller(executor, &subject, &registry).is_ok());
+    }
 }

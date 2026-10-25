@@ -157,6 +157,12 @@ impl Service {
             .as_ref()
             .ok_or_else(|| Status::unauthenticated("platform subject required"))?;
         self.client(peer, &subject.client_service)?;
+        if matches!(subject.identity.as_ref(), Some(authz::platform_subject::Identity::WorkloadId(identity)) if identity != peer)
+        {
+            return Err(Status::permission_denied(
+                "workload subject must match its attested caller",
+            ));
+        }
         if payload.client_service != subject.client_service
             || match &subject.identity {
                 Some(authz::platform_subject::Identity::Delegation(proof)) => {
@@ -312,5 +318,53 @@ impl RelayService for Service {
         .await
         .map_err(|_| Status::deadline_exceeded("Relay execution deadline"))?
         .map(Response::new)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn workloads_cannot_assert_another_identity_in_the_same_service() {
+        let first = "spiffe://proompteng.ai/ns/example/sa/first";
+        let second = "spiffe://proompteng.ai/ns/example/sa/second";
+        let service = Service::new(
+            vec![authz::RegisteredRelayClient {
+                id: "example".into(),
+                identities: vec![first.into(), second.into()],
+            }],
+            Vec::new(),
+            tonic::transport::Endpoint::from_static("http://localhost:1").connect_lazy(),
+        )
+        .unwrap();
+        let payload = platform_client::ExecutionPayload {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            client_service: "example".into(),
+            connector_id: "fixture".into(),
+            operation: "status".into(),
+            arguments: serde_json::json!({}),
+            binding: None,
+            delegation_id: None,
+        };
+        let input = relay::ExecuteRequest {
+            subject: Some(authz::PlatformSubject {
+                client_service: "example".into(),
+                identity: Some(authz::platform_subject::Identity::WorkloadId(second.into())),
+            }),
+            body: serde_json::to_vec(&payload).unwrap(),
+        };
+        assert_eq!(
+            service
+                .invoke(first, input.clone())
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::PermissionDenied
+        );
+        assert_eq!(
+            service.invoke(second, input).await.unwrap_err().code(),
+            tonic::Code::NotFound
+        );
     }
 }
