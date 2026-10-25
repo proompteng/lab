@@ -240,8 +240,7 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
-      # Installer images contain a large artifacts layer. Keep registry traffic bounded while
-      # the Docker client uploads that layer in resumable chunks.
+      # Installer images contain a large artifacts layer. Keep registry imports serial.
       max-parallel: 1
       matrix:
         include:
@@ -260,6 +259,8 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.10.0
+
+      - uses: ./.github/actions/setup-buildkit
 
       - name: Build installer
         id: build
@@ -283,6 +284,8 @@ jobs:
           set -euo pipefail
           tag="installer-v1.13.9-kata-4.1.0-r6-${{ matrix.profile }}"
           reference="${IMAGE}:${tag}"
+          tar -xOf "${INSTALLER_TAR}" manifest.json | jq -e \
+            'length == 1 and (.[0].RepoTags | length) == 1' >/dev/null
           regctl registry set "${IMAGE%%/*}" --tls enabled --blob-chunk 4194304 --blob-max 4194304 --req-concurrent 1
           push_log="$(mktemp)"
           trap 'rm -f "${push_log}"' EXIT

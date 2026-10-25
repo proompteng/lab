@@ -40,11 +40,15 @@ jobs:
   build:
     runs-on: arc-arm64
     steps:
-      - name: Checkout
+      - name: Checkout workflow tooling
+        uses: actions/checkout@v5
+
+      - name: Checkout external source
+        if: inputs.external_repository != ''
         uses: actions/checkout@v5
         with:
           repository: ${{ inputs.external_repository }}
-          path: ${{ inputs.external_repository && 'external_repo' || '.' }}
+          path: external_repo
 
       - name: Resolve repo root
         id: repo

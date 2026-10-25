@@ -13,7 +13,9 @@ runs:
           ARM64) architecture=arm64 ;;
           *) echo "Unsupported native architecture $RUNNER_ARCH" >&2; exit 1 ;;
         esac
-        echo "endpoint=tcp://arc-buildkit-${architecture}.arc.svc.cluster.local:1234" >> "$GITHUB_OUTPUT"
+        endpoint="tcp://arc-buildkit-${architecture}.arc.svc.cluster.local:1234"
+        echo "endpoint=$endpoint" >> "$GITHUB_OUTPUT"
+        echo "BUILDKIT_HOST=$endpoint" >> "$GITHUB_ENV"
     - uses: docker/setup-buildx-action@v3
       with:
         driver: remote
