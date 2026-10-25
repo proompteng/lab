@@ -174,6 +174,10 @@ seconds old. New batches still acknowledge immediately. A verification failure i
 repeated failures do not rewrite an already invalid checkpoint. The sixty-second freshness and backlog gates remain
 unchanged.
 
+The worker retries HTTP transport failures after one second while archive health remains invalid. Recovery requires
+fresh bucket, retention and payload verification before another acknowledgement. Database, integrity and policy
+failures still terminate the worker. `--once` reports a transport failure immediately instead of retrying.
+
 If a lower audit sequence commits during an upload, that batch remains acknowledged while the checkpoint waits for
 the lower sequence. The next poll exports the missing receipt before advancing the checkpoint. This normal commit
 race does not invalidate archive health or terminate the exporter. Missing outbox entries, failed uploads, invalid

@@ -1116,6 +1116,13 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
       }
       return new TengriUnavailableError('Tengri resource already exists', 409)
     case grpc.status.FAILED_PRECONDITION:
+      if (error.metadata.get('x-tengri-error-code')[0] === 'runtime_upgrade_required') {
+        return new TengriUnavailableError(
+          'This workspace needs a runtime upgrade before it can reconnect.',
+          412,
+          'runtime_upgrade_required',
+        )
+      }
       if (
         ['steerCodexInput', 'resolveCodexApproval'].includes(methodName) &&
         error.details === 'Codex control was not dispatched'
