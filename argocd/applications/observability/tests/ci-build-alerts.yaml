@@ -110,3 +110,26 @@ tests:
         exp_samples:
           - labels: '{}'
             value: 1
+  - name: initial history progress is healthy and a stalled reader fires then recovers
+    interval: 1m
+    input_series:
+      - series: ci_observability_last_history_scan_timestamp_seconds
+        values: 0+0x50
+      - series: ci_observability_last_history_progress_timestamp_seconds
+        values: 0+60x15 900+0x20 2220+60x10
+    promql_expr_test:
+      - expr: count(ALERTS{alertname="CiObservabilityHistoryScanStale",alertstate="firing"}) or vector(0)
+        eval_time: 20m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+      - expr: count(ALERTS{alertname="CiObservabilityHistoryScanStale",alertstate="firing"}) or vector(0)
+        eval_time: 32m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: count(ALERTS{alertname="CiObservabilityHistoryScanStale",alertstate="firing"}) or vector(0)
+        eval_time: 38m
+        exp_samples:
+          - labels: '{}'
+            value: 0

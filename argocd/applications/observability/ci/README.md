@@ -62,8 +62,8 @@ then the job name; it remains unknown when neither reports it.
 Step names map to bounded phases. `runner_setup` measures GitHub's "Set up job" step, not Pod scheduling or bootstrap.
 `unattributed` covers time between steps and steps without complete timestamps. A build-and-push action remains a combined phase where it does not expose
 separate top-level timings. BuildKit image/cache exporter durations are auxiliary observations that can overlap
-the main phase partition. Container filesystem metrics depend on cAdvisor coverage of the backing filesystem;
-missing filesystem samples do not establish free scratch capacity.
+the main phase partition. Runner resource panels cover CPU, working-set memory and throttling. The filesystem panel was removed after the
+live build showed no cAdvisor filesystem samples; it did not measure runner scratch capacity.
 
 BuildKit cache evidence counts cached Dockerfile `RUN` vertices, scoped separately for each build in a multi-image
 job, including verification builds. `warm`, `cold`, and `mixed` describe those instructions, not every layer or all
@@ -86,8 +86,10 @@ establish that a CI change caused an improvement.
 
 ## Alerts and recovery
 
-The `ci-build-performance.rules` Mimir group covers unavailable scraping, stale GitHub polling, stale historical
-discovery, delayed Loki records, sustained queues and duration regressions. The duration alert compares successful
+The `ci-build-performance.rules` Mimir group covers unavailable scraping, stale GitHub polling, stalled historical
+discovery, delayed Loki records, sustained queues and duration regressions. History liveness uses index-reading
+progress; an initial scan still making progress does not trigger the stalled-discovery alert. The separate full-scan
+timestamp and backfill state retain coverage information. The duration alert compares successful
 push build jobs within the same workflow, declared job family, architecture, runner pool and cache class. Unknown
 families and cache evidence remain visible but cannot trigger the duration alert. It requires five recent samples
 and ten baseline samples, then a median above 1.5 times baseline plus 60 seconds for ten minutes. A single cold-cache
@@ -106,12 +108,13 @@ failure does not stop builds. Recover code through a reviewed Git revert and Arg
 python3 -m unittest discover -s argocd/applications/observability/ci -p test_collector.py
 ruff check argocd/applications/observability/ci
 ruff format --check argocd/applications/observability/ci
-python3 argocd/applications/observability/ci/dashboard.py --check
 bun test packages/scripts/src/shared/__tests__/ci-observability.test.ts
 ```
 
-`dashboard.py` owns the generated dashboard ConfigMap. Edit that source and regenerate with
-`python3 argocd/applications/observability/ci/dashboard.py`. The behavioral suite covers attempt isolation, queue and
+`dashboard.json` is the native Grafana model; Kustomize embeds it directly in the dashboard ConfigMap. Import a
+preview through Grafana's manual JSON upload first. Verify live data, readable labels, units, table order and links
+in the UI, then export the verified model, retain the canonical `ci-build-performance` UID and commit it. Remove the
+temporary preview after the provisioned dashboard is verified. The behavioral suite covers attempt isolation, queue and
 execution calculations, cache parsing, cancellation, restart idempotency, failed outbox delivery, API search overflow,
 and stale collection. Promtool checks alert behavior and dashboard PromQL during scripts CI.
 

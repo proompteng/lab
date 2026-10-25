@@ -672,7 +672,7 @@ data:
               dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
           - alert: CiObservabilityHistoryScanStale
             expr: |
-              time() - max(ci_observability_last_history_scan_timestamp_seconds) > 600
+              time() - max(ci_observability_last_history_progress_timestamp_seconds) > 600
             for: 5m
             labels:
               severity: warning
@@ -681,7 +681,7 @@ data:
               notify: email
             annotations:
               summary: CI historical rerun discovery is stale
-              description: The 90-day run index has not completed a scan in 15 minutes. A fast rerun of an older workflow may not be discovered promptly.
+              description: Historical run-index discovery has made no progress for 15 minutes. Check API errors, rate-limit headroom and collector logs.
               dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
           - alert: CiObservabilityCompletionDelayed
             expr: |

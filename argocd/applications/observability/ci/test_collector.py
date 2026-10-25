@@ -493,6 +493,7 @@ class CollectorTests(unittest.TestCase):
         ):
             observer.history(self.now, days=1, windows=1)
             self.assertEqual(observer.history_day, 0)
+            self.assertEqual(observer.last_history_progress, self.now + 12)
             self.assertEqual(
                 self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0],
                 2,
@@ -501,6 +502,7 @@ class CollectorTests(unittest.TestCase):
         discovery.assert_called_once()
         self.assertEqual(observer.history_day, 1)
         self.assertEqual(observer.last_history, self.now + 18)
+        self.assertEqual(observer.last_history_progress, self.now + 18)
         self.assertEqual(
             self.store.db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 3
         )
