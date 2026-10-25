@@ -3,8 +3,6 @@ adminPassword: changeme
 grafana.ini:
   users:
     home_page: /d/ci-build-performance
-  auth:
-    disable_login_form: true
   auth.anonymous:
     enabled: true
     org_name: Main Org.

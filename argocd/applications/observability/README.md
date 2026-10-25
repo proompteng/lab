@@ -89,8 +89,8 @@ Observability is exposed over Tailscale using `Ingress` resources (not `Service`
 - Tempo gateway: `tempo.ide-newton.ts.net`
 
 Grafana permits anonymous Viewer access to dashboards and data source queries on the private Tailscale and
-`grafana.k8s.proompteng.ai` routes. The login form is hidden; existing signed-in administrators retain management
-access. Keep these routes private when changing ingress or network exposure.
+`grafana.k8s.proompteng.ai` routes. Optional administrator sign-in remains available for editing and cleanup;
+ordinary dashboard access requires no login. Keep these routes private when changing ingress or network exposure.
 The home page opens CI Build Performance directly; Grafana's personal home screen requests account-only stars and
 team APIs that return 401 for anonymous visitors.
 
