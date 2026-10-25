@@ -12,6 +12,8 @@ const bars = [
 const input = {
   schemaVersion: 'bayn.entry-inference-input.v1',
   numericalState: {
+    schemaVersion: 'bayn.jev-entry-state.v22',
+    task: { decisionPurpose: 'ENTRY' },
     candidate: { symbol: 'AAPL', bars1m: bars },
     session: { completedBarWindowEndsAt: '2026-10-25T07:00:00.000Z' },
     benchmark: { symbol: 'SPY' },

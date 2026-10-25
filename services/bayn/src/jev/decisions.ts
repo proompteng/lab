@@ -2,7 +2,13 @@ import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Result, Schema, S
 import { HttpClient, HttpClientRequest } from 'effect/http'
 
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
-import { NonNegativeIntegerSchema, UnitIntervalSchema, strictParseOptions } from '../schemas'
+import {
+  NonNegativeIntegerSchema,
+  Sha256Schema,
+  UnitIntervalSchema,
+  UtcInstantSchema,
+  strictParseOptions,
+} from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 
 export const decisionsEndpoint = 'https://api.openai.com/v1/decisions'
@@ -196,18 +202,19 @@ export const decodeDecisionsResponse = (request: DecisionsRequest, input: unknow
     return response
   })
 
-export interface DecisionsInference {
-  readonly requestHash: string
-  readonly responseHash: string
-  readonly startedAt: string
-  readonly completedAt: string
-  readonly response: DecisionsResponse
-}
+export const DecisionsInferenceSchema = Schema.Struct({
+  requestHash: Sha256Schema,
+  responseHash: Sha256Schema,
+  startedAt: UtcInstantSchema,
+  completedAt: UtcInstantSchema,
+  response: DecisionsResponseSchema,
+})
+export type DecisionsInference = typeof DecisionsInferenceSchema.Type
 
 export class DecisionsClient extends Context.Service<
   DecisionsClient,
   {
-    readonly evaluate: (request: unknown) => Effect.Effect<DecisionsInference, DecisionsError>
+    readonly evaluate: (request: unknown, budgetMs: number) => Effect.Effect<DecisionsInference, DecisionsError>
   }
 >()('@proompteng/bayn/DecisionsClient') {}
 
@@ -224,8 +231,14 @@ export const DecisionsClientLive = (key: Redacted.Redacted<string>, timeoutMs: n
           message: 'Decisions requires a key and a 1-10000ms timeout',
         })
       return {
-        evaluate: (input: unknown) =>
+        evaluate: (input: unknown, budgetMs: number) =>
           Effect.gen(function* () {
+            if (!Number.isSafeInteger(budgetMs) || budgetMs <= 0 || budgetMs > 10_000)
+              return yield* new DecisionsError({
+                category: 'REQUEST',
+                message: 'Decisions requires a remaining deadline of 1-10000ms',
+              })
+            const remainingMs = Math.min(timeoutMs, budgetMs)
             const prepared = yield* Effect.fromResult(prepareDecisionsRequest(input))
             const started = yield* Clock.currentTimeMillis
             let status: number | undefined
@@ -287,7 +300,7 @@ export const DecisionsClientLive = (key: Redacted.Redacted<string>, timeoutMs: n
                 ),
               )
               const completed = yield* Clock.currentTimeMillis
-              if (completed < started || completed - started >= timeoutMs)
+              if (completed < started || completed - started >= remainingMs)
                 return yield* new DecisionsError({
                   category: 'DEADLINE',
                   message: 'Decisions response arrived outside its deadline',
@@ -300,7 +313,7 @@ export const DecisionsClientLive = (key: Redacted.Redacted<string>, timeoutMs: n
                 response: decoded,
               }
             }).pipe(
-              Effect.timeout(`${timeoutMs} millis`),
+              Effect.timeout(`${remainingMs} millis`),
               Effect.mapError(
                 (cause) =>
                   new DecisionsError({
@@ -328,8 +341,3 @@ export const DecisionsClientLive = (key: Redacted.Redacted<string>, timeoutMs: n
       }
     }),
   )
-
-export const decisionsEstimatedCostPicoUsd = (usage: typeof DecisionsUsageSchema.Type): bigint => {
-  const { cached_tokens: cached, cache_write_tokens: writes } = usage.input_tokens_details
-  return BigInt(usage.input_tokens - cached - writes) * 100_000n + BigInt(cached) * 10_000n + BigInt(writes) * 125_000n
-}

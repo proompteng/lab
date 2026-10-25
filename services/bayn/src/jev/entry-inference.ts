@@ -103,7 +103,7 @@ const rejectedJevUsage = (error: JevError, expectedRequestHash: string) => {
     : null
 }
 
-const handoffDisposition = (input: EntryInferenceInput, visual: DecisionsInference) =>
+export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual: DecisionsInference) =>
   Result.gen(function* () {
     const chart = yield* makeNativeChartEvidence(input.chartSource)
     const assessments = yield* chartAssessments(chart, visual.response)
@@ -171,6 +171,7 @@ export const evaluateClaimedEntryInference = (claim: {
       !Number.isFinite(expires) ||
       !Number.isFinite(started) ||
       started < observed ||
+      Date.parse(prepared.input.chartSource.windowEndAt) > observed ||
       started >= expires ||
       expires - observed !== prepared.input.protocol.inferenceValidityMs ||
       now < started ||
@@ -190,7 +191,7 @@ export const evaluateClaimedEntryInference = (claim: {
         category: 'DEADLINE',
         message: 'Original evidence window expired before chart dispatch',
       })
-    const visual = yield* decisions.evaluate(visualRequest.request).pipe(
+    const visual = yield* decisions.evaluate(visualRequest.request, expires - visualNow).pipe(
       Effect.timeoutOrElse({
         duration: expires - visualNow,
         orElse: () =>
@@ -230,7 +231,7 @@ export const evaluateClaimedEntryInference = (claim: {
       if (!sourceBound)
         disposition = { status: 'PREPARATION_FAILED', visual: visual.success, reason: 'VISUAL_RECEIPT_MISMATCH' }
       else {
-        const derived = handoffDisposition(prepared.input, visual.success)
+        const derived = deriveEntryHandoffDisposition(prepared.input, visual.success)
         disposition = Result.isSuccess(derived)
           ? derived.success
           : { status: 'PREPARATION_FAILED', visual: visual.success, reason: 'DERIVATION_CONTRACT' }
@@ -261,10 +262,14 @@ export const evaluateClaimedEntryInference = (claim: {
       )
     if (disposition.status !== 'READY') return yield* completed({ status: 'NOT_REQUESTED' })
     const jevNow = yield* Clock.currentTimeMillis
-    if (jevNow >= expires || jevNow < Date.parse(handoff.recordedAt))
-      return yield* completed({ status: 'NOT_DISPATCHED' })
+    if (jevNow < Date.parse(handoff.recordedAt))
+      return yield* new EntryInferenceError({
+        category: 'DEADLINE',
+        message: 'Entry inference clock regressed after the committed provider handoff',
+      })
+    if (jevNow >= expires) return yield* completed({ status: 'NOT_DISPATCHED' })
     const client = yield* JevClient
-    const inference = yield* client.evaluate(disposition.jevRequest).pipe(
+    const inference = yield* client.evaluate(disposition.jevRequest, expires - jevNow).pipe(
       Effect.timeoutOrElse({
         duration: expires - jevNow,
         orElse: () =>

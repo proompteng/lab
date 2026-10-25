@@ -25,6 +25,12 @@ export type EntryInferenceInput = typeof EntryInferenceInputSchema.Type
 export const prepareEntryInferenceInput = (input: unknown) =>
   Result.gen(function* () {
     const value = yield* Schema.decodeUnknownResult(EntryInferenceInputSchema, strictParseOptions)(input)
+    yield* Schema.decodeUnknownResult(
+      Schema.Struct({
+        schemaVersion: Schema.Literal('bayn.jev-entry-state.v22'),
+        task: Schema.Struct({ decisionPurpose: Schema.Literal('ENTRY') }),
+      }),
+    )(value.numericalState)
     const source = yield* decodeChartSource(value.chartSource)
     const candidate = yield* Schema.decodeUnknownResult(
       Schema.Struct({ symbol: SymbolSchema, bars1m: ChartSourceSchema.fields.bars }),

@@ -8,6 +8,11 @@ import { JevClient, JevError } from './client'
 import { decodeJevResponse, JevFailure, prepareJevRequest } from './contract'
 import { DecisionsClient, DecisionsError, decodeDecisionsResponse, prepareDecisionsRequest } from './decisions'
 import { EntryInferenceJournal, evaluateClaimedEntryInference, type EntryHandoff } from './entry-inference'
+import {
+  decodeEntryHandoff,
+  decodeEntryInferenceCompletion,
+  usableEntryInferenceCompletion,
+} from './entry-inference-evidence'
 import { defaultJevProtocolDocument } from './protocol'
 
 const at = Date.parse('2026-10-25T07:00:32.000Z')
@@ -26,6 +31,8 @@ const fixture = () => {
     input: {
       schemaVersion: 'bayn.entry-inference-input.v1' as const,
       numericalState: {
+        schemaVersion: 'bayn.jev-entry-state.v22',
+        task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol: 'AAPL', bars1m: bars },
         benchmark: { symbol: 'SPY' },
         relativeSignals: {},
@@ -175,14 +182,77 @@ const run = (claim: ReturnType<typeof fixture>, setup: ReturnType<typeof provide
   )
 
 describe('claimed sequential entry inference', () => {
+  test('rejects a position-management purpose without dispatching entry providers', async () => {
+    const claim = fixture()
+    const setup = providers()
+    const input = {
+      ...claim.input,
+      numericalState: { ...claim.input.numericalState, task: { decisionPurpose: 'MANAGE' } },
+    }
+    expect(Result.isFailure(await run({ ...claim, input }, setup))).toBe(true)
+    expect(setup.events).toEqual([])
+  })
+  test('rejects a chart window from after the original observation without provider dispatch', async () => {
+    const claim = fixture()
+    const setup = providers()
+    const windowEndAt = '2026-10-25T07:01:00.000Z'
+    const input = {
+      ...claim.input,
+      chartSource: { ...claim.input.chartSource, windowEndAt },
+      numericalState: { ...claim.input.numericalState, session: { completedBarWindowEndsAt: windowEndAt } },
+    }
+    expect(Result.isFailure(await run({ ...claim, input }, setup))).toBe(true)
+    expect(setup.events).toEqual([])
+  })
   test('feeds chart assessments into the exact Jev request after committing its handoff', async () => {
     const setup = providers()
-    const result = Result.getOrThrow(await run(fixture(), setup))
+    const claim = fixture()
+    const result = Result.getOrThrow(await run(claim, setup))
+    expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, result))).toBe(true)
     expect(setup.events).toEqual(['visual', 'handoff', 'jev'])
     expect(result.handoff.disposition.status).toBe('READY')
     expect(result.jev.status).toBe('RECEIVED')
     if (result.handoff.disposition.status === 'READY' && result.jev.status === 'RECEIVED')
       expect(result.jev.inference.requestHash).toBe(result.handoff.disposition.jevRequestHash)
+  })
+
+  test('rejects resealed changes to the dependent Jev request', async () => {
+    const claim = fixture()
+    const result = Result.getOrThrow(await run(claim, providers()))
+    const disposition = result.handoff.disposition
+    if (disposition.status !== 'READY') throw new Error('Expected dependent request')
+    const changedRequest = { ...disposition.jevRequest, state: { candidate: { symbol: 'AAPL', invented: true } } }
+    const changedDisposition = {
+      ...disposition,
+      jevRequest: changedRequest,
+      jevRequestHash: Result.getOrThrow(canonicalHashV1Result(changedRequest)),
+    }
+    const { handoffHash: _, ...original } = result.handoff
+    const material = { ...original, disposition: changedDisposition }
+    const changed = { ...material, handoffHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+    expect(Result.isFailure(decodeEntryHandoff(claim, changed))).toBe(true)
+  })
+
+  test('rejects a dependent inference linked to a different request', async () => {
+    const claim = fixture()
+    const result = Result.getOrThrow(await run(claim, providers()))
+    if (result.jev.status !== 'RECEIVED') throw new Error('Expected dependent inference')
+    expect(
+      Result.isFailure(
+        decodeEntryInferenceCompletion(claim, {
+          ...result,
+          jev: { ...result.jev, inference: { ...result.jev.inference, requestHash: 'f'.repeat(64) } },
+        }),
+      ),
+    ).toBe(true)
+  })
+
+  test('retains late evidence for accounting while refusing it for entry', async () => {
+    const claim = fixture()
+    const result = Result.getOrThrow(await run(claim, providers()))
+    const completed = Result.getOrThrow(decodeEntryInferenceCompletion(claim, result))
+    expect(Result.isSuccess(usableEntryInferenceCompletion(claim, completed, at))).toBe(true)
+    expect(Result.isFailure(usableEntryInferenceCompletion(claim, completed, at + 10_000))).toBe(true)
   })
 
   test('keeps observed visual costs when the subsequent provider fails', async () => {

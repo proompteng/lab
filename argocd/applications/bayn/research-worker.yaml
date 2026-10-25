@@ -75,6 +75,11 @@ spec:
                 secretKeyRef:
                   name: bayn-jev-auth
                   key: api-key
+            - name: BAYN_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-openai-auth
+                  key: api-key
             - name: BAYN_RESEARCH_APPROVAL_KEY
               valueFrom:
                 secretKeyRef:

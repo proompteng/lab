@@ -9,7 +9,6 @@ import {
   DecisionsClientLive,
   decodeDecisionsResponse,
   decisionsEndpoint,
-  decisionsEstimatedCostPicoUsd,
   prepareDecisionsRequest,
 } from './decisions'
 import { renderNativeCandlesPng } from './chart-evidence'
@@ -80,7 +79,7 @@ describe('native OpenAI Decisions contract', () => {
   test('retains named predicates and source-anchor choices without a setup label', () => {
     const result = Result.getOrThrow(decodeDecisionsResponse(prepared().request, response))
     expect(result.answers).toEqual(response.answers)
-    expect(decisionsEstimatedCostPicoUsd(result.usage)).toBe(96_000_000n)
+    expect(result.usage).toEqual(usage)
   })
 
   test('retains a per-question refusal independently of successful judgments and metering', () => {
@@ -183,7 +182,7 @@ describe('native OpenAI Decisions contract', () => {
     })
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        return yield* (yield* DecisionsClient).evaluate(request)
+        return yield* (yield* DecisionsClient).evaluate(request, 1000)
       }).pipe(Effect.provide(layerFor(http))),
     )
     expect(bodies).toEqual([prepared().body])
@@ -205,7 +204,7 @@ describe('native OpenAI Decisions contract', () => {
       )
       const result = await Effect.runPromise(
         Effect.gen(function* () {
-          return yield* (yield* DecisionsClient).evaluate(request).pipe(Effect.result)
+          return yield* (yield* DecisionsClient).evaluate(request, 1000).pipe(Effect.result)
         }).pipe(Effect.provide(layerFor(http))),
       )
       expect(Result.isFailure(result)).toBe(true)
@@ -219,35 +218,38 @@ describe('native OpenAI Decisions contract', () => {
     }
   })
 
-  test('cancels a timed-out transport without retrying or fabricating usage', async () => {
-    let dispatches = 0
-    let interrupted = 0
-    const http = HttpClient.make(() =>
-      Effect.gen(function* () {
-        dispatches++
-        return yield* Effect.never.pipe(
-          Effect.onInterrupt(() =>
-            Effect.sync(() => {
-              interrupted++
-            }),
-          ),
-        )
-      }),
-    )
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const client = yield* DecisionsClient
-        const fiber = yield* client.evaluate(request).pipe(Effect.result, Effect.forkChild)
-        yield* TestClock.adjust('1001 millis')
-        return yield* Fiber.join(fiber)
-      }).pipe(Effect.provide(layerFor(http)), Effect.provide(TestClock.layer())),
-    )
-    expect(dispatches).toBe(1)
-    expect(interrupted).toBe(1)
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) {
-      expect(result.failure.category).toBe('DEADLINE')
-      expect(result.failure.usage).toBeUndefined()
-    }
-  })
+  test.each([250, 1000])(
+    'cancels transport at its remaining %sms deadline without retrying or fabricating usage',
+    async (budgetMs) => {
+      let dispatches = 0
+      let interrupted = 0
+      const http = HttpClient.make(() =>
+        Effect.gen(function* () {
+          dispatches++
+          return yield* Effect.never.pipe(
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                interrupted++
+              }),
+            ),
+          )
+        }),
+      )
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const client = yield* DecisionsClient
+          const fiber = yield* client.evaluate(request, budgetMs).pipe(Effect.result, Effect.forkChild)
+          yield* TestClock.adjust(budgetMs)
+          return yield* Fiber.join(fiber)
+        }).pipe(Effect.provide(layerFor(http)), Effect.provide(TestClock.layer())),
+      )
+      expect(dispatches).toBe(1)
+      expect(interrupted).toBe(1)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure.category).toBe('DEADLINE')
+        expect(result.failure.usage).toBeUndefined()
+      }
+    },
+  )
 })

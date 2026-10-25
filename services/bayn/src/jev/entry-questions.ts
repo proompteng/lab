@@ -5,6 +5,7 @@ import type { NativeChartEvidence } from './chart-evidence'
 import type { ChartAssessments } from './chart-questions'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest, type JevResponse } from './contract'
 import { EntrySetup, type EntryProposal } from './entry-proposals'
+import { jevInstructions } from './instructions'
 
 export const entryJudgmentThresholds = { affirmativeAtLeast: 0.7, negativeAtMost: 0.3 } as const
 
@@ -15,6 +16,53 @@ const questionNames = (setup: EntrySetup) => {
     stop: `${prefix}_stop_invalidates`,
     obstruction: `${prefix}_target_obstructed`,
   }
+}
+
+export const entryJudgmentDefinitions = (setup: EntrySetup) => ({
+  setup: {
+    question:
+      setup === EntrySetup.SupportRecovery
+        ? 'Does the latest completed price sequence show recovery after a test of the identified support?'
+        : 'Does the latest completed price sequence show acceptance above the identified consolidation?',
+    criteria: {
+      true:
+        setup === EntrySetup.SupportRecovery
+          ? 'The support test is followed by an observable recovery in the newest price sequence.'
+          : 'Completed candles establish price above the base rather than a brief rejected excursion.',
+      false:
+        setup === EntrySetup.SupportRecovery
+          ? 'Price is still falling through the support area or has not begun a recovery after the test.'
+          : 'The newest candles remain inside the base or reject the attempted break above it.',
+    },
+  },
+  stop: {
+    question: 'Would reaching this proposed stop invalidate the identified setup?',
+    criteria: {
+      true: 'The stop lies beyond the support or base whose continued defense is essential to this setup.',
+      false:
+        'Ordinary movement within the same intact setup can reach the stop, or the selected level has no clear role in invalidating the setup.',
+    },
+  },
+  obstruction: {
+    question: 'Is there observed overhead resistance between the proposed entry and target?',
+    criteria: {
+      true: 'An identifiable resistance area in the supplied observations lies before the target.',
+      false:
+        'The supplied observations show clear space to the target, or their first identifiable overhead resistance is beyond it.',
+    },
+  },
+})
+
+export const entryJudgmentPolicy = {
+  model: jevModel,
+  thresholds: entryJudgmentThresholds,
+  evidenceInstructions: jevInstructions.entry,
+  setups: Object.fromEntries(
+    Object.values(EntrySetup).map((setup) => [
+      setup,
+      { names: questionNames(setup), judgments: entryJudgmentDefinitions(setup) },
+    ]),
+  ),
 }
 
 export const makeEntryJudgmentRequest = (input: {
@@ -71,49 +119,16 @@ export const makeEntryJudgmentRequest = (input: {
           maximumHoldingMinutes: proposal.maximumHoldingMinutes,
           targetBasis: proposal.source.targetBasis,
         },
-        evidence:
-          'Use candidate, benchmark and relativeSignals in the shared state together with sourceEvidence and chartAssessment in these instructions. Chart assessments are model judgments about the same source bars, not independent facts. Proposed order prices are conditional terms, not observations or promised future prices.',
+        evidence: jevInstructions.entry,
       }
-      questions[names.setup] = {
-        type: 'noul',
-        instructions: {
-          question:
-            proposal.source.setup === EntrySetup.SupportRecovery
-              ? 'Does the latest completed price sequence show recovery after a test of the identified support?'
-              : 'Does the latest completed price sequence show acceptance above the identified consolidation?',
-          ...context,
-        },
-        criteria: {
-          true:
-            proposal.source.setup === EntrySetup.SupportRecovery
-              ? 'The support test is followed by an observable recovery in the newest price sequence.'
-              : 'Completed candles establish price above the base rather than a brief rejected excursion.',
-          false:
-            proposal.source.setup === EntrySetup.SupportRecovery
-              ? 'Price is still falling through the support area or has not begun a recovery after the test.'
-              : 'The newest candles remain inside the base or reject the attempted break above it.',
-        },
-      }
-      questions[names.stop] = {
-        type: 'noul',
-        instructions: { question: 'Would reaching this proposed stop invalidate the identified setup?', ...context },
-        criteria: {
-          true: 'The stop lies beyond the support or base whose continued defense is essential to this setup.',
-          false:
-            'Ordinary movement within the same intact setup can reach the stop, or the selected level has no clear role in invalidating the setup.',
-        },
-      }
-      questions[names.obstruction] = {
-        type: 'noul',
-        instructions: {
-          question: 'Is there observed overhead resistance between the proposed entry and target?',
-          ...context,
-        },
-        criteria: {
-          true: 'An identifiable resistance area in the supplied observations lies before the target.',
-          false:
-            'The supplied observations show clear space to the target, or their first identifiable overhead resistance is beyond it.',
-        },
+      const definitions = entryJudgmentDefinitions(source.setup)
+      for (const key of ['setup', 'stop', 'obstruction'] as const) {
+        const definition = definitions[key]
+        questions[names[key]] = {
+          type: 'noul',
+          instructions: { question: definition.question, ...context },
+          criteria: definition.criteria,
+        }
       }
     }
     return yield* prepareJevRequest({

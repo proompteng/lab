@@ -26,52 +26,49 @@ const presenceQuestions = [
   },
 ] as const
 
+const anchorQuestions = [
+  {
+    name: 'support_anchor',
+    instructions: 'Which completed bar has the low that anchors the most recently defended support level in the chart?',
+  },
+  {
+    name: 'resistance_anchor',
+    instructions:
+      'Which completed bar has the high that anchors the clearest observed overhead resistance above the latest completed close?',
+  },
+  {
+    name: 'base_first_bar',
+    instructions:
+      'Which bar begins the most recent completed consolidation before the newest directional move? Identify the first bar of that consolidation.',
+  },
+  {
+    name: 'base_last_bar',
+    instructions:
+      'Which bar ends the most recent completed consolidation before the newest directional move? Identify the last bar of that consolidation, before the move begins.',
+  },
+] as const
+const sharedInstructions =
+  'Read the completed one-minute candlesticks and volume for the identified symbol. Older bars are on the left. The lower histogram is traded volume. Numbers below the chart are minutes before windowEndAt and match chartLabel in the source bars. The image and source table are two representations of the same observations. Judge visible structure, without predicting future prices or using outside information.'
+export const chartQuestionPolicy = { model: decisionsModel, presenceQuestions, anchorQuestions, sharedInstructions }
+
 export const makeChartDecisionsRequest = (chart: NativeChartEvidence) => {
   const anchors: DecisionsRequest['questions'][number][] =
     chart.bars.length < 2
       ? []
-      : [
-          {
-            type: 'choice',
-            name: 'support_anchor',
-            instructions:
-              'Which completed bar has the low that anchors the most recently defended support level in the chart?',
-            choices: chart.bars.map((bar) => ({
-              value: bar.id,
-              description: `Bar labeled ${bar.chartLabel} minutes before the window end; low ${bar.low} USD at ${bar.timestamp}.`,
-            })),
-          },
-          {
-            type: 'choice',
-            name: 'resistance_anchor',
-            instructions:
-              'Which completed bar has the high that anchors the clearest observed overhead resistance above the latest completed close?',
-            choices: chart.bars.map((bar) => ({
-              value: bar.id,
-              description: `Bar labeled ${bar.chartLabel} minutes before the window end; high ${bar.high} USD at ${bar.timestamp}.`,
-            })),
-          },
-          {
-            type: 'choice',
-            name: 'base_first_bar',
-            instructions:
-              'Which bar begins the most recent completed consolidation before the newest directional move? Identify the first bar of that consolidation.',
-            choices: chart.bars.map((bar) => ({
-              value: bar.id,
-              description: `Bar labeled ${bar.chartLabel} minutes before the window end, beginning at ${bar.timestamp}.`,
-            })),
-          },
-          {
-            type: 'choice',
-            name: 'base_last_bar',
-            instructions:
-              'Which bar ends the most recent completed consolidation before the newest directional move? Identify the last bar of that consolidation, before the move begins.',
-            choices: chart.bars.map((bar) => ({
-              value: bar.id,
-              description: `Bar labeled ${bar.chartLabel} minutes before the window end, beginning at ${bar.timestamp}.`,
-            })),
-          },
-        ]
+      : anchorQuestions.map((question) => ({
+          type: 'choice',
+          name: question.name,
+          instructions: question.instructions,
+          choices: chart.bars.map((bar) => ({
+            value: bar.id,
+            description:
+              question.name === 'support_anchor'
+                ? `Bar labeled ${bar.chartLabel} minutes before the window end; low ${bar.low} USD at ${bar.timestamp}.`
+                : question.name === 'resistance_anchor'
+                  ? `Bar labeled ${bar.chartLabel} minutes before the window end; high ${bar.high} USD at ${bar.timestamp}.`
+                  : `Bar labeled ${bar.chartLabel} minutes before the window end, beginning at ${bar.timestamp}.`,
+          })),
+        }))
   return prepareDecisionsRequest({
     model: decisionsModel,
     input: [
@@ -80,7 +77,7 @@ export const makeChartDecisionsRequest = (chart: NativeChartEvidence) => {
         content: [
           {
             type: 'input_text',
-            text: 'Read the completed one-minute candlesticks and volume for the identified symbol. Older bars are on the left. The lower histogram is traded volume. Numbers below the chart are minutes before windowEndAt and match chartLabel in the source bars. The image and source table are two representations of the same observations. Judge visible structure, without predicting future prices or using outside information.',
+            text: sharedInstructions,
           },
           { type: 'input_image', image_url: chart.image },
           {
