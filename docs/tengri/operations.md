@@ -230,7 +230,8 @@ old memory snapshot.
    sleep exclusion before reopening normal work.
 
 After product acceptance, verify that no competing unqualified native publisher is active, then restore
-`TENGRI_PREPARED_SLOT_CUTOVER_READY=true` for normal delivery. Keep the Application unpaused and its source, sync policy
+`TENGRI_PREPARED_SLOT_GUEST_API_VERSION` to the qualified source's guest API protocol for normal delivery. Keep the
+Application unpaused and its source, sync policy
 and Kargo metadata intact. Set the publication hold again before a future incompatible guest API or snapshot change.
 
 If the replacement fails, keep traffic closed and retain the home and claim for repair. Once the new guest writes,
@@ -246,8 +247,9 @@ Production cutover requires separate authorization. An isolated Docker fixture g
 
 Image delivery is held independently of source merge. The image workflow still requires component and strict KVM
 acceptance and can publish verified immutable `sha-<source>` images and their retained indexes. It withholds both
-discoverable `kargo-sha-<source>` aliases unless the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY` is exactly
-`true`; an unset or false value keeps the current automatic Kargo policy from selecting this migration. Leave it held
+discoverable `kargo-sha-<source>` aliases unless the repository variable `TENGRI_PREPARED_SLOT_GUEST_API_VERSION` matches
+`GUEST_API_PROTOCOL_VERSION` in the qualified source. An unset, malformed or different protocol keeps the current
+automatic Kargo policy from selecting this migration. Leave it held
 until the approved old writers are fenced and every retained home is enrolled with the exact staged guest digest.
 The Proompteng image workflow uses the same hold for its Kargo alias because conversation recovery now requires the
 streaming Tengri RPC. Stage its immutable image too, then release both applications from the same reviewed source
@@ -293,8 +295,8 @@ A reviewed cutover follows this order:
    `runtime.proompteng.ai/home-uid`, and `runtime.proompteng.ai/image` for the approved immutable boot image. Set the home initialization annotation to `complete`.
    Update that MicroVM's image to the same boot digest and retain its owner/finalizer. Do not set a new Pod UID yet.
    An operator enrollment must contain external proof of old-writer fencing; Lease creation itself supplies none.
-5. After the approved fencing, Secret cleanup and enrollment are complete, set `TENGRI_PREPARED_SLOT_CUTOVER_READY`
-   to `true` and rerun the image workflow for the same approved `main` commit and staged image pair. Require all
+5. After the approved fencing, Secret cleanup and enrollment are complete, set `TENGRI_PREPARED_SLOT_GUEST_API_VERSION`
+   to the qualified source's guest API protocol and rerun the image workflow for the same approved `main` commit and staged image pair. Require all
    validation/signing gates again; the workflow then exposes both aliases through the normal publication path.
    Kargo's existing automatic policy promotes that pair and Argo reconciles its generated branch. The pool prepares the
    reserved retained home, records the new Pod UID, and binds/adopts it. Open lifecycle traffic only after those slots
