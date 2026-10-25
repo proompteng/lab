@@ -1,0 +1,233 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arc-buildkit
+  namespace: arc
+data:
+  buildkitd.toml: |
+    [worker.oci]
+      gc = true
+      reservedSpace = "10GB"
+      maxUsedSpace = "40GB"
+      minFreeSpace = "45GB"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: arc-buildkit-amd64
+  namespace: arc
+spec:
+  selector:
+    app.kubernetes.io/name: arc-buildkit
+    app.kubernetes.io/instance: arc-buildkit-amd64
+  ports:
+    - name: grpc
+      port: 1234
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: arc-buildkit-amd64
+  namespace: arc
+spec:
+  serviceName: arc-buildkit-amd64
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: arc-buildkit
+      app.kubernetes.io/instance: arc-buildkit-amd64
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: arc-buildkit
+        app.kubernetes.io/instance: arc-buildkit-amd64
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        kubernetes.io/hostname: turin
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: 'true'
+          effect: NoSchedule
+      containers:
+        - name: buildkit
+          image: moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+          args:
+            - --config
+            - /etc/buildkit/buildkitd.toml
+            - --addr
+            - unix:///run/buildkit/buildkitd.sock
+            - --addr
+            - tcp://0.0.0.0:1234
+            - --allow-insecure-entitlement
+            - network.host
+            - --oci-worker=true
+            - --containerd-worker=false
+          securityContext:
+            privileged: true
+          ports:
+            - name: grpc
+              containerPort: 1234
+          resources:
+            requests:
+              cpu: '2'
+              memory: 8Gi
+            limits:
+              cpu: '24'
+              memory: 64Gi
+          readinessProbe:
+            exec:
+              command:
+                - buildctl
+                - --addr
+                - unix:///run/buildkit/buildkitd.sock
+                - debug
+                - workers
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          volumeMounts:
+            - name: cache
+              mountPath: /var/lib/buildkit
+            - name: config
+              mountPath: /etc/buildkit
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: arc-buildkit
+  volumeClaimTemplates:
+    - metadata:
+        name: cache
+        labels:
+          storage.proompteng.ai/durability: rebuildable
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-path-ci-amd64
+        resources:
+          requests:
+            storage: 80Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: arc-buildkit-arm64
+  namespace: arc
+spec:
+  selector:
+    app.kubernetes.io/name: arc-buildkit
+    app.kubernetes.io/instance: arc-buildkit-arm64
+  ports:
+    - name: grpc
+      port: 1234
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: arc-buildkit-arm64
+  namespace: arc
+spec:
+  serviceName: arc-buildkit-arm64
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: arc-buildkit
+      app.kubernetes.io/instance: arc-buildkit-arm64
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: arc-buildkit
+        app.kubernetes.io/instance: arc-buildkit-arm64
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      tolerations: []
+      containers:
+        - name: buildkit
+          image: moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+          args:
+            - --config
+            - /etc/buildkit/buildkitd.toml
+            - --addr
+            - unix:///run/buildkit/buildkitd.sock
+            - --addr
+            - tcp://0.0.0.0:1234
+            - --allow-insecure-entitlement
+            - network.host
+            - --oci-worker=true
+            - --containerd-worker=false
+          securityContext:
+            privileged: true
+          ports:
+            - name: grpc
+              containerPort: 1234
+          resources:
+            requests:
+              cpu: '2'
+              memory: 8Gi
+            limits:
+              cpu: '24'
+              memory: 32Gi
+          readinessProbe:
+            exec:
+              command:
+                - buildctl
+                - --addr
+                - unix:///run/buildkit/buildkitd.sock
+                - debug
+                - workers
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          volumeMounts:
+            - name: cache
+              mountPath: /var/lib/buildkit
+            - name: config
+              mountPath: /etc/buildkit
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: arc-buildkit
+  volumeClaimTemplates:
+    - metadata:
+        name: cache
+        labels:
+          storage.proompteng.ai/durability: rebuildable
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 80Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: arc-buildkit
+  namespace: arc
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: arc-buildkit
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: runner
+            matchExpressions:
+              - key: actions.github.com/scale-set-name
+                operator: In
+                values:
+                  - arc-amd64
+                  - arc-arm64
+      ports:
+        - protocol: TCP
+          port: 1234
