@@ -5,8 +5,7 @@ import { Effect, FileSystem, Result } from 'effect'
 import { sha256, canonicalHashV1Result } from './hash'
 import { parseInferenceCostArgs } from './inference-cost-command'
 import { makeInferenceCostReport } from './inference-costs'
-import { JevOutcome, makeJevEvaluationReceipt } from './jev/evidence'
-import { evaluationRequestFixture, responseFixture } from './jev/test-support'
+import { expenseSourceFixture } from './inference-expense.test-support'
 import { readOperatingCostPacket } from './operating-cost-files'
 import {
   makeOperatingCostReport,
@@ -21,43 +20,24 @@ const paymentSource = '7'.repeat(64)
 const account = 'd'.repeat(64)
 const verified = new Set([source, creditSource, paymentSource])
 const inference = (missing = false) => {
-  const request = evaluationRequestFixture()
-  const response = { ...responseFixture(), usage: { input_tokens: 100_000, output_tokens: 10 } }
-  const receipt = missing
-    ? null
-    : Result.getOrThrow(
-        makeJevEvaluationReceipt(request, {
-          schemaVersion: 'bayn.jev-evaluation-receipt.v1',
-          requestId: request.requestId,
-          startedAt: request.observedAt,
-          completedAt: request.observedAt,
-          outcome: {
-            status: JevOutcome.Received,
-            inference: {
-              requestHash: request.requestHash,
-              responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
-              startedAt: request.observedAt,
-              completedAt: request.observedAt,
-              response,
-            },
-          },
-        }),
-      )
+  const row = expenseSourceFixture({ inputTokens: 100_000, missing })
+  const request = row.request
   return Result.getOrThrow(
     makeInferenceCostReport(
       {
-        schemaVersion: 'bayn.inference-cost-evidence.v1',
+        schemaVersion: 'bayn.inference-cost-evidence.v2',
         accountBindingHash: account,
         sessionDate: '1970-01-01',
         asOf: '1970-01-01T00:00:10.000Z',
         requests: [
           {
-            requestId: request.requestId,
-            cycleId: request.cycleId,
-            authorityGenerationHash: request.authorityGenerationHash,
-            request,
-            receipt,
-            resolution: null,
+            requestId: row.requestId,
+            cycleId: row.cycleId,
+            authorityGenerationHash: row.authorityGenerationHash,
+            request: row.request,
+            receipt: row.receipt,
+            resolution: row.resolution,
+            handoff: row.handoff,
           },
         ],
       },

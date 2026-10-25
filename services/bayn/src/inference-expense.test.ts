@@ -151,7 +151,7 @@ describe('inference expense quote and deterministic plan', () => {
     const { accountId: _account, sessionDate: _date, asOf: _cut, ...request } = source
     const priced = quote()
     const evidence = {
-      schemaVersion: 'bayn.inference-cost-evidence.v1' as const,
+      schemaVersion: 'bayn.inference-cost-evidence.v2' as const,
       accountBindingHash: priced.accountBindingHash,
       sessionDate: source.sessionDate,
       asOf: source.asOf,
@@ -183,7 +183,7 @@ describe('inference expense quote and deterministic plan', () => {
     const { accountId, sessionDate, asOf, ...request } = source
     const gap = quote({ missing: true })
     const evidence = {
-      schemaVersion: 'bayn.inference-cost-evidence.v1' as const,
+      schemaVersion: 'bayn.inference-cost-evidence.v2' as const,
       accountBindingHash: gap.accountBindingHash,
       sessionDate,
       asOf,
@@ -222,7 +222,7 @@ describe('inference expense quote and deterministic plan', () => {
     const { accountId: _account, sessionDate: _date, asOf: _cut, ...request } = source
     const gap = quote({ missing: true })
     const evidence = {
-      schemaVersion: 'bayn.inference-cost-evidence.v1' as const,
+      schemaVersion: 'bayn.inference-cost-evidence.v2' as const,
       accountBindingHash: gap.accountBindingHash,
       sessionDate: source.sessionDate,
       asOf: source.asOf,

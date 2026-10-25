@@ -1,3 +1,5 @@
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
+import { makeReplayInferenceBudget } from './inference-timing'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
@@ -54,7 +56,7 @@ const simulate = (
     routingLatencyMs?: number
     managedLatencyMs?: number
     nativeEntry?: boolean
-    entryAction?: string
+    supportsEntry?: boolean
     residualShock?: boolean
     entrySize?: number
     canceledEntries?: boolean
@@ -197,20 +199,32 @@ const simulate = (
                   `${yield* fs.makeTempDirectoryScoped()}/evidence`,
                   '3'.repeat(64),
                 ),
-                provider: {
-                  evaluate: (input: Parameters<typeof nativeJevInference>[0]) =>
-                    Effect.gen(function* () {
-                      providerCalls += 1
-                      yield* providerClock.adjust(options.managedLatencyMs ?? 0)
-                      return nativeJevInference(
-                        input,
-                        new Date(yield* providerClock.currentTimeMillis).toISOString(),
-                        options.nativeEntry === true ? (options.entryAction ?? 'enter') : 'hold',
-                      )
-                    }),
+                budget: makeReplayInferenceBudget(1000),
+                providers: {
+                  chart: chartProviderFixture,
+                  jev: {
+                    evaluate: (input: Parameters<typeof nativeJevInference>[0]) =>
+                      Effect.gen(function* () {
+                        providerCalls += 1
+                        yield* providerClock.adjust(options.managedLatencyMs ?? 0)
+                        return nativeJevInference(
+                          input,
+                          new Date(yield* providerClock.currentTimeMillis).toISOString(),
+                          options.nativeEntry === true && options.supportsEntry !== false,
+                        )
+                      }),
+                  },
                 },
               },
-              costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+              costs: {
+                jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+                chart: {
+                  inputMicrosPerMillionTokens: '100000',
+                  outputMicrosPerMillionTokens: '0',
+                  cachedInputMicrosPerMillionTokens: '10000',
+                  cacheWriteInputMicrosPerMillionTokens: '125000',
+                },
+              },
             }
       const report = yield* runControlSession({
         policy:
@@ -285,7 +299,7 @@ test('native Jev entry uses measured commitment before execution and mechanical 
 test('native entry abstentions retain paid calls without submitting orders', async () => {
   const wait = await simulate({
     nativeEntry: true,
-    entryAction: 'wait',
+    supportsEntry: false,
     managedLatencyMs: 10,
     sessionDurationMs: 22 * 60_000,
     pollIntervalMs: 120_000,
@@ -771,14 +785,22 @@ const frozenControlFixture = () => {
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
-      schemaVersion: 'bayn.backtest.v5',
+      schemaVersion: 'bayn.backtest.v6',
       jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       inference: {
-        mode: 'measured-provider',
+        mode: 'measured-providers',
         maximumCalls: 1000,
-        model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v21',
-        costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+        models: { jev: jevModel, chart: 'gpt-6-luna' },
+        inputDefinition: 'bayn.jev-entry-state.v22',
+        costs: {
+          jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+          chart: {
+            inputMicrosPerMillionTokens: '100000',
+            outputMicrosPerMillionTokens: '0',
+            cachedInputMicrosPerMillionTokens: '10000',
+            cacheWriteInputMicrosPerMillionTokens: '125000',
+          },
+        },
       },
       allocatedDataCostPerSessionMicros: '1000000',
       replicate: 'control-source-fixture',

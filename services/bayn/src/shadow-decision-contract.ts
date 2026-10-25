@@ -994,7 +994,7 @@ const streamingPricingEvidenceIssues = (
       return [{ path: ['executionMarketDataRows'], issue: 'streaming quote exceeds exact numeric bounds' }]
     const { bid, ask, bidSize, askSize } = values.success
     const target = document.strategyDecision
-    if (target?.schemaVersion === 'bayn.jev-entry-target.v6' && target.selectedSymbols.includes(symbol)) {
+    if (target?.schemaVersion === 'bayn.jev-entry-target.v7' && target.selectedSymbols.includes(symbol)) {
       const plan = target.exitPolicy.plans[symbol]
       // Match compileJevEntry using the exact quote bid, before instrument-price quantization.
       if (plan === undefined || bid <= BigInt(plan.levels.stopPriceMicros))
@@ -1199,7 +1199,7 @@ const jevEntryEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-entry-target.v6' || document.plannerInput === undefined)
+  if (target?.schemaVersion !== 'bayn.jev-entry-target.v7' || document.plannerInput === undefined)
     return [
       { path: ['strategyDecision'], issue: 'Jev entry requires its complete inference evidence and planner input' },
     ]
@@ -1229,7 +1229,7 @@ const jevEntryEvidenceIssues = (
       // The target schema has reproduced this exact request from its immutable source rows.
       const quoted = Schema.decodeUnknownResult(
         Schema.Struct({ candidate: Schema.Struct({ quote: Schema.Struct({ ask: Schema.Finite }) }) }),
-      )(candidate?.status === JevCandidatePlanStatus.Requested ? candidate.request.request.state : undefined)
+      )(candidate?.status === JevCandidatePlanStatus.Requested ? candidate.request.request.numericalState : undefined)
       const originalAsk = quoted.pipe(
         Result.flatMap((state) => priceNumberToMicros(state.candidate.quote.ask, 'ask', 'UP')),
       )
@@ -1327,7 +1327,7 @@ const jevEntryEvidenceIssues = (
 }
 
 const entryQuoteAgeLimit = (document: typeof ExecutionDecisionMaterialSchema.Type, eventAt: string, limit: number) =>
-  document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v6'
+  document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7'
     ? jevEntryQuoteMaximumAgeMs(document.strategyDecision, eventAt, limit)
     : limit
 
@@ -1796,7 +1796,7 @@ const executionMaterialIssues = (
       target.symbol,
       target.quantityAtoms,
       target.createdAt,
-      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v6'
+      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7'
         ? document.strategyDecision.exitPolicy.plans[target.symbol]
         : undefined,
     )
