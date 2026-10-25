@@ -356,7 +356,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (timer) clearTimeout(timer)
     }
-  }, [account?.authenticated, agentId, threadId])
+  }, [account?.authenticated, agentId, threadId, activeTurnId])
 
   useEffect(() => {
     if (!runId || !threadId) return
@@ -1129,6 +1129,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       (!text && !inputImages.length) ||
       run?.state.phase === 'needs_reconciliation' ||
       inputImages.length !== draftImages.length ||
+      !runRecovered ||
       submitting ||
       replayRecovering ||
       replayRecoveryRef.current ||
@@ -1984,6 +1985,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                       (Boolean(activeTurnId) && !runMatchesThread) ||
                       (!showStopAction && !prompt.trim() && !images.length) ||
                       readingImages ||
+                      !runRecovered ||
                       submitting ||
                       interrupting ||
                       replayRecovering ||
