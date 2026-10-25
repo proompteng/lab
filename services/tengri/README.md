@@ -554,8 +554,10 @@ conversation. Attachment and native operation receipts remain with the retained 
 
 ## Durable Codex runs
 
-Guest API 7 requires canonical UUID operation identities for every submission and control, plus confirmed native
-command cleanup before reporting cancellation. Old guests require a fenced cold replacement on their retained home.
+Guest API 8 provides direct file metadata and requires canonical UUID operation identities for every submission and
+control, plus confirmed native command cleanup before reporting cancellation. The web BFF, controller and guest must
+agree on this version; the operation inventory rejects drift. Older guests require a fenced cold replacement on their
+retained home.
 `SendCodexInput` returns a
 durable run, and `GetActiveCodexRun` recovers the workspace's run without relying on browser storage. `GetCodexRun`
 returns its current state. The public controller stages content-addressed image references and acknowledges a run

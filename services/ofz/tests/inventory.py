@@ -358,6 +358,16 @@ def main():
             f"{surface}: unclassified={sorted(operations - classified)}, "
             f"stale={sorted(classified - operations)}"
         )
+    admission = (ROOT / "services/tengri/src/slot/admission.rs").read_text()
+    target_parser = admission[admission.index("fn request_target(") :]
+    target_parser = target_parser[: target_parser.index("\n}\n")]
+    forwarded = set(
+        re.findall(r'"([A-Z][A-Za-z0-9]+)"', without_comments(target_parser))
+    )
+    assert forwarded == actual["guest"], (
+        f"supervisor guest RPC target parser drift: missing={sorted(actual['guest'] - forwarded)}, "
+        f"stale={sorted(forwarded - actual['guest'])}"
+    )
     counts = {surface: len(operations) for surface, operations in actual.items()}
     print(
         json.dumps(
