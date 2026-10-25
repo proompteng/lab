@@ -81,6 +81,7 @@ targets:
       - argocd/applications/postgres-upgrade-acceptance/base/recovery.yaml
       - argocd/applications/postgres-upgrade-acceptance/base/three-source-recovery.yaml
       - argocd/applications/proompteng/network-policy.yaml
+      - argocd/applications/relay/network-policy.yaml
       - argocd/applications/restate/networkpolicy.yaml
       - argocd/applications/restate-example/networkpolicy.yaml
       - argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml
@@ -232,7 +233,6 @@ targets:
       - flake.lock
       - flake.nix
       - nix/images/agents.nix
-      - nix/verify-agents-shell-image-lifecycle.sh
       - nix/images/bun-workspace-service.nix
       - nix/images/openai-codex-cli.nix
       - nix/packages.nix

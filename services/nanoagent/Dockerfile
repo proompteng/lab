@@ -29,15 +29,9 @@ COPY vscode-extension ./vscode-extension
 COPY test-guest-admin.sh /out/test-guest-admin.sh
 COPY browser-client.html browser-client.js ./
 COPY developer-profile.sh ./
-RUN go test ./... && \
+RUN --mount=type=tmpfs,target=/tmp go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-      go build -trimpath -ldflags='-s -w' -o /out/nanoagent . && \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-      go test -c -o /out/nanoagent-tests
-
-FROM scratch AS kvm-tests
-COPY --from=build /out/nanoagent-tests /out/nanoagent-tests
-COPY --from=build /out/test-guest-admin.sh /out/test-guest-admin.sh
+      go build -trimpath -ldflags='-s -w' -o /out/nanoagent .
 
 FROM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS go-runtime
 

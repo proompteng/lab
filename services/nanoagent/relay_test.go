@@ -47,13 +47,12 @@ func TestRelayIdentityIsStablePrivateAndNeverReturnsItsKey(t *testing.T) {
 
 func TestRelayConfigurationInstallsOnlyAScopedGrantAndReloadsTools(t *testing.T) {
 	supervisor, writer := readyCodexSupervisor(t)
-	supervisor.connectorsEnabled = true
 	supervisor.relayRoot = t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	connection := "11111111-1111-4111-8111-111111111111"
 	credential := strings.Repeat("a", 43)
-	params, _ := json.Marshal(relayConfiguration{ConnectionID: connection, Endpoint: "https://proompteng.ai/api/tengri/connectors/agent", GrantID: "22222222-2222-4222-8222-222222222222", Credential: credential, Operations: []relayOperation{{Name: "search", Description: "Search issues", InputSchema: json.RawMessage(`{"type":"object"}`)}}})
+	params, _ := json.Marshal(relayConfiguration{DelegationID: connection, ConnectorID: "galactic", ClientService: "tengri-web", Binding: relayBinding{Service: "tengri", ID: "33333333-3333-4333-8333-333333333333", Generation: "44444444-4444-4444-8444-444444444444"}, Endpoint: "https://proompteng.ai/api/platform/relay/agent", Credential: credential, Operations: []relayOperation{{Name: "search", Description: "Search issues", InputSchema: json.RawMessage(`{"type":"object"}`)}}})
 	done := make(chan error, 1)
 	go func() {
 		result, err := supervisor.call(ctx, "relay/configure", params)
@@ -94,7 +93,7 @@ func TestRelayConfigurationInstallsOnlyAScopedGrantAndReloadsTools(t *testing.T)
 		t.Fatal("grant configuration was not persisted")
 	}
 	go func() {
-		_, err := supervisor.call(ctx, "relay/remove", json.RawMessage(`{"connectionId":"11111111-1111-4111-8111-111111111111"}`))
+		_, err := supervisor.call(ctx, "relay/remove", json.RawMessage(`{"delegationId":"11111111-1111-4111-8111-111111111111"}`))
 		done <- err
 	}()
 	write = readCodexWireRequest(t, writer)
@@ -114,34 +113,15 @@ func TestRelayConfigurationInstallsOnlyAScopedGrantAndReloadsTools(t *testing.T)
 
 func TestRelayConfigurationRejectsInjectedFilesAndDestinations(t *testing.T) {
 	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
-	supervisor.connectorsEnabled = true
 	supervisor.relayRoot = t.TempDir()
 	for _, raw := range []string{
-		`{"connectionId":"../../escape"}`,
-		`{"connectionId":"11111111-1111-4111-8111-111111111111","keyFile":"/etc/shadow"}`,
-		`{"connectionId":"11111111-1111-4111-8111-111111111111","endpoint":"http://insecure.example","credential":"a"}`,
-		`{"connectionId":"11111111-1111-4111-8111-111111111111","arbitraryCommand":"sh"}`,
+		`{"delegationId":"../../escape"}`,
+		`{"delegationId":"11111111-1111-4111-8111-111111111111","keyFile":"/etc/shadow"}`,
+		`{"delegationId":"11111111-1111-4111-8111-111111111111","endpoint":"http://insecure.example","credential":"a"}`,
+		`{"delegationId":"11111111-1111-4111-8111-111111111111","arbitraryCommand":"sh"}`,
 	} {
 		if _, err := supervisor.call(context.Background(), "relay/configure", json.RawMessage(raw)); err == nil {
 			t.Fatal("unsafe connector configuration was accepted")
 		}
-	}
-}
-
-func TestRelayIsDormantBeforeWritingIdentityOrConfiguration(t *testing.T) {
-	for _, setting := range []string{"", "false", "1", "TRUE", "true "} {
-		t.Run(setting, func(t *testing.T) {
-			t.Setenv("TENGRI_CONNECTORS_ENABLED", setting)
-			supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
-			supervisor.relayRoot = filepath.Join(t.TempDir(), "uncreated")
-			for _, method := range []string{"relay/identity", "relay/configure", "relay/remove"} {
-				if _, err := supervisor.call(context.Background(), method, json.RawMessage(`{}`)); err == nil || !strings.Contains(err.Error(), "not enabled") {
-					t.Fatalf("%s did not stop at the dormant gate: %v", method, err)
-				}
-			}
-			if _, err := os.Stat(supervisor.relayRoot); !os.IsNotExist(err) {
-				t.Fatalf("disabled connector created identity/configuration state: %v", err)
-			}
-		})
 	}
 }

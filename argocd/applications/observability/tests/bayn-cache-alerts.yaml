@@ -211,20 +211,108 @@ tests:
   - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline"}
     values: 0 1+0x80
   alert_rule_test:
+  - eval_time: 1m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts: []
   - eval_time: 2m
     alertname: BaynValkeyPublicationFailure
     exp_alerts:
-    - exp_labels:
+    - exp_labels: &publication_labels
         team: trading
         namespace: bayn
         service: bayn-valkey
         notify: email
         severity: warning
+      exp_annotations: &publication_annotations
+        summary: Bayn could not publish a replicated broker cache value
+        description: 'Failed replicated puts in the last five minutes by category/cause: operation_deadline/unknown; Inspect replica acknowledgement duration, server memory and the matching publication trace. Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.'
+        runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
+        dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
+  - eval_time: 6m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts: []
+- name: publication diagnosis lists only recent put failures and deduplicates replicas
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn",operation="put",category="command_failed",cause_category="replica_acknowledgement",pod="api-a"}
+    values: 0 1+0x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn",operation="put",category="command_failed",cause_category="replica_acknowledgement",pod="api-b"}
+    values: 0 1+0x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline",cause_category="command_failed"}
+    values: 0 1+0x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline",cause_category="replica_acknowledgement"}
+    values: 0 1+0x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn",operation="put",category="old_failure",cause_category="old_failure"}
+    values: 5+0x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn",operation="get",category="get_failure",cause_category="get_failure"}
+    values: 0+1x80
+  - series: bayn_valkey_failures_total{namespace="other",service="bayn",operation="put",category="wrong_namespace",cause_category="wrong_namespace"}
+    values: 0+1x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="other",operation="put",category="wrong_service",cause_category="wrong_service"}
+    values: 0+1x80
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: *publication_labels
       exp_annotations:
         summary: Bayn could not publish a replicated broker cache value
-        description: Inspect failure category, replica acknowledgement duration, server memory and the matching publication
-          trace.
-        runbook_url: docs/runbooks/bayn-cache-observability.md
+        runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
+        dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
+        description: 'Failed replicated puts in the last five minutes by category/cause: command_failed/replica_acknowledgement; operation_deadline/command_failed; operation_deadline/replica_acknowledgement; Inspect replica acknowledgement duration, server memory and the matching publication trace. Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.'
+- name: a counter reset without a new failure is not a publication failure
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline",cause_category="command_failed"}
+    values: 9+0x8 0+0x72
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts: []
+- name: publication diagnosis survives counter resets without attributing the old count
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline",cause_category="command_failed"}
+    values: 9+0x8 0 1+0x70
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: *publication_labels
+      exp_annotations:
+        summary: Bayn could not publish a replicated broker cache value
+        runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
+        dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
+        description: 'Failed replicated puts in the last five minutes by category/cause: operation_deadline/command_failed; Inspect replica acknowledgement duration, server memory and the matching publication trace. Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.'
+- name: missing diagnostic labels remain unknown without suppressing the publication alert
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put"}
+    values: 0 1+0x80
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: *publication_labels
+      exp_annotations:
+        summary: Bayn could not publish a replicated broker cache value
+        runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
+        dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
+        description: 'Failed replicated puts in the last five minutes by category/cause: unknown/unknown; Inspect replica acknowledgement duration, server memory and the matching publication trace. Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.'
+- name: stale publication series retain recent evidence but cannot imply continuing failures
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline"}
+    values: 0 1+0x4 stale
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: *publication_labels
+      exp_annotations: *publication_annotations
+  - eval_time: 6m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts: []
 - name: sustained cache p99 after twenty samples
   interval: 15s
   input_series:

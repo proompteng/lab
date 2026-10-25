@@ -1,4 +1,10 @@
 apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opencode
+automountServiceAccountToken: false
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: opencode-development
@@ -27,7 +33,9 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: opencode
+        spiffe.io/spire-managed-identity: "true"
     spec:
+      serviceAccountName: opencode
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 45
@@ -57,6 +65,15 @@ spec:
           ports:
             - name: http
               containerPort: 4096
+          env:
+            - name: RELAY_CLIENT_SERVICE
+              value: opencode
+            - name: RELAY_GRPC_TARGET
+              value: relay.relay.svc.cluster.local:9443
+            - name: SPIFFE_ID
+              value: spiffe://proompteng.ai/ns/opencode/sa/opencode
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///spiffe-workload-api/spire-agent.sock
           startupProbe:
             tcpSocket:
               port: http
@@ -91,9 +108,16 @@ spec:
             - name: config
               mountPath: /etc/opencode
               readOnly: true
+            - name: workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
         - name: development
           persistentVolumeClaim:
             claimName: opencode-development
