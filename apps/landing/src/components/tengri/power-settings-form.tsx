@@ -1,14 +1,21 @@
 'use client'
 
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Button, Input, Switch } from '@proompteng/design/ui'
-import { LoaderCircle } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from '@/lib/tengri/schemas'
 import type { TengriAgent } from '@/lib/tengri/types'
 import { runTengriAction } from './client'
+
+const sleepIntervals = [1, 2, 5, 10, 15, 30, 60, 120, 240, 480, 1440, 0]
+
+function intervalLabel(minutes: number) {
+  if (minutes === 0) return 'Never'
+  if (minutes < 60) return `After ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
+  if (minutes % 60 === 0) return `After ${minutes / 60} ${minutes === 60 ? 'hour' : 'hours'}`
+  return `After ${minutes} minutes`
+}
 
 export function PowerSettingsForm({
   agent,
@@ -23,106 +30,101 @@ export function PowerSettingsForm({
   onChanged: () => Promise<void>
   onSavingChange: (saving: boolean) => void
 }) {
-  const [saved, setSaved] = useState(false)
+  const saving = useRef(false)
   const {
     register,
     reset,
     handleSubmit,
     setError,
-    watch,
     setValue,
-    formState: { errors, isDirty, isSubmitting },
+    watch,
+    formState: { errors, isSubmitting },
   } = useForm<TengriPowerSettings>({
     defaultValues: agent.power,
     resolver: zodResolver(tengriPowerSettingsSchema),
-    mode: 'onChange',
   })
-
   useEffect(() => {
     reset({ idleTimeoutMinutes: agent.power.idleTimeoutMinutes })
   }, [agent.id, agent.power.idleTimeoutMinutes, reset])
 
-  const idleTimeoutMinutes = watch('idleTimeoutMinutes')
+  const minutes = watch('idleTimeoutMinutes')
+  const intervals = sleepIntervals.includes(minutes) ? sleepIntervals : [minutes, ...sleepIntervals]
   const save = handleSubmit(async (power) => {
-    setSaved(false)
+    if (saving.current) return
+    saving.current = true
     onSavingChange(true)
     try {
       const updated = await runTengriAction<TengriAgent>({ action: 'update-power-settings', agentId: agent.id, power })
       reset(updated.power)
-      setSaved(true)
       try {
         await onChanged()
       } catch {
-        setError('root.server', { message: 'Settings were saved. Refresh the desktop to update its status.' })
+        setError('root.server', {
+          message: 'Saved. The workspace status could not refresh. Reopen Settings to check it.',
+        })
       }
     } catch (cause) {
-      setError('root.server', { message: cause instanceof Error ? cause.message : 'Power settings could not be saved' })
+      setError('root.server', {
+        message: cause instanceof Error ? cause.message : 'The sleep setting could not be saved.',
+      })
     } finally {
+      saving.current = false
       onSavingChange(false)
     }
   })
 
   return (
-    <form noValidate onSubmit={save} className="space-y-4 rounded-[10px] border border-zinc-700 bg-zinc-800/80 p-3">
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-4">
-          <label htmlFor={`${instanceId}-automatic-sleep`} className="text-xs font-medium text-zinc-200">
-            Automatic sleep
-          </label>
-          <Switch
-            id={`${instanceId}-automatic-sleep`}
-            checked={idleTimeoutMinutes !== 0}
-            disabled={disabled || isSubmitting}
-            onCheckedChange={(enabled) =>
-              setValue('idleTimeoutMinutes', enabled ? 60 : 0, { shouldDirty: true, shouldValidate: true })
-            }
-          />
-        </div>
-        <p className="text-[11px] leading-5 text-zinc-400">
-          Every sleep releases guest RAM and stops background processes. Your workspace is retained.
-        </p>
-      </div>
-      <div className="space-y-1.5">
-        <label htmlFor={`${instanceId}-idle-timeout`} className="block text-xs font-medium text-zinc-200">
-          Idle timeout in minutes
+    <form noValidate onSubmit={save} className="space-y-2">
+      <div className="flex min-h-12 items-center justify-between gap-4 rounded-[10px] border border-white/[0.07] bg-white/[0.045] px-3 py-2">
+        <label htmlFor={`${instanceId}-idle-timeout`} className="text-[13px] text-zinc-100">
+          Sleep when inactive
         </label>
-        <Input
+        <select
+          {...register('idleTimeoutMinutes', { valueAsNumber: true })}
           id={`${instanceId}-idle-timeout`}
-          type="number"
-          min={1}
-          max={1440}
-          step={1}
-          disabled={disabled || isSubmitting || idleTimeoutMinutes === 0}
           aria-describedby={`${instanceId}-idle-timeout-help`}
           aria-invalid={Boolean(errors.idleTimeoutMinutes)}
-          {...register('idleTimeoutMinutes', { valueAsNumber: true })}
-          className="max-w-32"
-        />
-        <p id={`${instanceId}-idle-timeout-help`} className="text-[11px] leading-5 text-zinc-400">
-          Sleep after this many minutes without authenticated activity. Turn off Automatic sleep to keep the agent
-          running until you sleep it manually.
+          disabled={disabled || isSubmitting}
+          className="max-w-[55%] rounded-md border border-white/10 bg-zinc-600/45 px-2 py-1 text-[12px] text-zinc-100 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
+          onChange={(event) => {
+            setValue('idleTimeoutMinutes', Number(event.currentTarget.value), { shouldDirty: true })
+            void save()
+          }}
+        >
+          {intervals.map((value) => (
+            <option key={value} value={value}>
+              {intervalLabel(value)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p id={`${instanceId}-idle-timeout-help`} className="px-3 text-[12px] leading-[1.45] text-zinc-400">
+        Your workspace sleeps after you and your agent stop working. Open windows and connection checks won’t keep it
+        awake. Files are kept; background processes stop.
+      </p>
+      {isSubmitting ? (
+        <p role="status" className="px-3 text-xs text-zinc-400">
+          Saving…
         </p>
-        {errors.idleTimeoutMinutes ? (
-          <p role="alert" className="text-xs text-red-200">
-            {errors.idleTimeoutMinutes.message}
-          </p>
-        ) : null}
-      </div>
-      <div className="flex items-center gap-3">
-        <Button type="submit" size="sm" variant="secondary" disabled={disabled || isSubmitting || !isDirty}>
-          {isSubmitting ? <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin" /> : null} Save power
-          settings
-        </Button>
-        {saved && !isDirty ? (
-          <p role="status" className="text-xs text-emerald-300">
-            Saved
-          </p>
-        ) : null}
-      </div>
+      ) : null}
+      {errors.idleTimeoutMinutes ? (
+        <p role="alert" className="px-3 text-xs text-red-300">
+          {errors.idleTimeoutMinutes.message}
+        </p>
+      ) : null}
       {errors.root?.server ? (
-        <p role="alert" className="text-xs text-red-200">
-          {errors.root.server.message}
-        </p>
+        <div className="flex items-center justify-between gap-3 px-3">
+          <p role="alert" className="text-xs text-red-300">
+            {errors.root.server.message}
+          </p>
+          <button
+            type="submit"
+            disabled={disabled || isSubmitting}
+            className="shrink-0 text-xs text-blue-400 outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          >
+            Try Again
+          </button>
+        </div>
       ) : null}
     </form>
   )

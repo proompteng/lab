@@ -140,6 +140,11 @@ and home, saves a full generation, flushes backing files, reaps Firecracker, and
 acknowledgement. Root edits, shell processes, Codex state, and home files resume from that snapshot. Scheduler memory
 requests stay reserved; resident guest RAM is released.
 
+Power & Sleep settings save immediately when the timeout menu changes. Background Codex reads and event-stream
+reconnects, terminal heartbeats, and empty terminal frames do not reset the idle clock. Their control-admission CAS
+still excludes an already claimed sleep. User commands, terminal input/output, and active agent work keep the workspace
+awake. An accepted durable run remains a sleep inhibitor until it reaches a terminal state.
+
 The journal consumes a snapshot before vCPUs run. A failed save can recover only its still-live guest. A failed restore,
 changed disk/image/kernel/CPU identity, lost active runner, or missing Pod retains the claim and home for fenced recovery.
 No Lease expiry or missing Kubernetes object proves that a previous storage writer stopped.

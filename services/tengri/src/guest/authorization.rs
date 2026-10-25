@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use kube::ResourceExt;
+use prost::Message;
 use tengri::guest_authorization::{
     GuestActor, GuestContext, GuestProof, GuestSigner, MaintenancePurpose, ObservationBudget,
     PROTOCOL_VERSION, body_sha256, request_action,
@@ -343,7 +344,7 @@ impl GuestRequestIssuer {
                 .activity
                 .as_ref()
                 .ok_or_else(|| Status::unavailable("guest control admission unavailable"))?
-                .admit_control(&self.claim)
+                .admit_control(&self.claim, control_activity(method, body)?)
                 .await?;
             // A delayed API response must not mint fresh authority after its
             // activity interval. Guest verification enforces this same deadline.
@@ -419,5 +420,90 @@ impl GuestRequestIssuer {
             #[cfg(test)]
             Source::Fixture => Ok(()),
         }
+    }
+}
+
+fn control_activity(method: &str, body: &[u8]) -> Result<crate::activity::ControlActivity, Status> {
+    use crate::activity::ControlActivity;
+    const PREFIX: &str = "/proompteng.runtime.guest.v1.NanoagentService/";
+    match method.strip_prefix(PREFIX) {
+        Some("WatchCodexEvents") => Ok(ControlActivity::Observation),
+        Some("CodexCall") => {
+            let request = super::rpc::proto::CodexRequest::decode(body)
+                .map_err(|_| Status::invalid_argument("invalid Codex request"))?;
+            Ok(match request.method.as_str() {
+                "account/read"
+                | "account/rateLimits/read"
+                | "model/list"
+                | "thread/list"
+                | "thread/read"
+                | "thread/turns/list"
+                | "thread/items/list" => ControlActivity::Observation,
+                _ => ControlActivity::Interaction,
+            })
+        }
+        _ => Ok(ControlActivity::Interaction),
+    }
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+    use crate::activity::ControlActivity;
+
+    #[test]
+    fn background_codex_reads_do_not_count_as_user_activity() {
+        let method = "/proompteng.runtime.guest.v1.NanoagentService/CodexCall";
+        for call in [
+            "account/read",
+            "account/rateLimits/read",
+            "model/list",
+            "thread/list",
+            "thread/read",
+            "thread/turns/list",
+            "thread/items/list",
+        ] {
+            let body = super::super::rpc::proto::CodexRequest {
+                method: call.into(),
+                params_json: b"{}".to_vec(),
+            }
+            .encode_to_vec();
+            assert!(
+                matches!(
+                    control_activity(method, &body).unwrap(),
+                    ControlActivity::Observation
+                ),
+                "{call}"
+            );
+        }
+        for call in [
+            "turn/start",
+            "turn/interrupt",
+            "thread/resume",
+            "account/login/start",
+            "thread/archive",
+        ] {
+            let body = super::super::rpc::proto::CodexRequest {
+                method: call.into(),
+                params_json: b"{}".to_vec(),
+            }
+            .encode_to_vec();
+            assert!(
+                matches!(
+                    control_activity(method, &body).unwrap(),
+                    ControlActivity::Interaction
+                ),
+                "{call}"
+            );
+        }
+        assert!(matches!(
+            control_activity(
+                "/proompteng.runtime.guest.v1.NanoagentService/WatchCodexEvents",
+                &[]
+            )
+            .unwrap(),
+            ControlActivity::Observation
+        ));
+        assert!(control_activity(method, &[255]).is_err());
     }
 }

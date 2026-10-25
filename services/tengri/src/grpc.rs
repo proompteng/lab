@@ -775,7 +775,9 @@ impl MicroVmControlPlane for ControlPlane {
         let issued = self
             .provisional_terminal_leases
             .issue_and_confirm(&request.agent_id, &request.terminal_id, || async {
-                self.activity.admit_control(&claim).await?;
+                self.activity
+                    .admit_control(&claim, crate::activity::ControlActivity::Interaction)
+                    .await?;
                 self.tickets
                     .issue_terminal(&principal, &request.agent_id, &request.terminal_id)
                     .await
@@ -1304,7 +1306,9 @@ impl MicroVmControlPlane for ControlPlane {
         let (agent, _, _) = self.guest_access(&principal, &request.agent_id, "").await?;
         let claim = crate::slot::client::claim_for(&agent)
             .map_err(|_| Status::unavailable("workspace runtime claim unavailable"))?;
-        self.activity.admit_control(&claim).await?;
+        self.activity
+            .admit_control(&claim, crate::activity::ControlActivity::Interaction)
+            .await?;
         let issued = self
             .tickets
             .issue_preview(&principal, &request.agent_id, port, &path, &fragment)
