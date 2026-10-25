@@ -966,6 +966,7 @@ class Collector:
         self.errors = 0
         self.cache_errors = 0
         self.history_day = 0
+        self.history_runs = None
         self.metrics = b""
 
     def selected(self, run):
@@ -1038,10 +1039,25 @@ class Collector:
 
     def history(self, now, days=90, windows=30):
         today = dt.datetime.fromtimestamp(now, UTC).date()
+        deadline = time.time() + 10
         for _ in range(windows):
             next_day = self.history_day % days + 1
-            day = (today - dt.timedelta(days=next_day)).isoformat()
-            for run in self.api.runs(day + "T00:00:00Z", day + "T23:59:59Z"):
+            if self.history_runs is None:
+                day = (today - dt.timedelta(days=next_day)).isoformat()
+                self.history_runs = iter(
+                    self.api.runs(day + "T00:00:00Z", day + "T23:59:59Z")
+                )
+            while True:
+                if time.time() >= deadline:
+                    return
+                try:
+                    run = next(self.history_runs)
+                except StopIteration:
+                    self.history_runs = None
+                    break
+                except Exception:
+                    self.history_runs = None
+                    raise
                 if self.selected(run):
                     self.store.discover(run, now)
             self.history_day = next_day
@@ -1232,6 +1248,7 @@ class Collector:
                 self.collect_pending(time.time() + 20)
             except Exception as error:
                 self.failure(error)
+            self.refresh()
             try:
                 self.history(begin)
             except Exception as error:

@@ -12,7 +12,8 @@ image runs the committed ConfigMap source using the same deployment pattern as e
 ## Collection and storage
 
 The collector polls active runs and today's completed runs every 60 seconds. It scans the previous 90 creation-day
-windows in groups of 30 per cycle so that older reruns are discovered even if they finish between polls. Conditional
+windows so that older reruns are discovered even if they finish between polls. Each history pass has a ten-second
+budget and resumes its current search next cycle; current metrics are published before that pass. Conditional
 GETs retain ETags in memory; unchanged authenticated responses avoid spending GitHub's primary rate-limit quota.
 Search windows over GitHub's 1,000-result limit are split before pagination. Collection errors and rate-limit backoff
 remain visible in metrics; stale collection never becomes a fabricated empty queue or successful build.
