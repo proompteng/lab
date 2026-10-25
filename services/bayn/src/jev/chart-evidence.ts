@@ -151,12 +151,28 @@ export const renderNativeCandlesPng = (bars: readonly VisualBar[]): Buffer => {
   ])
 }
 
+const chartImages = new Map<string, { readonly pngHash: string; readonly image: string }>()
+const chartImage = (barsHash: string, bars: readonly VisualBar[]) => {
+  const existing = chartImages.get(barsHash)
+  if (existing !== undefined) return existing
+  const png = renderNativeCandlesPng(bars)
+  const rendered = { pngHash: sha256(png), image: `data:image/png;base64,${png.toString('base64')}` }
+  if (chartImages.size >= 64) {
+    const oldest = chartImages.keys().next()
+    if (oldest.done === false) chartImages.delete(oldest.value)
+  }
+  chartImages.set(barsHash, rendered)
+  return rendered
+}
+
 export const makeNativeChartEvidence = (input: unknown) =>
   decodeChartSource(input).pipe(
     Result.flatMap((source) =>
       Result.gen(function* () {
         const { symbol, bars, windowEndAt } = source
-        const png = renderNativeCandlesPng(bars)
+        const barsHash = yield* canonicalHashV1Result(source).pipe(
+          Result.mapError((cause) => new JevContractError({ message: 'Chart source cannot be hashed', cause })),
+        )
         const identifiedBars = bars.map((bar) => {
           const timestamp = new Date(Date.parse(windowEndAt) - bar.minuteBeforeWindowEnd * 60_000).toISOString()
           return { ...bar, id: `bar_${timestamp}`, timestamp, chartLabel: String(bar.minuteBeforeWindowEnd) }
@@ -166,11 +182,8 @@ export const makeNativeChartEvidence = (input: unknown) =>
           windowEndAt,
           bars: identifiedBars,
           barCount: bars.length,
-          barsHash: yield* canonicalHashV1Result(source).pipe(
-            Result.mapError((cause) => new JevContractError({ message: 'Chart source cannot be hashed', cause })),
-          ),
-          pngHash: sha256(png),
-          image: `data:image/png;base64,${png.toString('base64')}`,
+          barsHash,
+          ...chartImage(barsHash, bars),
           provenance: 'DERIVED_FROM_SAME_NATIVE_OHLCV' as const,
         }
       }),

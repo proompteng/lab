@@ -3,11 +3,13 @@
 Run from `services/bayn` against a private local evidence bundle:
 
 ```sh
-bun tools/native-arrival-coverage.ts /private/native-coverage.json > /private/audited-quotes.json
+bun run build:research
+node dist/research/native-arrival-coverage.js /private/native-coverage.json > /private/audited-quotes.json
 ```
 
 This command has no database, Kafka, broker, model or network client. Keep production input and output private.
-The library export `auditNativeArrivalCoverage(input)` returns a typed `Result` containing `report` and `quotes`.
+The library export `auditNativeArrivalCoverage(input)` in `src/intraday-replay/native-arrival-coverage.ts` returns a
+typed `Result` containing `report` and `quotes`.
 Quotes use the existing `ObservedMarketValue<IntradayQuote>` type and production raw decoder; their original
 availability, projection sequence, raw-value hash, native payload and source coordinates are unchanged.
 
