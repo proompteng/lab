@@ -120,7 +120,8 @@ const dependencies = (label: string): ExecutionProgramDependencies => ({
     invalidate: Effect.void,
     take: () => Effect.succeed(cachedBrokerStateFixture(brokerAccount())),
   },
-  verifyBrokerStateVersion: () => Effect.void,
+  verifyBrokerStateVersion: (_version, _intentId, requireCryptoEntryFeeBound) =>
+    Effect.succeed(requireCryptoEntryFeeBound ? 25 : null),
   brokerRead: stableBrokerRead(),
   brokerMutation: {
     submit: () => Effect.die(new Error(`${label} submit must not run during composition proof`)),
@@ -149,6 +150,7 @@ const readEvidence: ReadEvidence = {
 const readResult = <A>(value: A): ReadResult<A> => ({ value, evidence: readEvidence })
 const brokerAccount = (overrides: Partial<Account> = {}): Account => ({
   cryptoStatus: null,
+  cryptoFeeTier: null,
   cashReportingQuantumMicros: '1' as const,
   nonMarginableBuyingPowerMicros: null,
 
@@ -1625,6 +1627,82 @@ describe('execution with the native reconciliation cache', () => {
     }
     return { fixture, cache, deps }
   }
+  test.each([false, true])('checks the fee tier at the final transport clock: reset crossed %s', async (crossReset) => {
+    const { fixture, cache, deps } = setup()
+    const beforeReset = '2026-07-28T07:59:59.900Z'
+    const account = brokerAccount({
+      cryptoStatus: 'ACTIVE',
+      cryptoFeeTier: 4,
+      nonMarginableBuyingPowerMicros: '1000000000',
+      observedAt: beforeReset,
+    })
+    await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(account))))
+    const authority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: identity(BrokerEnvironment.Live),
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: grantedCapitalAuthority(fixture.grant),
+        strategy,
+        observedAt: beforeReset,
+      }),
+    )
+    const intent: Intent = {
+      ...fixture.intent,
+      symbol: 'BTC/USD',
+      quantityAtoms: '1000000',
+      limitPriceMicros: '80000000000',
+      notionalLimitMicros: '80000000',
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    }
+    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('Expected mutation authority')
+    const readAt = <A>(value: A): ReadResult<A> => ({ value, evidence: { ...readEvidence, observedAt: beforeReset } })
+    let riskContextRead = false
+    let snapshotClockRead = false
+    let posts = 0
+    const exit = await Effect.runPromiseExit(
+      authorizeCachedFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        {
+          ...deps,
+          intentStore: { ...deps.intentStore, read: () => Effect.succeed(Option.some({ ...fixture.stored, intent })) },
+          verifyBrokerStateVersion: (_version, _intentId, required) => {
+            expect(required).toBe(true)
+            return Effect.succeed(18)
+          },
+          brokerRead: submissionProjectionFixture({
+            ...deps.brokerRead,
+            account: Effect.succeed(readAt(account)),
+            positions: Effect.succeed(readAt([])),
+            orders: () => Effect.succeed(readAt([])),
+            assetBySymbol: (symbol) => Effect.succeed(readAt(brokerAssetFixture(symbol, beforeReset))),
+          }),
+          readFinalExecutionRiskContext: (at) =>
+            deps.readFinalExecutionRiskContext(at).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  riskContextRead = true
+                }),
+              ),
+            ),
+          currentUtcInstant: Effect.sync(() => {
+            if (!riskContextRead) return beforeReset
+            if (!snapshotClockRead) {
+              snapshotClockRead = true
+              return beforeReset
+            }
+            return crossReset ? observedAt : beforeReset
+          }),
+        },
+      ),
+    )
+    expect(posts).toBe(crossReset ? 0 : 1)
+    expect(Exit.isSuccess(exit)).toBe(!crossReset)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('exceeds the sealed entry estimate')
+  })
   test.each(['empty', 'stale', 'changed-version'])(
     'denies %s cache before broker confirmation or transmission',
     async (scenario) => {
@@ -1638,7 +1716,7 @@ describe('execution with the native reconciliation cache', () => {
         ...(scenario === 'stale' ? { riskPolicy: { ...riskPolicy, maxBrokerStateAgeMs: 1 } } : {}),
         currentUtcInstant: Effect.succeed(scenario === 'stale' ? '2026-07-28T08:00:01.000Z' : observedAt),
         verifyBrokerStateVersion: () =>
-          scenario === 'changed-version' ? Effect.fail({ _tag: 'ChangedVersion' }) : Effect.void,
+          scenario === 'changed-version' ? Effect.fail({ _tag: 'ChangedVersion' }) : Effect.succeed(null),
         brokerRead: {
           ...deps.brokerRead,
           positions: Effect.sync(() => {

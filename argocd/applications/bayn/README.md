@@ -34,6 +34,12 @@ command is **not** run automatically from the trading service at startup.
 
 # Bayn GitOps rollout notes
 
+Protocol v23 retains the broker account's crypto fee tier in v2 account observations. Entry pricing uses that
+account-bound taker rate; future sells retain the maximum fee. Migration 146 requires flat, settled, fully accounted
+inventory and fresh exact reconciliation. The source rollout removes the prior PAPER request and activates OBSERVE.
+Restore PAPER only with the same account, limits and risk policy in a new mandate bound to the verified published image.
+Keep the existing financial history and acceptance cohort. Release health and modeled economics do not prove a natural trade.
+
 ## Isolated Jev instruction research
 
 The same immutable image includes `bayn-gepa` for bounded native Jev question optimization. Use the

@@ -551,8 +551,8 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   expect(report).toMatchObject({
     diagnosticOnly: true,
     schemaVersion: 'bayn.jev-abstention-report.v2',
-    protocol: 'bayn.jev.protocol.v22',
-    inputDefinition: 'bayn.jev-trading-signal-state.v20',
+    protocol: 'bayn.jev.protocol.v23',
+    inputDefinition: 'bayn.jev-trading-signal-state.v21',
     selectedSymbols: [],
     profitableEdgeProven: false,
   })
@@ -619,7 +619,7 @@ test('crypto economics and coverage are measured from sealed source rather than 
   const candidate = report.candidates.find((value) => value.symbol === 'SOL/USD')
   if (candidate === undefined || !('plans' in candidate) || !('coverage' in candidate))
     throw new Error('Expected requested SOL candidate')
-  expect(candidate.fees).toEqual({ estimatedFeeBpsPerSide: 25, estimatedRoundTripFeesBps: 50 })
+  expect(candidate.fees).toEqual({ maximumEntryFeeBps: 25, maximumExitFeeBps: 25, estimatedRoundTripFeesBps: 50 })
   expect(candidate.entryEconomics?.holdingExitRequiredBidRiseBps).toBeGreaterThan(80)
   expect(candidate.plans.length).toBeGreaterThan(0)
   expect(candidate.netRewardRisk).toEqual({
