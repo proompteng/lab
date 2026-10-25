@@ -1,6 +1,12 @@
 import { PgClient } from '@effect/sql-pg'
 import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clock'
 import { Data, Effect, Option, Result, Schema } from 'effect'
+import {
+  CryptoFeeTierSchema,
+  cryptoTakerFeeBps,
+  effectiveCryptoFeeTier,
+  type CryptoTakerFeeBps,
+} from '../broker/crypto-fees'
 
 import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
@@ -400,7 +406,8 @@ export const verifyBrokerStateVersion = (
   accountId: string,
   version: BrokerStateVersion,
   intentId: string,
-): Effect.Effect<void, ReconciliationStoreError> =>
+  requireCryptoEntryFeeBound: boolean,
+): Effect.Effect<CryptoTakerFeeBps | null, ReconciliationStoreError> =>
   runStore(
     'risk-context',
     Effect.gen(function* () {
@@ -444,6 +451,39 @@ export const verifyBrokerStateVersion = (
           'invariant',
           'cached broker reconciliation version changed before submit',
         )
+      if (!requireCryptoEntryFeeBound) return null
+      const [fee] = yield* sql`
+        SELECT
+          (d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,cryptoFeeTier}')::integer AS tier,
+          d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,observedAt}' AS account_observed_at,
+          d.document #>> '{strategyDecision,evidence,observation,observedAt}' AS priced_at
+        FROM intents i
+        JOIN autonomous_cycles c ON c.cycle_id = i.cycle_id
+        JOIN autonomous_cycle_shadow_decisions d ON d.cycle_id = c.cycle_id AND d.decision_hash = c.decision_hash
+        WHERE i.intent_id = ${intentId} AND i.account_id = ${accountId} AND i.side = 'BUY'
+          AND i.decision_hash = d.document #>> '{bindings,strategyDecisionHash}'
+          AND d.document #>> '{bindings,accountId}' = ${accountId}
+          AND d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v6'
+          AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' = 'bayn.jev.protocol.v23'
+          AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,schemaVersion}' = 'bayn.paper-account-snapshot.v2'
+          AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}' = ${accountId}
+          AND (d.document #> '{strategyDecision,evidence,observation,portfolio,brokerState,account}') ? 'cryptoFeeTier'
+          AND (d.document -> 'orderedIntentIds') @> ${JSON.stringify([intentId])}::jsonb
+      `.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Tuple([
+              Schema.Struct({
+                tier: Schema.NullOr(CryptoFeeTierSchema),
+                account_observed_at: UtcInstant,
+                priced_at: UtcInstant,
+              }),
+            ]),
+            strictParseOptions,
+          ),
+        ),
+      )
+      return cryptoTakerFeeBps(effectiveCryptoFeeTier(fee.tier, fee.account_observed_at, fee.priced_at))
     }),
   )
 

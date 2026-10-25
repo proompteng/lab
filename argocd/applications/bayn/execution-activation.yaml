@@ -42,7 +42,7 @@ spec:
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              value: "afd0e042639bd40c62f98c529e36f07f3565bebf621cc700c7da810e22c8768e"
+              value: "8a5dac560b05fea109936714d6953b7e32fb11e7109723a0189466b336eaae65"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_GLITCHTIP_DSN
@@ -57,7 +57,7 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "3353cf13424c80c4498a53ff388782585a5969d63b950579675223f582e21f4a"
+              value: "72b942692c5156c48a9fea3a0b834b96d8bebe79a334e759af87e8a27c3b7e60"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

@@ -501,19 +501,48 @@ export function codexResumeCommitIsCurrent(
   return requestGeneration === currentGeneration && requestedThreadId === currentThreadId
 }
 
-export function codexActiveTurnIdFromThread(rawJson: string) {
+export function codexThreadTurnState(rawJson: string) {
+  const state: { activeTurnId: string; completedTurnIds: string[]; clientTurnIds: Map<string, string> } = {
+    activeTurnId: '',
+    completedTurnIds: [],
+    clientTurnIds: new Map(),
+  }
   try {
     const response = record(JSON.parse(rawJson))
     const thread = record(response.thread)
     const turns = Array.isArray(thread.turns) ? thread.turns : []
-    for (let index = turns.length - 1; index >= 0; index -= 1) {
-      const turn = record(turns[index])
-      if (string(turn.status) === 'inProgress') return boundedIdentifier(turn.id, 256)
+    for (const value of turns) {
+      const turn = record(value)
+      const id = boundedIdentifier(turn.id, 256)
+      if (!id) continue
+      for (const [clientId, turnId] of nativeClientTurnIds(id, turn.items)) state.clientTurnIds.set(clientId, turnId)
+      const status = string(turn.status)
+      if (status === 'inProgress') state.activeTurnId = id
+      else if (['completed', 'failed', 'interrupted'].includes(status)) state.completedTurnIds.push(id)
     }
   } catch {
-    // A malformed resume response cannot identify an active turn.
+    return { activeTurnId: '', completedTurnIds: [], clientTurnIds: new Map<string, string>() }
   }
-  return ''
+  return state
+}
+
+export function codexEventClientTurnIds(event: TengriCodexEvent) {
+  if (event.kind !== 'user-message' && event.method !== 'turn/started' && event.method !== 'turn/completed') return []
+  const params = record(parseRawEvent(event.rawJson).params)
+  const turn = record(params.turn)
+  return nativeClientTurnIds(event.turnId || boundedIdentifier(turn.id, 256), [
+    ...(Array.isArray(turn.items) ? turn.items : []),
+    params.item,
+  ])
+}
+
+function nativeClientTurnIds(turnId: string, items: unknown): Array<[string, string]> {
+  if (!turnId || !Array.isArray(items)) return []
+  return items.flatMap((value): Array<[string, string]> => {
+    const item = record(value)
+    const clientId = boundedIdentifier(item.clientId, 160)
+    return item.type === 'userMessage' && clientId ? [[clientId, turnId]] : []
+  })
 }
 
 export function codexReconciledActiveTurnId(activeTurnId: string, completedTurns: ReadonlySet<string>) {

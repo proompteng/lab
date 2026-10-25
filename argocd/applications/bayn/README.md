@@ -34,6 +34,12 @@ command is **not** run automatically from the trading service at startup.
 
 # Bayn GitOps rollout notes
 
+Protocol v23 retains the broker account's crypto fee tier in v2 account observations. Entry pricing uses that
+account-bound taker rate; future sells retain the maximum fee. Migration 146 requires flat, settled, fully accounted
+inventory and fresh exact reconciliation. The source rollout removes the prior PAPER request and activates OBSERVE.
+Restore PAPER only with the same account, limits and risk policy in a new mandate bound to the verified published image.
+Keep the existing financial history and acceptance cohort. Release health and modeled economics do not prove a natural trade.
+
 ## Isolated Jev instruction research
 
 The same immutable image includes `bayn-gepa` for bounded native Jev question optimization. Use the
@@ -185,8 +191,8 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The implementation uses `bayn.jev.protocol.v22`, `bayn.jev.executable-profit-limit.behavior.v1`,
-trading-signal state v20, batch v6 and pinned `jev-1.13.0`, with the existing 15-minute holding limit.
+The implementation uses `bayn.jev.protocol.v23`, `bayn.jev.executable-profit-limit.behavior.v1`,
+trading-signal state v21, batch v6 and pinned `jev-1.13.0`, with the existing 15-minute holding limit.
 Crypto candidate and benchmark relative returns use matching completed-bar endpoints. Current candidate quote
 indicators remain separate, and fresh executable quotes still determine pricing, funding and fees. Crypto breakout
 uses the fresh bid against the completed range high; an older contextual trade cannot cap that current quote metric.
@@ -195,15 +201,14 @@ separately from observed market evidence. The selected complete plan binds those
 limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
 and remaining economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
 
-Migration 145 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
+Migration 146 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
-history. The strategy protocol hash is `d88530748288c895b348f0c4bdfcb1b13f305f5ce120f664ad2c5aa932ca1c7f`.
-The protocol cutover uses explicit OBSERVE manifests with read-only broker access, no standalone capital permission,
-and no retired activation request or lineage. After the v22 image is published and verified, a matching same-account
-PAPER research request is sealed and reviewed against that image. The sealed identity, activation generation and all
-three build lineages move together through Kargo. The account, monetary limits and risk policy remain unchanged.
+history. The strategy protocol hash is `64baeede37bbf9e9b9777ccb2746578705661a5a70f8e971a25427611fea4cd4`.
+The v23 source release first activates OBSERVE. A new same-account PAPER request must be authored against its verified
+published source and immutable image. Its sealed identity, activation generation and all three build lineages move
+together through Kargo. The account, monetary limits and risk policy remain unchanged.
 
-The native hook requires fresh flat/exact accounting before realizing v22 PAPER authority. Correct signal arithmetic
+The native hook requires fresh flat/exact accounting before realizing v23 PAPER authority. Correct signal arithmetic
 and successful activation do not establish profitable entries or a natural round trip. Those require subsequent
 runtime broker fills, posted fees and accounting evidence. Previous v21 grants and execution records remain in history.
 

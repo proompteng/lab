@@ -164,7 +164,8 @@ const partialExit = (
     projectedPositions: [{ symbol: position.symbol, quantityAtoms: String(quantity), costBasisMicros: String(cost) }],
     snapshot: {
       account: {
-        schemaVersion: 'bayn.paper-account-snapshot.v1' as const,
+        schemaVersion: 'bayn.paper-account-snapshot.v2' as const,
+        cryptoFeeTier: null,
         accountId,
         status: AccountStatus.Active,
         currency: 'USD' as const,

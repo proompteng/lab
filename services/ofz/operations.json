@@ -63,6 +63,11 @@
   },
   {
     "surface": "controller",
+    "operation": "StatFile",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "controller",
     "operation": "ListFiles",
     "action": "ACTION_FILES_OBSERVE"
   },
@@ -129,6 +134,16 @@
   {
     "surface": "controller",
     "operation": "ListCodexModels",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "ListCodexThreads",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "SetCodexThreadArchived",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -229,6 +244,11 @@
   },
   {
     "surface": "guest",
+    "operation": "StatFile",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "guest",
     "operation": "ListFiles",
     "action": "ACTION_FILES_OBSERVE"
   },
@@ -325,6 +345,21 @@
   },
   {
     "surface": "codex",
+    "operation": "thread/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/archive",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/unarchive",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
     "operation": "thread/start",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -410,6 +445,11 @@
   },
   {
     "surface": "bff",
+    "operation": "stat-file",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "bff",
     "operation": "list-files",
     "action": "ACTION_FILES_OBSERVE"
   },
@@ -486,6 +526,16 @@
   {
     "surface": "bff",
     "operation": "create-thread",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "list-threads",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "set-thread-archived",
     "action": "ACTION_CODEX_CONTROL"
   },
   {

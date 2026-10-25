@@ -46,18 +46,20 @@ pub mod proto {
 use proto::{
     Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
     CodexEvent, CodexEventKind, CodexHistoryPage, CodexHistoryPart, CodexImage, CodexLogin,
-    CodexModels, CodexRun, CodexThread, CodexTurn, CreateAgentRequest, CreateCodexThreadRequest,
-    CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest, Empty, FileEntry, FileEvent,
-    FileEventKind, GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest,
-    GetCodexRunRequest, InterruptCodexTurnRequest, IssueDesktopSessionRequest,
-    IssuePreviewSessionRequest, IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse,
-    ListCodexModelsRequest, ListFilesRequest, ListFilesResponse, ListTerminalsRequest,
-    ListTerminalsResponse, MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
+    CodexModels, CodexRun, CodexThread, CodexThreads, CodexTurn, CreateAgentRequest,
+    CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest,
+    Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest, GetCodexAccountRequest,
+    GetCodexLoginRequest, GetCodexRunRequest, InterruptCodexTurnRequest,
+    IssueDesktopSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
+    ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest, ListCodexThreadsRequest,
+    ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
+    MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
     ResolveCodexApprovalRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest,
-    SearchFilesRequest, SearchFilesResponse, SendCodexInputRequest, StartCodexLoginRequest,
-    SteerCodexInputRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
-    UpdatePowerSettingsRequest, WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest,
-    WriteFileRequest, WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
+    SearchFilesRequest, SearchFilesResponse, SendCodexInputRequest, SetCodexThreadArchivedRequest,
+    StartCodexLoginRequest, StatFileRequest, SteerCodexInputRequest, TerminalSession,
+    TerminalTicket, TerminateTerminalRequest, UpdatePowerSettingsRequest, WatchAgentRequest,
+    WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest, WriteFileResponse,
+    micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
@@ -479,6 +481,21 @@ impl MicroVmControlPlane for ControlPlane {
         ))
     }
 
+    async fn stat_file(
+        &self,
+        request: Request<StatFileRequest>,
+    ) -> Result<Response<FileEntry>, Status> {
+        let principal = self.authorize(&request, "StatFile").await?;
+        let request = request.into_inner();
+        let result = self
+            .guest(&principal, &request.agent_id, &request.path)
+            .await?
+            .stat_file(&request.path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(file_entry(result)))
+    }
+
     async fn list_files(
         &self,
         request: Request<ListFilesRequest>,
@@ -885,6 +902,69 @@ impl MicroVmControlPlane for ControlPlane {
             return Err(Status::not_found("no Codex device login is active"));
         }
         Ok(Response::new(codex_login(snapshot.result, started_at)))
+    }
+
+    async fn list_codex_threads(
+        &self,
+        request: Request<ListCodexThreadsRequest>,
+    ) -> Result<Response<CodexThreads>, Status> {
+        let principal = self.authorize(&request, "ListCodexThreads").await?;
+        let request = request.into_inner();
+        if request.cursor.len() > 4096 || request.cursor.chars().any(char::is_control) {
+            return Err(Status::invalid_argument("invalid chat cursor"));
+        }
+        let value = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .codex_call(
+                "thread/list",
+                json!({
+                    "archived": request.archived,
+                    "cursor": if request.cursor.is_empty() { None } else { Some(request.cursor) },
+                    "cwd": "/workspace",
+                    "sortKey": "updated_at",
+                    "limit": 50,
+                }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexThreads {
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn set_codex_thread_archived(
+        &self,
+        request: Request<SetCodexThreadArchivedRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "SetCodexThreadArchived").await?;
+        let request = request.into_inner();
+        validate_codex_id(&request.thread_id)?;
+        let guest = self
+            .guest(&principal, &request.agent_id, &request.thread_id)
+            .await?;
+        if request.archived
+            && let Some(run) = crate::runs::active(self, &principal).await?
+            && run.agent_id == request.agent_id
+            && run.thread_id == request.thread_id
+            && !run.state.terminal()
+        {
+            return Err(Status::failed_precondition(
+                "Wait for the response to finish before archiving this chat",
+            ));
+        }
+        guest
+            .codex_call(
+                if request.archived {
+                    "thread/archive"
+                } else {
+                    "thread/unarchive"
+                },
+                json!({ "threadId": request.thread_id }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(Empty {}))
     }
 
     async fn create_codex_thread(
