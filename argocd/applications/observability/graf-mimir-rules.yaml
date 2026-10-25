@@ -709,6 +709,19 @@ data:
               summary: CI build records are not reaching Loki
               description: A durable build record has waited at least ten minutes for Loki acknowledgement. Metrics remain independent of the record outbox.
               dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
+          - alert: CiObservabilityRecordsRejected
+            expr: |
+              max(ci_observability_loki_rejected_records) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: ci-observability
+              notify: email
+            annotations:
+              summary: Expired CI records need delivery recovery
+              description: Unacknowledged records exceeded Loki's seven-day admission window and are retained in SQLite loki_rejections. Newer records continue shipping. Inspect and recover these records without clearing their evidence.
+              dashboard_url: https://grafana.ide-newton.ts.net/d/ci-build-performance
           - alert: CiBuildQueueDelay
             expr: |
               ci_job_oldest_queue_seconds > 600

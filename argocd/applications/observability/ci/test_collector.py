@@ -536,6 +536,65 @@ class CollectorTests(unittest.TestCase):
         self.store = Store(self.path)
         self.assertEqual(self.store.installed_at, installed)
 
+    def test_signed_log_failure_cannot_discard_completed_job_timings(self):
+        api = FakeGitHub({}, {})
+        observer = Collector(
+            self.store, api, {"temporal-worker-images.yml": []}, "http://unused"
+        )
+        error = urllib.error.HTTPError(
+            "https://logs.example.invalid/signed", 404, "expired", {}, io.BytesIO()
+        )
+        with (
+            patch.object(api, "log", side_effect=error),
+            patch("time.time", return_value=self.now),
+        ):
+            observer.collect_job(run(), job(), self.now + 10)
+        record = json.loads(
+            self.store.db.execute("SELECT record FROM jobs").fetchone()[0]
+        )
+        self.assertEqual(record["durations"]["execution"], 239)
+        self.assertEqual(record["cache"]["state"], "unknown")
+        self.assertEqual(record["cache"]["reason"], "download_failed")
+        self.assertEqual(observer.cache_errors, 1)
+
+    def test_expired_unacknowledged_records_cannot_block_new_loki_delivery(self):
+        first, second = job_record(run(), job()), job_record(run(), job())
+        self.store.save_job(first, cache_evidence(""))
+        old_stamp = str(int((self.now - 8 * 86400) * 1e9))
+        self.store.db.execute("UPDATE outbox SET stamp=?", (old_stamp,))
+        self.store.db.commit()
+        second["job_id"] += 100
+        with (
+            patch("time.time", return_value=self.now),
+            patch("time.time_ns", return_value=int(self.now * 1e9)),
+        ):
+            self.store.save_job(second, cache_evidence(""))
+        observer = Collector(self.store, FakeGitHub({}, {}), {}, "http://unused")
+        with (
+            patch("time.time", return_value=self.now),
+            patch("urllib.request.urlopen", return_value=io.BytesIO()) as request,
+        ):
+            observer.flush()
+        body = json.loads(request.call_args.args[0].data)
+        delivered = [
+            json.loads(line)["job_id"]
+            for stream in body["streams"]
+            for _, line in stream["values"]
+        ]
+        self.assertEqual(delivered, [second["job_id"]])
+        rejected = self.store.db.execute(
+            "SELECT stamp, line, reason FROM loki_rejections"
+        ).fetchone()
+        self.assertEqual(rejected["stamp"], old_stamp)
+        self.assertEqual(json.loads(rejected["line"])["job_id"], first["job_id"])
+        self.assertEqual(rejected["reason"], "expired_unacknowledged")
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 2
+        )
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 0
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

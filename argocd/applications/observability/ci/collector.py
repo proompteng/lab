@@ -2,6 +2,7 @@
 
 import collections
 import datetime as dt
+import http.client
 import http.server
 import json
 import math
@@ -43,6 +44,7 @@ OUTCOMES = {
 }
 ACTIVE_STATES = ("in_progress", "queued", "waiting", "pending", "requested")
 MAX_LOG_BYTES = 16 * 1024 * 1024
+LOKI_MAX_SAMPLE_AGE_SECONDS = 168 * 3600
 METRICS = {
     "ci_job_phase_duration_seconds": (
         "histogram",
@@ -144,6 +146,14 @@ METRICS = {
     "ci_observability_backfill_complete": (
         "gauge",
         "Historical discovery has completed and initial pending attempts are drained.",
+    ),
+    "ci_observability_cache_errors_total": (
+        "counter",
+        "Optional build-log downloads that failed without blocking job timing collection.",
+    ),
+    "ci_observability_loki_rejected_records": (
+        "gauge",
+        "Expired unacknowledged records retained outside the Loki delivery queue.",
     ),
 }
 
@@ -399,6 +409,10 @@ class Store:
             );
             CREATE TABLE IF NOT EXISTS outbox (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, stamp TEXT, labels TEXT, line TEXT
+            );
+            CREATE TABLE IF NOT EXISTS loki_rejections (
+                id INTEGER PRIMARY KEY, stamp TEXT, labels TEXT, line TEXT,
+                reason TEXT, rejected_at REAL
             );
         """)
         with self.db:
@@ -763,6 +777,12 @@ class Store:
                 self.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0],
             )
         )
+        output.append(
+            exposition(
+                "ci_observability_loki_rejected_records",
+                self.db.execute("SELECT COUNT(*) FROM loki_rejections").fetchone()[0],
+            )
+        )
         oldest = self.db.execute(
             "SELECT MIN(CAST(stamp AS INTEGER)) FROM outbox"
         ).fetchone()[0]
@@ -799,6 +819,10 @@ class GitHubError(RuntimeError):
     def __init__(self, status):
         self.status = status
         super().__init__(f"GitHub API returned HTTP {status}")
+
+
+class GitHubQuotaError(RuntimeError):
+    pass
 
 
 class GitHub:
@@ -844,9 +868,9 @@ class GitHub:
 
     def check_quota(self):
         if time.time() < self.blocked_until:
-            raise RuntimeError("GitHub rate-limit backoff is active")
+            raise GitHubQuotaError("GitHub rate-limit backoff is active")
         if self.remaining < 1000 and time.time() < self.reset_at:
-            raise RuntimeError(
+            raise GitHubQuotaError(
                 "GitHub shared API quota reserve reached; waiting for reset"
             )
 
@@ -938,6 +962,7 @@ class Collector:
         self.active_runs, self.active_metrics = {}, ""
         self.last_poll, self.last_history = 0, 0
         self.errors = 0
+        self.cache_errors = 0
         self.history_day = 0
         self.metrics = b""
 
@@ -1028,13 +1053,29 @@ class Collector:
             return
         workflow = run["path"].split("@", 1)[0].rsplit("/", 1)[-1]
         record = job_record(run, job, self.families[workflow])
-        log = (
-            self.api.log(job["id"])
-            if time.time() < deadline
-            and any(k in record["durations"] for k in ("build", "build_and_publish"))
-            else None
-        )
-        self.store.save_job(record, cache_evidence(log or ""))
+        log = None
+        reason = "not_a_build"
+        if any(k in record["durations"] for k in ("build", "build_and_publish")):
+            reason = "collection_budget"
+            if time.time() < deadline:
+                reason = "logs_unavailable"
+                try:
+                    log = self.api.log(job["id"])
+                except (
+                    OSError,
+                    http.client.HTTPException,
+                    GitHubError,
+                    GitHubQuotaError,
+                ) as error:
+                    if isinstance(error, urllib.error.HTTPError):
+                        error.close()
+                    reason = "download_failed"
+                if log is None:
+                    self.cache_errors += 1
+        cache = cache_evidence(log or "")
+        if cache["state"] == "unknown":
+            cache["reason"] = reason
+        self.store.save_job(record, cache)
 
     def collect_attempt(self, pending):
         try:
@@ -1079,6 +1120,15 @@ class Collector:
             self.collect_attempt(pending)
 
     def flush(self):
+        cutoff = int((time.time() - LOKI_MAX_SAMPLE_AGE_SECONDS) * 1e9)
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT OR IGNORE INTO loki_rejections SELECT id, stamp, labels, line, 'expired_unacknowledged', ? FROM outbox WHERE CAST(stamp AS INTEGER) < ?",
+                (time.time(), cutoff),
+            )
+            self.store.db.execute(
+                "DELETE FROM outbox WHERE CAST(stamp AS INTEGER) < ?", (cutoff,)
+            )
         rows = self.store.db.execute(
             "SELECT * FROM outbox ORDER BY id LIMIT 100"
         ).fetchall()
@@ -1118,6 +1168,7 @@ class Collector:
             "last_poll_timestamp_seconds": self.last_poll,
             "last_history_scan_timestamp_seconds": self.last_history,
             "collection_errors_total": self.errors,
+            "cache_errors_total": self.cache_errors,
             "github_rate_limit_remaining": self.api.remaining,
             "backfill_complete": int(
                 self.last_history > 0

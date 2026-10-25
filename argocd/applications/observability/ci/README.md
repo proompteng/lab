@@ -34,6 +34,10 @@ Alloy scrapes the collector every 30 seconds and remote-writes its metrics to Mi
 sanitized workflow/job records to existing Loki. Retries preserve the same timestamp, labels and line. The Loki
 timestamp is observation time; `completed_at` preserves the actual GitHub event time. Backfill does not enter the
 one-hour volume or comparison windows as new builds. Loki and Mimir keep their existing retention policies.
+If an unacknowledged record exceeds Loki's 168-hour admission window, it moves atomically into retained
+`loki_rejections` storage with its original timestamp, labels and content. The rejection metric and alert remain
+visible while newer records continue shipping. Inspect that table and the existing job facts before controlled
+recovery; do not clear the retained evidence to silence the alert.
 
 Metric labels are limited to enrolled workflow filename, declared job family, architecture, runner pool, job role, event, outcome, phase,
 cache class and fixed statistical windows. Run IDs, commit SHAs, job names and runner Pod names are record fields,
@@ -65,6 +69,8 @@ uses the existing cache-summary rows for Attic substitutions, nixos.org substitu
 Its `nix_no_builds` and `nix_builds` classes distinguish whether the summary reported local derivation builds; they
 do not claim an equivalent Docker layer-hit ratio. Missing, oversized or expired logs
 produce explicit `unknown` evidence. Timings and outcomes remain collectible when cache evidence is unavailable.
+Signed-log HTTP errors, timeouts and rate-limit backoff are optional-evidence failures. They increment the cache
+error counter and preserve job timings rather than blocking collection.
 
 Rolling p50/p95 and sample counts use actual completion times. `1h` covers the latest hour; `7d_baseline` covers the
 preceding seven days, excluding that hour. These gauges provide an immediate baseline during backfill. Histograms
