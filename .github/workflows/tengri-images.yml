@@ -238,7 +238,7 @@ jobs:
           guest="${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
           directory="$(mktemp -d)"
           trap 'rm -rf "$directory"' EXIT
-          crane export "$guest" "$directory/rootfs.tar"
+          crane export --platform "linux/${ARCHITECTURE}" "$guest" "$directory/rootfs.tar"
           tar -xf "$directory/rootfs.tar" -C "$directory" guest/
           sed 's| /guest/| ./guest/|' "$directory/guest/SHA256SUMS" > "$directory/SHA256SUMS"
           (cd "$directory" && sha256sum --check SHA256SUMS)
