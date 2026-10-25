@@ -301,7 +301,7 @@ test('native entry abstentions retain paid calls without submitting orders', asy
     nativeEntry: true,
     supportsEntry: false,
     managedLatencyMs: 10,
-    sessionDurationMs: 22 * 60_000,
+    sessionDurationMs: 8 * 60_000,
     pollIntervalMs: 120_000,
   })
   expect(wait.report.orders).toEqual([])
@@ -314,7 +314,7 @@ test('incomplete expired native entry evidence cannot submit orders', async () =
   const expired = await simulate({
     nativeEntry: true,
     managedLatencyMs: fixture.protocol.inferenceValidityMs,
-    sessionDurationMs: 22 * 60_000,
+    sessionDurationMs: 8 * 60_000,
     pollIntervalMs: 120_000,
   })
   expect(expired.providerCalls).toBeGreaterThan(0)
