@@ -25,6 +25,9 @@ RUN --mount=type=cache,id=restate-cargo-registry,target=/usr/local/cargo/registr
     bash /proof/verify-metadata.sh \
     && bash /proof/verify-election-connect.sh
 
+FROM scratch AS evidence
+COPY --from=test /proof/*.log /
+
 FROM source AS builder
 RUN --mount=type=cache,id=restate-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=restate-cargo-git,target=/usr/local/cargo/git \

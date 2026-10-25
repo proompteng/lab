@@ -255,8 +255,8 @@ The operating-system root is the private 1.5 GiB Firecracker disk. Snapshot slee
 processes. An explicitly fenced cold replacement resets the root from the image. The 32 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
-`/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
-real guest through the isolated [KVM test](../tengri/test-kvm.sh) to exercise mounts and network administration.
+`/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Its `--runtime` mode requires an independently provisioned real guest to exercise mounts and network administration;
+the container-based KVM fixture has been removed.
 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.164.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 32 GiB PVC-backed
