@@ -289,6 +289,8 @@ def main():
     actual = {}
     for surface, proto in [
         ("ofz", "proto/proompteng/authz/v1/authz.proto"),
+        ("ofz_platform", "proto/proompteng/authz/v1/platform.proto"),
+        ("relay", "proto/proompteng/relay/v1/relay.proto"),
         ("controller", "services/tengri/proto/proompteng/runtime/v1/microvm.proto"),
         ("guest", "services/tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto"),
     ]:
@@ -314,6 +316,7 @@ def main():
     actual["codex"] = codex_cases(codex + "\n}")
     api_root = ROOT / "apps/landing/src/app/api/tengri"
     actual["bff_http"] = next_routes(api_root, "/api/tengri")
+    actual["platform_http"] = next_routes(ROOT / "apps/landing/src/app/api/platform", "/api/platform")
     access = (ROOT / "apps/landing/src/app/api/tengri/access/route.ts").read_text()
     actual["bff_access"] = operation_cases(access)
     access_schema = (ROOT / "apps/landing/src/lib/tengri/access-schemas.ts").read_text()

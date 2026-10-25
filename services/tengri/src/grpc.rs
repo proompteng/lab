@@ -87,7 +87,6 @@ pub struct ControlPlane {
     activity: ActivityTracker,
     terminal_creation_locks: TerminalCreationLockManager,
     provisional_terminal_leases: ProvisionalTerminalLeaseManager,
-    connectors_enabled: bool,
 }
 
 pub struct ControlPlaneConfig {
@@ -136,7 +135,6 @@ impl ControlPlane {
             activity,
             terminal_creation_locks: TerminalCreationLockManager::default(),
             provisional_terminal_leases,
-            connectors_enabled: std::env::var("TENGRI_CONNECTORS_ENABLED").as_deref() == Ok("true"),
         })
     }
 
@@ -844,9 +842,6 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<proto::ConnectorAgentRequest>,
     ) -> Result<Response<CodexModels>, Status> {
-        if !self.connectors_enabled {
-            return Err(Status::unimplemented("connectors are not enabled"));
-        }
         let principal = self.authorize(&request, "ConnectorAgent").await?;
         let request = request.into_inner();
         let method = match request.action.as_str() {
@@ -2821,11 +2816,10 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn dormant_connector_rpc_stops_before_authentication_and_workspace_access() {
+    async fn connector_rpc_requires_authentication_before_workspace_access() {
         let (service, _handle) =
             tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
-        let mut control = test_control_plane(Client::new(service, "tengri"));
-        control.connectors_enabled = false;
+        let control = test_control_plane(Client::new(service, "tengri"));
         let denied = control
             .connector_agent(Request::new(proto::ConnectorAgentRequest {
                 agent_id: "unavailable-workspace".into(),
@@ -2834,7 +2828,7 @@ pub(crate) mod tests {
             }))
             .await
             .unwrap_err();
-        assert_eq!(denied.code(), tonic::Code::Unimplemented);
+        assert_eq!(denied.code(), tonic::Code::Unauthenticated);
     }
 
     #[tokio::test]

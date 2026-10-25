@@ -118,13 +118,60 @@ impl Native {
         self.schema_hash().await
     }
 
+    pub(crate) async fn retire_domain_connectors(&self) -> Result<(), Status> {
+        let installed = self.schema_text().await?;
+        for (kind, relation, marker) in [
+            ("kube_namespace", None, "definition kube_namespace"),
+            (
+                "connector_connection",
+                None,
+                "definition connector_connection",
+            ),
+            ("platform", Some("kube_broker"), "kube_broker"),
+            ("platform", Some("connector_broker"), "connector_broker"),
+            (
+                "agent_grant",
+                Some("kube_namespace"),
+                "relation kube_namespace",
+            ),
+            (
+                "agent_grant",
+                Some("connector_connection"),
+                "relation connector_connection",
+            ),
+        ] {
+            if installed.contains(marker) {
+                let mut filter = json!({"resourceType":kind});
+                if let Some(relation) = relation {
+                    filter["optionalRelation"] = json!(relation);
+                }
+                self.post(
+                    "/v1/relationships/delete",
+                    json!({"relationshipFilter":filter}),
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn schema_hash(&self) -> Result<Vec<u8>, Status> {
+        Ok(Sha256::digest(self.schema_text().await?.as_bytes()).to_vec())
+    }
+
+    pub(crate) async fn schema_text(&self) -> Result<String, Status> {
         let response = self.post("/v1/schema/read", json!({})).await?;
         let schema = response["schemaText"]
             .as_str()
             .filter(|schema| !schema.is_empty())
             .ok_or_else(|| Status::unavailable("missing installed authorization schema"))?;
-        Ok(Sha256::digest(schema.as_bytes()).to_vec())
+        Ok(schema.to_owned())
+    }
+
+    pub(crate) async fn write_schema(&self, schema: &str) -> Result<(), Status> {
+        self.post("/v1/schema/write", json!({"schema": schema}))
+            .await?;
+        Ok(())
     }
 
     pub(crate) async fn platform_matches(&self, expected: &[Relationship]) -> Result<bool, Status> {

@@ -129,6 +129,36 @@ spire-server:
             - k8s:container-name:proompteng
           ttl: 2m
           fallback: false
+        relay:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/relay/sa/relay
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: relay
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: relay
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:relay
+            - k8s:container-name:relay
+          ttl: 2m
+          fallback: false
+        opencode:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/opencode/sa/opencode
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opencode
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opencode
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:opencode
+            - k8s:container-name:opencode
+          ttl: 2m
+          fallback: false
         ofz-api:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/ofz/sa/ofz-api
