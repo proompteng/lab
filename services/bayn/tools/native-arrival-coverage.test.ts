@@ -8,7 +8,7 @@ import {
   nativeArrivalObservationFixture,
 } from '../src/market-data/streaming/native-arrival.test-support'
 import { captureKafkaTransport, CaptureDisposition } from '../src/market-data/streaming/transport-evidence'
-import { auditNativeArrivalCoverage } from './native-arrival-coverage'
+import { auditNativeArrivalCoverage } from '../src/intraday-replay/native-arrival-coverage'
 
 const epoch = nativeArrivalEpochFixture
 const records = Array.from({ length: 4 }, (_, index) => {
