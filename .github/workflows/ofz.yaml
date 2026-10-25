@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'services/ofz/**'
-      - 'devices/nuc/ofz-recovery/**'
       - 'argocd/applications/ofz/**'
       - 'proto/proompteng/authz/**'
       - 'services/tengri/**'
@@ -55,7 +54,6 @@ on:
       - 'argocd/applications/tengri/crd.yaml'
       - 'bun.lock'
       - 'devices/galactic/omni/tengri-runner-*.json'
-      - 'devices/nuc/ofz-recovery/**'
       - 'flake.lock'
       - 'flake.nix'
       - 'nix/cache-push.sh'

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare and verify the independent NUC archive without printing credentials."""
+"""Prepare the disposable S3 archive used by integration tests."""
 
 import argparse
 import hashlib
@@ -29,7 +29,7 @@ from minio.retention import COMPLIANCE, Retention
 from minio.sse import SseS3
 from minio.sseconfig import Rule, SSEConfig
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "services/ofz"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from audit_export import (
     BUCKET,
     ENDPOINT,

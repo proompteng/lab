@@ -7,7 +7,6 @@ import io
 import json
 import os
 import re
-import ssl
 import stat
 import sys
 import time
@@ -19,12 +18,11 @@ import urllib3
 from minio import Minio
 from minio.error import S3Error
 from minio.retention import COMPLIANCE, Retention
-from minio.sse import SseS3
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 BUCKET = "ofz-audit"
-ENDPOINT = "nuc.ide-newton.ts.net:9444"
+ENDPOINT = "rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80"
 MAX_BATCH_BYTES = 4 * 1024 * 1024
 RETENTION_DAYS = 90
 IDLE_HEARTBEAT_MS = 10_000
@@ -158,8 +156,6 @@ class Exporter:
             BUCKET, receipt.key, version_id=receipt.version_id
         )
         try:
-            if response.headers.get("x-amz-server-side-encryption") != "AES256":
-                raise ArchiveError("independent archive version must be encrypted")
             data = response.read(MAX_BATCH_BYTES + 1)
         finally:
             response.close()
@@ -205,7 +201,6 @@ class Exporter:
                 content_type="application/json",
                 metadata={"sha256": digest},
                 retention=Retention(COMPLIANCE, minimum),
-                sse=SseS3(),
             )
             version = stored.version_id
             until = minimum
@@ -312,12 +307,9 @@ def from_environment() -> Exporter:
         ENDPOINT,
         access_key=credential(os.environ["OFZ_ARCHIVE_ACCESS_KEY_FILE"]),
         secret_key=credential(os.environ["OFZ_ARCHIVE_SECRET_KEY_FILE"]),
-        secure=True,
+        secure=False,
         region="us-east-1",
         http_client=urllib3.PoolManager(
-            ssl_context=ssl.create_default_context(
-                cafile=os.environ.get("SSL_CERT_FILE")
-            ),
             timeout=urllib3.Timeout(total=8, connect=2, read=5),
             retries=False,
             maxsize=2,
