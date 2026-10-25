@@ -1066,6 +1066,18 @@ class Collector:
             self.collect_job(run, job, deadline)
         self.store.finish(run, jobs)
 
+    def collect_pending(self, deadline):
+        while time.time() < deadline:
+            pending = self.store.pending()
+            if pending is None:
+                break
+            if (
+                pending["priority"] < self.store.installed_at
+                and self.api.remaining < 2000
+            ):
+                break
+            self.collect_attempt(pending)
+
     def flush(self):
         rows = self.store.db.execute(
             "SELECT * FROM outbox ORDER BY id LIMIT 100"
@@ -1138,18 +1150,15 @@ class Collector:
             begin = time.time()
             try:
                 self.poll(begin)
+                self.collect_pending(time.time() + 20)
+            except Exception as error:
+                self.failure(error)
+            try:
                 self.history(begin)
-                deadline = time.time() + 30
-                while time.time() < deadline:
-                    pending = self.store.pending()
-                    if pending is None:
-                        break
-                    if (
-                        pending["priority"] < self.store.installed_at
-                        and self.api.remaining < 2000
-                    ):
-                        break
-                    self.collect_attempt(pending)
+            except Exception as error:
+                self.failure(error)
+            try:
+                self.collect_pending(time.time() + 10)
                 with self.store.db:
                     self.store.db.execute(
                         "DELETE FROM jobs WHERE completed < ?", (begin - 90 * 86400,)
