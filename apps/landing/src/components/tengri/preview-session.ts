@@ -1,6 +1,6 @@
 import { normalizePreviewGatewayOrigin } from '@/lib/tengri/preview-origin'
 
-const PREVIEW_TICKET_PATTERN = /^[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{16,128}$/
+const PREVIEW_TICKET_PATTERN = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/
 
 export function safePreviewLaunchUrl(value: string, previewGatewayOrigin: string) {
   try {

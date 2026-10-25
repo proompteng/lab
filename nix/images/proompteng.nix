@@ -4,6 +4,7 @@
   repoRoot,
   bun,
   nodejs,
+  repoRevision ? "dirty",
 }:
 
 import ./bun-workspace-service.nix {
@@ -11,8 +12,8 @@ import ./bun-workspace-service.nix {
   serviceName = "proompteng";
   packageName = "landing";
   depsHash = {
-    x86_64-linux = "sha256-Gp6IfK0fe9es8+ToJn0FfqIRn/AlQJIAjW3jbRs3Okg=";
-    aarch64-linux = "sha256-gk1BsXB9iC5bHx7aMBmeLlSD9dwZEkA+/0e9OHpFPy0=";
+    x86_64-linux = "sha256-PTO4SoB1vaBGTc75X6tkg6j2lBdtJqz8C8Y8QXBDVOw=";
+    aarch64-linux = "sha256-C+6/BVMsoBo6r2Xwoc6w8ZeB7IWMPG3x5ENxCUPIaZQ=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -27,6 +28,7 @@ import ./bun-workspace-service.nix {
     "packages/design"
     "services/tengri/proto"
     "services/tengri/migrations"
+    "services/tengri/fixtures"
   ];
   buildCommands = [
     "bun --cwd=apps/landing run prebuild"
@@ -50,6 +52,7 @@ import ./bun-workspace-service.nix {
   ];
   workingDir = "/app/apps/landing";
   env = [
+    "APP_SOURCE_REVISION=${repoRevision}"
     "PORT=3000"
     "HOSTNAME=0.0.0.0"
     "TENGRI_PROTO_PATH=/app/services/tengri/proto/proompteng/runtime/v1/microvm.proto"

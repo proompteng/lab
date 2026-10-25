@@ -3,7 +3,6 @@ package ai.proompteng.dorvud.ta.flink
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.time.Instant
-import java.time.LocalTime
 import java.time.ZoneId
 
 internal fun decodeArchivedTechnicalFeature(
@@ -38,7 +37,10 @@ internal fun decodeArchivedTechnicalFeature(
       material.windowEndMs % 60_000 == 0L && material.inputs.size in 1..390,
   ) { "invalid technical window" }
   val start = Instant.ofEpochMilli(material.windowStartMs).atZone(ZoneId.of("America/New_York"))
-  require(start.toLocalTime() == LocalTime.of(9, 30) && start.toLocalDate().toString() == material.sessionDate) {
+  require(
+    material.windowStartMs == equityFeatureSegmentStart(Instant.ofEpochMilli(material.windowEndMs - 1)) &&
+      start.toLocalDate().toString() == material.sessionDate,
+  ) {
     "technical session mismatch"
   }
   require(

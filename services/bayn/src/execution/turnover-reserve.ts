@@ -10,7 +10,7 @@ export interface EntryTurnoverReserveInput {
   readonly maximumTurnoverMicros: bigint
   /** Other unresolved commitments must stay reserved until their outcome is known. */
   readonly otherReservedMicros: bigint
-  readonly quantityMicros: bigint
+  readonly quantityAtoms: bigint
   readonly entryLimitPriceMicros: bigint
   readonly exitReferencePriceMicros: bigint
   readonly exitAllowanceBps: bigint
@@ -26,9 +26,9 @@ export const assessEntryTurnoverReserve = (input: EntryTurnoverReserveInput) => 
   )
     return Result.fail({ _tag: 'InvalidEntryTurnoverReserve' as const })
   const ceil = (numerator: bigint, denominator: bigint) => (numerator + denominator - 1n) / denominator
-  const entryMicros = ceil(input.quantityMicros * input.entryLimitPriceMicros, 1_000_000n)
+  const entryMicros = ceil(input.quantityAtoms * input.entryLimitPriceMicros, 1_000_000_000n)
   const exitPriceMicros = ceil(input.exitReferencePriceMicros * (10_000n + input.exitAllowanceBps), 10_000n)
-  const expectedExitMicros = ceil(input.quantityMicros * exitPriceMicros, 1_000_000n)
+  const expectedExitMicros = ceil(input.quantityAtoms * exitPriceMicros, 1_000_000_000n)
   const projected = input.filledTurnoverMicros + input.otherReservedMicros + entryMicros + expectedExitMicros
   return Result.succeed({
     schemaVersion: 'bayn.entry-turnover-reserve.v1' as const,

@@ -1,0 +1,25 @@
+name: flamingo
+
+on:
+  pull_request:
+    paths:
+      - 'argocd/applications/flamingo/**'
+      - '.github/workflows/flamingo-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'argocd/applications/flamingo/**'
+      - '.github/workflows/flamingo-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  serving-identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s argocd/applications/flamingo -p 'test_*.py' -v

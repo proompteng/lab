@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { NodeServices } from '@effect/platform-node'
-import { ConfigProvider, Effect, ManagedRuntime, Redacted, Result } from 'effect'
+import { ConfigProvider, Context, Effect, ManagedRuntime, Redacted, Result } from 'effect'
 import { SqlClient } from 'effect/sql'
 
 import requestMigration from '../migrations/0076_jev_evaluation_evidence'
@@ -13,10 +13,12 @@ import { makeInferenceExpenseStore } from './inference-expense-postgres'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from './test-environment.test-support'
 import { runInferenceExpensePass } from './inference-expense-runtime'
 import { readInferenceExpenseLedger } from './inference-expense-journal'
+import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { makeTigerBeetleRequestClient } from './tigerbeetle-client'
 import { readForwardInferenceExpenses } from './forward-performance/inference-expenses'
 import { readInferenceExpenseSession } from './inference-cost-command'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
+import { forwardPerformanceSnapshot } from './forward-performance/postgres/snapshot'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_expense_test'
@@ -181,6 +183,58 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
   })
 
   const nativeTest = baynTestTigerBeetleAddress === undefined ? test.skip : test
+  nativeTest('keeps a PostgreSQL quote capture stable while a later request posts to the native ledger', async () => {
+    const address = baynTestTigerBeetleAddress
+    if (address === undefined || !/^127\.0\.0\.1:\d+$/.test(address))
+      throw new Error('Native inference expense acceptance requires an isolated loopback TigerBeetle cluster')
+    const result = await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const source = expenseSourceFixture({ accountId: `synthetic-expense-cut-${crypto.randomUUID()}` })
+          yield* persistSource(source)
+          const sql = yield* PgClient.PgClient
+          const store = makeInferenceExpenseStore(sql, source.accountId, '1970-01-01')
+          const client = yield* makeTigerBeetleRequestClient({
+            operationTimeoutMs: 5_000,
+            tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7_001 },
+          })
+          yield* runInferenceExpensePass(store, client, expenseRateFixture)
+          const { captured, report } = yield* forwardPerformanceSnapshot(sql).withTransaction(
+            Effect.gen(function* () {
+              const captured = yield* readInferenceExpenseSnapshot(sql, source.accountId, source.sessionDate)
+              yield* Effect.gen(function* () {
+                yield* persistSource(expenseSourceFixture({ accountId: source.accountId, key: 'b', inputTokens: 2 }))
+                yield* runInferenceExpensePass(store, client, expenseRateFixture)
+              }).pipe(
+                Effect.updateContext((context: Context.Context<PgClient.PgClient>) =>
+                  Context.omit(sql.transactionService, sql.transactionSemaphoreService)(context),
+                ),
+              )
+              const report = yield* readInferenceExpenseLedger(
+                client,
+                captured,
+                store.currentSession(source.sessionDate),
+              )
+              return { captured, report }
+            }),
+          )
+          const current = yield* readInferenceExpenseSnapshot(sql, source.accountId, source.sessionDate)
+          const next = yield* readInferenceExpenseLedger(client, current, store.currentSession(source.sessionDate))
+          return { captured, report, current, next }
+        }),
+      ),
+    )
+    expect(result.captured.evidence.requests).toHaveLength(1)
+    expect(result.captured.quotes).toHaveLength(1)
+    expect(result.report.transferCount).toBe(1)
+    expect(result.report.verifiedSessionTransferCount).toBe(2)
+    expect(result.report.knownEstimatedCostPicoUsd).toBe('42000')
+    expect(result.current.evidence.requests).toHaveLength(2)
+    expect(result.current.quotes).toHaveLength(2)
+    expect(result.next.transferCount).toBe(2)
+    expect(result.next.knownEstimatedCostPicoUsd).toBe('126000')
+    expect(BigInt(result.next.ledgerTimestampMax)).toBe(BigInt(result.report.ledgerTimestampMax))
+  })
   nativeTest(
     'projects a real PostgreSQL receipt into native TigerBeetle and verifies it once after replay',
     async () => {
@@ -210,9 +264,8 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
             if (quote === undefined) return yield* Effect.die('synthetic frozen native quote is absent')
             const ledger = yield* readInferenceExpenseLedger(
               client,
-              quote.accountBindingHash,
-              source.sessionDate,
-              rows.map((row) => row.quote),
+              yield* readInferenceExpenseSnapshot(yield* PgClient.PgClient, source.accountId, source.sessionDate),
+              store.currentSession(source.sessionDate),
             )
             const url = new URL(testUrl)
             url.searchParams.set('options', `-c search_path=${schema}`)

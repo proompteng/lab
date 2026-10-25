@@ -4,14 +4,15 @@ metadata:
   name: proompteng
   namespace: proompteng
 spec:
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+  replicas: 2
   selector:
     matchLabels:
       app: proompteng
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
   template:
     metadata:
       annotations:
@@ -22,45 +23,56 @@ spec:
         sidecar.istio.io/proxyMemory: 64Mi
         sidecar.istio.io/proxyMemoryLimit: 256Mi
       labels:
-        sidecar.istio.io/inject: "true"
         app: proompteng
+        sidecar.istio.io/inject: "true"
         spiffe.io/spire-managed-identity: "true"
     spec:
-      serviceAccountName: proompteng
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: proompteng
+              topologyKey: kubernetes.io/hostname
       automountServiceAccountToken: false
-      enableServiceLinks: false
-      nodeSelector:
-        kubernetes.io/arch: arm64
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1001
-        runAsGroup: 1001
-        seccompProfile:
-          type: RuntimeDefault
       containers:
-        - name: proompteng
-          image: registry.ide-newton.ts.net/lab/proompteng
-          resources:
-            limits:
-              cpu: "1"
-              memory: "512Mi"
-            requests:
-              cpu: "200m"
-              memory: "256Mi"
-          ports:
-            - name: http
-              containerPort: 3000
-              protocol: TCP
-          env:
+        - env:
+            - name: SENTRY_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: proompteng-observability
+                  key: SENTRY_DSN
+            - name: SENTRY_BROWSER_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: proompteng-observability
+                  key: SENTRY_BROWSER_DSN
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: proompteng-observability
+                  key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            - name: OFZ_GRPC_ENDPOINT
+              value: ofz-api.ofz.svc.cluster.local:9443
+            - name: TENGRI_DESKTOP_ORIGIN
+              value: https://proompteng.ai
+            - name: TENGRI_OIDC_ISSUER
+              value: https://auth.proompteng.ai/realms/tengri
+            - name: TENGRI_OIDC_CONNECT_IP
+              value: 100.100.244.181
+            - name: TENGRI_OIDC_CLIENT_SECRET_FILE
+              value: /var/run/tengri/oidc/client-secret
+            - name: TENGRI_DATABASE_DSN
+              value: postgres://tengri_bff@ofz-db-rw.ofz.svc.cluster.local:5432/tengri_control
+            - name: TENGRI_DATABASE_PASSWORD_FILE
+              value: /var/run/tengri/database/password
+            - name: TENGRI_DATABASE_CA_FILE
+              value: /var/run/tengri/database-ca/ca.crt
             - name: NEXT_PUBLIC_CONVEX_URL
               value: https://convex.proompteng.ai
             - name: LANDING_CMS_URL
               value: https://cms.proompteng.ai
-            - name: BETTER_AUTH_URL
-              value: https://proompteng.ai
             - name: TENGRI_GRPC_ENDPOINT
-              # The release promotion enables this endpoint atomically with
-              # the Tengri ApplicationSet entry and immutable image digests.
               value: tengri-grpc.tengri.svc.cluster.local:50051
             - name: SPIFFE_ENDPOINT_SOCKET
               value: unix:///spiffe-workload-api/spire-agent.sock
@@ -72,52 +84,97 @@ spec:
               value: https://tengri.proompteng.ai
             - name: TENGRI_BFF_SECRET_DIR
               value: /var/run/secrets/tengri-bff
-          startupProbe:
-            httpGet:
-              path: /
-              port: http
-            periodSeconds: 2
-            failureThreshold: 30
-          readinessProbe:
-            httpGet:
-              path: /
-              port: http
-            periodSeconds: 10
-            failureThreshold: 3
+          image: registry.ide-newton.ts.net/lab/proompteng
           livenessProbe:
+            failureThreshold: 3
             httpGet:
               path: /
               port: http
             periodSeconds: 30
+          name: proompteng
+          ports:
+            - containerPort: 3000
+              name: http
+              protocol: TCP
+          readinessProbe:
             failureThreshold: 3
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 200m
+              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
-              drop: [ALL]
+              drop:
+                - ALL
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+          startupProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 2
           volumeMounts:
-            - name: workload-api
-              mountPath: /spiffe-workload-api
+            - mountPath: /var/run/tengri/oidc
+              name: oidc
               readOnly: true
-            - name: tmp
-              mountPath: /tmp
-            - name: next-cache
-              mountPath: /app/apps/landing/.next/cache
-            - name: tengri-bff
-              mountPath: /var/run/secrets/tengri-bff
+            - mountPath: /var/run/tengri/database
+              name: database
               readOnly: true
+            - mountPath: /var/run/tengri/database-ca
+              name: database-ca
+              readOnly: true
+            - mountPath: /spiffe-workload-api
+              name: workload-api
+              readOnly: true
+            - mountPath: /tmp
+              name: tmp
+            - mountPath: /app/apps/landing/.next/cache
+              name: next-cache
+            - mountPath: /var/run/secrets/tengri-bff
+              name: tengri-bff
+              readOnly: true
+      enableServiceLinks: false
+      securityContext:
+        fsGroup: 1001
+        runAsGroup: 1001
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: proompteng
       volumes:
-        - name: workload-api
-          csi:
-            driver: csi.spiffe.io
-            readOnly: true
-        - name: tmp
-          emptyDir:
-            sizeLimit: 128Mi
-        - name: next-cache
-          emptyDir:
-            sizeLimit: 256Mi
         - name: tengri-bff
           secret:
-            secretName: tengri-bff
+            defaultMode: 288
+            secretName: tengri-internal-request-key
+        - name: oidc
+          secret:
+            defaultMode: 288
+            secretName: tengri-oidc-client
+        - name: database
+          secret:
+            defaultMode: 288
+            secretName: tengri-bff-db
+        - name: database-ca
+          secret:
+            defaultMode: 288
+            secretName: ofz-database-ca
+        - csi:
+            driver: csi.spiffe.io
+            readOnly: true
+          name: workload-api
+        - emptyDir:
+            sizeLimit: 128Mi
+          name: tmp
+        - emptyDir:
+            sizeLimit: 256Mi
+          name: next-cache

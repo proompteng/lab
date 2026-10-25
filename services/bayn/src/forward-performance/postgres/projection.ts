@@ -38,7 +38,7 @@ export const intentExecutionKey = (input: {
   readonly accountId: string
   readonly symbol: string
   readonly side: 'BUY' | 'SELL'
-  readonly quantityMicros: string
+  readonly quantityAtoms: string
   readonly replanGenerationHash?: string
   readonly createdAt: string
 }): string =>
@@ -48,7 +48,7 @@ export const intentExecutionKey = (input: {
     input.accountId,
     input.symbol,
     input.side,
-    input.quantityMicros,
+    input.quantityAtoms,
     input.replanGenerationHash ?? null,
     input.createdAt,
   ])
@@ -66,7 +66,7 @@ export const executionEvidenceFromRows = (
       accountId: row.account_id,
       symbol: row.symbol,
       side: row.side,
-      quantityMicros: row.quantity_micros,
+      quantityAtoms: row.quantity_atoms,
       ...(row.replan_generation_hash === null ? {} : { replanGenerationHash: row.replan_generation_hash }),
       createdAt: row.created_at.toISOString(),
     }),
@@ -95,7 +95,7 @@ export const executionEvidenceFromRows = (
           accountId: document.bindings.accountId,
           symbol: target.symbol,
           side: target.side,
-          quantityMicros: target.quantityMicros,
+          quantityAtoms: target.quantityAtoms,
           ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
           createdAt: document.createdAt,
         }),
@@ -111,8 +111,8 @@ export const executionEvidenceFromRows = (
         accountId: fill.account_id,
         symbol: fill.symbol,
         side: fill.side,
-        quantityMicros: fill.quantity_micros,
-        priceMicros: fill.price_micros,
+        quantityAtoms: fill.quantity_atoms,
+        priceAtoms: fill.price_atoms,
         feeMicros: fill.fee_micros,
         sourceTimestamp: fill.source_timestamp,
         occurredAt: fill.occurred_at.toISOString(),
@@ -132,7 +132,7 @@ export const executionEvidenceFromRows = (
         accountId: document.bindings.accountId,
         symbol: target.symbol,
         side: target.side,
-        plannedQuantityMicros: target.quantityMicros,
+        plannedQuantityAtoms: target.quantityAtoms,
         ...(reference === undefined ? {} : { referencePriceMicros: reference.referencePriceMicros }),
         ...(intentRow === undefined || intentRow === null || intentRow.terminal_outcome === null
           ? {}
@@ -145,7 +145,7 @@ export const executionEvidenceFromRows = (
                 decisionHash: intentRow.decision_hash,
                 symbol: intentRow.symbol,
                 side: intentRow.side,
-                quantityMicros: intentRow.quantity_micros,
+                quantityAtoms: intentRow.quantity_atoms,
                 notionalLimitMicros: intentRow.notional_limit_micros,
                 terminalOutcome: intentRow.terminal_outcome,
                 createdAt: intentRow.created_at.toISOString(),
@@ -163,9 +163,9 @@ export const executionEvidenceFromRows = (
                 accountId: orderRow.account_id,
                 symbol: orderRow.symbol,
                 side: orderRow.side,
-                ...(orderRow.quantity_micros === null ? {} : { quantityMicros: orderRow.quantity_micros }),
+                ...(orderRow.quantity_atoms === null ? {} : { quantityAtoms: orderRow.quantity_atoms }),
                 ...(orderRow.notional_micros === null ? {} : { notionalMicros: orderRow.notional_micros }),
-                filledQuantityMicros: orderRow.filled_quantity_micros,
+                filledQuantityAtoms: orderRow.filled_quantity_atoms,
                 status: orderRow.status,
                 occurredAt: orderRow.occurred_at.toISOString(),
                 observedAt: orderRow.observed_at.toISOString(),
@@ -211,7 +211,7 @@ export const marketVolumeRequestsFromRows = (
       manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
         ? {
             ...base,
-            sourceFeed: 'iex',
+            sourceFeed: manifest.feed,
             decisionSnapshotAsOfSession: manifest.sessionDate,
             decisionManifest: manifest,
           }

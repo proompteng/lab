@@ -1,33 +1,39 @@
 import { describe, expect, test } from 'bun:test'
 import type { ObjectContext } from '@restatedev/restate-sdk'
-import { Clock, Effect, Fiber } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/http'
-import { TestClock } from 'effect/testing'
+import { Effect } from 'effect'
 
-import { makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { settleCompletedBrokerObservationPoll } from '../composition/broker-observation-runtime'
-import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
+import {
+  makeBaynBrokerObservations,
+  type BrokerObservationPoll,
+  type BrokerObservationRuntime,
+} from './restate-broker-observations'
 
 const controllerKey = 'a'.repeat(64)
 const sourceRevision = 'b'.repeat(40)
 const config = { controllerKey, sourceRevision, pollIntervalMs: 10_000, operationTimeoutMs: 30_000 }
+type TestRuntime = Omit<Partial<BrokerObservationRuntime>, 'poll'> & {
+  poll?: (signal: AbortSignal, reservation: { captureId: string }) => Promise<BrokerObservationPoll>
+}
 type State = { sourceRevision: string; epoch: number; sequence: number; lastSnapshotHash?: string }
 const harness = (
   input: {
-    runtime?: Partial<BrokerObservationRuntime>
+    runtime?: TestRuntime
     state?: State
     key?: string
     elapsedMs?: number
     now?: () => Promise<number>
     sleep?: (milliseconds: number) => Promise<void>
     budgetDeadline?: number
+    quotaDeadline?: number
     runResults?: Map<string, unknown>
     losePollResult?: 'before-journal' | 'after-journal'
   } = {},
 ) => {
   let state: State | null = input.state ?? null
   let budgetDeadline = input.budgetDeadline ?? null
+  let quotaDeadline = input.quotaDeadline ?? 0
   let activations = 0
   let polls = 0
   let now = 0
@@ -38,32 +44,43 @@ const harness = (
     idempotencyKey: string
     delay: { milliseconds: number }
   }> = []
-  const object = makeBaynBrokerObservations(config, {
-    nextPollNotBeforeMs: input.runtime?.nextPollNotBeforeMs ?? (async () => 0),
-    preparePoll: input.runtime?.preparePoll ?? (async () => 'test-capture'),
-    activate:
-      input.runtime?.activate ??
-      (async () => {
-        activations += 1
-      }),
-    poll: async (signal, reservation) => {
-      const result = await (
-        input.runtime?.poll ??
-        (async () => {
-          polls += 1
-          return { _tag: 'Published', snapshotHash: 'c'.repeat(64), nextPollNotBeforeMs: 0 } as const
-        })
-      )(signal, reservation)
-      now += input.elapsedMs ?? 0
-      return result
+  const object = makeBaynBrokerObservations(
+    config,
+    {
+      activate: async (signal, deadline) => {
+        quotaDeadline = Math.max(quotaDeadline, deadline)
+        if (input.runtime?.activate) await input.runtime.activate(signal, deadline)
+        else activations += 1
+      },
+      poll: async (signal, reservation) => {
+        const startedAtMs = now
+        if (quotaDeadline > now)
+          return { poll: { _tag: 'QuotaWait', nextPollNotBeforeMs: quotaDeadline }, startedAtMs, completedAtMs: now }
+        quotaDeadline = now + 180_000
+        const result = await (
+          input.runtime?.poll ??
+          (async () => {
+            polls += 1
+            return { _tag: 'Published', snapshotHash: 'c'.repeat(64), nextPollNotBeforeMs: 0 } as const
+          })
+        )(signal, reservation)
+        now += input.elapsedMs ?? 0
+        quotaDeadline = result.nextPollNotBeforeMs
+        return { poll: result, startedAtMs, completedAtMs: now }
+      },
     },
-  })
+    [],
+    { currentTimeMillisUnsafe: () => now },
+  )
   const context = {
     key: input.key ?? controllerKey,
     date: { now: input.now ?? (async () => now) },
     console: { warn: () => undefined },
-    request: () => ({ attemptCompletedSignal: new AbortController().signal }),
+    request: () => ({ id: 'test-capture', attemptCompletedSignal: new AbortController().signal }),
     get: async (key: string) => (key === 'polling' ? state : budgetDeadline),
+    clear: () => {
+      budgetDeadline = null
+    },
     set: (key: string, value: State | number) => {
       if (key === 'polling') {
         if (typeof value === 'number') throw new Error('unexpected numeric owner state')
@@ -107,102 +124,55 @@ const harness = (
     deliveries,
     sleeps,
     commands,
+    advance: (milliseconds: number) => {
+      now += milliseconds
+    },
     calls: () => ({ activations, polls }),
     state: () => state,
-    budgetDeadline: () => budgetDeadline,
+    budgetDeadline: () => quotaDeadline,
+    legacyBudget: () => budgetDeadline,
   }
 }
 
 describe('Restate broker observation owner', () => {
-  test.each([undefined, 'before-journal', 'after-journal'] as const)(
-    'a 47-second handoff releases unused debt only with returned proof (%s)',
-    async (lostResult) => {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const execute = Effect.runPromiseWith(yield* Effect.context<never>())
-          const budget = yield* makeBrokerObservationBudget
-          const journal = new Map<string, unknown>()
-          let claims = 0
-          let requests = 0
-          const client = budget.decorate(
-            HttpClient.make((request) =>
-              Effect.sync(() => {
-                requests += 1
-                return HttpClientResponse.fromWeb(request, new Response('{}'))
-              }),
-            ),
-          )
-          const runtime: Partial<BrokerObservationRuntime> = {
-            nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
-            preparePoll: (signal) => execute(budget.prepareCapture, { signal }),
-            poll: (signal, reservation) =>
-              execute(
-                Effect.gen(function* () {
-                  if (claims === 0) yield* TestClock.adjust(47_000)
-                  claims += 1
-                  const claim = yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)
-                  if (claim._tag === 'ExpiredUnused')
-                    return {
-                      _tag: 'Unavailable',
-                      captureNotStarted: { reason: 'ExpiredUnusedTicket', expiredByMs: claim.expiredByMs },
-                      nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
-                    } as const
-                  if (claim._tag === 'Unavailable')
-                    return { _tag: 'Unavailable', nextPollNotBeforeMs: reservation.interruptedNotBeforeMs } as const
-                  yield* client.get('https://example.invalid/account')
-                  return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs } as const
-                }),
-                { signal },
-              ),
-          }
-          // Restate replays the original capture clock; runtime claims see the delayed live clock.
-          const journaledClock = () => {
-            let reads = 0
-            return async () => (++reads <= 2 ? 0 : 47_000)
-          }
-          const first = harness({
-            runtime,
-            now: journaledClock(),
-            runResults: journal,
-            ...(lostResult === undefined ? {} : { losePollResult: lostResult }),
-          })
-          yield* Effect.promise(() => first.handlers.activate(first.context, { sourceRevision }))
-          expect(first.budgetDeadline()).toBe(lostResult === undefined ? 0 : 180_000)
-          expect(first.deliveries[0]?.delay.milliseconds).toBe(lostResult === undefined ? 1_000 : 133_000)
-          expect(first.state()?.lastSnapshotHash).toBeUndefined()
-          expect(requests).toBe(0)
-          expect(claims).toBe(1)
-          yield* TestClock.adjust(47_000)
-          const replay = harness({ runtime, now: journaledClock(), runResults: journal })
-          yield* Effect.promise(() => replay.handlers.activate(replay.context, { sourceRevision }))
-          expect(replay.budgetDeadline()).toBe(lostResult === 'before-journal' ? 180_000 : 0)
-          expect(claims).toBe(lostResult === 'before-journal' ? 2 : 1)
-          expect(requests).toBe(0)
-          expect(replay.state()?.lastSnapshotHash).toBeUndefined()
-          expect(replay.commands).toEqual([
-            'activate broker observation projection',
-            'read broker observation budget',
-            'prepare broker observation capture',
-            'poll and publish broker observation',
-          ])
-          expect(first.commands).toEqual(replay.commands)
-        }).pipe(Effect.provide(TestClock.layer())),
-      )
+  test('a reserved quota window schedules a successor without holding the owner or starting HTTP', async () => {
+    const h = harness({ state: { sourceRevision, epoch: 1, sequence: 1 }, quotaDeadline: 180_000 })
+    await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
+    expect(h.sleeps).toEqual([])
+    expect(h.commands).toEqual(['poll and publish broker observation'])
+    expect(h.calls().polls).toBe(0)
+    expect(h.deliveries[0]?.delay.milliseconds).toBe(180_000)
+  })
+  test('deployment activation waits for reserved quota and returns its fresh published cut', async () => {
+    const h = harness({ state: { sourceRevision, epoch: 1, sequence: 1 }, quotaDeadline: 180_000 })
+    const state = await h.handlers.activate(h.context, { sourceRevision })
+    expect(h.sleeps).toEqual([180_000])
+    expect(state.lastSnapshotHash).toBe('c'.repeat(64))
+    expect(h.calls().polls).toBe(1)
+  })
+  test.each(['before-journal', 'after-journal'] as const)(
+    'lost poll proof retains the reservation until durable replay (%s)',
+    async (losePollResult) => {
+      const runResults = new Map<string, unknown>()
+      let captures = 0
+      const runtime: TestRuntime = {
+        poll: async (_, reservation) => {
+          expect(reservation.captureId).toBe('test-capture')
+          return ++captures === 1
+            ? { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }
+            : { _tag: 'Unavailable', nextPollNotBeforeMs: 180_000 }
+        },
+      }
+      const first = harness({ runtime, runResults, losePollResult })
+      await first.handlers.activate(first.context, { sourceRevision })
+      expect(first.budgetDeadline()).toBe(0)
+      const replay = harness({ runtime, runResults })
+      await replay.handlers.activate(replay.context, { sourceRevision })
+      expect(replay.budgetDeadline()).toBe(losePollResult === 'before-journal' ? 180_000 : 0)
+      expect(captures).toBe(losePollResult === 'before-journal' ? 2 : 1)
+      expect(replay.commands).toEqual(['activate broker observation projection', 'poll and publish broker observation'])
     },
   )
-  test('an old journaled unavailable result retains its conservative deadline on replay', async () => {
-    const journal = new Map<string, unknown>([
-      ['activate broker observation projection', undefined],
-      ['read broker observation budget', 0],
-      ['prepare broker observation capture', 'old-ticket'],
-      ['poll and publish broker observation', { _tag: 'Unavailable', nextPollNotBeforeMs: 180_000 }],
-    ])
-    const h = harness({ runResults: journal })
-    await h.handlers.activate(h.context, { sourceRevision })
-    expect(h.budgetDeadline()).toBe(180_000)
-    expect(h.calls()).toEqual({ activations: 0, polls: 0 })
-    expect(h.state()?.lastSnapshotHash).toBeUndefined()
-  })
   test.each([0, 8_400, 45_000])(
     'a completed persistence failure retains measured quota %d without the lost-worker reservation',
     async (measuredDeadline) => {
@@ -265,7 +235,17 @@ describe('Restate broker observation owner', () => {
     await h.handlers.activate(h.context, { sourceRevision })
     expect(h.state()?.lastSnapshotHash).toBeUndefined()
     expect(h.budgetDeadline()).toBe(180_000)
-    expect(h.deliveries[0]?.delay.milliseconds).toBe(180_000)
+    expect(h.deliveries[0]?.delay.milliseconds).toBe(10_000)
+    h.advance(10_000)
+    await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
+    expect(h.deliveries[1]?.delay.milliseconds).toBe(170_000)
+  })
+  test('activation hands the legacy durable deadline to the database and clears its old key', async () => {
+    const h = harness({ state: { sourceRevision: 'd'.repeat(40), epoch: 1, sequence: 1 }, budgetDeadline: 180_000 })
+    await h.handlers.activate(h.context, { sourceRevision })
+    expect(h.sleeps).toEqual([180_000])
+    expect(h.legacyBudget()).toBeNull()
+    expect(h.calls()).toEqual({ activations: 1, polls: 1 })
   })
   test('publishes before returning activation and schedules only one serial successor', async () => {
     const h = harness()
@@ -291,306 +271,6 @@ describe('Restate broker observation owner', () => {
     expect(h.deliveries[0]?.idempotencyKey).toBe(h.deliveries[1]?.idempotencyKey)
     expect(h.state()?.epoch).toBe(1)
   })
-  test('repeated activation waits for the background HTTP budget before refreshing', async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const execute = Effect.runPromiseWith(yield* Effect.context<never>())
-        const budget = yield* makeBrokerObservationBudget
-        const starts: number[] = []
-        const client = budget.decorate(
-          HttpClient.make((request) =>
-            Effect.gen(function* () {
-              starts.push(yield* Clock.currentTimeMillis)
-              return HttpClientResponse.fromWeb(request, new Response('{}'))
-            }),
-          ),
-        )
-        const h = harness({
-          now: () => execute(Clock.currentTimeMillis),
-          sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
-          runtime: {
-            nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
-            preparePoll: (signal) => execute(budget.prepareCapture, { signal }),
-            poll: (signal, reservation) =>
-              execute(
-                Effect.gen(function* () {
-                  if (
-                    (yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))._tag !==
-                    'Claimed'
-                  )
-                    return { _tag: 'Unavailable', nextPollNotBeforeMs: reservation.interruptedNotBeforeMs } as const
-                  yield* budget.beginCapture
-                  yield* Effect.all(
-                    Array.from({ length: 34 }, () => client.get('https://paper-api.alpaca.markets/v2/account')),
-                    { concurrency: 2 },
-                  )
-                  return {
-                    _tag: 'Published',
-                    snapshotHash: 'c'.repeat(64),
-                    nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
-                  } as const
-                }),
-                { signal },
-              ),
-          },
-        })
-        yield* Effect.promise(() => h.handlers.activate(h.context, { sourceRevision }))
-        for (const capture of [2, 3]) {
-          const pending = yield* Effect.promise(() => h.handlers.activate(h.context, { sourceRevision })).pipe(
-            Effect.forkChild({ startImmediately: true }),
-          )
-          yield* TestClock.adjust(20_399)
-          expect(starts).toHaveLength((capture - 1) * 34)
-          expect(h.deliveries).toHaveLength(capture - 1)
-          yield* TestClock.adjust(1)
-          yield* Fiber.join(pending)
-          expect(starts.slice((capture - 1) * 34)).toEqual(Array.from({ length: 34 }, () => (capture - 1) * 20_400))
-        }
-        expect(h.state()?.epoch).toBe(1)
-        expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([20_400, 20_400, 20_400])
-        expect(new Set(h.deliveries.map((delivery) => delivery.idempotencyKey)).size).toBe(1)
-      }).pipe(Effect.provide(TestClock.layer())),
-    )
-  })
-  test('waits durably beyond the inactivity bound before starting an activation capture', async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const execute = Effect.runPromiseWith(yield* Effect.context<never>())
-        const budget = yield* makeBrokerObservationBudget
-        const polls: number[] = []
-        const requests: number[] = []
-        const client = budget.decorate(
-          HttpClient.make((request) =>
-            Effect.gen(function* () {
-              requests.push(yield* Clock.currentTimeMillis)
-              return HttpClientResponse.fromWeb(
-                request,
-                new Response('{}', { headers: { 'x-ratelimit-limit': '100' } }),
-              )
-            }),
-          ),
-        )
-        const h = harness({
-          now: () => execute(Clock.currentTimeMillis),
-          sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
-          runtime: {
-            nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
-            preparePoll: (signal) => execute(budget.prepareCapture, { signal }),
-            poll: (signal, reservation) =>
-              execute(
-                Effect.gen(function* () {
-                  if (
-                    (yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))._tag !==
-                    'Claimed'
-                  )
-                    return { _tag: 'Unavailable', nextPollNotBeforeMs: reservation.interruptedNotBeforeMs } as const
-                  polls.push(yield* Clock.currentTimeMillis)
-                  yield* budget.beginCapture
-                  yield* Effect.all(
-                    Array.from({ length: 52 }, () => client.get('https://paper-api.alpaca.markets/v2/account')),
-                    { concurrency: 2 },
-                  )
-                  return {
-                    _tag: 'Published',
-                    snapshotHash: 'c'.repeat(64),
-                    nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
-                  } as const
-                }),
-                { signal },
-              ),
-          },
-        })
-        yield* Effect.promise(() => h.handlers.activate(h.context, { sourceRevision }))
-        const pending = yield* Effect.promise(() => h.handlers.activate(h.context, { sourceRevision })).pipe(
-          Effect.forkChild({ startImmediately: true }),
-        )
-        yield* TestClock.adjust(config.operationTimeoutMs * 2)
-        expect(h.sleeps).toEqual([62_400])
-        expect(polls).toEqual([0])
-        expect(requests).toHaveLength(52)
-        yield* TestClock.adjust(2_400)
-        expect((yield* Fiber.join(pending)).lastSnapshotHash).toBe('c'.repeat(64))
-        expect(polls).toEqual([0, 62_400])
-        expect(requests.slice(52)).toEqual(Array.from({ length: 52 }, () => 62_400))
-        expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([62_400, 62_400])
-        expect(h.state()?.epoch).toBe(1)
-      }).pipe(Effect.provide(TestClock.layer())),
-    )
-  })
-  test.each([sourceRevision, 'd'.repeat(40)])(
-    'a replacement worker preserves debt from source %s before activation',
-    async (previousRevision) => {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const execute = Effect.runPromiseWith(yield* Effect.context<never>())
-          const makeWorker = (state?: State, budgetDeadline?: number) =>
-            Effect.gen(function* () {
-              const budget = yield* makeBrokerObservationBudget
-              const requests: number[] = []
-              const client = budget.decorate(
-                HttpClient.make((request) =>
-                  Effect.gen(function* () {
-                    requests.push(yield* Clock.currentTimeMillis)
-                    return HttpClientResponse.fromWeb(request, new Response('{}'))
-                  }),
-                ),
-              )
-              const h = harness({
-                ...(state === undefined ? {} : { state }),
-                ...(budgetDeadline === undefined ? {} : { budgetDeadline }),
-                now: () => execute(Clock.currentTimeMillis),
-                sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
-                runtime: {
-                  nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
-                  preparePoll: (signal) => execute(budget.prepareCapture, { signal }),
-                  poll: (signal, reservation) =>
-                    execute(
-                      Effect.gen(function* () {
-                        if (
-                          (yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))
-                            ._tag !== 'Claimed'
-                        ) {
-                          return {
-                            _tag: 'Unavailable',
-                            nextPollNotBeforeMs: reservation.interruptedNotBeforeMs,
-                          } as const
-                        }
-                        yield* budget.beginCapture
-                        yield* Effect.all(
-                          Array.from({ length: 34 }, () => client.get('https://paper-api.alpaca.markets/v2/account')),
-                          { concurrency: 2 },
-                        )
-                        return {
-                          _tag: 'Published',
-                          snapshotHash: 'c'.repeat(64),
-                          nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
-                        } as const
-                      }),
-                      { signal },
-                    ),
-                },
-              })
-              return { ...h, requests }
-            })
-          const first = yield* makeWorker()
-          yield* Effect.promise(() => first.handlers.activate(first.context, { sourceRevision }))
-          const stored = first.state()
-          const deadline = first.budgetDeadline()
-          expect(deadline).toBe(20_400)
-          if (stored === null || deadline === null) throw new Error('missing durable observation state')
-          const replacement = yield* makeWorker({ ...stored, sourceRevision: previousRevision }, deadline)
-          const pending = yield* Effect.promise(() =>
-            replacement.handlers.activate(replacement.context, { sourceRevision }),
-          ).pipe(Effect.forkChild({ startImmediately: true }))
-          yield* TestClock.adjust(20_399)
-          expect(replacement.requests).toEqual([])
-          expect(replacement.sleeps).toEqual([20_400])
-          yield* TestClock.adjust(1)
-          yield* Fiber.join(pending)
-          expect(replacement.requests).toEqual(Array.from({ length: 34 }, () => 20_400))
-          expect(replacement.budgetDeadline()).toBe(40_800)
-          expect(replacement.state()?.epoch).toBe(previousRevision === sourceRevision ? 1 : 2)
-        }).pipe(Effect.provide(TestClock.layer())),
-      )
-    },
-  )
-  test.each(['activation', 'journal-replay'] as const)(
-    'replacement %s retains the cost of an interrupted 52-call capture',
-    async (mode) => {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const execute = Effect.runPromiseWith(yield* Effect.context<never>())
-          const journal = mode === 'journal-replay' ? new Map<string, unknown>() : undefined
-          const makeWorker = (
-            interrupted: boolean,
-            state?: State,
-            budgetDeadline?: number,
-            runResults?: Map<string, unknown>,
-          ) =>
-            Effect.gen(function* () {
-              const budget = yield* makeBrokerObservationBudget
-              const requests: number[] = []
-              let preparations = 0
-              const client = budget.decorate(
-                HttpClient.make((request) =>
-                  Effect.gen(function* () {
-                    requests.push(yield* Clock.currentTimeMillis)
-                    return HttpClientResponse.fromWeb(
-                      request,
-                      new Response('{}', { headers: { 'x-ratelimit-limit': '100' } }),
-                    )
-                  }),
-                ),
-              )
-              const h = harness({
-                ...(state === undefined ? {} : { state }),
-                ...(budgetDeadline === undefined ? {} : { budgetDeadline }),
-                ...(runResults === undefined ? {} : { runResults }),
-                now: () => execute(Clock.currentTimeMillis),
-                sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
-                runtime: {
-                  nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
-                  preparePoll: (signal) => {
-                    preparations += 1
-                    return execute(budget.prepareCapture, { signal })
-                  },
-                  poll: (signal, reservation) =>
-                    execute(
-                      Effect.gen(function* () {
-                        if (
-                          (yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))
-                            ._tag !== 'Claimed'
-                        )
-                          return {
-                            _tag: 'Unavailable',
-                            nextPollNotBeforeMs: reservation.interruptedNotBeforeMs,
-                          } as const
-                        yield* budget.beginCapture
-                        yield* Effect.all(
-                          Array.from({ length: 52 }, () => client.get('https://paper-api.alpaca.markets/v2/account')),
-                          { concurrency: 2 },
-                        )
-                        if (interrupted) return yield* Effect.die('worker interrupted before capture result')
-                        return {
-                          _tag: 'Published',
-                          snapshotHash: 'c'.repeat(64),
-                          nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
-                        } as const
-                      }),
-                      { signal },
-                    ),
-                },
-              })
-              return { ...h, requests, preparations: () => preparations }
-            })
-          const first = yield* makeWorker(true, undefined, undefined, journal)
-          expect(
-            (yield* Effect.promise(() => first.handlers.activate(first.context, { sourceRevision }))).lastSnapshotHash,
-          ).toBeUndefined()
-          expect(first.requests).toHaveLength(52)
-          expect(first.budgetDeadline()).toBe(180_000)
-          if (mode === 'journal-replay') {
-            const replayed = yield* makeWorker(false, undefined, 0, journal)
-            const result = yield* Effect.promise(() => replayed.handlers.activate(replayed.context, { sourceRevision }))
-            expect(result.lastSnapshotHash).toBeUndefined()
-            expect(replayed.preparations()).toBe(0)
-            expect(replayed.requests).toEqual([])
-            expect(replayed.budgetDeadline()).toBe(180_000)
-          }
-          const replacement = yield* makeWorker(false, first.state() ?? undefined, first.budgetDeadline() ?? undefined)
-          const pending = yield* Effect.promise(() =>
-            replacement.handlers.activate(replacement.context, { sourceRevision }),
-          ).pipe(Effect.forkChild({ startImmediately: true }))
-          yield* TestClock.adjust(179_999)
-          expect(replacement.requests).toEqual([])
-          yield* TestClock.adjust(1)
-          expect((yield* Fiber.join(pending)).lastSnapshotHash).toBe('c'.repeat(64))
-          expect(replacement.requests).toEqual(Array.from({ length: 52 }, () => 180_000))
-          expect(replacement.budgetDeadline()).toBe(242_400)
-        }).pipe(Effect.provide(TestClock.layer())),
-      )
-    },
-  )
   test('rotation revokes old epochs and survives reconstruction from durable state', async () => {
     const h = harness({ state: { sourceRevision: 'd'.repeat(40), epoch: 7, sequence: 19 } })
     await h.handlers.activate(h.context, { sourceRevision })
@@ -681,6 +361,7 @@ describe('Restate broker observation owner', () => {
         elapsedMs: 1_000,
       })
       await h.handlers.activate(h.context, { sourceRevision })
+      h.advance(19_400)
       await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
       expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([19_400, 19_400])
     },
@@ -689,10 +370,10 @@ describe('Restate broker observation owner', () => {
     'refuses a corrupt durable budget %s without starting a broker poll',
     async (budgetDeadline) => {
       const h = harness({ budgetDeadline })
-      const state = await h.handlers.activate(h.context, { sourceRevision })
-      expect(state.lastSnapshotHash).toBeUndefined()
+      const failure = await h.handlers.activate(h.context, { sourceRevision }).catch((cause: unknown) => cause)
+      expect(failure).toBeInstanceOf(Error)
       expect(h.calls().polls).toBe(0)
-      expect(h.budgetDeadline()).toBe(budgetDeadline)
+      expect(h.legacyBudget()).toBe(budgetDeadline)
     },
   )
   test.each([{ sourceRevision: 'd'.repeat(40) }, { sourceRevision, interval: 1 }])(

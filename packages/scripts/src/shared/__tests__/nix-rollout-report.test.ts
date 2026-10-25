@@ -63,6 +63,21 @@ describe('Nix rollout report', () => {
     expect(bayn?.workflowPaths).toContain('argocd/applications/kargo')
   })
 
+  it('accepts an immutable Kargo image build without duplicate manual release wrappers', () => {
+    const report = buildNixRolloutReport({
+      inventory: inventory([
+        entry({
+          name: 'opencode',
+          class: 'nix-image',
+          nixImageAttr: 'opencode-image',
+          repoImages: ['registry.ide-newton.ts.net/lab/opencode'],
+          workflowPaths: ['.github/workflows/opencode-build-push.yml', 'argocd/applications/kargo'],
+        }),
+      ]),
+    })
+    expect(report.missingBuildContracts).toEqual([])
+  })
+
   it('reports missing build contract pieces for Nix image apps', () => {
     const report = buildNixRolloutReport({
       inventory: inventory([

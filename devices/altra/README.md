@@ -12,7 +12,7 @@ Inventory:
 
 Docs:
 
-- `devices/altra/docs/bmc-ipmi.md` (BMC access, bridged CPU and RAM temperatures, and power-control safety)
+- `devices/altra/docs/bmc-ipmi.md` (BMC access, CPU and RAM temperatures, fan PWM and automatic restore, and power control)
 - `devices/altra/docs/cluster-bootstrap.md` (install + join existing cluster)
 - `devices/altra/docs/relayout-volumes.md` (EPHEMERAL=300GB, local-path on OS disk + extra local-path on second NVMe)
 - `docs/incidents/2026-02-18-altra-volume-relayout-etcd-rejoin.md` (failure modes, root causes, and recovery sequence from this session)

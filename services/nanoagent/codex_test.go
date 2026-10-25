@@ -83,6 +83,60 @@ func respondToCodexWireRequest(t *testing.T, supervisor *codexSupervisor, reques
 	supervisor.readMessagesWithLimit(nil, generation, strings.NewReader(string(message)+"\n"), codexProtocolLineMaxBytes)
 }
 
+func TestCodexThreadsDisableInheritedApps(t *testing.T) {
+	for _, method := range []string{"thread/start", "thread/resume"} {
+		for _, config := range []string{"null", `{"model_reasoning_effort":"high","features.apps":true,"features":{"apps":true,"shell_snapshot":true}}`} {
+			t.Run(method+"/"+config, func(t *testing.T) {
+				supervisor, writer := readyCodexSupervisor(t)
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				params := json.RawMessage(`{"threadId":"thread-1","cwd":"/workspace","model":"fixture","config":` + config + `}`)
+				done := make(chan error, 1)
+				go func() {
+					_, err := supervisor.call(ctx, method, params)
+					done <- err
+				}()
+				request := readCodexWireRequest(t, writer)
+				var actual struct {
+					Cwd    string         `json:"cwd"`
+					Model  string         `json:"model"`
+					Config map[string]any `json:"config"`
+				}
+				if json.Unmarshal(request.Params, &actual) != nil || actual.Config["features.apps"] != false {
+					t.Fatalf("%s retained inherited app tools: %s", method, request.Params)
+				}
+				if actual.Cwd != "/workspace" || actual.Model != "fixture" {
+					t.Fatalf("%s changed the native workspace or model: %s", method, request.Params)
+				}
+				if config != "null" {
+					features, ok := actual.Config["features"].(map[string]any)
+					if !ok || features["apps"] != false || features["shell_snapshot"] != true || actual.Config["model_reasoning_effort"] != "high" {
+						t.Fatalf("%s changed unrelated settings or retained a nested apps override: %s", method, request.Params)
+					}
+				}
+				respondToCodexWireRequest(t, supervisor, request, nil)
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestCodexRejectsInvalidThreadConfigBeforeDispatch(t *testing.T) {
+	for _, params := range []string{`null`, `{"config":[]}`, `{"config":{"features":true}}`} {
+		supervisor, writer := readyCodexSupervisor(t)
+		if _, err := supervisor.call(context.Background(), "thread/start", json.RawMessage(params)); err == nil {
+			t.Fatalf("invalid thread configuration was accepted: %s", params)
+		}
+		select {
+		case request := <-writer.messages:
+			t.Fatalf("invalid thread configuration reached Codex: %s", request)
+		default:
+		}
+	}
+}
+
 func TestCodexSupervisorPreservesTypedRPCError(t *testing.T) {
 	t.Parallel()
 	supervisor, writer := readyCodexSupervisor(t)
@@ -95,7 +149,10 @@ func TestCodexSupervisorPreservesTypedRPCError(t *testing.T) {
 	}()
 
 	request := readCodexWireRequest(t, writer)
-	if request.Method != "thread/resume" || string(request.Params) != string(params) {
+	var wireParams struct {
+		ThreadID string `json:"threadId"`
+	}
+	if request.Method != "thread/resume" || json.Unmarshal(request.Params, &wireParams) != nil || wireParams.ThreadID != threadID {
 		t.Fatalf("Codex wire request = method %q params %s", request.Method, request.Params)
 	}
 	respondToCodexWireRequest(t, supervisor, request, json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id 00000000-0000-4000-8000-000000000000"}`))
@@ -156,6 +213,10 @@ func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
 		"account/read",
 		"account/login/start",
 		"thread/start",
+		"thread/list",
+		"thread/archive",
+		"thread/unarchive",
+		"thread/read",
 		"thread/resume",
 		"thread/turns/list",
 		"thread/items/list",
@@ -207,7 +268,7 @@ func TestCodexBlockedWriteDoesNotHoldSupervisorStateLock(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := supervisor.request(ctx, "account/read", json.RawMessage(`{}`), false)
+		_, err := supervisor.request(ctx, "account/read", json.RawMessage(`{}`), false, nil)
 		done <- err
 	}()
 	select {
@@ -445,10 +506,10 @@ func TestCodexMCPToolApprovalWaitsForExplicitDecision(t *testing.T) {
 			if len(writer.messages) != 0 || len(supervisor.approvals) != 1 {
 				t.Fatal("MCP confirmation did not wait for an explicit user decision")
 			}
-			if len(supervisor.buffer) != 1 || supervisor.buffer[0].ApprovalID != "17" || string(supervisor.buffer[0].Raw) != string(raw) {
+			if len(supervisor.buffer) != 1 || supervisor.buffer[0].ApprovalID != approvalKey(supervisor.generation, json.RawMessage(`17`)) || string(supervisor.buffer[0].Raw) != string(raw) {
 				t.Fatal("MCP confirmation was not published with its original scope and arguments")
 			}
-			if err := supervisor.resolveApproval(context.Background(), "17", decision); err != nil {
+			if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), decision); err != nil {
 				t.Fatal(err)
 			}
 			response := readCodexWireRequest(t, writer)
@@ -522,7 +583,7 @@ func TestCodexOversizedMCPApprovalPreservesDisplayAndScope(t *testing.T) {
 				t.Fatal("oversized confirmation did not wait for an explicit decision")
 			}
 			event := supervisor.buffer[0]
-			if event.Method != message.Method || event.ApprovalID != "17" || len(event.Raw) > 16<<10 {
+			if event.Method != message.Method || event.ApprovalID != approvalKey(supervisor.generation, json.RawMessage(`17`)) || len(event.Raw) > 16<<10 {
 				t.Fatal("oversized confirmation lost its method, approval ID, or size bound")
 			}
 			var bounded struct {
@@ -556,11 +617,11 @@ func TestCodexOversizedMCPApprovalPreservesDisplayAndScope(t *testing.T) {
 				t.Fatalf("bounded confirmation changed advertised scopes: %s", event.Raw)
 			}
 			if !session {
-				if err := supervisor.resolveApproval(context.Background(), "17", "approveSession"); err == nil || len(writer.messages) != 0 {
+				if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "approveSession"); err == nil || len(writer.messages) != 0 {
 					t.Fatal("bounded confirmation accepted an unadvertised scope")
 				}
 			}
-			if err := supervisor.resolveApproval(context.Background(), "17", "deny"); err != nil {
+			if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "deny"); err != nil {
 				t.Fatal(err)
 			}
 			if response := readCodexWireRequest(t, writer); string(response.Result) != `{"action":"decline"}` {
@@ -617,7 +678,7 @@ func TestCodexResolvedMCPRequestCannotBeApprovedAfterCancellation(t *testing.T) 
 	resolved := codexRPCMessage{Method: "serverRequest/resolved", Params: json.RawMessage(`{"threadId":"thread-1","requestId":17}`)}
 	raw, _ = json.Marshal(resolved)
 	supervisor.handleServerMessage(supervisor.generation, resolved, raw)
-	if err := supervisor.resolveApproval(context.Background(), "17", "approveOnce"); err == nil || len(writer.messages) != 0 {
+	if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "approveOnce"); err == nil || len(writer.messages) != 0 {
 		t.Fatal("canceled MCP request was allowed to execute from a stale approval card")
 	}
 }
@@ -709,6 +770,9 @@ sleep 30
 			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.1-sol\n") {
 				t.Fatalf("Codex default model arguments = %q, error = %v", args, err)
 			}
+			if !strings.Contains(string(args), "-c\nfeatures.apps=false\n") {
+				t.Fatalf("Codex inherited app tools are not disabled: %q", args)
+			}
 			for _, browserOption := range []string{`mcp_servers.tengri_browser.args=["browser-mcp"]`, "mcp_servers.tengri_browser.tool_timeout_sec=300", "mcp_servers.tengri_browser.required=true"} {
 				if !strings.Contains(string(args), browserOption+"\n") {
 					t.Fatalf("Codex browser configuration missing %s: %q", browserOption, args)
@@ -719,6 +783,37 @@ sleep 30
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("Codex app-server did not receive the initialized notification")
+}
+
+func TestCodexSupervisorDoesNotPublishReadyWhenInitializationFails(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a local fake app-server process")
+	}
+	directory := t.TempDir()
+	binary := filepath.Join(directory, "fake-codex")
+	script := `#!/bin/sh
+IFS= read -r initialize
+printf '%s\n' '{"id":1,"error":{"code":-32600,"message":"initialization rejected"}}'
+sleep 30
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake app-server: %v", err)
+	}
+	supervisor := newCodexSupervisor(binary, directory)
+	_, events, err := supervisor.subscribe(0)
+	if err != nil {
+		t.Fatalf("subscribe to Codex lifecycle: %v", err)
+	}
+	supervisor.start()
+	t.Cleanup(supervisor.close)
+	select {
+	case event := <-events:
+		if event.Method != "error" || supervisor.isReady() {
+			t.Fatalf("rejected initialization reported a ready runtime: %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Codex did not report failed initialization")
+	}
 }
 
 func TestCodexSupervisorRestartsAfterProcessExit(t *testing.T) {
@@ -741,19 +836,33 @@ exit 17
 	}
 
 	supervisor := newCodexSupervisor(binary, directory)
+	subscription, events, err := supervisor.subscribe(0)
+	if err != nil {
+		t.Fatalf("subscribe to Codex lifecycle: %v", err)
+	}
+	t.Cleanup(func() { supervisor.unsubscribe(subscription) })
 	supervisor.start()
 	t.Cleanup(supervisor.close)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		content, err := os.ReadFile(marker)
-		if err == nil && strings.Count(string(content), "started\n") >= 2 {
-			return
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	var restartingSequence uint64
+	for {
+		select {
+		case event := <-events:
+			if event.Method == "error" {
+				restartingSequence = event.Sequence
+			}
+			if event.Method == "tengri/runtimeReady" && restartingSequence > 0 {
+				if event.Sequence <= restartingSequence || !strings.Contains(string(event.Raw), `"generationId":`) {
+					t.Fatalf("invalid recovered lifecycle event: %+v", event)
+				}
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("Codex restart never published successful initialization after its restart notice")
 		}
-		time.Sleep(20 * time.Millisecond)
 	}
-	content, _ := os.ReadFile(marker)
-	t.Fatalf("Codex app-server starts = %d, want at least 2", strings.Count(string(content), "started\n"))
 }
 
 func TestCodexDeviceLoginRestartCancelsThePreviousAttempt(t *testing.T) {

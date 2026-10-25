@@ -10,7 +10,7 @@ export const lastEntryAllocationQuery = (sql: PgClient.PgClient) => sql`
     ),
     'flat', NOT EXISTS (
       SELECT 1 FROM jsonb_array_elements(decision.document #> '{plannerInput,brokerState,positions}') AS position
-      WHERE (position ->> 'quantityMicros')::numeric <> 0
+      WHERE (position ->> 'quantityAtoms')::numeric <> 0
     ),
     'allocationCapitalMicros', decision.document #>> '{plannerInput,allocationCapitalMicros}',
     'maximumTurnoverMicros', decision.document #>> '{riskPolicy,maxDailyTradedNotionalMicros}',

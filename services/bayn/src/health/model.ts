@@ -1,13 +1,13 @@
 import type { Effect } from 'effect'
 
-import type { BrokerReadShape } from '../broker/alpaca'
-import type { RuntimeConfig } from '../config'
+import type { BrokerReadShape } from '../broker/alpaca/model'
+import type { RuntimeConfig } from '../config/model'
 import type { CycleOperationsProjection } from '../cycle/observability'
-import type { CycleObservabilityShape } from '../cycle/store'
+import type { CycleObservabilityShape } from '../cycle/store/observability'
 import type { DatabaseError } from '../db/database-error'
 import type { ExecutionControllerStatus, ExecutionControllerStatusStoreShape } from '../execution/controller-status'
 import type { JournalService } from '../ledger'
-import type { IntradayMarketDataService } from '../market-data'
+import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import type { BrokerConfiguration, RuntimeHealth, RuntimeState } from '../runtime-state'
 import type { UtcEpochMillisFailure } from '../time'
 

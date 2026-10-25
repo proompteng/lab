@@ -195,34 +195,41 @@ describe('enabled app inventory', () => {
     }
   })
 
-  it('recognizes the inert devbox promotion template without accepting arbitrary mutable images', () => {
-    const template = {
-      name: 'devbox',
-      path: 'argocd/applications/devbox',
-      repoURL: 'https://github.com/proompteng/lab.git',
-      sourceFile: 'argocd/applicationsets/platform.yaml',
-      sourceKind: 'applicationset-element',
-      class: 'deferred',
-      enabled: true,
-      hasHelmChart: false,
-      repoImages: ['registry.ide-newton.ts.net/lab/codex-devbox:unpublished'],
-      workflowPaths: ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo'],
-    } satisfies EnabledAppInventoryEntry
-    expect(classifyEnabledApp(template).class).toBe('workflow-image')
-    expect(classifyEnabledApp({ ...template, workflowPaths: [] }).class).toBe('deferred')
-    for (const reference of [
-      'registry.ide-newton.ts.net/lab/codex-devbox:latest',
-      'registry.ide-newton.ts.net/lab/codex-devbox:unreviewed',
-      `registry.ide-newton.ts.net/lab/codex-devbox@sha256:${'0'.repeat(64)}`,
-    ]) {
-      expect(
-        classifyEnabledApp({
-          ...template,
-          repoImages: [reference],
-        }).class,
-      ).toBe('deferred')
-    }
-  })
+  it.each([
+    ['devbox', 'codex-devbox', 'unpublished', '.github/workflows/codex-devbox.yml'],
+    ['ofz', 'ofz', 'unpromoted', '.github/workflows/ofz.yaml'],
+  ])(
+    'recognizes the inert %s promotion template without accepting arbitrary mutable images',
+    (name, image, tag, workflow) => {
+      const repository = `registry.ide-newton.ts.net/lab/${image}`
+      const template = {
+        name,
+        path: `argocd/applications/${name}`,
+        repoURL: 'https://github.com/proompteng/lab.git',
+        sourceFile: 'argocd/applicationsets/platform.yaml',
+        sourceKind: 'applicationset-element',
+        class: 'deferred',
+        enabled: true,
+        hasHelmChart: false,
+        repoImages: [`${repository}:${tag}`],
+        workflowPaths: [workflow, 'argocd/applications/kargo'],
+      } satisfies EnabledAppInventoryEntry
+      expect(classifyEnabledApp(template).class).toBe('workflow-image')
+      expect(classifyEnabledApp({ ...template, workflowPaths: [] }).class).toBe('deferred')
+      for (const reference of [
+        `${repository}:latest`,
+        `${repository}:unreviewed`,
+        `${repository}@sha256:${'0'.repeat(64)}`,
+      ]) {
+        expect(
+          classifyEnabledApp({
+            ...template,
+            repoImages: [reference],
+          }).class,
+        ).toBe('deferred')
+      }
+    },
+  )
 
   it('classifies Tengri as a Kargo-owned workflow image only with complete ownership evidence', () => {
     const tengri = {
@@ -597,7 +604,7 @@ describe('enabled app inventory', () => {
 
   it('pins Keycloak to the immutable multi-architecture security release', () => {
     expect(keycloakManifest).toContain(
-      'quay.io/keycloak/keycloak:26.7.3@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54',
+      'quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c',
     )
   })
 
@@ -724,14 +731,14 @@ describe('enabled app inventory', () => {
     expect(entry('attic').workflowPaths).toContain('.github/workflows/attic-build-push.yaml')
   })
 
-  it('tracks ARC runner images through both GitHub Actions and manual Nix image paths', () => {
+  it('tracks ARC runner images through the single GitHub Actions and Kargo path', () => {
     expect(entry('arc')).toMatchObject({
       class: 'nix-image',
       nixImageAttr: 'arc-runner-image',
-      buildScriptPath: 'packages/scripts/src/arc-runner/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/arc-runner/deploy-service.ts',
     })
     expect(entry('arc').workflowPaths).toContain('.github/workflows/arc-runner-build-push.yml')
+    expect(entry('arc').buildScriptPath).toBeUndefined()
+    expect(entry('arc').deployScriptPath).toBeUndefined()
   })
 
   it('tracks Froussard through both GitHub Actions and manual Nix image paths', () => {

@@ -70,6 +70,11 @@ Both retained pipelines enable `kubernetes.operator.job.restart.failed`, allowin
 terminal failures from successful checkpoint state after a dependency outage. This does not skip state, permit
 non-restored operators, or change the savepoint upgrade mode. Verify actual restoration and new completed checkpoints.
 
+Alloy labels producer logs from Kubernetes discovery with `namespace`, `pod`, `container` and `service` before
+forwarding them to Loki. Query `{namespace="torghut",service="torghut-ta"}` or the exact GlitchTip server and event
+timestamp. A healthy Alloy Pod alone does not prove these labels or log delivery; verify current records for the
+forwarder and both Flink process types after deployment.
+
 Alloy scrapes `torghut-ta-metrics` and `market-data-archive-metrics`. The signal pipeline alerts distinguish missing
 scrapes, a reachable JobManager without a running job, and stalled or missing checkpoints. Each routes to the existing
 critical email receiver. A Ready JobManager alone is insufficient; check the Flink REST job state and checkpoint age.

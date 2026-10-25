@@ -13,6 +13,7 @@ import org.apache.kafka.clients.consumer.OffsetResetStrategy
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.HexFormat
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -65,6 +66,25 @@ class MarketDataArchiveJobTest {
     assertEquals(4, existing.size)
     assertTrue(extended.size > existing.size)
     existing.forEach { (name, hash) -> assertEquals(hash, extended[name], "savepoint operator: $name") }
+  }
+
+  @Test
+  fun `raw archive operators retain the deployed savepoint identities`() {
+    val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+    configureMarketDataArchiveJob(environment, MarketDataArchiveConfig.fromEnv(validEnvironment()))
+    val graph = environment.streamGraph
+    val hashes = StreamGraphHasherV2().traverseStreamGraphAndGenerateHashes(graph)
+    val expected =
+      mapOf(
+        "Source: market-data-bars-source" to "d618a97df21bbd4bb61c79cdeca965b4",
+        "signal-intraday-bars-archive: Writer" to "b44d1e67369ec08bf6e68aa027449b4b",
+        "signal-intraday-quotes-archive: Writer" to "e9779db5592ff21254bf256adf667700",
+        "signal-intraday-trades-archive: Writer" to "e8d2cf76684903e35fd2637619d8c5be",
+      )
+    expected.forEach { (name, hash) ->
+      val node = graph.streamNodes.single { it.operatorName == name }
+      assertEquals(hash, HexFormat.of().formatHex(hashes.getValue(node.id)), "deployed savepoint operator: $name")
+    }
   }
 
   @Test
@@ -276,7 +296,7 @@ class MarketDataArchiveJobTest {
       MarketDataArchiveConfig.fromEnv(valid - "ARCHIVE_DELAYED_SIP_TRADES_TOPIC")
     }
     assertFailsWith<IllegalArgumentException> {
-      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "1001"))
+      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "10001"))
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_PARALLELISM" to "17"))
@@ -312,7 +332,17 @@ class MarketDataArchiveJobTest {
     }
   }
 
-  private fun validEnvironment(): Map<String, String> =
+  @Test
+  fun `retained quote recovery admits bounded ten thousand row batches`() {
+    val config =
+      MarketDataArchiveConfig.fromEnv(validEnvironment() + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "10000"))
+    assertEquals(10_000, config.clickhouseBatchSize)
+    assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(validEnvironment() + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "10001"))
+    }
+  }
+
+  internal fun validEnvironment(): Map<String, String> =
     mapOf(
       "ARCHIVE_CORE_FEED" to "sip",
       "ARCHIVE_CORE_BARS_TOPIC" to "torghut.bars.1m.v1",

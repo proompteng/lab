@@ -56,12 +56,22 @@ spec:
                   app.kubernetes.io/name: ofz-api
       containers:
         - name: ofz-api
-          image: registry.ide-newton.ts.net/lab/ofz
+          image: registry.ide-newton.ts.net/lab/ofz:unpromoted
           args: [serve]
           ports:
             - name: grpc
               containerPort: 9443
           env:
+            - name: SENTRY_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: ofz-observability
+                  key: SENTRY_DSN
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: ofz-observability
+                  key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
             - name: RUST_LOG
               value: ofz=info
             - name: OFZ_DATABASE_DSN
@@ -132,6 +142,9 @@ spec:
         - name: database-ca
           secret:
             secretName: ofz-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
             defaultMode: 0440
         - name: native
           secret:
@@ -143,7 +156,8 @@ kind: PodDisruptionBudget
 metadata:
   name: ofz-api
 spec:
-  maxUnavailable: 1
+  minAvailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
   selector:
     matchLabels:
       app.kubernetes.io/name: ofz-api

@@ -1,9 +1,11 @@
 import { createRoot } from 'react-dom/client'
 import { useEffect, useState } from 'react'
 import { AccessPanel } from '@/components/tengri/access-panel'
+import { PasskeyRegistration } from '@/components/tengri/passkey-registration'
 import { startTengriSignIn, signOutTengri } from './auth-client'
 
 function Fixture() {
+  const workspaceUid = new URLSearchParams(window.location.search).get('workspace') || undefined
   const [authenticated, setAuthenticated] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -24,7 +26,7 @@ function Fixture() {
           >
             Sign out
           </button>
-          <AccessPanel />
+          <AccessPanel workspaceUid={workspaceUid} />
         </>
       ) : (
         <button type="button" onClick={() => void startTengriSignIn().catch((cause) => setError(String(cause)))}>
@@ -32,6 +34,7 @@ function Fixture() {
         </button>
       )}
       {error ? <p role="alert">{error}</p> : null}
+      <PasskeyRegistration />
     </main>
   )
 }

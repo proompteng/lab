@@ -20,6 +20,12 @@ spec:
     datastoreEngine: postgres
     datastoreTLSSecretName: ofz-db-ca
     replicas: 3
+    dispatchCacheEnabled: "false"
+    dispatchClusterCacheEnabled: "false"
+    datastoreConnPoolReadMaxOpen: "10"
+    datastoreConnPoolReadMinOpen: "2"
+    datastoreConnPoolWriteMaxOpen: "4"
+    datastoreConnPoolWriteMinOpen: "1"
     httpEnabled: true
     telemetryEndpoint: ""
     pdb:

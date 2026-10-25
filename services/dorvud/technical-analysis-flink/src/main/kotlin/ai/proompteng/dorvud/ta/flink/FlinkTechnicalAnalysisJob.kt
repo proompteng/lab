@@ -74,7 +74,7 @@ fun main() {
   val env = StreamExecutionEnvironment.getExecutionEnvironment()
 
   configureEnvironment(env, config)
-  val graph = configureTechnicalAnalysisJob(env, config, RollingMarketFeatureConfig.fromEnv())
+  val graph = configureTechnicalAnalysisJob(env, config, RollingMarketFeatureConfig.fromEnv(), CryptoMarketFeatureConfig.fromEnv())
   if (!config.clickhouseUrl.isNullOrBlank()) ensureClickhouseSchema(config)
   graph.jobName = "torghut-technical-analysis-flink"
   env.execute(graph)
@@ -84,6 +84,7 @@ internal fun configureTechnicalAnalysisJob(
   env: StreamExecutionEnvironment,
   config: FlinkTaConfig,
   features: RollingMarketFeatureConfig? = null,
+  crypto: CryptoMarketFeatureConfig? = null,
 ): StreamGraph {
   val serde = AvroSerde()
   val trades =
@@ -223,19 +224,32 @@ internal fun configureTechnicalAnalysisJob(
   signals.sinkTo(signalSink(config, serde)).name("sink-signals")
   applyClickhouseSinks(config, microBars, signals)
 
-  if (features == null) return env.streamGraph
-
-  // New sources change generated sink IDs; retain the legacy graph identities for savepoint restoration.
-  val previous = env.getStreamGraph(false)
-  val rollingGraph = configureRollingMarketFeatures(env, config, features)
-  val extended = env.streamGraph
-  // Checkpoints contain generated IDs from the immediately preceding executable topology, not its restore aliases.
-  val restoreGraph =
-    when (features.restoreTopology) {
-      FeatureRestoreTopology.TA_ONLY -> previous
-      FeatureRestoreTopology.ROLLING_FEATURES -> requireNotNull(rollingGraph) { "Rolling restore topology requires technical features" }
+  val prepared =
+    if (features == null) {
+      env.getStreamGraph(false)
+    } else {
+      // New sources change generated sink IDs; retain the preceding graph identities for savepoint restoration.
+      val previous = env.getStreamGraph(false)
+      val rollingGraph = configureRollingMarketFeatures(env, config, features)
+      val extended = env.getStreamGraph(false)
+      val restoreGraph =
+        when (features.restoreTopology) {
+          FeatureRestoreTopology.TA_ONLY -> previous
+          FeatureRestoreTopology.ROLLING_FEATURES -> requireNotNull(rollingGraph) { "Rolling restore topology requires technical features" }
+        }
+      preserveExistingOperatorIds(restoreGraph, extended)
+      extended
     }
-  preserveExistingOperatorIds(restoreGraph, extended)
+  if (crypto == null) return prepared
+  val equityFeatureTopics = setOfNotNull(features?.topic, features?.technicalTopic, features?.barsTopic)
+  require(crypto.topic !in equityFeatureTopics && crypto.source.topic !in equityFeatureTopics) {
+    "crypto and equity feature topics must differ"
+  }
+  configureCryptoMarketFeatures(env, config, crypto)
+  val extended = env.streamGraph
+  // The crypto cutover restores checkpoints from the currently deployed complete equity graph.
+  prepared.streamNodes.forEach { it.userHash = null }
+  preserveExistingOperatorIds(prepared, extended)
   return extended
 }
 

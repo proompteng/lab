@@ -1,15 +1,11 @@
 import { Result, Schema } from 'effect'
 
-import { Pipeable } from '../../pipeable'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import { CycleDecisionDocumentSchema, type CycleDecisionDocument } from '../../shadow-decision-contract'
-import { TargetPlanStatus } from '../../target-planner'
-import type { InputManifest } from '../../types'
+import { TargetPlanStatus } from '../../target-planner/index'
 import {
   CycleState,
   CycleTerminalReason,
-  isIntradayAutonomousCycle,
-  isLegacyAutonomousCycle,
   type AutonomousCycle,
   type CycleCompletionState,
   type CycleDraft,
@@ -17,38 +13,11 @@ import {
 import { cycleTerminalReasonForBlockedTargetPlan } from '../recovery-decisions'
 import { cycleDraftMatches, cycleDraftOf, isCycleStateTransitionAllowed } from '../transitions'
 import { cycleDecisionStoreEvidence } from './decision-contract'
+import { hasExpiredUnusedEntryAdmission, unusedEntryExpiresAt } from '../entry-admission'
 import type { CycleStoreDecisionFailure } from './decision-contract'
+import type { CycleAcquireReceipt } from './model'
 
 export type { CycleStoreDecisionFailure } from './decision-contract'
-
-export type AcquireDecision =
-  | {
-      readonly _tag: 'Return'
-      readonly cycle: AutonomousCycle
-      readonly created: boolean
-    }
-  | {
-      readonly _tag: 'Block'
-      readonly cycle: AutonomousCycle
-      readonly created: boolean
-      readonly reason: CycleTerminalReason.MissedPublication
-    }
-
-export type SnapshotDecision =
-  | {
-      readonly _tag: 'Replay'
-      readonly cycle: AutonomousCycle
-    }
-  | {
-      readonly _tag: 'Persist'
-      readonly cycle: AutonomousCycle
-      readonly snapshotId: string
-    }
-  | {
-      readonly _tag: 'Block'
-      readonly cycle: AutonomousCycle
-      readonly reason: CycleTerminalReason.MissedPublication
-    }
 
 export type ActivationDecision =
   | {
@@ -62,7 +31,7 @@ export type ActivationDecision =
   | {
       readonly _tag: 'Block'
       readonly cycle: AutonomousCycle
-      readonly reason: CycleTerminalReason.MissedSubmission
+      readonly reason: CycleTerminalReason.MissedSubmission | CycleTerminalReason.UnusedEntryExpired
     }
 
 export type DecisionBindingDecision =
@@ -78,7 +47,7 @@ export type DecisionBindingDecision =
   | {
       readonly _tag: 'Block'
       readonly cycle: AutonomousCycle
-      readonly reason: CycleTerminalReason.MissedSubmission
+      readonly reason: CycleTerminalReason.MissedSubmission | CycleTerminalReason.UnusedEntryExpired
     }
 
 export type CompletionDecision =
@@ -118,94 +87,27 @@ const fail = (
 
 const shadowDecisionEquivalent = Schema.toEquivalence(CycleDecisionDocumentSchema)
 
-const makeInitialCycleDataFirst = (draft: CycleDraft, observedAt: string): AutonomousCycle => {
-  const missedPublication =
-    draft.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' && observedAt >= draft.window.publicationDeadlineAt
-  return {
-    ...draft,
-    state: missedPublication ? CycleState.Blocked : CycleState.Pending,
-    bindings: {},
-    ...(missedPublication
-      ? {
-          terminalReason: CycleTerminalReason.MissedPublication,
-          terminalAt: observedAt,
-        }
-      : {}),
-    stateVersion: 1,
-    createdAt: observedAt,
-    updatedAt: observedAt,
-  }
-}
+export const makeInitialCycle = (draft: CycleDraft, observedAt: string): AutonomousCycle => ({
+  ...draft,
+  state: CycleState.Pending,
+  bindings: {},
+  stateVersion: 1,
+  createdAt: observedAt,
+  updatedAt: observedAt,
+})
 
-export const makeInitialCycle = Pipeable.dual(2, makeInitialCycleDataFirst)
-
-const decideAcquireDataFirst = (
+export const decideAcquire = (
   stored: AutonomousCycle,
   draft: CycleDraft,
-  observedAt: string,
   created: boolean,
-): Result.Result<AcquireDecision, CycleStoreDecisionFailure> => {
+): Result.Result<CycleAcquireReceipt, CycleStoreDecisionFailure> => {
   if (!cycleDraftMatches(cycleDraftOf(stored), draft)) {
     return fail('conflict', 'stored cycle differs from deterministic acquisition input')
   }
-  return Result.succeed(
-    stored.state === CycleState.Pending &&
-      stored.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' &&
-      observedAt >= stored.window.publicationDeadlineAt
-      ? {
-          _tag: 'Block',
-          cycle: stored,
-          created,
-          reason: CycleTerminalReason.MissedPublication,
-        }
-      : { _tag: 'Return', cycle: stored, created },
-  )
+  return Result.succeed({ cycle: stored, created })
 }
 
-export const decideAcquire = Pipeable.dual(4, decideAcquireDataFirst)
-
-const decideSnapshotBindingDataFirst = (
-  cycle: AutonomousCycle,
-  snapshot: InputManifest['finalizedSnapshot'],
-  observedAt: string,
-): Result.Result<SnapshotDecision, CycleStoreDecisionFailure> => {
-  if (isIntradayAutonomousCycle(cycle)) {
-    return fail('invariant', 'intraday cycle snapshots bind atomically with their decision')
-  }
-  if (!isLegacyAutonomousCycle(cycle)) return fail('invariant', 'cycle contract versions are not correlated')
-  if (observedAt < cycle.window.signalCloseAt) {
-    return fail('invariant', 'snapshot binding cannot precede the Signal session close')
-  }
-  if (
-    snapshot.asOfSession !== cycle.identity.signalSessionDate ||
-    snapshot.lastSession !== cycle.identity.signalSessionDate ||
-    snapshot.calendarVersion !== cycle.identity.signalCalendarVersion
-  ) {
-    return fail('invariant', 'finalized Signal publication does not match the cycle signal session and calendar')
-  }
-  if (cycle.bindings.snapshotId !== undefined) {
-    return cycle.bindings.snapshotId === snapshot.snapshotId
-      ? Result.succeed({ _tag: 'Replay', cycle })
-      : fail('conflict', 'cycle snapshot binding cannot be replaced')
-  }
-  if (cycle.state !== CycleState.Pending) {
-    return fail('conflict', 'snapshot may bind only while a cycle is pending')
-  }
-  if (observedAt >= cycle.window.publicationDeadlineAt) {
-    return Result.succeed({
-      _tag: 'Block',
-      cycle,
-      reason: CycleTerminalReason.MissedPublication,
-    })
-  }
-  return observedAt < cycle.updatedAt
-    ? fail('conflict', 'cycle update time cannot move backward')
-    : Result.succeed({ _tag: 'Persist', cycle, snapshotId: snapshot.snapshotId })
-}
-
-export const decideSnapshotBinding = Pipeable.dual(3, decideSnapshotBindingDataFirst)
-
-const decideActivationDataFirst = (
+export const decideActivation = (
   cycle: AutonomousCycle,
   observedAt: string,
 ): Result.Result<ActivationDecision, CycleStoreDecisionFailure> => {
@@ -213,18 +115,13 @@ const decideActivationDataFirst = (
   if (!isCycleStateTransitionAllowed(cycle.state, CycleState.Active)) {
     return fail('conflict', 'only a pending cycle may become active')
   }
-  if (
-    cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' &&
-    cycle.schemaVersion !== 'bayn.autonomous-cycle.v4' &&
-    cycle.bindings.snapshotId === undefined
-  ) {
-    return fail('invariant', 'cycle activation requires a bound snapshot')
-  }
   if (observedAt >= cycle.window.submissionCutoffAt) {
     return Result.succeed({
       _tag: 'Block',
       cycle,
-      reason: CycleTerminalReason.MissedSubmission,
+      reason: hasExpiredUnusedEntryAdmission(cycle, observedAt)
+        ? CycleTerminalReason.UnusedEntryExpired
+        : CycleTerminalReason.MissedSubmission,
     })
   }
   return observedAt < cycle.updatedAt
@@ -232,9 +129,7 @@ const decideActivationDataFirst = (
     : Result.succeed({ _tag: 'Persist', cycle })
 }
 
-export const decideActivation = Pipeable.dual(2, decideActivationDataFirst)
-
-const decideDecisionBindingDataFirst = (
+export const decideDecisionBinding = (
   cycle: AutonomousCycle,
   document: CycleDecisionDocument,
   observedAt: string,
@@ -252,6 +147,9 @@ const decideDecisionBindingDataFirst = (
   if (cycle.state !== CycleState.Active) {
     return fail('conflict', 'decision may bind only while a cycle is active')
   }
+  if (hasExpiredUnusedEntryAdmission(cycle, observedAt)) {
+    return Result.succeed({ _tag: 'Block', cycle, reason: CycleTerminalReason.UnusedEntryExpired })
+  }
   if (observedAt >= cycle.window.submissionCutoffAt) {
     return Result.succeed({
       _tag: 'Block',
@@ -261,14 +159,14 @@ const decideDecisionBindingDataFirst = (
   }
   const executionMarketData = document.bindings.executionMarketData
   const decisionMarketData = document.bindings.decisionMarketData ?? executionMarketData
-  const snapshotMatches = isIntradayAutonomousCycle(cycle)
-    ? cycle.bindings.snapshotId === undefined &&
-      executionMarketData !== undefined &&
-      decisionMarketData !== undefined &&
-      document.bindings.snapshotId === decisionMarketData.snapshotId &&
-      document.bindings.snapshotContentHash === decisionMarketData.contentHash &&
-      document.bindings.snapshotFinalizedAt === decisionMarketData.observedAt
-    : document.bindings.snapshotId === cycle.bindings.snapshotId
+  const snapshotMatches =
+    cycle.bindings.snapshotId === undefined &&
+    executionMarketData !== undefined &&
+    decisionMarketData !== undefined &&
+    document.bindings.snapshotId === decisionMarketData.snapshotId &&
+    document.bindings.snapshotContentHash === decisionMarketData.contentHash &&
+    document.bindings.snapshotFinalizedAt === decisionMarketData.observedAt
+
   if (
     document.bindings.cycleId !== cycle.identity.cycleId ||
     document.bindings.strategyName !== cycle.identity.strategyName ||
@@ -288,9 +186,7 @@ const decideDecisionBindingDataFirst = (
     : Result.succeed({ _tag: 'Persist', cycle, document })
 }
 
-export const decideDecisionBinding = Pipeable.dual(4, decideDecisionBindingDataFirst)
-
-const decideCompletionDataFirst = (
+export const decideCompletion = (
   cycle: AutonomousCycle,
   state: CycleCompletionState,
   observedAt: string,
@@ -306,9 +202,7 @@ const decideCompletionDataFirst = (
     : Result.succeed({ _tag: 'VerifyDecision', cycle, decisionHash, state })
 }
 
-export const decideCompletion = Pipeable.dual(3, decideCompletionDataFirst)
-
-const validateCompletionDocumentDataFirst = (
+export const validateCompletionDocument = (
   decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
   storedDocuments: readonly CycleDecisionDocument[],
   executionCompletionEvidenceMatches?: boolean,
@@ -334,17 +228,7 @@ const validateCompletionDocumentDataFirst = (
     : fail('invariant', 'cycle terminal state must match its exact durable shadow decision')
 }
 
-export const validateCompletionDocument = Pipeable.by<
-  (
-    storedDocuments: readonly CycleDecisionDocument[],
-    executionCompletionEvidenceMatches?: boolean,
-  ) => (
-    decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
-  ) => ReturnType<typeof validateCompletionDocumentDataFirst>,
-  typeof validateCompletionDocumentDataFirst
->((arguments_) => !Array.isArray(arguments_[0]), validateCompletionDocumentDataFirst)
-
-const decideBlockDataFirst = (
+export const decideBlock = (
   cycle: AutonomousCycle,
   reason: CycleTerminalReason,
   observedAt: string,
@@ -355,21 +239,19 @@ const decideBlockDataFirst = (
   if (!isCycleStateTransitionAllowed(cycle.state, CycleState.Blocked)) {
     return fail('conflict', `terminal cycle ${cycle.identity.cycleId} cannot be blocked again`)
   }
-  if (
-    reason === CycleTerminalReason.MissedPublication &&
-    (cycle.window.schemaVersion === 'bayn.autonomous-cycle-window.v3' ||
-      cycle.state !== CycleState.Pending ||
-      cycle.bindings.snapshotId !== undefined ||
-      observedAt < cycle.window.publicationDeadlineAt)
-  ) {
-    return fail(
-      'invariant',
-      'missed-publication transition requires an unbound pending cycle at or after its publication deadline',
-    )
-  }
+  if (reason === CycleTerminalReason.MissedPublication)
+    return fail('invariant', 'current cycles have no publication deadline')
   if (reason === CycleTerminalReason.MissedSubmission && observedAt < cycle.window.submissionCutoffAt) {
     return fail('invariant', 'missed-submission transition cannot precede the broker submission cutoff')
   }
+  if (
+    reason === CycleTerminalReason.UnusedEntryExpired &&
+    (cycle.schemaVersion !== 'bayn.autonomous-cycle.v4' ||
+      cycle.bindings.snapshotId !== undefined ||
+      cycle.bindings.decisionHash !== undefined ||
+      Date.parse(observedAt) < unusedEntryExpiresAt(cycle))
+  )
+    return fail('invariant', 'unused-entry expiry requires an unbound intraday cycle after its admission lease')
   if (observedAt < cycle.updatedAt) return fail('conflict', 'cycle update time cannot move backward')
   const decisionHash = cycle.bindings.decisionHash
   return cycle.state === CycleState.Active && decisionHash !== undefined
@@ -377,9 +259,7 @@ const decideBlockDataFirst = (
     : Result.succeed({ _tag: 'Persist', cycle, reason })
 }
 
-export const decideBlock = Pipeable.dual(3, decideBlockDataFirst)
-
-const validateBlockedDecisionDataFirst = (
+export const validateBlockedDecision = (
   decision: Extract<BlockDecision, { readonly _tag: 'VerifyDecision' }>,
   storedDocuments: readonly CycleDecisionDocument[],
   executionGenerationIsSuperseded?: boolean,
@@ -425,13 +305,3 @@ const validateBlockedDecisionDataFirst = (
   }
   return fail('invariant', 'decision-bound cycle may block only from its exact blocked or expired execution decision')
 }
-
-export const validateBlockedDecision = Pipeable.by<
-  (
-    storedDocuments: readonly CycleDecisionDocument[],
-    executionGenerationIsSuperseded?: boolean,
-  ) => (
-    decision: Extract<BlockDecision, { readonly _tag: 'VerifyDecision' }>,
-  ) => ReturnType<typeof validateBlockedDecisionDataFirst>,
-  typeof validateBlockedDecisionDataFirst
->((arguments_) => !Array.isArray(arguments_[0]), validateBlockedDecisionDataFirst)

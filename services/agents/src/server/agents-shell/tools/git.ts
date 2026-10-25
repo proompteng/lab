@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 
 import { READ_SCOPES, WRITE_SCOPES, destructiveAnnotations, openReadOnlyAnnotations } from '../constants'
-import { normalizeCliArgs, requireReadOnlyGitArgs } from '../cli-policy'
+import { normalizeCliArgs, readOnlyGitArgs } from '../cli-policy'
 import { agentsShellErrorFromUnknown } from '../errors'
 import { toolSecurityMeta, type EffectTool } from '../mcp-adapter'
 import { jsonTextResult } from '../results'
@@ -12,7 +12,7 @@ export const createGitTools = (): EffectTool[] => [
     name: 'git',
     title: 'Inspect git repository',
     description:
-      'Inspect local Git metadata under /workspace. Pass argv after git. Use git_write with an owned session for ls-remote.',
+      'Inspect local Git metadata; branches only list. Use git_write for changes/ls-remote. Managed worktrees require their owning subject.',
     inputSchema: CliInputSchema,
     outputSchema: CommandResultSchema,
     annotations: openReadOnlyAnnotations,
@@ -21,8 +21,7 @@ export const createGitTools = (): EffectTool[] => [
     handler: (args: CliInput, { runner, auth }) =>
       Effect.tryPromise({
         try: async () => {
-          const gitArgs = normalizeCliArgs('git', args.args)
-          requireReadOnlyGitArgs(gitArgs)
+          const gitArgs = readOnlyGitArgs(normalizeCliArgs('git', args.args))
           return jsonTextResult(
             await runner.runProcess({
               command: 'git',

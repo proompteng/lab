@@ -1,47 +1,53 @@
+import { jevMarketForFeed } from './jev/markets'
+import { nativeFeatureMatchesBars, rollingWindowStartMs } from './market-data/features/native-feature'
 import { observedBarsAt, type StreamingProjection } from './market-data/streaming/projection'
 import { compressionsAlgorithms } from '@platformatic/kafka'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Data, Effect, Layer, Logger, Result, Schedule, Stdio, Stream } from 'effect'
+import { Data, Effect, FileSystem, Layer, Logger, Result, Schedule, Schema, Stdio, Stream } from 'effect'
+import { SnapshotManifestFields } from './market-data/streaming/manifest-schema'
+import { diagnoseStreamingInputs } from './market-data/streaming/inputs'
+import { SymbolSchema, strictParseOptions } from './schemas'
+import { verifyIntradaySnapshotQuery } from './market-data/intraday/verification'
+import type { IntradaySnapshotQuery } from './market-data/intraday/model'
 import { kafkaMarketConfig } from './config/source'
 import { canonicalJsonV1Result } from './hash'
-import { featureMatchesBars } from './market-data/features/contract'
+
 import { technicalFeatureMatchesBars } from './market-data/features/technical-contract'
 import { technicalReceiptAvailableAt } from './market-data/streaming/technical-projection'
 import { makeKafkaMarketProjection } from './market-data/streaming/kafka'
 import { kafkaBootstrapDeadlineMs } from './market-data/streaming/bootstrap'
-import {
-  defaultIntradayMomentumProtocolDocument,
-  intradayMomentumFeatureTopic,
-} from './strategy/intraday-momentum/protocol'
 
 class StreamingDiagnosticsFailure extends Data.TaggedError('StreamingDiagnosticsFailure')<{
   readonly message: string
   readonly cause?: unknown
 }> {}
 
-export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol: string) => {
-  const allBars = projection.bars.get(symbol) ?? []
-  const features = projection.features.get(symbol) ?? []
+export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol: string, observedAtMs: number) => {
+  const allBars = (projection.bars.get(symbol) ?? []).filter((entry) => entry.availableAtMs <= observedAtMs)
+  const features = (projection.features.get(symbol) ?? []).filter((entry) => entry.availableAtMs <= observedAtMs)
+  const technicalFeatures = (projection.technicalFeatures.get(symbol) ?? []).filter(
+    (entry) => entry.availableAtMs <= observedAtMs,
+  )
   const matches = features.filter(({ value }) => {
     const bars = observedBarsAt(
       projection,
       symbol,
-      BigInt(value.material.windowStartMs) * 1_000_000n,
+      BigInt(rollingWindowStartMs(value)) * 1_000_000n,
       BigInt(value.material.windowEndMs) * 1_000_000n,
-      Number.MAX_SAFE_INTEGER,
+      observedAtMs,
     ).map(({ value: bar }) => bar)
-    const match = featureMatchesBars(value, bars)
+    const match = nativeFeatureMatchesBars(value, bars)
     return Result.isSuccess(match) && match.success
   })
-  const technicalMatches = (projection.technicalFeatures.get(symbol) ?? []).filter((candidate) => {
-    if (!technicalReceiptAvailableAt(projection, candidate, Number.MAX_SAFE_INTEGER)) return false
+  const technicalMatches = technicalFeatures.filter((candidate) => {
+    if (!technicalReceiptAvailableAt(projection, candidate, observedAtMs)) return false
     const { value } = candidate
     const bars = observedBarsAt(
       projection,
       symbol,
       BigInt(value.material.windowEndMs - 30 * 60_000) * 1_000_000n,
       BigInt(value.material.windowEndMs) * 1_000_000n,
-      Number.MAX_SAFE_INTEGER,
+      observedAtMs,
     ).map((entry) => entry.value)
     if (bars.length !== 30) return false
     const match = technicalFeatureMatchesBars(value, bars)
@@ -54,7 +60,7 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
       : {
           technical: {
             topic: projection.technicalTopic,
-            retainedFeatures: projection.technicalFeatures.get(symbol)?.length ?? 0,
+            retainedFeatures: technicalFeatures.length,
             matchedFeatures: technicalMatches.map(({ value, availableAtMs, topic, partition, offset }) => ({
               featureId: value.featureId,
               windowEndMs: value.material.windowEndMs,
@@ -70,8 +76,12 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
         }),
     retainedBars: allBars.length,
     retainedFeatures: features.length,
-    latestQuoteAt: projection.quotes.get(symbol)?.value.eventAt ?? null,
-    latestTradeAt: projection.trades.get(symbol)?.value.eventAt ?? null,
+    latestQuoteAt:
+      projection.quoteHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)?.value.eventAt ??
+      null,
+    latestTradeAt:
+      projection.tradeHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)?.value.eventAt ??
+      null,
     matchedFeatures: matches.map(({ value, availableAtMs }) => ({
       featureId: value.featureId,
       windowEndMs: value.material.windowEndMs,
@@ -81,30 +91,64 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
   }
 }
 
+const DiagnosticQuerySchema = Schema.Struct({
+  sessionDate: SnapshotManifestFields.sessionDate,
+  calendar: SnapshotManifestFields.calendar,
+  rangeStartAt: SnapshotManifestFields.rangeStartAt,
+  rangeEndAt: SnapshotManifestFields.rangeEndAt,
+  observedAt: SnapshotManifestFields.observedAt,
+  universeId: SnapshotManifestFields.universeId,
+  universeSymbolHash: SnapshotManifestFields.universeSymbolHash,
+  universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+  symbols: Schema.optionalKey(SnapshotManifestFields.symbols),
+  candidateSymbols: SnapshotManifestFields.candidateSymbols,
+  candidateEvidencePolicy: SnapshotManifestFields.candidateEvidencePolicy,
+  benchmarkEvidencePolicy: SnapshotManifestFields.benchmarkEvidencePolicy,
+  benchmarkSymbols: SnapshotManifestFields.benchmarkSymbols,
+  purpose: SnapshotManifestFields.purpose,
+  feed: SnapshotManifestFields.feed,
+  delayClass: SnapshotManifestFields.delayClass,
+  sourceTopics: SnapshotManifestFields.sourceTopics,
+  maximumQuoteAgeMs: SnapshotManifestFields.maximumQuoteAgeMs,
+  minimumWatermarkLagMs: SnapshotManifestFields.minimumWatermarkLagMs,
+})
+export const decodeStreamingDiagnosticQuery = (raw: unknown) =>
+  Schema.decodeUnknownResult(
+    DiagnosticQuerySchema,
+    strictParseOptions,
+  )(raw).pipe(Result.flatMap(verifyIntradaySnapshotQuery))
+
+export const streamingInputDiagnosticReceipt = (projection: StreamingProjection, query: IntradaySnapshotQuery) => {
+  const diagnostics = diagnoseStreamingInputs(projection, query)
+  return Result.isSuccess(diagnostics)
+    ? { status: 'AVAILABLE' as const, ...diagnostics.success }
+    : {
+        status: 'UNAVAILABLE' as const,
+        reason: diagnostics.failure.reason,
+        message: diagnostics.failure.message,
+        candidates: (query.candidateSymbols ?? []).map((symbol) => ({
+          symbol,
+          eligibility: { status: 'UNAVAILABLE' as const },
+        })),
+      }
+}
 const usage =
-  'Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help'
+  'Usage: bayn-streaming-diagnostics --query <query.json> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help'
 export const parseStreamingDiagnosticsArgs = (args: readonly string[]) => {
   if (args.length === 1 && args[0] === '--codecs') return { kind: 'codecs' } as const
   if (args.length === 1 && args[0] === '--help') return { kind: 'help' } as const
+  const timeoutSeconds = args.length === 4 ? Number(args[3]) : kafkaBootstrapDeadlineMs / 1000
   if (
     (args.length === 2 ||
       (args.length === 4 && args[2] === '--bootstrap-timeout-seconds' && /^[1-9]\d*$/.test(args[3] ?? ''))) &&
-    args[0] === '--since' &&
+    args[0] === '--query' &&
     args[1] !== undefined &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(args[1])
-  ) {
-    const sinceMs = Date.parse(args[1])
-    const timeoutSeconds = args.length === 4 ? Number(args[3]) : kafkaBootstrapDeadlineMs / 1000
-    if (
-      Number.isSafeInteger(timeoutSeconds) &&
-      timeoutSeconds >= 1 &&
-      timeoutSeconds <= 14_400 &&
-      Number.isSafeInteger(sinceMs) &&
-      sinceMs > 0 &&
-      new Date(sinceMs).toISOString().replace('.000Z', 'Z') === args[1].replace('.000Z', 'Z')
-    )
-      return { kind: 'probe', sinceMs, bootstrapTimeoutMs: timeoutSeconds * 1000 } as const
-  }
+    args[1].trim().length > 0 &&
+    Number.isSafeInteger(timeoutSeconds) &&
+    timeoutSeconds >= 1 &&
+    timeoutSeconds <= 14_400
+  )
+    return { kind: 'probe', queryPath: args[1], bootstrapTimeoutMs: timeoutSeconds * 1000 } as const
   return { kind: 'invalid' } as const
 }
 const print = (value: string) =>
@@ -131,39 +175,51 @@ const main = (args: ReturnType<typeof parseStreamingDiagnosticsArgs>) =>
         return yield* print('Kafka codecs verified: gzip,snappy,lz4,zstd')
       }
       if (args.kind === 'invalid') return yield* new StreamingDiagnosticsFailure({ message: usage })
+      const fs = yield* FileSystem.FileSystem
+      const text = yield* fs.readFileString(args.queryPath)
+      const raw = yield* Effect.try({
+        try: (): unknown => JSON.parse(text),
+        catch: (cause) => new StreamingDiagnosticsFailure({ message: 'Invalid diagnostic query JSON', cause }),
+      })
+      const query = yield* Effect.fromResult(decodeStreamingDiagnosticQuery(raw))
       const config = yield* kafkaMarketConfig
       if (config === undefined)
         return yield* new StreamingDiagnosticsFailure({
           message: 'Diagnostics require the configured Bayn Kafka identity',
         })
-      const protocol = defaultIntradayMomentumProtocolDocument
       const market = yield* makeKafkaMarketProjection(
         { ...config, bootstrapTimeoutMs: args.bootstrapTimeoutMs },
-        {
-          universeId: protocol.universeId,
-          universeSymbolHash: protocol.universeSymbolHash,
-          symbols: protocol.universe,
-          topics: {
-            ...protocol.sourceTopics,
-            features: intradayMomentumFeatureTopic,
-            ...(config.technicalFeaturesTopic === undefined
-              ? {}
-              : { technicalFeatures: config.technicalFeaturesTopic }),
+        [
+          {
+            universeId: query.universeId,
+            universeSymbolHash: query.universeSymbolHash,
+            symbols: query.universe,
+            topics: {
+              ...query.sourceTopics,
+              features: jevMarketForFeed(query.feed).streamingInput.featureTopic,
+              ...(query.feed === 'us' || config.technicalFeaturesTopic === undefined
+                ? {}
+                : { technicalFeatures: config.technicalFeaturesTopic }),
+            },
           },
-        },
+        ],
         undefined,
-        args.sinceMs,
+        Date.parse(query.rangeStartAt),
       )
       const cut = yield* market.read.pipe(
         Effect.retry({ schedule: Schedule.spaced('1 second'), times: args.bootstrapTimeoutMs / 1000 + 30 }),
       )
-      const symbols = protocol.universe.map((symbol) => summarizeStreamingSymbol(cut.projection, symbol))
+      const diagnostics = streamingInputDiagnosticReceipt(cut.projection, query)
+      const symbols = query.universe.map((symbol) =>
+        summarizeStreamingSymbol(cut.projection, symbol, Date.parse(query.observedAt)),
+      )
       yield* print(
         yield* Effect.fromResult(
           canonicalJsonV1Result({
-            schemaVersion: 'bayn.streaming-diagnostic-receipt.v1',
-            evidenceMode: 'retained-input-join-observed-now',
-            sinceMs: args.sinceMs,
+            schemaVersion: 'bayn.streaming-diagnostic-receipt.v2',
+            evidenceMode: 'retained-input-join-at-requested-observation',
+            query,
+            diagnostics,
             bootstrapTimeoutMs: args.bootstrapTimeoutMs,
             bootstrap: cut.bootstrap,
             positions: cut.positions,

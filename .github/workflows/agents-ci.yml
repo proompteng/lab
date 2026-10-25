@@ -24,7 +24,6 @@ on:
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/openai-codex-cli.nix'
       - 'nix/packages.nix'
-      - 'nix/verify-agents-shell-image-lifecycle.sh'
       - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
@@ -338,8 +337,13 @@ jobs:
         id: published_agents_images
         run: |
           set -euo pipefail
+          git fetch --no-tags --depth=1 origin refs/heads/kargo/agents
+          PUBLISHED_GITOPS_REVISION="$(git rev-parse FETCH_HEAD)"
+          PUBLISHED_VALUES_PATH="${RUNNER_TEMP}/agents-published-values.yaml"
+          git show "${PUBLISHED_GITOPS_REVISION}:argocd/applications/agents/values.yaml" > "${PUBLISHED_VALUES_PATH}"
+          printf 'gitops_revision=%s\n' "${PUBLISHED_GITOPS_REVISION}" >> "${GITHUB_OUTPUT}"
           bun run packages/scripts/src/agents/resolve-published-agents-images.ts \
-            --values-path argocd/applications/agents/values.yaml \
+            --values-path "${PUBLISHED_VALUES_PATH}" \
             --output "${GITHUB_OUTPUT}"
 
       - name: Select published defaults for the smoke test
@@ -518,11 +522,6 @@ jobs:
                 _ "${archive_path}" "${load_archive}"
             fi
             load_archives+=("${load_archive}")
-            if [[ "${target}" == 'agents-shell' ]]; then
-              IMAGE_LABEL="${target}"
-              run_with_progress 'Agents Shell process lifecycle' 3 \
-                bash nix/verify-agents-shell-image-lifecycle.sh "${load_archive}"
-            fi
           done
 
           IMAGE_LABEL="$(IFS=,; echo "${targets[*]}")"

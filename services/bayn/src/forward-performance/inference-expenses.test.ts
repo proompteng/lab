@@ -34,10 +34,15 @@ const evidence = {
 }
 
 test('attributes verified inference estimates only to the requested generation and retains unknown usage', () => {
-  const result: Omit<ForwardInferenceExpenseSession, 'exactSessionLedger'> = Result.getOrThrow(
+  const result: Omit<
+    ForwardInferenceExpenseSession,
+    'exactSessionLedger' | 'ledgerTimestampMax' | 'verifiedSessionTransferCount'
+  > = Result.getOrThrow(
     summarizeForwardInferenceExpenses(evidence, first.accountId, frozen, first.authorityGenerationHash),
   )
   expect(result.sourceAsOf).toBe(evidence.asOf)
+  expect(result).not.toHaveProperty('requestsWithCoverageIssues')
+  expect(JSON.stringify(result)).not.toContain(gap.requestId)
   expect(result).toMatchObject({
     claimedRequestCount: 2,
     knownEstimatedCostPicoUsd: '126000',

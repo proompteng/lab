@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http2'
 import { describe, expect, test } from 'bun:test'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Effect, Exit, Option, Schedule, Scope } from 'effect'
+import { Clock, Config, Effect, Exit, Option, Schedule, Schema, Scope } from 'effect'
 
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { brokerObservationJsonSerde, makeBaynBrokerObservations } from './restate-broker-observations'
@@ -50,16 +50,16 @@ describeRestate('Real Restate broker observation journal', () => {
     let fail = false
     const makeObserved = () =>
       makeBaynBrokerObservations(config, {
-        nextPollNotBeforeMs: async () => 0,
-        preparePoll: async () => 'test-capture',
         activate: async () => {
           activations += 1
         },
         poll: async () => {
           polls += 1
-          return fail
+          const startedAtMs = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+          const poll: import('./restate-broker-observations').BrokerObservationPoll = fail
             ? { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }
             : { _tag: 'Published', snapshotHash: '3'.repeat(64), nextPollNotBeforeMs: 0 }
+          return { poll, startedAtMs, completedAtMs: startedAtMs }
         },
       })
     const bridge = restate.service({
@@ -153,11 +153,110 @@ describeRestate('Real Restate broker observation journal', () => {
           yield* Effect.sleep('1200 millis')
           const restarted = createServer(restate.createEndpointHandler({ services: [makeObserved(), bridge] }))
           yield* acquireRestateHttp2Server(restarted, address.port)
-          yield* waitFor(() => invoke('status').pipe(Effect.map(() => polls > beforeRestart)))
+          yield* json(`${admin}/deployments`, { uri: `http://host.docker.internal:${address.port}`, force: true })
+          yield* waitFor(() => invoke('status').pipe(Effect.map(() => polls >= beforeRestart + 2)))
           expect(activations).toBe(1)
           expect(polls).toBeGreaterThan(beforeRestart)
+          const metrics = yield* json(
+            `${admin}/query`,
+            {
+              query: `SELECT journal_size FROM sys_invocation WHERE target_service_name = 'BaynBrokerObservations'
+                AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'poll'
+                AND completed_at IS NOT NULL ORDER BY completed_at DESC LIMIT 1`,
+            },
+            { accept: 'application/json' },
+          ).pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(
+                Schema.Struct({ rows: Schema.Array(Schema.Struct({ journal_size: Schema.Number })) }),
+              ),
+            ),
+          )
+          const journalSize = metrics.rows[0]?.journal_size
+          expect(journalSize).toBeDefined()
+          expect(journalSize).toBeLessThanOrEqual(8)
+          const stateReads = yield* json(
+            `${admin}/query`,
+            {
+              query: `SELECT COUNT(*) AS lazy_state_reads FROM sys_journal
+                WHERE entry_type = 'Command: GetLazyState' AND id IN (
+                  SELECT id FROM sys_invocation WHERE target_service_name = 'BaynBrokerObservations'
+                    AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'poll'
+                    AND completed_at IS NOT NULL ORDER BY completed_at DESC LIMIT 1
+                )`,
+            },
+            { accept: 'application/json' },
+          )
+          expect(stateReads).toEqual({ rows: [{ lazy_state_reads: 0 }] })
+          process.stdout.write(`BROKER_OBSERVATION_JOURNAL_SIZE=${journalSize}\n`)
         }),
       ),
     )
   }, 30_000)
+  test('replay after a journaled delayed send tolerates a changed live transport clock', async () => {
+    if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
+    let attempts = 0
+    let captures = 0
+    let clockOffsetMs = 0
+    const clock = Clock.Clock.defaultValue()
+    const replayKey = randomUUID().replaceAll('-', '').repeat(2)
+    const observations = makeBaynBrokerObservations(
+      { ...config, controllerKey: replayKey, pollIntervalMs: 60_000 },
+      {
+        activate: async () => undefined,
+        poll: async () => {
+          captures += 1
+          const startedAtMs = clock.currentTimeMillisUnsafe()
+          return {
+            poll: { _tag: 'Published', snapshotHash: '4'.repeat(64), nextPollNotBeforeMs: 0 },
+            startedAtMs,
+            completedAtMs: startedAtMs,
+          }
+        },
+      },
+      [
+        ({ request }) => ({
+          interceptor: {
+            handler: async (next) => {
+              await next()
+              if (request.target.handler === 'activate' && ++attempts === 1) {
+                clockOffsetMs = 60_000
+                throw new Error('Injected lost completion after journaled delayed send')
+              }
+            },
+          },
+        }),
+      ],
+      { currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe() + clockOffsetMs },
+    )
+    const bridge = restate.service({
+      name: 'ObservationReplayBridge',
+      handlers: {
+        start: async (ctx: restate.Context) =>
+          ctx.genericCall({
+            service: 'BaynBrokerObservations',
+            method: 'activate',
+            key: replayKey,
+            parameter: { sourceRevision: config.sourceRevision },
+            inputSerde: brokerObservationJsonSerde,
+            outputSerde: brokerObservationJsonSerde,
+          }),
+      },
+    })
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = createServer(restate.createEndpointHandler({ services: [observations, bridge] }))
+          yield* acquireRestateHttp2Server(server, 0)
+          const address = server.address()
+          if (address === null || typeof address === 'string') throw new Error('Missing local endpoint address')
+          yield* json(`${admin}/deployments`, { uri: `http://host.docker.internal:${address.port}`, force: true })
+          const result = yield* json(`${ingress}/ObservationReplayBridge/start`, {})
+          expect(result).toMatchObject({ lastSnapshotHash: '4'.repeat(64) })
+          expect(attempts).toBe(2)
+          expect(captures).toBe(1)
+        }),
+      ),
+    )
+  }, 15_000)
 })

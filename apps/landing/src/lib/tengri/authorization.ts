@@ -21,7 +21,7 @@ export function humanContext(identity: TengriIdentity, workspaceUid = '', runtim
     actor: { identity: { case: 'humanId', value: identity.session.humanId } },
     sessionId: identity.session.id,
     traceId: randomUUID(),
-    deadlineUnixMs: BigInt(Date.now() + 5000),
+    deadlineUnixMs: BigInt(Date.now() + 25_000),
     contractVersion: 1,
     workspaceUid,
     runtimeEpoch,

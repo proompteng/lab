@@ -30,28 +30,11 @@ export const ExecutionControllerActivationSchema = Schema.Struct({
 })
 export type ExecutionControllerActivation = typeof ExecutionControllerActivationSchema.Type
 
-export const ExecutionControllerBindingSchema = Schema.Struct({
-  planHash: Sha256Schema,
-  sourceRevision: GitSourceRevisionSchema,
-})
-export type ExecutionControllerBinding = typeof ExecutionControllerBindingSchema.Type
-
-export const resolveOptionalExecutionControllerBinding = (
-  planHash: string | undefined,
-  sourceRevision: string | undefined,
-): Result.Result<ExecutionControllerBinding | undefined, string> => {
-  if (planHash === undefined && sourceRevision === undefined) return Result.succeed(undefined)
-  return planHash !== undefined && sourceRevision !== undefined
-    ? Result.succeed({ planHash, sourceRevision })
-    : Result.fail('native Restate controller rotation requires both previous binding fields')
-}
-
 export const ExecutionDeploymentActivationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.execution-deployment-activation.v1'),
+  schemaVersion: Schema.Literal('bayn.execution-deployment-activation.v2'),
   controllerKey: Sha256Schema,
   planHash: Sha256Schema,
   sourceRevision: GitSourceRevisionSchema,
-  previousBinding: Schema.optionalKey(ExecutionControllerBindingSchema),
 })
 export type ExecutionDeploymentActivation = typeof ExecutionDeploymentActivationSchema.Type
 
@@ -134,8 +117,8 @@ export type ExecutionDeploymentActivationDecision =
 
 const sameBinding = (
   state: ExecutionControllerState,
-  request: Pick<ExecutionControllerActivation, 'planHash'>,
-): boolean => state.planHash === request.planHash
+  request: Pick<ExecutionControllerActivation, 'planHash' | 'sourceRevision'>,
+): boolean => state.planHash === request.planHash && state.sourceRevision === request.sourceRevision
 
 const conflict = (
   operation: ExecutionControllerDecisionError['operation'],
@@ -199,30 +182,19 @@ export const decideExecutionDeploymentActivation = (
   state: ExecutionControllerState | null,
   request: ExecutionDeploymentActivation,
 ): Result.Result<ExecutionDeploymentActivationDecision, ExecutionControllerDecisionError> => {
-  if (state === null) {
-    return request.previousBinding === undefined
-      ? Result.succeed({ _tag: 'Activate', state })
-      : conflict('activate', 'execution controller rotation expected durable controller state')
+  if (state === null || sameBinding(state, request) || !state.active) {
+    return Result.succeed({ _tag: 'Activate', state })
   }
-  if (sameBinding(state, request)) return Result.succeed({ _tag: 'Activate', state })
-  if (request.previousBinding === undefined) {
-    return conflict('activate', 'execution controller deployment activation conflicts with durable controller state')
-  }
-  if (!sameBinding(state, request.previousBinding)) {
-    return conflict('activate', 'execution controller rotation does not match the expected previous binding')
-  }
-  return state.active
-    ? Result.succeed({
-        _tag: 'Rotate',
-        deactivation: {
-          schemaVersion: 'bayn.execution-controller-deactivation.v1',
-          controllerKey: request.controllerKey,
-          epoch: state.epoch,
-          planHash: state.planHash,
-          sourceRevision: state.sourceRevision,
-        },
-      })
-    : Result.succeed({ _tag: 'Activate', state })
+  return Result.succeed({
+    _tag: 'Rotate',
+    deactivation: {
+      schemaVersion: 'bayn.execution-controller-deactivation.v1',
+      controllerKey: request.controllerKey,
+      epoch: state.epoch,
+      planHash: state.planHash,
+      sourceRevision: state.sourceRevision,
+    },
+  })
 }
 
 export const decideExecutionControllerTick = (
@@ -235,6 +207,8 @@ export const decideExecutionControllerTick = (
   if (state === null || !state.active) return Result.succeed({ _tag: 'Ignored', reason: 'Inactive' })
   if (tick.epoch !== state.epoch) return Result.succeed({ _tag: 'Ignored', reason: 'StaleEpoch' })
   if (tick.sequence !== state.nextSequence) return Result.succeed({ _tag: 'Ignored', reason: 'StaleSequence' })
+  if (state.sourceRevision !== workerSourceRevision)
+    return conflict('tick', 'execution controller worker does not own the active source')
   if (state.nextSequence === Number.MAX_SAFE_INTEGER) {
     return Result.fail(
       new ExecutionControllerDecisionError({
@@ -262,7 +236,12 @@ export const completeExecutionControllerTick = (
   result: ExecutionAdvanceStepResult,
   workerSourceRevision: string,
 ): Result.Result<ExecutionControllerState, ExecutionControllerDecisionError> => {
-  if (!state.active || tick.epoch !== state.epoch || tick.sequence !== state.nextSequence) {
+  if (
+    !state.active ||
+    tick.epoch !== state.epoch ||
+    tick.sequence !== state.nextSequence ||
+    state.sourceRevision !== workerSourceRevision
+  ) {
     return conflict('complete', 'execution controller completion does not match durable controller state')
   }
   if (state.nextSequence === Number.MAX_SAFE_INTEGER) {
@@ -296,7 +275,6 @@ export const completeExecutionControllerTick = (
   }
   return Result.succeed({
     ...state,
-    sourceRevision: workerSourceRevision,
     nextSequence: state.nextSequence + 1,
     lastCompletion: {
       sequence: tick.sequence,

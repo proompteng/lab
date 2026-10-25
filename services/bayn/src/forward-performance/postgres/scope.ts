@@ -1,6 +1,8 @@
 import { PgClient } from '@effect/sql-pg'
 import { DiscrepancyKind } from '../../execution/contracts'
-import { CashYieldEvidenceRow, ReconciliationRow } from './model'
+import { ReconciliationRow } from './model'
+import type { ForwardPerformanceCashYieldEvidence } from '../model'
+import { reportedCashMicros } from '../../broker/alpaca/cash-reporting'
 
 export const SIGNED_I128_MIN = -(1n << 127n)
 export const SIGNED_I128_MAX = (1n << 127n) - 1n
@@ -8,7 +10,6 @@ export const INTEGER_PATTERN = /^(?:0|-[1-9][0-9]*|[1-9][0-9]*)$/
 
 export type GenerationScopeTarget =
   | 'cycle'
-  | 'unclosed-cycle'
   | 'intent'
   | 'transaction'
   | 'reconciliation'
@@ -18,17 +19,21 @@ export type GenerationScopeTarget =
   | 'fill'
   | 'mutation'
 
-export const durableCycleGenerationBinding = (sql: PgClient.PgClient) => sql`
+export const durableCycleGenerationBinding = (
+  sql: PgClient.PgClient,
+  authorityGenerationHash: string | undefined,
+) => sql`
   EXISTS (
     SELECT 1
     FROM autonomous_cycle_shadow_decisions AS scoped_decision
     WHERE scoped_decision.cycle_id = cycle.cycle_id
       AND scoped_decision.decision_hash = cycle.decision_hash
-      AND scoped_decision.schema_version = 'bayn.paper-cycle-decision.v1'
+      AND scoped_decision.schema_version IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
       AND scoped_decision.document ->> 'mode' = 'PAPER'
       AND scoped_decision.document #>> '{bindings,accountId}' = scope_generation.account_id
       AND scoped_decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id
-      AND scoped_decision.document #>> '{bindings,authorityGenerationHash}' = scope_generation.generation_hash
+      AND scoped_decision.document #>> '{bindings,authorityGenerationHash}' =
+        ${authorityGenerationHash ?? sql`scope_generation.generation_hash`}
   )
   OR EXISTS (
     SELECT 1
@@ -59,7 +64,7 @@ export const generationScope = (
             = cycle.qualification_run_id
           AND cycle.account_id = scope_generation.account_id
           AND (
-            ${durableCycleGenerationBinding(sql)}
+            ${durableCycleGenerationBinding(sql, authorityGenerationHash)}
             OR (
               cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
               AND cycle.created_at >= scope_generation.activated_at
@@ -70,24 +75,6 @@ export const generationScope = (
                   AND cycle.created_at >= next_generation.activated_at
               )
             )
-          )
-      )`
-    case 'unclosed-cycle':
-      return sql`EXISTS (
-        SELECT 1
-        FROM authority_generations AS scope_generation
-        LEFT JOIN authority_generations AS next_generation
-          ON next_generation.previous_generation_hash = scope_generation.generation_hash
-        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
-          AND scope_generation.maximum = 'PAPER'
-          AND scope_generation.account_id = ${accountId}
-          AND COALESCE(scope_generation.qualification_run_id, scope_generation.research_plan_hash)
-            = cycle.qualification_run_id
-          AND cycle.account_id = scope_generation.account_id
-          AND cycle.created_at >= scope_generation.activated_at
-          AND (
-            next_generation.activated_at IS NULL
-            OR cycle.created_at < next_generation.activated_at
           )
       )`
     case 'intent':
@@ -261,8 +248,6 @@ export const closingSnapshotBoundary = (
         )
       )`
 
-export const ledgerReplayBoundary = (sql: PgClient.PgClient) => sql`latest_reconciliation.reconciled_at`
-
 export const signedI128 = (value: string): bigint | undefined => {
   if (!INTEGER_PATTERN.test(value)) return undefined
   const parsed = BigInt(value)
@@ -272,7 +257,7 @@ export const signedI128 = (value: string): bigint | undefined => {
 export const reconciliationExactness = (
   accountId: string,
   reconciliation: typeof ReconciliationRow.Type,
-  cashYield: typeof CashYieldEvidenceRow.Type | undefined,
+  cashYield: ForwardPerformanceCashYieldEvidence | undefined,
 ): { readonly performanceExact: boolean; readonly cashYieldAdjustedExact: boolean } => {
   if (reconciliation.status === 'EXACT') {
     return {
@@ -288,20 +273,23 @@ export const reconciliationExactness = (
     discrepancy.kind !== DiscrepancyKind.Cash ||
     discrepancy.identity !== accountId ||
     discrepancy.lastObservedAt !== reconciliation.reconciled_at.toISOString() ||
-    cashYield.reconciliation_id !== reconciliation.reconciliation_id ||
-    cashYield.reconciliation_content_hash !== reconciliation.content_hash ||
-    cashYield.reconciled_at.toISOString() !== reconciliation.reconciled_at.toISOString()
+    cashYield.reconciliationId !== reconciliation.reconciliation_id ||
+    cashYield.reconciliationContentHash !== reconciliation.content_hash ||
+    cashYield.reconciledAt !== reconciliation.reconciled_at.toISOString()
   ) {
     return { performanceExact: false, cashYieldAdjustedExact: false }
   }
 
-  const baselineCash = signedI128(cashYield.baseline_cash_micros)
-  const openingCash = signedI128(cashYield.opening_cash_micros)
-  const preWindowCashDelta = signedI128(cashYield.pre_window_accounted_cash_delta_micros)
-  const preWindowResidual = signedI128(cashYield.pre_window_cash_residual_micros)
-  const closingCash = signedI128(cashYield.closing_cash_micros)
-  const accountedCashDelta = signedI128(cashYield.accounted_cash_delta_micros)
-  const yieldAmount = signedI128(cashYield.cash_yield_micros)
+  const baselineCash = signedI128(cashYield.baselineCashMicros)
+  const openingCash = signedI128(cashYield.openingCashMicros)
+  const preWindowCashDelta = signedI128(cashYield.preWindowAccountedCashDeltaMicros)
+  const preWindowResidual = signedI128(cashYield.preWindowCashResidualMicros)
+  const closingCash = signedI128(cashYield.closingCashMicros)
+  const accountedCashDelta = signedI128(cashYield.accountedCashDeltaMicros)
+  const yieldAmount = signedI128(cashYield.cashYieldMicros)
+  const baselineOffset = signedI128(cashYield.baselineCashReportingOffsetMicros)
+  const openingOffset = signedI128(cashYield.openingCashReportingOffsetMicros)
+  const closingOffset = signedI128(cashYield.closingCashReportingOffsetMicros)
   const expectedCash = signedI128(discrepancy.expected)
   const observedCash = signedI128(discrepancy.observed)
   if (
@@ -312,15 +300,29 @@ export const reconciliationExactness = (
     closingCash === undefined ||
     accountedCashDelta === undefined ||
     yieldAmount === undefined ||
+    baselineOffset === undefined ||
+    openingOffset === undefined ||
+    closingOffset === undefined ||
     expectedCash === undefined ||
     observedCash === undefined ||
     yieldAmount <= 0n ||
     preWindowResidual !== 0n ||
-    openingCash !== baselineCash + preWindowCashDelta ||
-    expectedCash !== openingCash + accountedCashDelta ||
+    openingCash !==
+      BigInt(
+        reportedCashMicros(
+          (baselineCash + preWindowCashDelta + openingOffset - baselineOffset).toString(),
+          cashYield.openingCashReportingQuantumMicros,
+        ),
+      ) ||
+    expectedCash !==
+      BigInt(
+        reportedCashMicros(
+          (openingCash + accountedCashDelta + closingOffset - openingOffset).toString(),
+          cashYield.closingCashReportingQuantumMicros,
+        ),
+      ) ||
     observedCash !== closingCash ||
-    observedCash - expectedCash !== yieldAmount ||
-    closingCash - openingCash - accountedCashDelta !== yieldAmount
+    observedCash - expectedCash !== yieldAmount
   ) {
     return { performanceExact: false, cashYieldAdjustedExact: false }
   }

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Deferred, Effect, Fiber, FileSystem, Result, Stream } from 'effect'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import {
   gapDecisionMs,
   gapFixture,
@@ -62,7 +62,7 @@ test('two complete original-format source fixtures produce a deterministic decis
       expect(report.previousReceipt.contentHash).toBe(data.previous.receiptHash)
       expect(report.currentReceipt.contentHash).toBe(data.current.receiptHash)
       const { reportHash, ...material } = report
-      expect(canonicalHashV1(material)).toBe(reportHash)
+      expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
       expect((yield* runGapRecoveryStudy(data.input, previous, current)).reportHash).toBe(reportHash)
       yield* fs.writeFile(current.arrivalsPath, Buffer.from('corrupt'))
       expect(Result.isFailure(yield* Effect.result(runGapRecoveryStudy(data.input, previous, current)))).toBeTrue()
@@ -238,7 +238,7 @@ test.each(['complete', 'missing', 'wide'] as const)(
         else expect(stderr).toBe('')
         const report = JSON.parse(yield* fs.readFileString(`${dir}/report.json`))
         const { reportHash, ...material } = report
-        expect(canonicalHashV1(material)).toBe(reportHash)
+        expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
         expect(report.decision.capitalAuthority).toBe('NONE')
         expect(report.decision.inputComplete).toBe(!incomplete)
         const retry = yield* Effect.acquireRelease(

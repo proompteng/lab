@@ -233,20 +233,6 @@ const project = (
              AND execution_controller_status.active = false
              AND EXCLUDED.active = true
            )
-           OR (
-             EXCLUDED.epoch = execution_controller_status.epoch
-             AND EXCLUDED.next_sequence = execution_controller_status.next_sequence
-             AND execution_controller_status.plan_hash = repeat('0', 64)
-             AND EXCLUDED.plan_hash <> execution_controller_status.plan_hash
-             AND execution_controller_status.active = true
-             AND EXCLUDED.active = true
-             AND EXCLUDED.last_sequence IS NOT DISTINCT FROM execution_controller_status.last_sequence
-             AND EXCLUDED.last_outcome IS NOT DISTINCT FROM execution_controller_status.last_outcome
-             AND EXCLUDED.last_receipt_hash IS NOT DISTINCT FROM execution_controller_status.last_receipt_hash
-             AND EXCLUDED.completed_at IS NOT DISTINCT FROM execution_controller_status.completed_at
-             AND EXCLUDED.next_due_at IS NOT DISTINCT FROM execution_controller_status.next_due_at
-             AND EXCLUDED.last_pass IS NOT DISTINCT FROM execution_controller_status.last_pass
-           )
         RETURNING controller_key
       `.pipe(
         Effect.flatMap((rows) => {

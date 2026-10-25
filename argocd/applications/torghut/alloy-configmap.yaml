@@ -37,6 +37,32 @@ data:
         regex         = "symphony-torghut"
         action        = "drop"
       }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "service"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        regex         = "(.+)"
+        target_label  = "service"
+      }
     }
 
     discovery.kubernetes "symphony_torghut" {
@@ -115,14 +141,6 @@ data:
     }
 
     loki.process "torghut_pod_logs" {
-      stage.labels {
-        values = {
-          namespace = "{{ .Labels.namespace }}",
-          pod       = "{{ .Labels.pod }}",
-          container = "{{ .Labels.container }}",
-        }
-      }
-
       stage.static_labels {
         values = {
           job = "torghut",

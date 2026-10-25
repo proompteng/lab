@@ -1,14 +1,11 @@
+import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import { connect, createServer as createHttp2Server, type ClientHttp2Session } from 'node:http2'
 
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect } from 'effect'
 
 import { acquireRestateHttp2Server } from './restate-http2-server'
-import {
-  decodeRestateRequestIdentityKeys,
-  makeRestateExecutionEndpointHandler,
-  restateExecutionServerConfig,
-} from './restate-execution-server'
+import { makeRestateExecutionEndpointHandler, restateExecutionServerConfig } from './restate-execution-server'
 
 const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
@@ -79,9 +76,12 @@ describe('native Restate execution server', () => {
       {
         runtime: {
           activate: () => Promise.resolve(),
-          nextPollNotBeforeMs: () => Promise.resolve(0),
-          preparePoll: () => Promise.resolve('test-capture'),
-          poll: () => Promise.resolve({ _tag: 'Unavailable', nextPollNotBeforeMs: 0 }),
+          poll: () =>
+            Promise.resolve({
+              poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
+              startedAtMs: 0,
+              completedAtMs: 0,
+            }),
         },
         pollIntervalMs: 30_000,
       },
@@ -122,10 +122,14 @@ describe('native Restate execution server', () => {
     ).toEqual([
       {
         name: 'BaynExecutionController',
-        handlers: ['activate', 'tick', 'deactivate', 'status', 'activateDeployment'],
+        handlers: ['activate', 'tick', 'deactivate', 'prepareActivation', 'status', 'activateDeployment'],
       },
       { name: 'BaynBrokerObservations', handlers: ['activate', 'poll', 'status'] },
     ])
+    expect(services[0]?.handlers?.find(({ name }) => name === 'prepareActivation')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: true,
+    })
     expect(services[0]?.handlers?.find(({ name }) => name === 'activateDeployment')).toMatchObject({
       ty: 'SHARED',
       ingressPrivate: false,
@@ -143,6 +147,7 @@ describe('native Restate execution server', () => {
       { name: 'activate', ingressPrivate: true },
       { name: 'tick', ingressPrivate: true },
       { name: 'deactivate', ingressPrivate: true },
+      { name: 'prepareActivation', ingressPrivate: true },
       { name: 'status', ingressPrivate: true },
     ])
   })
@@ -176,13 +181,7 @@ describe('native Restate execution server', () => {
       port: 9080,
       requestIdentityKeys: requestIdentityKey,
     })
-    expect(Object.keys(configured).sort()).toEqual([
-      'activationToken',
-      'port',
-      'previousPlanHash',
-      'previousSourceRevision',
-      'requestIdentityKeys',
-    ])
+    expect(Object.keys(configured).sort()).toEqual(['activationToken', 'port', 'requestIdentityKeys'])
   })
 
   test('rejects an unsigned discovery request when request identity is configured', async () => {
@@ -198,9 +197,12 @@ describe('native Restate execution server', () => {
       {
         runtime: {
           activate: () => Promise.resolve(),
-          nextPollNotBeforeMs: () => Promise.resolve(0),
-          preparePoll: () => Promise.resolve('test-capture'),
-          poll: () => Promise.resolve({ _tag: 'Unavailable', nextPollNotBeforeMs: 0 }),
+          poll: () =>
+            Promise.resolve({
+              poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
+              startedAtMs: 0,
+              completedAtMs: 0,
+            }),
         },
         pollIntervalMs: 30_000,
       },

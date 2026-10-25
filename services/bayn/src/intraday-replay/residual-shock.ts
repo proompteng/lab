@@ -1,8 +1,10 @@
+import { equityMarketProfile } from '../jev/markets'
+
 import { Data, Result } from 'effect'
 
-import { numberToMicros } from '../execution-model'
+import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import type { JevProtocol } from '../jev/protocol'
-import { usesCandidateWindowTrade, type IntradayBar } from '../market-data/intraday/model'
+import { usesWindowTradeEvidence, type IntradayBar } from '../market-data/intraday/model'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { compareRecords } from '../market-data/intraday/verification'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
@@ -153,7 +155,7 @@ const closes = (bars: readonly IntradayBar[], symbol: string, start: bigint) =>
     ),
   )
 
-export const selectResidualShock = (snapshot: StrategyMarketSnapshot, protocol: JevProtocol) =>
+export const selectResidualShock = (snapshot: StrategyMarketSnapshot, _protocol: JevProtocol) =>
   Result.gen(function* () {
     const now = intradayInstantNanos(snapshot.manifest.observedAt)
     const start = intradayInstantNanos(snapshot.manifest.rangeStartAt)
@@ -179,7 +181,7 @@ export const selectResidualShock = (snapshot: StrategyMarketSnapshot, protocol: 
           return yield* Result.fail(
             new ResidualShockFailure({ message: `Residual shock pricing evidence is invalid for ${symbol}` }),
           )
-        const times = usesCandidateWindowTrade(snapshot.manifest, symbol)
+        const times = usesWindowTradeEvidence(snapshot.manifest, symbol)
           ? [quote.eventAt]
           : [quote.eventAt, trade.eventAt]
         return (
@@ -190,7 +192,7 @@ export const selectResidualShock = (snapshot: StrategyMarketSnapshot, protocol: 
             const age = now - intradayInstantNanos(at)
             return age >= 0n && age <= 10_000_000_000n
           }) &&
-          (symbol === protocol.benchmarkSymbol || (ask - bid) * 20_000n <= 5n * (ask + bid))
+          (symbol === 'SPY' || (ask - bid) * 20_000n <= 5n * (ask + bid))
         )
       }).pipe(
         Result.mapError(
@@ -198,11 +200,11 @@ export const selectResidualShock = (snapshot: StrategyMarketSnapshot, protocol: 
             new ResidualShockFailure({ message: `Cannot validate residual shock liquidity for ${symbol}`, cause }),
         ),
       )
-    if (!(yield* liquid(protocol.benchmarkSymbol)))
+    if (!(yield* liquid('SPY')))
       return yield* Result.fail(new ResidualShockFailure({ message: 'Residual shock benchmark is stale or illiquid' }))
-    const benchmark = yield* closes(snapshot.bars, protocol.benchmarkSymbol, start)
+    const benchmark = yield* closes(snapshot.bars, 'SPY', start)
     const candidates = []
-    for (const symbol of protocol.candidateSymbols) {
+    for (const symbol of equityMarketProfile.candidateSymbols) {
       const exclusion = snapshot.manifest.candidateExclusions?.find((entry) => entry.symbol === symbol)
       if (exclusion !== undefined) {
         candidates.push({ symbol, status: ResidualShockStatus.SourceExcluded, exclusion })

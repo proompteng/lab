@@ -20,6 +20,18 @@ spec:
         (has(object.spec.initContainers) && object.spec.initContainers.exists(c,
           has(c.resources) && has(c.resources.limits) && 'runtime.proompteng.ai/kvm-tun' in c.resources.limits))
   validations:
+    - expression: >-
+        object.spec.containers.all(c,
+          has(c.securityContext) && has(c.securityContext.seccompProfile) &&
+          (c.name == 'runner'
+            ? c.securityContext.seccompProfile.type == 'RuntimeDefault' ||
+              (c.securityContext.seccompProfile.type == 'Localhost' &&
+               c.securityContext.seccompProfile.localhostProfile == 'profiles/tengri-runner.json')
+            : c.securityContext.seccompProfile.type == 'RuntimeDefault')) &&
+        object.spec.initContainers.all(c,
+          has(c.securityContext) && has(c.securityContext.seccompProfile) &&
+          c.securityContext.seccompProfile.type == 'RuntimeDefault')
+      message: Only the Tengri runner may select the bounded io_uring profile; other containers require RuntimeDefault.
     - expression: object.metadata.namespace == 'tengri' && object.spec.serviceAccountName == 'tengri-slot'
       message: KVM and TUN allocation is reserved for Tengri slot Pods.
     - expression: request.operation != 'CREATE' || request.userInfo.username == 'system:serviceaccount:tengri:tengri'

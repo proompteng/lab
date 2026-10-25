@@ -1,9 +1,16 @@
+import { isContinuousMarket } from '../market-hours'
+import type { MarketCalendarObservation } from '../broker/alpaca/model'
+import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
+import type { RollingMarketFeature } from '../market-data/features/contract'
+import type { StreamingVerifiedMarketSnapshot, StreamingFeatureReceipt } from '../market-data/streaming/snapshot'
+import { equityMarketProfile } from '../jev/markets'
+
 import { Effect, Result } from 'effect'
-import { numberToMicros } from '../execution-model'
+import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import type { StreamingVerifiedSnapshotReference } from '../market-data/streaming/reference'
 import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   featureBarContentHash,
   decodeRollingMarketFeature,
@@ -29,28 +36,49 @@ import {
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
 
-const rawPricingRequest: IntradaySnapshotRequest = {
+type EquityFixtureSnapshot = Omit<StreamingVerifiedMarketSnapshot, 'manifest'> & {
+  readonly manifest: Omit<StreamingVerifiedMarketSnapshot['manifest'], 'calendar' | 'streaming'> & {
+    readonly calendar: MarketCalendarObservation
+    readonly streaming: Omit<StreamingVerifiedMarketSnapshot['manifest']['streaming'], 'features'> & {
+      readonly features: readonly StreamingFeatureReceipt<RollingMarketFeature>[]
+    }
+  }
+}
+const assertEquityFixture: (snapshot: StreamingVerifiedMarketSnapshot) => asserts snapshot is EquityFixtureSnapshot = (
+  snapshot,
+) => {
+  if (
+    isContinuousMarket(snapshot.manifest.calendar) ||
+    snapshot.manifest.streaming.features.some((entry) => isCryptoMarketFeature(entry.value))
+  )
+    throw new Error('equity fixture produced a different market')
+}
+
+const rawPricingRequest: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
   sessionDate: '2026-09-04',
   calendar: Result.getOrThrow(
-    normalizeMarketCalendarResult([{ date: '2026-09-04', open: '09:30', close: '16:00' }], {
-      start: '2026-09-04',
-      end: '2026-09-04',
-    }),
+    normalizeMarketCalendarResult(
+      [{ session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' }],
+      {
+        start: '2026-09-04',
+        end: '2026-09-04',
+      },
+    ),
   ),
   rangeStartAt: '2026-09-04T14:29:00.000Z',
   rangeEndAt: '2026-09-04T14:30:00.000Z',
   observedAt: '2026-09-04T14:30:02.000Z',
-  universeId: protocol.universeId,
-  universeSymbolHash: protocol.universeSymbolHash,
+  universeId: equityMarketProfile.universeId,
+  universeSymbolHash: equityMarketProfile.universeSymbolHash,
   universe: protocol.universe,
   symbols: ['AAPL'],
   purpose: IntradaySnapshotPurpose.EntryPricing,
-  feed: protocol.feed,
-  delayClass: protocol.delayClass,
-  sourceTopics: protocol.sourceTopics,
+  feed: equityMarketProfile.feed,
+  delayClass: equityMarketProfile.delayClass,
+  sourceTopics: equityMarketProfile.sourceTopics,
   maximumQuoteAgeMs: 2_000,
   minimumWatermarkLagMs: 0,
-  archiveWatermarks: Object.values(protocol.sourceTopics)
+  archiveWatermarks: Object.values(equityMarketProfile.sourceTopics)
     .toSorted()
     .map((sourceTopic) => ({
       sourceTopic,
@@ -61,12 +89,12 @@ const rawPricingRequest: IntradaySnapshotRequest = {
 
 export const streamingFixture = (returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 }) => {
   const { purpose: _purpose, ...baseRequest } = rawPricingRequest
-  const request: IntradaySnapshotRequest = {
+  const request: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
     ...baseRequest,
     rangeStartAt: '2026-09-04T14:00:00.000Z',
     maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
     minimumWatermarkLagMs: 2000,
-    symbols: [...protocol.candidateSymbols, protocol.benchmarkSymbol].sort(),
+    symbols: [...protocol.candidateSymbols, 'SPY'].sort(),
     candidateSymbols: protocol.candidateSymbols,
   }
   const raw = makeIntradayMomentumTestSnapshot(protocol, request, returns)
@@ -81,7 +109,14 @@ export const streamingFixture = (returns: Readonly<Record<string, number>> = { A
       })),
     }),
   )
-  return { cut, query, snapshot, rows, archive, protocol }
+  return {
+    cut,
+    query,
+    snapshot,
+    rows,
+    archive: { ...archive, manifest: { ...archive.manifest, calendar: request.calendar } },
+    protocol,
+  }
 }
 
 export const streamingFixtureFromRaw = (
@@ -89,10 +124,10 @@ export const streamingFixtureFromRaw = (
   request: IntradaySnapshotQuery,
 ) => {
   const universe = {
-    universeId: protocol.universeId,
-    universeSymbolHash: protocol.universeSymbolHash,
+    universeId: equityMarketProfile.universeId,
+    universeSymbolHash: equityMarketProfile.universeSymbolHash,
     symbols: protocol.universe,
-    topics: { ...protocol.sourceTopics, features: intradayMomentumFeatureTopic },
+    topics: { ...equityMarketProfile.sourceTopics, features: intradayMomentumFeatureTopic },
   }
   const observed = Date.parse(request.observedAt)
   let projection = emptyStreamingProjection('fixture-epoch')
@@ -103,19 +138,20 @@ export const streamingFixtureFromRaw = (
   let offset = 0
   for (const symbol of request.purpose === undefined ? (request.symbols ?? []) : []) {
     const bars = raw.bars.filter((bar) => bar.symbol === symbol)
-    if (bars.length !== 30) continue
+    if (bars.length === 0 || !bars.some((bar) => Date.parse(bar.eventAt) === Date.parse(request.rangeEndAt) - 60_000))
+      continue
     const material = {
       schemaVersion: MarketFeatureContract.V1,
-      definitionId: MarketFeatureDefinition.RollingPrice30m,
-      definitionHash: protocol.streamingInput.requiredDefinitionHash,
+      definitionId: MarketFeatureDefinition.ObservedPriceWindow,
+      definitionHash: equityMarketProfile.streamingInput.requiredDefinitionHash,
       provider: 'alpaca',
       feed: 'iex',
       delayClass: 'real_time_exchange_only',
-      universeId: protocol.universeId,
-      universeSymbolHash: protocol.universeSymbolHash,
+      universeId: equityMarketProfile.universeId,
+      universeSymbolHash: equityMarketProfile.universeSymbolHash,
       symbol,
       sessionDate: request.sessionDate,
-      sessionPolicy: MarketFeatureSessionPolicy.RegularNewYork,
+      sessionPolicy: MarketFeatureSessionPolicy.IexClockSegments,
       windowStartMs: Date.parse(request.rangeStartAt),
       windowEndMs: Date.parse(request.rangeEndAt),
       inputs: bars.map((bar) => ({
@@ -146,7 +182,7 @@ export const streamingFixtureFromRaw = (
     const feature = Result.getOrThrow(
       decodeRollingMarketFeature({
         material,
-        featureId: canonicalHashV1(material),
+        featureId: Result.getOrThrow(canonicalHashV1Result(material)),
         computedAtMs: observed,
         producerRevision: 'fixture',
       }),
@@ -167,7 +203,9 @@ export const streamingFixtureFromRaw = (
     }))
   const cut = {
     projection,
+    consumerSequence: raw.bars.length + raw.quotes.length + raw.trades.length + offset,
     positions,
+    deliveredPositions: positions,
     bootstrap: {
       schemaVersion: 'bayn.kafka-bootstrap.v1' as const,
       epoch: projection.epoch,
@@ -183,8 +221,10 @@ export const streamingFixtureFromRaw = (
       })),
     },
   }
-  const query: IntradaySnapshotQuery = request
+  if (isContinuousMarket(request.calendar)) throw new Error('equity fixture requires exchange hours')
+  const query = { ...request, calendar: request.calendar }
   const snapshot = Result.getOrThrow(constructStreamingSnapshot(cut, query))
+  assertEquityFixture(snapshot)
   const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
   return { cut, query, snapshot, rows }
 }

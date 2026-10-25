@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: opencode
+resources:
+  - research.yaml
+  - server.yaml
+  - networkpolicy.yaml
+  - tailscale-ingress.yaml
+configMapGenerator:
+  - name: opencode-config
+    files:
+      - opencode.json
+images:
+  - name: opencode-main
+    newName: registry.ide-newton.ts.net/lab/opencode
+    newTag: unpromoted

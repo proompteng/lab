@@ -1,7 +1,7 @@
 import { Effect, Result } from 'effect'
 
 import type { AuthorityGenerationStoreShape } from './db/execution-store'
-import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents'
+import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents/blocked-cycle'
 import { Authority, KillState } from './execution/contracts'
 import { legacyObserveSuccessorGenerationSchemaVersion } from './execution/legacy-wire'
 import type { WriterFenceService } from './execution/writer-fence'
@@ -39,7 +39,7 @@ export type TerminalGenerationRolloverReceipt =
 export interface TerminalGenerationRecoveryInput<R> {
   readonly accountId: string
   readonly blockedIntents: BlockedCycleIntentStoreShape
-  readonly authorityStore: AuthorityGenerationStoreShape
+  readonly authorityStore: Pick<AuthorityGenerationStoreShape, 'ensureAuthorityGeneration'>
   readonly writerFence: WriterFenceService
   /** Must persist and validate a fresh exact, flat reconciliation after intent settlement. */
   readonly reconcileAfterSettlement: Effect.Effect<void, OperationalError, R>

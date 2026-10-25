@@ -36,7 +36,7 @@ import (
 const fixtureDomain = "proompteng.ai"
 const controllerID = "spiffe://" + fixtureDomain + "/ns/tengri/sa/tengri"
 const bffID = "spiffe://" + fixtureDomain + "/ns/proompteng/sa/proompteng"
-const guestID = "spiffe://" + fixtureDomain + "/ns/tengri/slot/pod/interop-agent"
+const guestID = "spiffe://" + fixtureDomain + "/ns/tengri/slot/pod/33333333-3333-4333-8333-333333333333"
 
 func TestKVMWorkloadAPI(t *testing.T) {
 	if os.Getenv("NANOAGENT_KVM_INTEROP") != "1" {
@@ -240,7 +240,7 @@ func TestSupervisorMutualTLSRequiresTheExactControllerAndSlot(t *testing.T) {
 	source := fixture.source(t, controllerID)
 	for _, peer := range []string{guestID, "spiffe://" + fixtureDomain + "/ns/tengri/slot/pod/previous-pod"} {
 		config := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeID(spiffeid.RequireFromString(peer)))
-		connection, err := grpc.NewClient(server.Listener.Addr().String(), grpc.WithTransportCredentials(credentials.NewTLS(config)))
+		connection, err := grpc.NewClient(server.Listener.Addr().String(), append(fixtureRPCDialOptions(), grpc.WithTransportCredentials(credentials.NewTLS(config)))...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -254,7 +254,7 @@ func TestSupervisorMutualTLSRequiresTheExactControllerAndSlot(t *testing.T) {
 	}
 	wrong := fixture.source(t, guestID)
 	config := tlsconfig.MTLSClientConfig(wrong, wrong, tlsconfig.AuthorizeID(spiffeid.RequireFromString(guestID)))
-	connection, err := grpc.NewClient(server.Listener.Addr().String(), grpc.WithTransportCredentials(credentials.NewTLS(config)))
+	connection, err := grpc.NewClient(server.Listener.Addr().String(), append(fixtureRPCDialOptions(), grpc.WithTransportCredentials(credentials.NewTLS(config)))...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestSupervisorRejectsExpiredUntrustedAndPlaintextClients(t *testing.T) {
 				config.Certificates = []tls.Certificate{{Certificate: [][]byte{testCase.svid.Certificates[0].Raw}, PrivateKey: testCase.svid.PrivateKey}}
 				transport = credentials.NewTLS(config)
 			}
-			connection, err := grpc.NewClient(server.Listener.Addr().String(), grpc.WithTransportCredentials(transport))
+			connection, err := grpc.NewClient(server.Listener.Addr().String(), append(fixtureRPCDialOptions(), grpc.WithTransportCredentials(transport))...)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -11,12 +11,12 @@ import {
 
 export const retainedReplayCaptureFixture = (manifest: BacktestSourceManifest) => {
   const text = JSON.stringify({
-    schemaVersion: 'bayn.replay-source-capture.v1',
+    schemaVersion: 'bayn.replay-source-capture.v2',
     capturedAt: new Date(manifest.coverageEndMs + 1).toISOString(),
     origin: 'Independently frozen deterministic capture fixture',
     coverageStartMs: manifest.coverageStartMs,
     coverageEndMs: manifest.coverageEndMs,
-    universe: manifest.universe,
+    marketSources: manifest.marketSources,
     positions: manifest.positions,
   })
   return validateBacktestSourceReceipt(text, sha256(text)).pipe(Result.getOrThrow)
@@ -26,7 +26,7 @@ export const retainedReplayFixture = () => {
   const input = simulationFixture()
   const events = input.input.arrivals.events
     .map((event) =>
-      event.record.topic === input.cursor.universe.topics.features
+      event.record.topic === input.cursor.marketSources[0].topics.features
         ? { ...event, record: { ...event.record, partition: 0 } }
         : event,
     )
@@ -47,7 +47,7 @@ export const retainedReplayFixture = () => {
     })
   }
   const manifest: BacktestSourceManifest = {
-    schemaVersion: 'bayn.backtest-source.v1',
+    schemaVersion: 'bayn.backtest-source.v2',
     encoding: 'ndjson-gzip',
     transport: 'captured-kafka',
     dataSha256: sha256(gzipSync(body)),
@@ -60,7 +60,7 @@ export const retainedReplayFixture = () => {
     positions: [...positions.values()].sort((a, b) =>
       a.topic < b.topic ? -1 : a.topic > b.topic ? 1 : a.partition - b.partition,
     ),
-    universe: input.cursor.universe,
+    marketSources: input.cursor.marketSources,
     deliveryModel: input.source.deliveryModel,
   }
   const complete = {

@@ -26,6 +26,18 @@ choice. The public sources above do not establish that those products use VNC, W
 owner-bound preview grant for the reserved browser port `13339`. Generic workspace previews cannot select that
 port. The grant bootstraps a cookie on its isolated preview origin. Chrome renders noVNC in an iframe on that origin.
 
+Chrome and Code bind their preview origin to the login session, workspace, runtime epoch, desktop and window.
+Their cookies and SQL leases last at most 30 minutes. The desktop renews halfway through the confirmed lease,
+using a new authenticated launch ticket and the same origin. A hidden bootstrap frame replaces the HttpOnly cookie;
+its acknowledgement must match the frame, origin, session ID and renewal nonce. Credentials never enter parent
+messages. Code and Chrome keep their visible documents and established sockets. Chrome retains its
+display of the same guest Chromium process, preserving tabs, form contents and takeover state.
+New handshakes reject rotated credentials. Established sockets recheck the current lease's complete authority
+binding and fresh Ofz policy every second; expiry, deletion or policy denial closes them within three seconds.
+Renewal does not launch guest processes or touch the VM activity tracker. It uses the existing audited
+control action and session idle policy; it cannot revive an expired session or extend its eight-hour maximum. Every launch, bootstrap and
+subsequent connection still requires current Ofz authority; expiry, sign-out and policy revocation remain enforced.
+
 Nanoagent forwards authenticated preview WebSocket traffic to TigerVNC's private Unix socket. TigerVNC exposes no
 TCP listener. Its socket has mode `0600`, and the X display requires the guest's Xauthority cookie. The gateway
 retains its origin checks, owner authorization, grant revocation, and SPIFFE mutual TLS to the slot supervisor. The
@@ -52,7 +64,7 @@ hash. Cold guests therefore use the packages in their immutable image, even afte
 The graphics runtime has scoped library, font, and keyboard paths. The `xkbcomp` wrapper handles TigerVNC's
 compiled absolute executable path.
 
-The compressed graphics bundle fits inside the private 1 GiB root filesystem with enforced headroom; the expanded
+The compressed graphics bundle fits inside the private 1.5 GiB root filesystem with enforced headroom; the expanded
 runtime resides on the retained home. The image build verifies cold extraction without network access, then
 validates the engine and extracted runtime through `browser-smoke`. A cold engine install requires network access to
 the pinned Playwright package and Chromium download service. Startup failures remain visible and retryable.
@@ -87,8 +99,11 @@ Existing Codex approval settings remain in effect.
 uses the native remote display and the production stdio MCP socket. Its test website denies framing and reports
 JavaScript form input. The suite verifies manual navigation, text clipboard, agent screenshots and mouse input, native tabs and history, cookies,
 local storage, workspace downloads, takeover, grant revocation, and reopening the same browser.
+The disposable gateway shortens preview leases to one minute. Both suites cross the original cookie expiry:
+Code retains an unsaved buffer in the same document, and Chrome retains a filled form and human takeover.
+Production has no configurable short-lease or authorization bypass.
 
-The guest image independently validates its extracted graphics runtime and 1 GiB filesystem. The requested
+The guest image independently validates its extracted graphics runtime and 1.5 GiB filesystem. The requested
 production rollout still requires the selected Kargo Freight, exact deployed images, an enrolled guest with the browser image,
 and actual browser and agent interaction on `proompteng.ai`.
 

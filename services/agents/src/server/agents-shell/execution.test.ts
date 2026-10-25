@@ -100,6 +100,7 @@ describe('one execution contract', () => {
     })
     expect(rejected.isError).toBe(true)
     expect(JSON.stringify(rejected.content)).toContain('owned by another subject')
+    expect(rejected.structuredContent).toMatchObject({ code: 'REPO_SESSION_FORBIDDEN' })
     expect(existsSync(join(root, 'result'))).toBe(false)
     expect(runner.jobs.size).toBe(0)
   })

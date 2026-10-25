@@ -2,11 +2,11 @@ import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Redacted, Schema } from 'effect'
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Redacted, Schema, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
-import { canonicalHashV1OrThrow } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { operationCurrentTimeMillis } from '../operation-timeout'
@@ -25,7 +25,7 @@ const fixture = Effect.gen(function* () {
   yield* TestClock.setTime(initialAt)
   const sql = yield* PgClient.PgClient
   const providerClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
-  const runId = canonicalHashV1OrThrow({ test: 'source-clock-exclusion', run: randomUUID() })
+  const runId = Result.getOrThrow(canonicalHashV1Result({ test: 'source-clock-exclusion', run: randomUUID() }))
   const clock = yield* makeSimulatedExecutionClock(runId, runId, providerClock)
   const commitNow =
     sql`SELECT extract(epoch FROM execution_account_commit_now(${clock.accountId}))::double precision * 1000 AS at`.pipe(

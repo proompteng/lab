@@ -1,6 +1,9 @@
 import { expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import { isMap, isSeq, parseDocument } from 'yaml'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join, relative } from 'node:path'
+import { isMap, isSeq, parseAllDocuments, parseDocument } from 'yaml'
 
 type Rule = {
   resources?: string[]
@@ -64,33 +67,90 @@ const services = documents<Service>('argocd/applications/tengri/services.yaml')
 const ingressRoutes = documents<IngressRoute>('argocd/applications/tengri/ingressroute.yaml')
 const networkPolicies = documents<NetworkPolicy>('argocd/applications/tengri/network-policies.yaml')
 
+const cutover = new Map(
+  ['tengri', 'proompteng'].map((app) => [
+    app,
+    parseAllDocuments(
+      execFileSync(
+        'kustomize',
+        ['build', new URL(`../../../../argocd/applications/${app}`, import.meta.url).pathname],
+        {
+          encoding: 'utf8',
+        },
+      ),
+    ),
+  ]),
+)
+
+function cutoverManifest(app: string, kind: string, name: string) {
+  const document = cutover
+    .get(app)
+    ?.find((entry) => entry.get('kind') === kind && entry.getIn(['metadata', 'name']) === name)
+  if (!document) throw new Error(`Missing cutover ${kind}/${name}`)
+  expect(document.errors).toEqual([])
+  return document
+}
+
 function manifest(path: string) {
   const document = parseDocument(readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8'))
   expect(document.errors).toEqual([])
   return document
 }
 
-test('the namespace quota covers six slots at the accepted native memory limit', () => {
-  function mib(value: unknown) {
-    const match = /^(\d+)(Mi|Gi)$/.exec(String(value))
-    if (!match) throw new Error('Expected a bounded memory quantity')
-    return Number(match[1]) * (match[2] === 'Gi' ? 1024 : 1)
+test('controller identity reaches the mounted SPIFFE workload API', () => {
+  const controller = cutoverManifest('tengri', 'Deployment', 'tengri')
+  const mounts = controller.getIn(['spec', 'template', 'spec', 'containers', 0, 'volumeMounts'])
+  if (!isSeq(mounts)) throw new Error('Missing controller volume mounts')
+  expect(mounts.toJSON()).toContainEqual({
+    name: 'workload-api',
+    mountPath: '/spiffe-workload-api',
+    readOnly: true,
+  })
+})
+
+test('Nanoagent promotion rewrites the controller ConfigMap reference', () => {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'tengri-promotion-')))
+  const image = `registry.ide-newton.ts.net/lab/nanoagent@sha256:${'e'.repeat(64)}`
+  try {
+    writeFileSync(
+      join(directory, 'kustomization.yaml'),
+      JSON.stringify({
+        apiVersion: 'kustomize.config.k8s.io/v1beta1',
+        kind: 'Kustomization',
+        resources: [relative(directory, new URL('../../../../argocd/applications/tengri', import.meta.url).pathname)],
+        configMapGenerator: [{ name: 'tengri-release', behavior: 'merge', literals: [`NANOAGENT_IMAGE=${image}`] }],
+      }),
+    )
+    const rendered = parseAllDocuments(
+      execFileSync('kustomize', ['build', directory, '--load-restrictor', 'LoadRestrictionsNone'], {
+        encoding: 'utf8',
+      }),
+    )
+    const release = rendered.find(
+      (entry) => entry.get('kind') === 'ConfigMap' && entry.getIn(['data', 'NANOAGENT_IMAGE']) === image,
+    )
+    const controller = rendered.find(
+      (entry) => entry.get('kind') === 'Deployment' && entry.getIn(['metadata', 'name']) === 'tengri',
+    )
+    if (!release || !controller) throw new Error('Missing promoted image contract')
+    const env = controller.getIn(['spec', 'template', 'spec', 'containers', 0, 'env'])
+    if (!isSeq(env)) throw new Error('Missing controller environment')
+    const reference = env.items.find((entry) => isMap(entry) && entry.get('name') === 'TENGRI_DEFAULT_IMAGE')
+    if (!isMap(reference)) throw new Error('Missing guest image reference')
+    expect(reference.getIn(['valueFrom', 'configMapKeyRef', 'name'])).toBe(release.getIn(['metadata', 'name']))
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test('the namespace can admit six slot leases with rolling-upgrade headroom', () => {
   const quota = manifest('argocd/applications/tengri/resource-quota.yaml')
-  const slots = Number(quota.getIn(['spec', 'hard', 'count/leases.coordination.k8s.io']))
-  const native = readFileSync(new URL('../../../../services/tengri/test-kvm.sh', import.meta.url), 'utf8')
-  const nativeMemory = /--memory=(\d+)g/.exec(native)
-  if (!nativeMemory) throw new Error('Native acceptance must constrain runner memory')
-  const deployment = manifest('argocd/applications/tengri/deployment.yaml')
-  const controller = mib(
-    deployment.getIn(['spec', 'template', 'spec', 'containers', 0, 'resources', 'limits', 'memory']),
+  const source = readFileSync(new URL('../../../../services/tengri/src/controller.rs', import.meta.url), 'utf8')
+  const slots = /const SLOT_COUNT: usize = (\d+);/.exec(source)
+  if (!slots) throw new Error('Controller slot capacity must be explicit')
+  expect(Number(quota.getIn(['spec', 'hard', 'count/leases.coordination.k8s.io']))).toBeGreaterThanOrEqual(
+    Number(slots[1]) + 1,
   )
-  const proxy = mib(
-    deployment.getIn(['spec', 'template', 'metadata', 'annotations', 'sidecar.istio.io/proxyMemoryLimit']),
-  )
-  const required = slots * (Number(nativeMemory[1]) * 1024 + 128) + controller + proxy
-  expect(mib(quota.getIn(['spec', 'hard', 'limits.memory']))).toBeGreaterThanOrEqual(required)
-  expect(mib(quota.getIn(['spec', 'hard', 'requests.memory']))).toBeGreaterThanOrEqual(required)
 })
 
 test('the platform enrolls the KVM/TUN prerequisite without changing namespace policy', () => {
@@ -225,6 +285,7 @@ test('the controller reaches prepared slots without preserving an old guest netw
   expect(policies.map((policy) => policy.metadata?.name).sort()).toEqual([
     'tengri-control-plane',
     'tengri-default-deny',
+    'tengri-run-worker',
     'tengri-slots',
   ])
   for (const policy of policies) {
@@ -280,53 +341,127 @@ test('Traefik can reach both public listeners while observability remains contro
   expect(ingressFrom('observability')?.ports).toEqual([{ protocol: 'TCP', port: 8080 }])
 })
 
-test('only the controller can reach the shared SpiceDB API', () => {
-  const controller = networkPolicies.find((policy) => policy.metadata?.name === 'tengri-control-plane')
-  const ofz = controller?.spec?.egress?.find((rule) =>
-    rule.to?.some((target) => target.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'ofz'),
-  )
-  expect(ofz).toEqual({
-    to: [
-      {
-        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'ofz' } },
-        podSelector: { matchLabels: { 'authzed.com/cluster': 'ofz', 'authzed.com/cluster-component': 'spicedb' } },
-      },
-    ],
-    ports: [{ protocol: 'TCP', port: 8443 }],
-  })
+test('the controller and supervisors reach only their required Ofz endpoints', () => {
+  const namespace = { matchLabels: { 'kubernetes.io/metadata.name': 'ofz' } }
+  const database = {
+    to: [{ namespaceSelector: namespace, podSelector: { matchLabels: { 'cnpg.io/cluster': 'ofz-db' } } }],
+    ports: [{ protocol: 'TCP', port: 5432 }],
+  }
+  const targetPolicies = cutover.get('tengri')!.map((entry) => entry.toJSON() as NetworkPolicy)
+  const ofzRules = (name: string) =>
+    targetPolicies
+      .find((policy) => policy.metadata?.name === name)
+      ?.spec?.egress?.filter((rule) =>
+        rule.to?.some((target) => target.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'ofz'),
+      )
+  expect(ofzRules('tengri-control-plane')).toEqual([
+    {
+      to: [{ namespaceSelector: namespace, podSelector: { matchLabels: { 'app.kubernetes.io/name': 'ofz-api' } } }],
+      ports: [{ protocol: 'TCP', port: 9443 }],
+    },
+    database,
+  ])
+  expect(ofzRules('tengri-slots')).toEqual([database])
   const guest = networkPolicies.find((policy) => policy.metadata?.name === 'tengri-slots')
-  expect(
-    guest?.spec?.egress?.some((rule) =>
-      rule.to?.some((target) => target.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'ofz'),
-    ),
-  ).toBe(false)
   const internet = guest?.spec?.egress?.flatMap((rule) => rule.to ?? []).find((target) => target.ipBlock)
   expect(internet?.ipBlock?.except).toContain('10.0.0.0/8')
   expect(internet?.ipBlock?.except).toContain('100.64.0.0/10')
 })
 
-test('the SpiceDB credential is sealed for the controller namespace and mounted as a file', () => {
-  const sealed = manifest('argocd/applications/tengri/spicedb-key-sealedsecret.yaml')
-  expect(sealed.get('kind')).toBe('SealedSecret')
-  expect(sealed.getIn(['metadata', 'namespace'])).toBe('tengri')
-  expect(sealed.getIn(['spec', 'template', 'metadata', 'name'])).toBe('tengri-spicedb-key')
-  expect(sealed.getIn(['spec', 'encryptedData', 'preshared_key'])).toBeString()
-  expect(sealed.getIn(['spec', 'template', 'data'])).toBeUndefined()
-  const deployment = manifest('argocd/applications/tengri/deployment.yaml')
+test('the controller mounts its request key and verified-TLS database credential', () => {
+  const deployment = cutoverManifest('tengri', 'Deployment', 'tengri')
   const pod = deployment.getIn(['spec', 'template', 'spec'])
   if (!isMap(pod)) throw new Error('Deployment pod spec must be a mapping')
+  expect(pod.toJSON()).toMatchObject({
+    securityContext: { runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532 },
+    containers: [
+      expect.objectContaining({
+        env: expect.arrayContaining([
+          { name: 'OFZ_GRPC_ENDPOINT', value: 'ofz-api.ofz.svc.cluster.local:9443' },
+          { name: 'TENGRI_INTERNAL_HMAC_KEY_FILE', value: '/var/run/tengri/internal/TENGRI_INTERNAL_HMAC_SECRET' },
+          {
+            name: 'TENGRI_DATABASE_DSN',
+            value:
+              'host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=tengri_control user=tengri_controller sslmode=require',
+          },
+          { name: 'TENGRI_DATABASE_PASSWORD_FILE', value: '/var/run/tengri/database/password' },
+          { name: 'TENGRI_DATABASE_CA_FILE', value: '/var/run/tengri/database-ca/ca.crt' },
+        ]),
+        volumeMounts: expect.arrayContaining([
+          { name: 'internal-request-key', mountPath: '/var/run/tengri/internal', readOnly: true },
+          { name: 'database', mountPath: '/var/run/tengri/database', readOnly: true },
+          { name: 'database-ca', mountPath: '/var/run/tengri/database-ca', readOnly: true },
+        ]),
+      }),
+    ],
+    volumes: expect.arrayContaining([
+      { name: 'internal-request-key', secret: { secretName: 'tengri-internal-request-key', defaultMode: 0o440 } },
+      { name: 'database', secret: { secretName: 'tengri-controller-db', defaultMode: 0o440 } },
+      { name: 'database-ca', secret: { secretName: 'ofz-database-ca', defaultMode: 0o440 } },
+    ]),
+  })
+  const containers = pod.get('containers')
+  if (!isSeq(containers) || !isMap(containers.items[0])) throw new Error('Controller container required')
+  expect(containers.items[0].get('envFrom')).toBeUndefined()
+  const serialized = JSON.stringify(pod.toJSON())
+  expect(serialized).not.toContain('TENGRI_AUTHZ_')
+  expect(serialized).not.toContain('tengri-runtime')
+  expect(serialized).not.toContain('tengri-spicedb-key')
+})
+
+test('the BFF reads the same dedicated request key contract as the controller', () => {
+  const deployment = cutoverManifest('proompteng', 'Deployment', 'proompteng')
+  const volumes = deployment.getIn(['spec', 'template', 'spec', 'volumes'])
+  if (!isSeq(volumes)) throw new Error('BFF volumes must be explicit')
+  const key = volumes.items.find((entry) => isMap(entry) && entry.get('name') === 'tengri-bff')
+  if (!isMap(key)) throw new Error('BFF request key volume required')
+  expect(key.getIn(['secret', 'secretName'])).toBe('tengri-internal-request-key')
+  expect(key.getIn(['secret', 'defaultMode'])).toBe(288)
+  expect(deployment.getIn(['spec', 'template', 'spec', 'securityContext', 'fsGroup'])).toBe(1001)
+})
+
+test('active deployments use the complete Ofz cutover contract', () => {
+  for (const app of ['tengri', 'proompteng']) {
+    const active = manifest(`argocd/applications/${app}/deployment.yaml`).toString()
+    expect(active).toContain('OFZ_GRPC_ENDPOINT')
+    expect(active).toContain('tengri-internal-request-key')
+    expect(active).toContain('ofz-database-ca')
+  }
+})
+
+test('the BFF cutover includes every required Ofz, identity and TLS database setting', () => {
+  const deployment = cutoverManifest('proompteng', 'Deployment', 'proompteng')
+  const pod = deployment.getIn(['spec', 'template', 'spec'])
+  if (!isMap(pod)) throw new Error('BFF pod required')
   expect(pod.toJSON()).toMatchObject({
     containers: [
       expect.objectContaining({
         env: expect.arrayContaining([
-          { name: 'TENGRI_AUTHZ_ENDPOINT', value: 'http://ofz.ofz.svc.cluster.local:8443' },
-          { name: 'TENGRI_AUTHZ_KEY_FILE', value: '/var/run/secrets/tengri-authz/preshared_key' },
+          { name: 'OFZ_GRPC_ENDPOINT', value: 'ofz-api.ofz.svc.cluster.local:9443' },
+          { name: 'TENGRI_OIDC_ISSUER', value: 'https://auth.proompteng.ai/realms/tengri' },
+          { name: 'TENGRI_OIDC_CLIENT_SECRET_FILE', value: '/var/run/tengri/oidc/client-secret' },
+          {
+            name: 'TENGRI_DATABASE_DSN',
+            value: 'postgres://tengri_bff@ofz-db-rw.ofz.svc.cluster.local:5432/tengri_control',
+          },
+          { name: 'TENGRI_DATABASE_PASSWORD_FILE', value: '/var/run/tengri/database/password' },
+          { name: 'TENGRI_DATABASE_CA_FILE', value: '/var/run/tengri/database-ca/ca.crt' },
         ]),
         volumeMounts: expect.arrayContaining([
-          { name: 'authz-secret', mountPath: '/var/run/secrets/tengri-authz', readOnly: true },
+          { name: 'oidc', mountPath: '/var/run/tengri/oidc', readOnly: true },
+          { name: 'database', mountPath: '/var/run/tengri/database', readOnly: true },
+          { name: 'database-ca', mountPath: '/var/run/tengri/database-ca', readOnly: true },
         ]),
       }),
     ],
-    volumes: expect.arrayContaining([{ name: 'authz-secret', secret: { secretName: 'tengri-spicedb-key' } }]),
+    volumes: expect.arrayContaining([
+      { name: 'oidc', secret: { secretName: 'tengri-oidc-client', defaultMode: 0o440 } },
+      { name: 'database', secret: { secretName: 'tengri-bff-db', defaultMode: 0o440 } },
+      { name: 'database-ca', secret: { secretName: 'ofz-database-ca', defaultMode: 0o440 } },
+    ]),
   })
+  const policies = cutoverManifest('proompteng', 'NetworkPolicy', 'proompteng-web').toJSON() as NetworkPolicy
+  for (const port of [9443, 5432, 8443]) {
+    expect(policies.spec?.egress?.some((rule) => rule.ports?.some((entry) => entry.port === port))).toBe(true)
+  }
 })

@@ -111,11 +111,23 @@ export default function DesktopOnboarding() {
   }, [pendingDeletionAgentCreatedAt, pendingDeletionAgentId, refresh])
   useEffect(() => {
     if (pendingDeletionAgentId) return
-    const refreshDelay = desktopRefreshDelay(gate, Date.now())
+    const nextRefreshDelay = () => (snapshotError ? 30_000 : desktopRefreshDelay(gate, Date.now()))
+    const refreshDelay = nextRefreshDelay()
     if (refreshDelay === null) return
-    const timer = window.setTimeout(() => void refresh(), refreshDelay)
-    return () => window.clearTimeout(timer)
-  }, [gate, pendingDeletionAgentId, refresh])
+    let cancelled = false
+    let timer: number
+    const poll = async () => {
+      await refresh()
+      if (!cancelled) {
+        timer = window.setTimeout(() => void poll(), nextRefreshDelay() ?? refreshDelay)
+      }
+    }
+    timer = window.setTimeout(() => void poll(), refreshDelay)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [gate, pendingDeletionAgentId, refresh, snapshotError])
 
   if (gate.kind === 'ready' && snapshot?.user) {
     return (
@@ -146,7 +158,13 @@ export default function DesktopOnboarding() {
         </header>
         <div className="relative z-10 grid min-h-[100svh] place-items-center px-5 pt-12 pb-8">
           <AnimatePresence mode="wait">
-            <DesktopGate key={gate.kind} gate={gate} onAgentDeleted={beginAgentDeletion} onRefresh={refresh} />
+            <DesktopGate
+              key={`${snapshot?.user?.id}/${gate.kind}`}
+              gate={gate}
+              principalId={snapshot?.user?.id}
+              onAgentDeleted={beginAgentDeletion}
+              onRefresh={refresh}
+            />
           </AnimatePresence>
         </div>
       </main>
@@ -156,10 +174,12 @@ export default function DesktopOnboarding() {
 
 function DesktopGate({
   gate,
+  principalId,
   onAgentDeleted,
   onRefresh,
 }: {
   gate: DesktopGateState
+  principalId?: string
   onAgentDeleted: (agent: TengriAgent) => void
   onRefresh: () => Promise<void>
 }) {
@@ -167,7 +187,7 @@ function DesktopGate({
     return (
       <StatusWindow
         icon={<LoaderCircle className="h-7 w-7 animate-spin" />}
-        title="Starting Tengri"
+        title="Tengri"
         detail="Loading your workspace…"
         progress
       />
@@ -203,7 +223,7 @@ function DesktopGate({
       />
     )
   }
-  if (gate.kind === 'create') return <CreateAgentWindow onCreated={onRefresh} />
+  if (gate.kind === 'create') return <CreateAgentWindow principalId={principalId} onCreated={onRefresh} />
   if (gate.kind === 'ready') {
     return (
       <ActionWindow
@@ -215,9 +235,17 @@ function DesktopGate({
       />
     )
   }
-  if (gate.kind === 'sleeping') return <SleepingAgentWindow agent={gate.agent} onChanged={onRefresh} />
+  if (gate.kind === 'sleeping')
+    return <SleepingAgentWindow principalId={principalId} agent={gate.agent} onChanged={onRefresh} />
   if (gate.kind === 'failed') {
-    return <FailedAgentWindow agent={gate.agent} onChanged={onRefresh} onDeleted={onAgentDeleted} />
+    return (
+      <FailedAgentWindow
+        principalId={principalId}
+        agent={gate.agent}
+        onChanged={onRefresh}
+        onDeleted={onAgentDeleted}
+      />
+    )
   }
   if (gate.kind === 'unknown') {
     return (
@@ -257,7 +285,7 @@ function SignInWindow() {
     <ActionWindow
       icon={busy ? <LoaderCircle className="h-7 w-7 animate-spin" /> : <CircleUserRound className="h-7 w-7" />}
       title="Sign in to Tengri"
-      detail="Sign in with GitHub and your passkey. Ofz determines which workspaces you can access."
+      detail="First sign in with GitHub. Then use your saved passkey, or create one if this is your first sign-in."
       error={error}
       actionIcon={<CircleUserRound aria-hidden="true" className="h-4 w-4" />}
       actionBusy={busy}
@@ -267,7 +295,7 @@ function SignInWindow() {
   )
 }
 
-function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
+function CreateAgentWindow({ principalId, onCreated }: { principalId?: string; onCreated: () => Promise<void> }) {
   const {
     formState: { errors, isSubmitting },
     handleSubmit,
@@ -281,7 +309,7 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
 
   const createAgent = handleSubmit(async ({ displayName }) => {
     try {
-      await runTengriAction<TengriAgent>({ action: 'create-agent', displayName })
+      await runTengriAction<TengriAgent>({ action: 'create-agent', displayName }, { principalId })
       await onCreated()
     } catch (cause) {
       setError('root.server', { message: cause instanceof Error ? cause.message : 'Agent could not be created' })
@@ -314,8 +342,8 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
           </p>
         ) : null}
         <dl className="mt-5 grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-white/10 bg-white/10 text-center">
-          <Resource label="CPU" value="2 cores" />
-          <Resource label="Memory" value="4 GiB" />
+          <Resource label="CPU" value="4 cores" />
+          <Resource label="Memory" value="8 GiB" />
           <Resource label="Workspace" value="32 GiB" />
         </dl>
         {errors.root?.server ? (
@@ -343,7 +371,15 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
   )
 }
 
-function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChanged: () => Promise<void> }) {
+function SleepingAgentWindow({
+  principalId,
+  agent,
+  onChanged,
+}: {
+  principalId?: string
+  agent: TengriAgent
+  onChanged: () => Promise<void>
+}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -351,7 +387,10 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
     setBusy(true)
     setError('')
     try {
-      await runTengriAction<TengriAgent>({ action: 'resume-agent', agentId: agent.id })
+      await runTengriAction<TengriAgent>(
+        { action: 'resume-agent', agentId: agent.id, workspaceUid: agent.uid },
+        { principalId },
+      )
       await onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Agent could not be resumed')
@@ -376,10 +415,12 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
 
 function FailedAgentWindow({
   agent,
+  principalId,
   onChanged,
   onDeleted,
 }: {
   agent: TengriAgent
+  principalId?: string
   onChanged: () => Promise<void>
   onDeleted: (agent: TengriAgent) => void
 }) {
@@ -391,7 +432,10 @@ function FailedAgentWindow({
     setDeleteBusy(true)
     setError('')
     try {
-      await runTengriAction<null>({ action: 'delete-agent', agentId: agent.id })
+      await runTengriAction<null>(
+        { action: 'delete-agent', agentId: agent.id, workspaceUid: agent.uid },
+        { principalId },
+      )
       onDeleted(agent)
       publishDeletedDesktopState(agent.id)
       setConfirmOpen(false)

@@ -1,16 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   decideGapRecovery,
-  decideGapRecoveryExit,
   GapEndpointKind,
   GapEndpointStatus,
-  GapExitAction,
-  GapExitReason,
   GapRecoveryDecision,
-  gapRecoveryDefinition,
   observeGapRecoveryEndpoint,
   prepareGapRecoverySession,
 } from './gap-recovery'
@@ -26,20 +22,19 @@ const run = (f = gapFixture()) =>
       f.session,
     ),
   )
-const position = {
-  symbol: 'AAPL',
-  firstFilledAt: new Date(gapDecisionMs + 2_000).toISOString(),
-  averageEntryPrice: 100,
-  pendingExit: null,
-}
 
 describe('original-receipt gap recovery', () => {
   test('broker calendar handles daylight-saving transitions and rejects skipped endpoint roles', () => {
     const calendar = [
-      { date: '2026-10-30', open: '09:30', close: '16:00' },
-      { date: '2026-11-02', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-10-30', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-11-02', open: '09:30', close: '16:00' },
     ]
-    const input = { ...gapSessionInput(), sessionDate: '2026-11-02', calendar, calendarHash: canonicalHashV1(calendar) }
+    const input = {
+      ...gapSessionInput(),
+      sessionDate: '2026-11-02',
+      calendar,
+      calendarHash: Result.getOrThrow(canonicalHashV1Result(calendar)),
+    }
     const session = Result.getOrThrow(prepareGapRecoverySession(input))
     expect(session.priorAtMs).toBe(Date.parse('2026-10-30T19:59:30Z'))
     expect(session.openingAtMs).toBe(Date.parse('2026-11-02T14:30:30Z'))
@@ -47,7 +42,11 @@ describe('original-receipt gap recovery', () => {
     const duplicate = [...calendar, calendar[1]]
     expect(
       Result.isFailure(
-        prepareGapRecoverySession({ ...input, calendar: duplicate, calendarHash: canonicalHashV1(duplicate) }),
+        prepareGapRecoverySession({
+          ...input,
+          calendar: duplicate,
+          calendarHash: Result.getOrThrow(canonicalHashV1Result(duplicate)),
+        }),
       ),
     ).toBeTrue()
   })
@@ -85,16 +84,16 @@ describe('original-receipt gap recovery', () => {
     expect(report.profitability).toBe('NOT_ESTABLISHED')
     expect(report.qualification).toBe('UNQUALIFIED')
     const { reportHash, ...material } = report
-    expect(canonicalHashV1(material)).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
     expect(run().reportHash).toBe(reportHash)
     expect(report).not.toHaveProperty('orders')
   })
 
   test.each([
     [99.5, 99.75, 'AAPL'],
-    [99.50000000001, 99.75, null],
+    [99.500000001, 99.75, null],
     [99, 99.2475, 'AAPL'],
-    [99, 99.24749999999, null],
+    [99, 99.247499999, null],
     [99, 100, null],
   ] as const)('exact decimal boundary for opening %s and decision %s', (opening, decision, selected) => {
     expect(run(gapFixture({ prices: { AAPL: [100, opening, decision] } })).selectedSymbol).toBe(selected)
@@ -286,139 +285,7 @@ describe('original-receipt gap recovery', () => {
   })
 })
 
-describe('gap position lifecycle', () => {
-  test.each([100, 99] as const)('rejects a malformed session record before a valid %s exit quote', (bid) => {
-    const at = gapDecisionMs + 60_000
-    const f = gapFixture({
-      additional: [
-        {
-          availableAtMs: at - 2000,
-          eventAtMs: at - 2000,
-          channel: 'quotes',
-          symbol: 'AAPL',
-          bid: -1,
-          ask: 100,
-          bidSize: 100,
-          askSize: 100,
-        },
-        {
-          availableAtMs: at - 1000,
-          eventAtMs: at - 1000,
-          channel: 'quotes',
-          symbol: 'AAPL',
-          bid,
-          ask: bid,
-          bidSize: 100,
-          askSize: 100,
-        },
-      ],
-    })
-    const cursor = f.cursorAt(at)
-    expect([...cursor.projection.rejections.values()].flat().length).toBeGreaterThan(0)
-    const result = decideGapRecoveryExit(cursor, f.session, new Date(at).toISOString(), position)
-    expect(Result.isFailure(result)).toBeTrue()
-    if (Result.isFailure(result)) expect(JSON.stringify(result.failure)).toContain('rejected records')
-  })
-
-  test('rejects discarded session rejection evidence before evaluating an otherwise valid exit', () => {
-    const at = gapDecisionMs + 60_000
-    const f = gapFixture({
-      additional: [
-        {
-          availableAtMs: at - 1000,
-          eventAtMs: at - 1000,
-          channel: 'quotes',
-          symbol: 'AAPL',
-          bid: 100,
-          ask: 100,
-          bidSize: 100,
-          askSize: 100,
-        },
-      ],
-    })
-    const cursor = f.cursorAt(at)
-    const discarded = {
-      ...cursor,
-      projection: {
-        ...cursor.projection,
-        discardedRejectionsThroughMs: new Map([[`${gapRecoveryDefinition.sourceTopics.quotes}:0`, gapOpenMs + 60_000]]),
-      },
-    }
-    const result = decideGapRecoveryExit(discarded, f.session, new Date(at).toISOString(), position)
-    expect(Result.isFailure(result)).toBeTrue()
-    if (Result.isFailure(result)) expect(JSON.stringify(result.failure)).toContain('discarded rejection evidence')
-  })
-
-  const observe = (at: number, bid: number, pendingExit: GapExitReason | null = null) => {
-    const f = gapFixture({
-      additional: [
-        {
-          availableAtMs: at - 1000,
-          channel: 'quotes',
-          symbol: 'AAPL',
-          eventAtMs: at - 1000,
-          bid,
-          ask: bid,
-          bidSize: 100,
-          askSize: 100,
-        },
-      ],
-    })
-    return Result.getOrThrow(
-      decideGapRecoveryExit(f.cursorAt(at), f.session, new Date(at).toISOString(), { ...position, pendingExit }),
-    )
-  }
-  test('does not impose the abandoned fifteen-minute holding limit', () => {
-    expect(observe(gapDecisionMs + 20 * 60_000, 100).action).toBe(GapExitAction.Hold)
-  })
-  test('stop boundary is inclusive and exits remain latched after price recovery', () => {
-    expect(observe(gapDecisionMs + 60_000, 99.5).reason).toBe(GapExitReason.Stop)
-    expect(observe(gapDecisionMs + 60_000, 99.50000000001).action).toBe(GapExitAction.Hold)
-    expect(observe(gapDecisionMs + 60_000, 102, GapExitReason.Stop).reason).toBe(GapExitReason.Stop)
-  })
-  test('missing management pricing stays unknown; close still requests reducing exit without inventing pricing', () => {
-    const f = gapFixture()
-    const missingAt = gapDecisionMs + 60_000
-    const missing = Result.getOrThrow(
-      decideGapRecoveryExit(f.cursorAt(missingAt), f.session, new Date(missingAt).toISOString(), position),
-    )
-    expect(missing.action).toBe(GapExitAction.Unavailable)
-    const closeAt = f.session.closeMs - gapRecoveryDefinition.flattenBeforeCloseMs
-    const close = Result.getOrThrow(
-      decideGapRecoveryExit(f.cursorAt(closeAt), f.session, new Date(closeAt).toISOString(), position),
-    )
-    expect(close.action).toBe(GapExitAction.Exit)
-    expect(close.reason).toBe(GapExitReason.Close)
-    expect(close.pricingAvailable).toBeFalse()
-    const end = Result.getOrThrow(
-      decideGapRecoveryExit(
-        f.cursorAt(f.session.closeMs),
-        f.session,
-        new Date(f.session.closeMs).toISOString(),
-        position,
-      ),
-    )
-    expect(end.action).toBe(GapExitAction.DeadlinePassed)
-  })
-  test('half-day close follows supplied exchange calendar rather than hard-coded UTC hours', () => {
-    const f = gapFixture({ close: '13:00' })
-    expect(f.session.closeMs).toBe(Date.parse('2026-09-04T17:00:00.000Z'))
-    const at = f.session.closeMs - 300_000
-    expect(
-      Result.getOrThrow(decideGapRecoveryExit(f.cursorAt(at), f.session, new Date(at).toISOString(), position)).reason,
-    ).toBe(GapExitReason.Close)
-  })
-  test('rejects invalid position prices, symbols and reversed fill clocks', () => {
-    const f = gapFixture()
-    for (const p of [
-      { ...position, averageEntryPrice: 0 },
-      { ...position, symbol: 'SPY' },
-      { ...position, firstFilledAt: new Date(gapOpenMs).toISOString() },
-    ])
-      expect(
-        Result.isFailure(
-          decideGapRecoveryExit(f.decisionCursor(), f.session, new Date(gapDecisionMs).toISOString(), p),
-        ),
-      ).toBeTrue()
-  })
+test('half-day close follows the supplied exchange calendar', () => {
+  const f = gapFixture({ close: '13:00' })
+  expect(f.session.closeMs).toBe(Date.parse('2026-09-04T17:00:00.000Z'))
 })

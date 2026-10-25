@@ -19,6 +19,8 @@ helmCharts:
     releaseName: sealed-secrets-web
     namespace: sealed-secrets
     valuesInline:
+      nodeSelector:
+        kubernetes.io/arch: amd64
       sealedSecrets:
         namespace: sealed-secrets
         serviceName: sealed-secrets

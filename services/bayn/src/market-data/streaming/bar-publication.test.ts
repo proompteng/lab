@@ -1,7 +1,6 @@
-import { BarPublicationPolicy } from '../intraday/bar-publication'
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
-import { canonicalHashV1 } from '../../hash'
+import { Result, Schema } from 'effect'
+import { canonicalHashV1Result } from '../../hash'
 import { streamingFixture, streamingFixtureFromRaw } from '../../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../../strategy/intraday-momentum/test-support'
 import { featureBarContentHash } from '../features/contract'
@@ -11,6 +10,7 @@ import { incorporateMarketRecord, incorporateRecordedMarketValue } from './proje
 import { constructSimulatedSnapshot, constructStreamingSnapshot } from './snapshot'
 import { simulationFixture } from '../../testing/simulated-streaming-fixture'
 import { reproduceSimulatedSnapshot, reproduceStreamingSnapshot } from './replay'
+import { StreamingSnapshotEvidenceSchema } from './evidence-schema'
 
 for (const symbol of ['AAPL', 'SPY']) {
   test(`accepts normal corrected bars for ${symbol} independently of quote age`, () => {
@@ -76,7 +76,7 @@ test('identical late republications preserve timeliness and exact feature lineag
   const replacement = {
     ...feature.value,
     material,
-    featureId: canonicalHashV1(material),
+    featureId: Result.getOrThrow(canonicalHashV1Result(material)),
     computedAtMs: Date.parse(query.observedAt) + 7,
   }
   projection = incorporateMarketRecord(
@@ -205,7 +205,7 @@ test('identical late republications preserve timeliness and exact feature lineag
       value: JSON.stringify({
         ...replacement,
         material: changedMaterial,
-        featureId: canonicalHashV1(changedMaterial),
+        featureId: Result.getOrThrow(canonicalHashV1Result(changedMaterial)),
         computedAtMs: changedAt,
       }),
     },
@@ -224,20 +224,23 @@ test('identical late republications preserve timeliness and exact feature lineag
     },
     { ...query, observedAt: new Date(changedAt).toISOString() },
   )
-  expect(Result.isFailure(rejected)).toBe(true)
-  if (Result.isFailure(rejected))
-    expect(rejected.failure).toMatchObject({ reason: 'freshness', facts: { symbol: 'SPY' } })
+  expect(Result.isSuccess(rejected)).toBe(true)
+  expect(
+    Result.getOrThrow(rejected).bars.find((bar) => bar.symbol === 'SPY' && bar.eventAt === first.eventAt)?.volume,
+  ).toBe(changed.volume)
 })
 
-test('legacy recorded cuts retain the old quote-linked bar timing policy', () => {
+test('retired bar timing policies cannot reconstruct a current observation', () => {
   const { cut, query } = streamingFixture()
-  const snapshot = Result.getOrThrow(constructStreamingSnapshot(cut, query, BarPublicationPolicy.LegacyQuoteAge))
-  expect(snapshot.manifest.streaming.barPublicationPolicy).toBeUndefined()
+  const snapshot = Result.getOrThrow(constructStreamingSnapshot(cut, query))
   expect(
-    Result.getOrThrow(
-      reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
-    ).manifest,
-  ).toEqual(snapshot.manifest)
+    Result.isFailure(
+      Schema.decodeUnknownResult(StreamingSnapshotEvidenceSchema)({
+        ...snapshot.manifest.streaming,
+        barPublicationPolicy: 'legacy-quote-age',
+      }),
+    ),
+  ).toBe(true)
 })
 
 for (const scenario of [
@@ -251,7 +254,7 @@ for (const scenario of [
   test(`bar publication policy still rejects ${scenario}`, () => {
     const { protocol, query } = streamingFixture()
     const raw = makeIntradayMomentumTestSnapshot(protocol, { ...query, archiveWatermarks: [] }, {})
-    const first = raw.bars.find((bar) => bar.symbol === 'SPY')
+    const first = raw.bars.findLast((bar) => bar.symbol === 'SPY')
     if (first === undefined) throw new Error('Missing benchmark')
     const delay = scenario === 'late-correction' ? 105_001 : scenario === 'premature' ? 50_000 : 75_001
     const bars = raw.bars.map((bar) =>

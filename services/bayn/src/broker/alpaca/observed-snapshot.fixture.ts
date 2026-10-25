@@ -40,8 +40,8 @@ export const observedBrokerSnapshotFixture = (
             submittedAt: sourceTimestamp,
             filledAt: sourceTimestamp,
             observedAt,
-            quantityMicros: '1000000',
-            filledQuantityMicros: '1000000',
+            quantityAtoms: '1000000000',
+            filledQuantityAtoms: '1000000000',
             filledAveragePriceMicros: '200000000',
             orderClass: OrderClass.Simple,
             orderType: OrderType.Limit,
@@ -58,10 +58,10 @@ export const observedBrokerSnapshotFixture = (
           {
             accountId,
             activityId: 'fill',
-            cumulativeQuantityMicros: '1000000',
-            leavesQuantityMicros: '0',
-            priceMicros: '200000000',
-            quantityMicros: '1000000',
+            cumulativeQuantityAtoms: '1000000000',
+            leavesQuantityAtoms: '0',
+            priceAtoms: '200000000000',
+            quantityAtoms: '1000000000',
             side: OrderSide.Buy,
             symbol: 'AAPL',
             transactionTime: sourceTimestamp,
@@ -76,6 +76,11 @@ export const observedBrokerSnapshotFixture = (
     completedAt: observedAt,
     snapshot: {
       account: observe({
+        cryptoStatus: null,
+        cryptoFeeTier: null,
+        cashReportingQuantumMicros: '1' as const,
+        nonMarginableBuyingPowerMicros: null,
+
         id: accountId,
         status: AccountStatus.Active,
         currency: 'USD',

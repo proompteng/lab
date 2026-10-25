@@ -106,13 +106,13 @@ internal fun alpacaMarketDataStreamUrl(
   config: ForwarderConfig,
   feed: FeedRuntimeConfig,
 ): String =
-  when (config.alpacaMarketType) {
+  when (feed.marketType) {
     AlpacaMarketType.EQUITY -> {
       val equityFeed = requireNotNull(feed.equityFeed) { "equity runtime requires a typed equity feed" }
       "${config.alpacaStreamUrl.trimEnd('/')}/${equityFeed.apiVersion}/${equityFeed.id}"
     }
     AlpacaMarketType.CRYPTO ->
-      "${config.alpacaStreamUrl.trimEnd('/')}/v1beta3/crypto/${config.alpacaCryptoLocation}"
+      "${config.alpacaStreamUrl.trimEnd('/')}/v1beta3/crypto/${feed.feed}"
     AlpacaMarketType.OPTIONS -> "${config.alpacaStreamUrl.trimEnd('/')}/v1beta1/${feed.feed}"
   }
 
@@ -127,9 +127,10 @@ internal fun marketDataIdleRequiresReconnect(
     marketDataFreshnessGateActive(
       marketSessionState(now, marketType, marketHolidays),
       equityFeed,
+      now,
     )
 
-internal fun coreIexProviderIdleRequiresReconnect(
+internal fun providerMarketDataIdleRequiresReconnect(
   subscribedAt: Instant?,
   lastProviderMarketDataAt: Instant?,
   now: Instant,
@@ -138,8 +139,8 @@ internal fun coreIexProviderIdleRequiresReconnect(
   equityFeed: EquityFeed?,
   idleTimeoutMs: Long,
 ): Boolean {
-  if (marketType != AlpacaMarketType.EQUITY || equityFeed != EquityFeed.Iex || subscribedAt == null) return false
-  if (!marketDataFreshnessGateActive(marketSessionState(now, marketType, marketHolidays), equityFeed)) return false
+  if (subscribedAt == null || (marketType != AlpacaMarketType.CRYPTO && equityFeed != EquityFeed.Iex)) return false
+  if (!marketDataFreshnessGateActive(marketSessionState(now, marketType, marketHolidays), equityFeed, now)) return false
   val lastProviderOrSubscriptionAt = maxOf(subscribedAt, lastProviderMarketDataAt ?: subscribedAt)
   return now.toEpochMilli() - lastProviderOrSubscriptionAt.toEpochMilli() >= idleTimeoutMs
 }
@@ -147,8 +148,7 @@ internal fun coreIexProviderIdleRequiresReconnect(
 internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
     AlpacaMarketType.EQUITY -> "${config.alpacaBaseUrl.trimEnd('/')}/v2/stocks/bars"
-    AlpacaMarketType.CRYPTO ->
-      "${config.alpacaBaseUrl.trimEnd('/')}/v1beta3/crypto/${config.alpacaCryptoLocation}/bars"
+    AlpacaMarketType.CRYPTO -> error("native crypto ingestion uses websocket events")
     AlpacaMarketType.OPTIONS -> error("options bars backfill is not supported on the websocket lane")
   }
 
@@ -297,7 +297,7 @@ private class MarketDataFeedRuntimeState(
       maxLagMs = appConfig.marketDataChannelFreshnessMaxMs,
       warmupMs = appConfig.marketDataChannelFreshnessWarmupMs,
       nowMs = nowMs,
-      marketType = appConfig.alpacaMarketType,
+      marketType = config.marketType,
       marketHolidays = appConfig.optionsMarketHolidays,
       equityFeed = config.equityFeed,
     )
@@ -612,7 +612,7 @@ class ForwarderApp(
     val url = alpacaMarketDataStreamUrl(config, feed.config)
     httpClient.webSocket({
       url(url)
-      if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+      if (feed.config.marketType == AlpacaMarketType.OPTIONS) {
         header("Content-Type", "application/msgpack")
       }
     }) {
@@ -632,10 +632,10 @@ class ForwarderApp(
             lastEventAt = lastOptionsMarketDataEventAt.get(),
             subscribedSince = subscribedSince.get(),
             subscribedCount = if (subscribedOk) 1 else 0,
-            marketType = config.alpacaMarketType,
+            marketType = feed.config.marketType,
             marketHolidays = config.optionsMarketHolidays,
           )
-        if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+        if (feed.config.marketType == AlpacaMarketType.OPTIONS) {
           metrics.setOptionsEventStarvation(eventStarved)
           if (eventStarved) {
             recordFeedError(feed, ReadinessErrorClass.OptionsEventStarvation)
@@ -661,7 +661,7 @@ class ForwarderApp(
               marketDataIdleRequiresReconnect(
                 sessionReady = feed.websocketReady.get(),
                 now = Instant.ofEpochMilli(nowMs()),
-                marketType = config.alpacaMarketType,
+                marketType = feed.config.marketType,
                 marketHolidays = config.optionsMarketHolidays,
                 equityFeed = feed.config.equityFeed,
               )
@@ -676,7 +676,13 @@ class ForwarderApp(
             if (elements is JsonArray) elements.toList() else listOf(elements)
           return messages.mapNotNull { el ->
             try {
-              json.decodeFromJsonElement(AlpacaMessageSerializer, el)
+              if (feed.config.marketType == AlpacaMarketType.CRYPTO && el is JsonObject &&
+                (el["T"] as? JsonPrimitive)?.content in setOf("t", "q", "b", "u", "o")
+              ) {
+                decodeAlpacaCryptoMessage(el)
+              } else {
+                json.decodeFromJsonElement(AlpacaMessageSerializer, el)
+              }
             } catch (e: SerializationException) {
               logger.warn(e) { "failed to decode alpaca message; dropping" }
               null
@@ -838,7 +844,7 @@ class ForwarderApp(
                   }
                 }
               }
-              if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && updates.isNotEmpty()) {
+              if (feed.config.marketType == AlpacaMarketType.OPTIONS && updates.isNotEmpty()) {
                 publishOptionsWsStatus(
                   producer = producer,
                   seq = feed.sequence,
@@ -857,7 +863,7 @@ class ForwarderApp(
           }
         }
       val starvationMonitor =
-        if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+        if (feed.config.marketType == AlpacaMarketType.OPTIONS) {
           launch {
             while (isActive) {
               delay(15_000)
@@ -871,7 +877,7 @@ class ForwarderApp(
                   lastEventAt = lastOptionsMarketDataEventAt.get(),
                   subscribedSince = subscribedSince.get(),
                   subscribedCount = subscribedCount,
-                  marketType = config.alpacaMarketType,
+                  marketType = feed.config.marketType,
                   marketHolidays = config.optionsMarketHolidays,
                 )
               metrics.setOptionsEventStarvation(eventStarved)
@@ -1004,9 +1010,9 @@ class ForwarderApp(
                 val observed = observedMarketDataMessage(msg)
                 if (observed != null) {
                   lastProviderMarketDataAt = Instant.ofEpochMilli(nowMs())
-                  metrics.recordProviderMessage(config.alpacaMarketType, feed.config.feed, observed.channel)
+                  metrics.recordProviderMessage(feed.config.marketType, feed.config.feed, observed.channel)
                   feed.channelFreshness.recordProviderEvent(observed.channel, observed.symbol)
-                  if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && observed.isQuoteOrTrade) {
+                  if (feed.config.marketType == AlpacaMarketType.OPTIONS && observed.isQuoteOrTrade) {
                     lastOptionsMarketDataEventAt.set(Instant.ofEpochMilli(nowMs()))
                     starvationStatusPublished.set(false)
                     metrics.setOptionsEventStarvation(false)
@@ -1014,7 +1020,7 @@ class ForwarderApp(
                   }
                 }
                 val channel = handleMessage(msg, producer, feed)
-                if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && channel in setOf("trade", "trades", "quote", "quotes")) {
+                if (feed.config.marketType == AlpacaMarketType.OPTIONS && channel in setOf("trade", "trades", "quote", "quotes")) {
                   lastOptionsMarketDataEventAt.set(Instant.ofEpochMilli(nowMs()))
                   starvationStatusPublished.set(false)
                   metrics.setOptionsEventStarvation(false)
@@ -1024,18 +1030,17 @@ class ForwarderApp(
             }
           }
           if (
-            feed.config.core &&
-            coreIexProviderIdleRequiresReconnect(
+            providerMarketDataIdleRequiresReconnect(
               subscribedAt = subscribedSince.get(),
               lastProviderMarketDataAt = lastProviderMarketDataAt,
               now = Instant.ofEpochMilli(nowMs()),
-              marketType = config.alpacaMarketType,
+              marketType = feed.config.marketType,
               marketHolidays = config.optionsMarketHolidays,
               equityFeed = feed.config.equityFeed,
               idleTimeoutMs = config.marketDataReadIdleTimeoutMs,
             )
           ) {
-            error("alpaca IEX websocket received no provider market data for ${config.marketDataReadIdleTimeoutMs}ms")
+            error("alpaca websocket feed=${feed.config.feed} received no provider market data for ${config.marketDataReadIdleTimeoutMs}ms")
           }
         }
       } finally {
@@ -1043,7 +1048,7 @@ class ForwarderApp(
         starvationMonitor?.cancel()
         recordMarketDataWsDisconnected(feed)
         publishObservationStatus(producer, feed, "disconnected", feed.errorClass.get(), "market-data session closed")
-        if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+        if (feed.config.marketType == AlpacaMarketType.OPTIONS) {
           publishOptionsWsStatus(
             producer = producer,
             seq = feed.sequence,
@@ -1270,7 +1275,7 @@ class ForwarderApp(
 
   internal suspend fun pollLatestMarketData(producer: KafkaProducer<String, String>) {
     latestMarketData?.poll(coreMarketDataFeed.sequence::next) { envelope ->
-      val topic = requireNotNull(coreMarketDataFeed.config.topicFor(envelope.channel, config.alpacaMarketType))
+      val topic = requireNotNull(coreMarketDataFeed.config.topicFor(envelope.channel))
       recordLag(envelope, coreMarketDataFeed)
       val delivered = CompletableDeferred<Unit>()
       runInterruptible(Dispatchers.IO) {
@@ -1544,14 +1549,9 @@ class ForwarderApp(
   ) {
     val topics =
       buildList {
-        add(feed.config.topics.trades)
-        add(feed.config.topics.quotes)
-        feed.config.topics.bars1m
-          ?.let { add(it) }
-        add(feed.config.topics.status)
-        if (feed.config.core && tradeUpdatesEnabled) {
-          config.topics.tradeUpdates?.let { add(it) }
-        }
+        feed.config.channels.mapNotNullTo(this) { feed.config.topicFor(it) }
+        if (feed.config.marketType != AlpacaMarketType.CRYPTO) add(feed.config.topics.status)
+        if (feed.config.core && tradeUpdatesEnabled) config.topics.tradeUpdates?.let { add(it) }
       }.distinct()
 
     val result =
@@ -1581,6 +1581,16 @@ class ForwarderApp(
     producer: KafkaProducer<String, String>,
     feed: MarketDataFeedRuntimeState,
   ): String? {
+    if (msg is AlpacaCryptoMessage) {
+      val event = msg.event
+      require(event.symbol in feed.config.symbols) { "unsubscribed crypto pair" }
+      val env = cryptoEnvelope(msg, feed.config.feed, Instant.now(), feed.sequence.next(event.symbol))
+      val topic = requireNotNull(feed.config.cryptoEventsTopic)
+      recordLag(env, feed)
+      val serializedSequence = feed.channelFreshness.recordSerializedEvent(env.channel, env.symbol)
+      sendKafka(producer, topic, env, env.channel, feed, serializedSequence)
+      return env.channel
+    }
     when (msg) {
       is AlpacaError -> {
         logger.error { "alpaca error code=${msg.code} msg=${msg.msg}" }
@@ -1592,7 +1602,7 @@ class ForwarderApp(
       }
       is AlpacaTrade -> {
         val dedupKey =
-          if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+          if (feed.config.marketType == AlpacaMarketType.OPTIONS) {
             "${feed.config.feed}:trades:${msg.symbol}:${msg.timestamp}:${msg.price}:${msg.size}:${msg.exchange}:" +
               msg.conditions.orEmpty().joinToString("|")
           } else {
@@ -1607,7 +1617,7 @@ class ForwarderApp(
       }
       is AlpacaQuote -> {
         val dedupKey =
-          if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+          if (feed.config.marketType == AlpacaMarketType.OPTIONS) {
             "${feed.config.feed}:quotes:${msg.symbol}:${msg.timestamp}:${msg.bidPrice}:${msg.bidSize}:" +
               "${msg.askPrice}:${msg.askSize}"
           } else {
@@ -1631,7 +1641,7 @@ class ForwarderApp(
     val env =
       AlpacaMapper.toEnvelope(
         msg,
-        config.alpacaMarketType,
+        feed.config.marketType,
         feed.config.feed,
         feed.config.equityFeed,
       ) { key -> feed.sequence.next(key) }
@@ -1641,7 +1651,7 @@ class ForwarderApp(
         }
     recordLag(env, feed)
 
-    val topic = feed.config.topicFor(env.channel, config.alpacaMarketType) ?: return null
+    val topic = feed.config.topicFor(env.channel) ?: return null
 
     val serializedSequence = feed.channelFreshness.recordSerializedEvent(env.channel, env.symbol)
     sendKafka(producer, topic, env, env.channel, feed, serializedSequence)
@@ -1713,7 +1723,7 @@ class ForwarderApp(
     val observed = observedMarketDataMessage(msg) ?: return
     feed.channelFreshness.recordDeliveryFailure(observed.channel, observed.symbol)
     val reason = marketDataEnvelopeDropReason(msg)
-    metrics.recordMarketDataDrop(config.alpacaMarketType, feed.config.feed, observed.channel, reason)
+    metrics.recordMarketDataDrop(feed.config.marketType, feed.config.feed, observed.channel, reason)
     if (feed.envelopeDropLogged.compareAndSet(false, true)) {
       logger.warn {
         "alpaca market-data frame dropped before envelope " +
@@ -1850,7 +1860,9 @@ class ForwarderApp(
 
   private fun tradeUpdatesGate(): Boolean = if (tradeUpdatesEnabled) tradeUpdatesReady.get() else true
 
-  private fun marketDataChannelsGate(): Boolean = marketDataChannelSnapshot().all { it.ready }
+  private fun marketDataChannelsGate(): Boolean =
+    marketDataChannelSnapshot().all { it.ready } &&
+      marketDataFeeds.filter { !it.config.core && it.config.marketType == AlpacaMarketType.CRYPTO }.all { it.readiness().ready }
 
   private fun marketDataChannelSnapshot(): List<MarketDataChannelReadiness> {
     val snapshot = coreMarketDataFeed.channelFreshness.snapshot()
@@ -2024,7 +2036,7 @@ class ForwarderApp(
     errorClass: ReadinessErrorClass? = null,
     detail: String? = null,
   ) {
-    if (feed.config.core) return
+    if (feed.config.core || feed.config.marketType == AlpacaMarketType.CRYPTO) return
     val now = Instant.ofEpochMilli(nowMs())
     val websocket = feed.websocketStatus.get()
     val payload: JsonElement =
@@ -2156,6 +2168,7 @@ internal data class ObservedMarketDataMessage(
 
 internal fun observedMarketDataMessage(message: AlpacaMessage): ObservedMarketDataMessage? =
   when (message) {
+    is AlpacaCryptoMessage -> ObservedMarketDataMessage(message.event.channel.subscription, message.event.symbol)
     is AlpacaTrade -> ObservedMarketDataMessage("trade", message.symbol)
     is AlpacaQuote -> ObservedMarketDataMessage("quote", message.symbol)
     is AlpacaBar -> ObservedMarketDataMessage("bars", message.symbol)
@@ -2233,6 +2246,7 @@ internal fun marketDataEnvelopeDropReason(message: AlpacaMessage): String {
 
 internal fun alpacaEventTimestamp(message: AlpacaMessage): String? =
   when (message) {
+    is AlpacaCryptoMessage -> message.event.eventTs.toString()
     is AlpacaTrade -> message.timestamp
     is AlpacaQuote -> message.timestamp
     is AlpacaBar -> message.timestamp

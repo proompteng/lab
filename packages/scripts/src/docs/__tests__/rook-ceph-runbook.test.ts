@@ -61,7 +61,7 @@ it('retains the completed scrub profile rollout annotation during runtime reserv
 
   expect(values).toContain('osd_scrub_auto_repair: "true"')
   expect(values).toContain('osd_scrub_auto_repair_num_errors: "5"')
-  expect(values).toContain('osd_max_scrubs: "3"')
+  expect(values).toContain('osd_max_scrubs: "1"')
   expect(kustomization).toContain('path: cephcluster-osd-config-rollout.yaml')
   expect(kustomization).toContain('kind: CephCluster')
   expect(kustomization).toContain('name: rook-ceph')
@@ -78,33 +78,11 @@ it('protects clients while allowing all-day scrub progress without overcommittin
   const values = YAML.parse(readFileSync(join(repoRoot, 'argocd/applications/rook-ceph/cluster-values.yaml'), 'utf8'))
   const osd: Record<string, string> = values.cephClusterSpec.cephConfig.osd
 
-  expect(osd.osd_mclock_profile).toBe('custom')
+  expect(osd.osd_mclock_profile).toBe('high_client_ops')
   expect(osd.osd_scrub_begin_hour).toBe('0')
   expect(osd.osd_scrub_end_hour).toBe('0')
-  expect(osd.osd_max_scrubs).toBe('3')
+  expect(osd.osd_max_scrubs).toBe('1')
   expect(osd).not.toHaveProperty('osd_scrub_sleep')
-
-  const classes = ['client', 'background_recovery', 'background_best_effort']
-  let reservedCapacity = 0
-  for (const service of classes) {
-    const reservation = Number(osd[`osd_mclock_scheduler_${service}_res`])
-    const weight = Number(osd[`osd_mclock_scheduler_${service}_wgt`])
-    const limit = Number(osd[`osd_mclock_scheduler_${service}_lim`])
-
-    expect(reservation).toBeGreaterThan(0)
-    expect(weight).toBeGreaterThan(0)
-    expect(Number.isInteger(weight)).toBe(true)
-    // Ceph interprets zero as unlimited; idle capacity can serve any class.
-    expect(limit).toBe(0)
-    reservedCapacity += reservation
-  }
-  expect(reservedCapacity).toBeLessThanOrEqual(1)
-  expect(Number(osd.osd_mclock_scheduler_client_res)).toBeGreaterThan(
-    Number(osd.osd_mclock_scheduler_background_best_effort_res),
-  )
-  // Preserve a meaningful scrub reservation above the built-in profiles' 5%.
-  expect(Number(osd.osd_mclock_scheduler_background_best_effort_res)).toBeGreaterThan(0.05)
-  expect(Number(osd.osd_mclock_scheduler_background_best_effort_res)).toBeGreaterThan(
-    Number(osd.osd_mclock_scheduler_background_recovery_res),
-  )
+  // The built-in profile owns all scheduler shares; retained custom overrides prevent the migration.
+  expect(Object.keys(osd).filter((key) => key.startsWith('osd_mclock_scheduler_'))).toEqual([])
 })

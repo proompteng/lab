@@ -1,4 +1,6 @@
+import type { JevRequest } from './contract'
 import { Result, Schema } from 'effect'
+import { jevBenchmarkSymbol } from './markets'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -31,28 +33,25 @@ export enum JevSourceExclusion {
 export enum JevEntryExclusion {
   Spread = 'spread',
   DisplayedSize = 'displayed-size',
-  Momentum = 'momentum',
 }
 
 export enum JevBatchPlanVersion {
-  V1 = 'bayn.jev-batch-plan.v1',
-  V2 = 'bayn.jev-batch-plan.v2',
-  V3 = 'bayn.jev-batch-plan.v3',
-  V4 = 'bayn.jev-batch-plan.v4',
+  V6 = 'bayn.jev-batch-plan.v6',
 }
 
+export const JevCandidateExclusionSchema = Schema.Struct({
+  status: Schema.Literal(JevCandidatePlanStatus.Excluded),
+  symbol: SymbolSchema,
+  reason: Schema.Union([Schema.Enum(JevSourceExclusion), Schema.Enum(JevEntryExclusion)]),
+  message: Schema.NonEmptyString,
+})
 const CandidatePlanSchema = Schema.Union([
   Schema.Struct({
     status: Schema.Literal(JevCandidatePlanStatus.Requested),
     symbol: SymbolSchema,
     request: JevEvaluationRequestSchema,
   }),
-  Schema.Struct({
-    status: Schema.Literal(JevCandidatePlanStatus.Excluded),
-    symbol: SymbolSchema,
-    reason: Schema.Union([Schema.Enum(JevSourceExclusion), Schema.Enum(JevEntryExclusion)]),
-    message: Schema.NonEmptyString,
-  }),
+  JevCandidateExclusionSchema,
 ])
 
 const PlanMaterialSchema = Schema.Struct({
@@ -111,19 +110,14 @@ export const makeJevBatchPlan = (input: unknown) =>
     const lifetime = Date.parse(material.expiresAt) - Date.parse(material.observedAt)
     if (lifetime <= 0 || lifetime > 10_000 || material.candidates.length === 0)
       return yield* invalid('Jev batch requires candidates and a bounded validity window')
+    const firstCandidate = material.candidates[0]
+    if (firstCandidate === undefined || material.benchmarkSymbol !== jevBenchmarkSymbol(firstCandidate.symbol))
+      return yield* invalid('Jev batch benchmark anchor differs from its first candidate')
     let previous = ''
     for (const candidate of material.candidates) {
-      if (candidate.symbol <= previous || candidate.symbol === material.benchmarkSymbol)
-        return yield* invalid('Jev batch candidates must be unique, sorted and distinct from the benchmark')
+      if (candidate.symbol <= previous) return yield* invalid('Jev batch candidates must be unique and sorted')
       previous = candidate.symbol
       if (candidate.status === JevCandidatePlanStatus.Excluded) {
-        if (candidate.reason === JevEntryExclusion.Momentum && material.schemaVersion !== JevBatchPlanVersion.V4)
-          return yield* invalid('Momentum exclusions require version-four Jev batches')
-        if (
-          material.schemaVersion === JevBatchPlanVersion.V1 &&
-          (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize)
-        )
-          return yield* invalid('Version-one Jev batches cannot contain entry-quote exclusions')
         continue
       }
       const request = yield* decodeJevEvaluationRequest(candidate.request)
@@ -133,12 +127,12 @@ export const makeJevBatchPlan = (input: unknown) =>
         request.authorityGenerationHash !== material.authorityGenerationHash ||
         request.snapshotId !== material.snapshotId ||
         request.observedAt !== material.observedAt ||
-        request.expiresAt !== material.expiresAt ||
-        (yield* hash({ model: request.request.model, questions: request.request.questions })) !==
-          material.questionSetHash
+        request.expiresAt !== material.expiresAt
       )
         return yield* invalid('Jev batch mixes candidate identity, observation, deadline or question set')
     }
+    if ((yield* jevBatchQuestionSetHash(material.candidates)) !== material.questionSetHash)
+      return yield* invalid('Jev batch question set differs from its sealed candidate requests')
     return { ...material, batchId: yield* hash(material) }
   })
 
@@ -229,11 +223,26 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
       !plan.candidates.every(
         (candidate) =>
           candidate.status === JevCandidatePlanStatus.Excluded &&
-          (candidate.reason === JevEntryExclusion.Spread ||
-            candidate.reason === JevEntryExclusion.DisplayedSize ||
-            (plan.schemaVersion === JevBatchPlanVersion.V4 && candidate.reason === JevEntryExclusion.Momentum)),
+          (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize),
       )
     )
       return yield* invalid('No Jev candidate has usable inference evidence')
     return inferences
   })
+
+export const jevBatchQuestionSetHash = (
+  candidates: readonly { readonly symbol: string; readonly request?: { readonly request: JevRequest } }[],
+) =>
+  hash(
+    candidates.flatMap((candidate) =>
+      candidate.request === undefined
+        ? []
+        : [
+            {
+              symbol: candidate.symbol,
+              model: candidate.request.request.model,
+              questions: candidate.request.request.questions,
+            },
+          ],
+    ),
+  )

@@ -1,18 +1,19 @@
-import { Effect, Option, Result } from 'effect'
+import { intentPlanSchemaVersion } from '../execution/contracts'
+import { Duration, Effect, Option, Result } from 'effect'
 import { withObservedStage } from '../telemetry'
 
-import { MutationOperation } from '../broker/alpaca-mutations'
-import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
-import { CycleRunnerError } from '../cycle/runner'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle/model'
+import { CycleRunnerError } from '../cycle/runner/model'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
-import { legacyAuthorityStateSchemaVersion, legacyIntentPlanSchemaVersion } from '../execution/legacy-wire'
+import { legacyAuthorityStateSchemaVersion } from '../execution/legacy-wire'
 import {
   classifyExistingCommit,
   IntentStore,
   planExecutionIntent,
   validateCommitIdentity,
   type StoredIntent,
-} from '../execution/intents'
+} from '../execution/intents/domain'
 import {
   Authority,
   IntentState,
@@ -24,13 +25,24 @@ import {
   type Intent,
   type Position,
 } from '../execution/contracts'
-import { MutationStore, type MutationEvent } from '../execution/mutations'
+import { MutationStore, type MutationEvent } from '../execution/mutations/model'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
+import {
+  jevBrokerEvidenceFreshUntilMs,
+  jevProfitTargetHoldingDeadlineAt,
+  jevProfitTargetLimitFloors,
+  jevProfitTargetStopCrossed,
+} from '../jev/exit'
+import { jevPricingQuery } from '../jev/runtime'
+import { IntradaySnapshotPurpose, type IntradayMarketDataService } from '../market-data/intraday/model'
+import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import { loadIntradaySnapshot } from './intraday-market-data'
 import { canonicalHashV1Result } from '../hash'
 import type { ReconciliationPassResult } from '../reconciler'
 import type { Policy } from '../risk'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
-import { TargetPlanStatus } from '../target-planner'
+import { TargetPlanStatus } from '../target-planner/index'
 import type { CycleExecutionModel } from '../execution-model-contract'
 import {
   decideExecutionPhaseCompletion,
@@ -49,7 +61,6 @@ import {
   type PreparedMutationCycleStep,
 } from './mutation-decisions'
 import { mutationRunnerError } from './mutation-interpreter'
-import { Pipeable } from '../pipeable'
 
 export type MutationPreparationFacts = {
   readonly snapshot: {
@@ -67,6 +78,7 @@ export type MutationIntentInput = {
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleCloseSubmitCutoffAt?: string
   readonly executionCycleCloseExpiresAt?: string
+  readonly intradayMarketData?: IntradayMarketDataService
 }
 
 export type MutationPreparation = {
@@ -198,25 +210,27 @@ const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolea
   stored.side === expected.side &&
   stored.orderType === expected.orderType &&
   stored.timeInForce === expected.timeInForce &&
-  stored.quantityMicros === expected.quantityMicros &&
+  stored.quantityAtoms === expected.quantityAtoms &&
   stored.notionalLimitMicros === expected.notionalLimitMicros &&
+  stored.limitPriceMicros === expected.limitPriceMicros &&
   stored.createdAt === expected.createdAt
 
 const validateCurrentMutationExecutionTerms = (
-  preparation: MutationPreparation,
   limitSlippageBps: number,
   targetIntent: ExecutionDecisionDocument['targetPlan']['intentTargets'][number],
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
+  minimumSellPriceMicros: bigint | undefined,
 ): Result.Result<void, CycleRunnerError> => {
   const pricing = deriveExecutionIntentPricing({
+    symbol: targetIntent.symbol,
     side: targetIntent.side,
     orderType: targetIntent.orderType,
     timeInForce: targetIntent.timeInForce,
-    quantityMicros: BigInt(targetIntent.quantityMicros),
+    quantityAtoms: BigInt(targetIntent.quantityAtoms),
     referencePriceMicros: BigInt(target.referencePriceMicros),
-    executionModel: preparation.executionModel,
     limitSlippageBps: BigInt(limitSlippageBps),
+    ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
   })
   if (Result.isFailure(pricing)) {
     return Result.fail(
@@ -227,7 +241,8 @@ const validateCurrentMutationExecutionTerms = (
       }),
     )
   }
-  return pricing.success.notionalLimitMicros.toString() === riskBinding.notionalLimitMicros
+  return pricing.success.notionalLimitMicros.toString() === riskBinding.notionalLimitMicros &&
+    pricing.success.expectedExecutionPriceMicros.toString() === riskBinding.limitPriceMicros
     ? Result.succeed(undefined)
     : Result.fail(
         mutationRunnerError({
@@ -258,7 +273,7 @@ const hasBoundSellExposure = (prepared: PreparedExecutionIntent, positions: read
     (position) =>
       position.accountId === prepared.intent.accountId &&
       position.symbol === prepared.intent.symbol &&
-      BigInt(position.quantityMicros) !== 0n,
+      BigInt(position.quantityAtoms) !== 0n,
   )
 
 const entryCloseObligationIsUnresolved = (
@@ -289,7 +304,7 @@ const entryCloseObligationIsUnresolved = (
   )
 }
 
-const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
+export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
   input: I,
   preparation: P,
   policy: Policy,
@@ -389,9 +404,11 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     for (const lookup of recoveryLookups) {
       const intent = yield* planExecutionIntent(
         {
-          schemaVersion: legacyIntentPlanSchemaVersion,
+          schemaVersion: intentPlanSchemaVersion,
           ...lookup.targetIntent,
           notionalLimitMicros: lookup.riskBinding.notionalLimitMicros,
+          limitPriceMicros: lookup.riskBinding.limitPriceMicros,
+          ...(lookup.riskBinding.protection === undefined ? {} : { protection: lookup.riskBinding.protection }),
           ...(document.replanGenerationHash === undefined
             ? {}
             : { replanGenerationHash: document.replanGenerationHash }),
@@ -581,7 +598,15 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     if (!allowSubmit && !drainOpenOrders && uncommittedIntents.length > 0) {
       return { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
     }
+    const profitTarget =
+      document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' ? document.strategyDecision : undefined
+    const profitHoldingDeadlineAt = yield* Effect.fromResult(jevProfitTargetHoldingDeadlineAt(profitTarget)).pipe(
+      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+    )
     if (allowSubmit) {
+      const profitFloors = yield* Effect.fromResult(
+        jevProfitTargetLimitFloors(profitTarget, document.createdAt, document.targetPlan.targets),
+      ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
       for (const prepared of preparedIntents) {
         const requiresFreshSubmission =
           prepared.stored === undefined ||
@@ -589,11 +614,11 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         if (!requiresFreshSubmission) continue
         yield* Effect.fromResult(
           validateCurrentMutationExecutionTerms(
-            preparation,
             document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0,
             prepared.targetIntent,
             prepared.target,
             prepared.riskBinding,
+            profitFloors[prepared.targetIntent.symbol],
           ),
         )
       }
@@ -750,12 +775,109 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
           )
           if (observation._tag === 'StableOpen') {
-            if (drainOpenOrders) {
+            if (
+              drainOpenOrders ||
+              (profitHoldingDeadlineAt !== undefined && facts.evaluatedAt >= profitHoldingDeadlineAt) ||
+              (mutationPhase === 'ENTRY' && record.intent.side === OrderSide.Buy && hasOpenPosition) ||
+              (allowSubmit &&
+                facts.evaluatedAt >=
+                  executionSubmitExpiresAt(submissionCutoffAt, prepared.riskBinding.evaluation.decision.expiresAt))
+            ) {
               return {
                 _tag: 'Execute',
                 action: 'CANCEL',
                 intentId: prepared.intent.intentId,
                 observedAt: facts.evaluatedAt,
+              }
+            }
+            // A resting funded profit limit must release the outstanding order when its
+            // entry-bound stop crosses, including recovery where new submissions are forbidden.
+            // Cancellation is the only action here; terminal reconciliation still precedes any replan.
+            const state = facts.reconciliation.brokerState
+            if (
+              mutationPhase === 'CLOSE' &&
+              record.intent.side === OrderSide.Sell &&
+              profitTarget !== undefined &&
+              profitHoldingDeadlineAt !== undefined &&
+              profitTarget.symbols[0] === record.intent.symbol &&
+              input.intradayMarketData !== undefined &&
+              document.executionSession !== undefined &&
+              state.account.accountId === input.accountId &&
+              state.reconciliation.status === ReconciliationStatus.Exact &&
+              facts.reconciliation.report.metrics.accountingExact &&
+              (latest === undefined || state.reconciliation.reconciledAt >= latest.occurredAt) &&
+              state.unknownOrderCount === 0 &&
+              facts.reconciliation.riskContext.unknownMutationCount === 0 &&
+              state.positions.some(
+                (position) => position.symbol === record.intent.symbol && BigInt(position.quantityAtoms) > 0n,
+              )
+            ) {
+              const observedAt = yield* dependencies.now
+              const freshUntil = jevBrokerEvidenceFreshUntilMs(state)
+              const budgetMs = Math.max(
+                0,
+                Math.min(
+                  profitTarget.evidence.protocol.maximumQuoteAgeMs,
+                  Date.parse(profitHoldingDeadlineAt) - Date.parse(observedAt),
+                  freshUntil - Date.parse(observedAt) - 1,
+                ),
+              )
+              if (
+                budgetMs > 0 &&
+                [
+                  state.account.observedAt,
+                  state.positionsObservedAt,
+                  state.ordersObservedAt,
+                  state.reconciliation.reconciledAt,
+                ].every((at) => at <= observedAt)
+              ) {
+                const marketData = input.intradayMarketData
+                const calendar = document.executionSession.calendar
+                const stop = yield* Effect.gen(function* () {
+                  const query = yield* Effect.fromResult(
+                    jevPricingQuery(
+                      cycle,
+                      profitTarget.evidence.protocol,
+                      calendar,
+                      observedAt,
+                      [record.intent.symbol],
+                      IntradaySnapshotPurpose.Liquidation,
+                    ),
+                  )
+                  const pricing = yield* loadIntradaySnapshot(marketData, query)
+                  const rows = yield* Effect.fromResult(persistIntradayRecordRows(pricing))
+                  const checkedAt = yield* dependencies.now
+                  if (Date.parse(checkedAt) >= freshUntil) return undefined
+                  const crossed = yield* Effect.fromResult(
+                    jevProfitTargetStopCrossed(profitTarget, observedAt, checkedAt, {
+                      manifest: pricing.manifest,
+                      rows,
+                    }),
+                  )
+                  return crossed ? checkedAt : undefined
+                }).pipe(
+                  Effect.catchTags({
+                    JevAwaitingEvidence: () => Effect.void,
+                    OperationalError: (cause) =>
+                      isIntradaySnapshotPending(cause.cause) || cause.retryable ? Effect.void : Effect.fail(cause),
+                  }),
+                  Effect.timeoutOption(Duration.millis(budgetMs)),
+                  Effect.mapError((cause) =>
+                    mutationRunnerError({
+                      message: 'Pending profit stop evidence could not be verified',
+                      cause,
+                      failure: 'market-data',
+                    }),
+                  ),
+                )
+                if (Option.isSome(stop) && stop.value !== undefined) {
+                  return {
+                    _tag: 'Execute',
+                    action: 'CANCEL',
+                    intentId: prepared.intent.intentId,
+                    observedAt: stop.value,
+                  }
+                }
               }
             }
             pendingIntentFound = true
@@ -902,17 +1024,3 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       ? { _tag: 'Complete', observedAt: facts.evaluatedAt }
       : { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: completion.reason }
   })
-
-export const prepareMutationIntent = Pipeable.generic<
-  <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
-    preparation: P,
-    policy: Policy,
-    cycle: AutonomousCycle,
-    document: ExecutionDecisionDocument,
-    reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
-    allowSubmit: boolean,
-    drainOpenOrders: boolean,
-    dependencies: MutationPreparationDependencies<R, E, I, P>,
-  ) => (input: I) => Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore>,
-  typeof prepareMutationIntentDataFirst
->(9, prepareMutationIntentDataFirst)

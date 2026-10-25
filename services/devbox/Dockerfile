@@ -1,8 +1,6 @@
-# syntax=mirror.gcr.io/docker/dockerfile:1.7
+# syntax=mirror.gcr.io/docker/dockerfile:1.20
 FROM mirror.gcr.io/ubuntu:24.04
 SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
-ARG CODEX_VERSION=0.153.4
-ARG RUST_VERSION=1.90.0
 ENV DEBIAN_FRONTEND=noninteractive container=kata
 RUN apt-get update && apt-get install --yes --no-install-recommends \
     systemd systemd-sysv dbus-user-session openssh-server sudo locales \
@@ -25,29 +23,32 @@ RUN mkdir -p /etc/nix /opt/devbox && \
     ln -s "$(cat /opt/devbox/toolchain-path)" /opt/devbox/toolchain
 ENV PATH=/opt/devbox/toolchain/bin:/home/codex/.local/bin:/opt/devbox/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV RUSTUP_HOME=/opt/devbox/rustup CARGO_HOME=/opt/devbox/cargo
-RUN curl --fail --location --retry 3 https://chatgpt.com/codex/install.sh -o /tmp/codex-install.sh && \
-    runuser -u codex -- env CODEX_NON_INTERACTIVE=1 sh /tmp/codex-install.sh --release "${CODEX_VERSION}" && \
-    rm /tmp/codex-install.sh && \
-    case "$(dpkg --print-architecture)" in amd64) rust_arch=x86_64 ;; arm64) rust_arch=aarch64 ;; *) exit 1 ;; esac && \
+ARG RUST_VERSION=1.90.0
+RUN case "$(dpkg --print-architecture)" in amd64) rust_arch=x86_64 ;; arm64) rust_arch=aarch64 ;; *) exit 1 ;; esac && \
     curl --fail --location --retry 3 "https://static.rust-lang.org/rustup/archive/1.28.2/${rust_arch}-unknown-linux-gnu/rustup-init" -o /tmp/rustup-init && \
     curl --fail --location --retry 3 "https://static.rust-lang.org/rustup/archive/1.28.2/${rust_arch}-unknown-linux-gnu/rustup-init.sha256" -o /tmp/rustup-init.sha256 && \
     cd /tmp && sha256sum --check rustup-init.sha256 && chmod +x rustup-init && \
     ./rustup-init -y --no-modify-path --profile minimal --default-toolchain "${RUST_VERSION}" --component rustfmt,clippy && \
     rm /tmp/rustup-init /tmp/rustup-init.sha256
-COPY . /opt/lab-seed
+COPY --exclude=services/devbox . /opt/lab-seed
 COPY --chmod=0755 services/devbox/install-deps.sh /usr/local/bin/devbox-install-deps
 WORKDIR /opt/lab-seed
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/devbox/playwright
-ARG SOURCE_REVISION
 RUN devbox-install-deps && \
     bunx --no-install playwright install --with-deps chromium && \
-    test -n "${SOURCE_REVISION}" && \
-    printf '%s\n' "${SOURCE_REVISION}" > /opt/devbox/source-revision && \
     NIX_REMOTE=local nix develop /opt/lab-toolchain --command toolchain-doctor && \
     NIX_REMOTE=local nix-store --dump-db > /opt/devbox/nix-registration && \
     rm -rf /root/.bun/install/cache /root/.npm /var/lib/apt/lists/*
+ARG CODEX_VERSION=0.162.1
+ARG CODEX_INSTALLER_SHA256=150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6
+RUN curl --fail --location --retry 3 "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/install.sh" -o /tmp/codex-install.sh && \
+    printf '%s  %s\n' "${CODEX_INSTALLER_SHA256}" /tmp/codex-install.sh | sha256sum -c - && \
+    runuser -u codex -- env CODEX_NON_INTERACTIVE=1 sh /tmp/codex-install.sh --release "${CODEX_VERSION}" && \
+    rm /tmp/codex-install.sh
+COPY services/devbox /opt/lab-seed/services/devbox
 COPY --chmod=0755 services/devbox/boot.sh /usr/local/bin/devbox-boot
 COPY --chmod=0755 services/devbox/seed-home.sh /usr/local/bin/devbox-seed-home
+COPY --chmod=0755 services/devbox/seed-nix.sh /usr/local/bin/devbox-seed-nix
 COPY services/devbox/prepare.sh /usr/local/sbin/devbox-prepare
 COPY services/devbox/verify.sh /usr/local/bin/devbox-verify
 COPY services/devbox/profile.sh /etc/profile.d/devbox.sh
@@ -63,6 +64,8 @@ RUN chmod 0755 /usr/local/sbin/devbox-prepare /usr/local/bin/devbox-verify && \
     systemctl enable ssh docker nix-daemon.socket devbox-prepare devbox-health && \
     systemctl mask systemd-resolved.service systemd-networkd.service systemd-networkd-wait-online.service && \
     rm -f /etc/ssh/ssh_host_* /etc/machine-id && touch /etc/machine-id
+ARG SOURCE_REVISION
+RUN test -n "${SOURCE_REVISION}" && printf '%s\n' "${SOURCE_REVISION}" > /opt/devbox/source-revision
 ENV CARGO_HOME=/home/codex/.cargo HOME=/home/codex
 STOPSIGNAL SIGRTMIN+3
 ENTRYPOINT ["/usr/local/bin/devbox-boot"]

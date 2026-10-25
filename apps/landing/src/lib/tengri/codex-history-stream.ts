@@ -2,6 +2,8 @@ import 'server-only'
 
 import type { CodexHistoryPage } from './codex-history'
 import type { TengriErrorCode } from './types'
+import { context } from '@opentelemetry/api'
+import { reportServerError } from '../observability/server'
 
 type HistorySource<Value> = AsyncIterable<Value> & { cancel(): void }
 type HistoryFailure = Error & { status: number; code?: TengriErrorCode }
@@ -12,6 +14,7 @@ export async function codexHistoryResponse<Value>(
   normalize: (value: Value) => CodexHistoryPage,
   failure: (error: unknown) => HistoryFailure,
 ) {
+  const active = context.active()
   const iterator = source[Symbol.asyncIterator]()
   const encoder = new TextEncoder()
   let disposed = false
@@ -67,6 +70,7 @@ export async function codexHistoryResponse<Value>(
           return
         }
         const error = failure(cause)
+        if (error.status >= 500) context.with(active, () => reportServerError(cause, 'tengri.history', error.status))
         controller.enqueue(
           encoder.encode(
             `${JSON.stringify({ type: 'error', error: error.message, status: error.status, code: error.code })}\n`,

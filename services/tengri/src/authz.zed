@@ -1,6 +1,0 @@
-definition tengri_user {}
-
-definition tengri_workspace {
-    relation owner: tengri_user
-    permission access = owner
-}

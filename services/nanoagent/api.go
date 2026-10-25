@@ -23,6 +23,7 @@ const (
 )
 
 type apiConfig struct {
+	guestAuthorization  *guestRPCAdmission
 	bootstrapToken      string
 	codexBinary         string
 	codeServerBinary    string
@@ -38,19 +39,20 @@ type apiConfig struct {
 }
 
 type apiServer struct {
-	bootstrapToken   string
-	codex            *codexSupervisor
-	editor           *editorSupervisor
-	browser          *browserSupervisor
-	evidence         evidence
-	fileMutationMu   sync.RWMutex
-	fileWatcher      *fileWatcher
-	previewRequests  *previewRequestTracker
-	previewTransport http.RoundTripper
-	syncDirectories  func(workspace, ...string) error
-	terminals        *terminalManager
-	workspace        workspace
-	rpc              *grpc.Server
+	guestAuthorization *guestRPCAdmission
+	bootstrapToken     string
+	codex              *codexSupervisor
+	editor             *editorSupervisor
+	browser            *browserSupervisor
+	evidence           evidence
+	fileMutationMu     sync.RWMutex
+	fileWatcher        *fileWatcher
+	previewRequests    *previewRequestTracker
+	previewTransport   http.RoundTripper
+	syncDirectories    func(workspace, ...string) error
+	terminals          *terminalManager
+	workspace          workspace
+	rpc                *grpc.Server
 }
 
 type apiError struct {
@@ -58,6 +60,9 @@ type apiError struct {
 }
 
 func newAPIServer(config apiConfig) (*apiServer, error) {
+	if config.guestAuthorization == nil || config.guestAuthorization.admission == nil || config.guestAuthorization.claim == nil || config.guestAuthorization.recoveryGeneration == 0 {
+		return nil, errors.New("signed guest authorization is required")
+	}
 	if config.bootstrapToken == "" {
 		return nil, errors.New("bootstrap token is required")
 	}
@@ -77,14 +82,15 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	server := &apiServer{
-		bootstrapToken:   config.bootstrapToken,
-		evidence:         config.evidence,
-		fileWatcher:      files,
-		previewRequests:  newPreviewRequestTracker(),
-		previewTransport: transport,
-		syncDirectories:  syncWorkspaceDirectories,
-		terminals:        newTerminalManager(workspace, config.shell, config.homeRoot),
-		workspace:        workspace,
+		guestAuthorization: config.guestAuthorization,
+		bootstrapToken:     config.bootstrapToken,
+		evidence:           config.evidence,
+		fileWatcher:        files,
+		previewRequests:    newPreviewRequestTracker(),
+		previewTransport:   transport,
+		syncDirectories:    syncWorkspaceDirectories,
+		terminals:          newTerminalManager(workspace, config.shell, config.homeRoot),
+		workspace:          workspace,
 	}
 	if config.codeServerBinary != "" {
 		server.editor = newEditorSupervisor(config.codeServerBinary, config.codeServerBootstrap, config.homeRoot, workspace)
@@ -99,6 +105,7 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 	if config.startCodex {
 		server.codex = newCodexSupervisor(config.codexBinary, workspace.realRoot)
 		server.codex.browserMCP = server.browser != nil
+		server.codex.relayRoot = filepath.Join(config.homeRoot, ".tengri", "relay")
 		server.codex.start()
 	}
 	server.evidence.GuestProtocolVersion = guestProtocolVersion
@@ -136,6 +143,10 @@ func (server *apiServer) previewRoutes() http.Handler {
 	mux.HandleFunc("/v1/preview/{port}/{path...}", server.handlePreview)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !strings.HasPrefix(request.URL.Path, "/v1/preview/") {
+			http.NotFound(writer, request)
+			return
+		}
 		authorization := request.Header.Get("Authorization")
 		provided, found := strings.CutPrefix(authorization, "Bearer ")
 		if !found || subtle.ConstantTimeCompare([]byte(provided), []byte(server.bootstrapToken)) != 1 {
@@ -144,9 +155,20 @@ func (server *apiServer) previewRoutes() http.Handler {
 			writeAPIError(writer, http.StatusUnauthorized, "invalid Nanoagent credentials")
 			return
 		}
+		claim, err := server.guestAuthorization.admitHTTP(writer, request)
+		if err != nil {
+			writer.Header().Set(nanoagentAuthFailureHeader, nanoagentAuthFailureHeaderValue)
+			writeAPIError(writer, http.StatusUnauthorized, "invalid signed guest authorization")
+			return
+		}
+		ctx, cancel := server.guestAuthorization.guardHTTPRuntime(request.Context(), claim)
+		defer cancel()
+		request = request.WithContext(ctx)
 		writer.Header().Set("Referrer-Policy", "no-referrer")
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
-		mux.ServeHTTP(writer, request)
+		mux.ServeHTTP(&guestResponseWriter{ResponseWriter: writer, check: func() error {
+			return server.guestAuthorization.requireClaim(claim)
+		}}, request)
 	})
 }
 

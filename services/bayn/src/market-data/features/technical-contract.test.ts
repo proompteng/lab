@@ -1,11 +1,15 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fixture from './fixtures/technical-indicators-v1.json'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import type { IntradayBar } from '../intraday/model'
 import { decodeTechnicalMarketFeature, technicalFeatureMatchesBars, TechnicalReadiness } from './technical-contract'
 
-const rehash = (material: typeof fixture.material) => ({ ...fixture, material, featureId: canonicalHashV1(material) })
+const rehash = (material: typeof fixture.material) => ({
+  ...fixture,
+  material,
+  featureId: Result.getOrThrow(canonicalHashV1Result(material)),
+})
 const rawBars = (): IntradayBar[] =>
   fixture.material.inputs.map((input) => ({
     provider: 'alpaca',
@@ -106,7 +110,11 @@ test('gaps make recursive values unavailable while a contiguous tail can remain 
   }
   expect(
     Result.isSuccess(
-      decodeTechnicalMarketFeature({ ...fixture, material: changed, featureId: canonicalHashV1(changed) }),
+      decodeTechnicalMarketFeature({
+        ...fixture,
+        material: changed,
+        featureId: Result.getOrThrow(canonicalHashV1Result(changed)),
+      }),
     ),
   ).toBe(true)
 })

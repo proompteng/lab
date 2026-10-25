@@ -14,7 +14,6 @@ import {
   type LedgerValidationError,
 } from '../ledger-plan'
 import type { ReconciliationResult } from '../types'
-import { Pipeable } from '../pipeable'
 
 const classifyCreateBatch = <Record extends { readonly id: bigint }>(
   kind: 'account' | 'transfer',
@@ -57,21 +56,17 @@ const classifyCreateBatch = <Record extends { readonly id: bigint }>(
   return Result.succeed(existing)
 }
 
-const classifyAccountCreateBatchDataFirst = (
+export const classifyAccountCreateBatch = (
   accounts: readonly LedgerAccountRecord[],
   results: readonly LedgerCreateResult[],
 ): Result.Result<readonly LedgerAccountRecord[], LedgerValidationError> =>
   classifyCreateBatch('account', 'verify-account-results', accounts, results)
 
-export const classifyAccountCreateBatch = Pipeable.dual(2, classifyAccountCreateBatchDataFirst)
-
-const classifyTransferCreateBatchDataFirst = (
+export const classifyTransferCreateBatch = (
   transfers: readonly LedgerTransferRecord[],
   results: readonly LedgerCreateResult[],
 ): Result.Result<readonly LedgerTransferRecord[], LedgerValidationError> =>
   classifyCreateBatch('transfer', 'verify-transfer-results', transfers, results)
-
-export const classifyTransferCreateBatch = Pipeable.dual(2, classifyTransferCreateBatchDataFirst)
 
 const queryFilter = (ledger: number): LedgerQueryFilter => ({
   user_data_128: 0n,
@@ -148,7 +143,7 @@ export interface LedgerQueries {
   readonly transfers: LedgerQueryFilter
 }
 
-const persistedRunQueriesDataFirst = (
+export const persistedRunQueries = (
   result: ReconciliationResult,
   ledger: number,
 ): Result.Result<LedgerQueries, LedgerValidationError> => {
@@ -180,9 +175,7 @@ const persistedRunQueriesDataFirst = (
   })
 }
 
-export const persistedRunQueries = Pipeable.dual(2, persistedRunQueriesDataFirst)
-
-const accountReconciliationQueriesDataFirst = (plan: LedgerPlan, ledger: number): LedgerQueries => ({
+export const accountReconciliationQueries = (plan: LedgerPlan, ledger: number): LedgerQueries => ({
   accounts: {
     ...queryFilter(ledger),
     user_data_128: plan.runKey,
@@ -195,16 +188,12 @@ const accountReconciliationQueriesDataFirst = (plan: LedgerPlan, ledger: number)
   },
 })
 
-export const accountReconciliationQueries = Pipeable.dual(2, accountReconciliationQueriesDataFirst)
-
-const runPlanQueriesDataFirst = (plan: LedgerPlan, ledger: number): LedgerQueries => ({
+export const runPlanQueries = (plan: LedgerPlan, ledger: number): LedgerQueries => ({
   accounts: { ...queryFilter(ledger), user_data_128: plan.runKey, limit: plan.accounts.length + 1 },
   transfers: { ...queryFilter(ledger), user_data_64: plan.runTag, limit: plan.transfers.length + 1 },
 })
 
-export const runPlanQueries = Pipeable.dual(2, runPlanQueriesDataFirst)
-
-const assembleAccountPlanDataFirst = (
+export const assembleAccountPlan = (
   accountId: string,
   plans: readonly LedgerPlan[],
 ): Result.Result<LedgerPlan, LedgerValidationError> => {
@@ -258,5 +247,3 @@ const assembleAccountPlanDataFirst = (
     transfers: [...transfers.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
   })
 }
-
-export const assembleAccountPlan = Pipeable.dual(2, assembleAccountPlanDataFirst)

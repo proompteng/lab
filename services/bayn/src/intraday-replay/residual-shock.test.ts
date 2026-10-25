@@ -1,8 +1,9 @@
+import { equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import type { StreamingMarketSnapshot } from '../market-data/streaming/snapshot'
 import { checkProperty } from '../testing/property-test-support'
@@ -21,7 +22,7 @@ const number = (value: { numerator: string; denominator: string }) =>
   Number((BigInt(value.numerator) * 1_000_000_000_000n) / BigInt(value.denominator)) / 1_000_000_000_000
 
 test('frozen falsification definition retains its preregistered hash', () => {
-  expect(canonicalHashV1(residualShockDefinition)).toBe(
+  expect(Result.getOrThrow(canonicalHashV1Result(residualShockDefinition))).toBe(
     '76afb9108e06eaacb0231bbfc6a1dc00861451f2677cc8b99aee263691af68d6',
   )
 })
@@ -186,7 +187,7 @@ test('property: candidate order and raw bar order cannot change the selected sym
     'residual-shock-selection-order',
     fc.property(fc.integer({ min: 0, max: 14 }), (shift) => {
       const source = snapshot()
-      const candidates = fixture.protocol.candidateSymbols
+      const candidates = equityMarketProfile.candidateSymbols
       const rotated = [...candidates.slice(shift), ...candidates.slice(0, shift)]
       const result = Result.getOrThrow(
         selectResidualShock(

@@ -10,7 +10,8 @@ import {
 } from './strategy'
 import type { JevProtocol } from './jev/protocol'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
-import { loadConfig, type LoadedRuntimeConfig } from './config'
+import { loadConfig } from './config/load'
+import { type LoadedRuntimeConfig } from './config/model'
 import {
   makeRuntimeProvenanceResult,
   makeStrategyProtocolHashResult,

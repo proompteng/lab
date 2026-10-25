@@ -83,6 +83,13 @@ not clamped to one or rendered as zero. Network directions are separate because 
 or negative link speeds produce no utilization ratio. Weighted disk I/O time estimates average outstanding work;
 disk busy time alone does not establish saturation on a parallel NVMe device.
 
+`CephOsdReadLatencyHigh` pages through the existing critical email route when an OSD's five-minute mean
+client read latency stays above 500 ms for five minutes. `CephOsdQueueWaitHigh` warns when estimated mean
+queue wait stays above 100 ms for ten minutes. Both retain bounded node/OSD identity. Missing or idle reads
+produce no latency estimate; use the existing exporter and OSD performance missing-data alerts for telemetry loss.
+Compare reads and processing time with scrub work, mapped RBD activity, and host queues. A low commit-latency
+gauge does not rule out delayed reads. These alerts do not authorize workload throttling or changing scrub policy.
+
 Correlate `node` with `ceph osd metadata` before attributing an OSD to an HDD or its shared NVMe DB device.
 Do not infer per-application latency from a shared OSD metric. The host agent retains kernel `rbd` device counters
 alongside physical disks under `job="node-storage"`. These identify client-volume work after mapping the device to a PVC.
@@ -93,12 +100,36 @@ Keep client RBD and physical OSD disk measurements separate when calculating tot
 backend PID and lifetime with PostgreSQL waits for a specific stall. Application histograms or a separately authorized
 disposable-PVC benchmark establish application tails; block counters remain sampled storage context.
 
+## Tengri replica-read comparison
+
+The October 11, 2026 read-only probe compared client-local `localize`, `balance`, and `default` policies against
+one retained Tengri home on Turin. Each pass read the same 48 seeded 4 KiB offsets with the librbd client cache
+disabled and a 200-IOPS ceiling. Twenty-eight offsets contained nonzero data. The order was `localize`, `balance`,
+`default`, then the reverse order. No image writes, Ceph configuration changes or workload limits were applied.
+
+| Policy     | First pass mean / p95 | Reverse pass mean / p95 |
+| ---------- | --------------------- | ----------------------- |
+| `localize` | 773 / 2,986 ms        | 414 / 1,438 ms          |
+| `balance`  | 122 / 619 ms          | 172 / 1,005 ms          |
+| `default`  | 146 / 1,156 ms        | 146 / 752 ms            |
+
+Localizing reads had worse tails in both orders. Server caches and concurrent workload activity were uncontrolled;
+these small librbd samples do not establish the guest kernel RBD distribution or a reliable winner between balance
+and default. The current CSI read-affinity setting appends localization after StorageClass map options, so adding
+a StorageClass balance option alone would not change the effective mapping. Retain the existing policy until a
+kernel-client comparison and a bounded adoption path are qualified. Do not disable read affinity cluster-wide
+based on this probe.
+
+Scrubs remained enabled during the comparison. Their marginal latency cost was not isolated, so this evidence does
+not justify changing scrub concurrency or scheduler shares. Keep the shared Ceph workloads together and use the
+read/queue metrics to qualify any later scheduler change.
+
 ## Remove stale recovery overrides
 
 Ceph's monitor configuration database is persistent. Removing an entry from GitOps is not proof that an old live
 override has disappeared. The normal source configuration deliberately omits the five keys below. The mClock
-profile remains `custom`, with the measured per-OSD IOPS values unchanged. Preserve the committed scheduler shares and
-scrub concurrency documented in [the scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture).
+profile is `high_client_ops`, with the measured per-OSD IOPS values unchanged. Remove prior custom scheduler overrides
+through the explicitly authorized profile-migration procedure, and preserve scrub concurrency documented in [the scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture).
 
 Before the one-time authorized cleanup, save the relevant rows from `ceph config dump -f json` and each OSD's
 effective configuration outside Git. Require `HEALTH_OK`, all OSDs up/in, and all PGs active+clean with no recovery,
@@ -119,7 +150,7 @@ values are `osd_mclock_override_recovery_settings=false`, `osd_recovery_max_acti
 `osd_recovery_max_active_hdd=3`, `osd_max_backfills=1`, and `osd_scrub_sleep=0`.
 The zero generic recovery value selects the media-specific defaults; it does not disable recovery.
 
-Scrubs remain eligible all day with `osd_max_scrubs=3`. mClock disables `osd_scrub_sleep`, so retaining
+Scrubs remain eligible all day with `osd_max_scrubs=1` to bound HDD contention for database WAL. mClock disables `osd_scrub_sleep`, so retaining
 `0.1` would misrepresent the effective behavior. Removing these overrides is configuration hygiene, not a claim of
 measured throughput gain. Do not alter IOPS capacities without a separately controlled calibration.
 

@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../testing/market-calendar-fixture'
 import { afterAll, describe, expect, test } from 'bun:test'
 
 import { NodeHttpClient } from '@effect/platform-node'
@@ -14,14 +15,14 @@ import { normalizeBar } from './intraday/verification'
 const describeNative = baynTestClickhouseUrl === undefined ? describe.skip : describe
 const sourceTopic = 'archive-precision-bars'
 const request: IntradaySnapshotRequest = {
-  calendar: {
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+  calendar: withProviderSessions({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
     source: 'alpaca-v2-calendar',
     requestedRange: { start: '2026-10-01', end: '2026-10-01' },
     timeZone: 'UTC',
     sessions: [{ date: '2026-10-01', openAt: '2026-10-01T13:30:00.000Z', closeAt: '2026-10-01T20:00:00.000Z' }],
     normalizedResponseHash: 'b'.repeat(64),
-  },
+  }),
   universeId: 'archive-precision-v1',
   universeSymbolHash: 'a'.repeat(64),
   universe: ['SPY'],

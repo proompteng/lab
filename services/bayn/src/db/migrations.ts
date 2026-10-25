@@ -1,3 +1,47 @@
+import accountBoundEntryFees from '../../migrations/0146_account_bound_entry_fees'
+import currentQuoteBreakout from '../../migrations/0145_current_quote_breakout'
+import alignedSignalPeriods from '../../migrations/0144_aligned_signal_periods'
+import executableProfitLimits from '../../migrations/0143_executable_profit_limits'
+import nativeArrivalAppendLocality from '../../migrations/0142_native_arrival_append_locality'
+import fundedPlanCoverage from '../../migrations/0141_funded_plan_coverage'
+import economicTradePlans from '../../migrations/0140_economic_trade_plans'
+import jevGepaEditor from '../../migrations/0139_jev_gepa_editor'
+import jevEditorStructuredOutput from '../../migrations/0138_jev_editor_structured_output'
+import setupAndPlan from '../../migrations/0137_setup_and_plan'
+import currentAuthorityWrites from '../../migrations/0136_current_authority_writes'
+import jevEditorIdentity from '../../migrations/0135_jev_editor_identity'
+import completePlanChoice from '../../migrations/0133_complete_plan_choice'
+import removeUnusedSchema from '../../migrations/0134_remove_unused_schema'
+import jevHarness2 from '../../migrations/0132_jev_harness2'
+import modelSelectedTradePlan from '../../migrations/0131_model_selected_trade_plan'
+import feeSourceCreatedAt from '../../migrations/0130_fee_source_created_at'
+import harness2Research from '../../migrations/0129_harness2_research'
+import strategyNativeProtection from '../../migrations/0128_strategy_native_protection'
+import currentJevCycles from '../../migrations/0127_current_jev_cycles'
+import entryBoundExits from '../../migrations/0126_entry_bound_exits'
+import marketManagementJudgment from '../../migrations/0125_market_management_judgment'
+import focusedJevJudgments from '../../migrations/0124_focused_jev_judgments'
+import setupActionProtocol from '../../migrations/0123_setup_action_protocol'
+import explicitLimitDecisions from '../../migrations/0122_explicit_limit_decisions'
+import explicitLimitIntents from '../../migrations/0121_explicit_limit_intents'
+import mixedMarketReplay from '../../migrations/0120_mixed_market_replay'
+import nativeArrivalRetention from '../../migrations/0119_native_arrival_retention'
+import completedBarBenchmarks from '../../migrations/0118_completed_bar_benchmarks'
+import riskValuationIndexes from '../../migrations/0117_risk_valuation_indexes'
+import costSupportedEntry from '../../migrations/0116_cost_supported_entry'
+import requiredPositionCost from '../../migrations/0115_required_position_cost'
+import limitOrderCompletion from '../../migrations/0114_limit_order_completion'
+import extendedEquityHours from '../../migrations/0113_extended_equity_hours'
+import shadowDecisionGenerationIndex from '../../migrations/0104_shadow_decision_generation_index'
+import reclassifyExpiredNativeEntry from '../../migrations/0101_reclassify_expired_native_entry'
+import unusedEntryAdmission from '../../migrations/0100_unused_entry_admission'
+import submissionDenialReason from '../../migrations/0099_submission_denial_reason'
+import valkeyBrokerMaterializations from '../../migrations/0098_valkey_broker_materializations'
+import brokerObservationQuota from '../../migrations/0096_broker_observation_quota'
+import continuousCashSpot from '../../migrations/0097_continuous_cash_spot'
+import completionEvidenceIndexes from '../../migrations/0095_completion_evidence_indexes'
+import brokerObservationCaptures from '../../migrations/0094_broker_observation_captures'
+import researchInference from '../../migrations/0093_research_inference'
 import expiredZeroExecutionRearm from '../../migrations/0092_expired_zero_execution_rearm'
 import inferenceExpenseQuotes from '../../migrations/0091_inference_expense_quotes'
 import momentumFirstJevCompatibility from '../../migrations/0090_momentum_first_jev_compatibility'
@@ -91,9 +135,73 @@ import materializedCompletionCutoff from '../../migrations/0060_materialized_com
 import latestRearmPosition from '../../migrations/0061_latest_rearm_position'
 import discrepancyMandateRotation from '../../migrations/0062_discrepancy_mandate_rotation'
 import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
+import observedFeeAccruals from '../../migrations/0102_observed_fee_accruals'
+import cashFeeOpeningPrecision from '../../migrations/0103_cash_fee_opening_precision'
+import cryptoCashFeeSettlement from '../../migrations/0105_crypto_cash_fee_settlement'
+import cashFeeOverrelease from '../../migrations/0106_cash_fee_overrelease'
+import feePostingAcknowledgements from '../../migrations/0107_fee_posting_acknowledgements'
+import availableHistoryProtocol from '../../migrations/0108_available_history_protocol'
+import capitalSizingProtocol from '../../migrations/0109_capital_sizing_protocol'
+import capitalSizingRecovery from '../../migrations/0110_capital_sizing_recovery'
+import modelActionProtocol from '../../migrations/0111_model_action_protocol'
+import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '145_current_quote_breakout': currentQuoteBreakout,
+  '146_account_bound_entry_fees': accountBoundEntryFees,
+  '143_executable_profit_limits': executableProfitLimits,
+  '144_aligned_signal_periods': alignedSignalPeriods,
+  '142_native_arrival_append_locality': nativeArrivalAppendLocality,
+  '140_economic_trade_plans': economicTradePlans,
+  '141_funded_plan_coverage': fundedPlanCoverage,
+  '137_setup_and_plan': setupAndPlan,
+  '138_jev_editor_structured_output': jevEditorStructuredOutput,
+  '139_jev_gepa_editor': jevGepaEditor,
+  '136_current_authority_writes': currentAuthorityWrites,
+  '134_remove_unused_schema': removeUnusedSchema,
+  '127_current_jev_cycles': currentJevCycles,
+  '126_entry_bound_exits': entryBoundExits,
+  '128_strategy_native_protection': strategyNativeProtection,
+  '135_jev_editor_identity': jevEditorIdentity,
+  '132_jev_harness2': jevHarness2,
+  '131_model_selected_trade_plan': modelSelectedTradePlan,
+  '133_complete_plan_choice': completePlanChoice,
+  '129_harness2_research': harness2Research,
+  '130_fee_source_created_at': feeSourceCreatedAt,
+  '123_setup_action_protocol': setupActionProtocol,
+  '124_focused_jev_judgments': focusedJevJudgments,
+  '125_market_management_judgment': marketManagementJudgment,
+  '122_explicit_limit_decisions': explicitLimitDecisions,
+  '121_explicit_limit_intents': explicitLimitIntents,
+  '120_mixed_market_replay': mixedMarketReplay,
+  '119_native_arrival_retention': nativeArrivalRetention,
+  '118_completed_bar_benchmarks': completedBarBenchmarks,
+  '117_risk_valuation_indexes': riskValuationIndexes,
+  '116_cost_supported_entry': costSupportedEntry,
+  '115_required_position_cost': requiredPositionCost,
+  '114_limit_order_completion': limitOrderCompletion,
+  '113_extended_equity_hours': extendedEquityHours,
+  '112_broker_cash_settlements': brokerCashSettlements,
+  '111_model_action_protocol': modelActionProtocol,
+  '109_capital_sizing_protocol': capitalSizingProtocol,
+  '110_capital_sizing_recovery': capitalSizingRecovery,
+  '107_fee_posting_acknowledgements': feePostingAcknowledgements,
+  '108_available_history_protocol': availableHistoryProtocol,
+  '106_cash_fee_overrelease': cashFeeOverrelease,
+  '104_shadow_decision_generation_index': shadowDecisionGenerationIndex,
+  '105_crypto_cash_fee_settlement': cryptoCashFeeSettlement,
+  '103_cash_fee_opening_precision': cashFeeOpeningPrecision,
+  '102_observed_fee_accruals': observedFeeAccruals,
+  '101_reclassify_expired_native_entry': reclassifyExpiredNativeEntry,
+  '100_unused_entry_admission': unusedEntryAdmission,
+  '99_submission_denial_reason': submissionDenialReason,
+  '98_valkey_broker_materializations': valkeyBrokerMaterializations,
+  '96_broker_observation_quota': brokerObservationQuota,
+  '97_continuous_cash_spot': continuousCashSpot,
+  '95_completion_evidence_indexes': completionEvidenceIndexes,
+  '94_broker_observation_captures': brokerObservationCaptures,
+  '93_research_inference': researchInference,
   '92_expired_zero_execution_rearm': expiredZeroExecutionRearm,
   '91_inference_expense_quotes': inferenceExpenseQuotes,
   '90_momentum_first_jev_compatibility': momentumFirstJevCompatibility,

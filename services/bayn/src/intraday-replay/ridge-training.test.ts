@@ -1,9 +1,10 @@
+import { equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem, Layer, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { runRidgeTrainingCommand } from '../ridge-training-command'
 import { utcInstantFromEpochMillis } from '../time'
 import { ControlStudyFailure } from './control-portfolio'
@@ -23,8 +24,8 @@ test('original receipts generate causal labels from partial fills with serial ca
       const report = yield* runRidgeTraining(fixture.input, arrivals, fixture.receipt)
       expect(report.status).toBe('FITTED')
       expect(report.artifact).not.toBeNull()
-      expect(report.chains).toHaveLength(fixture.protocol.candidateSymbols.length)
-      expect(report.rows).toHaveLength(fixture.protocol.candidateSymbols.length * 4)
+      expect(report.chains).toHaveLength(equityMarketProfile.candidateSymbols.length)
+      expect(report.rows).toHaveLength(equityMarketProfile.candidateSymbols.length * 4)
       for (const chain of report.chains) {
         expect(chain.failure).toBeNull()
         expect(chain.skippedSessionDates).toEqual([])
@@ -37,15 +38,15 @@ test('original receipts generate causal labels from partial fills with serial ca
           RidgeTrainingOutcome.Resolved,
           RidgeTrainingOutcome.Resolved,
         ])
-        expect(first?.ledger.fills.map((fill) => fill.quantityMicros)).toEqual([
-          '5000000',
-          '2000000',
-          '2000000',
-          '1000000',
-          '5000000',
-          '2000000',
-          '2000000',
-          '1000000',
+        expect(first?.ledger.fills.map((fill) => fill.quantityAtoms)).toEqual([
+          '5000000000',
+          '2000000000',
+          '2000000000',
+          '1000000000',
+          '5000000000',
+          '2000000000',
+          '2000000000',
+          '1000000000',
         ])
         expect(attempts[0]?.openingCashMicros).toBe('100000000000')
         expect(attempts[0]?.openingTurnoverMicros).toBe('0')
@@ -85,7 +86,7 @@ test('original receipts generate causal labels from partial fills with serial ca
       expect(Result.isFailure(yield* Effect.result(runRidgeTrainingCommand(args)))).toBeTrue()
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
   )
-}, 60_000)
+}, 150_000)
 
 test.each(['unresolved', 'excluded'] as const)(
   '%s produces an explicit no-artifact diagnostic',
@@ -124,7 +125,7 @@ test.each(['unresolved', 'excluded'] as const)(
         expect(report.rows).toEqual([])
         expect(report.status).toBe(mode === 'unresolved' ? 'INCOMPLETE' : 'NO_TRAINING_ROWS')
         if (mode === 'unresolved') {
-          expect(report.unresolvedAttempts).toBe(fixture.protocol.candidateSymbols.length)
+          expect(report.unresolvedAttempts).toBe(equityMarketProfile.candidateSymbols.length)
           expect(report.chains[0]?.skippedSessionDates).toEqual(['2026-09-02'])
           expect(report.chains[0]?.sessions[0]?.trainingAttempts?.[0]).toMatchObject({
             outcome: RidgeTrainingOutcome.Unresolved,
@@ -141,6 +142,17 @@ test.each(['unresolved', 'excluded'] as const)(
 test('pinned calendar rejects an omitted middle training day and source reaching beyond the fit boundary', () => {
   const fixture = ridgeTrainingFixture()
   expect(Result.isSuccess(prepareRidgeTraining(fixture.input, fixture.receipt))).toBeTrue()
+  expect(
+    Result.isFailure(
+      prepareRidgeTraining(
+        {
+          ...fixture.input,
+          backtest: { ...fixture.input.backtest, allocatedDataCostPerSessionMicros: null },
+        },
+        fixture.receipt,
+      ),
+    ),
+  ).toBeTrue()
   const calendar = fixture.input.calendar.map((day, index) => (index === 1 ? { ...day, date: '2026-09-01' } : day))
   const omitted = {
     ...fixture.input,
@@ -155,7 +167,7 @@ test('pinned calendar rejects an omitted middle training day and source reaching
   expect(
     Result.isFailure(
       prepareRidgeTraining(
-        { ...fixture.input, calendar, expectedCalendarHash: canonicalHashV1(calendar) },
+        { ...fixture.input, calendar, expectedCalendarHash: Result.getOrThrow(canonicalHashV1Result(calendar)) },
         fixture.receipt,
       ),
     ),

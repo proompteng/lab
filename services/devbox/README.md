@@ -18,11 +18,28 @@ container is privileged inside its guest so systemd, Docker, Nix, and Codex's Li
 sandbox can work. No host directories, containerd socket, or Kubernetes service
 account credential are exposed to the devbox.
 
+Nix initialization runs once per image registration digest. A completed seed
+mounts the existing store on later boots without scanning it or importing the
+database again. Image upgrades copy missing store paths and use Nix's
+`--register-validity --hash-given` operation to register only unknown paths.
+The completion receipt is written after registration and the toolchain GC root
+succeed. Interrupted copies and imports retry; a missing database or toolchain
+also invalidates the receipt. User-installed packages remain in the store.
+
 Readiness uses the guest's internal HTTP endpoint on port 8080. It requires setup
 to finish and both SSH and Docker to be active. The LAN Service exposes only SSH.
 Systemd delegates cgroup v2 subtrees for Docker; the installed Kata agent cannot
 add `kubectl exec` processes to that non-leaf cgroup. Use SSH for administration.
 HTTP probes avoid that exec limitation while checking the same guest services.
+Preparation retries after five seconds if a startup step fails. Codex can finish
+starting its daemon after the CLI's readiness deadline; a retry recognizes the
+running daemon and completes setup. The HTTP endpoint stays unready until setup
+succeeds. Failed attempts remain in the journal.
+Preparation starts independently of SSH and Docker. Their initial failures cannot
+leave preparation permanently blocked by a failed systemd dependency job. Nix and
+the user manager are wanted dependencies; command failures retry instead of
+preventing the preparation command from running. Readiness still requires setup,
+SSH, and Docker to succeed.
 Docker and containerd data both use the ext4 disk because overlayfs snapshots
 cannot use the image's virtio-fs filesystem as their writable backing store.
 
@@ -31,7 +48,20 @@ cannot use the image's virtio-fs filesystem as their writable backing store.
 The `Codex devbox` workflow builds and exercises one development image on both
 native architectures, then publishes a signed immutable index. The release receipt
 must upload successfully before the Kargo discovery tag is exposed. Publication
-uses the shared Docker retry helper and the registry's 5 MiB/s single bulk writer.
+uses the shared Docker retry helper and the registry's
+[shared upload budget](../../argocd/applications/registry/README.md).
+
+Builds use Docker's native image store instead of exporting and reloading the
+whole image through a separate BuildKit container. Validated main builds publish
+an inline cache at `cache-amd64` and `cache-arm64`. PRs can read those caches but
+cannot replace them. Cache tags are excluded from Kargo discovery. Main releases
+finish publishing when newer commits arrive; superseded PR builds are cancelled.
+Boot files and the source revision are applied after dependency installation, so
+boot-only changes reuse the Nix, Rust, workspace dependency, and browser layers.
+Codex version changes reuse those layers too. The dependency installer itself
+remains an input to its installation layer.
+Build commands use the runner Pod's network. Its 1400-byte MTU avoids the nested
+Docker bridge's 1500-byte MTU, which can stall HTTPS artifact downloads.
 
 The `devbox` Warehouse and Stage bind the image to its source commit and successful
 workflow run. Kargo updates `argocd/applications/devbox` on `kargo/devbox`; the
@@ -119,6 +149,11 @@ Add `codex-turin` in the desktop app's Connections settings and open
 `/home/codex/src/lab`.
 The image contains the version-pinned official standalone Codex installation under
 the user's persistent home. It can bootstrap the daemon without a device login.
+The build downloads `install.sh` from that version's official `openai/codex`
+GitHub release and verifies its pinned SHA-256 before execution. Update
+`CODEX_VERSION` and `CODEX_INSTALLER_SHA256` together from the release asset metadata.
+The upstream installer verifies the selected platform package's checksum and
+reported version; the mutable website installer URL is not a build dependency.
 On boot, the image refreshes its managed standalone package and command links while
 preserving personal configuration, skills, memories, credentials, and workspaces.
 The first-boot service initializes the daemon, clones the source revision used to

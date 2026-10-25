@@ -1,11 +1,15 @@
+import { isNativeError } from 'node:util/types'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import {
   Cause,
+  Clock,
   Effect,
+  Exit,
   Layer,
   Logger,
   ManagedRuntime,
+  Metric,
   Option,
   References,
   Result,
@@ -15,17 +19,56 @@ import {
 } from 'effect'
 import { HttpClient } from 'effect/http'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
 import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
-import { makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
+import { brokerObservationQuotaWindowMs, makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
 import { brokerSnapshotCacheConfig, captureBrokerObservation } from '../broker/alpaca/snapshot-cache'
-import { observedBrokerSnapshotHash, observationUnavailable } from '../broker/alpaca/observed-snapshot'
-import type { BrokerReadError } from '../broker/alpaca/failures'
-import { makeBrokerObservationStore } from '../db/broker-observations'
+import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
+import { canonicalHashV1Result } from '../hash'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
-import { withObservedSpan } from '../telemetry'
+import { withObservedStage } from '../telemetry'
+import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
+import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
+
+export const brokerPublicationFailureAnnotations = (failure: BrokerReadError): Readonly<Record<string, string>> => {
+  const unknown = {
+    'broker.publication_dependency': 'unknown',
+    'broker.publication_operation': 'unknown',
+    'broker.publication_failure_category': 'unknown',
+    'broker.publication_cause_category': 'unknown',
+  }
+  if (!isNativeError(failure)) return unknown
+  try {
+    // The persistence wrapper retains the original cache error as its direct cause.
+    const cause: unknown = Object.getOwnPropertyDescriptor(failure, 'cause')?.value
+    if (!isNativeError(cause) || Object.getPrototypeOf(cause) !== ValkeyCacheError.prototype) return unknown
+    const operation: unknown = Object.getOwnPropertyDescriptor(cause, 'operation')?.value
+    const category: unknown = Object.getOwnPropertyDescriptor(cause, 'category')?.value
+    const causeCategory: unknown = Object.getOwnPropertyDescriptor(cause, 'causeCategory')?.value
+    return {
+      'broker.publication_dependency': 'valkey',
+      'broker.publication_operation':
+        typeof operation === 'string' && ['get', 'put', 'remove', 'configure', 'connect'].includes(operation)
+          ? operation
+          : 'unknown',
+      'broker.publication_failure_category':
+        typeof category === 'string' && Object.values(ValkeyFailureCategory).some((value) => value === category)
+          ? category
+          : 'unknown',
+      'broker.publication_cause_category':
+        typeof causeCategory === 'string' &&
+        Object.values(ValkeyFailureCategory).some((value) => value === causeCategory)
+          ? causeCategory
+          : 'unknown',
+    }
+  } catch {
+    return unknown
+  }
+}
 
 export const settleCompletedBrokerObservationPoll = <R>(
   poll: Effect.Effect<BrokerObservationPoll, BrokerReadError, R>,
@@ -43,19 +86,23 @@ export const settleCompletedBrokerObservationPoll = <R>(
   )
 
 export const acquireBrokerObservationRuntime = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
 ): Effect.Effect<
   {
     readonly runtime: BrokerObservationRuntime
     readonly pollIntervalMs: number
   },
   never,
-  Scope.Scope
+  Scope.Scope | ValkeyCache
 > =>
   Effect.gen(function* () {
+    const cache = yield* ValkeyCache
     const telemetry = Layer.mergeAll(
+      Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
+      Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
       Layer.succeed(Logger.CurrentLoggers, yield* Logger.CurrentLoggers),
       Layer.succeed(Tracer.Tracer, yield* Tracer.Tracer),
+      Layer.succeed(Clock.Clock, yield* Clock.Clock),
     )
     const persistenceResources = PostgresClientLive(plan.config).pipe(
       Layer.provide(NodeServices.layer),
@@ -86,127 +133,172 @@ export const acquireBrokerObservationRuntime = (
         plan.config.alpaca.expectedAccountId,
         plan.config.build.sourceRevision,
         config.maxAgeMs,
+        cache,
       ),
     )
     return {
       pollIntervalMs: config.pollIntervalMs,
       runtime: {
-        activate: (signal) =>
+        activate: (signal, nextPollNotBeforeMs) =>
           managed.runPromise(
-            Effect.flatMap(store, (value) => value.activate),
+            Effect.flatMap(store, (value) => value.activate(nextPollNotBeforeMs)),
             { signal },
           ),
-        nextPollNotBeforeMs: (signal) => managed.runPromise(budget.nextPollNotBeforeMs, { signal }),
-        preparePoll: (signal) => managed.runPromise(budget.prepareCapture, { signal }),
-        poll: (signal, reservation) =>
-          managed.runPromise(
-            Effect.gen(function* () {
-              const claim = yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)
-              if (claim._tag !== 'Claimed') {
-                yield* Effect.flatMap(store, (value) => value.invalidate)
-                if (claim._tag === 'ExpiredUnused') {
-                  // Returning this result journals proof before the owner replaces speculative debt.
-                  // Any interruption/failure before that result, or a repeated claim, keeps the full reservation.
-                  yield* Effect.logWarning('Broker observation capture expired before starting').pipe(
+        poll: (signal, reservation) => {
+          const parent = currentOpenTelemetryParentSpan()
+          const poll = Effect.gen(function* () {
+            // The durable claim must precede HTTP and remain outside completed-work error recovery.
+            const persistence = yield* store
+            const requestedAtMs = yield* Clock.currentTimeMillis
+            const captureStartDeadlineMs = requestedAtMs + plan.config.operationTimeoutMs
+            const interruptedNotBeforeMs =
+              captureStartDeadlineMs + plan.config.operationTimeoutMs * 3 + brokerObservationQuotaWindowMs
+            const claim = yield* persistence.begin(reservation.captureId, interruptedNotBeforeMs)
+            if (claim.status !== BrokerObservationClaimStatus.Reserved)
+              return {
+                _tag: claim.status === BrokerObservationClaimStatus.QuotaWait ? 'QuotaWait' : 'Unavailable',
+                nextPollNotBeforeMs: claim.nextPollNotBeforeMs,
+              } as const
+            const ticket = claim.ticket
+            const claimedAtMs = yield* Clock.currentTimeMillis
+            if (claimedAtMs < requestedAtMs)
+              return yield* observationUnavailable('Broker observation clock regressed before HTTP')
+            yield* budget.beginCapture
+            const now = yield* Clock.currentTimeMillis
+            if (now < claimedAtMs)
+              return yield* observationUnavailable('Broker observation clock regressed before HTTP')
+            if (now > captureStartDeadlineMs) {
+              yield* persistence.failed(ticket, yield* budget.nextPollNotBeforeMs)
+              const expiredByMs = now - captureStartDeadlineMs
+              yield* Effect.logWarning('Broker observation capture expired before starting').pipe(
+                Effect.annotateLogs({
+                  'broker.capture_not_started_reason': 'expired_unused_ticket',
+                  'broker.capture_start_lateness_ms': expiredByMs,
+                }),
+              )
+              return {
+                _tag: 'Unavailable',
+                captureNotStarted: { reason: 'ExpiredUnusedTicket', expiredByMs },
+                nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
+              } as const
+            }
+            return yield* settleCompletedBrokerObservationPoll(
+              Effect.gen(function* () {
+                const capture = Effect.gen(function* () {
+                  const broker = yield* ScopedRef.get(brokerRuntimes)
+                  const parent = yield* Effect.currentSpan.pipe(Effect.orDie)
+                  const annotations = yield* References.CurrentLogAnnotations
+                  return yield* Effect.promise((captureSignal) =>
+                    broker.runPromiseExit(
+                      Effect.gen(function* () {
+                        return yield* captureBrokerObservation(
+                          (yield* BrokerSession).read,
+                          ticket.startedAt,
+                          captureTimeoutMs,
+                        )
+                      }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
+                      { signal: captureSignal },
+                    ),
+                  ).pipe(
+                    Effect.flatMap((exit) =>
+                      Exit.isSuccess(exit)
+                        ? Effect.succeed(exit.value)
+                        : Effect.failCause(
+                            Cause.map(exit.cause, (cause) => {
+                              if (cause instanceof BrokerReadError) return cause
+                              if (cause.cause instanceof BrokerReadError) return cause.cause
+                              return new BrokerReadError({
+                                operation: 'preflight',
+                                kind: BrokerReadErrorKind.Forbidden,
+                                retryable: false,
+                                message: 'Broker account read permissions are unavailable',
+                                cause: cause.cause,
+                              })
+                            }),
+                          ),
+                    ),
+                  )
+                })
+                const result = yield* capture.pipe(
+                  withObservedStage('bayn.broker.observation.capture', { dependency: 'alpaca' }),
+                  Effect.timeoutOrElse({
+                    duration: captureTimeoutMs,
+                    orElse: () =>
+                      Effect.fail(observationUnavailable('Broker observation acquisition exceeded its deadline')),
+                  }),
+                  // Stop lazy layer acquisition on every failed exit before any known-work quota settlement.
+                  Effect.onExit((exit) =>
+                    Exit.isFailure(exit) ? ScopedRef.set(brokerRuntimes, acquireBroker) : Effect.void,
+                  ),
+                  Effect.result,
+                )
+                if (Result.isFailure(result)) {
+                  yield* persistence.failed(ticket, yield* budget.nextPollNotBeforeMs)
+                  yield* Effect.logWarning('Broker observation poll failed').pipe(
                     Effect.annotateLogs({
-                      'broker.capture_not_started_reason': 'expired_unused_ticket',
-                      'broker.capture_start_lateness_ms': claim.expiredByMs,
+                      'broker.operation': result.failure.operation,
+                      'broker.failure_kind': result.failure.kind,
+                      'broker.retryable': result.failure.retryable,
+                      ...(result.failure.status === undefined ? {} : { 'broker.http_status': result.failure.status }),
                     }),
                   )
-                  return {
-                    _tag: 'Unavailable',
-                    captureNotStarted: { reason: 'ExpiredUnusedTicket', expiredByMs: claim.expiredByMs },
-                    nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
-                  } as const
+                  return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs } as const
                 }
-                return {
-                  _tag: 'Unavailable',
-                  nextPollNotBeforeMs: Math.max(reservation.interruptedNotBeforeMs, yield* budget.nextPollNotBeforeMs),
-                } as const
-              }
-              // A claimed worker can replace its interruption reservation with measured usage after completion.
-              // Typed, completed persistence failures have no broker request still in flight.
-              return yield* settleCompletedBrokerObservationPoll(
-                Effect.gen(function* () {
-                  yield* budget.beginCapture
-                  const persistence = yield* store
-                  const ticket = yield* persistence.begin
-                  const capture = Effect.gen(function* () {
-                    const broker = yield* ScopedRef.get(brokerRuntimes)
-                    const parent = yield* Effect.currentSpan.pipe(Effect.orDie)
-                    const annotations = yield* References.CurrentLogAnnotations
-                    return yield* Effect.tryPromise({
-                      try: (captureSignal) =>
-                        broker.runPromise(
-                          Effect.gen(function* () {
-                            return yield* captureBrokerObservation(
-                              (yield* BrokerSession).read,
-                              ticket.startedAt,
-                              captureTimeoutMs,
-                            )
-                          }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
-                          { signal: captureSignal },
-                        ),
-                      catch: (cause) => observationUnavailable('Verified broker observation acquisition failed', cause),
-                    })
-                  })
-                  const result = yield* capture.pipe(
-                    withObservedSpan('bayn.broker.observation.capture'),
-                    Effect.timeoutOrElse({
-                      duration: captureTimeoutMs,
-                      orElse: () =>
-                        Effect.fail(observationUnavailable('Broker observation acquisition exceeded its deadline')),
-                    }),
+                const snapshotHash = yield* Effect.fromResult(canonicalHashV1Result(result.success)).pipe(
+                  Effect.mapError((cause) => observationUnavailable('Broker snapshot cannot be canonicalized', cause)),
+                )
+                const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
+                const publication = yield* persistence
+                  .publish(ticket, result.success, nextPollNotBeforeMs)
+                  .pipe(
+                    withObservedStage('bayn.broker.observation.publish', { dependency: 'postgresql' }),
                     Effect.result,
                   )
-                  if (Result.isFailure(result)) {
-                    // ManagedRuntime's lazy layer build can outlive the canceled capture effect.
-                    // Stop it before a persistence failure may release the measured request budget.
-                    yield* ScopedRef.set(brokerRuntimes, acquireBroker)
-                    yield* persistence.failed(ticket)
-                    yield* Effect.logWarning('Broker observation poll failed').pipe(
-                      Effect.annotateLogs({
-                        'broker.operation': result.failure.operation,
-                        'broker.failure_kind': result.failure.kind,
-                      }),
-                    )
-                    return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs } as const
-                  }
-                  const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
-                  const publication = yield* persistence
-                    .publish(ticket, result.success)
-                    .pipe(withObservedSpan('bayn.broker.observation.publish'), Effect.result)
-                  if (Result.isFailure(publication)) {
-                    yield* persistence.failed(ticket)
-                    yield* Effect.logWarning('Broker observation publication failed')
-                    return { _tag: 'Unavailable', nextPollNotBeforeMs } as const
-                  }
-                  if (!publication.success) return { _tag: 'Invalidated', nextPollNotBeforeMs } as const
-                  yield* Effect.logInfo('Broker observation published').pipe(
-                    Effect.annotateLogs({
-                      'broker.snapshot_hash': observedBrokerSnapshotHash(result.success),
-                      'broker.observed_at': result.success.observedAt,
-                      'broker.source_revision': plan.config.build.sourceRevision,
-                      'broker.next_poll_not_before_ms': nextPollNotBeforeMs,
-                    }),
+                if (Result.isFailure(publication)) {
+                  yield* persistence.failed(ticket, nextPollNotBeforeMs)
+                  yield* Effect.logWarning('Broker observation publication failed').pipe(
+                    Effect.annotateLogs(brokerPublicationFailureAnnotations(publication.failure)),
                   )
-                  return {
-                    _tag: 'Published',
-                    snapshotHash: observedBrokerSnapshotHash(result.success),
-                    nextPollNotBeforeMs,
-                  } as const
-                }),
-                budget.nextPollNotBeforeMs,
-              )
-            }).pipe(
-              Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.invalidate)),
-              withObservedSpan('bayn.broker.observation.poll', {
-                'bayn.source.revision': plan.config.build.sourceRevision,
+                  return { _tag: 'Unavailable', nextPollNotBeforeMs } as const
+                }
+                if (!publication.success) {
+                  yield* persistence.failed(ticket, nextPollNotBeforeMs)
+                  return { _tag: 'Invalidated', nextPollNotBeforeMs } as const
+                }
+                yield* Effect.logInfo('Broker observation published').pipe(
+                  Effect.annotateLogs({
+                    'broker.snapshot_hash': snapshotHash,
+                    'broker.observed_at': result.success.observedAt,
+                    'broker.source_revision': plan.config.build.sourceRevision,
+                    'broker.next_poll_not_before_ms': nextPollNotBeforeMs,
+                  }),
+                )
+                return {
+                  _tag: 'Published',
+                  snapshotHash,
+                  nextPollNotBeforeMs,
+                } as const
               }),
-              Effect.annotateLogs({ sourceRevision: plan.config.build.sourceRevision }),
-            ),
-            { signal },
-          ),
+              budget.nextPollNotBeforeMs,
+            )
+          }).pipe(
+            // A canceled predecessor must not invalidate a newer capture or a published result. Retain the
+            // interrupted capture's quota debt; only its still-owned unfinished projection is fenced.
+            Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.interrupt(reservation.captureId))),
+            withObservedStage('bayn.broker.observation.poll', {
+              attributes: { 'bayn.source.revision': plan.config.build.sourceRevision },
+            }),
+            Effect.annotateLogs({ sourceRevision: plan.config.build.sourceRevision }),
+          )
+          const sampled = Effect.gen(function* () {
+            const startedAtMs = yield* Clock.currentTimeMillis
+            const result = yield* poll
+            return { poll: result, startedAtMs, completedAtMs: yield* Clock.currentTimeMillis }
+          })
+          return managed.runPromise(parent === undefined ? sampled : sampled.pipe(Effect.withParentSpan(parent)), {
+            signal,
+          })
+        },
       },
     }
   })

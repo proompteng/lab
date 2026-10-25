@@ -10,6 +10,7 @@ use std::{
 use anyhow::{Context as _, bail};
 use futures::{Stream, StreamExt};
 use hyper_util::rt::TokioIo;
+use sha2::{Digest, Sha256};
 use spiffe::{SpiffeId, TrustDomain, X509Source, X509Svid, x509_source::SvidPicker};
 use spiffe_rustls::{LocalOnly, authorizer, mtls_client, mtls_server};
 use tokio::{
@@ -45,6 +46,20 @@ impl SvidPicker for ExactIdentity {
 }
 
 impl WorkloadIdentity {
+    pub fn certificate_revision(&self) -> anyhow::Result<[u8; 32]> {
+        match self {
+            Self::Spiffe { source, .. } => {
+                anyhow::ensure!(
+                    source.is_healthy(),
+                    "SPIFFE workload identity is unavailable or expired"
+                );
+                Ok(Sha256::digest(source.svid()?.leaf().as_ref()).into())
+            }
+            #[cfg(test)]
+            Self::Fixture(port) => Ok(Sha256::digest(port.to_be_bytes()).into()),
+        }
+    }
+
     pub async fn from_environment(namespace: &str) -> anyhow::Result<Self> {
         let endpoint =
             env::var("SPIFFE_ENDPOINT_SOCKET").context("SPIFFE_ENDPOINT_SOCKET is required")?;

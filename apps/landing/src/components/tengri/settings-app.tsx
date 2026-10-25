@@ -8,6 +8,7 @@ import type { TengriAgent, TengriCodexAccount, TengriUser } from '@/lib/tengri/t
 import { runTengriAction } from './client'
 import { DesktopAppIcon } from './desktop-app-icon'
 import { PowerSettingsForm } from './power-settings-form'
+import { PasskeyRegistration } from './passkey-registration'
 import { AccessPanel } from './access-panel'
 import { formatAgentDate, formatAgentResources, formatAgentUptime, shouldRefreshCodexAccount } from './settings-model'
 
@@ -377,6 +378,7 @@ export function SettingsApp({
               <h2 id={`${instanceId}-settings-access`} className="text-sm font-medium text-zinc-200">
                 Access
               </h2>
+              <PasskeyRegistration />
               <AccessPanel workspaceUid={agent.uid} active={active && selectedSection === 'access'} />
             </section>
           </div>

@@ -1,3 +1,5 @@
+import { equityRollingValues } from '../../market-data/features/native-feature'
+import { exchangeSessions } from '../../market-hours'
 import { Result, Schema } from 'effect'
 
 import { makeExecutionCalendarObservation } from '../../cycle/construction'
@@ -6,11 +8,10 @@ import type { IntradayCandidateExclusion, IntradayQuote, IntradayTrade } from '.
 import type { StrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
 import { compareIntradayInstants, intradayInstantNanos } from '../../market-data/intraday/time'
 import { strictParseOptions, UtcInstantSchema } from '../../schemas'
-import type { VerifiedStrategyContext } from '../core'
+
 import {
   IntradayMomentumFailure,
   type IntradayMomentumMarketContext,
-  type IntradayMomentumStrategyDefinition,
   type IntradayMomentumTargetPortfolio,
 } from './model'
 import {
@@ -122,7 +123,7 @@ const validateSnapshot = (
   const snapshotSymbols = intradayMomentumSnapshotSymbols(protocol)
   const candidateEnvelope = validateCandidateEnvelope(manifest, protocol)
   if (Result.isFailure(candidateEnvelope)) return Result.fail(candidateEnvelope.failure)
-  const boundSession = manifest.calendar.sessions.find(({ date }) => date === manifest.sessionDate)
+  const boundSession = exchangeSessions(manifest.calendar).find(({ date }) => date === manifest.sessionDate)
   const selectedCalendar =
     boundSession === undefined
       ? undefined
@@ -293,7 +294,16 @@ const decideIntradayMomentumFromEnvelope = (
       return yield* fail('snapshot-identity', 'Strategy requires the canonical feature input contract')
     const core = yield* decideIntradayMomentumCore({
       rollingPrices: Object.fromEntries(
-        snapshot.manifest.streaming.features.map(({ value }) => [value.material.symbol, value.material.values]),
+        yield* Result.all(
+          snapshot.manifest.streaming.features.map(({ value }) =>
+            equityRollingValues(value).pipe(
+              Result.map((values) => [value.material.symbol, values] as const),
+              Result.mapError(
+                (cause) => new IntradayMomentumFailure({ reason: 'snapshot-identity', message: cause.message }),
+              ),
+            ),
+          ),
+        ),
       ),
       latestQuotes: Object.fromEntries(
         Object.entries(snapshot.latestQuotes).map(([symbol, quote]) => [symbol, toCoreQuote(quote)]),
@@ -352,13 +362,3 @@ export const verifyIntradayMomentumDecisionEnvelope = (
             ),
     ),
   )
-
-export const makeIntradayMomentumDefinition = (
-  protocol: IntradayMomentumProtocol,
-): IntradayMomentumStrategyDefinition => ({
-  name: 'intraday-momentum',
-  holdingPeriod: 'INTRADAY',
-  parameters: protocol,
-  decide: (context: VerifiedStrategyContext<IntradayMomentumMarketContext>) =>
-    decideIntradayMomentum(context.market, protocol),
-})

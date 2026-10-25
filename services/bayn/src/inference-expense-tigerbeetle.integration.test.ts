@@ -26,16 +26,45 @@ describeTigerBeetle('native inference expense TigerBeetle records', () => {
             operationTimeoutMs: 5_000,
             tigerBeetle: { clusterId: 20912n, replicaAddresses: [address], ledger: 7_001 },
           })
+          const empty = yield* readInferenceExpenseLedger(
+            client,
+            {
+              evidence: {
+                accountBindingHash: first.accountBindingHash,
+                sessionDate: first.sessionDate,
+                asOf: '1970-01-01T00:00:00.000Z',
+              },
+              quotes: [],
+            },
+            Effect.succeed([]),
+          )
           const plan = Result.getOrThrow(buildInferenceExpensePlan([first, second]))
           yield* postInferenceExpenses(client, plan)
           yield* postInferenceExpenses(client, plan)
-          return yield* readInferenceExpenseLedger(client, first.accountBindingHash, first.sessionDate, [first, second])
+          const owners = [first, second].map((quote) => ({ quote, verifiedAt: '1970-01-01T00:01:00.000Z' }))
+          const captured = yield* readInferenceExpenseLedger(
+            client,
+            {
+              evidence: {
+                accountBindingHash: first.accountBindingHash,
+                sessionDate: first.sessionDate,
+                asOf: '1970-01-01T00:02:00.000Z',
+              },
+              quotes: owners.slice(0, 1),
+            },
+            Effect.succeed(owners),
+          )
+          return { empty, captured }
         }),
       ),
     )
-    expect(result.exactQuotedLedger).toBe(true)
-    expect(result.transferCount).toBe(2)
-    expect(result.knownEstimatedCostPicoUsd).toBe('126000')
-    expect(result.invoiceReconciled).toBe(false)
+    expect(result.empty.transferCount).toBe(0)
+    expect(result.empty.verifiedSessionTransferCount).toBe(0)
+    expect(result.empty.ledgerTimestampMax).toBe('1')
+    expect(result.captured.exactLedgerPrefix).toBe(true)
+    expect(result.captured.transferCount).toBe(1)
+    expect(result.captured.verifiedSessionTransferCount).toBe(2)
+    expect(result.captured.knownEstimatedCostPicoUsd).toBe('42000')
+    expect(result.captured.invoiceReconciled).toBe(false)
   })
 })

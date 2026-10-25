@@ -76,6 +76,8 @@ data class MarketDataArchiveConfig(
   val clickhouseMaxRetries: Int,
   val featuresTopic: String? = null,
   val technicalFeaturesTopic: String? = null,
+  val crypto: CryptoArchiveConfig? = null,
+  val cryptoFeaturesTopic: String? = null,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -163,7 +165,7 @@ data class MarketDataArchiveConfig(
       val saslPassword = env["ARCHIVE_KAFKA_PASSWORD"]?.takeIf { it.isNotEmpty() }
       require(checkpointIntervalMs > 0) { "ARCHIVE_CHECKPOINT_INTERVAL_MS must be > 0" }
       require(parallelism in 1..16) { "ARCHIVE_PARALLELISM must be within 1..16" }
-      require(batchSize in 1..1_000) { "ARCHIVE_CLICKHOUSE_BATCH_SIZE must be within 1..1000" }
+      require(batchSize in 1..10_000) { "ARCHIVE_CLICKHOUSE_BATCH_SIZE must be within 1..10000" }
       require(flushMs >= 250) { "ARCHIVE_CLICKHOUSE_FLUSH_MS must be >= 250" }
       require(maxRetries in 0..10) { "ARCHIVE_CLICKHOUSE_MAX_RETRIES must be within 0..10" }
       if (securityProtocol.startsWith("SASL_")) {
@@ -190,6 +192,8 @@ data class MarketDataArchiveConfig(
         clickhouseMaxRetries = maxRetries,
         featuresTopic = optional("ARCHIVE_FEATURES_TOPIC"),
         technicalFeaturesTopic = optional("ARCHIVE_TECHNICAL_FEATURES_TOPIC"),
+        crypto = CryptoArchiveConfig.fromEnv(env),
+        cryptoFeaturesTopic = optional("ARCHIVE_CRYPTO_FEATURES_TOPIC"),
       )
     }
   }
@@ -312,6 +316,17 @@ internal fun configureMarketDataArchiveJob(
   require(config.technicalFeaturesTopic == null || config.technicalFeaturesTopic != config.featuresTopic) { "feature topics must differ" }
   config.featuresTopic?.let { configureMarketFeatureArchive(environment, config, it) }
   config.technicalFeaturesTopic?.let { configureMarketFeatureArchive(environment, config, it, technical = true) }
+  config.crypto?.let { configureCryptoMarketDataArchive(environment, config, it) }
+  config.cryptoFeaturesTopic?.let { topic ->
+    configureCryptoMarketFeatureArchive(
+      environment,
+      config,
+      requireNotNull(config.crypto) {
+        "crypto features require their raw source"
+      },
+      topic,
+    )
+  }
 }
 
 internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema<ArchiveKafkaRecord> {
@@ -647,12 +662,15 @@ private fun expectedDelayClass(
     else -> error("unsupported archive feed: $feed")
   }
 
-private fun archiveKafkaSource(config: MarketDataArchiveConfig): KafkaSource<ArchiveKafkaRecord> {
+internal fun archiveKafkaSource(
+  config: MarketDataArchiveConfig,
+  topics: List<String> = config.routes.keys.toList(),
+): KafkaSource<ArchiveKafkaRecord> {
   val builder =
     KafkaSource
       .builder<ArchiveKafkaRecord>()
       .setBootstrapServers(config.bootstrapServers)
-      .setTopics(config.routes.keys.toList())
+      .setTopics(topics)
       .setClientIdPrefix(config.clientId)
       .setGroupId(config.groupId)
       .setDeserializer(ArchiveKafkaRecordDeserializer())
@@ -814,7 +832,7 @@ private fun archiveTradeClickhouseSink(config: MarketDataArchiveConfig): JdbcSin
     .buildAtLeastOnce(archiveJdbcConnectionOptions(config))
 }
 
-private fun archiveJdbcExecutionOptions(config: MarketDataArchiveConfig): JdbcExecutionOptions =
+internal fun archiveJdbcExecutionOptions(config: MarketDataArchiveConfig): JdbcExecutionOptions =
   JdbcExecutionOptions
     .builder()
     .withBatchSize(config.clickhouseBatchSize)
@@ -822,7 +840,7 @@ private fun archiveJdbcExecutionOptions(config: MarketDataArchiveConfig): JdbcEx
     .withMaxRetries(config.clickhouseMaxRetries)
     .build()
 
-private fun archiveJdbcConnectionOptions(config: MarketDataArchiveConfig): JdbcConnectionOptions =
+internal fun archiveJdbcConnectionOptions(config: MarketDataArchiveConfig): JdbcConnectionOptions =
   JdbcConnectionOptions
     .JdbcConnectionOptionsBuilder()
     .withUrl(config.clickhouseUrl)

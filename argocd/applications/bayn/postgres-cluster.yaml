@@ -17,6 +17,21 @@ spec:
   enableSuperuserAccess: false
   minSyncReplicas: 1
   maxSyncReplicas: 1
+  managed:
+    roles:
+      - name: bayn_research
+        ensure: present
+        login: true
+        inherit: false
+        superuser: false
+        createdb: false
+        createrole: false
+        replication: false
+        bypassrls: false
+        connectionLimit: 2
+        comment: Isolated native Jev editor claims and receipts
+        passwordSecret:
+          name: bayn-research-db
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   affinity:
@@ -24,11 +39,11 @@ spec:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
           - matchExpressions:
-              - key: kubernetes.io/arch
+              - key: network.proompteng.ai/100g
                 operator: In
                 values:
-                  - amd64
-    podAntiAffinityType: preferred
+                  - "true"
+    podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname
   resources:
     requests:
@@ -49,6 +64,12 @@ spec:
       dataChecksums: true
   postgresql:
     parameters:
+      shared_buffers: 512MB
+      effective_cache_size: 1536MB
+      wal_buffers: 16MB
+      wal_compression: lz4
+      max_wal_size: 4GB
+      checkpoint_timeout: 15min
       password_encryption: scram-sha-256
       ssl_min_protocol_version: TLSv1.3
       log_lock_waits: "on"

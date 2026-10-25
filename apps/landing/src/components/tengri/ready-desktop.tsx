@@ -621,7 +621,11 @@ export function ReadyDesktop({
         }
         await commitDesktopLifecycleAction({
           action,
-          request: () => runTengriAction<TengriAgent | null>({ action, agentId: agent.id }),
+          request: () =>
+            runTengriAction<TengriAgent | null>(
+              { action, agentId: agent.id, workspaceUid: agent.uid },
+              { principalId: user.id },
+            ),
           onCommitted: (committedAction) => {
             committed = true
             setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
@@ -651,7 +655,7 @@ export function ReadyDesktop({
         setBusyAction(null)
       }
     },
-    [agent.id, onChanged],
+    [agent.id, agent.uid, user.id, onChanged],
   )
 
   const signOut = useCallback(async () => {
@@ -815,6 +819,8 @@ export function ReadyDesktop({
               ) : desktopWindow.app === 'chrome' ? (
                 <MemoizedChromeApp
                   agentId={agent.id}
+                  desktopId={desktopId}
+                  windowId={desktopWindow.id}
                   onFocus={() => dispatch({ type: 'focus', id: desktopWindow.id })}
                   previewGatewayOrigin={previewGatewayOrigin}
                 />

@@ -62,19 +62,31 @@ export function controlDatabase(): Promise<Pool> {
       process.emitWarning('Retired Tengri database pool cleanup failed.', { code: 'TENGRI_CONTROL_DB_CLOSE_FAILURE' }),
     )
   const current = pool
-  const expected = createHash('sha256')
-    .update(
-      readFileSync(
-        process.env.TENGRI_DATABASE_SCHEMA_FILE?.trim() ||
-          path.resolve(process.cwd(), '../../services/tengri/migrations/0001_control.sql'),
-      ),
-    )
-    .digest()
+  const migrationDirectory = path.resolve(process.cwd(), '../../services/tengri/migrations')
+  const expected = [
+    '0001_control.sql',
+    '0002_replay_buckets.sql',
+    '0003_replay_slots.sql',
+    '0004_leadership_window.sql',
+    '0005_capability_slots.sql',
+    '0006_preview_lease_identity.sql',
+    '0007_ephemeral_oauth.sql',
+  ].map((file) =>
+    createHash('sha256')
+      .update(readFileSync(path.join(migrationDirectory, file)))
+      .digest(),
+  )
   verified = current
-    .query<{ version: unknown; checksum: unknown }>('SELECT version,checksum FROM tengri.schema_version')
+    .query<{ version: unknown; checksum: unknown }>(
+      'SELECT version,checksum FROM tengri.schema_version ORDER BY version',
+    )
     .then((result) => {
-      const row = z.object({ version: z.literal(1), checksum: z.instanceof(Buffer) }).parse(result.rows[0])
-      if (result.rowCount !== 1 || !row.checksum.equals(expected)) throw new OfzError(503)
+      const rows = z.array(z.object({ version: z.number().int(), checksum: z.instanceof(Buffer) })).parse(result.rows)
+      if (
+        rows.length !== expected.length ||
+        rows.some((row, index) => row.version !== index + 1 || !row.checksum.equals(expected[index]))
+      )
+        throw new OfzError(503)
       return current
     })
     .catch(() => {

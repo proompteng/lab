@@ -1,7 +1,14 @@
+import {
+  isContinuousMarket,
+  tradingWindow,
+  continuousExecutionPolicy,
+  continuousMarketHours,
+  type MarketHours,
+} from '../../market-hours'
 import { DateTime, Option, Result } from 'effect'
 
-import type { MarketCalendarObservation, MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
-import { intradayDecisionDelaySeconds, intradayLookbackMinutes } from '../../strategy/intraday-market'
+import type { MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca/model'
+import { intradayDecisionDelaySeconds, intradayMinimumCompletedHistoryMs } from '../../strategy/intraday-market'
 import {
   makeCycleDraft,
   makeCycleIdentity,
@@ -12,14 +19,13 @@ import {
 import {
   CycleState,
   CycleTerminalReason,
-  intradayCycleEntryAttemptOrdinal,
-  isIntradayAutonomousCycle,
   type AutonomousCycle,
   type CycleDraft,
   type CycleExecutionPolicy,
   type IntradayCycleEntryAttemptOrdinal,
 } from '../model'
 import { cycleDraftMatches, cycleDraftOf } from '../transitions'
+import { unusedEntryExpiresAt } from '../entry-admission'
 
 const calendarRangeDays = 31
 const millisecondsPerDay = 86_400_000
@@ -92,25 +98,32 @@ export const marketCalendarQueryFromSession = (
     }),
   )
 
+export const firstIntradayObservationAtMs = (
+  session: Pick<MarketCalendarSession, 'openAt'>,
+  executionPolicy: { readonly warmupAfterOpenMs: number },
+): number =>
+  Date.parse(session.openAt) +
+  Math.max(executionPolicy.warmupAfterOpenMs, intradayMinimumCompletedHistoryMs) +
+  intradayDecisionDelaySeconds * 1_000
+
 export const selectIntradayExecutionSession = (
-  observation: MarketCalendarObservation,
+  observation: MarketHours,
   executionPolicy: Extract<
     CycleExecutionPolicy,
     { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }
   >,
   observedAt: string,
 ): MarketCalendarSession | undefined => {
+  if (isContinuousMarket(observation)) {
+    const window = tradingWindow(observation, observedAt, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 })
+    return Result.isSuccess(window) && window.success !== null ? window.success : undefined
+  }
   const observedAtMillis = Date.parse(observedAt)
   if (!Number.isFinite(observedAtMillis)) return undefined
 
   return observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
-    const openAtMillis = Date.parse(session.openAt)
     const cutoffAtMillis = Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
-    const hasExecutableWindow =
-      openAtMillis +
-        Math.max(executionPolicy.warmupAfterOpenMs, intradayLookbackMinutes * 60_000) +
-        intradayDecisionDelaySeconds * 1_000 <
-      cutoffAtMillis
+    const hasExecutableWindow = firstIntradayObservationAtMs(session, executionPolicy) < cutoffAtMillis
     if (!Number.isFinite(cutoffAtMillis) || !hasExecutableWindow || observedAtMillis >= cutoffAtMillis) return selected
     return selected === undefined || session.date < selected.date ? session : selected
   }, undefined)
@@ -118,7 +131,7 @@ export const selectIntradayExecutionSession = (
 
 export interface IntradayCycleCandidate {
   readonly cycleBindingId: string
-  readonly strategyName: 'intraday-momentum' | 'jev'
+  readonly strategyName: 'jev'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: Extract<
@@ -129,7 +142,7 @@ export interface IntradayCycleCandidate {
 
 export const makeIntradayCycleDraft = (
   candidate: IntradayCycleCandidate,
-  observation: MarketCalendarObservation,
+  observation: Pick<MarketHours, 'schemaVersion' | 'source'>,
   executionSession: MarketCalendarSession,
   entryAttemptOrdinal: IntradayCycleEntryAttemptOrdinal = 1,
 ): Result.Result<CycleDraft, CycleConstructionFailure> =>
@@ -137,7 +150,9 @@ export const makeIntradayCycleDraft = (
     const executionCalendar = yield* makeExecutionCalendarObservation({
       schemaVersion: observation.schemaVersion,
       source: observation.source,
-      ...executionSession,
+      date: executionSession.date,
+      openAt: executionSession.openAt,
+      closeAt: executionSession.closeAt,
     })
     const identity = yield* makeCycleIdentity({
       schemaVersion: 'bayn.autonomous-cycle-identity.v4',
@@ -159,20 +174,21 @@ export const makeIntradayCycleDraft = (
 export const nextIntradayEntryAttemptOrdinal = (
   cycle: AutonomousCycle,
   observedAt: string,
+  submissionCutoffAt: string,
   recoveredBlockedCycle = false,
 ): IntradayCycleEntryAttemptOrdinal | undefined => {
   if (
-    (cycle.identity.strategyName !== 'intraday-momentum' && cycle.identity.strategyName !== 'jev') ||
-    (cycle.state !== CycleState.Completed && !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
+    (cycle.state !== CycleState.Completed &&
+      cycle.state !== CycleState.NoTrade &&
+      !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
     cycle.terminalAt === undefined ||
     cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' ||
-    observedAt >= cycle.window.submissionCutoffAt
+    observedAt >= submissionCutoffAt
   )
     return undefined
   const currentAttempt =
-    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' ||
     cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4'
-      ? intradayCycleEntryAttemptOrdinal(cycle.identity)
+      ? cycle.identity.entryAttemptOrdinal
       : undefined
   const rearmAt = Date.parse(cycle.terminalAt) + intradayEntryRearmDelayMs
   return currentAttempt !== undefined &&
@@ -184,44 +200,59 @@ export const nextIntradayEntryAttemptOrdinal = (
 }
 
 /**
- * Authority rollover can terminalize an unused pre-submission cycle without a decision document. Reconstruct its
+ * An authority rollover or expired entry lease can leave an unused cycle without a decision. Reconstruct its
  * original draft under the current approved context before allowing a distinct attempt; never reinterpret a changed
  * strategy, account, mandate, calendar or execution policy. The caller must separately prove an absent decision and
  * current execution authority. The ordinary rearm cooldown, cutoff and fresh admission checks still apply.
  */
-export const canRearmUnboundPreSubmissionCycle = (
+export const canRearmUnusedCycle = (
   cycle: AutonomousCycle,
   candidate: IntradayCycleCandidate,
-  observation: MarketCalendarObservation,
+  observation: MarketHours,
   executionSession: MarketCalendarSession,
+  observedAt: string,
 ): boolean => {
   if (
-    !isIntradayAutonomousCycle(cycle) ||
     cycle.state !== CycleState.Blocked ||
-    cycle.terminalReason !== CycleTerminalReason.ProvenanceMismatch ||
     cycle.bindings.snapshotId !== undefined ||
     cycle.bindings.decisionHash !== undefined ||
-    cycle.terminalAt === undefined ||
-    cycle.terminalAt >= cycle.window.submissionOpenAt
+    cycle.terminalAt === undefined
   )
     return false
+  const expiredContinuousLease =
+    cycle.window.executionCalendarSchemaVersion === continuousMarketHours.schemaVersion &&
+    cycle.terminalReason === CycleTerminalReason.MissedSubmission &&
+    cycle.terminalAt >= cycle.window.submissionCutoffAt &&
+    observedAt >= cycle.window.submissionCutoffAt
+  const preSubmissionRollover =
+    cycle.terminalReason === CycleTerminalReason.ProvenanceMismatch && cycle.terminalAt < cycle.window.submissionOpenAt
+  const unusedEntryExpired =
+    cycle.terminalReason === CycleTerminalReason.UnusedEntryExpired &&
+    Date.parse(cycle.terminalAt) >= unusedEntryExpiresAt(cycle) &&
+    Date.parse(observedAt) >= unusedEntryExpiresAt(cycle)
+  if (!expiredContinuousLease && !unusedEntryExpired && !preSubmissionRollover) return false
+  const useOriginalWindow =
+    expiredContinuousLease ||
+    unusedEntryExpired ||
+    cycle.window.executionCalendarSchemaVersion !== observation.schemaVersion
+  const originalSession = useOriginalWindow
+    ? {
+        date: cycle.identity.executionSessionDate,
+        openAt: cycle.window.executionOpenAt,
+        closeAt: cycle.window.executionCloseAt,
+      }
+    : executionSession
   const originalDraft = makeIntradayCycleDraft(
     candidate,
-    observation,
-    executionSession,
-    intradayCycleEntryAttemptOrdinal(cycle.identity),
+    useOriginalWindow
+      ? { schemaVersion: cycle.window.executionCalendarSchemaVersion, source: cycle.window.executionCalendarSource }
+      : observation,
+    originalSession,
+    cycle.identity.entryAttemptOrdinal,
   )
   if (Result.isFailure(originalDraft)) return false
-  if (cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4') {
-    return cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
-  }
-  const identity = originalDraft.success.identity
-  if (identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4') return false
-  // V3 has an implicit first ordinal. Reconstruct that original version solely for comparison;
-  // acquisition still creates a new v4 attempt and never rewrites the retained v3 record.
-  const { cycleId: _cycleId, schemaVersion: _schemaVersion, entryAttemptOrdinal: _ordinal, ...material } = identity
-  const legacyDraft = makeCycleIdentity({ ...material, schemaVersion: 'bayn.autonomous-cycle-identity.v3' }).pipe(
-    Result.flatMap((legacyIdentity) => makeCycleDraft(legacyIdentity, originalDraft.success.window)),
+  return (
+    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4' &&
+    cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
   )
-  return Result.isSuccess(legacyDraft) && cycleDraftMatches(cycleDraftOf(cycle), legacyDraft.success)
 }

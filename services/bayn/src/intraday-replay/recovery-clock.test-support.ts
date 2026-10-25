@@ -9,7 +9,7 @@ export const makeRecoveryContainmentStore = (
   events: { completeHistory: unused, ingest: unused, ingestPositions: unused },
   accounting: { account: unused, verifyCompleted: unused },
   valuation: { value: unused, hasAccountBaseline: unused },
-  reconciliation: { bindings: unused, reconcile: unused },
+  reconciliation: { retainCashReporting: unused, bindings: unused, reconcile: unused },
   authorityRestriction: { restrictAuthority },
 })
 

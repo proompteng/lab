@@ -1,10 +1,9 @@
 import { isSqlError } from 'effect/sql/SqlError'
 
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
-import { isMarketDataVerificationError, renderMarketDataVerificationError } from '../market-data-verification'
-import { Pipeable } from '../pipeable'
+import { isMarketDataVerificationError, renderMarketDataVerificationError } from './verification/errors'
 
-const marketDataOperationErrorDataFirst = (
+export const marketDataOperationError = (
   operation: 'check' | 'inspect' | 'inspect-publication' | 'load',
   message: string,
   cause: unknown,
@@ -25,5 +24,3 @@ const marketDataOperationErrorDataFirst = (
   }
   return retryableOperationalError({ component: 'market-data', operation, message, cause })
 }
-
-export const marketDataOperationError = Pipeable.dual(3, marketDataOperationErrorDataFirst)

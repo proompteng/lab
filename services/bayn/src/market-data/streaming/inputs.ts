@@ -1,4 +1,6 @@
-import { BarPublicationPolicy } from '../intraday/bar-publication'
+import { snapshotMarketCloseAt } from '../../market-hours'
+import { nativeFeatureMatchesBars, rollingWindowStartMs } from '../features/native-feature'
+import { isCryptoMarketFeature } from '../features/crypto-contract'
 import { Result } from 'effect'
 
 import {
@@ -21,7 +23,6 @@ import {
   verifyIntradaySnapshotQuery,
 } from '../intraday/verification'
 import {
-  featureMatchesBars,
   marketFeatureClockSkewAllowanceMs,
   MarketFeatureDefinition,
   rollingFeatureDefinitionMaterial,
@@ -42,35 +43,42 @@ const failure = (reason: IntradaySnapshotFailure['reason'], message: string, cau
 const observedWithin = <A>(entry: ObservedMarketValue<A>, observedAtMs: number) => entry.availableAtMs <= observedAtMs
 const rollingFeatureDefinitionHash = sha256(JSON.stringify(rollingFeatureDefinitionMaterial))
 
+export const missingMinuteBars = (bars: readonly IntradayBar[], startAt: string, endAt: string) => {
+  const start = intradayInstantNanos(startAt)
+  const end = intradayInstantNanos(endAt)
+  const present = new Set(bars.map((bar) => intradayInstantNanos(bar.eventAt)))
+  const missing: string[] = []
+  for (let at = start; at < end; at += 60_000_000_000n)
+    if (!present.has(at)) missing.push(new Date(Number(at / 1_000_000n)).toISOString())
+  return missing
+}
+
 /** Shared input policy only. This does not issue live snapshot or broker authority. */
-export const selectStreamingInputs = (
-  state: StreamingProjection,
-  query: IntradaySnapshotQuery,
-  publicationPolicy = BarPublicationPolicy.TimelyEquivalentRevision,
-) =>
+export const selectStreamingInputs = (state: StreamingProjection, query: IntradaySnapshotQuery) =>
   Result.gen(function* () {
     const request = yield* verifyIntradaySnapshotQuery(query)
     const observedAtMs = Date.parse(request.observedAt)
     const start = intradayInstantNanos(request.rangeStartAt)
     const end = intradayInstantNanos(request.rangeEndAt)
     const symbols = request.symbols ?? request.universe
+    const source = state.sources.get(request.universeId)
+    const technicalTopic = source?.topics.technicalFeatures
+    const inputTopics = Object.values(source?.topics ?? request.sourceTopics)
     const observationEvicted =
       request.purpose === IntradaySnapshotPurpose.Liquidation
         ? symbols.some((symbol) => (state.minimumQuoteObservationMs.get(symbol) ?? 0) > observedAtMs)
         : state.minimumObservationMs > observedAtMs
     if (
       observationEvicted ||
-      discardedRejectionsOverlap(
-        state,
-        Date.parse(request.rangeStartAt),
-        request.purpose === IntradaySnapshotPurpose.Liquidation ? request.sourceTopics.quotes : undefined,
+      (request.purpose === IntradaySnapshotPurpose.Liquidation ? [request.sourceTopics.quotes] : inputTopics).some(
+        (topic) => discardedRejectionsOverlap(state, Date.parse(request.rangeStartAt), topic),
       )
     )
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),
       )
-    const session = request.calendar.sessions.find((entry) => entry.date === request.sessionDate)
-    if (session === undefined)
+    const marketCloseAt = snapshotMarketCloseAt(request.calendar, request.sessionDate, request.observedAt)
+    if (marketCloseAt === undefined)
       return yield* Result.fail(failure('request', 'Streaming snapshot has no bound exchange session'))
     const candidates = new Set(request.candidateSymbols)
     const entries: ObservedMarketValue<IntradayBar | IntradayQuote | IntradayTrade>[] = []
@@ -81,6 +89,16 @@ export const selectStreamingInputs = (
     const featureExclusions: IntradayCandidateExclusion[] = []
     const missingRangeCompletionBars = new Set<string>()
     for (const [key, history] of state.rejections) {
+      if (
+        ![
+          ...Object.values(request.sourceTopics),
+          ...[...state.features.values()]
+            .flat()
+            .filter((entry) => request.universe.includes(entry.value.material.symbol))
+            .map((entry) => entry.topic),
+        ].some((topic) => key.startsWith(`${topic}:`))
+      )
+        continue
       if (request.purpose === IntradaySnapshotPurpose.Liquidation && !key.startsWith(`${request.sourceTopics.quotes}:`))
         continue
       const rejection = history.find(
@@ -98,8 +116,7 @@ export const selectStreamingInputs = (
       if (request.purpose === undefined) {
         entries.push(...bars)
         for (const bar of bars) {
-          const publication =
-            publicationPolicy === BarPublicationPolicy.TimelyEquivalentRevision ? bar.firstPublication : undefined
+          const publication = bar.firstPublication
           publicationBars.push((publication ?? bar).value)
           if (publication !== undefined) {
             if (publication.availableAtMs > observedAtMs || publication.sequence >= bar.sequence)
@@ -112,9 +129,10 @@ export const selectStreamingInputs = (
       if (request.purpose === undefined && trade !== undefined && intradayInstantNanos(trade.value.eventAt) >= start)
         entries.push(trade)
       if (request.purpose !== undefined) continue
-      if (state.technicalTopic !== undefined) {
+      if (technicalTopic !== undefined) {
         for (const candidate of state.technicalFeatures.get(symbol) ?? []) {
           if (
+            candidate.topic !== technicalTopic ||
             !technicalReceiptAvailableAt(state, candidate, observedAtMs) ||
             candidate.value.material.sessionDate !== request.sessionDate ||
             candidate.value.material.windowEndMs !== Date.parse(request.rangeEndAt)
@@ -140,12 +158,12 @@ export const selectStreamingInputs = (
       for (const candidate of state.features.get(symbol) ?? []) {
         if (
           candidate.availableAtMs > observedAtMs ||
-          candidate.value.material.sessionDate !== request.sessionDate ||
-          candidate.value.material.windowStartMs !== Date.parse(request.rangeStartAt) ||
+          (!isCryptoMarketFeature(candidate.value) && candidate.value.material.sessionDate !== request.sessionDate) ||
+          rollingWindowStartMs(candidate.value) !== Date.parse(request.rangeStartAt) ||
           candidate.value.material.windowEndMs !== Date.parse(request.rangeEndAt)
         )
           continue
-        const matches = yield* featureMatchesBars(
+        const matches = yield* nativeFeatureMatchesBars(
           candidate.value,
           bars.map((entry) => entry.value),
         ).pipe(Result.mapError((cause) => failure('identity', 'Streaming feature inputs failed verification', cause)))
@@ -160,14 +178,24 @@ export const selectStreamingInputs = (
         }
         break
       }
+      if (
+        request.benchmarkSymbols?.includes(symbol) === true &&
+        (selected === undefined ||
+          !bars.some((bar) => intradayInstantNanos(bar.value.eventAt) === end - 60_000_000_000n))
+      )
+        return yield* Result.fail(
+          failure('not-ready', `Required completed-bar benchmark is unavailable for ${symbol}`, { symbol }),
+        )
       if (selected !== undefined) featureReceipts.push(selected)
       else if (candidates.has(symbol)) {
         let message = 'matching complete rolling feature is unavailable'
         if (request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade) {
           const present = new Set(bars.map((bar) => intradayInstantNanos(bar.value.eventAt)))
-          const missing: string[] = []
-          for (let at = start; at < end; at += 60_000_000_000n)
-            if (!present.has(at)) missing.push(new Date(Number(at / 1_000_000n)).toISOString())
+          const missing = missingMinuteBars(
+            bars.map((bar) => bar.value),
+            request.rangeStartAt,
+            request.rangeEndAt,
+          )
           if (!present.has(end - 60_000_000_000n)) missingRangeCompletionBars.add(symbol)
           message =
             missing.length > 0
@@ -184,7 +212,7 @@ export const selectStreamingInputs = (
               symbol,
               eventAt: request.rangeEndAt,
               requiredFeature: {
-                definitionId: MarketFeatureDefinition.RollingPrice30m,
+                definitionId: MarketFeatureDefinition.ObservedPriceWindow,
                 definitionHash: rollingFeatureDefinitionHash,
                 windowStartAt: request.rangeStartAt,
                 windowEndAt: request.rangeEndAt,
@@ -210,7 +238,7 @@ export const selectStreamingInputs = (
     yield* validateIdentity(
       request,
       [...quotes, ...trades],
-      session.closeAt,
+      marketCloseAt,
       true,
       undefined,
       marketFeatureClockSkewAllowanceMs,
@@ -231,7 +259,6 @@ export const selectStreamingInputs = (
       quotes,
       trades,
       marketFeatureClockSkewAllowanceMs,
-      publicationPolicy,
     )
     const exclusions = new Map(availability.exclusions.map((exclusion) => [exclusion.symbol, exclusion]))
     for (const exclusion of featureExclusions) {
@@ -240,19 +267,15 @@ export const selectStreamingInputs = (
         exclusions.set(exclusion.symbol, exclusion)
     }
     const excluded = new Set(exclusions.keys())
-    if (request.purpose === undefined && candidates.size > 0 && [...candidates].every((symbol) => excluded.has(symbol)))
-      return yield* Result.fail(
-        failure('not-ready', 'No candidate has complete raw data and a matching rolling feature'),
-      )
     const technicalFeatures =
       request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
         ? technicalReceipts
         : technicalReceipts.filter((feature) => !excluded.has(feature.value.material.symbol))
     const technical =
-      state.technicalTopic === undefined
+      technicalTopic === undefined
         ? undefined
         : {
-            topic: state.technicalTopic,
+            topic: technicalTopic,
             features: technicalFeatures,
             unavailableSymbols: symbols.filter(
               (symbol) => !technicalFeatures.some((feature) => feature.value.material.symbol === symbol),
@@ -272,4 +295,51 @@ export const selectStreamingInputs = (
       exclusions,
       excluded,
     }
+  })
+
+export const diagnoseStreamingInputs = (state: StreamingProjection, query: IntradaySnapshotQuery) =>
+  Result.map(selectStreamingInputs(state, query), (selected) => {
+    const observedAtMs = Date.parse(query.observedAt)
+    const candidates = (query.candidateSymbols ?? []).map((symbol) => {
+      const bars = observedBarsAt(
+        state,
+        symbol,
+        intradayInstantNanos(query.rangeStartAt),
+        intradayInstantNanos(query.rangeEndAt),
+        observedAtMs,
+      )
+      const quote = state.quoteHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
+      const exclusion = selected.exclusions.get(symbol)
+      return {
+        symbol,
+        eligibility:
+          exclusion === undefined
+            ? { status: 'ELIGIBLE' as const }
+            : { status: 'EXCLUDED' as const, reason: exclusion.reason, message: exclusion.message },
+        window: {
+          startAt: query.rangeStartAt,
+          endAt: query.rangeEndAt,
+          requiredBarCount: (Date.parse(query.rangeEndAt) - Date.parse(query.rangeStartAt)) / 60_000,
+          observedBarCount: bars.length,
+          missingBarAt: missingMinuteBars(
+            bars.map((entry) => entry.value),
+            query.rangeStartAt,
+            query.rangeEndAt,
+          ),
+        },
+        matchingFeature: selected.featureReceipts.find((entry) => entry.value.material.symbol === symbol) ?? null,
+        quote:
+          quote === undefined
+            ? null
+            : {
+                eventAt: quote.value.eventAt,
+                ageMs: observedAtMs - Date.parse(quote.value.eventAt),
+                availableAtMs: quote.availableAtMs,
+                sourceTopic: quote.value.sourceTopic,
+                sourcePartition: quote.value.sourcePartition,
+                sourceOffset: quote.value.sourceOffset,
+              },
+      }
+    })
+    return { observedAt: query.observedAt, candidates }
   })

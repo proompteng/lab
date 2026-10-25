@@ -11,7 +11,6 @@ export const QualificationBindingSchema = Schema.Struct({
   lockId: Sha256Schema,
   resultHash: Sha256Schema,
 })
-export type QualificationBinding = typeof QualificationBindingSchema.Type
 
 export const QualifiedCapitalGrantSchema = Schema.TaggedStruct('Qualified', {
   qualification: QualificationBindingSchema,
@@ -31,7 +30,7 @@ export interface ExecutionMandateAllocationFacts {
   readonly maxAdverseSlippageBps: bigint
   readonly targetWeights: Readonly<Record<string, number>>
   readonly positions: readonly {
-    readonly quantityMicros: string
+    readonly quantityAtoms: string
     readonly symbol: string
   }[]
   readonly referencePriceMicros: Readonly<Record<string, string>>
@@ -65,7 +64,7 @@ const currentReferenceGrossExposureMicros = (
         }
         return Result.mapError(
           Result.map(
-            notionalMicros(absolute(BigInt(position.quantityMicros)), BigInt(price)),
+            notionalMicros(absolute(BigInt(position.quantityAtoms)), BigInt(price)),
             (notional) => current + notional,
           ),
           (cause): ExecutionMandateAllocationFailure => ({
@@ -206,6 +205,8 @@ export interface ExecutionMandateAuthorityFacts {
   readonly reason?: string
 }
 
+export const strategyProtocolCutoverRestrictionReason = 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER'
+
 export const executionCycleRestrictionSubject = 'execution cycle loop'
 export const executionActivationRestrictionSubject = 'execution activation lease'
 /** Persistence-only subject retained for the durable completion reason consumed by migrated database predicates. */
@@ -235,7 +236,11 @@ export const isExecutionCyclePreflightStoreRestriction = (reason: string | undef
 
 /** Restrictions whose current bound cycle must be allowed to reach the existing terminal recovery owner. */
 export const isExecutionMandateRecoveryRestriction = (reason: string | undefined): boolean =>
-  reason === reconciliationIncompleteRestrictionReason || isExecutionMandateFailureRestriction(reason)
+  reason === strategyProtocolCutoverRestrictionReason ||
+  reason === 'BLOCKED_AVAILABLE_HISTORY_CUTOVER' ||
+  reason === 'BLOCKED_CONTINUOUS_CASH_SPOT_CUTOVER' ||
+  reason === reconciliationIncompleteRestrictionReason ||
+  isExecutionMandateFailureRestriction(reason)
 
 /** Durable persisted reason retained byte-for-byte so existing database rearm predicates keep accepting new mandates. */
 export const executionMandateCompletedRestrictionReason = `${executionMandateCompletionPersistenceSubject} restricted effective authority: flat exact receipt finalized`
@@ -299,6 +304,13 @@ export const decideExecutionMandateAuthority = (
     facts.effective === 'OBSERVE' &&
     facts.kill === 'ACTIVE' &&
     facts.generationHash !== facts.sourceGenerationHash
+  if (
+    isRestrictedPaperAuthority &&
+    facts.reason === strategyProtocolCutoverRestrictionReason &&
+    !facts.currentGenerationMatchesRequest
+  ) {
+    return Result.succeed({ _tag: 'Rearm' })
+  }
   if (isRestrictedPaperAuthority && facts.reason === reconciliationIncompleteRestrictionReason) {
     return Result.succeed({ _tag: 'Rearm' })
   }

@@ -1,9 +1,11 @@
+import { observeRequest } from '@/lib/observability/server'
 import { createHash } from 'node:crypto'
 import { create, toJson, type MessageInitShape } from '@bufbuild/protobuf'
 import { z } from 'zod'
 import {
   accessCommandSchema,
   accessResourceSchema,
+  MAX_ACCESS_COMMAND_BYTES,
   workspaceUidSchema,
   type AccessCommand,
 } from '@/lib/tengri/access-schemas'
@@ -65,6 +67,10 @@ function workspace(command: AccessCommand) {
 }
 
 export async function GET(request: Request) {
+  return observeRequest(request, 'tengri/access.get', () => handleGET(request))
+}
+
+async function handleGET(request: Request) {
   try {
     requireSameOriginGet(request)
     const identity = await requireTengriIdentity(request)
@@ -103,11 +109,15 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  return observeRequest(request, 'tengri/access.post', () => handlePOST(request))
+}
+
+async function handlePOST(request: Request) {
   try {
     requireSameOrigin(request)
     const identity = await requireTengriIdentity(request)
     const parsed = accessCommandSchema.parse(
-      await readTengriJsonBody(request, { subject: identity.subject, maxBytes: 65536 }),
+      await readTengriJsonBody(request, { subject: identity.subject, maxBytes: MAX_ACCESS_COMMAND_BYTES }),
     )
     const input: MessageInitShape<typeof ExecuteCommandRequestSchema> = {
       context: humanContext(identity, workspace(parsed)),
@@ -173,6 +183,7 @@ export async function POST(request: Request) {
             humanId: human.humanId,
             role: parsed.role === 'developer' ? WorkspaceRole.DEVELOPER : WorkspaceRole.VIEWER,
             enabled: parsed.enabled,
+            ...(parsed.enabled && parsed.role === 'viewer' ? { scope: parsed.scope } : {}),
           },
         }
         break

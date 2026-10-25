@@ -8,14 +8,12 @@ on:
     paths:
       - apps/orbit-salvage/**
       - .github/workflows/orbit-salvage-ci.yml
-      - .github/ci/impact-map.yml
   push:
     branches:
       - main
     paths:
       - apps/orbit-salvage/**
       - .github/workflows/orbit-salvage-ci.yml
-      - .github/ci/impact-map.yml
   workflow_dispatch:
 
 concurrency:

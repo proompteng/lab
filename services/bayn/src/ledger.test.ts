@@ -5,7 +5,7 @@ import { Cause, Effect, Exit, Result } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { provideTestLayer } from './effect-test-support'
 import { OrderSide, type Fill } from './execution/contracts'
 import {
@@ -80,15 +80,15 @@ const journalConfig = {
 } satisfies Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>
 
 const paperFill = (fillId: string, accountId = 'paper-account'): Fill => ({
-  schemaVersion: 'bayn.paper-fill.v1',
+  schemaVersion: 'bayn.fill.v2',
   accountId,
   fillId,
   brokerOrderId: `broker-${fillId}`,
   clientOrderId: `client-${fillId}`,
   symbol: 'NVDA',
   side: OrderSide.Buy,
-  quantityMicros: '1000000',
-  priceMicros: '100000000',
+  quantityAtoms: '1000000000',
+  priceAtoms: '100000000000',
   feeMicros: '100',
   occurredAt: '2026-07-22T15:30:00.000Z',
 })
@@ -98,7 +98,7 @@ const paperPlan = (fillId: string, accountId = 'paper-account') =>
     prepareAccounting(
       fillId.padEnd(64, fillId[0] ?? 'a').slice(0, 64),
       paperFill(fillId, accountId),
-      { quantityMicros: '0', costMicros: '0' },
+      { quantityAtoms: '0', costMicros: '0' },
       journalConfig.tigerBeetle.ledger,
     ),
   ).ledger
@@ -115,6 +115,12 @@ const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): Tige
   lookupTransfers: async () => [],
   queryAccounts: async () => [],
   queryTransfers: async () => [],
+  getAccountTransfers: async () => {
+    throw new Error('unexpected account transfer history read')
+  },
+  getAccountBalances: async () => {
+    throw new Error('unexpected account balance history read')
+  },
   destroy: () => undefined,
   ...overrides,
 })
@@ -170,6 +176,12 @@ const makeLedgerClient = () => {
             (filter.user_data_64 === 0n || transfer.user_data_64 === filter.user_data_64),
         )
         .slice(0, filter.limit),
+    getAccountTransfers: async () => {
+      throw new Error('unexpected account transfer history read')
+    },
+    getAccountBalances: async () => {
+      throw new Error('unexpected account balance history read')
+    },
     destroy: () => undefined,
   }
   return { accounts, transfers, client }
@@ -178,8 +190,9 @@ const makeLedgerClient = () => {
 const withJournal = <A, E>(client: TigerBeetleClient, use: (journal: JournalService) => Effect.Effect<A, E>) =>
   Effect.gen(function* () {
     return yield* use(yield* Journal)
-  }).pipe(
+  }).pipe((self) =>
     provideTestLayer(
+      self,
       JournalLive(journalConfig, {
         createClient: () => client,
         resolveReplicaAddresses: () => Effect.succeed(['3000']),
@@ -848,15 +861,15 @@ describe('TigerBeetle simulation journal', () => {
 
   test('posts one paper fill idempotently and rejects a conflicting transfer', async () => {
     const fill: Fill = {
-      schemaVersion: 'bayn.paper-fill.v1',
+      schemaVersion: 'bayn.fill.v2',
       accountId: 'paper-account',
       fillId: 'activity-1',
       brokerOrderId: 'broker-order-1',
       clientOrderId: 'client-order-1',
       symbol: 'NVDA',
       side: OrderSide.Buy,
-      quantityMicros: '1000000',
-      priceMicros: '100000000',
+      quantityAtoms: '1000000000',
+      priceAtoms: '100000000000',
       feeMicros: '100',
       occurredAt: '2026-07-22T15:30:00.000Z',
     }
@@ -864,7 +877,7 @@ describe('TigerBeetle simulation journal', () => {
       prepareAccounting(
         'a'.repeat(64),
         fill,
-        { quantityMicros: '0', costMicros: '0' },
+        { quantityAtoms: '0', costMicros: '0' },
         journalConfig.tigerBeetle.ledger,
       ),
     ).ledger
@@ -929,15 +942,15 @@ describe('TigerBeetle simulation journal', () => {
 
   test('rebuilds a paper transaction into the exact read-only ledger plan', () => {
     const fill: Fill = {
-      schemaVersion: 'bayn.paper-fill.v1',
+      schemaVersion: 'bayn.fill.v2',
       accountId: 'paper-account',
       fillId: 'activity-2',
       brokerOrderId: 'broker-order-2',
       clientOrderId: 'client-order-2',
       symbol: 'AMD',
       side: OrderSide.Buy,
-      quantityMicros: '2000000',
-      priceMicros: '50000000',
+      quantityAtoms: '2000000000',
+      priceAtoms: '50000000000',
       feeMicros: '0',
       occurredAt: '2026-07-22T15:31:00.000Z',
     }
@@ -945,7 +958,7 @@ describe('TigerBeetle simulation journal', () => {
       prepareAccounting(
         'b'.repeat(64),
         fill,
-        { quantityMicros: '0', costMicros: '0' },
+        { quantityAtoms: '0', costMicros: '0' },
         journalConfig.tigerBeetle.ledger,
       ),
     )
@@ -998,6 +1011,12 @@ describe('TigerBeetle simulation journal', () => {
         writes += 1
         return []
       },
+      getAccountTransfers: async () => {
+        throw new Error('unexpected account transfer history read')
+      },
+      getAccountBalances: async () => {
+        throw new Error('unexpected account balance history read')
+      },
       destroy: () => undefined,
     })
     const config: RuntimeConfig = {
@@ -1015,8 +1034,9 @@ describe('TigerBeetle simulation journal', () => {
     const useJournal = <A, E>(body: (journal: JournalService) => Effect.Effect<A, E>) =>
       Effect.gen(function* () {
         return yield* body(yield* Journal)
-      }).pipe(
+      }).pipe((self) =>
         provideTestLayer(
+          self,
           JournalLive(config, {
             createClient: () => client,
             resolveReplicaAddresses: () => Effect.succeed(['3000']),

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
 
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { checkProperty } from '../../testing/property-test-support'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { reproduceStreamingSnapshot } from './replay'
@@ -26,7 +26,9 @@ test('property: retained receipt order reproduces a snapshot independently of ph
         // Arrival order remains bound by retained receipts; only storage enumeration is permuted.
         const replay = Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, reordered))
         expect(replay).toEqual(snapshot)
-        expect(canonicalHashV1(replay.manifest)).toBe(canonicalHashV1(snapshot.manifest))
+        expect(Result.getOrThrow(canonicalHashV1Result(replay.manifest))).toBe(
+          Result.getOrThrow(canonicalHashV1Result(snapshot.manifest)),
+        )
         const index = seed % rows.bars.length
         const tampered = {
           ...reordered,

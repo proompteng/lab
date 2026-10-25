@@ -1,35 +1,30 @@
-local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
-if not vim.uv.fs_stat(lazypath) then
-  vim.fn.mkdir(vim.fn.fnamemodify(lazypath, ":h"), "p")
-  local staging = vim.fn.trim(vim.fn.system({ "mktemp", "-d", lazypath .. ".install-XXXXXX" }))
-  assert(vim.v.shell_error == 0 and staging ~= "", "create Lazy staging directory: " .. staging)
-  local output = vim.fn.system({
-    "git", "clone", "--filter=blob:none", "--branch=stable",
-    "https://github.com/folke/lazy.nvim.git", staging,
-  })
-  assert(vim.v.shell_error == 0, output)
-  output = vim.fn.system({
-    "git", "-C", staging, "checkout", "--detach",
-    "85c7ff3711b730b4030d03144f6db6375044ae82",
-  })
-  assert(vim.v.shell_error == 0, output)
-  local installed, err = vim.uv.fs_rename(staging, lazypath)
-  assert(installed, err)
-end
-vim.opt.rtp:prepend(lazypath)
+local editor = "/opt/tengri/editor"
+local building = vim.env.TENGRI_EDITOR_BUILD == "1"
+vim.opt.rtp:prepend(editor .. "/plugins/lazy.nvim")
+local plugins = building and {} or dofile(editor .. "/plugins.lua")
 
-require("lazy").setup({
-  {
-    "AstroNvim/AstroNvim",
-    version = "v6.1.0",
-    import = "astronvim.plugins",
-    opts = {
-      mapleader = " ",
-      maplocalleader = ",",
-      icons_enabled = true,
-    },
+table.insert(plugins, {
+  "AstroNvim/AstroNvim",
+  version = "v6.1.0",
+  commit = "aa0545fc8357009fc8a67e6cd93e7f8544e3aba9",
+  import = "astronvim.plugins",
+  opts = {
+    mapleader = " ",
+    maplocalleader = ",",
+    icons_enabled = true,
   },
-}, {
-  install = { colorscheme = { "astrotheme", "habamax" } },
+})
+table.insert(plugins, {
+  "AstroNvim/astrocore",
+  opts = function(_, opts)
+    opts.treesitter.auto_install = false
+    opts.treesitter.ensure_installed = {}
+  end,
+})
+require("lazy").setup(plugins, {
+  root = building and editor .. "/plugins" or nil,
+  lockfile = building and editor .. "/lazy-lock.json" or nil,
+  install = { missing = building, colorscheme = { "astrotheme", "habamax" } },
   ui = { backdrop = 100 },
+  performance = { rtp = { paths = { editor .. "/site" } } },
 })

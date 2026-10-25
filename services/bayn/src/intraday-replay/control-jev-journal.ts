@@ -12,9 +12,10 @@ import {
 } from '../jev/batch'
 import { type JevBatchEvidence, JevBatchStore } from '../jev/batch-evaluation'
 import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest, type JevEvaluationRequest } from '../jev/evidence'
-import { JevClaim, JevEvaluationStore } from '../jev/evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { JevPurpose } from '../jev/portfolio'
+import { JevEntryTargetSchema } from '../jev/decision'
 import {
   decodeJevResolution,
   JevResolutionStatus,
@@ -22,7 +23,7 @@ import {
   type JevEvaluationEvidence,
 } from '../jev/resolution'
 import { reproduceJevTradingSignalBatch } from '../jev/trading-signals'
-import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import type { ReplayJevCall } from './jev-timing'
@@ -133,29 +134,6 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
       })
     const evaluations: JevEvaluationStore['Service'] = {
       read: (id) => atomic(readEvaluation(id)),
-      begin: (raw) =>
-        atomic(
-          Effect.gen(function* () {
-            const request = yield* Effect.fromResult(decodeJevEvaluationRequest(raw))
-            const planned = plannedRequests.get(request.requestId)
-            if (
-              planned === undefined ||
-              (yield* Effect.fromResult(canonicalHashV1Result(planned))) !==
-                (yield* Effect.fromResult(canonicalHashV1Result(request)))
-            )
-              return yield* failure('Inference requires its committed native batch')
-            const saved = yield* readEvaluation(request.requestId)
-            if (saved === null) {
-              yield* write('request', request.requestId, request)
-              return { status: JevClaim.Acquired } as const
-            }
-            if (saved.resolution === null) return { status: JevClaim.Pending } as const
-            if (saved.resolution.status === JevResolutionStatus.Abandoned)
-              return { status: JevClaim.Abandoned, resolution: saved.resolution } as const
-            if (saved.receipt === null) return yield* failure('Recorded request lacks its receipt')
-            return { status: JevClaim.Recorded, receipt: saved.receipt, resolution: saved.resolution } as const
-          }),
-        ),
       record: (rawRequest, rawReceipt) =>
         atomic(
           Effect.gen(function* () {
@@ -233,20 +211,28 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             return pending.sort()
           }),
         ),
-      begin: (raw) =>
+      begin: (raw, suppliedObservation) =>
         atomic(
           Effect.gen(function* () {
             const decoded = yield* Effect.fromResult(decodeJevBatchPlan(raw))
+            yield* Effect.fromResult(reproduceJevTradingSignalBatch(suppliedObservation, decoded))
+            yield* recordObservation({ contentHash: decoded.observationHash, payload: suppliedObservation })
             const observation = yield* readObservation(decoded.observationHash)
             const plan = yield* Effect.fromResult(reproduceJevTradingSignalBatch(observation, decoded))
             const saved = yield* readBatch(plan.batchId)
-            if (saved !== null) return saved
+            if (saved !== null) return { ...saved, dispatches: [] }
+            const claimedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
             yield* write('batch', plan.batchId, plan)
             pendingBatches.add(plan.batchId)
-            for (const candidate of plan.candidates)
-              if (candidate.status === JevCandidatePlanStatus.Requested)
+            const dispatches = []
+            for (const candidate of plan.candidates) {
+              if (candidate.status === JevCandidatePlanStatus.Requested) {
+                yield* write('request', candidate.request.requestId, candidate.request)
                 plannedRequests.set(candidate.request.requestId, candidate.request)
-            return { plan, result: null }
+                dispatches.push({ request: candidate.request, claimedAt })
+              }
+            }
+            return { plan, result: null, dispatches }
           }),
         ),
       finish: (id) =>
@@ -303,46 +289,66 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
           }),
         ),
     }
+    const recordObservation = ({ contentHash, payload }: CandidateObservation) =>
+      Effect.gen(function* () {
+        const observation = yield* Effect.fromResult(reproduceJevCandidateObservation(payload))
+        if (
+          observation.schemaVersion !== 'bayn.jev-observation.v1' ||
+          observation.contentHash !== contentHash ||
+          observation.portfolio.brokerState.account.accountId !== `research-control-${runId}` ||
+          observation.cycleId !==
+            (yield* Effect.fromResult(
+              canonicalHashV1Result({ runId, sessionDate: observation.snapshot.manifest.sessionDate }),
+            )) ||
+          observation.authorityGenerationHash !==
+            (yield* Effect.fromResult(
+              canonicalHashV1Result({
+                runId,
+                scope: 'SIMULATED_CONTROL',
+                protocol: observation.protocol,
+              }),
+            ))
+        )
+          return yield* failure('Observation does not belong to this simulated control')
+        const existing = yield* read('observation', contentHash)
+        if (existing === null) yield* write('observation', contentHash, payload)
+        else yield* readObservation(contentHash)
+        const key = `${observation.cycleId}:${observation.portfolio.purpose}`
+        const previous = windows.get(key)
+        if (previous === undefined || previous < observation.snapshot.manifest.rangeEndAt)
+          windows.set(key, observation.snapshot.manifest.rangeEndAt)
+      })
     const observations: CandidateObservationStore['Service'] = {
       latestJevWindowEnd: ({ cycleId, purpose }) =>
         atomic(Effect.sync(() => Option.fromNullishOr(windows.get(`${cycleId}:${purpose}`)))),
-      record: ({ contentHash, payload }) =>
-        atomic(
-          Effect.gen(function* () {
-            const observation = yield* Effect.fromResult(reproduceJevCandidateObservation(payload))
-            if (
-              observation.schemaVersion !== 'bayn.jev-observation.v1' ||
-              observation.contentHash !== contentHash ||
-              observation.portfolio.purpose !== JevPurpose.Manage ||
-              observation.portfolio.brokerState.account.accountId !== `research-control-management-${runId}` ||
-              observation.cycleId !==
-                (yield* Effect.fromResult(
-                  canonicalHashV1Result({ runId, sessionDate: observation.snapshot.manifest.sessionDate }),
-                )) ||
-              observation.authorityGenerationHash !==
-                (yield* Effect.fromResult(
-                  canonicalHashV1Result({
-                    runId,
-                    scope: 'SIMULATED_CONTROL_MANAGEMENT',
-                    protocol: observation.protocol,
-                  }),
-                ))
-            )
-              return yield* failure('Observation does not belong to this simulated control')
-            const existing = yield* read('observation', contentHash)
-            if (existing === null) yield* write('observation', contentHash, payload)
-            else yield* readObservation(contentHash)
-            const key = `${observation.cycleId}:${observation.portfolio.purpose}`
-            const previous = windows.get(key)
-            if (previous === undefined || previous < observation.snapshot.manifest.rangeEndAt)
-              windows.set(key, observation.snapshot.manifest.rangeEndAt)
-          }),
-        ),
+      record: (observation) => atomic(recordObservation(observation)),
     }
     return {
       evaluations,
       batches: batchStore,
       observations,
+      usable: Effect.sync(() => !interrupted),
+      retainEntryDecision: (raw: unknown) =>
+        atomic(
+          Effect.gen(function* () {
+            const decision = yield* Schema.decodeUnknownEffect(JevEntryTargetSchema, strictParseOptions)(raw)
+            const storedBatch = yield* readBatch(decision.evidence.batchPlan.batchId)
+            if (storedBatch?.result?.resultHash !== decision.evidence.batchResult.resultHash)
+              return yield* failure('Entry decision has no identical committed batch result')
+            const observation = yield* Effect.fromResult(
+              reproduceJevCandidateObservation(yield* readObservation(decision.evidence.batchPlan.observationHash)),
+            )
+            if (
+              observation.schemaVersion !== 'bayn.jev-observation.v1' ||
+              observation.portfolio.purpose !== JevPurpose.Entry ||
+              observation.portfolio.brokerState.account.accountId !== `research-control-${runId}`
+            )
+              return yield* failure('Entry decision belongs to another independent portfolio')
+            const hash = yield* Effect.fromResult(canonicalHashV1Result(decision))
+            yield* write('entry-decision', hash, decision)
+            return hash
+          }),
+        ),
       calls: Effect.sync((): readonly ReplayJevCall[] => [...calls]),
       retainCall: (call: ReplayJevCall) =>
         atomic(

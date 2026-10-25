@@ -20,7 +20,7 @@ spec:
           (!has(v.ephemeral) ||
             (has(v.ephemeral.volumeClaimTemplate.spec.storageClassName) &&
               v.ephemeral.volumeClaimTemplate.spec.storageClassName in
-                ['local-path', 'local-path-ryzen', 'local-path-turin-nvme-intel', 'local-path-turin-nvme-transcend'])))
+                ['local-path', 'local-path-ryzen', 'local-path-ci-amd64', 'local-path-turin-nvme-intel', 'local-path-turin-nvme-transcend'])))
     - name: missing-compute-toleration
       expression: >-
         !has(object.spec.tolerations) || !object.spec.tolerations.exists(t,

@@ -1,8 +1,6 @@
-BEGIN;
 CREATE SCHEMA IF NOT EXISTS ofz;
 REVOKE ALL ON SCHEMA ofz FROM PUBLIC;
-CREATE TABLE ofz.schema_version (version integer PRIMARY KEY CHECK (version = 1), checksum bytea CHECK (octet_length(checksum) = 32));
-INSERT INTO ofz.schema_version(version) VALUES (1);
+CREATE TABLE ofz.schema_version (version integer PRIMARY KEY CHECK (version = 1), checksum bytea NOT NULL CHECK (octet_length(checksum) = 32));
 CREATE FUNCTION ofz.now_ms() RETURNS bigint LANGUAGE sql VOLATILE
 AS $$ SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint $$;
 
@@ -17,6 +15,20 @@ CREATE TABLE ofz.platform_state (
     fleet_bytes bigint NOT NULL DEFAULT 206158430208 CHECK (fleet_bytes > 0)
 );
 INSERT INTO ofz.platform_state DEFAULT VALUES;
+CREATE TABLE ofz.bootstrap (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    fingerprint bytea NOT NULL CHECK (octet_length(fingerprint) = 32),
+    manifest jsonb NOT NULL,
+    schema_hash bytea CHECK (octet_length(schema_hash) = 32),
+    bootstrap_audit_id uuid UNIQUE NOT NULL,
+    activation_audit_id uuid UNIQUE NOT NULL,
+    phase text NOT NULL CHECK (phase IN ('initializing', 'initialized', 'activating', 'active')),
+    bootstrap_receipt jsonb,
+    activation_receipt jsonb,
+    CHECK ((phase = 'initializing') = (bootstrap_receipt IS NULL)),
+    CHECK ((phase = 'active') = (activation_receipt IS NOT NULL)),
+    CHECK (phase = 'initializing' OR schema_hash IS NOT NULL)
+);
 CREATE TABLE ofz.humans (
     id text PRIMARY KEY CHECK (id ~ '^[0-9a-f]{64}$'),
     github_id text UNIQUE NOT NULL CHECK (github_id ~ '^[1-9][0-9]{0,19}$')
@@ -37,7 +49,10 @@ CREATE TABLE ofz.reservations (
     owner_id text NOT NULL CHECK (owner_id ~ '^[0-9a-f]{64}$'),
     home_bytes bigint NOT NULL CHECK (home_bytes = 34359738368),
     created_at_ms bigint NOT NULL DEFAULT ofz.now_ms(),
-    state text NOT NULL CHECK (state IN ('reserved', 'enrolled', 'released'))
+    workspace_uid uuid UNIQUE,
+    state text NOT NULL CHECK (state IN ('reserved', 'enrolling', 'enrolled', 'released')),
+    CHECK (state <> 'reserved' OR workspace_uid IS NULL),
+    CHECK (state NOT IN ('enrolling', 'enrolled') OR workspace_uid IS NOT NULL)
 );
 CREATE TABLE ofz.workspaces (
     uid uuid PRIMARY KEY,
@@ -47,17 +62,19 @@ CREATE TABLE ofz.workspaces (
     home_bytes bigint NOT NULL CHECK (home_bytes = 34359738368),
     running boolean NOT NULL DEFAULT false,
     runtime_epoch uuid,
-    state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'quarantined', 'removed'))
+    state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'quarantined', 'removing', 'removed'))
 );
 CREATE TABLE ofz.collaborators (
     workspace_uid uuid NOT NULL REFERENCES ofz.workspaces(uid),
     human_id text NOT NULL CHECK (human_id ~ '^[0-9a-f]{64}$'),
     role integer NOT NULL CHECK (role BETWEEN 2 AND 3),
+    scope jsonb CHECK (scope IS NULL OR jsonb_typeof(scope) = 'object'),
+    CHECK (role = 3 OR scope IS NULL),
     PRIMARY KEY (workspace_uid, human_id)
 );
 CREATE VIEW ofz.quota_usage AS
 SELECT owner_id,count(*)::bigint AS used_workspaces,sum(running::integer)::bigint AS used_active,sum(home_bytes)::bigint AS used_bytes
-FROM (SELECT owner_id,false AS running,home_bytes FROM ofz.reservations WHERE state='reserved'
+FROM (SELECT owner_id,false AS running,home_bytes FROM ofz.reservations WHERE state='enrolling' OR (state='reserved' AND created_at_ms+300000>ofz.now_ms())
       UNION ALL SELECT owner_id,running,home_bytes FROM ofz.workspaces WHERE state<>'removed') retained
 GROUP BY owner_id;
 CREATE TABLE ofz.sessions (
@@ -170,4 +187,3 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA ofz TO ofz_api;
 GRANT SELECT ON ofz.audit, ofz.audit_outbox, ofz.archive_state TO ofz_archiver;
 GRANT UPDATE (acknowledged_at_ms, archive_receipt) ON ofz.audit_outbox TO ofz_archiver;
 GRANT UPDATE ON ofz.archive_state TO ofz_archiver;
-COMMIT;

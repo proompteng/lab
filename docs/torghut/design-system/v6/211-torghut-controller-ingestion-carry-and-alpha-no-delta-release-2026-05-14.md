@@ -1,6 +1,6 @@
 # 211. Torghut Controller-Ingestion Carry And Alpha No-Delta Release (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

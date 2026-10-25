@@ -20,7 +20,7 @@ exports.activate = async function activate(context) {
   const open = async (request) => {
     if (
       typeof request.path !== 'string' ||
-      !request.path.startsWith('/') ||
+      !request.path.startsWith('/workspace/') ||
       request.path.length > 4096 ||
       request.path.includes('\0') ||
       request.path.includes('\r') ||
@@ -28,7 +28,7 @@ exports.activate = async function activate(context) {
     ) {
       throw new Error('Invalid workspace file path')
     }
-    const target = path.resolve(workspaceRoot, '.' + request.path)
+    const target = path.resolve(workspaceRoot, request.path.slice('/workspace/'.length))
     if (!target.startsWith(workspaceRoot + path.sep)) throw new Error('File is outside the workspace')
     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(target))
     await vscode.window.showTextDocument(document, { preview: false })

@@ -41,7 +41,7 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         "/spec/versions/0/schema/openAPIV3Schema",
         "x-kubernetes-validations",
         json!([
-            {"rule": "self.spec.ownerHash == oldSelf.spec.ownerHash", "message": "ownerHash is immutable"},
+            {"rule": "self.spec.reservationId == oldSelf.spec.reservationId", "message": "reservation identity is immutable"},
             {"rule": "self.spec.architecture == oldSelf.spec.architecture", "message": "the server-selected architecture is immutable"},
             {
                 "rule": "self.spec.resources.workspaceGib >= oldSelf.spec.resources.workspaceGib",
@@ -218,9 +218,16 @@ mod tests {
             }),
             "the controller must be able to adopt a configured digest at a safe boundary"
         );
+        assert!(
+            validations.iter().all(|validation| {
+                validation.get("rule").and_then(Value::as_str)
+                    != Some("self.spec.ownerHash == oldSelf.spec.ownerHash")
+            }),
+            "the controller projects ownership transfers from current Ofz authority"
+        );
         assert!(validations.iter().any(|validation| {
             validation.get("rule").and_then(Value::as_str)
-                == Some("self.spec.ownerHash == oldSelf.spec.ownerHash")
+                == Some("self.spec.reservationId == oldSelf.spec.reservationId")
         }));
         assert_eq!(
             crd.pointer(

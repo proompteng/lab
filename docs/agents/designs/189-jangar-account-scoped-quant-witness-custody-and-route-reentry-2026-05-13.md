@@ -1,22 +1,16 @@
 # 189. Jangar Account-Scoped Quant Witness Custody And Route Reentry (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Gideon Park, Torghut Traders Architecture
 Scope: Jangar quant-control evidence, account/window witness custody, Torghut route-warrant repair admission,
 capital-safe route reentry, rollout, rollback, and cross-stage handoff.
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/193-torghut-account-scoped-quant-witness-bridge-and-route-reentry-2026-05-13.md`
 
 Extends:
 
 - `188-jangar-typed-torghut-evidence-admission-and-repair-dispatch-2026-05-13.md`
 - `188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
 - `187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
-- `docs/torghut/design-system/v6/192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md`
-- `docs/torghut/design-system/v6/190-torghut-route-warrant-exchange-and-ingestion-proof-reentry-2026-05-13.md`
 
 ## Decision
 
@@ -291,7 +285,6 @@ Deployer milestone:
 
 Local checks:
 
-- `bunx oxfmt --check docs/agents/designs/189-jangar-account-scoped-quant-witness-custody-and-route-reentry-2026-05-13.md docs/torghut/design-system/v6/193-torghut-account-scoped-quant-witness-bridge-and-route-reentry-2026-05-13.md docs/torghut/design-system/v6/index.md`
 - `git diff --check`
 
 Engineer checks:

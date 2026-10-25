@@ -58,6 +58,10 @@ spec:
               ownerHash:
                 pattern: ^[a-f0-9]{64}$
                 type: string
+              policyVersion:
+                format: uint64
+                minimum: 0.0
+                type: integer
               power:
                 default:
                   idleTimeoutMinutes: 60
@@ -71,6 +75,8 @@ spec:
                 required:
                 - idleTimeoutMinutes
                 type: object
+              reservationId:
+                type: string
               resources:
                 properties:
                   cpuMillis:
@@ -96,6 +102,8 @@ spec:
                 - memoryMib
                 - workspaceGib
                 type: object
+              runtimeEpoch:
+                type: string
               slot:
                 nullable: true
                 properties:
@@ -139,7 +147,10 @@ spec:
             - idleDeadline
             - image
             - ownerHash
+            - policyVersion
+            - reservationId
             - resources
+            - runtimeEpoch
             type: object
           status:
             nullable: true
@@ -187,6 +198,11 @@ spec:
                 default: 0
                 format: int64
                 type: integer
+              observedPolicyVersion:
+                default: 0
+                format: uint64
+                minimum: 0.0
+                type: integer
               phase:
                 enum:
                 - Pending
@@ -216,6 +232,9 @@ spec:
                 format: date-time
                 nullable: true
                 type: string
+              runtimeEpoch:
+                default: ""
+                type: string
             required:
             - phase
             type: object
@@ -224,8 +243,8 @@ spec:
         title: MicroVM
         type: object
         x-kubernetes-validations:
-        - message: ownerHash is immutable
-          rule: self.spec.ownerHash == oldSelf.spec.ownerHash
+        - message: reservation identity is immutable
+          rule: self.spec.reservationId == oldSelf.spec.reservationId
         - message: the server-selected architecture is immutable
           rule: self.spec.architecture == oldSelf.spec.architecture
         - message: workspace size cannot shrink

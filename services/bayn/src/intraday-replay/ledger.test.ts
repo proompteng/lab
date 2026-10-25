@@ -6,12 +6,12 @@ import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type Repl
 
 const feeMultiplierPpm = 1_000_000
 const executionModel = intradayMomentumExecutionModel
-type FillInput = EconomicReplayFill & { readonly requestedQuantityMicros: string }
+type FillInput = EconomicReplayFill & { readonly requestedQuantityAtoms: string }
 const filledDefaults: FillInput = {
   symbol: 'AMD',
   side: 'buy',
-  requestedQuantityMicros: '1000000',
-  quantityMicros: '1000000',
+  requestedQuantityAtoms: '1000000000',
+  quantityAtoms: '1000000000',
   observedAt: '2026-09-04T13:35:30.000Z',
   priceMicros: '100000000',
   notionalMicros: '100000000',
@@ -20,8 +20,8 @@ const filled = (overrides: Partial<FillInput> = {}): FillInput => ({ ...filledDe
 const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 const freshLedger = (cashMicros = '1000000000') => success(createReplayLedger(cashMicros))
 const apply = (ledger: ReplayLedger<EconomicReplayFill>, input: FillInput) => {
-  const { requestedQuantityMicros, ...fill } = input
-  return applyReplayFill(ledger, fill, requestedQuantityMicros, executionModel, feeMultiplierPpm)
+  const { requestedQuantityAtoms, ...fill } = input
+  return applyReplayFill(ledger, fill, requestedQuantityAtoms, executionModel, feeMultiplierPpm)
 }
 
 describe('intraday replay ledger', () => {
@@ -40,8 +40,8 @@ describe('intraday replay ledger', () => {
   })
 
   test.each([
-    ['requestedQuantityMicros', '1.5'],
-    ['quantityMicros', '1.5'],
+    ['requestedQuantityAtoms', '1.5'],
+    ['quantityAtoms', '1.5'],
     ['priceMicros', '0'],
     ['observedAt', 'invalid-date'],
     ['notionalMicros', '0'],
@@ -50,7 +50,7 @@ describe('intraday replay ledger', () => {
       _tag: 'Failure',
       failure: {
         _tag: 'InvalidIntradayReplayLedger',
-        field: field === 'requestedQuantityMicros' ? field : `fill.${field}`,
+        field: field === 'requestedQuantityAtoms' ? field : `fill.${field}`,
       },
     })
   })
@@ -61,7 +61,7 @@ describe('intraday replay ledger', () => {
       symbol: 'AMD',
       side: 'buy',
       observedAt: filledDefaults.observedAt,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       priceMicros: '100000000',
       notionalMicros: '100000000',
       provenanceHash: 'c'.repeat(64),
@@ -70,7 +70,7 @@ describe('intraday replay ledger', () => {
       applyReplayFill(
         success(createReplayLedger<ProvenancedFill>('1000000000')),
         entry,
-        '1000000',
+        '1000000000',
         executionModel,
         feeMultiplierPpm,
       ),
@@ -85,14 +85,14 @@ describe('intraday replay ledger', () => {
 
   test('carries a partial entry through a profitable close and aggregates fees', () => {
     const afterEntry = success(
-      apply(freshLedger(), filled({ requestedQuantityMicros: '2000000', quantityMicros: '1000000' })),
+      apply(freshLedger(), filled({ requestedQuantityAtoms: '2000000000', quantityAtoms: '1000000000' })),
     )
     expect(afterEntry).toMatchObject({
       cashMicros: '899990000',
       executionFeesMicros: '10000',
       netRealizedPnlAfterCostsMicros: null,
-      positions: [{ symbol: 'AMD', quantityMicros: '1000000', costBasisMicros: '100000000' }],
-      fills: [{ quantityMicros: '1000000', notionalMicros: '100000000' }],
+      positions: [{ symbol: 'AMD', quantityAtoms: '1000000000', costBasisMicros: '100000000' }],
+      fills: [{ quantityAtoms: '1000000000', notionalMicros: '100000000' }],
     })
 
     const closed = success(
@@ -134,8 +134,8 @@ describe('intraday replay ledger', () => {
       apply(
         freshLedger(),
         filled({
-          requestedQuantityMicros: '3000000',
-          quantityMicros: '3000000',
+          requestedQuantityAtoms: '3000000000',
+          quantityAtoms: '3000000000',
           notionalMicros: '300000000',
         }),
       ),
@@ -145,7 +145,7 @@ describe('intraday replay ledger', () => {
         opened,
         filled({
           side: 'sell',
-          requestedQuantityMicros: '3000000',
+          requestedQuantityAtoms: '3000000000',
           priceMicros: '101000000',
           notionalMicros: '101000000',
         }),
@@ -155,15 +155,15 @@ describe('intraday replay ledger', () => {
       cashMicros: '800970000',
       executionFeesMicros: '30000',
       netRealizedPnlAfterCostsMicros: null,
-      positions: [{ symbol: 'AMD', quantityMicros: '2000000', costBasisMicros: '200000000' }],
+      positions: [{ symbol: 'AMD', quantityAtoms: '2000000000', costBasisMicros: '200000000' }],
     })
     const closed = success(
       apply(
         partial,
         filled({
           side: 'sell',
-          requestedQuantityMicros: '2000000',
-          quantityMicros: '2000000',
+          requestedQuantityAtoms: '2000000000',
+          quantityAtoms: '2000000000',
           priceMicros: '99000000',
           notionalMicros: '198000000',
         }),
@@ -183,8 +183,8 @@ describe('intraday replay ledger', () => {
       ledger,
       filled({
         side: 'sell',
-        requestedQuantityMicros: '2000000',
-        quantityMicros: '2000000',
+        requestedQuantityAtoms: '2000000000',
+        quantityAtoms: '2000000000',
         priceMicros: '99000000',
         notionalMicros: '198000000',
       }),
@@ -195,11 +195,11 @@ describe('intraday replay ledger', () => {
       expect(result.failure).toMatchObject({
         _tag: 'IntradayReplayLedgerOversell',
         symbol: 'AMD',
-        requestedQuantityMicros: '2000000',
-        positionQuantityMicros: '1000000',
+        requestedQuantityAtoms: '2000000000',
+        positionQuantityAtoms: '1000000000',
       })
     }
-    expect(ledger.positions).toEqual([{ symbol: 'AMD', quantityMicros: '1000000', costBasisMicros: '100000000' }])
+    expect(ledger.positions).toEqual([{ symbol: 'AMD', quantityAtoms: '1000000000', costBasisMicros: '100000000' }])
   })
 
   test('rejects a buy that only fits before the accrued session fee', () => {
@@ -218,7 +218,10 @@ describe('intraday replay ledger', () => {
   test('rejects malformed financial quantities and notional without recording a fill', () => {
     const ledger = freshLedger()
     const malformedNotional = apply(ledger, filled({ notionalMicros: '99999999' }))
-    const fractionalQuantity = apply(ledger, filled({ requestedQuantityMicros: '1500000', quantityMicros: '1500000' }))
+    const fractionalQuantity = apply(
+      ledger,
+      filled({ requestedQuantityAtoms: '1500000000', quantityAtoms: '1500000000' }),
+    )
 
     expect(Result.isFailure(malformedNotional)).toBe(true)
     expect(Result.isFailure(fractionalQuantity)).toBe(true)
@@ -234,7 +237,7 @@ describe('intraday replay ledger', () => {
     const opened = success(
       apply(
         freshLedger(),
-        filled({ quantityMicros: '2000000', requestedQuantityMicros: '2000000', notionalMicros: '200000000' }),
+        filled({ quantityAtoms: '2000000000', requestedQuantityAtoms: '2000000000', notionalMicros: '200000000' }),
       ),
     )
     const partial = success(
@@ -242,20 +245,20 @@ describe('intraday replay ledger', () => {
         opened,
         filled({
           side: 'sell',
-          quantityMicros: '500000',
-          requestedQuantityMicros: '500000',
+          quantityAtoms: '500000000',
+          requestedQuantityAtoms: '500000000',
           notionalMicros: '50000000',
         }),
       ),
     )
-    expect(partial.positions[0]?.quantityMicros).toBe('1500000')
+    expect(partial.positions[0]?.quantityAtoms).toBe('1500000000')
     const closed = success(
       apply(
         partial,
         filled({
           side: 'sell',
-          quantityMicros: '1500000',
-          requestedQuantityMicros: '1500000',
+          quantityAtoms: '1500000000',
+          requestedQuantityAtoms: '1500000000',
           notionalMicros: '150000000',
         }),
       ),

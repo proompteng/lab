@@ -1,8 +1,12 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
+import { isContinuousMarket } from '../../market-hours'
+import type { MarketCalendarObservation } from '../../broker/alpaca/model'
+import { exchangeSessions } from '../../market-hours'
 import { IntradayCandidateEvidencePolicy } from './model'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1, sha256 } from '../../hash'
+import { sha256, canonicalHashV1Result } from '../../hash'
 import {
   IntradayIngestionDelayDirection,
   IntradaySnapshotFailure,
@@ -17,16 +21,19 @@ const symbols = ['AMD', 'NVDA'] as const
 const barsTopic = 'torghut.bars.1m.v1'
 const quotesTopic = 'torghut.quotes.v1'
 const tradesTopic = 'torghut.trades.v1'
-const calendarMaterial = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const calendarMaterial = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: '2026-08-18', end: '2026-08-18' },
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
+})
+const calendar = {
+  ...calendarMaterial,
+  normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)),
 }
-const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
 
-const request: IntradaySnapshotRequest = {
+const request: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
   sessionDate: '2026-08-18',
   calendar,
   rangeStartAt: '2026-08-18T13:30:00.000Z',
@@ -261,12 +268,14 @@ describe('immutable intraday market snapshot', () => {
     const delayedRows = {
       ...rows,
       bars: rows.bars.map((bar) =>
-        bar.symbol === 'AMD' && bar.event_at === request.rangeStartAt
-          ? { ...bar, ingested_at: '2026-08-18T13:33:00.000Z' }
+        bar.symbol === 'AMD' && Date.parse(bar.event_at) === Date.parse(request.rangeEndAt) - 60_000
+          ? { ...bar, ingested_at: new Date(Date.parse(request.rangeEndAt) + 120_001).toISOString() }
           : bar,
       ),
     }
-    const snapshot = success(verifyIntradaySnapshot(candidateRequest, delayedRows))
+    const snapshot = success(
+      verifyIntradaySnapshot({ ...candidateRequest, observedAt: '2026-08-18T13:37:01.000Z' }, delayedRows),
+    )
     expect(snapshot.bars).toHaveLength(rows.bars.length)
     expect(snapshot.manifest.candidateExclusions).toEqual([
       {
@@ -284,7 +293,9 @@ describe('immutable intraday market snapshot', () => {
         }),
       ).reason,
     ).toBe('hash')
-    expect(error(verifyIntradaySnapshot(request, delayedRows)).reason).toBe('freshness')
+    expect(
+      error(verifyIntradaySnapshot({ ...request, observedAt: '2026-08-18T13:37:01.000Z' }, delayedRows)).reason,
+    ).toBe('freshness')
   })
 
   test('requires the benchmark even when candidate data is unavailable', () => {
@@ -333,8 +344,11 @@ describe('immutable intraday market snapshot', () => {
     ).toBe('coverage')
   })
 
-  test('rejects candidate policies without exactly one required benchmark or on execution pricing', () => {
-    for (const candidateSymbols of [[], ['AMD', 'NVDA'], ['AMD', 'AMD'], ['UNKNOWN']]) {
+  test('accepts an all-candidate universe but rejects malformed candidate sets and execution pricing', () => {
+    expect(
+      Result.isSuccess(verifyIntradaySnapshotRequest({ ...request, symbols, candidateSymbols: ['AMD', 'NVDA'] })),
+    ).toBeTrue()
+    for (const candidateSymbols of [[], ['AMD', 'AMD'], ['UNKNOWN']]) {
       expect(error(verifyIntradaySnapshotRequest({ ...request, symbols, candidateSymbols })).reason).toBe('request')
     }
     expect(
@@ -349,18 +363,18 @@ describe('immutable intraday market snapshot', () => {
     ).toBe('request')
   })
 
-  test('accepts legacy persisted quote and trade markers without changing the snapshot binding', () => {
+  test('rejects retired persisted quote and trade markers', () => {
     const rows = makeRows()
-    const current = success(verifyIntradaySnapshot(request, rows))
-    const legacy = success(
-      verifyIntradaySnapshot(request, {
-        ...rows,
-        quotes: rows.quotes.map((row) => ({ ...row, latest_payload_variants: '1' })),
-        trades: rows.trades.map((row) => ({ ...row, latest_payload_variants: '1' })),
-      }),
-    )
-
-    expect(legacy).toEqual(current)
+    for (const field of ['quotes', 'trades'] as const) {
+      expect(
+        Result.isFailure(
+          verifyIntradaySnapshot(request, {
+            ...rows,
+            [field]: rows[field].map((row) => ({ ...row, latest_payload_variants: '1' })),
+          }),
+        ),
+      ).toBe(true)
+    }
   })
 
   test('binds complete post-range evidence without requiring every symbol to be selection-fresh simultaneously', () => {
@@ -487,18 +501,22 @@ describe('immutable intraday market snapshot', () => {
 
   test('reruns row-level invariants instead of trusting a self-rehashed payload', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
     expect(success(reverifyIntradayMarketSnapshot(verified))).toEqual(verified)
 
     const firstBar = verified.bars[0]
     if (firstBar === undefined) throw new Error('bar fixture is incomplete')
     const bars = Object.freeze([firstBar, firstBar, ...verified.bars.slice(2)])
     const { contentHash: _contentHash, snapshotId: _snapshotId, ...boundMaterial } = verified.manifest
-    const material = Object.freeze({ ...boundMaterial, barsContentHash: canonicalHashV1(bars) })
-    const contentHash = canonicalHashV1(material)
+    const material = Object.freeze({
+      ...boundMaterial,
+      barsContentHash: Result.getOrThrow(canonicalHashV1Result(bars)),
+    })
+    const contentHash = Result.getOrThrow(canonicalHashV1Result(material))
     const manifest = Object.freeze({
       ...material,
       contentHash,
-      snapshotId: canonicalHashV1({ ...material, contentHash }),
+      snapshotId: Result.getOrThrow(canonicalHashV1Result({ ...material, contentHash })),
     })
     const selfRehashed: IntradayMarketSnapshot = Object.freeze({ ...verified, bars, manifest })
 
@@ -507,27 +525,29 @@ describe('immutable intraday market snapshot', () => {
 
   test('reruns exchange-session invariants instead of trusting a self-rehashed calendar', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
     const forgedCalendarMaterial = {
       schemaVersion: verified.manifest.calendar.schemaVersion,
       source: verified.manifest.calendar.source,
       requestedRange: { ...verified.manifest.calendar.requestedRange },
       timeZone: verified.manifest.calendar.timeZone,
-      sessions: verified.manifest.calendar.sessions.map((session) => ({
+      providerSessions: verified.manifest.calendar.providerSessions,
+      sessions: exchangeSessions(verified.manifest.calendar).map((session) => ({
         ...session,
         openAt: '2026-08-18T14:30:00.000Z',
       })),
     }
     const forgedCalendar = Object.freeze({
       ...forgedCalendarMaterial,
-      normalizedResponseHash: canonicalHashV1(forgedCalendarMaterial),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(forgedCalendarMaterial)),
     })
     const { contentHash: _contentHash, snapshotId: _snapshotId, ...boundMaterial } = verified.manifest
     const material = Object.freeze({ ...boundMaterial, calendar: forgedCalendar })
-    const contentHash = canonicalHashV1(material)
+    const contentHash = Result.getOrThrow(canonicalHashV1Result(material))
     const manifest = Object.freeze({
       ...material,
       contentHash,
-      snapshotId: canonicalHashV1({ ...material, contentHash }),
+      snapshotId: Result.getOrThrow(canonicalHashV1Result({ ...material, contentHash })),
     })
     const selfRehashed: IntradayMarketSnapshot = Object.freeze({ ...verified, manifest })
 
@@ -536,6 +556,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('rejects altered manifest metadata even when rows and snapshot identity are unchanged', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
     const forgedManifest = Object.freeze({
       ...verified.manifest,
       barCount: verified.manifest.barCount + 1,
@@ -743,7 +764,7 @@ describe('immutable intraday market snapshot', () => {
     }
     const premarketCalendar = {
       ...premarketMaterial,
-      normalizedResponseHash: canonicalHashV1(premarketMaterial),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(premarketMaterial)),
     }
     expect(
       error(
@@ -773,7 +794,10 @@ describe('immutable intraday market snapshot', () => {
         verifyIntradaySnapshotRequest({
           ...request,
           sessionDate: '2026-08-22',
-          calendar: { ...weekendMaterial, normalizedResponseHash: canonicalHashV1(weekendMaterial) },
+          calendar: {
+            ...weekendMaterial,
+            normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(weekendMaterial)),
+          },
           rangeStartAt: '2026-08-22T13:30:00.000Z',
           rangeEndAt: '2026-08-22T13:35:00.000Z',
           observedAt: '2026-08-22T13:35:30.000Z',
@@ -781,7 +805,7 @@ describe('immutable intraday market snapshot', () => {
       ),
     ).toMatchObject({ reason: 'request' })
 
-    const earlyCloseMaterial = {
+    const earlyCloseMaterial = withProviderSessions({
       ...calendarMaterial,
       sessions: [
         {
@@ -790,11 +814,14 @@ describe('immutable intraday market snapshot', () => {
           closeAt: '2026-08-18T18:00:00.000Z',
         },
       ],
-    }
+    })
     expect(
       verifyIntradaySnapshotRequest({
         ...request,
-        calendar: { ...earlyCloseMaterial, normalizedResponseHash: canonicalHashV1(earlyCloseMaterial) },
+        calendar: {
+          ...earlyCloseMaterial,
+          normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(earlyCloseMaterial)),
+        },
         rangeStartAt: '2026-08-18T17:55:00.000Z',
         rangeEndAt: '2026-08-18T18:00:00.000Z',
         observedAt: '2026-08-18T18:15:00.000Z',
@@ -817,7 +844,7 @@ describe('immutable intraday market snapshot', () => {
     const mutableCalendar = {
       ...request.calendar,
       requestedRange: { ...request.calendar.requestedRange },
-      sessions: request.calendar.sessions.map((session) => ({ ...session })),
+      sessions: exchangeSessions(request.calendar).map((session) => ({ ...session })),
     }
     const mutableUniverse = [...request.universe]
     const mutableTopics = { ...request.sourceTopics }
@@ -830,6 +857,7 @@ describe('immutable intraday market snapshot', () => {
       archiveWatermarks: mutableWatermarks,
     }
     const verified = success(verifyIntradaySnapshotRequest(mutableRequest))
+    if (isContinuousMarket(verified.calendar)) throw new Error('expected equity fixture')
 
     mutableUniverse[0] = 'AAPL'
     mutableCalendar.sessions[0]!.openAt = '2026-08-18T14:30:00.000Z'
@@ -844,8 +872,8 @@ describe('immutable intraday market snapshot', () => {
     expect(Object.isFrozen(verified.universe)).toBe(true)
     expect(Object.isFrozen(verified.calendar)).toBe(true)
     expect(Object.isFrozen(verified.calendar.requestedRange)).toBe(true)
-    expect(Object.isFrozen(verified.calendar.sessions)).toBe(true)
-    expect(Object.isFrozen(verified.calendar.sessions[0])).toBe(true)
+    expect(Object.isFrozen(exchangeSessions(verified.calendar))).toBe(true)
+    expect(Object.isFrozen(exchangeSessions(verified.calendar)[0])).toBe(true)
     expect(Object.isFrozen(verified.sourceTopics)).toBe(true)
     expect(Object.isFrozen(verified.archiveWatermarks)).toBe(true)
     expect(Object.isFrozen(verified.archiveWatermarks[0])).toBe(true)
@@ -1028,6 +1056,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('returns a typed row failure for malformed replayed quote and trade timestamps', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
 
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       {
@@ -1050,6 +1079,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('returns a typed row failure for null replayed quote and trade rows', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
 
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       {
@@ -1072,6 +1102,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('returns a typed row failure for malformed replayed bar rows', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
 
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       {
@@ -1094,6 +1125,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('returns a typed row failure for malformed replayed snapshot collections', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
 
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       { ...verified, bars: null as never },
@@ -1111,6 +1143,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('decodes the replay envelope before reading nested manifest fields', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       null as never,
       { ...verified, manifest: null as never },
@@ -1134,6 +1167,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('returns a typed row failure for non-serializable replayed quote and trade payloads', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
 
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       {
@@ -1270,7 +1304,7 @@ describe('immutable intraday market snapshot', () => {
 
     const delayedRequest: IntradaySnapshotRequest = {
       ...request,
-      observedAt: '2026-08-18T13:50:30.000Z',
+      observedAt: '2026-08-18T13:51:01.000Z',
       feed: 'delayed_sip',
       delayClass: 'delayed_15m_consolidated',
     }
@@ -1296,13 +1330,15 @@ describe('immutable intraday market snapshot', () => {
       })),
     }
 
-    const firstBar = delayedRows.bars[0]
+    const firstBar = delayedRows.bars.find(
+      (bar) => Date.parse(bar.event_at) === Date.parse(delayedRequest.rangeEndAt) - 60_000,
+    )
     if (firstBar === undefined) throw new Error('bar fixture is incomplete')
     const lateBar = error(
       verifyIntradaySnapshot(delayedRequest, {
         ...delayedRows,
-        bars: delayedRows.bars.map((bar, index) =>
-          index === 0
+        bars: delayedRows.bars.map((bar) =>
+          bar === firstBar
             ? { ...bar, ingested_at: new Date(Date.parse(bar.event_at) + 17 * 60_000 + 1).toISOString() }
             : bar,
         ),

@@ -1,5 +1,5 @@
 import { Result } from 'effect'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { gzipSync } from 'node:zlib'
 import { validateBacktestSourceReceipt, type BacktestSourceManifest } from './source'
 import { prepareGapRecoverySession, gapRecoveryDefinition } from './gap-recovery'
@@ -12,14 +12,14 @@ export const gapDecisionMs = gapOpenMs + 1_830_000
 
 export const gapSessionInput = (close = '16:00') => {
   const calendar = [
-    { date: '2026-09-03', open: '09:30', close: '16:00' },
-    { date: '2026-09-04', open: '09:30', close },
+    { session_open: '0930', session_close: '1600', date: '2026-09-03', open: '09:30', close: '16:00' },
+    { date: '2026-09-04', open: '09:30', close, session_open: '0930', session_close: close.replace(':', '') },
   ]
   return {
     schemaVersion: 'bayn.gap-recovery-session.v1',
     sessionDate: '2026-09-04',
     calendar,
-    calendarHash: canonicalHashV1(calendar),
+    calendarHash: Result.getOrThrow(canonicalHashV1Result(calendar)),
   }
 }
 
@@ -96,7 +96,7 @@ export const gapSourceFixture = (
     }
   })
   const manifest: BacktestSourceManifest = {
-    schemaVersion: 'bayn.backtest-source.v1',
+    schemaVersion: 'bayn.backtest-source.v2',
     encoding: 'ndjson-gzip',
     transport: 'original-capture',
     dataSha256: sha256(bytes),
@@ -108,16 +108,16 @@ export const gapSourceFixture = (
     origin: 'SYNTHETIC gap-recovery command fixture, not a captured market session',
     positions,
     nativeVisiblePartitions: partitions,
-    universe: fixture.universe,
+    marketSources: [fixture.universe] as const,
     deliveryModel: fixture.source.deliveryModel,
   }
   const receiptText = JSON.stringify({
-    schemaVersion: 'bayn.original-capture-replay-receipt.v1',
+    schemaVersion: 'bayn.original-capture-replay-receipt.v2',
     recordedAt: new Date(coverageEndMs + 1).toISOString(),
     origin: manifest.origin,
     coverageStartMs,
     coverageEndMs,
-    universe: fixture.universe,
+    marketSources: [fixture.universe] as const,
     positions,
     nativeVisiblePartitions: partitions,
     deliveryModel: fixture.source.deliveryModel,

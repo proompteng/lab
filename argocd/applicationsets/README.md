@@ -96,7 +96,7 @@ retained files are tracked for evidence-gated retirement in `docs/repository-cle
 
 ## Storage maintenance holds
 
-Product and platform ApplicationSets preserve the `argocd.argoproj.io/skip-reconcile` and
+Bootstrap, product, and platform ApplicationSets preserve the `argocd.argoproj.io/skip-reconcile` and
 `storage.proompteng.ai/ceph-remount-owner` annotations. This permits an authorized storage-maintenance operator to
 hold one Application while its owning controller stops and restarts a workload. The ApplicationSet must not remove
 that hold during volume detachment. No Application is paused by this configuration.

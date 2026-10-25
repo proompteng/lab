@@ -61,8 +61,8 @@ export const makePersistenceReceipt = (overrides: Partial<ForwardPerformanceEvid
           cycleId: hash('a'),
           symbol: 'NVDA',
           side: 'SELL',
-          quantityMicros: '1000000',
-          priceMicros: '109000000',
+          quantityAtoms: '1000000000',
+          priceAtoms: '109000000000',
           notionalMicros: '109000000',
           feeMicros: '20',
           realizedPnlMicros: '100',
@@ -71,6 +71,7 @@ export const makePersistenceReceipt = (overrides: Partial<ForwardPerformanceEvid
       ],
       ledgerTotals: {
         realizedGainMicros: '100',
+        cashSettlementRoundingMicros: '0',
         realizedLossMicros: '0',
         brokerExecutionFeesMicros: '20',
         otherChargedCostsMicros: '0',

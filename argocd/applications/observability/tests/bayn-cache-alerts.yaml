@@ -1,0 +1,458 @@
+rule_files:
+- rules.yaml
+evaluation_interval: 15s
+tests:
+- name: healthy exporter pairs, index and native heartbeats remain quiet
+  interval: 15s
+  input_series:
+  - series: up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_connected_slaves{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: redis_master_link_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}
+    values: 1+0x80
+  - series: cnpg_bayn_generation_index_ready{namespace="bayn",cluster="bayn-db",role="primary"}
+    values: 1+0x80
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn",source_revision="current"}
+    values: 0+15x80
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller",source_revision="current"}
+    values: 0+15x80
+  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}
+    values: 1+0x80
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BaynValkeyMetricsUnavailable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: BaynValkeyReplicaUnavailable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: BaynValkeyMemoryPressure
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: BaynValkeyLatencyHigh
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: BaynOperationMetricsUnavailable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: BaynGenerationIndexUnavailable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: BaynGenerationSettlementSlow
+    exp_alerts: []
+- name: one missing exporter is detected
+  interval: 15s
+  input_series:
+  - series: up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_connected_slaves{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: redis_master_link_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}
+    values: 1+0x80
+  - series: cnpg_bayn_generation_index_ready{namespace="bayn",cluster="bayn-db",role="primary"}
+    values: 1+0x80
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn",source_revision="current"}
+    values: 0+15x80
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller",source_revision="current"}
+    values: 0+15x80
+  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}
+    values: 1+0x80
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: BaynValkeyMetricsUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-valkey
+        notify: email
+        severity: critical
+      exp_annotations:
+        summary: Bayn cannot observe both Valkey data servers
+        description: Both exporters and both server observations must be available. Check collector discovery, exporter health
+          and the two data pods.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+- name: no exporter series is detected
+  interval: 15s
+  input_series: []
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: BaynValkeyMetricsUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-valkey
+        notify: email
+        severity: critical
+      exp_annotations:
+        summary: Bayn cannot observe both Valkey data servers
+        description: Both exporters and both server observations must be available. Check collector discovery, exporter health
+          and the two data pods.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+- name: replica loss prevents acknowledged publications
+  interval: 15s
+  input_series:
+  - series: redis_connected_slaves{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 0+0x80
+  - series: redis_master_link_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 0+0x80
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyReplicaUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-valkey
+        notify: email
+        severity: critical
+      exp_annotations:
+        summary: Bayn Valkey has lost its required replica
+        description: Bayn requires one acknowledged replica before publishing broker observations. Recover the peer and inspect
+          link/offset history; do not weaken WAIT.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+- name: initial rollout does not expect worker exports before the API declares the contract
+  interval: 15s
+  input_series: []
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BaynOperationMetricsUnavailable
+    exp_alerts: []
+- name: native metrics absence remains visible through the separate API pull indicator
+  interval: 15s
+  input_series:
+  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}
+    values: 1+0x80
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: BaynOperationMetricsUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn
+        notify: email
+        severity: warning
+        source_revision: current
+      exp_annotations:
+        summary: Bayn native operation metrics are unavailable
+        description: An API-advertised source revision has no recent native metrics heartbeat for this service. Older retained
+          workers cannot satisfy its revision. Check export failure logs, Mimir and the exact gateway egress allowance.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-execution-controller
+        notify: email
+        severity: warning
+        source_revision: current
+      exp_annotations:
+        summary: Bayn native operation metrics are unavailable
+        description: An API-advertised source revision has no recent native metrics heartbeat for this service. Older retained
+          workers cannot satisfy its revision. Check export failure logs, Mimir and the exact gateway egress allowance.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+- name: missing index catalog evidence is unknown and alerts
+  interval: 15s
+  input_series:
+  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}
+    values: 1+0x80
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: BaynGenerationIndexUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-db
+        notify: email
+        severity: critical
+      exp_annotations:
+        summary: Bayn generation lookup index is unavailable
+        description: Check migration 104, index validity/readiness and CNPG monitoring query collection. Do not recreate or
+          drop the production index without investigation.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+- name: slow cache samples below the traffic minimum do not assert p99
+  interval: 15s
+  input_series:
+  - series: bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn-execution-controller",stage="bayn.valkey.put",outcome="succeeded",le="0.25"}
+    values: 0+0x80
+  - series: bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn-execution-controller",stage="bayn.valkey.put",outcome="succeeded",le="0.5"}
+    values: 0+0.1x80
+  - series: bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn-execution-controller",stage="bayn.valkey.put",outcome="succeeded",le="+Inf"}
+    values: 0+0.1x80
+  - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.valkey.put",outcome="succeeded"}
+    values: 0+0.1x80
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BaynValkeyLatencyHigh
+    exp_alerts: []
+- name: failed publication increments page after the hold
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline"}
+    values: 0 1+0x80
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: &publication_labels
+        team: trading
+        namespace: bayn
+        service: bayn-valkey
+        notify: email
+        severity: warning
+      exp_annotations: &publication_annotations
+        summary: Bayn could not publish a replicated broker cache value
+        description: 'Failed replicated puts in the last five minutes by category/cause: operation_deadline/unknown; Inspect replica acknowledgement duration, server memory and the matching publication trace. Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.'
+        runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
+        dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
+  - eval_time: 6m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts: []
+- name: publication diagnosis lists only recent put failures and deduplicates replicas
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn",operation="put",category="command_failed",cause_category="replica_acknowledgement",pod="api-a"}
+    values: 0 1+0x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn",operation="put",category="command_failed",cause_category="replica_acknowledgement",pod="api-b"}
+    values: 0 1+0x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline",cause_category="command_failed"}
+    values: 0 1+0x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline",cause_category="replica_acknowledgement"}
+    values: 0 1+0x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn",operation="put",category="old_failure",cause_category="old_failure"}
+    values: 5+0x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn",operation="get",category="get_failure",cause_category="get_failure"}
+    values: 0+1x80
+  - series: bayn_valkey_failures_total{namespace="other",service="bayn",operation="put",category="wrong_namespace",cause_category="wrong_namespace"}
+    values: 0+1x80
+  - series: bayn_valkey_failures_total{namespace="bayn",service="other",operation="put",category="wrong_service",cause_category="wrong_service"}
+    values: 0+1x80
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: *publication_labels
+      exp_annotations:
+        summary: Bayn could not publish a replicated broker cache value
+        runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
+        dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
+        description: 'Failed replicated puts in the last five minutes by category/cause: command_failed/replica_acknowledgement; operation_deadline/command_failed; operation_deadline/replica_acknowledgement; Inspect replica acknowledgement duration, server memory and the matching publication trace. Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.'
+- name: a counter reset without a new failure is not a publication failure
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline",cause_category="command_failed"}
+    values: 9+0x8 0+0x72
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts: []
+- name: publication diagnosis survives counter resets without attributing the old count
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline",cause_category="command_failed"}
+    values: 9+0x8 0 1+0x70
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: *publication_labels
+      exp_annotations:
+        summary: Bayn could not publish a replicated broker cache value
+        runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
+        dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
+        description: 'Failed replicated puts in the last five minutes by category/cause: operation_deadline/command_failed; Inspect replica acknowledgement duration, server memory and the matching publication trace. Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.'
+- name: missing diagnostic labels remain unknown without suppressing the publication alert
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put"}
+    values: 0 1+0x80
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: *publication_labels
+      exp_annotations:
+        summary: Bayn could not publish a replicated broker cache value
+        runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
+        dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
+        description: 'Failed replicated puts in the last five minutes by category/cause: unknown/unknown; Inspect replica acknowledgement duration, server memory and the matching publication trace. Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.'
+- name: stale publication series retain recent evidence but cannot imply continuing failures
+  interval: 15s
+  input_series:
+  - series: bayn_valkey_failures_total{namespace="bayn",service="bayn-execution-controller",operation="put",category="operation_deadline"}
+    values: 0 1+0x4 stale
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: *publication_labels
+      exp_annotations: *publication_annotations
+  - eval_time: 6m
+    alertname: BaynValkeyPublicationFailure
+    exp_alerts: []
+- name: sustained cache p99 after twenty samples
+  interval: 15s
+  input_series:
+  - series: bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn-execution-controller",stage="bayn.valkey.put",outcome="succeeded",le="0.25"}
+    values: 0+0x80
+  - series: bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn-execution-controller",stage="bayn.valkey.put",outcome="succeeded",le="1"}
+    values: 0+1x80
+  - series: bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn-execution-controller",stage="bayn.valkey.put",outcome="succeeded",le="+Inf"}
+    values: 0+1x80
+  - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.valkey.put",outcome="succeeded"}
+    values: 0+1x80
+  alert_rule_test:
+  - eval_time: 11m
+    alertname: BaynValkeyLatencyHigh
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-valkey
+        notify: email
+        severity: warning
+        stage: bayn.valkey.put
+      exp_annotations:
+        summary: Bayn cache latency is consuming its command budget
+        description: Successful get/put p99 exceeds 250ms, one quarter of the one-second command deadline, with at least twenty
+          samples. Compare SET, replica acknowledgement and queue time.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+- name: sustained generation statement p95 after twenty samples
+  interval: 15s
+  input_series:
+  - series: bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn-execution-controller",stage="bayn.postgres.generation-settlement",outcome="succeeded",le="0.5"}
+    values: 0+0x80
+  - series: bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn-execution-controller",stage="bayn.postgres.generation-settlement",outcome="succeeded",le="1"}
+    values: 0+1x80
+  - series: bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn-execution-controller",stage="bayn.postgres.generation-settlement",outcome="succeeded",le="+Inf"}
+    values: 0+1x80
+  - series: bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",stage="bayn.postgres.generation-settlement",outcome="succeeded"}
+    values: 0+1x80
+  alert_rule_test:
+  - eval_time: 16m
+    alertname: BaynGenerationSettlementSlow
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-db
+        notify: email
+        severity: warning
+      exp_annotations:
+        summary: Bayn generation settlement query is slow
+        description: The named statement p95 exceeds 500ms with at least twenty samples. Inspect its trace, PostgreSQL waits
+          and generation-index scan history; catalog counters alone do not prove query plan choice.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+- name: fresh retained old workers cannot hide missing current worker telemetry
+  interval: 15s
+  input_series:
+  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}
+    values: 1+0x80
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn",source_revision="current"}
+    values: 0+15x80
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller",source_revision="old-retained"}
+    values: 0+15x80
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: BaynOperationMetricsUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        notify: email
+        severity: warning
+        service: bayn-execution-controller
+        source_revision: current
+      exp_annotations:
+        summary: Bayn native operation metrics are unavailable
+        description: An API-advertised source revision has no recent native metrics heartbeat for this service. Older retained
+          workers cannot satisfy its revision. Check export failure logs, Mimir and the exact gateway egress allowance.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+- name: index telemetry absence stays quiet until the API adopts the observability contract
+  interval: 15s
+  input_series: []
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BaynGenerationIndexUnavailable
+    exp_alerts: []
+
+- name: missing connected-replica observation remains unavailable with healthy exporters
+  interval: 15s
+  input_series:
+  - series: up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_master_link_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyReplicaUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-valkey
+        notify: email
+        severity: critical
+      exp_annotations:
+        summary: Bayn Valkey has lost its required replica
+        description: Bayn requires one acknowledged replica before publishing broker observations. Recover the peer and inspect
+          link/offset history; do not weaken WAIT.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+
+- name: missing replica-link observation remains unavailable with healthy exporters
+  interval: 15s
+  input_series:
+  - series: up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_connected_slaves{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyReplicaUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-valkey
+        notify: email
+        severity: critical
+      exp_annotations:
+        summary: Bayn Valkey has lost its required replica
+        description: Bayn requires one acknowledged replica before publishing broker observations. Recover the peer and inspect
+          link/offset history; do not weaken WAIT.
+        runbook_url: docs/runbooks/bayn-cache-observability.md

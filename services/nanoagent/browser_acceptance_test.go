@@ -79,7 +79,7 @@ func installBrowserAcceptance(mux *http.ServeMux, browser *browserSupervisor, ho
 const previousCookie=document.cookie;const previousStorage=localStorage.getItem('browser-proof');
 document.cookie='browser-proof=persistent; Max-Age=600; SameSite=Lax';localStorage.setItem('browser-proof','persistent');
 const report=()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{const rect=document.querySelector('input').getBoundingClientRect();fetch('/_test/site-loaded',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:location.href,previousCookie,previousStorage,userAgent:navigator.userAgent,messageCenter:{x:Math.round(screenX+rect.x+rect.width/2),y:Math.round(screenY+outerHeight-innerHeight+rect.y+rect.height/2)}})})}));addEventListener('pageshow',report);
-document.querySelector('input').oninput=()=>fetch('/_test/site-input',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:document.querySelector('input').value})});
+let inputReports=Promise.resolve();document.querySelector('input').oninput=()=>{const message=document.querySelector('input').value;inputReports=inputReports.then(()=>fetch('/_test/site-input',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})}))};
 document.querySelector('form').onsubmit=async e=>{e.preventDefault();const message=document.querySelector('input').value;await fetch('/_test/site-submitted',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,userAgent:navigator.userAgent})});document.querySelector('output').textContent='Submitted: '+message};
 </script></body></html>`))
 	})

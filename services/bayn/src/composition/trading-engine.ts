@@ -1,12 +1,12 @@
-import { Effect } from 'effect'
+import { Effect, Option } from 'effect'
 import { makeBrokerStateCache } from '../execution/broker-state-cache'
 
 import type { ExecutionCycleClosureStoreShape } from '../db/execution-cycle-closure'
 import { operationalError } from '../errors'
 import type { ExecutionAuthority } from '../execution/authority'
-import type { BlockedCycleIntentStoreShape } from '../execution/intents'
+import type { BlockedCycleIntentStoreShape } from '../execution/intents/blocked-cycle'
 import { makeExecutionProgram, type ExecutionProgramDependencies } from '../execution/runtime-program'
-import type { IntradayMarketDataService } from '../market-data'
+import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import type { MutationCycleExecutionMode, ObserveAutonomousCycleInput } from '../observe-composition/model'
 import { loadStrategyExecutionRiskPolicy, makeMutationAutonomousCycleStartup } from '../observe-composition/startup'
 
@@ -42,7 +42,18 @@ export const makeTradingEngine = (input: TradingEngineInput) =>
         ...input.execution,
         brokerStateCache: makeBrokerStateCache(input.cycle.accountId, input.cycle.authorityGenerationHash),
         riskPolicy,
-        isCloseOnlyIntent: (intentId) => input.cycle.executionCycleClosureStore.containsIntent(intentId),
+        isCloseOnlyIntent: (intentId) =>
+          input.execution.intentStore
+            .read(intentId)
+            .pipe(
+              Effect.flatMap((stored) =>
+                Option.isSome(stored) &&
+                stored.value.intent.protection !== undefined &&
+                stored.value.intent.protection._tag !== 'Bracket'
+                  ? Effect.succeed(true)
+                  : input.cycle.executionCycleClosureStore.containsIntent(intentId),
+              ),
+            ),
       }),
     ).pipe(
       Effect.mapError((cause) =>

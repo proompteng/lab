@@ -1,9 +1,9 @@
 import type { Effect } from 'effect'
 import type { BrokerEnvironment } from '../broker/identity'
-import { BrokerRead } from '../broker/alpaca'
-import type { CycleExecutionPolicy } from '../cycle'
-import type { CycleRunnerError, CycleRunResult } from '../cycle/runner'
-import { CycleStore } from '../cycle/store'
+import { BrokerRead } from '../broker/alpaca/model'
+import type { CycleExecutionPolicy } from '../cycle/model'
+import type { CycleRunnerError, CycleRunResult } from '../cycle/runner/model'
+import { CycleStore } from '../cycle/store/model'
 import {
   BrokerEventStore,
   AuthorityGenerationStore,
@@ -13,12 +13,13 @@ import {
   ValuationStore,
 } from '../db/execution-store'
 import type { ExecutionCycleClosureStoreShape } from '../db/execution-cycle-closure'
-import { IntentStore, type BlockedCycleIntentStoreShape } from '../execution/intents'
-import { MutationStore } from '../execution/mutations'
+import { IntentStore } from '../execution/intents/domain'
+import { type BlockedCycleIntentStoreShape } from '../execution/intents/blocked-cycle'
+import { MutationStore } from '../execution/mutations/model'
 import type { ExecutionProgram } from '../execution/runtime-program'
 import { WriterFence } from '../execution/writer-fence'
 import type { CycleExecutionModel } from '../execution-model-contract'
-import type { IntradayMarketDataService } from '../market-data'
+import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
@@ -51,7 +52,7 @@ type ObserveRuntime = CycleStore | ObserveDecisionRuntime
 export type RecoveryFirstRuntime = ObserveRuntime | IntentStore | MutationStore
 
 export type ObserveStartupPreparation = {
-  readonly executionModel: Extract<CycleExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v5' }>
+  readonly executionModel: Extract<CycleExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v6' }>
   readonly executionPolicy: Extract<
     CycleExecutionPolicy,
     { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }
@@ -128,7 +129,7 @@ export type ExecutionMutationLogContext = {
 
 export type PostMutationReconciliation = {
   readonly _tag: 'PostMutationReconciliation'
-  readonly cycle: import('../cycle').AutonomousCycle
+  readonly cycle: import('../cycle/model').AutonomousCycle
   readonly delayMs: number
   readonly logContext: ExecutionMutationLogContext
   readonly observedAt: string

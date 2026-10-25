@@ -51,6 +51,11 @@ spec:
   enableServiceLinks: false
   nodeSelector:
     kubernetes.io/arch: amd64
+  tolerations:
+    - key: workload.proompteng.ai/compute-local
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
   restartPolicy: Never
   terminationGracePeriodSeconds: 5
   securityContext:
@@ -129,6 +134,11 @@ spec:
   enableServiceLinks: false
   nodeSelector:
     kubernetes.io/arch: amd64
+  tolerations:
+    - key: workload.proompteng.ai/compute-local
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
   restartPolicy: Never
   terminationGracePeriodSeconds: 5
   securityContext:

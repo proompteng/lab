@@ -1,12 +1,13 @@
+import { withProviderSessions } from '../testing/market-calendar-fixture'
 import { Result, Schema } from 'effect'
 import { IntradayPerformanceManifestSchema } from './intraday-schema'
 import { intradayPerformanceDecisionRequest, intradayPerformanceSessionQuery } from './intraday-volume'
 import type { ForwardPerformanceIntradayMarketVolumeRequest } from './model'
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import { IsoDateSchema } from '../schemas'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 
-export const completedIntradayCycles = [
+const recordedIntradayCycles = [
   {
     cycleId: 'c4b0a5b9bd46f3e2fc8b972809b400b19510cdcd444f2cb4ad1ee5f0bd4b2e99',
     session: '2026-09-10',
@@ -109,7 +110,7 @@ export const completedIntradayCycles = [
       ],
       symbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY'],
       barCount: 209,
-      calendar: {
+      calendar: withProviderSessions({
         source: 'alpaca-v2-calendar',
         sessions: [
           {
@@ -224,13 +225,13 @@ export const completedIntradayCycles = [
           },
         ],
         timeZone: 'UTC',
-        schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+        schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
         requestedRange: {
           end: '2026-10-10',
           start: '2026-09-10',
         },
         normalizedResponseHash: '1e5955ff3fe06032aa6f3422b1b2422aaca1fa5afdcfcf2656722a7abd3c4138',
-      },
+      }),
       universe: [
         'AAPL',
         'AMD',
@@ -444,7 +445,7 @@ export const completedIntradayCycles = [
       ],
       symbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY'],
       barCount: 209,
-      calendar: {
+      calendar: withProviderSessions({
         source: 'alpaca-v2-calendar',
         sessions: [
           {
@@ -554,13 +555,13 @@ export const completedIntradayCycles = [
           },
         ],
         timeZone: 'UTC',
-        schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+        schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
         requestedRange: {
           end: '2026-10-11',
           start: '2026-09-11',
         },
         normalizedResponseHash: '4fa7db4671cb39bfcea964c2df6e093dc11f798ff9787debd533790ac2c678dd',
-      },
+      }),
       universe: [
         'AAPL',
         'AMD',
@@ -674,6 +675,18 @@ export const completedIntradayCycles = [
   },
 ] as const
 
+export const completedIntradayCycles = recordedIntradayCycles.map((cycle) => {
+  const { normalizedResponseHash: _calendarHash, ...calendarMaterial } = cycle.manifest.calendar
+  const calendar = {
+    ...calendarMaterial,
+    normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)),
+  }
+  const { snapshotId: _snapshotId, contentHash: _contentHash, ...original } = cycle.manifest
+  const material = { ...original, calendar }
+  const hashed = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  return { ...cycle, manifest: { ...hashed, snapshotId: Result.getOrThrow(canonicalHashV1Result(hashed)) } }
+})
+
 export const makeIntradayPerformanceFixture = () => {
   const cycle = completedIntradayCycles[1]
   const request: ForwardPerformanceIntradayMarketVolumeRequest = {
@@ -735,8 +748,8 @@ export const makeStreamingPartitionPerformanceFixture = () => {
       },
     },
   }
-  const hashed = { ...material, contentHash: canonicalHashV1(material) }
-  const decisionManifest = { ...hashed, snapshotId: canonicalHashV1(hashed) }
+  const hashed = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  const decisionManifest = { ...hashed, snapshotId: Result.getOrThrow(canonicalHashV1Result(hashed)) }
   return {
     request: { ...request, decisionManifest, decisionSnapshotId: decisionManifest.snapshotId },
     archive: {

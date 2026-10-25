@@ -27,9 +27,11 @@ class RetainedFeatureReplayTest {
     partition: Int,
     offset: Int = minute,
     close: Double = 100.0,
+    sessionStart: Instant = start,
+    marketSession: String = "regular",
   ): RetainedFeatureArrival {
-    val event = start.plusSeconds(minute * 60L)
-    val ingest = start.plusSeconds((offset + 1) * 60L + 1)
+    val event = sessionStart.plusSeconds(minute * 60L)
+    val ingest = sessionStart.plusSeconds((offset + 1) * 60L + 1)
     val envelope =
       Envelope(
         ingestTs = ingest,
@@ -50,7 +52,7 @@ class RetainedFeatureReplayTest {
             timestamp = event.toString(),
           ),
         provider = "alpaca",
-        marketSession = "regular",
+        marketSession = marketSession,
         delayClass = "real_time_exchange_only",
         version = 2,
       )
@@ -103,6 +105,31 @@ class RetainedFeatureReplayTest {
     return CapturedReplay(arrivals, summary.skippedBars, summary.rejectedBars, summary.recordedAtMs)
   }
 
+  @Test fun `retained replay emits the same extended-session feature definitions as live input`() {
+    for ((at, session) in listOf("2026-09-11T12:00:00Z" to "pre", "2026-09-11T20:00:00Z" to "post")) {
+      val sessionStart = Instant.parse(at)
+      val arrivals =
+        (0..1).flatMap { minute ->
+          symbols.indices.map { arrival(minute, it, sessionStart = sessionStart, marketSession = session) }
+        }
+      val source = bytes(arrivals)
+      val replay = captureReplay(source, config(source, arrivals.size), clock)
+      assertEquals(0, replay.skippedBars)
+      assertEquals(0, replay.rejectedBars)
+      assertEquals(4, replay.rolling.size)
+      assertEquals(4, replay.technical.size)
+      val latest =
+        Json.decodeFromString<RollingMarketFeature>(
+          replay.rolling
+            .last()
+            .record.value,
+        )
+      assertEquals(ROLLING_FEATURE_DEFINITION, latest.material.definitionId)
+      assertEquals(sessionStart.toEpochMilli(), latest.material.windowStartMs)
+      assertEquals(sessionStart.plusSeconds(120).toEpochMilli(), latest.material.windowEndMs)
+    }
+  }
+
   @Test fun `command streams sources larger than 128 MiB without resetting feature state`() {
     val directory = Files.createTempDirectory("retained-large-source-")
     try {
@@ -127,7 +154,7 @@ class RetainedFeatureReplayTest {
       RetainedFeatureReplay.main(arrayOf(configPath.toString(), source.toString(), output.toString()))
       val arrivals = Files.readAllLines(output.resolve("arrivals.ndjson")).map { Json.decodeFromString<RetainedFeatureArrival>(it) }
       assertEquals(count, arrivals.count { it.record.topic == "technical" })
-      assertEquals(count - 29, arrivals.count { it.record.topic == "features" })
+      assertEquals(count, arrivals.count { it.record.topic == "features" })
       assertTrue(Files.exists(output.resolve("receipt.json")))
     } finally {
       Files.walk(directory).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) } }
@@ -167,16 +194,16 @@ class RetainedFeatureReplayTest {
     val arrivals = input()
     val source = bytes(arrivals)
     val result = captureReplay(source, config(source, arrivals.size), clock)
-    assertEquals(4, result.rolling.size)
+    assertEquals(62, result.rolling.size)
     assertEquals(0, result.skippedBars)
     assertEquals(clock.millis(), result.recordedAtMs)
     result.rolling.forEachIndexed { index, output ->
       val feature = Json.decodeFromString<RollingMarketFeature>(output.record.value)
       assertEquals(symbols[index % 2], feature.material.symbol)
       assertEquals(clock.millis(), feature.computedAtMs)
-      assertEquals(arrivals[58 + index].availableAtMs + 100, output.availableAtMs)
+      assertEquals(arrivals[index].availableAtMs + 100, output.availableAtMs)
       assertEquals(index.toString(), output.record.offset)
-      assertEquals(30, feature.material.inputs.size)
+      assertEquals(minOf(index / 2 + 1, 30), feature.material.inputs.size)
       assertTrue(feature.material.inputs.all { it.sourcePartition == index % 2 })
     }
     assertEquals(result, captureReplay(source, config(source, arrivals.size), clock))
@@ -192,7 +219,7 @@ class RetainedFeatureReplayTest {
           .last()
           .record.value,
       )
-    assertEquals(5, result.rolling.size)
+    assertEquals(63, result.rolling.size)
     assertEquals("101000000", corrected.material.values.lastClosePriceMicros)
     assertEquals(
       "31",
@@ -272,7 +299,7 @@ class RetainedFeatureReplayTest {
         clock,
       )
     val output = result.arrivals
-    assertEquals(66, output.size)
+    assertEquals(124, output.size)
     assertTrue(
       output.zipWithNext().all { (left, right) ->
         left.availableAtMs < right.availableAtMs ||
@@ -299,14 +326,14 @@ class RetainedFeatureReplayTest {
     val arrivals = input().take(60) + ahead + lagging
     val source = bytes(arrivals)
     val result = captureReplay(source, config(source, arrivals.size), clock)
-    assertEquals(4, result.rolling.size)
+    assertEquals(62, result.rolling.size)
     assertTrue(
       result.rolling.zipWithNext().all { (left, right) ->
         left.availableAtMs <= right.availableAtMs && left.record.offset.toLong() < right.record.offset.toLong()
       },
     )
-    assertEquals(start.plusSeconds(31 * 60).toEpochMilli() + 100, result.rolling[2].availableAtMs)
-    assertEquals(result.rolling[2].availableAtMs, result.rolling[3].availableAtMs)
+    assertEquals(start.plusSeconds(31 * 60).toEpochMilli() + 100, result.rolling[60].availableAtMs)
+    assertEquals(result.rolling[60].availableAtMs, result.rolling[61].availableAtMs)
   }
 
   @Test fun `live-equivalent rejections preserve keyed history and permit later valid features`() {
@@ -329,11 +356,11 @@ class RetainedFeatureReplayTest {
     val result = captureReplay(source, config(source, arrivals.size), clock)
     assertEquals(2, result.rejectedBars)
     assertEquals(0, result.skippedBars)
-    assertEquals(1, result.rolling.size)
+    assertEquals(30, result.rolling.size)
     val feature =
       Json.decodeFromString<RollingMarketFeature>(
         result.rolling
-          .single()
+          .last()
           .record.value,
       )
     assertEquals(30, feature.material.inputs.size)
@@ -349,7 +376,7 @@ class RetainedFeatureReplayTest {
         .last()
         .sourceOffset,
     )
-    assertEquals(arrivals.last().availableAtMs + 100, result.rolling.single().availableAtMs)
+    assertEquals(arrivals.last().availableAtMs + 100, result.rolling.last().availableAtMs)
   }
 
   @Test fun `hash count ordering and premature arrival failures cannot produce a receipt`() {
@@ -373,7 +400,7 @@ class RetainedFeatureReplayTest {
       val arrivals = input().map { it.copy(record = it.record.copy(timestampMs = it.availableAtMs + difference)) }
       val source = bytes(arrivals)
       if (difference in -5000L..5000L) {
-        assertEquals(4, captureReplay(source, config(source, arrivals.size), clock).rolling.size)
+        assertEquals(62, captureReplay(source, config(source, arrivals.size), clock).rolling.size)
       } else {
         assertFailsWith<IllegalArgumentException> { captureReplay(source, config(source, arrivals.size), clock) }
       }
@@ -386,6 +413,6 @@ class RetainedFeatureReplayTest {
         it.copy(availableAtMs = it.availableAtMs - 5000, record = it.record.copy(timestampMs = it.availableAtMs))
       }
     val source = bytes(sourceArrivals)
-    assertEquals(4, captureReplay(source, config(source, sourceArrivals.size), clock).rolling.size)
+    assertEquals(62, captureReplay(source, config(source, sourceArrivals.size), clock).rolling.size)
   }
 }

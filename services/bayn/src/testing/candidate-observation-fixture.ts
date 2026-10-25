@@ -1,3 +1,4 @@
+import { exchangeSessions } from '../market-hours'
 import { Result, Schema } from 'effect'
 
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
@@ -13,7 +14,7 @@ import { streamingFixture } from './streaming-market-fixture'
 export const candidateObservationFixture = () => {
   const fixture = streamingFixture()
   const { snapshot, protocol } = fixture
-  const session = snapshot.manifest.calendar.sessions[0]
+  const session = exchangeSessions(snapshot.manifest.calendar)[0]
   if (session === undefined) throw new Error('candidate observation fixture requires a session')
   const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(protocol.executionModel))
   if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
@@ -22,7 +23,7 @@ export const candidateObservationFixture = () => {
     makeIntradayCycleDraft(
       {
         cycleBindingId: 'a'.repeat(64),
-        strategyName: 'intraday-momentum',
+        strategyName: 'jev',
         strategyProtocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
         accountId: 'candidate-observation-test',
         executionPolicy,

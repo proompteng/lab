@@ -53,7 +53,7 @@ printf '%s\n' "${HOMEBREW_PREFIX-<unset>}" "${HOMEBREW_CELLAR-<unset>}" "${HOMEB
 			if _, err := os.Stat(filepath.Join(home, "brew-started")); !os.IsNotExist(err) {
 				t.Fatalf("shell startup executed Homebrew: %v", err)
 			}
-			path := home + "/.local/bin:" + home + "/go/bin:" + home + "/.cargo/bin:"
+			path := home + "/.local/bin:" + home + "/go/bin:" + home + "/.cargo/bin:/opt/tengri/editor/bin:"
 			want := []string{"<unset>", "<unset>", "<unset>", "", scenario.manpath, scenario.infopath, scenario.editor, scenario.visual}
 			if scenario.installed {
 				want[0], want[1], want[2] = prefix, prefix+"/Cellar", prefix+"/Homebrew"

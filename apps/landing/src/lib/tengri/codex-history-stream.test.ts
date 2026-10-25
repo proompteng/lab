@@ -1,4 +1,8 @@
-import { expect, mock, test } from 'bun:test'
+import { expect, mock, spyOn, test } from 'bun:test'
+import * as Sentry from '@sentry/node'
+import { context, propagation, trace } from '@opentelemetry/api'
+import { InMemorySpanExporter, NodeTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-node'
+import { observeRequest } from '../observability/server'
 import type { CodexHistoryPage } from './codex-history'
 
 void mock.module('server-only', () => ({}))
@@ -7,6 +11,44 @@ const metadata: CodexHistoryPage = { type: 'page', part: 'thread', rawJson: '{}'
 function failure(cause: unknown) {
   return Object.assign(new Error(cause instanceof Error ? cause.message : 'Unavailable'), { status: 503 })
 }
+
+test('a failed history record reports the original exception and marks the live request span failed', async () => {
+  const { codexHistoryResponse } = await import('./codex-history-stream')
+  const exporter = new InMemorySpanExporter()
+  const provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
+  provider.register()
+  const capture = spyOn(Sentry, 'captureException').mockReturnValue('fixture-event')
+  const cause = new Error('RPC connection lost')
+  try {
+    const request = new Request('https://proompteng.ai/api/tengri')
+    const response = await observeRequest(request, 'tengri.history', () =>
+      codexHistoryResponse(
+        {
+          cancel() {},
+          async *[Symbol.asyncIterator]() {
+            yield metadata
+            throw cause
+          },
+        },
+        request.signal,
+        (page) => page,
+        failure,
+      ),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.text()).toContain('"type":"error"')
+    expect(capture).toHaveBeenCalledTimes(1)
+    expect(capture.mock.calls[0]?.[0]).toBe(cause)
+    expect(exporter.getFinishedSpans()).toHaveLength(1)
+    expect(exporter.getFinishedSpans()[0]!.status.code).toBe(2)
+  } finally {
+    capture.mockRestore()
+    await provider.shutdown()
+    context.disable()
+    trace.disable()
+    propagation.disable()
+  }
+})
 
 test('forwards one page at a time, honors backpressure, and cancels the upstream stream on disconnect', async () => {
   const { codexHistoryResponse } = await import('./codex-history-stream')

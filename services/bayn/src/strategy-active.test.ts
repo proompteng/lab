@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { makeRuntimeProvenance } from './contracts'
-import { canonicalHashV1OrThrow } from './hash'
+import { makeRuntimeProvenanceResult } from './contracts'
+import { canonicalHashV1Result } from './hash'
 import {
   activeStrategyBehaviorHash,
   activeStrategyName,
@@ -13,20 +13,22 @@ import {
 describe('active strategy composition', () => {
   test('selects the native Jev definition and protocol at the production boundary', () => {
     const protocol = Result.getOrThrow(loadActiveStrategyProtocol())
-    const parameterHash = canonicalHashV1OrThrow(protocol)
-    const provenance = makeRuntimeProvenance({
-      sourceRevision: 'a'.repeat(40),
-      image: {
-        repository: 'registry.ide-newton.ts.net/lab/bayn',
-        digest: `sha256:${'b'.repeat(64)}`,
-      },
-      strategy: {
-        name: activeStrategyName,
-        behaviorHash: activeStrategyBehaviorHash,
-        parameterHash,
-        parameterSchemaVersion: protocol.schemaVersion,
-      },
-    })
+    const parameterHash = Result.getOrThrow(canonicalHashV1Result(protocol))
+    const provenance = Result.getOrThrow(
+      makeRuntimeProvenanceResult({
+        sourceRevision: 'a'.repeat(40),
+        image: {
+          repository: 'registry.ide-newton.ts.net/lab/bayn',
+          digest: `sha256:${'b'.repeat(64)}`,
+        },
+        strategy: {
+          name: activeStrategyName,
+          behaviorHash: activeStrategyBehaviorHash,
+          parameterHash,
+          parameterSchemaVersion: protocol.schemaVersion,
+        },
+      }),
+    )
 
     const runtime = makeActiveStrategyRuntime(protocol, provenance)
 
@@ -37,7 +39,7 @@ describe('active strategy composition', () => {
       name: 'jev',
       behaviorHash: activeStrategyBehaviorHash,
       parameterHash,
-      parameterSchemaVersion: 'bayn.jev.protocol.v2',
+      parameterSchemaVersion: 'bayn.jev.protocol.v23',
     })
   })
 })

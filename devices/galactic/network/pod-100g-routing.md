@@ -44,8 +44,9 @@ underlying Flannel routes provide a recovery path after removal, not automatic f
    Inspect the Omni sync dry run. It must update only the two `30-<machine-uuid>-storage-network` patches.
    It must not change Ryzen, installers, extensions, node addresses, or Flannel's advertised endpoints.
 4. Sync the merged template through Omni. No reboot, drain, OSD rollout, or new application attachment is required.
-5. Run the route verifier. Exit `0` requires all 52 host and forwarded-pod lookups to use the expected interfaces,
-   gateways, and unbound host source addresses. Exit `1` means a failed check. Exit `2` means evidence is unavailable.
+5. Run the route verifier. Exit `0` requires all 60 host and forwarded-pod lookups to use the expected interfaces,
+   gateways, and unbound host source addresses. It also requires the storage addresses to belong only to the bonds,
+   with no IPv4 address left on a bond member. Exit `1` means a failed check. Exit `2` means evidence is unavailable.
 
    ```bash
    python3 devices/galactic/network/verify-pod-routing.py
@@ -101,10 +102,37 @@ kubectl --context galactic-lan -n rook-ceph delete pod,service -l lab-network-pr
 If a check fails, retain the failure evidence, then delete the probes before investigating. Missing telemetry is
 unknown. These small requests establish connectivity, not 100G throughput or storage latency improvement.
 
+## Recover a stale address on a bond member
+
+A live conversion from a physical interface to `storage0` can leave the old address and connected route in the
+kernel even though Talos's `AddressSpecs` assigns the address only to the bond. The duplicate connected route can
+send replies through the enslaved physical interface. Host clients using a remote Service endpoint are affected:
+kube-proxy masquerades those connections to the storage address, while direct pod connections can still work.
+
+Compare `talosctl -n <node-address> get addressspecs -o yaml` with `ip -j address show dev storage0` and
+`ip -j address show master storage0` from that node's existing Flannel pod. Check both host and forwarded-pod routes
+to the peer's storage address. Require the physical interface to be a member of `storage0`, the same address to be
+present on the bond, and no desired `AddressSpec` for that address on the member before removing a stale address.
+Do not remove the bond address or change the management interface.
+
+For the verified Altra incident on 2026-10-12 UTC, the bounded repair was:
+
+```sh
+kubectl --context galactic-lan -n kube-system exec <altra-flannel-pod> -c kube-flannel -- \
+  ip address del 10.100.0.11/24 dev enp1s0f1np1
+```
+
+No persistent configuration changed: Omni already assigns `10.100.0.11/24` solely to `storage0`. Require the peer
+storage route to select `storage0`, the full route verifier to pass, and host-network requests to a remote Service
+endpoint to succeed by both literal Service IP and DNS name. Then verify fresh `node-storage` samples for every
+node, remote-write recovery, and Ceph quorum/data health. The incident changed Turin's Mimir Service requests from
+connection timeouts to HTTP 200 while preserving the 100G pod routes. The verifier now rejects the stale member
+address and checks the previously uncovered masqueraded-Service reply routes.
+
 ## Recover stalled CSI operations
 
-If an earlier route selected a storage source and left a CSI operation stuck, correct the preferred source and pass
-all 52 checks first. Before restarting a CephFS plugin, identify every PVC consumer on the affected node. For Altra:
+If an earlier route selected a storage source and left a CSI operation stuck, correct the preferred source and require
+a successful verifier exit first. Before restarting a CephFS plugin, identify every PVC consumer on the affected node. For Altra:
 
 ```bash
 kubectl --context galactic-lan -n rook-ceph get pods --all-namespaces \

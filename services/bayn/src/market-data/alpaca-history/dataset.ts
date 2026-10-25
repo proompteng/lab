@@ -78,7 +78,6 @@ export const HistoricalDatasetManifestSchema = Schema.Struct({
   recordCount: NonNegativeIntegerSchema,
   datasetId: Sha256Schema,
 })
-export type HistoricalDatasetManifest = typeof HistoricalDatasetManifestSchema.Type
 
 export const decodeHistoricalManifest = (text: string, expectedId: string) =>
   Result.gen(function* () {
@@ -123,11 +122,16 @@ export const readHistoricalDataset = (directory: string, expectedId: string) =>
     )(coverageText)
     const sessions = yield* Effect.forEach(calendar, (day) =>
       Effect.fromResult(normalizeMarketCalendarResult([day], { start: day.date, end: day.date })).pipe(
-        Effect.flatMap((value) =>
-          value.sessions[0] === undefined
+        Effect.flatMap((value) => {
+          const session = value.providerSessions[0]
+          return session === undefined
             ? Effect.fail(new HistoricalDatasetFailure({ message: 'Historical calendar has no session' }))
-            : Effect.succeed(value.sessions[0]),
-        ),
+            : Effect.succeed({
+                date: session.date,
+                openAt: session.regularOpenAt,
+                closeAt: session.regularCloseAt,
+              })
+        }),
       ),
     )
     if (

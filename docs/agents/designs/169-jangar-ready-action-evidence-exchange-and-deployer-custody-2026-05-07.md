@@ -1,6 +1,6 @@
 # 169. Jangar Ready-Action Evidence Exchange And Deployer Custody (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-07
 Owner: Victor Chen, Jangar Engineering
 Scope: Jangar control-plane evidence settlement, stage-specific action packets, engineer acceptance gates, deployer

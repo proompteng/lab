@@ -1,6 +1,6 @@
 # 57. Jangar Authority Capsules and Readiness-Class Separation (2026-03-20)
 
-Status: Ready for merge (discover architecture lane)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: `2026-03-20`
 Owner: Victor Chen (Jangar Engineering)
 Related mission: `codex/swarm-jangar-control-plane-discover`
@@ -15,9 +15,6 @@ Companion doc:
 
 Extends:
 
-- `54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md`
-- `55-jangar-rollout-fact-receipts-and-swarm-freeze-parity-2026-03-20.md`
-- `56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md`
 - `51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
 
 ## Executive summary

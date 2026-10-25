@@ -290,7 +290,7 @@ FROM scratch
 
 LABEL org.opencontainers.image.source="https://github.com/proompteng/lab"
 LABEL org.opencontainers.image.description="Kata Containers 4.1.0 multi-VMM system extension for Talos 1.13"
-LABEL org.opencontainers.image.version="4.1.0-talos-v1.13.9-r5"
+LABEL org.opencontainers.image.version="4.1.0-talos-v1.13.9-r6"
 
 COPY --from=payload /extension/manifest.yaml /manifest.yaml
 COPY --from=payload /extension/rootfs /rootfs

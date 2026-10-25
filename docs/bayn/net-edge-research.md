@@ -56,8 +56,9 @@ do not report a Bayn overfitting probability or deflated Sharpe unless those cal
 Use the [retained native export](study-evidence-export.md) for reproducible decision diagnostics. Include exclusions,
 abstentions, pending results and cycles with no batch. Filtering only realized winners or comparing overlapping
 forward labels cannot reconstruct replacement choices, order timing or portfolio cash carry.
-Use [original capture](../../services/bayn/src/research-capture/README.md) for studies that require the complete
-arrival and controller timeline. Retained decision snapshots do not satisfy that contract.
+Studies that require a complete arrival and controller timeline remain blocked until independent collection proves
+that coverage. The [market-data archive boundary](market-data-archive.md) keeps collection outside trading.
+Retained decision snapshots and Kafka producer timestamps do not establish the original trading arrival timeline.
 
 The [signal study](jev-signal-study.md), [matched-entry study](matched-entry-study.md),
 [portfolio controls](control-portfolios.md) and [ridge training](six-bar-ridge.md) have different evidence boundaries.

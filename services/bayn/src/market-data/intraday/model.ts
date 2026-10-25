@@ -1,3 +1,4 @@
+import { instrumentMarket, MarketKind } from '../../instruments'
 import type { SimulatedMarketSnapshot, SimulatedVerifiedMarketSnapshot } from '../streaming/snapshot'
 import type { SimulatedSnapshotReference } from '../streaming/simulation-service'
 import type { StreamingMarketSnapshot, StreamingVerifiedMarketSnapshot } from '../streaming/snapshot'
@@ -6,13 +7,21 @@ import { Context, Data, Effect } from 'effect'
 
 import type { OperationalError } from '../../errors'
 import type { IsoDate } from '../../schemas'
-import type { MarketCalendarObservation } from '../../broker/alpaca/model'
+import type { MarketHours } from '../../market-hours'
 
-export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
-export type IntradayDelayClass = 'real_time_exchange_only' | 'real_time_consolidated' | 'delayed_15m_consolidated'
+export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip' | 'us'
+export type IntradayDelayClass =
+  | 'real_time_exchange_only'
+  | 'real_time_consolidated'
+  | 'delayed_15m_consolidated'
+  | 'real_time_crypto'
 export enum IntradaySnapshotPurpose {
   EntryPricing = 'ENTRY_PRICING',
   Liquidation = 'LIQUIDATION',
+}
+
+export enum IntradayBenchmarkEvidencePolicy {
+  CompletedBars = 'bayn.benchmark-evidence.completed-bars.v1',
 }
 
 export enum IntradayCandidateEvidencePolicy {
@@ -21,7 +30,7 @@ export enum IntradayCandidateEvidencePolicy {
 
 export interface IntradaySnapshotQuery {
   readonly sessionDate: IsoDate
-  readonly calendar: MarketCalendarObservation
+  readonly calendar: MarketHours
   readonly rangeStartAt: string
   readonly rangeEndAt: string
   readonly observedAt: string
@@ -34,6 +43,8 @@ export interface IntradaySnapshotQuery {
   /** Decision candidates whose unavailable data is recorded separately from the required benchmark. */
   readonly candidateSymbols?: readonly string[]
   readonly candidateEvidencePolicy?: IntradayCandidateEvidencePolicy
+  readonly benchmarkEvidencePolicy?: IntradayBenchmarkEvidencePolicy
+  readonly benchmarkSymbols?: readonly string[]
   /** Quote-only execution evidence; omission keeps the full decision-time bar and trade contract. */
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
@@ -53,12 +64,20 @@ export interface IntradayArchiveWatermark {
   readonly inclusiveLastOffset: string
 }
 
-export const usesCandidateWindowTrade = (
+export const usesWindowTradeEvidence = (
   request: Pick<IntradaySnapshotQuery, 'candidateEvidencePolicy' | 'candidateSymbols'>,
   symbol: string,
 ): boolean =>
   request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade &&
-  request.candidateSymbols?.includes(symbol) === true
+  (request.candidateSymbols?.includes(symbol) === true || instrumentMarket(symbol) === MarketKind.Crypto)
+
+export const usesCompletedBarBenchmark = (
+  request: Pick<IntradaySnapshotQuery, 'benchmarkEvidencePolicy' | 'benchmarkSymbols' | 'candidateSymbols'>,
+  symbol: string,
+): boolean =>
+  request.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars &&
+  request.benchmarkSymbols?.includes(symbol) === true &&
+  request.candidateSymbols?.includes(symbol) !== true
 
 export interface IntradaySnapshotRequest extends IntradaySnapshotQuery {
   /** Exact Kafka-backed archive version captured before this snapshot is loaded. */
@@ -78,7 +97,8 @@ export interface IntradayRecordIdentity {
   readonly universeId: string
   readonly universeSymbolHash: string
   readonly feed: IntradayFeed
-  readonly marketSession: 'regular'
+  readonly marketSession: 'pre' | 'regular' | 'post' | 'continuous'
+  readonly nativePayload?: string
   readonly delayClass: IntradayDelayClass
   readonly symbol: string
   readonly eventAt: string
@@ -122,7 +142,7 @@ export interface IntradayCandidateExclusion {
 export interface IntradaySnapshotManifest {
   readonly schemaVersion: 'bayn.intraday-market-snapshot.v1'
   readonly sessionDate: IsoDate
-  readonly calendar: MarketCalendarObservation
+  readonly calendar: MarketHours
   readonly rangeStartAt: string
   readonly rangeEndAt: string
   readonly observedAt: string
@@ -133,6 +153,8 @@ export interface IntradaySnapshotManifest {
   readonly symbols: readonly string[]
   readonly candidateSymbols?: readonly string[]
   readonly candidateEvidencePolicy?: IntradayCandidateEvidencePolicy
+  readonly benchmarkEvidencePolicy?: IntradayBenchmarkEvidencePolicy
+  readonly benchmarkSymbols?: readonly string[]
   readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed

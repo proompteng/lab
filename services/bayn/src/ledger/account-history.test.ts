@@ -29,15 +29,15 @@ const history = () => {
     for (const side of [OrderSide.Buy, OrderSide.Sell]) {
       const identity = `${index}-${side}`
       const fill: Fill = {
-        schemaVersion: 'bayn.paper-fill.v1',
+        schemaVersion: 'bayn.fill.v2',
         accountId,
         fillId: identity,
         brokerOrderId: `broker-${identity}`,
         clientOrderId: `client-${identity}`,
         symbol: 'NVDA',
         side,
-        quantityMicros: '1000000',
-        priceMicros: side === OrderSide.Buy ? '100000000' : '110000000',
+        quantityAtoms: '1000000000',
+        priceAtoms: side === OrderSide.Buy ? '100000000000' : '110000000000',
         feeMicros: '100',
         occurredAt: '2026-09-18T15:30:00.000Z',
       }
@@ -47,8 +47,8 @@ const history = () => {
             (index * 2 + (side === OrderSide.Buy ? 1 : 2)).toString(16).padStart(64, '0'),
             fill,
             side === OrderSide.Buy
-              ? { quantityMicros: '0', costMicros: '0' }
-              : { quantityMicros: '1000000', costMicros: '100000000' },
+              ? { quantityAtoms: '0', costMicros: '0' }
+              : { quantityAtoms: '1000000000', costMicros: '100000000' },
             config.tigerBeetle.ledger,
           ),
         ).ledger,
@@ -95,6 +95,12 @@ const reader = (overrides: Partial<TigerBeetleClient> = {}) => {
       queryTransfers: async (filter) => {
         queries.push(filter)
         return queryPage(fixture.transfers, filter)
+      },
+      getAccountTransfers: async () => {
+        throw new Error('unexpected account transfer history read')
+      },
+      getAccountBalances: async () => {
+        throw new Error('unexpected account balance history read')
       },
       destroy: () => {
         closed += 1

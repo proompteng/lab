@@ -1,7 +1,7 @@
 import { Cause, Clock, Effect, Exit } from 'effect'
 
-import type { CycleMutationReceipt, CycleStoreError, CycleStoreShape } from '../cycle/store'
-import { isTerminalCycleState } from '../cycle'
+import type { CycleMutationReceipt, CycleStoreError, CycleStoreShape } from '../cycle/store/model'
+import { isTerminalCycleState } from '../cycle/transitions'
 import type { JevBatchStore } from '../jev/batch-evaluation'
 import { operationTimeoutOrElse } from '../operation-timeout'
 
@@ -51,7 +51,6 @@ export const withTerminalJevEvidence = (
   return {
     ...store,
     activate: (...args) => after(store.activate(...args)),
-    bindSnapshot: (...args) => after(store.bindSnapshot(...args)),
     bindDecision: (...args) => after(store.bindDecision(...args)),
     finish: (...args) => after(store.finish(...args)),
     block: (...args) => after(store.block(...args)),

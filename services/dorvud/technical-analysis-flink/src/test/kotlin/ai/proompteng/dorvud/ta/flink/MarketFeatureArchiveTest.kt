@@ -9,7 +9,7 @@ import kotlin.test.assertNull
 class MarketFeatureArchiveTest {
   private val json = Json { encodeDefaults = true }
 
-  private fun fixture() = java.io.File("../../bayn/src/market-data/features/fixtures/rolling-price-v1.json").readText()
+  private fun fixture() = java.io.File("../../bayn/src/market-data/features/fixtures/observed-price-window-v1.json").readText()
 
   private fun record() = ArchiveKafkaRecord("torghut.market-features.v1", 2, 12, fixture())
 
@@ -22,6 +22,51 @@ class MarketFeatureArchiveTest {
     java.time.Instant
       .parse("2026-09-11T14:00:03Z")
       .toEpochMilli()
+
+  @Test fun `archive rejects correctly hashed windows outside one executable segment`() {
+    val original = json.decodeFromString(RollingMarketFeature.serializer(), fixture())
+    for ((startAt, accepted) in listOf(
+      "2026-09-11T11:50:00Z" to false,
+      "2026-09-11T12:00:00Z" to true,
+      "2026-09-11T13:00:00Z" to true,
+      "2026-09-11T13:20:00Z" to false,
+      "2026-09-11T13:30:00Z" to true,
+      "2026-09-11T19:30:00Z" to true,
+      "2026-09-11T19:50:00Z" to false,
+      "2026-09-11T20:00:00Z" to true,
+      "2026-09-11T20:50:00Z" to false,
+    )) {
+      val shift =
+        java.time.Instant
+          .parse(startAt)
+          .toEpochMilli() - original.material.windowStartMs
+      val nanos = shift.toBigInteger() * 1_000_000L.toBigInteger()
+      val material =
+        original.material.copy(
+          windowStartMs = original.material.windowStartMs + shift,
+          windowEndMs = original.material.windowEndMs + shift,
+          inputs =
+            original.material.inputs.map {
+              it.copy(
+                eventTimeNanos = (it.eventTimeNanos.toBigInteger() + nanos).toString(),
+                ingestionTimeNanos = (it.ingestionTimeNanos.toBigInteger() + nanos).toString(),
+              )
+            },
+        )
+      val changed =
+        original.copy(
+          material = material,
+          computedAtMs = original.computedAtMs + shift,
+          featureId = featureHash(json.encodeToJsonElement(RollingMarketFeatureMaterial.serializer(), material)),
+        )
+      val record = record().copy(value = json.encodeToString(RollingMarketFeature.serializer(), changed))
+      if (accepted) {
+        assertEquals(changed.computedAtMs, decodeArchivedMarketFeature(record, routes(), changed.computedAtMs).computedAtMs)
+      } else {
+        assertFailsWith<IllegalArgumentException> { decodeArchivedMarketFeature(record, routes(), changed.computedAtMs) }
+      }
+    }
+  }
 
   @Test fun `archive retains exact feature message and transport coordinates`() {
     val decoded = decodeArchivedMarketFeature(record(), routes(), archivedAt)
@@ -78,9 +123,9 @@ class MarketFeatureArchiveTest {
     }
   }
 
-  @Test fun `archive rejects incomplete provenance even with recomputed content hash`() {
+  @Test fun `archive rejects missing range-completion provenance even with recomputed content hash`() {
     val feature = json.decodeFromString(RollingMarketFeature.serializer(), fixture())
-    val material = feature.material.copy(inputs = feature.material.inputs.drop(1))
+    val material = feature.material.copy(inputs = feature.material.inputs.dropLast(1))
     val changed =
       feature.copy(
         material = material,

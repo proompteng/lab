@@ -11,7 +11,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Context, Effect, Semaphore } from 'effect'
 import { operationTimeoutOrElse } from '../operation-timeout'
 
-import { BrokerRead } from '../broker/alpaca'
+import { BrokerRead } from '../broker/alpaca/model'
 import { BrokerEnvironment } from '../broker/identity'
 import type { RecordAutonomousCyclePass } from '../app'
 import type { SimulatedExecutionClock } from './clock'
@@ -28,7 +28,7 @@ import {
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
-import { CycleStore } from '../cycle/store'
+import { CycleStore } from '../cycle/store/model'
 import { makeCycleStore, withWriterFenceCycleStore } from '../cycle/store/postgres'
 import { BrokerAccess, grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
 import {
@@ -41,8 +41,9 @@ import { Authority, KillState } from '../execution/contracts'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
 import { executionGenerationNeedsRecovery, makeGenerationCycleDriver } from '../composition/generation-cycle'
 import { refreshResearchCapitalActivationReconciliation } from '../composition/capital-activation'
-import { BlockedCycleIntentStore, IntentStore } from '../execution/intents'
-import { MutationStore } from '../execution/mutations'
+import { BlockedCycleIntentStore } from '../execution/intents/blocked-cycle'
+import { IntentStore } from '../execution/intents/domain'
+import { MutationStore } from '../execution/mutations/model'
 import { makeTradingEngine } from '../composition/trading-engine'
 import { WriterFence } from '../execution/writer-fence'
 import type { ExecutionProgramDependencies } from '../execution/runtime-program'
@@ -223,8 +224,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       Context.add(MutationStore, mutationStore),
     )
     const readAuthorityState = store.authorityGeneration.readAuthorityState
-    if (readAuthorityState === undefined)
-      return yield* new ReplayBrokerFailure({ message: 'Replay runtime requires durable authority reads' })
     const readAuthority = readAuthorityState.pipe(Effect.mapError(replayGenerationRecoveryError))
     const reconcileForActivation = reconcileReplayForActivation(
       input.currentUtcInstant,
@@ -274,8 +273,8 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           executionMode: mode,
           execution: {
             currentUtcInstant: input.currentUtcInstant,
-            verifyBrokerStateVersion: (version, intentId) =>
-              verifyBrokerStateVersion(sql, identity.accountId, version, intentId),
+            verifyBrokerStateVersion: (version, intentId, requireCryptoEntryFeeBound) =>
+              verifyBrokerStateVersion(sql, identity.accountId, version, intentId, requireCryptoEntryFeeBound),
             brokerRead: input.broker.read,
             brokerMutation: input.broker.mutation,
             intentStore,

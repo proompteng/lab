@@ -1,10 +1,12 @@
+use super::authorization::GuestRequestIssuer;
+use futures::StreamExt;
 use prost::Message;
 use tonic::{Request, Status, metadata::MetadataValue, transport::Channel};
 
 use super::*;
 
 #[cfg(test)]
-pub(super) mod test_server;
+pub(crate) mod test_server;
 #[cfg(test)]
 mod tests;
 
@@ -18,11 +20,66 @@ type Client = proto::nanoagent_service_client::NanoagentServiceClient<Channel>;
 pub struct RpcClient {
     client: Client,
     authorization: MetadataValue<tonic::metadata::Ascii>,
-    claim: Option<crate::slot::Claim>,
+    issuer: GuestRequestIssuer,
 }
 
 impl RpcClient {
-    pub fn new(channel: Channel, token: &str) -> Result<Self, GuestError> {
+    pub(crate) async fn preview_headers(
+        &self,
+        method: &http::Method,
+        target: &str,
+        body: &[u8],
+    ) -> Result<http::HeaderMap, Status> {
+        let (proof, fence) = self
+            .issuer
+            .sign(&format!("HTTP {method}"), target, body)
+            .await?;
+        self.issuer.recheck(fence).await?;
+        let mut headers = http::HeaderMap::new();
+        let claim = self.issuer.claim();
+        for (name, value) in [
+            (
+                crate::slot::supervisor::CLAIM_UID_HEADER,
+                claim.microvm_uid.clone(),
+            ),
+            (
+                crate::slot::supervisor::CLAIM_EPOCH_HEADER,
+                claim.epoch.to_string(),
+            ),
+            (
+                crate::slot::supervisor::RUNTIME_EPOCH_HEADER,
+                claim.runtime_epoch.clone(),
+            ),
+        ] {
+            headers.insert(
+                name,
+                value
+                    .parse()
+                    .map_err(|_| Status::internal("encode guest preview binding"))?,
+            );
+        }
+        headers.insert(
+            tengri::guest_authorization::CONTEXT_HEADER,
+            proof
+                .context
+                .parse()
+                .map_err(|_| Status::internal("encode guest HTTP context"))?,
+        );
+        headers.insert(
+            tengri::guest_authorization::SIGNATURE_HEADER,
+            proof
+                .signature
+                .parse()
+                .map_err(|_| Status::internal("encode guest HTTP signature"))?,
+        );
+        Ok(headers)
+    }
+
+    pub(super) fn new(
+        channel: Channel,
+        token: &str,
+        issuer: GuestRequestIssuer,
+    ) -> Result<Self, GuestError> {
         let authorization =
             MetadataValue::try_from(format!("Bearer {token}")).map_err(|_| GuestError::Api {
                 status: StatusCode::UNAUTHORIZED,
@@ -33,7 +90,7 @@ impl RpcClient {
                 .max_decoding_message_size(MAX_GUEST_JSON_BYTES)
                 .max_encoding_message_size(MAX_GUEST_JSON_BYTES),
             authorization,
-            claim: None,
+            issuer,
         })
     }
 
@@ -45,35 +102,133 @@ impl RpcClient {
                 .connect_timeout(GUEST_CONNECT_TIMEOUT)
                 .connect_lazy(),
             token,
+            super::authorization::GuestAuthorization::fixture_issuer(),
         )
     }
 
-    fn request<T>(&self, value: T, timeout: Option<Duration>) -> Request<T> {
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn fixture_for_runtime(
+        channel: Channel,
+        token: &str,
+        claim: crate::slot::Claim,
+        pod_uid: String,
+        database: std::sync::Arc<crate::control::Database>,
+    ) -> Result<Self, GuestError> {
+        Self::new(
+            channel,
+            token,
+            super::authorization::GuestAuthorization::fixture_for_runtime(claim, pod_uid, database),
+        )
+    }
+
+    async fn request<T: Message>(
+        &self,
+        operation: &str,
+        target: &str,
+        value: T,
+        timeout: Option<Duration>,
+    ) -> Result<(Request<T>, crate::control::Fence), Status> {
+        let method = format!("/proompteng.runtime.guest.v1.NanoagentService/{operation}");
+        let (proof, fence) = self
+            .issuer
+            .sign(&method, target, &value.encode_to_vec())
+            .await?;
         let mut request = Request::new(value);
+        crate::telemetry::inject(&mut request);
         request
             .metadata_mut()
             .insert("authorization", self.authorization.clone());
-        if let Some(claim) = &self.claim {
-            request.metadata_mut().insert(
+        let claim = self.issuer.claim();
+        for (key, value) in [
+            (
                 crate::slot::supervisor::CLAIM_UID_HEADER,
-                claim.microvm_uid.parse().expect("validated claim UID"),
-            );
-            request.metadata_mut().insert(
+                claim.microvm_uid.clone(),
+            ),
+            (
                 crate::slot::supervisor::CLAIM_EPOCH_HEADER,
-                claim.epoch.to_string().parse().expect("numeric epoch"),
+                claim.epoch.to_string(),
+            ),
+            (
+                crate::slot::supervisor::RUNTIME_EPOCH_HEADER,
+                claim.runtime_epoch.clone(),
+            ),
+            (tengri::guest_authorization::CONTEXT_HEADER, proof.context),
+            (
+                tengri::guest_authorization::SIGNATURE_HEADER,
+                proof.signature,
+            ),
+        ] {
+            request.metadata_mut().insert(
+                key,
+                value
+                    .parse()
+                    .map_err(|_| Status::internal("invalid guest authorization metadata"))?,
             );
         }
         if let Some(timeout) = timeout {
             request.set_timeout(timeout);
         }
-        request
+        Ok((request, fence))
+    }
+
+    async fn call<T: Message, Output, Pending>(
+        &self,
+        operation: &str,
+        target: &str,
+        value: T,
+        timeout: Option<Duration>,
+        invoke: impl FnOnce(Client, Request<T>) -> Pending,
+    ) -> Result<tonic::Response<Output>, Status>
+    where
+        Pending: std::future::Future<Output = Result<tonic::Response<Output>, Status>>,
+    {
+        let (request, fence) = self.request(operation, target, value, timeout).await?;
+        self.call_request(request, fence, invoke).await
+    }
+
+    async fn call_request<T, Output, Pending>(
+        &self,
+        request: Request<T>,
+        fence: crate::control::Fence,
+        invoke: impl FnOnce(Client, Request<T>) -> Pending,
+    ) -> Result<tonic::Response<Output>, Status>
+    where
+        Pending: std::future::Future<Output = Result<tonic::Response<Output>, Status>>,
+    {
+        let pending = invoke(self.client.clone(), request);
+        tokio::pin!(pending);
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.tick().await;
+        let response = loop {
+            tokio::select! { biased;
+                _ = interval.tick() => self.issuer.recheck(fence).await?,
+                result = &mut pending => break result?,
+            }
+        };
+        self.issuer.recheck(fence).await?;
+        Ok(response)
+    }
+
+    pub async fn codex_activity(&self) -> Result<proto::CodexActivity, GuestError> {
+        let info = self
+            .call(
+                "GetInfo",
+                "",
+                proto::Empty {},
+                Some(GUEST_UNARY_TIMEOUT),
+                |mut client, request| async move { client.get_info(request).await },
+            )
+            .await
+            .map_err(rpc_error)?
+            .into_inner();
+        info.codex_activity.ok_or_else(|| GuestError::Api {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "Agent work state cannot be confirmed; automatic sleep deferred".into(),
+        })
     }
 
     pub async fn verify_identity(&self, pod_uid: &str) -> Result<(), GuestError> {
-        let info = self
-            .client
-            .clone()
-            .get_info(self.request(proto::Empty {}, Some(GUEST_UNARY_TIMEOUT)))
+        let info = self.call("GetInfo", "", proto::Empty {}, Some(GUEST_UNARY_TIMEOUT), |mut client, request| async move { client.get_info(request).await })
             .await
             .map_err(|error| {
                 if error.code() == tonic::Code::Unimplemented {
@@ -87,22 +242,26 @@ impl RpcClient {
                 message: "Nanoagent identity does not match the current guest Pod".into(),
             });
         }
-        if info.protocol_version != 2 {
-            return Err(GuestError::Api { status: StatusCode::BAD_GATEWAY,
-                message: "Nanoagent uses an unsupported guest protocol version. Sleep and resume the agent to use the current guest image.".into() });
+        if info.protocol_version != tengri::GUEST_API_PROTOCOL_VERSION {
+            return Err(GuestError::Api {
+                status: StatusCode::BAD_GATEWAY,
+                message:
+                    "The agent requires a retained-home runtime upgrade before it can reconnect."
+                        .into(),
+            });
         }
         Ok(())
     }
 
-    pub fn bind_claim(&mut self, claim: crate::slot::Claim) {
-        self.claim = Some(claim);
-    }
-
     pub async fn open_editor(&self) -> Result<(), GuestError> {
         let result = self
-            .client
-            .clone()
-            .open_editor(self.request(proto::Empty {}, Some(Duration::from_secs(300))))
+            .call(
+                "OpenEditor",
+                "",
+                proto::Empty {},
+                Some(Duration::from_secs(300)),
+                |mut client, request| async move { client.open_editor(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -116,9 +275,13 @@ impl RpcClient {
     }
     pub async fn open_browser(&self) -> Result<(), GuestError> {
         let result = self
-            .client
-            .clone()
-            .open_browser(self.request(proto::Empty {}, Some(Duration::from_secs(300))))
+            .call(
+                "OpenBrowser",
+                "",
+                proto::Empty {},
+                Some(Duration::from_secs(300)),
+                |mut client, request| async move { client.open_browser(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -130,11 +293,29 @@ impl RpcClient {
         }
         Ok(())
     }
+    pub async fn stat_file(&self, path: &str) -> Result<FileEntry, GuestError> {
+        Ok(self
+            .call(
+                "StatFile",
+                path,
+                proto::Path { path: path.into() },
+                Some(GUEST_UNARY_TIMEOUT),
+                |mut client, request| async move { client.stat_file(request).await },
+            )
+            .await
+            .map_err(rpc_error)?
+            .into_inner()
+            .into())
+    }
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
         let result = self
-            .client
-            .clone()
-            .list_files(self.request(proto::Path { path: path.into() }, Some(GUEST_UNARY_TIMEOUT)))
+            .call(
+                "ListFiles",
+                path,
+                proto::Path { path: path.into() },
+                Some(GUEST_UNARY_TIMEOUT),
+                |mut client, request| async move { client.list_files(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -145,9 +326,13 @@ impl RpcClient {
     }
     pub async fn read_file(&self, path: &str) -> Result<FileContent, GuestError> {
         let result = self
-            .client
-            .clone()
-            .read_file(self.request(proto::Path { path: path.into() }, Some(GUEST_UNARY_TIMEOUT)))
+            .call(
+                "ReadFile",
+                path,
+                proto::Path { path: path.into() },
+                Some(GUEST_UNARY_TIMEOUT),
+                |mut client, request| async move { client.read_file(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -173,16 +358,17 @@ impl RpcClient {
             return Err(GuestError::ResponseTooLarge(MAX_GUEST_FILE_BYTES));
         }
         let result = self
-            .client
-            .clone()
-            .write_file(self.request(
+            .call(
+                "WriteFile",
+                path,
                 proto::FileWrite {
                     path: path.into(),
                     content: content.into(),
                     expected_revision: expected_revision.into(),
                 },
                 Some(GUEST_UNARY_TIMEOUT),
-            ))
+                |mut client, request| async move { client.write_file(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -195,10 +381,12 @@ impl RpcClient {
     }
     pub async fn create_directory(&self, path: &str) -> Result<FileEntry, GuestError> {
         Ok(self
-            .client
-            .clone()
-            .create_directory(
-                self.request(proto::Path { path: path.into() }, Some(GUEST_UNARY_TIMEOUT)),
+            .call(
+                "CreateDirectory",
+                path,
+                proto::Path { path: path.into() },
+                Some(GUEST_UNARY_TIMEOUT),
+                |mut client, request| async move { client.create_directory(request).await },
             )
             .await
             .map_err(rpc_error)?
@@ -211,32 +399,34 @@ impl RpcClient {
         destination_path: &str,
     ) -> Result<FileEntry, GuestError> {
         Ok(self
-            .client
-            .clone()
-            .move_file(self.request(
+            .call(
+                "MoveFile",
+                source_path,
                 proto::FileMove {
                     source_path: source_path.into(),
                     destination_path: destination_path.into(),
                 },
                 Some(GUEST_UNARY_TIMEOUT),
-            ))
+                |mut client, request| async move { client.move_file(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner()
             .into())
     }
     pub async fn delete_file(&self, path: &str, recursive: bool) -> Result<(), GuestError> {
-        self.client
-            .clone()
-            .delete_file(self.request(
-                proto::FileDelete {
-                    path: path.into(),
-                    recursive,
-                },
-                Some(GUEST_UNARY_TIMEOUT),
-            ))
-            .await
-            .map_err(rpc_error)?;
+        self.call(
+            "DeleteFile",
+            path,
+            proto::FileDelete {
+                path: path.into(),
+                recursive,
+            },
+            Some(GUEST_UNARY_TIMEOUT),
+            |mut client, request| async move { client.delete_file(request).await },
+        )
+        .await
+        .map_err(rpc_error)?;
         Ok(())
     }
     pub async fn search_files(
@@ -246,16 +436,17 @@ impl RpcClient {
         limit: u32,
     ) -> Result<FileSearchResult, GuestError> {
         let result = self
-            .client
-            .clone()
-            .search_files(self.request(
+            .call(
+                "SearchFiles",
+                path,
                 proto::FileSearch {
                     query: query.into(),
                     path: path.into(),
                     limit,
                 },
                 Some(GUEST_UNARY_TIMEOUT),
-            ))
+                |mut client, request| async move { client.search_files(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -270,15 +461,16 @@ impl RpcClient {
         after: Option<u64>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<FileEvent, GuestError>> + Send>>, GuestError> {
         let mut stream = self
-            .client
-            .clone()
-            .watch_files(self.request(
+            .call(
+                "WatchFiles",
+                path,
                 proto::FileWatch {
                     path: path.into(),
                     after,
                 },
                 None,
-            ))
+                |mut client, request| async move { client.watch_files(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -302,9 +494,9 @@ impl RpcClient {
         rows: u32,
     ) -> Result<TerminalCreation, GuestError> {
         let result = self
-            .client
-            .clone()
-            .create_terminal(self.request(
+            .call(
+                "CreateTerminal",
+                "",
                 proto::TerminalCreate {
                     creation_id: creation_id.into(),
                     cwd: cwd.into(),
@@ -312,7 +504,8 @@ impl RpcClient {
                     rows,
                 },
                 Some(GUEST_UNARY_TIMEOUT),
-            ))
+                |mut client, request| async move { client.create_terminal(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -337,9 +530,13 @@ impl RpcClient {
     }
     pub async fn list_terminals(&self) -> Result<Vec<TerminalSession>, GuestError> {
         Ok(self
-            .client
-            .clone()
-            .list_terminals(self.request(proto::Empty {}, Some(GUEST_UNARY_TIMEOUT)))
+            .call(
+                "ListTerminals",
+                "",
+                proto::Empty {},
+                Some(GUEST_UNARY_TIMEOUT),
+                |mut client, request| async move { client.list_terminals(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner()
@@ -349,14 +546,15 @@ impl RpcClient {
             .collect())
     }
     pub async fn terminate_terminal(&self, id: &str) -> Result<(), GuestError> {
-        self.client
-            .clone()
-            .terminate_terminal(self.request(
-                proto::TerminalId { id: id.into() },
-                Some(GUEST_UNARY_TIMEOUT),
-            ))
-            .await
-            .map_err(rpc_error)?;
+        self.call(
+            "TerminateTerminal",
+            id,
+            proto::TerminalId { id: id.into() },
+            Some(GUEST_UNARY_TIMEOUT),
+            |mut client, request| async move { client.terminate_terminal(request).await },
+        )
+        .await
+        .map_err(rpc_error)?;
         Ok(())
     }
     pub(crate) async fn codex_call(
@@ -365,15 +563,16 @@ impl RpcClient {
         params: Value,
     ) -> Result<CodexCallResponse, GuestError> {
         let result = self
-            .client
-            .clone()
-            .codex_call(self.request(
+            .call(
+                "CodexCall",
+                "",
                 proto::CodexRequest {
                     method: method.into(),
                     params_json: serde_json::to_vec(&params)?,
                 },
                 Some(GUEST_UNARY_TIMEOUT),
-            ))
+                |mut client, request| async move { client.codex_call(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -384,9 +583,13 @@ impl RpcClient {
     }
     pub async fn codex_login(&self) -> Result<CodexLoginSnapshot, GuestError> {
         let result = self
-            .client
-            .clone()
-            .codex_login(self.request(proto::Empty {}, Some(GUEST_UNARY_TIMEOUT)))
+            .call(
+                "CodexLogin",
+                "",
+                proto::Empty {},
+                Some(GUEST_UNARY_TIMEOUT),
+                |mut client, request| async move { client.codex_login(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -400,33 +603,19 @@ impl RpcClient {
             started_at: result.started_at,
         })
     }
-    pub async fn resolve_codex_approval(
-        &self,
-        approval_id: &str,
-        decision: &str,
-    ) -> Result<(), GuestError> {
-        self.client
-            .clone()
-            .resolve_codex_approval(self.request(
-                proto::CodexApproval {
-                    approval_id: approval_id.into(),
-                    decision: decision.into(),
-                },
-                Some(GUEST_UNARY_TIMEOUT),
-            ))
-            .await
-            .map_err(rpc_error)?;
-        Ok(())
-    }
     pub async fn watch_codex_events(
         &self,
         after: u64,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<CodexEvent, GuestError>> + Send>>, GuestError>
     {
         let mut stream = self
-            .client
-            .clone()
-            .watch_codex_events(self.request(proto::CodexWatch { after }, None))
+            .call(
+                "WatchCodexEvents",
+                "",
+                proto::CodexWatch { after },
+                None,
+                |mut client, request| async move { client.watch_codex_events(request).await },
+            )
             .await
             .map_err(rpc_error)?
             .into_inner();
@@ -446,12 +635,30 @@ impl RpcClient {
     }
     pub async fn attach_terminal(
         &self,
-        inputs: tokio_stream::wrappers::ReceiverStream<proto::TerminalInput>,
+        mut inputs: tokio_stream::wrappers::ReceiverStream<proto::TerminalInput>,
     ) -> Result<tonic::Streaming<proto::TerminalOutput>, GuestError> {
+        let first = inputs.next().await.ok_or_else(|| {
+            rpc_error(Status::invalid_argument(
+                "terminal requires an opening frame",
+            ))
+        })?;
+        let target = match &first.action {
+            Some(proto::terminal_input::Action::Attach(attach)) => attach.id.clone(),
+            _ => {
+                return Err(rpc_error(Status::invalid_argument(
+                    "terminal requires an attachment first",
+                )));
+            }
+        };
+        let (request, fence) = self
+            .request("AttachTerminal", &target, first, None)
+            .await
+            .map_err(rpc_error)?;
+        let request = request.map(|first| tokio_stream::once(first).chain(inputs));
         Ok(self
-            .client
-            .clone()
-            .attach_terminal(self.request(inputs, None))
+            .call_request(request, fence, |mut client, request| async move {
+                client.attach_terminal(request).await
+            })
             .await
             .map_err(rpc_error)?
             .into_inner())
@@ -529,6 +736,10 @@ pub(crate) fn rpc_error(error: Status) -> GuestError {
             if detail.type_url == "type.googleapis.com/proompteng.runtime.guest.v1.OperationFailure"
                 && let Ok(failure) = proto::OperationFailure::decode(detail.value.as_slice())
             {
+                if failure.codex_operation_rejected && error.code() == tonic::Code::InvalidArgument
+                {
+                    return GuestError::CodexOperationRejected;
+                }
                 if failure.resource_too_large {
                     status = StatusCode::PAYLOAD_TOO_LARGE;
                 }

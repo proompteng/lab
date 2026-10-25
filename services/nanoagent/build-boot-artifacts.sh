@@ -21,7 +21,7 @@ printf '%s  /guest/vmlinux\n' "$kernel_sha" | sha256sum --check
 cp /rootfs-validation.txt /rootfs/usr/share/nanoagent/rootfs-validation.txt
 # Credentials and resolver state are injected into each private copy before boot.
 rm -f /rootfs/etc/resolv.conf /rootfs/etc/tengri-slot.json
-truncate -s 1073741824 /guest/rootfs.ext4
+truncate -s 1610612736 /guest/rootfs.ext4
 mkfs.ext4 -F -q -m 0 -b 4096 -N 32768 -J size=16 \
   -E lazy_itable_init=0,lazy_journal_init=0,root_owner=0:0 \
   -d /rootfs /guest/rootfs.ext4

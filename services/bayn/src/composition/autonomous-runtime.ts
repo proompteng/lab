@@ -2,7 +2,7 @@ import { Effect, Layer, Result, Scope } from 'effect'
 import {
   makeApplicationPlan,
   recordAutonomousCyclePass,
-  type ApplicationPlanFor,
+  type ApplicationPlan,
   type AutonomousCycleDriverStartup,
   type AutonomousCycleStartup,
   type AutonomousCycleStartupInput,
@@ -10,8 +10,8 @@ import {
   type AutonomousRuntimeResolver,
 } from '../app'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
-import { makeMutation } from '../broker/alpaca-mutations'
-import type { LoadedRuntimeConfig } from '../config'
+import { makeMutation } from '../broker/alpaca-mutations/interpreter'
+import type { LoadedRuntimeConfig } from '../config/model'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
 import { Authority, type ResearchCapitalGrantGeneration } from '../execution/contracts'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
@@ -21,7 +21,7 @@ import {
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
   type RecoveryFirstRuntime,
-} from '../observe-composition'
+} from '../observe-composition/model'
 import { runOnce } from '../reconciler'
 import { boundedReconciliationPass } from '../observe-composition/decision-builder'
 import { currentUtcInstant } from '../time'
@@ -53,10 +53,7 @@ const ownCycleDriverStartup =
   (input) =>
     startup(input).pipe(Effect.map((driver) => driver.pipe(Effect.flatMap(owner))))
 
-export const makeAutonomousServiceRuntime = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  options: AutonomousServiceRuntimeOptions,
-) =>
+export const makeAutonomousServiceRuntime = (plan: ApplicationPlan, options: AutonomousServiceRuntimeOptions) =>
   Effect.gen(function* () {
     const configured = yield* Effect.fromResult(configuredCapitalActivation(plan)).pipe(
       Effect.mapError((message) => capitalActivationOperationalError(message)),
@@ -76,7 +73,7 @@ export const makeAutonomousServiceRuntime = (
       parameterHash: plan.parameterHash,
       strategy: plan.strategy,
       strategyProtocolHash: plan.strategyProtocolHash,
-    }) as ApplicationPlanFor<'AutonomousService'>
+    }) as ApplicationPlan
     const noCycle = (
       _startup: AutonomousCycleStartupInput,
     ): Effect.Effect<Effect.Effect<void, never, never>, OperationalError, never> => Effect.succeed(Effect.never)
@@ -113,11 +110,6 @@ export const makeAutonomousServiceRuntime = (
                     )
                     const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                       Effect.gen(function* () {
-                        if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
-                          return yield* capitalActivationOperationalError(
-                            'OBSERVE cycle startup requires durable authority state reads',
-                          )
-                        }
                         const authority = yield* runtimeServices.authorityGenerationStore.readAuthorityState.pipe(
                           Effect.mapError((cause) =>
                             capitalActivationOperationalError('OBSERVE cycle startup authority read failed', cause),
@@ -150,13 +142,6 @@ export const makeAutonomousServiceRuntime = (
                       AutonomousRuntime<never, never>,
                       OperationalError
                     > => {
-                      if (runtimeServices.authorityGenerationStore.readOrInitializeObserveAuthority === undefined) {
-                        return Effect.fail(
-                          capitalActivationOperationalError(
-                            'OBSERVE runtime startup requires durable authority initialization',
-                          ),
-                        )
-                      }
                       return runtimeServices.authorityGenerationStore
                         .readOrInitializeObserveAuthority({
                           generationHash: observePlan.config.alpaca.authorityGenerationHash,
@@ -210,13 +195,6 @@ export const makeAutonomousServiceRuntime = (
                       generation: ResearchCapitalGrantGeneration,
                     ): Effect.Effect<AutonomousRuntime<never, never>, OperationalError, Scope.Scope> => {
                       const readAuthority = runtimeServices.authorityGenerationStore.readAuthorityState
-                      if (readAuthority === undefined) {
-                        return Effect.fail(
-                          capitalActivationOperationalError(
-                            'capital startup recovery requires durable authority state reads',
-                          ),
-                        )
-                      }
                       return readAuthority.pipe(
                         Effect.mapError((cause) =>
                           capitalActivationOperationalError('capital startup recovery authority read failed', cause),
@@ -247,7 +225,7 @@ export const makeAutonomousServiceRuntime = (
                             parameterHash: plan.parameterHash,
                             strategy: plan.strategy,
                             strategyProtocolHash: plan.strategyProtocolHash,
-                          }) as ApplicationPlanFor<'AutonomousService'>
+                          }) as ApplicationPlan
                           return currentUtcInstant.pipe(
                             Effect.flatMap((observedAt) =>
                               resolvePreparedExecutionAuthority({
@@ -288,12 +266,13 @@ export const makeAutonomousServiceRuntime = (
                                     executionMode: restricted ? 'CloseOnly' : 'Mutation',
                                     execution: {
                                       currentUtcInstant,
-                                      verifyBrokerStateVersion: (version, intentId) =>
+                                      verifyBrokerStateVersion: (version, intentId, requireCryptoEntryFeeBound) =>
                                         verifyBrokerStateVersion(
                                           runtimeServices.pgClient,
                                           realizedPlan.config.alpaca.expectedAccountId,
                                           version,
                                           intentId,
+                                          requireCryptoEntryFeeBound,
                                         ),
                                       brokerRead: runtimeServices.session.read,
                                       brokerMutation,

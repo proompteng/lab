@@ -33,7 +33,7 @@ spec:
     - websecure
   routes:
     - kind: Rule
-      match: Host(`proompteng.ai`) && Method(`POST`) && (Path(`/api/auth/login`) || Path(`/api/auth/step-up`))
+      match: Host(`proompteng.ai`) && Method(`POST`) && (Path(`/api/auth/login`) || Path(`/api/auth/step-up`) || Path(`/api/auth/add-passkey`))
       priority: 200
       middlewares:
         - name: proompteng-auth-start-rate-limit

@@ -1,8 +1,8 @@
 {
   "material": {
     "schemaVersion": "dorvud.technical-feature.v1",
-    "definitionId": "dorvud.technical-indicators-1m.v1",
-    "definitionHash": "600e5e7df1a00f5eb2d3f1790a31dde566d6657322753c2292bd70cc313d3ecc",
+    "definitionId": "dorvud.technical-indicators-1m.v2",
+    "definitionHash": "5b8548a5f385e72a3693c39b0f357a5221d481cb0634bd996b4b81b1e4cbf1f9",
     "provider": "alpaca",
     "feed": "iex",
     "delayClass": "real_time_exchange_only",
@@ -10,7 +10,7 @@
     "universeSymbolHash": "1eb44d625271a4eb75016f276d13783617c012685cb598f20ae93249164c0121",
     "symbol": "AAPL",
     "sessionDate": "2026-09-11",
-    "sessionPolicy": "alpaca.regular.new-york-date.v1",
+    "sessionPolicy": "alpaca.iex-clock-segments.new-york.v2",
     "windowStartMs": 1789133400000,
     "windowEndMs": 1789137060000,
     "inputs": [
@@ -562,7 +562,7 @@
       }
     }
   },
-  "featureId": "9a14a47abede7857b7e8161487d98c35126344966866da700a33120debdfae90",
+  "featureId": "e20fc4afdba638d028f5153449f26bda7b816207da5aa2adcafbff50d742d198",
   "computedAtMs": 1789219800000,
   "producerRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }

@@ -11,7 +11,7 @@ const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : des
 const hash = (value: string) => value.repeat(64)
 
 describePostgres('Forward-performance strategy generation binding', () => {
-  test('resolves a pre-created cycle through its durable decision and preserves generation isolation', async () => {
+  test('resolves pre-created cycles without scanning other generations and preserves isolation', async () => {
     const url = baynTestPostgresUrl ?? ''
     const parsed = new URL(url)
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
@@ -71,9 +71,28 @@ describePostgres('Forward-performance strategy generation binding', () => {
                 bindings: { accountId: 'account', qualificationRunId: hash('b'), authorityGenerationHash: hash('a') },
               }
               yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (
-                'cycle', ${hash('d')}, 'bayn.paper-cycle-decision.v1', ${JSON.stringify(decision)}::jsonb
+                'cycle', ${hash('d')}, 'bayn.paper-cycle-decision.v2', ${JSON.stringify(decision)}::jsonb
               )`
+              yield* sql`INSERT INTO autonomous_cycles
+                SELECT 'other-cycle-' || n, 'account', ${hash('b')}, ${hash('c')}, ${hash('d')},
+                  'NO_TRADE', '2026-09-19T13:30:00Z', '2026-09-17T19:57:13Z'
+                FROM generate_series(1, 512) n`
+              yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
+                SELECT 'other-cycle-' || n, ${hash('d')}, 'bayn.paper-cycle-decision.v2',
+                  jsonb_set(${JSON.stringify(decision)}::jsonb, '{bindings,authorityGenerationHash}',
+                    to_jsonb(${hash('9')}::text))
+                FROM generate_series(1, 512) n`
+              yield* sql`CREATE INDEX ON autonomous_cycle_shadow_decisions
+                ((document #>> '{bindings,authorityGenerationHash}'))`
+              yield* sql`ANALYZE autonomous_cycles`
+              yield* sql`ANALYZE autonomous_cycle_shadow_decisions`
+              const readCount = sql<{ count: string }>`SELECT (
+                pg_stat_get_xact_tuples_returned('autonomous_cycle_shadow_decisions'::regclass) +
+                pg_stat_get_xact_tuples_fetched('autonomous_cycle_shadow_decisions'::regclass)
+              )::text AS count`
+              const before = yield* readCount
               const fromDecision = yield* readForwardPerformanceStrategyRows(sql, 'account', hash('a'))
+              const after = yield* readCount
               const unscoped = yield* readForwardPerformanceStrategyRows(sql, 'account')
               const foreignAccount = yield* readForwardPerformanceStrategyRows(sql, 'foreign', hash('a'))
               yield* sql`INSERT INTO authority_generations
@@ -101,6 +120,7 @@ describePostgres('Forward-performance strategy generation binding', () => {
               const unbound = yield* readForwardPerformanceStrategyRows(sql, 'account')
               return {
                 fromDecision,
+                decisionRowsVisited: Number(after[0]?.count) - Number(before[0]?.count),
                 unscoped,
                 foreignAccount,
                 afterSuccessor,
@@ -118,6 +138,7 @@ describePostgres('Forward-performance strategy generation binding', () => {
         }),
       )
       expect(result.fromDecision).toHaveLength(1)
+      expect(result.decisionRowsVisited).toBeLessThan(32)
       expect(result.fromDecision[0]?.strategy_protocol_hash).toBe(hash('c'))
       for (const rows of [
         result.unscoped,

@@ -5,7 +5,9 @@ metadata:
   namespace: proompteng
 spec:
   podSelector: {}
-  policyTypes: [Ingress, Egress]
+  policyTypes:
+    - Ingress
+    - Egress
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -13,53 +15,67 @@ metadata:
   name: proompteng-web
   namespace: proompteng
 spec:
-  podSelector:
-    matchLabels:
-      app: proompteng
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: traefik
-      ports:
-        - protocol: TCP
-          port: 3000
   egress:
     - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: glitchtip
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+              app.kubernetes.io/component: web
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/instance: observability-tempo-v3
+              app.kubernetes.io/component: distributor
+      ports:
+        - protocol: TCP
+          port: 4318
+    - ports:
+        - port: 15012
+          protocol: TCP
+      to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: istio-system
           podSelector:
             matchLabels:
               app: istiod
-      ports:
-        - protocol: TCP
-          port: 15012
-    - to:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+      to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
           podSelector:
             matchLabels:
               k8s-app: kube-dns
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    - to:
+    - ports:
+        - port: 50051
+          protocol: TCP
+      to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: tengri
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: tengri
               app.kubernetes.io/component: control-plane
-      ports:
-        - protocol: TCP
-          port: 50051
-    - to:
+              app.kubernetes.io/name: tengri
+    - ports:
+        - port: 443
+          protocol: TCP
+      to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
@@ -72,6 +88,53 @@ spec:
               - 192.168.0.0/16
               - 224.0.0.0/4
               - 240.0.0.0/4
+    - ports:
+        - port: 9443
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ofz-api
+    - ports:
+        - port: 5432
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: ofz-db
+    - ports:
+        - port: 443
+          protocol: TCP
+      to:
+        - ipBlock:
+            cidr: 100.100.244.181/32
+    - ports:
+        - port: 8443
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
       ports:
-        - protocol: TCP
-          port: 443
+        - port: 3000
+          protocol: TCP
+  podSelector:
+    matchLabels:
+      app: proompteng
+  policyTypes:
+    - Ingress
+    - Egress

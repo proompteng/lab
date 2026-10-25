@@ -10,6 +10,7 @@ pub(crate) struct TestService {
     pub get_info: Option<Handler<proto::Empty, proto::GuestInfo>>,
     pub open_editor: Option<Handler<proto::Empty, proto::Editor>>,
     pub open_browser: Option<Handler<proto::Empty, proto::Browser>>,
+    pub stat_file: Option<Handler<proto::Path, proto::FileEntry>>,
     pub list_files: Option<Handler<proto::Path, proto::FileList>>,
     pub read_file: Option<Handler<proto::Path, proto::FileContent>>,
     pub write_file: Option<Handler<proto::FileWrite, proto::FileWriteResult>>,
@@ -22,7 +23,6 @@ pub(crate) struct TestService {
     pub terminate_terminal: Option<Handler<proto::TerminalId, proto::Empty>>,
     pub codex_call: Option<Handler<proto::CodexRequest, proto::CodexResult>>,
     pub codex_login: Option<Handler<proto::Empty, proto::CodexLoginState>>,
-    pub resolve_codex_approval: Option<Handler<proto::CodexApproval, proto::Empty>>,
 }
 
 #[tonic::async_trait]
@@ -52,6 +52,15 @@ impl proto::nanoagent_service_server::NanoagentService for TestService {
         self.open_browser
             .as_ref()
             .ok_or_else(|| Status::unimplemented("OpenBrowser"))?(request)
+        .map(Response::new)
+    }
+    async fn stat_file(
+        &self,
+        request: Request<proto::Path>,
+    ) -> Result<Response<proto::FileEntry>, Status> {
+        self.stat_file
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("StatFile"))?(request)
         .map(Response::new)
     }
     async fn list_files(
@@ -177,15 +186,6 @@ impl proto::nanoagent_service_server::NanoagentService for TestService {
         self.codex_login
             .as_ref()
             .ok_or_else(|| Status::unimplemented("CodexLogin"))?(request)
-        .map(Response::new)
-    }
-    async fn resolve_codex_approval(
-        &self,
-        request: Request<proto::CodexApproval>,
-    ) -> Result<Response<proto::Empty>, Status> {
-        self.resolve_codex_approval
-            .as_ref()
-            .ok_or_else(|| Status::unimplemented("ResolveCodexApproval"))?(request)
         .map(Response::new)
     }
     type WatchCodexEventsStream =

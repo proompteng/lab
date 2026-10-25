@@ -131,7 +131,8 @@ This is a known production failure mode.
 
 ## Procedure B: ClickHouse replicas read-only (keeper metadata loss)
 
-See also `docs/torghut/ops-2026-01-01-ta-recovery.md` and `v1/operations-clickhouse-replica-and-keeper.md`.
+See also `docs/torghut/ops-2026-01-01-ta-recovery.md` and the current
+[Torghut GitOps and recovery runbook](../../../../argocd/applications/torghut/README.md).
 
 ### Steps (high level)
 

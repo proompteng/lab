@@ -13,7 +13,10 @@ var (
 	errPathOutsideWorkspace = errors.New("path escapes the workspace")
 )
 
-const workspaceTemporaryFilePrefix = ".nanoagent-write-"
+const (
+	workspacePath                = "/workspace"
+	workspaceTemporaryFilePrefix = ".nanoagent-write-"
+)
 
 var internalPathNames = map[string]struct{}{
 	".codex":  {},
@@ -53,12 +56,17 @@ func (workspace workspace) close() error {
 }
 
 func (workspace workspace) relative(requested string) (string, error) {
-	if requested == "" || requested == "/" || requested == "." {
+	if requested == workspacePath {
 		return ".", nil
 	}
-	relative := filepath.Clean(strings.TrimPrefix(requested, "/"))
-	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	if !strings.HasPrefix(requested, workspacePath+"/") || len(requested) > 4096 || strings.ContainsAny(requested, "\x00\r\n") {
 		return "", errPathOutsideWorkspace
+	}
+	relative := strings.TrimPrefix(requested, workspacePath+"/")
+	for _, part := range strings.Split(relative, "/") {
+		if part == "" || part == "." || part == ".." {
+			return "", errPathOutsideWorkspace
+		}
 	}
 	if isInternalRelativePath(relative) {
 		return "", errInternalPath
@@ -82,9 +90,9 @@ func (workspace workspace) relativeFromAbsolute(absolute string) (string, error)
 
 func (workspace workspace) displayRelative(relative string) string {
 	if relative == "" || relative == "." {
-		return "/"
+		return workspacePath
 	}
-	return "/" + filepath.ToSlash(relative)
+	return workspacePath + "/" + filepath.ToSlash(relative)
 }
 
 func (workspace workspace) resolveExisting(requested string) (string, error) {
@@ -191,10 +199,10 @@ func (workspace workspace) isVisibleAbsolute(absolute string) bool {
 
 func (workspace workspace) displayPath(absolute string) string {
 	relative, err := filepath.Rel(workspace.realRoot, absolute)
-	if err != nil || relative == "." {
-		return "/"
+	if err != nil {
+		return workspacePath
 	}
-	return "/" + filepath.ToSlash(relative)
+	return workspace.displayRelative(relative)
 }
 
 func pathWithin(root string, target string) bool {

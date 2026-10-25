@@ -142,6 +142,82 @@ function runPromql(rules: Rule[], cases: unknown[]): void {
   }
 }
 
+test('daily publication alert detects missed schedules and resolves after recovery without weekend pages', () => {
+  const manifest = YAML.parse(
+    readFileSync(
+      new URL('../../../../../argocd/applications/observability/graf-mimir-rules.yaml', import.meta.url),
+      'utf8',
+    ),
+  ) as { data: Record<string, string> }
+  const groups = YAML.parse(manifest.data['graf-rules.yaml'] ?? '') as {
+    groups: { name: string; rules: Rule[] }[]
+  }
+  const rule = groups.groups
+    .find(({ name }) => name === 'signal-publications.rules')
+    ?.rules.find(({ alert }) => alert === 'SignalAdjustedDailyPublicationMissed')
+  if (!rule) throw new Error('Daily publication deadline alert is required')
+  expect(rule.for).toBe('5m')
+  expect(rule.labels).toEqual({ severity: 'warning', team: 'trading', notify: 'email' })
+  const expected = {
+    exp_labels: { namespace: 'torghut', cronjob: 'signal-adjusted-daily-publisher', ...rule.labels },
+    exp_annotations: rule.annotations,
+  }
+  const scenarios = [
+    { name: 'failed run after earlier success', scheduled: true, success: '900+0x4320', firing: true },
+    { name: 'first scheduled run fails', scheduled: true, success: null, firing: true },
+    { name: 'scheduled run succeeds', scheduled: true, success: '1100+0x4320', firing: false },
+    { name: 'no run has been scheduled yet', scheduled: false, success: null, firing: false },
+    { name: 'owned recovery completes', scheduled: true, success: '900+0x150 9060+0x4169', firing: true },
+  ]
+  const cases = scenarios.map((scenario) => ({
+    name: scenario.name,
+    interval: '1m',
+    input_series: ['a', 'b'].flatMap((instance) => {
+      const scope = `namespace="torghut",cronjob="signal-adjusted-daily-publisher",instance="${instance}"`
+      return [
+        { series: `kube_cronjob_created{${scope}}`, values: '100+0x4320' },
+        ...(scenario.scheduled
+          ? [{ series: `kube_cronjob_status_last_schedule_time{${scope}}`, values: '1000+0x4320' }]
+          : []),
+        ...(scenario.success === null
+          ? []
+          : [{ series: `kube_cronjob_status_last_successful_time{${scope}}`, values: scenario.success }]),
+      ]
+    }),
+    alert_rule_test: [
+      { alertname: rule.alert, eval_time: '120m', exp_alerts: [] },
+      { alertname: rule.alert, eval_time: '150m', exp_alerts: scenario.firing ? [expected] : [] },
+      {
+        alertname: rule.alert,
+        eval_time: scenario.name === 'scheduled run succeeds' ? '3d' : '160m',
+        exp_alerts: scenario.firing && scenario.name !== 'owned recovery completes' ? [expected] : [],
+      },
+    ],
+  }))
+  runPromql([rule], cases)
+})
+
+test('cluster collector retains the CronJob timestamps needed to detect a missed publication', () => {
+  const config = readFileSync(
+    new URL('../../../../../argocd/applications/observability/cluster-metrics-alloy-config.river', import.meta.url),
+    'utf8',
+  )
+  const expression = config
+    .split('\n')
+    .find((line) => line.includes('|kube_cronjob_created|'))
+    ?.match(/"(.+)"/)?.[1]
+  if (!expression) throw new Error('Kubernetes metric allowlist is required')
+  const allowlist = new RegExp(`^(?:${expression})$`)
+  for (const metric of [
+    'kube_cronjob_created',
+    'kube_cronjob_status_last_schedule_time',
+    'kube_cronjob_status_last_successful_time',
+  ]) {
+    expect(allowlist.test(`${metric};torghut;`)).toBe(true)
+  }
+  expect(allowlist.test('kube_job_status_failed;torghut;')).toBe(false)
+})
+
 test('Bayn readiness flaps remain one incident until five minutes of recovery', () => {
   const manifest = YAML.parse(
     readFileSync(

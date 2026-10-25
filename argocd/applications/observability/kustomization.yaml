@@ -34,6 +34,7 @@ resources:
   - torghut-execution-recovery-dashboard-configmap.yaml
   - arc-runner-capacity-dashboard-configmap.yaml
   - bayn-cycle-operations-dashboard-configmap.yaml
+  - bayn-cache-performance-dashboard-configmap.yaml
   - cluster-metrics-alloy-rbac.yaml
   - cluster-metrics-alloy-deployment.yaml
   - mimir-config-check.yaml
@@ -84,6 +85,32 @@ images:
     newTag: 1.6.39-alpine
 
 patches:
+  - target:
+      kind: Deployment
+      name: observability-(loki-v3|mimir|tempo-v3)-.*
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: network-data-plane
+      spec:
+        template:
+          spec:
+            nodeSelector:
+              network.proompteng.ai/100g: "true"
+  - target:
+      kind: StatefulSet
+      name: observability-(loki-v3|mimir|tempo-v3)-.*
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: network-data-plane
+      spec:
+        template:
+          spec:
+            nodeSelector:
+              network.proompteng.ai/100g: "true"
   - target:
       kind: DaemonSet
       name: observability-loki-v3-canary
@@ -167,10 +194,10 @@ patches:
           argocd.argoproj.io/sync-wave: "3"
       - op: add
         path: /spec/template/metadata/annotations/observability.proompteng.ai~1alertmanager-fallback-config-revision
-        value: "2026-10-11-1"
+        value: "2026-10-13-warning-email-1"
       - op: replace
         path: /spec/template/spec/volumes/4
         value:
           name: alertmanager-fallback-config
           secret:
-            secretName: observability-alertmanager-email
+            secretName: observability-alertmanager-email-brevo

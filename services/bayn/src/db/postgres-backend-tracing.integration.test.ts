@@ -6,6 +6,7 @@ import { Statement } from 'effect/sql'
 import { SqlError } from 'effect/sql/SqlError'
 
 import { PostgresClientLive } from './postgres-client'
+import { PostgresMigrationsLive } from './postgres-migrations'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 
@@ -31,6 +32,73 @@ const fixtureUrl = () => {
     throw new Error('Backend tracing tests require an isolated local _test database')
   return Redacted.make(url.toString())
 }
+
+postgresTest(
+  'startup migrations own a bounded connection without extending trading query deadlines',
+  async () => {
+    const config = { operationTimeoutMs: 100, postgres: { url: fixtureUrl(), tls: false, caPath: '/unused' } }
+    const runtimeClient = PostgresClientLive({ ...config, operationTimeoutMs: 30_000 })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* sql`CREATE TABLE migration_timeout_probe (statement_timeout text, application_name text)`
+        yield* sql`
+        CREATE FUNCTION delay_first_fixture_index() RETURNS event_trigger LANGUAGE plpgsql AS $body$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM migration_timeout_probe) THEN
+            INSERT INTO migration_timeout_probe VALUES (
+              current_setting('statement_timeout'), current_setting('application_name')
+            );
+            PERFORM pg_sleep(0.2);
+          END IF;
+        END
+        $body$
+      `
+        yield* sql`
+        CREATE EVENT TRIGGER delay_first_fixture_index ON ddl_command_start
+        WHEN TAG IN ('CREATE INDEX') EXECUTE FUNCTION delay_first_fixture_index()
+      `
+        yield* Effect.scoped(Layer.build(PostgresMigrationsLive(config).pipe(Layer.provide(runtimeClient)))).pipe(
+          Effect.ensuring(sql`DROP EVENT TRIGGER delay_first_fixture_index`.pipe(Effect.orDie)),
+        )
+        const decode = Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ statement_timeout: Schema.String, application_name: Schema.String })]),
+        )
+        const probe = yield* sql`SELECT * FROM migration_timeout_probe`.pipe(Effect.flatMap(decode))
+        expect(probe).toEqual([{ statement_timeout: '895s', application_name: 'bayn-migrations' }])
+        const ordinary = yield* sql`
+        SELECT current_setting('statement_timeout') AS statement_timeout,
+          current_setting('application_name') AS application_name
+      `.pipe(Effect.flatMap(decode))
+        expect(ordinary).toEqual([{ statement_timeout: '25s', application_name: 'bayn' }])
+        const [remaining] = yield* sql`
+        SELECT count(*)::integer AS count FROM pg_stat_activity
+        WHERE datname = current_database() AND application_name = 'bayn-migrations'
+      `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ count: Schema.Int })]))))
+        expect(remaining.count).toBe(0)
+        yield* sql`UPDATE schema_migrations SET name = 'legacy_fixture' WHERE migration_id = 1`
+        const rejected = yield* Effect.exit(Effect.scoped(Layer.build(PostgresMigrationsLive(config))))
+        expect(Exit.isFailure(rejected)).toBe(true)
+        if (Exit.isFailure(rejected))
+          expect(Cause.squash(rejected.cause)).toMatchObject({
+            operation: 'migrate',
+            message: 'legacy migration history is unsupported after the hard cut',
+          })
+        const [afterFailure] = yield* sql`
+          SELECT count(*)::integer AS count FROM pg_stat_activity
+          WHERE datname = current_database() AND application_name = 'bayn-migrations'
+        `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ count: Schema.Int })]))))
+        expect(afterFailure.count).toBe(0)
+        yield* sql`UPDATE schema_migrations SET name = 'initial_schema' WHERE migration_id = 1`
+        yield* sql`DROP FUNCTION delay_first_fixture_index()`
+        yield* sql`DROP TABLE migration_timeout_probe`
+      }).pipe(Effect.provide(runtimeClient), Effect.provide(NodeServices.layer)),
+    )
+  },
+  30_000,
+)
 
 postgresTest(
   'SQL statements and writer controls identify their actual backend without changing query results',

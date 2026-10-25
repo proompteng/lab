@@ -100,7 +100,8 @@ export const readJevEvaluationEvidence = (sql: PgClient.PgClient, input: readonl
       ...new Set(yield* Schema.decodeUnknownEffect(Schema.Array(Sha256Schema), strictParseOptions)(input)),
     ]
     const evidence = new Map<string, JevEvaluationEvidence>()
-    if (requestIds.length === 0) return evidence
+    const observationHashes: string[] = []
+    if (requestIds.length === 0) return { evidence, observationHashes }
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.Array(StoredRow),
       strictParseOptions,
@@ -121,10 +122,11 @@ export const readJevEvaluationEvidence = (sql: PgClient.PgClient, input: readonl
         return yield* jevEvaluationReadError('Stored Jev request identity differs')
       decoded.push({ row, request })
     }
-    yield* requireJevCandidateObservations(
+    const observations = yield* requireJevCandidateObservations(
       sql,
       decoded.map(({ request }) => request),
     )
+    observationHashes.push(...observations.map((observation) => observation.content_hash))
     for (const { row, request } of decoded) {
       const receipt =
         row.receipt === null ? null : yield* Effect.fromResult(decodeJevEvaluationReceipt(request, row.receipt))
@@ -134,5 +136,5 @@ export const readJevEvaluationEvidence = (sql: PgClient.PgClient, input: readonl
         return yield* jevEvaluationReadError('A Jev receipt has no committed resolution')
       evidence.set(request.requestId, { request, receipt, resolution })
     }
-    return evidence
+    return { evidence, observationHashes }
   }).pipe(Effect.mapError(jevEvaluationReadError))

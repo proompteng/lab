@@ -118,7 +118,7 @@ func TestFileSearchStopsWhenRequestIsCanceled(t *testing.T) {
 	server := testAPIServer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := (&guestRPCServer{api: server}).SearchFiles(ctx, &pb.FileSearch{Query: "missing", Path: "/", Limit: 100})
+	_, err := (&guestRPCServer{api: server}).SearchFiles(ctx, &pb.FileSearch{Query: "missing", Path: "/workspace", Limit: 100})
 	if status.Code(err) != codes.Canceled {
 		t.Fatalf("canceled search = %v", err)
 	}
@@ -151,7 +151,7 @@ func TestFileSearchSkipsHiddenRuntimeCachesAndPreservesVisibleDirectories(t *tes
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatalf("decode search response: %v", err)
 	}
-	if len(result.Entries) != 3 || result.Entries[0].Path != "/go/needle-go.txt" || result.Entries[1].Path != "/src/go/needle-nested-go.txt" || result.Entries[2].Path != "/src/needle-project.txt" {
+	if len(result.Entries) != 3 || result.Entries[0].Path != "/workspace/go/needle-go.txt" || result.Entries[1].Path != "/workspace/src/go/needle-nested-go.txt" || result.Entries[2].Path != "/workspace/src/needle-project.txt" {
 		t.Fatalf("search entries = %#v", result.Entries)
 	}
 	if result.Truncated {
@@ -185,7 +185,7 @@ func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 	server := testAPIServer(t)
 
 	writeBody := fileWriteInput{
-		Path:             "/src/main.rs",
+		Path:             "/workspace/src/main.rs",
 		Content:          []byte("fn main() {}\n"),
 		ExpectedRevision: missingFileRevision,
 	}
@@ -198,11 +198,11 @@ func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 		t.Fatalf("decode write response: %v", err)
 	}
 	wantRevision := revisionForContent([]byte("fn main() {}\n"))
-	if written.Path != "/src/main.rs" || written.Size != int64(len("fn main() {}\n")) || written.Revision != wantRevision {
+	if written.Path != "/workspace/src/main.rs" || written.Size != int64(len("fn main() {}\n")) || written.Revision != wantRevision {
 		t.Fatalf("write response = %#v, want path/size/revision for saved content", written)
 	}
 
-	readResponse := fileReadResult(server.readFileSnapshot("/src/main.rs"))
+	readResponse := fileReadResult(server.readFileSnapshot("/workspace/src/main.rs"))
 	if readResponse.Code != codes.OK || readResponse.Body.String() != "fn main() {}\n" {
 		t.Fatalf("read response = status %d body %q", readResponse.Code, readResponse.Body.String())
 	}
@@ -210,7 +210,7 @@ func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 		t.Fatalf("read ETag = %q, want strong content ETag", got)
 	}
 
-	listResponse := fileResult(server.listFiles("/src"))
+	listResponse := fileResult(server.listFiles("/workspace/src"))
 	if listResponse.Code != codes.OK {
 		t.Fatalf("list status = %d body = %s", listResponse.Code, listResponse.Body.String())
 	}
@@ -218,7 +218,7 @@ func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 	if err := json.Unmarshal(listResponse.Body.Bytes(), &listed); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	if len(listed.Entries) != 1 || listed.Entries[0].Path != "/src/main.rs" {
+	if len(listed.Entries) != 1 || listed.Entries[0].Path != "/workspace/src/main.rs" {
 		t.Fatalf("listed files = %#v", listed)
 	}
 }
@@ -228,7 +228,7 @@ func TestFileReadSnapshotRemainsConsistentDuringMutation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(server.workspace.root, "read.txt"), []byte("read snapshot"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := server.readFileSnapshot("/read.txt")
+	snapshot, err := server.readFileSnapshot("/workspace/read.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestFileReadSnapshotRemainsConsistentDuringMutation(t *testing.T) {
 		t.Fatal("read snapshot retained the mutation lock")
 	}
 	server.fileMutationMu.Unlock()
-	if _, err := server.writeFile(fileWriteInput{Path: "/read.txt", Content: []byte("replacement"), ExpectedRevision: snapshot.revision}); err != nil {
+	if _, err := server.writeFile(fileWriteInput{Path: "/workspace/read.txt", Content: []byte("replacement"), ExpectedRevision: snapshot.revision}); err != nil {
 		t.Fatal(err)
 	}
 	if string(snapshot.content) != "read snapshot" || snapshot.revision != revisionForContent(snapshot.content) {
@@ -247,13 +247,13 @@ func TestFileReadSnapshotRemainsConsistentDuringMutation(t *testing.T) {
 func TestFileAPIAtomicWriteDoesNotExposeTemporaryRenameEvents(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	id, events, err := server.fileWatcher.subscribe(0, "/", server.workspace.realRoot)
+	id, events, err := server.fileWatcher.subscribe(0, "/workspace", server.workspace.realRoot)
 	if err != nil {
 		t.Fatalf("subscribe workspace: %v", err)
 	}
 	defer server.fileWatcher.unsubscribe(id)
 	body := fileWriteInput{
-		Path:             "/document.txt",
+		Path:             "/workspace/document.txt",
 		Content:          []byte("saved"),
 		ExpectedRevision: missingFileRevision,
 	}
@@ -273,10 +273,10 @@ func TestFileAPIAtomicWriteDoesNotExposeTemporaryRenameEvents(t *testing.T) {
 	for {
 		select {
 		case event := <-events:
-			if event.Kind == "reset" || strings.Contains(event.Path, "/.nanoagent-write-") {
+			if event.Kind == "reset" || strings.Contains(event.Path, "/workspace/.nanoagent-write-") {
 				t.Fatalf("atomic write leaked temporary filesystem event: %#v", event)
 			}
-			if event.Path == "/document.txt" {
+			if event.Path == "/workspace/document.txt" {
 				sawTarget = true
 				quiet.Reset(250 * time.Millisecond)
 			}
@@ -294,7 +294,7 @@ func TestFileAPIAcceptsTheAdvertisedFourMiBPayload(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
 	body := fileWriteInput{
-		Path:             "/large.bin",
+		Path:             "/workspace/large.bin",
 		Content:          make([]byte, maxFileBytes),
 		ExpectedRevision: missingFileRevision,
 	}
@@ -309,7 +309,7 @@ func TestFileAPIRequiresValidExpectedRevision(t *testing.T) {
 	for _, revision := range []string{"", "abc123", strings.Repeat("A", fileRevisionLength), strings.Repeat("g", fileRevisionLength), `"` + strings.Repeat("a", fileRevisionLength) + `"`, "MISSING"} {
 		t.Run(revision, func(t *testing.T) {
 			server := testAPIServer(t)
-			_, err := (&guestRPCServer{api: server}).WriteFile(context.Background(), &pb.FileWrite{Path: "/invalid-revision.txt", ExpectedRevision: revision})
+			_, err := (&guestRPCServer{api: server}).WriteFile(context.Background(), &pb.FileWrite{Path: "/workspace/invalid-revision.txt", ExpectedRevision: revision})
 			if status.Code(err) != codes.InvalidArgument {
 				t.Fatalf("invalid revision = %v", err)
 			}
@@ -334,7 +334,7 @@ func TestFileAPIRejectsStaleAndCreateOnlyRevisions(t *testing.T) {
 	write := func(expectedRevision string, content string) *fileOperationResult {
 		t.Helper()
 		body := fileWriteInput{
-			Path:             "/document.txt",
+			Path:             "/workspace/document.txt",
 			Content:          []byte(content),
 			ExpectedRevision: expectedRevision,
 		}
@@ -370,7 +370,7 @@ func TestFileAPIRejectsStaleAndCreateOnlyRevisions(t *testing.T) {
 
 	missingTarget := filepath.Join(server.workspace.root, "new-document.txt")
 	body := fileWriteInput{
-		Path:             "/new-document.txt",
+		Path:             "/workspace/new-document.txt",
 		Content:          []byte("create"),
 		ExpectedRevision: wantCurrent,
 	}
@@ -408,7 +408,7 @@ func TestFileAPIConcurrentWritersUseOneMatchingRevision(t *testing.T) {
 		content := content
 		go func() {
 			body := fileWriteInput{
-				Path:             "/concurrent.txt",
+				Path:             "/workspace/concurrent.txt",
 				Content:          []byte(content),
 				ExpectedRevision: wantInitial,
 			}
@@ -492,7 +492,7 @@ func TestFileAPIMutationAcknowledgementFailureDoesNotHideVisibleState(t *testing
 			run: func(t *testing.T, server *apiServer) {
 				t.Helper()
 				body := fileWriteInput{
-					Path:             "/written.txt",
+					Path:             "/workspace/written.txt",
 					Content:          []byte("visible"),
 					ExpectedRevision: missingFileRevision,
 				}
@@ -510,7 +510,7 @@ func TestFileAPIMutationAcknowledgementFailureDoesNotHideVisibleState(t *testing
 			name: "mkdir",
 			run: func(t *testing.T, server *apiServer) {
 				t.Helper()
-				body := pathRequest{Path: "/created/nested"}
+				body := pathRequest{Path: "/workspace/created/nested"}
 				response := fileResult(server.createDirectory(body))
 				if response.Code == codes.OK {
 					t.Fatalf("mkdir acknowledgement status = %d body = %s", response.Code, response.Body.String())
@@ -529,7 +529,7 @@ func TestFileAPIMutationAcknowledgementFailureDoesNotHideVisibleState(t *testing
 				if err := os.WriteFile(source, []byte("moved"), 0o640); err != nil {
 					t.Fatalf("write move source: %v", err)
 				}
-				body := moveFileRequest{SourcePath: "/source.txt", DestinationPath: "/moved.txt"}
+				body := moveFileRequest{SourcePath: "/workspace/source.txt", DestinationPath: "/workspace/moved.txt"}
 				response := fileResult(server.moveFile(body))
 				if response.Code == codes.OK {
 					t.Fatalf("move acknowledgement status = %d body = %s", response.Code, response.Body.String())
@@ -551,7 +551,7 @@ func TestFileAPIMutationAcknowledgementFailureDoesNotHideVisibleState(t *testing
 				if err := os.WriteFile(target, []byte("gone"), 0o640); err != nil {
 					t.Fatalf("write delete target: %v", err)
 				}
-				body := deleteFileRequest{Path: "/deleted.txt", Recursive: false}
+				body := deleteFileRequest{Path: "/workspace/deleted.txt", Recursive: false}
 				response := fileResult(server.deleteFile(body))
 				if response.Code == codes.OK {
 					t.Fatalf("delete acknowledgement status = %d body = %s", response.Code, response.Body.String())
@@ -601,7 +601,7 @@ func TestFileAPIAtomicWritePreservesExecutableMode(t *testing.T) {
 		t.Fatalf("write executable fixture: %v", err)
 	}
 	body := fileWriteInput{
-		Path:             "/script.sh",
+		Path:             "/workspace/script.sh",
 		Content:          []byte("#!/bin/sh\nexit 0\n"),
 		ExpectedRevision: revisionForContent([]byte("#!/bin/sh\nexit 1\n")),
 	}
@@ -633,7 +633,7 @@ func TestFileAPIRejectsSymlinkEscape(t *testing.T) {
 		t.Fatalf("os.Symlink() error = %v", err)
 	}
 
-	response := fileReadResult(server.readFileSnapshot("/escape/secret"))
+	response := fileReadResult(server.readFileSnapshot("/workspace/escape/secret"))
 	if response.Code != codes.PermissionDenied {
 		t.Fatalf("escape status = %d body = %s", response.Code, response.Body.String())
 	}
@@ -656,13 +656,13 @@ func TestFileAPIRejectsSymlinkIntoInternalMetadata(t *testing.T) {
 		t.Fatalf("os.Symlink() error = %v", err)
 	}
 
-	readResponse := fileReadResult(server.readFileSnapshot("/visible/auth.json"))
+	readResponse := fileReadResult(server.readFileSnapshot("/workspace/visible/auth.json"))
 	if readResponse.Code != codes.NotFound {
 		t.Fatalf("internal symlink read status = %d body = %s", readResponse.Code, readResponse.Body.String())
 	}
 
 	writeBody := fileWriteInput{
-		Path:             "/visible/injected.json",
+		Path:             "/workspace/visible/injected.json",
 		Content:          []byte("blocked"),
 		ExpectedRevision: missingFileRevision,
 	}
@@ -687,18 +687,18 @@ func TestFileAPIMoveReportsTheLogicalSymlinkEntryPath(t *testing.T) {
 	if err := os.Symlink("target.txt", filepath.Join(server.workspace.root, "link.txt")); err != nil {
 		t.Fatalf("create symlink: %v", err)
 	}
-	id, events, err := server.fileWatcher.subscribe(0, "/link.txt", "")
+	id, events, err := server.fileWatcher.subscribe(0, "/workspace/link.txt", "")
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
 	defer server.fileWatcher.unsubscribe(id)
-	body := moveFileRequest{SourcePath: "/link.txt", DestinationPath: "/moved-link.txt"}
+	body := moveFileRequest{SourcePath: "/workspace/link.txt", DestinationPath: "/workspace/moved-link.txt"}
 
 	response := fileResult(server.moveFile(body))
 	if response.Code != codes.OK {
 		t.Fatalf("move status = %d body = %s", response.Code, response.Body.String())
 	}
-	if event := <-events; event.Kind != "renamed" || event.PreviousPath != "/link.txt" || event.Path != "/moved-link.txt" {
+	if event := <-events; event.Kind != "renamed" || event.PreviousPath != "/workspace/link.txt" || event.Path != "/workspace/moved-link.txt" {
 		t.Fatalf("symlink move event = %#v, want logical entry paths", event)
 	}
 	info, err := os.Lstat(filepath.Join(server.workspace.root, "moved-link.txt"))
@@ -726,14 +726,14 @@ func TestFileAPIMoveCorrelatesRawEventsThroughSymlinkedParent(t *testing.T) {
 	if err := os.Symlink("actual", filepath.Join(server.workspace.realRoot, "alias")); err != nil {
 		t.Fatalf("create parent symlink: %v", err)
 	}
-	id, events, err := server.fileWatcher.subscribe(0, "/", actual)
+	id, events, err := server.fileWatcher.subscribe(0, "/workspace", actual)
 	if err != nil {
 		t.Fatalf("subscribe canonical parent: %v", err)
 	}
 	defer server.fileWatcher.unsubscribe(id)
 	body := moveFileRequest{
-		SourcePath:      "/alias/source.txt",
-		DestinationPath: "/alias/moved.txt",
+		SourcePath:      "/workspace/alias/source.txt",
+		DestinationPath: "/workspace/alias/moved.txt",
 	}
 
 	response := fileResult(server.moveFile(body))
@@ -746,7 +746,7 @@ func TestFileAPIMoveCorrelatesRawEventsThroughSymlinkedParent(t *testing.T) {
 	for {
 		select {
 		case event := <-events:
-			if event.Kind != "renamed" || event.PreviousPath != "/alias/source.txt" || event.Path != "/alias/moved.txt" {
+			if event.Kind != "renamed" || event.PreviousPath != "/workspace/alias/source.txt" || event.Path != "/workspace/alias/moved.txt" {
 				t.Fatalf("symlink-parent move event = %#v, want one logical paired rename", event)
 			}
 			if paired {
@@ -782,7 +782,7 @@ func TestWatchFilesRoutesPairedRenameThroughSymlinkedParent(t *testing.T) {
 	client, _ := rpcTestClient(t, server)
 	ctx, cancel := context.WithCancel(rpcTestContext(t))
 	defer cancel()
-	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/alias", After: nil})
+	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/workspace/alias", After: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -791,8 +791,8 @@ func TestWatchFilesRoutesPairedRenameThroughSymlinkedParent(t *testing.T) {
 	}
 
 	body := moveFileRequest{
-		SourcePath:      "/alias/source.txt",
-		DestinationPath: "/alias/moved.txt",
+		SourcePath:      "/workspace/alias/source.txt",
+		DestinationPath: "/workspace/alias/moved.txt",
 	}
 	moveResponse := fileResult(server.moveFile(body))
 	if moveResponse.Code != codes.OK {
@@ -828,8 +828,8 @@ func TestWatchFilesRoutesPairedRenameThroughSymlinkedParent(t *testing.T) {
 			t.Fatalf("decode watch event: %v", decoded.err)
 		}
 		if decoded.event.Kind != "renamed" ||
-			decoded.event.PreviousPath != "/alias/source.txt" ||
-			decoded.event.Path != "/alias/moved.txt" {
+			decoded.event.PreviousPath != "/workspace/alias/source.txt" ||
+			decoded.event.Path != "/workspace/alias/moved.txt" {
 			t.Fatalf("watch event = %#v, want logical paired rename", decoded.event)
 		}
 	case <-time.After(time.Second):
@@ -840,12 +840,12 @@ func TestWatchFilesRoutesPairedRenameThroughSymlinkedParent(t *testing.T) {
 func TestWatchFilesWithoutCursorStartsAfterHistoricalEvents(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/historical.txt"})
+	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/workspace/historical.txt"})
 
 	client, _ := rpcTestClient(t, server)
 	ctx, cancel := context.WithCancel(rpcTestContext(t))
 	defer cancel()
-	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/", After: nil})
+	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/workspace", After: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -875,7 +875,7 @@ func TestWatchFilesWithoutCursorStartsAfterHistoricalEvents(t *testing.T) {
 			err    error
 		}{events: events}
 	}()
-	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/current.txt"})
+	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/workspace/current.txt"})
 	select {
 	case decoded := <-result:
 		if decoded.err != nil {
@@ -884,10 +884,10 @@ func TestWatchFilesWithoutCursorStartsAfterHistoricalEvents(t *testing.T) {
 		if len(decoded.events) != 2 {
 			t.Fatalf("watch events = %#v, want snapshot and current event", decoded.events)
 		}
-		if snapshot := decoded.events[0]; snapshot.Sequence != 1 || snapshot.Kind != "reset" || snapshot.Path != "/" {
+		if snapshot := decoded.events[0]; snapshot.Sequence != 1 || snapshot.Kind != "reset" || snapshot.Path != "/workspace" {
 			t.Fatalf("watch snapshot = %#v, want starting cursor 1", snapshot)
 		}
-		if current := decoded.events[1]; current.Sequence != 2 || current.Path != "/current.txt" {
+		if current := decoded.events[1]; current.Sequence != 2 || current.Path != "/workspace/current.txt" {
 			t.Fatalf("current watch event = %#v, want post-subscription event", current)
 		}
 	case <-time.After(time.Second):
@@ -898,7 +898,7 @@ func TestWatchFilesWithoutCursorStartsAfterHistoricalEvents(t *testing.T) {
 func TestFileWatcherSubscribeCurrentEmitsZeroStartingCursor(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	id, events, err := server.fileWatcher.subscribeCurrent("/", server.workspace.realRoot)
+	id, events, err := server.fileWatcher.subscribeCurrent("/workspace", server.workspace.realRoot)
 	if err != nil {
 		t.Fatalf("subscribe from current sequence: %v", err)
 	}
@@ -906,7 +906,7 @@ func TestFileWatcherSubscribeCurrentEmitsZeroStartingCursor(t *testing.T) {
 
 	select {
 	case event := <-events:
-		if event.Sequence != 0 || event.Kind != "reset" || event.Path != "/" {
+		if event.Sequence != 0 || event.Kind != "reset" || event.Path != "/workspace" {
 			t.Fatalf("initial watch snapshot = %#v, want zero starting cursor", event)
 		}
 	case <-time.After(time.Second):
@@ -917,13 +917,13 @@ func TestFileWatcherSubscribeCurrentEmitsZeroStartingCursor(t *testing.T) {
 func TestWatchFilesExplicitZeroReplaysHistoricalEvents(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/historical.txt"})
+	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/workspace/historical.txt"})
 
 	client, _ := rpcTestClient(t, server)
 	ctx, cancel := context.WithCancel(rpcTestContext(t))
 	defer cancel()
 	zero := uint64(0)
-	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/", After: &zero})
+	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/workspace", After: &zero})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -935,7 +935,7 @@ func TestWatchFilesExplicitZeroReplaysHistoricalEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.Sequence != 1 || event.Kind != "changed" || event.Path != "/historical.txt" {
+	if event.Sequence != 1 || event.Kind != "changed" || event.Path != "/workspace/historical.txt" {
 		t.Fatalf("replay event = %#v, want historical event at sequence 1", event)
 	}
 }
@@ -959,14 +959,14 @@ func TestFileAPIMoveCorrelatesLeafSymlinkThroughSymlinkedParent(t *testing.T) {
 	if err := os.Symlink("actual", filepath.Join(server.workspace.realRoot, "alias")); err != nil {
 		t.Fatalf("create parent symlink: %v", err)
 	}
-	id, events, err := server.fileWatcher.subscribe(0, "/", actual)
+	id, events, err := server.fileWatcher.subscribe(0, "/workspace", actual)
 	if err != nil {
 		t.Fatalf("subscribe canonical parent: %v", err)
 	}
 	defer server.fileWatcher.unsubscribe(id)
 	body := moveFileRequest{
-		SourcePath:      "/alias/link.txt",
-		DestinationPath: "/alias/moved-link.txt",
+		SourcePath:      "/workspace/alias/link.txt",
+		DestinationPath: "/workspace/alias/moved-link.txt",
 	}
 
 	response := fileResult(server.moveFile(body))
@@ -979,7 +979,7 @@ func TestFileAPIMoveCorrelatesLeafSymlinkThroughSymlinkedParent(t *testing.T) {
 	for {
 		select {
 		case event := <-events:
-			if event.Kind != "renamed" || event.PreviousPath != "/alias/link.txt" || event.Path != "/alias/moved-link.txt" {
+			if event.Kind != "renamed" || event.PreviousPath != "/workspace/alias/link.txt" || event.Path != "/workspace/alias/moved-link.txt" {
 				t.Fatalf("combined-symlink move event = %#v, want one logical paired rename", event)
 			}
 			if paired {
@@ -1011,10 +1011,10 @@ func TestFileAPIMoveDoesNotDependOnSpareWatcherCapacity(t *testing.T) {
 	}
 	server.fileWatcher.mu.Lock()
 	for index := range fileWatchDirectoryLimit {
-		server.fileWatcher.watched[fmt.Sprintf("/already-watched/%03d", index)] = 1
+		server.fileWatcher.watched[fmt.Sprintf("/workspace/already-watched/%03d", index)] = 1
 	}
 	server.fileWatcher.mu.Unlock()
-	body := moveFileRequest{SourcePath: "/source.txt", DestinationPath: "/destination/moved.txt"}
+	body := moveFileRequest{SourcePath: "/workspace/source.txt", DestinationPath: "/workspace/destination/moved.txt"}
 
 	response := fileResult(server.moveFile(body))
 	if response.Code != codes.OK {
@@ -1041,8 +1041,8 @@ func TestFileAPIAllowsImmediateFollowUpMovesWhileEchoFenceIsPending(t *testing.T
 	}{
 		{
 			name:        "previous destination becomes source",
-			source:      "/b.txt",
-			destination: "/c.txt",
+			source:      "/workspace/b.txt",
+			destination: "/workspace/c.txt",
 		},
 		{
 			name: "previous source becomes destination",
@@ -1052,8 +1052,8 @@ func TestFileAPIAllowsImmediateFollowUpMovesWhileEchoFenceIsPending(t *testing.T
 					t.Fatalf("write replacement source: %v", err)
 				}
 			},
-			source:      "/c.txt",
-			destination: "/a.txt",
+			source:      "/workspace/c.txt",
+			destination: "/workspace/a.txt",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1077,7 +1077,7 @@ func TestFileAPIAllowsImmediateFollowUpMovesWhileEchoFenceIsPending(t *testing.T
 				return fileResult(server.moveFile(body))
 			}
 
-			if response := move("/a.txt", "/b.txt"); response.Code != codes.OK {
+			if response := move("/workspace/a.txt", "/workspace/b.txt"); response.Code != codes.OK {
 				t.Fatalf("initial move status = %d body = %s", response.Code, response.Body.String())
 			}
 			if test.prepare != nil {
@@ -1086,12 +1086,12 @@ func TestFileAPIAllowsImmediateFollowUpMovesWhileEchoFenceIsPending(t *testing.T
 			if response := move(test.source, test.destination); response.Code != codes.OK {
 				t.Fatalf("follow-up move status = %d body = %s", response.Code, response.Body.String())
 			}
-			content, err := os.ReadFile(filepath.Join(server.workspace.root, strings.TrimPrefix(test.destination, "/")))
+			content, err := os.ReadFile(filepath.Join(server.workspace.root, strings.TrimPrefix(test.destination, "/workspace/")))
 			if err != nil {
 				t.Fatalf("read follow-up destination: %v", err)
 			}
 			want := "original"
-			if test.source == "/c.txt" {
+			if test.source == "/workspace/c.txt" {
 				want = "replacement"
 			}
 			if string(content) != want {
@@ -1108,7 +1108,7 @@ func TestFileAPIHidesTengriAndCodexMetadata(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(server.workspace.root, name), 0o700); err != nil {
 			t.Fatalf("create metadata directory: %v", err)
 		}
-		response := fileReadResult(server.readFileSnapshot("/" + name + "/config.json"))
+		response := fileReadResult(server.readFileSnapshot("/workspace/" + name + "/config.json"))
 		if response.Code != codes.NotFound {
 			t.Fatalf("%s read status = %d body = %s", name, response.Code, response.Body.String())
 		}
@@ -1183,6 +1183,9 @@ func TestPreviewOnlyProxiesToGuestLoopback(t *testing.T) {
 	target := "/v1/preview/43210/hello?mode=full"
 	request := httptest.NewRequest(http.MethodGet, target, nil)
 	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	if err := signFixturePreview(request, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	request.Header.Set("Connection", "keep-alive, X-Internal")
 	request.Header.Set("Forwarded", "for=203.0.113.7")
 	request.Header.Set("Keep-Alive", "timeout=5")
@@ -1216,6 +1219,9 @@ func TestBeginShutdownCancelsActivePreviewRequests(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/preview/43210/events", nil)
 	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	if err := signFixturePreview(request, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	response := httptest.NewRecorder()
 	handled := make(chan struct{})
 	go func() {
@@ -1285,7 +1291,7 @@ func TestPreviewRejectsReservedAndPrivilegedPorts(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
 	for _, port := range []string{"0", "22", "8080", "8443", "65536", "not-a-port"} {
-		response := performAuthorizedRequest(server.previewRoutes(), http.MethodGet, "/v1/preview/"+port+"/", nil)
+		response := performAuthorizedRequest(server.previewRoutes(), http.MethodGet, "/v1/preview/"+port+"/workspace", nil)
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("preview port %q status = %d body = %q", port, response.Code, response.Body.String())
 		}
@@ -1331,14 +1337,17 @@ func TestPreviewProxiesWebSocketUpgradesToGuestLoopback(t *testing.T) {
 	t.Cleanup(nanoagent.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	previewRequest := httptest.NewRequest(http.MethodGet, "/v1/preview/"+upstreamURL.Port()+"/hmr", nil)
+	previewRequest.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	previewRequest.Header.Set("Origin", "https://tengri-session.proompteng.ai")
+	if err := signFixturePreview(previewRequest, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	connection, response, err := websocket.Dial(
 		ctx,
 		"ws"+strings.TrimPrefix(nanoagent.URL, "http")+"/v1/preview/"+upstreamURL.Port()+"/hmr",
 		&websocket.DialOptions{
-			HTTPHeader: http.Header{
-				"Authorization": []string{"Bearer test-bootstrap-token"},
-				"Origin":        []string{"https://tengri-session.proompteng.ai"},
-			},
+			HTTPHeader:   previewRequest.Header,
 			Subprotocols: []string{"vite-hmr"},
 		},
 	)
@@ -1374,8 +1383,11 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 func performAuthorizedRequest(handler http.Handler, method string, target string, body []byte) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, target, bytes.NewReader(body))
 	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	if err := signFixturePreview(request, body, nil); err != nil {
+		panic(err)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	handler.ServeHTTP(fixtureDeadlineRecorder{response}, request)
 	return response
 }

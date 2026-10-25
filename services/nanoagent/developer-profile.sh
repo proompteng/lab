@@ -10,6 +10,6 @@ if [ -x "$HOME/.linuxbrew/bin/brew" ]; then
   fi
   export INFOPATH="$HOMEBREW_PREFIX/share/info:${INFOPATH:-}"
 fi
-export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:/opt/tengri/editor/bin:$PATH"
 export EDITOR="${EDITOR:-nvim}"
 export VISUAL="${VISUAL:-$EDITOR}"

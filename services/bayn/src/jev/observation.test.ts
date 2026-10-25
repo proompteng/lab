@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { nativeJevFixture } from './native.test-support'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevObservationCheck, JevObservationField } from './observation-diagnostics'

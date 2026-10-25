@@ -15,6 +15,7 @@ import {
   JevOutcome,
   type JevEvaluationReceipt,
 } from './jev/evidence'
+import { JevFailure } from './jev/contract'
 import { decodeJevResolution } from './jev/resolution'
 
 export class InferenceCostError extends Data.TaggedError('InferenceCostError')<{
@@ -26,6 +27,7 @@ export enum InferenceUsageStatus {
   Received = 'RECEIVED_USAGE',
   Rejected = 'REJECTED_RESPONSE_USAGE',
   Unknown = 'UNKNOWN_USAGE',
+  NotDispatched = 'NOT_DISPATCHED',
 }
 
 export enum InferenceCostCoverage {
@@ -85,12 +87,14 @@ interface Usage {
   readonly model: string
   readonly inputTokens: bigint
   readonly outputTokens: bigint
-  readonly status: InferenceUsageStatus.Received | InferenceUsageStatus.Rejected
+  readonly status: InferenceUsageStatus.Received | InferenceUsageStatus.Rejected | InferenceUsageStatus.NotDispatched
 }
 
 const meteredUsage = (receipt: JevEvaluationReceipt | null, model: string): Usage | null => {
   if (receipt === null) return null
   const outcome = receipt.outcome
+  if (outcome.status === JevOutcome.Failed && outcome.failure === JevFailure.NotDispatched)
+    return { model, inputTokens: 0n, outputTokens: 0n, status: InferenceUsageStatus.NotDispatched }
   // Rejected responses can still be billable. Only extract their usage after the receipt and response hashes verify.
   const raw =
     outcome.status === JevOutcome.Received
@@ -136,6 +140,7 @@ export interface InferenceCostReport {
   readonly requestCount: number
   readonly meteredRequestCount: number
   readonly rejectedResponseUsageCount: number
+  readonly notDispatchedRequestCount: number
   readonly unknownUsageCount: number
   readonly unpricedUsageCount: number
   readonly inputTokens: string
@@ -193,6 +198,7 @@ export const makeInferenceCostReport = (
     let outputTokens = 0n
     let totalPicoUsd = 0n
     let unknownUsageCount = 0
+    let notDispatchedRequestCount = 0
     let unpricedUsageCount = 0
     let rejectedResponseUsageCount = 0
     for (const row of evidence.requests) {
@@ -237,7 +243,7 @@ export const makeInferenceCostReport = (
       const startedAt =
         receipt?.outcome.status === JevOutcome.Received ? receipt.outcome.inference.startedAt : receipt?.startedAt
       const priced =
-        usage === null || startedAt === undefined
+        usage === null || usage.status === InferenceUsageStatus.NotDispatched || startedAt === undefined
           ? undefined
           : rates.find(
               ({ rate }) =>
@@ -245,10 +251,12 @@ export const makeInferenceCostReport = (
             )
       // tokens * (USD micros / million tokens) is exact in pico-USD. Round only the aggregate, never each call.
       const cost =
-        usage === null || priced === undefined
-          ? null
-          : usage.inputTokens * BigInt(priced.rate.inputMicrosPerMillionTokens) +
-            usage.outputTokens * BigInt(priced.rate.outputMicrosPerMillionTokens)
+        usage?.status === InferenceUsageStatus.NotDispatched
+          ? 0n
+          : usage === null || priced === undefined
+            ? null
+            : usage.inputTokens * BigInt(priced.rate.inputMicrosPerMillionTokens) +
+              usage.outputTokens * BigInt(priced.rate.outputMicrosPerMillionTokens)
       const purpose = Schema.decodeUnknownResult(PurposeState)(request.request.state)
       lines.set(request.requestId, {
         requestId: request.requestId,
@@ -267,6 +275,7 @@ export const makeInferenceCostReport = (
       else {
         inputTokens += usage.inputTokens
         outputTokens += usage.outputTokens
+        if (usage.status === InferenceUsageStatus.NotDispatched) notDispatchedRequestCount += 1
         if (usage.status === InferenceUsageStatus.Rejected) rejectedResponseUsageCount += 1
         if (cost === null) unpricedUsageCount += 1
         else totalPicoUsd += cost
@@ -296,7 +305,8 @@ export const makeInferenceCostReport = (
       coverage: complete ? InferenceCostCoverage.Estimated : InferenceCostCoverage.Incomplete,
       invoiceReconciled: false as const,
       requestCount: requests.length,
-      meteredRequestCount: requests.length - unknownUsageCount,
+      meteredRequestCount: requests.length - unknownUsageCount - notDispatchedRequestCount,
+      notDispatchedRequestCount,
       rejectedResponseUsageCount,
       unknownUsageCount,
       unpricedUsageCount,

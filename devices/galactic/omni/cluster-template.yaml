@@ -61,6 +61,8 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - file: tengri-runner-arm64.json
+  - file: ceph-hdd-write-deadline.yaml
   - idOverride: 35-12345678-9abc-deff-1234-56789abcdeff-workload-placement
     annotations:
       name: Advertise 100G workload capacity
@@ -276,6 +278,17 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - file: tengri-runner-amd64.json
+  - file: ceph-hdd-write-deadline.yaml
+  - idOverride: 37-8bf7ec00-171c-11f1-8000-7cc255f16774-ephemeral-boot
+    annotations:
+      name: Disable redundant growth mounts on Turin ephemeral storage
+    inline: |
+      apiVersion: v1alpha1
+      kind: VolumeConfig
+      name: EPHEMERAL
+      provisioning:
+        grow: false
   - idOverride: 35-8bf7ec00-171c-11f1-8000-7cc255f16774-workload-placement
     annotations:
       name: Advertise 100G workload capacity
@@ -445,6 +458,14 @@ patches:
       src: 10.244.0.0/23
       dst: 100.100.244.142/32
       table: "100"
+  - idOverride: 36-8bf7ec00-171c-11f1-8000-7cc255f16774-tigerbeetle-storage
+    annotations:
+      name: Retained Turin TigerBeetle directory
+    inline: |
+      apiVersion: v1alpha1
+      kind: UserVolumeConfig
+      name: tigerbeetle
+      volumeType: directory
 ---
 kind: Machine
 name: ff115a00-c307-11f0-a28f-648eab3e4100
@@ -457,6 +478,7 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - file: tengri-runner-amd64.json
   - idOverride: 35-ff115a00-c307-11f0-a28f-648eab3e4100-workload-placement
     annotations:
       name: Reserve Ryzen for compute and local storage

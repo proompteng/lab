@@ -204,11 +204,9 @@ done
 ```
 
 This is maintenance-only tuning. After recovery is clean, restore the current
-[GitOps scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture), including
-all nine custom mClock settings, through a reviewed configuration change. Remove the
-recovery/backfill override gate and recovery-only concurrency settings. Do not
-remove the scheduler reservations or restore the former scrub time window; the
-current profile reserves capacity for the outstanding scrub backlog.
+[GitOps scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture), through a reviewed configuration change. Its built-in `high_client_ops` profile requires removing the nine prior
+custom scheduler overrides using the owning migration procedure. Remove the recovery/backfill override gate and
+recovery-only concurrency settings. Keep all-day scrub eligibility and verify backlog progress with client latency.
 
 ## Create a Turin Maintenance Pod
 

@@ -1,13 +1,31 @@
 import { describe, expect, test } from 'bun:test'
 import { createServer } from 'node:http'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
-import { ConfigProvider, Console, Deferred, Effect, Exit, Fiber, Logger, References } from 'effect'
+import {
+  ConfigProvider,
+  Console,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Logger,
+  Metric,
+  References,
+  Tracer,
+} from 'effect'
+import { PrometheusMetrics } from 'effect/observability'
 import { TestClock } from 'effect/testing'
 
 import {
   ExecutionStageTimings,
   type ExecutionStageTiming,
   decodeOtlpTraceEndpoint,
+  decodeOtlpMetricsEndpoint,
+  makeMetricsRuntimeLayer,
   makeTelemetryRuntimeLayer,
   telemetryRuntimeConfig,
   withObservedSpan,
@@ -15,6 +33,63 @@ import {
 } from './telemetry'
 
 describe('Bayn telemetry', () => {
+  test.each(['success', 'failure', 'defect', 'interruption'])(
+    'retains the native millisecond interval through %s and finalizes once',
+    async (outcome) => {
+      const spans: Tracer.Span[] = []
+      let finalized = 0
+      const exit = await Effect.runPromiseExit(
+        Effect.gen(function* () {
+          spans.push(yield* Effect.currentSpan.pipe(Effect.orDie))
+          yield* TestClock.adjust(25)
+          if (outcome === 'failure') return yield* Effect.fail('fixture failure')
+          if (outcome === 'defect') return yield* Effect.die('fixture defect')
+          if (outcome === 'interruption') return yield* Effect.interrupt
+        }).pipe(
+          Effect.ensuring(Effect.sync(() => finalized++)),
+          withObservedStage('bayn.postgres.commit'),
+          Effect.provide(TestClock.layer()),
+          Effect.provide(Logger.layer([])),
+        ),
+      )
+      expect(Exit.isSuccess(exit)).toBe(outcome === 'success')
+      expect(finalized).toBe(1)
+      expect(spans).toHaveLength(1)
+      expect(spans[0]?.attributes.get('bayn.native_wall.clock')).toBe('effect.Clock.currentTimeMillis')
+      expect(spans[0]?.attributes.get('bayn.native_wall.started_at')).toBe('1970-01-01T00:00:00.000Z')
+      expect(spans[0]?.attributes.get('bayn.native_wall.finished_at')).toBe('1970-01-01T00:00:00.025Z')
+    },
+  )
+
+  test('published research telemetry uses its embedded source without a deployment revision variable', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.telemetry-build-'))
+    const sourceRevision = 'a'.repeat(40)
+    try {
+      const built = await Bun.build({
+        entrypoints: [join(import.meta.dir, 'telemetry.ts')],
+        outdir: directory,
+        target: 'bun',
+        packages: 'external',
+        define: { __BAYN_BUILD_SOURCE_REVISION__: JSON.stringify(sourceRevision) },
+      })
+      expect(built.success).toBe(true)
+      const published: typeof import('./telemetry') = await import(pathToFileURL(join(directory, 'telemetry.js')).href)
+      const config = await Effect.runPromise(
+        published
+          .telemetryRuntimeConfig('bayn-research')
+          .pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromUnknown({ NODE_ENV: 'production' }),
+            ),
+          ),
+      )
+      expect(config.serviceVersion).toBe(sourceRevision)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('retains a backend PID on slow and failed stage logs without copying other span data or logging fast calls', async () => {
     const annotations: Readonly<Record<string, unknown>>[] = []
     const logger = Logger.make(({ fiber }) => {
@@ -144,6 +219,7 @@ describe('Bayn telemetry', () => {
           ConfigProvider.fromUnknown({
             BAYN_CODE_REVISION: ' source-revision ',
             OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ' http://tempo:4318/v1/traces ',
+            OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: ' http://mimir/otlp/v1/metrics ',
             NODE_ENV: ' production ',
             POD_NAMESPACE: ' bayn ',
             HOSTNAME: ' bayn-test-0 ',
@@ -156,6 +232,7 @@ describe('Bayn telemetry', () => {
       serviceName: 'bayn-test',
       serviceVersion: 'source-revision',
       endpoint: 'http://tempo:4318/v1/traces',
+      metricsEndpoint: 'http://mimir/otlp/v1/metrics',
       environment: 'production',
       namespace: 'bayn',
       instanceId: 'bayn-test-0',
@@ -171,6 +248,93 @@ describe('Bayn telemetry', () => {
     expect(decodeOtlpTraceEndpoint('http://user:secret@tempo:4318/v1/traces')._tag).toBe('Invalid')
     expect(decodeOtlpTraceEndpoint('http://tempo:4318')._tag).toBe('Invalid')
     expect(decodeOtlpTraceEndpoint('file:///tmp/traces')._tag).toBe('Invalid')
+  })
+
+  test('validates the Mimir OTLP metrics boundary', () => {
+    expect(decodeOtlpMetricsEndpoint(undefined)).toEqual({ _tag: 'Disabled' })
+    expect(decodeOtlpMetricsEndpoint('http://mimir/otlp/v1/metrics')._tag).toBe('Configured')
+    expect(decodeOtlpMetricsEndpoint('http://user:secret@mimir/otlp/v1/metrics')._tag).toBe('Invalid')
+    expect(decodeOtlpMetricsEndpoint('http://mimir/v1/traces')._tag).toBe('Invalid')
+  })
+
+  test('histograms preserve elapsed time and distinguish success, typed failure, defect and cancellation', async () => {
+    const metrics = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.adjust(20).pipe(withObservedStage('bayn.postgres.commit'))
+        yield* TestClock.adjust(5).pipe(
+          Effect.andThen(Effect.fail('private-error')),
+          withObservedStage('bayn.postgres.commit'),
+          Effect.exit,
+        )
+        yield* Effect.die('private-defect').pipe(withObservedStage('bayn.postgres.commit'), Effect.exit)
+        const entered = yield* Deferred.make<void>()
+        const operation = yield* Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Effect.never),
+          withObservedStage('bayn.postgres.commit'),
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(250)
+        yield* Fiber.interrupt(operation)
+        return yield* PrometheusMetrics.format()
+      }).pipe(
+        Effect.provide(TestClock.layer()),
+        Effect.provideService(Metric.MetricRegistry, new Map()),
+        Effect.provide(Logger.layer([])),
+      ),
+    )
+    expect(metrics).toMatch(/bayn_operation_duration_seconds_count\{[^\n]*outcome="succeeded"[^\n]*\} 1/)
+    expect(metrics).toMatch(/bayn_operation_duration_seconds_sum\{[^\n]*outcome="succeeded"[^\n]*\} 0.02/)
+    expect(metrics).toMatch(/bayn_operation_duration_seconds_count\{[^\n]*outcome="failed"[^\n]*\} 2/)
+    expect(metrics).toMatch(/bayn_operation_duration_seconds_sum\{[^\n]*outcome="interrupted"[^\n]*\} 0.25/)
+    expect(metrics).not.toContain('private-error')
+    expect(metrics).not.toContain('private-defect')
+  })
+
+  test('exports native histograms and a heartbeat as OTLP protobuf at scope shutdown', async () => {
+    const bodies: Buffer[] = []
+    const server = createServer((request, response) => {
+      const chunks: Uint8Array[] = []
+      request.on('data', (chunk: Uint8Array) => chunks.push(chunk))
+      request.on('end', () => {
+        expect(request.url).toBe('/otlp/v1/metrics')
+        bodies.push(Buffer.concat(chunks))
+        response.writeHead(200).end()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('metrics test server did not bind TCP')
+    const options = {
+      serviceName: 'bayn-test',
+      serviceVersion: 'source-test',
+      instanceId: 'pod-test',
+      metricsEndpoint: `http://127.0.0.1:${address.port}/otlp/v1/metrics`,
+    }
+    try {
+      await Effect.runPromise(
+        Effect.void.pipe(
+          withObservedStage('bayn.postgres.commit'),
+          Effect.provide(Layer.mergeAll(makeTelemetryRuntimeLayer(options), makeMetricsRuntimeLayer(options))),
+          Effect.provideService(Metric.MetricRegistry, new Map()),
+        ),
+      )
+      const body = Buffer.concat(bodies)
+      for (const field of [
+        'bayn_operation_duration_seconds',
+        'bayn_telemetry_heartbeat_timestamp_seconds',
+        'source-test',
+        'source_revision',
+        'pod-test',
+        'succeeded',
+      ])
+        expect(body.includes(Buffer.from(field)), field).toBe(true)
+      expect(bodies).toHaveLength(1)
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((cause) => (cause === undefined ? resolve() : reject(cause))),
+      )
+    }
   })
 
   test('correlates Effect logs with the active trace and span', async () => {

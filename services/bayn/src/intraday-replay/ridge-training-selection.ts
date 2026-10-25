@@ -6,7 +6,13 @@ import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
 import type { HistoricalMarketCursor } from '../market-data/streaming/historical'
 import { utcInstantFromEpochMillis } from '../time'
 import { featureRowFromObservation, isCandidateExclusion } from './control-ridge'
-import { extractSixBarResearchObservation, sixBarResearchDefinition, SixBarResearchStatus } from './six-bar-features'
+import {
+  extractSixBarResearchObservation,
+  sixBarResearchDefinition,
+  SixBarResearchStatus,
+  SixBarUnavailableReason,
+} from './six-bar-features'
+import { jevHistoryStartMs } from '../jev/observation-query'
 
 /** One fixed candidate's causal, serial training behavior; this is not a fitted model. */
 export const selectRidgeTrainingCandidate = (
@@ -19,14 +25,20 @@ export const selectRidgeTrainingCandidate = (
     const observation = yield* extractSixBarResearchObservation(cursor, {
       ...query,
       calendar,
-      rangeStartAt: utcInstantFromEpochMillis(Date.parse(query.rangeEndAt) - 6 * 60_000),
+      rangeStartAt: utcInstantFromEpochMillis(
+        jevHistoryStartMs(calendar, query.sessionDate, Date.parse(query.rangeEndAt), 6),
+      ),
       symbols: [candidateSymbol, sixBarResearchDefinition.benchmarkSymbol].sort(),
       candidateSymbols: [candidateSymbol],
       candidateEvidencePolicy: sixBarResearchDefinition.candidateEvidencePolicy,
       maximumQuoteAgeMs: sixBarResearchDefinition.maximumQuoteAgeMs,
       minimumWatermarkLagMs: sixBarResearchDefinition.minimumWatermarkLagMs,
     })
-    if (observation.status !== SixBarResearchStatus.Available && !isCandidateExclusion(observation))
+    if (
+      observation.status !== SixBarResearchStatus.Available &&
+      observation.reason !== SixBarUnavailableReason.SessionHistory &&
+      !isCandidateExclusion(observation)
+    )
       return { status: 'UNAVAILABLE' as const, observations: [observation] }
     const feature =
       observation.status === SixBarResearchStatus.Available ? featureRowFromObservation(observation) : null
@@ -37,7 +49,8 @@ export const selectRidgeTrainingCandidate = (
       feature,
       observation,
       exclusions:
-        observation.status === SixBarResearchStatus.Available
+        observation.status === SixBarResearchStatus.Available ||
+        observation.reason === SixBarUnavailableReason.SessionHistory
           ? []
           : [
               {

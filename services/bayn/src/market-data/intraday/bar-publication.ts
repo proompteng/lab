@@ -2,8 +2,7 @@ import type { IntradayBar } from './model'
 import { intradayInstantNanos } from './time'
 
 export enum BarPublicationPolicy {
-  LegacyQuoteAge = 'legacy-quote-age',
-  TimelyEquivalentRevision = 'timely-equivalent-revision.v1',
+  ObservedHistory = 'observed-completed-history.v1',
 }
 
 // Alpaca publishes originals after the minute and corrections at the following half minute.

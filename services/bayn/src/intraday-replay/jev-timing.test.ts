@@ -2,12 +2,12 @@ import { expect, test } from 'bun:test'
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1OrThrow } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { JevError, type JevClient } from '../jev/client'
 import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
-import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { makeBoundedReplayJevProvider, makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
 
 const request = (symbol: string) =>
   Result.getOrThrow(
@@ -24,6 +24,73 @@ const response: JevResponse = {
 }
 const providerAt = Date.parse('2026-09-21T12:00:00.000Z')
 const marketAt = Date.parse('2026-09-04T14:00:02.000Z')
+
+test('a frozen replay budget bounds concurrent provider dispatches and does not refund failed calls', async () => {
+  let providerCalls = 0
+  const prepared = request('AAPL')
+  const bounded = makeBoundedReplayJevProvider(
+    {
+      evaluate: () =>
+        Effect.suspend(() => {
+          providerCalls++
+          return providerCalls === 1
+            ? Effect.fail(new JevError({ failure: JevFailure.Transport, message: 'Fixture transport failure' }))
+            : Effect.succeed({
+                requestHash: prepared.requestHash,
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                startedAt: utcInstantFromEpochMillis(providerAt),
+                completedAt: utcInstantFromEpochMillis(providerAt),
+                response,
+              })
+        }),
+    },
+    2,
+  )
+  const outcomes = await Effect.runPromise(
+    Effect.all(
+      Array.from({ length: 10 }, () => bounded.provider.evaluate(prepared.request).pipe(Effect.result)),
+      { concurrency: 'unbounded' },
+    ),
+  )
+  expect(providerCalls).toBe(2)
+  expect(bounded.dispatchCount()).toBe(2)
+  expect(outcomes.filter(Result.isSuccess)).toHaveLength(1)
+  expect(outcomes.filter(Result.isFailure).map((result) => result.failure.failure)).toEqual([
+    JevFailure.Transport,
+    ...Array.from({ length: 8 }, () => JevFailure.NotDispatched),
+  ])
+})
+
+test('interrupting a provider stops it and retains its consumed replay budget', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>()
+      let stopped = false
+      const bounded = makeBoundedReplayJevProvider(
+        {
+          evaluate: () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  stopped = true
+                }),
+              ),
+            ),
+        },
+        1,
+      )
+      const first = yield* bounded.provider.evaluate(request('AAPL').request).pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      yield* Fiber.interrupt(first)
+      const next = yield* bounded.provider.evaluate(request('AMD').request).pipe(Effect.result)
+      expect(stopped).toBe(true)
+      expect(bounded.dispatchCount()).toBe(1)
+      expect(next._tag).toBe('Failure')
+      if (Result.isFailure(next)) expect(next.failure.failure).toBe(JevFailure.NotDispatched)
+    }),
+  )
+})
 
 const fixture = Effect.gen(function* () {
   const providerClock = yield* TestClock.make()
@@ -70,7 +137,7 @@ test('provider receipts start after measured clock synchronization', async () =>
               yield* f.providerClock.adjust(50)
               return {
                 requestHash: prepared.requestHash,
-                responseHash: canonicalHashV1OrThrow(response),
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
                 startedAt: utcInstantFromEpochMillis(startedAt),
                 completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
                 response,
@@ -237,7 +304,7 @@ test('concurrent inference advances source time by elapsed batch time and preser
               activeCalls--
               return {
                 requestHash: prepared.requestHash,
-                responseHash: canonicalHashV1OrThrow(response),
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
                 startedAt: utcInstantFromEpochMillis(startedAt),
                 completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
                 response,
@@ -338,6 +405,48 @@ test('provider failures consume elapsed time and remain retained', async () => {
     httpStatus: 429,
     responseHash: null,
     rejectedResponse: null,
+  })
+})
+
+test('payment-required receipts stop the replay even when native evaluation handles the provider error', async () => {
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* fixture
+        let providerCalls = 0
+        const provider: JevClient['Service'] = {
+          evaluate: () =>
+            Effect.suspend(() => {
+              providerCalls++
+              return Effect.fail(new JevError({ failure: JevFailure.Status, message: 'Payment required', status: 402 }))
+            }),
+        }
+        const timing = yield* makeReplayJevTiming({ ...f, provider }).pipe(
+          Effect.provideService(Clock.Clock, f.marketClock),
+        )
+        const outcome = yield* timing
+          .run(
+            Effect.forEach(['AAPL', 'AMD'], (symbol) =>
+              timing.client.evaluate(request(symbol).request).pipe(Effect.result),
+            ),
+          )
+          .pipe(Effect.result)
+        return { outcome, calls: f.calls, providerCalls }
+      }),
+    ),
+  )
+  expect(result.providerCalls).toBe(1)
+  expect(result.calls).toHaveLength(1)
+  expect(result.calls[0]?.outcome).toEqual({
+    status: 'FAILED',
+    failure: JevFailure.Status,
+    httpStatus: 402,
+    responseHash: null,
+    rejectedResponse: null,
+  })
+  expect(result.outcome).toMatchObject({
+    _tag: 'Failure',
+    failure: { _tag: 'ReplayBrokerFailure', message: 'Jev replay stopped after HTTP 402 payment required' },
   })
 })
 
@@ -446,7 +555,7 @@ test('a substituted response identity fails the replay after preserving the actu
             evaluate: () =>
               Effect.succeed({
                 requestHash: request('AMZN').requestHash,
-                responseHash: canonicalHashV1OrThrow(response),
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
                 startedAt: utcInstantFromEpochMillis(providerAt),
                 completedAt: utcInstantFromEpochMillis(providerAt),
                 response,

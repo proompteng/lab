@@ -1,11 +1,11 @@
 import { Redacted, Result } from 'effect'
 
-import type { RuntimeConfig } from '../config'
-import { makeRuntimeProvenance } from '../contracts'
-import { deriveCycleOperationsStatus } from '../cycle/observability'
+import type { RuntimeConfig } from '../config/model'
+import { makeRuntimeProvenanceResult } from '../contracts'
+import { deriveCycleOperationsStatusResult } from '../cycle/observability'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import { Authority } from '../execution/contracts'
-import { canonicalHashV1OrThrow } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import type { RuntimeState } from '../runtime-state'
 import {
   activeStrategyBehaviorHash,
@@ -15,19 +15,21 @@ import {
 } from '../strategy'
 
 export const fixtureProtocol = Result.getOrThrow(loadActiveStrategyProtocol())
-export const provenance = makeRuntimeProvenance({
-  sourceRevision: 'a'.repeat(40),
-  image: {
-    repository: 'registry.ide-newton.ts.net/lab/bayn',
-    digest: `sha256:${'b'.repeat(64)}`,
-  },
-  strategy: {
-    name: activeStrategyName,
-    behaviorHash: activeStrategyBehaviorHash,
-    parameterHash: canonicalHashV1OrThrow(fixtureProtocol),
-    parameterSchemaVersion: fixtureProtocol.schemaVersion,
-  },
-})
+export const provenance = Result.getOrThrow(
+  makeRuntimeProvenanceResult({
+    sourceRevision: 'a'.repeat(40),
+    image: {
+      repository: 'registry.ide-newton.ts.net/lab/bayn',
+      digest: `sha256:${'b'.repeat(64)}`,
+    },
+    strategy: {
+      name: activeStrategyName,
+      behaviorHash: activeStrategyBehaviorHash,
+      parameterHash: Result.getOrThrow(canonicalHashV1Result(fixtureProtocol)),
+      parameterSchemaVersion: fixtureProtocol.schemaVersion,
+    },
+  }),
+)
 
 export const fixtureRuntime = makeActiveStrategyRuntime(fixtureProtocol, provenance)
 
@@ -80,26 +82,28 @@ export const readyState = (): RuntimeState => {
         cycleRunner: { status: 'AVAILABLE', checkedAt, error: null },
       },
     },
-    cycle: deriveCycleOperationsStatus(
-      {
-        current: null,
-        last: null,
-        unfinishedCycleCount: 0,
-        authority: null,
-        reconciliation: null,
-        mutations: {
-          eventCount: 0,
-          recoveryFoundCount: 0,
-          approvedIntentCount: 0,
-          acknowledgedIntentCount: 0,
-          unresolvedCount: 0,
-          oldestUnresolvedAt: null,
-          latestOccurredAt: null,
+    cycle: Result.getOrThrow(
+      deriveCycleOperationsStatusResult(
+        {
+          current: null,
+          last: null,
+          unfinishedCycleCount: 0,
+          authority: null,
+          reconciliation: null,
+          mutations: {
+            eventCount: 0,
+            recoveryFoundCount: 0,
+            approvedIntentCount: 0,
+            acknowledgedIntentCount: 0,
+            unresolvedCount: 0,
+            oldestUnresolvedAt: null,
+            latestOccurredAt: null,
+          },
         },
-      },
-      Date.parse(checkedAt),
-      Authority.Observe,
-      config,
+        Date.parse(checkedAt),
+        Authority.Observe,
+        config,
+      ),
     ),
     autonomousCycleLoop: {
       configured: true,

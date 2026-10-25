@@ -1,0 +1,90 @@
+version: 1
+
+# Select suites within the single root-scripts job using the existing impact router.
+targets:
+  all:
+    kind: validation
+    paths:
+      - .github/ci/impact-map.yml
+      - .github/ci/root-script-map.yml
+      - .github/workflows/pull-request.yml
+      - packages/scripts/src/ci/impact-router.ts
+      - packages/scripts/src/ci/__tests__/impact-router.test.ts
+
+  flamingo:
+    kind: validation
+    paths:
+      - scripts/jangar/**
+      - argocd/applications/flamingo/**
+      - argocd/applications/agents/anypi*agentprovider.yaml
+      - argocd/applications/agents/values.yaml
+      - argocd/applications/bumba/deployment.yaml
+      - argocd/applications/jangar/deployment.yaml
+      - argocd/applications/jangar/openwebui-values.yaml
+      - argocd/applications/kubevirt/kustomization.yaml
+      - argocd/applications/saigak/**
+      - argocd/applicationsets/platform.yaml
+      - services/anypi/src/config*.ts
+      - services/bumba/src/activities/index.ts
+      - docs/agents/anypi.md
+      - docs/jangar/*flamingo*.md
+
+  hermes:
+    kind: validation
+    paths:
+      - scripts/hermes/**
+      - argocd/applications/hermes/**
+      - argocd/applications/openclaw/**
+      - argocd/applications/kargo/stages.yaml
+      - argocd/applicationsets/platform.yaml
+      - argocd/applications/observability/cluster-metrics-alloy-config.river
+      - argocd/applications/observability/cluster-metrics-alloy-deployment.yaml
+      - argocd/applications/observability/graf-mimir-rules.yaml
+      - argocd/applications/observability/kube-state-metrics-values.yaml
+      - .github/workflows/hermes-*.yml
+      - docs/runbooks/hermes-production-rollout.md
+
+  kube-router:
+    kind: validation
+    paths:
+      - scripts/kube-router/**
+      - argocd/applications/kube-router/**
+      - argocd/applications/buzz/networkpolicy.yaml
+      - argocd/applications/observability/grafana-upgrade-backup.yaml
+      - argocd/applications/proompteng/network-policy.yaml
+      - argocd/applications/restate/networkpolicy.yaml
+      - argocd/applications/restate-example/networkpolicy.yaml
+      - argocd/applications/temporal/upgrade/*backup.yaml
+      - argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml
+      - argocd/applications/hermes/network-policy.yaml
+      - argocd/applications/tengri/network-policies.yaml
+      - argocd/applicationsets/platform.yaml
+      - argocd/applications/observability/cluster-metrics-alloy-config.river
+      - argocd/applications/observability/cluster-metrics-alloy-deployment.yaml
+      - argocd/applications/observability/graf-mimir-rules.yaml
+      - argocd/applications/observability/kube-state-metrics-values.yaml
+      - docs/runbooks/kube-router-network-policy-rollout.md
+
+  cluster-upgrades:
+    kind: validation
+    paths:
+      - scripts/cluster-upgrades/**
+      - argocd/applications/clickhouse-upgrade-acceptance/**
+      - argocd/applications/postgres-upgrade-acceptance/**
+      - argocd/applications/*/postgres-upgrade-backup.yaml
+      - argocd/applications/*/postgres-cluster.yaml
+      - argocd/applications/coder/coder-cluster.yaml
+      - argocd/applications/temporal/upgrade/**
+
+  forgejo:
+    kind: validation
+    paths:
+      - scripts/forgejo/**
+      - .github/workflows/forgejo-image-publish.yml
+      - argocd/applications/forgejo/upstream-image.json
+
+  tengri-secrets:
+    kind: validation
+    paths:
+      - scripts/seal-tengri-runtime.ts
+      - scripts/seal-tengri-runtime.test.ts

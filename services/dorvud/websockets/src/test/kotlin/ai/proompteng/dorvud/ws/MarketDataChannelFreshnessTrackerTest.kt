@@ -17,7 +17,7 @@ class MarketDataChannelFreshnessTrackerTest {
       at: String,
       lastProviderAt: Instant? = lastMarketDataAt,
       feed: EquityFeed = EquityFeed.Iex,
-    ) = coreIexProviderIdleRequiresReconnect(
+    ) = providerMarketDataIdleRequiresReconnect(
       subscribedAt = subscribedAt,
       lastProviderMarketDataAt = lastProviderAt,
       now = Instant.parse(at),
@@ -568,5 +568,48 @@ class MarketDataChannelFreshnessTrackerTest {
     assertEquals("market_data_channel_conditional_observed", deliveredTrade.reason)
     assertEquals(listOf("NVDA260717C00160000"), deliveredTrade.observedSymbols)
     assertEquals(listOf("NVDA260717P00160000"), deliveredTrade.missingSymbols)
+  }
+
+  @Test fun `IEX freshness and idle recovery cover exactly Basic eight to seventeen hours`() {
+    for ((at, required) in listOf(
+      "2026-10-16T11:59:59Z" to false,
+      "2026-10-16T12:00:00Z" to true,
+      "2026-10-16T20:59:59Z" to true,
+      "2026-10-16T21:00:00Z" to false,
+      "2026-11-02T12:59:59Z" to false,
+      "2026-11-02T13:00:00Z" to true,
+      "2026-11-02T22:00:00Z" to false,
+    )) {
+      assertEquals(
+        required,
+        marketDataIdleRequiresReconnect(true, Instant.parse(at), AlpacaMarketType.EQUITY, emptySet(), EquityFeed.Iex),
+        at,
+      )
+    }
+    assertFalse(
+      marketDataIdleRequiresReconnect(true, Instant.parse("2026-10-17T14:00:00Z"), AlpacaMarketType.EQUITY, emptySet(), EquityFeed.Iex),
+    )
+  }
+
+  @Test fun `sparse extended prints are conditional while delivered quotes stay required`() {
+    var now = Instant.parse("2026-10-16T12:01:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(listOf("bars", "quotes", "trades"), 60_000, 0, {
+        now
+      }, AlpacaMarketType.EQUITY, equityFeed = EquityFeed.Iex)
+    tracker.recordSubscription(listOf("AAPL", "NVDA"))
+    now += 1000
+    val initial = tracker.snapshot().associateBy { it.channel }
+    assertTrue(initial.getValue("bars").ready)
+    assertTrue(initial.getValue("trades").ready)
+    assertFalse(initial.getValue("quotes").ready)
+    tracker.recordProviderEvent("quotes", "AAPL")
+    val sequence = tracker.recordSerializedEvent("quotes", "AAPL")
+    tracker.recordKafkaSuccess("quotes", "AAPL", sequence)
+    val quote = tracker.snapshot().single { it.channel == "quotes" }
+    assertTrue(quote.ready)
+    assertEquals(listOf("NVDA"), quote.missingSymbols)
+    now += 60_001
+    assertFalse(tracker.snapshot().single { it.channel == "quotes" }.ready)
   }
 }

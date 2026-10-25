@@ -2,7 +2,6 @@ import { Data, Redacted, Schema } from 'effect'
 
 import type * as Effect from 'effect/Effect'
 import type * as FileSystem from 'effect/FileSystem'
-import type * as HttpClient from 'effect/http/HttpClient'
 
 import {
   IsoDateSchema,
@@ -264,12 +263,4 @@ export interface AlpacaHistoricalClient {
   readonly capture: (
     query: AlpacaHistoricalQuery,
   ) => Effect.Effect<VendorHistoricalCapture, VendorHistoricalFailure, FileSystem.FileSystem>
-}
-
-export interface AlpacaHistoricalClientFactory {
-  readonly make: (
-    httpClient: HttpClient.HttpClient,
-    credentials: AlpacaHistoricalCredentials,
-    options?: AlpacaHistoricalClientOptions,
-  ) => Effect.Effect<AlpacaHistoricalClient, VendorHistoricalFailure>
 }

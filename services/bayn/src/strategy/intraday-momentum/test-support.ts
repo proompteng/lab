@@ -1,5 +1,13 @@
-import { canonicalHashV1 } from '../../hash'
-import type { IntradaySnapshotRequest } from '../../market-data'
+import { decideIntradayMomentum } from './decision'
+import type { IntradayMomentumStrategyDefinition, IntradayMomentumMarketContext } from './model'
+import type { VerifiedStrategyContext } from '../core'
+import { Result } from 'effect'
+import { equityClockSession } from '../../equity-hours'
+import type { JevProtocol } from '../../jev/protocol'
+import { equityMarketProfile } from '../../jev/markets'
+import type { MarketCalendarObservation } from '../../broker/alpaca/model'
+import { canonicalHashV1Result } from '../../hash'
+import type { IntradaySnapshotRequest } from '../../market-data/intraday/model'
 import type { IntradayMarketSnapshot } from '../../market-data/intraday/model'
 import { utcInstantFromEpochMillis } from '../../time'
 import type { IntradayMomentumProtocol } from './protocol'
@@ -11,12 +19,17 @@ export const intradayTestArchiveTopics = Object.freeze({
 } as const)
 
 export const makeIntradayMomentumTestSnapshot = (
-  protocol: Pick<IntradayMomentumProtocol, 'delayClass' | 'feed' | 'universe' | 'universeId' | 'universeSymbolHash'>,
+  inputProtocol:
+    | Pick<IntradayMomentumProtocol, 'delayClass' | 'feed' | 'universe' | 'universeId' | 'universeSymbolHash'>
+    | JevProtocol,
   request: IntradaySnapshotRequest,
   premiums: Readonly<Record<string, number>> = {},
   basePrice = 100,
   bidSizes: Readonly<Record<string, number>> = {},
-): IntradayMarketSnapshot => {
+): IntradayMarketSnapshot & { readonly manifest: { readonly calendar: MarketCalendarObservation } } => {
+  const protocol = 'marketProfiles' in inputProtocol ? equityMarketProfile : inputProtocol
+  if (request.calendar.schemaVersion === 'bayn.continuous-market-hours.v1')
+    throw new Error('equity fixture requires exchange hours')
   const rangeStartEpoch = Date.parse(request.rangeStartAt)
   const rangeMinutes = (Date.parse(request.rangeEndAt) - rangeStartEpoch) / 60_000
   const requestedSymbols = request.symbols ?? request.universe
@@ -31,7 +44,7 @@ export const makeIntradayMomentumTestSnapshot = (
     universeId: protocol.universeId,
     universeSymbolHash: protocol.universeSymbolHash,
     feed: protocol.feed,
-    marketSession: 'regular' as const,
+    marketSession: protocol.feed === 'iex' ? (equityClockSession(eventAt) ?? 'regular') : ('regular' as const),
     delayClass: protocol.delayClass,
     symbol,
     eventAt,
@@ -131,12 +144,12 @@ export const makeIntradayMomentumTestSnapshot = (
     barCount: bars.length,
     quoteCount: quotes.length,
     tradeCount: trades.length,
-    barsContentHash: canonicalHashV1(bars),
-    quotesContentHash: canonicalHashV1(quotes),
-    tradesContentHash: canonicalHashV1(trades),
+    barsContentHash: Result.getOrThrow(canonicalHashV1Result(bars)),
+    quotesContentHash: Result.getOrThrow(canonicalHashV1Result(quotes)),
+    tradesContentHash: Result.getOrThrow(canonicalHashV1Result(trades)),
     lineage,
   }
-  const contentHash = canonicalHashV1(material)
+  const contentHash = Result.getOrThrow(canonicalHashV1Result(material))
   return {
     bars,
     quotes,
@@ -145,7 +158,17 @@ export const makeIntradayMomentumTestSnapshot = (
     manifest: {
       ...material,
       contentHash,
-      snapshotId: canonicalHashV1({ ...material, contentHash }),
+      snapshotId: Result.getOrThrow(canonicalHashV1Result({ ...material, contentHash })),
     },
-  } as unknown as IntradayMarketSnapshot
+  }
 }
+
+export const makeIntradayMomentumDefinition = (
+  protocol: IntradayMomentumProtocol,
+): IntradayMomentumStrategyDefinition => ({
+  name: 'intraday-momentum',
+  holdingPeriod: 'INTRADAY',
+  parameters: protocol,
+  decide: (context: VerifiedStrategyContext<IntradayMomentumMarketContext>) =>
+    decideIntradayMomentum(context.market, protocol),
+})

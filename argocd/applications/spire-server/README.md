@@ -1,8 +1,8 @@
 # Galactic SPIRE
 
-The `spire-server`, `spire-system`, and `spire-test` Applications install SPIRE through the platform ApplicationSet.
+The `spire-server` and `spire-system` Applications install SPIRE through the platform ApplicationSet.
 The upstream SPIRE chart is pinned to `0.30.2`, SPIRE to `1.15.3`, and the CRD chart to `0.6.1`.
-The two Helm applications use the existing Lovely renderer and its Helm 3 toolchain. The canary uses native Kustomize.
+Both Helm applications use the existing Lovely renderer and its Helm 3 toolchain.
 
 ## Ownership and identity
 
@@ -15,9 +15,11 @@ The nested PVC template's generated `apiVersion` and `kind` are excluded from di
 fields from its predicted state. Capacity, storage class, access modes, and retention remain compared.
 
 SPIRE and Istio use the single trust domain `proompteng.ai`. There is no default registration for other pods.
-The controller registers `spire-test` canaries, Proompteng and Tengri application containers, their native Istio
-proxies, and the two existing Istio gateways through explicit `ClusterSPIFFEID` resources. Namespace, Pod,
-service-account, and container selectors constrain each registration. X.509-SVID lifetimes are two minutes.
+The controller registers Proompteng and Tengri application containers, their native Istio proxies, and the two
+existing Istio gateways through explicit `ClusterSPIFFEID` resources. Namespace, Pod,
+service-account, and container selectors constrain each registration. Tengri controllers and Restate run workers
+share the existing `tengri` service-account identity; both their application containers and native proxies are registered.
+X.509-SVID lifetimes are two minutes.
 Application containers use the Workload API directly; Istio proxies obtain their identities and trust bundles through
 SPIRE's Envoy SDS API on a separate read-only CSI mount. Native sidecar injection uses the existing Istio CNI, so
 restricted application Pods do not require a privileged network init container.
@@ -94,20 +96,20 @@ have re-attested. Verify the exact promoted application images, `proompteng.ai` 
 renewal, both gRPC hops, and the authenticated desktop. A rollback must restore the complete previous configuration
 and use the previous data mount; changing only the trust-domain string is insufficient.
 
-Render both Helm applications with Helm 3 and render the canary with Kustomize. Validate the rendered Kubernetes
-resources and the ApplicationSet before merge. Root reconciliation must update only the platform ApplicationSet
-at the reviewed main commit; the three child Applications then reconcile their committed desired state.
+Render both Helm applications with Helm 3. Validate the rendered Kubernetes resources and the ApplicationSet
+before merge. Root reconciliation must update only the platform ApplicationSet at the reviewed main commit;
+the two child Applications then reconcile their committed desired state.
 
-The canary DaemonSet watches its X.509 identity on every Linux node. Its registration has a two-minute TTL so the
-verifier can observe rotation promptly. Run:
+Run the SPIRE readiness and registration checks:
 
 ```sh
 python3 argocd/applications/spire-server/verify.py --context galactic-tailscale
 ```
 
-The verifier requires ready server, agent, and CSI workloads, a canary on every node, AMD64 and ARM64 coverage,
-the expected SPIFFE ID, at least two distinct certificate validity windows per canary, a currently valid identity,
-and denial for an unregistered workload. It reads metadata only and prints no certificates, keys, or tokens.
+The verifier requires ready server, agent, and CSI workloads, the shared PostgreSQL datastore with verified TLS,
+three distinct hosts for each HA replica set, AMD64 and ARM64 nodes, and denial for an unregistered workload.
+It prints no certificates, keys, or tokens. Verify identity issuance and renewal through the registered
+applications when accepting an identity or datastore change.
 
 For recovery, revert the affected values or workload templates through a reviewed main change and reconcile that
 revision. Preserve the server PVC and CRDs. Restore the datastore and signing keys together if storage recovery is

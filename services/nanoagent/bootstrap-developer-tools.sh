@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly INSTALLER_COMMIT='35da6871c4be7d7fdab2fd505fb7fa667926a2a5'
 readonly INSTALLER_SHA256='5f333bbe53bc490e51e7ccb1df8779b3dd6ee73a1a7379efda216edb08ccb148'
-readonly FORMULAE=(neovim tree-sitter-cli gh fd fzf lazygit gdu bottom kubernetes-cli tmux make cmake pkgconf gcc)
+readonly FORMULAE=(gh fd fzf lazygit gdu bottom kubernetes-cli tmux make cmake pkgconf gcc)
 installer=''
 
 fail() { printf 'bootstrap-developer-tools: %s\n' "$*" >&2; exit 1; }
@@ -66,7 +66,7 @@ install_tools() {
   [[ "$(stat -c %u "$prefix")" == "$(id -u)" ]] || fail 'Homebrew prefix has a different owner'
   eval "$("$prefix/bin/brew" shellenv bash)"
   # Preserve the pinned language toolchains ahead of optional Homebrew packages.
-  export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH"
+  export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:/opt/tengri/editor/bin:$PATH"
   local installed
   installed="$("$prefix/bin/brew" list --formula --versions)"
   local missing=()
@@ -88,21 +88,10 @@ install_tools() {
   chmod 0700 "$cpp_wrapper"
   mv -Tf "$cpp_wrapper" "$HOME/.local/bin/g++"
   ln -sfn "$HOME/.local/bin/g++" "$HOME/.local/bin/c++"
-  for command in nvim tree-sitter gh fd fzf lazygit gdu-go btm kubectl tmux make cmake pkg-config; do
+  for command in gh fd fzf lazygit gdu-go btm kubectl tmux make cmake pkg-config; do
     [[ -x "$prefix/bin/$command" ]] || fail "developer command is missing: $command"
   done
-  if ! "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
-    '+if v:errmsg != "" | cquit 1 | endif' +qa; then
-    HOMEBREW_NO_ASK=1 "$prefix/bin/brew" upgrade --formula --force-bottle neovim
-    "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
-      '+if v:errmsg != "" | cquit 1 | endif' +qa
-  fi
-  if cmp -s /usr/share/nanoagent/astronvim-init.lua "$config/init.lua"; then
-    "$prefix/bin/nvim" --headless \
-      "+lua require('lazy').install({wait=true,show=false}); for name,plugin in pairs(require('lazy.core.config').plugins) do assert(plugin._.installed,name .. ' is missing'); for _,task in ipairs(plugin._.tasks or {}) do assert(not task:has_errors(),name .. ' failed installation') end end" \
-      "+lua assert(require('astronvim').version() == 'v6.1.0'); assert(vim.v.errmsg == '',vim.v.errmsg)" \
-      '+if v:errmsg != "" | cquit 1 | endif' +qa
-  fi
+  [[ -x /opt/tengri/editor/bin/nvim && -x /opt/tengri/editor/bin/tree-sitter && -s /opt/tengri/editor/plugins.lua ]] || fail 'bundled editor is unavailable'
   mkdir -p "$(dirname "$receipt")"
   local staging
   staging="$(mktemp "${receipt}.XXXXXX")"
@@ -121,7 +110,7 @@ cpp_wrapper_contents() {
 tools_present() {
   local prefix="$1" config="$2" c_root="$3" triplet="$4" command
   [[ -x "$prefix/bin/brew" && "$(stat -c %u "$prefix")" == "$(id -u)" ]] || return 1
-  for command in nvim tree-sitter gh fd fzf lazygit gdu-go btm kubectl tmux make cmake pkg-config; do
+  for command in gh fd fzf lazygit gdu-go btm kubectl tmux make cmake pkg-config; do
     [[ -x "$prefix/bin/$command" ]] || return 1
   done
   [[ "$(readlink "$HOME/.local/bin/gdu")" == "$prefix/bin/gdu-go" ]] || return 1
@@ -132,8 +121,7 @@ tools_present() {
   [[ -f "$c_root/sysroot/usr/include/features.h" ]] || return 1
   [[ -e "$config/init.lua" || -e "$config/init.vim" ]] || return 1
   if cmp -s /usr/share/nanoagent/astronvim-init.lua "$config/init.lua"; then
-    local data="${XDG_DATA_HOME:-$HOME/.local/share}/nvim/lazy"
-    [[ -f "$config/lazy-lock.json" && -d "$data/lazy.nvim" && -d "$data/AstroNvim" ]] || return 1
+    [[ -x /opt/tengri/editor/bin/nvim && -x /opt/tengri/editor/bin/tree-sitter && -s /opt/tengri/editor/plugins.lua ]] || return 1
   fi
 }
 

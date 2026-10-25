@@ -1,0 +1,19 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: ofz-database-ca
+  annotations:
+    argocd.argoproj.io/sync-wave: "-9"
+spec:
+  refreshInterval: 1m
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: ofz-database-ca
+  target:
+    name: ofz-database-ca
+    creationPolicy: Owner
+  data:
+    - secretKey: ca.crt
+      remoteRef:
+        key: ofz-db-public-ca
+        property: ca.crt

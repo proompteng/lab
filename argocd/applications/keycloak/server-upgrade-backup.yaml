@@ -1,7 +1,7 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Backup
 metadata:
-  name: keycloak-server-26-7-3
+  name: keycloak-server-26-7-4
   namespace: keycloak
   annotations:
     argocd.argoproj.io/sync-wave: "-10"

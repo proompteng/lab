@@ -1,10 +1,12 @@
 import { Schema } from 'effect'
 
 import { UtcInstantSchema } from '../../schemas'
+import { Reason as RiskReason } from '../../risk'
 import { RequiredMarketFeatureSchema } from '../../market-data/features/contract'
 import type { IntradaySnapshotFailure } from '../../market-data/intraday/model'
 
 export enum DecisionReadinessReason {
+  AccountProtection = 'ACCOUNT_PROTECTION',
   DecisionPending = 'DECISION_PENDING',
   InferenceUnavailable = 'INFERENCE_UNAVAILABLE',
   LookbackWarmup = 'LOOKBACK_WARMUP',
@@ -19,6 +21,13 @@ export enum DecisionReadinessReason {
 export const DecisionReadinessSchema = Schema.Struct({
   reason: Schema.Enum(DecisionReadinessReason),
   message: Schema.NonEmptyString,
+  accountProtectionReasons: Schema.optionalKey(
+    Schema.Array(Schema.Literals([RiskReason.DailyLossExceeded, RiskReason.DrawdownExceeded])).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(2),
+      Schema.isUnique(),
+    ),
+  ),
   availableAt: Schema.optionalKey(UtcInstantSchema),
   symbol: Schema.optionalKey(Schema.NonEmptyString),
   eventAt: Schema.optionalKey(UtcInstantSchema),
@@ -30,7 +39,14 @@ export const DecisionReadinessSchema = Schema.Struct({
       symbols: Schema.Array(Schema.NonEmptyString),
     }),
   ),
-})
+}).check(
+  Schema.makeFilter(
+    (readiness) =>
+      readiness.accountProtectionReasons === undefined ||
+      readiness.reason === DecisionReadinessReason.AccountProtection,
+    { expected: 'account limit reasons belong only to account protection readiness' },
+  ),
+)
 
 export type DecisionReadiness = typeof DecisionReadinessSchema.Type
 
@@ -72,12 +88,19 @@ export const CycleWaitReasonSchema = Schema.Union([
     'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
     'JEV_POSITION_AWAITING_RECONCILIATION',
     'JEV_POSITION_HELD',
+    'PROTECTION_RECOVERY_BACKOFF',
+    'PROTECTION_RECOVERY_ONLY',
+    'PROTECTION_AWAITING_RECONCILIATION',
+    'PROTECTION_CANCEL_PENDING',
+    'PROTECTION_AUTHORITY_UNAVAILABLE',
+    'PROTECTION_EXIT_COMMITTED',
     'POST_MUTATION_RECONCILIATION',
     'AWAITING_SUBMISSION_OPEN',
     'AWAITING_CLOSE_WINDOW',
     'CLOSE_STORE_UNAVAILABLE',
     'CLOSE_MARKET_DATA_UNAVAILABLE',
     'CLOSE_QUOTE_PENDING',
+    'CLOSE_RECONCILIATION_PENDING',
     'CLOSE_ONLY_UNTIL_CLOSE',
     'MUTATION_NOT_ADVANCED',
     'MUTATION_RECOVERY_BACKOFF',

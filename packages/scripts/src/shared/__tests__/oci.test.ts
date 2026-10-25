@@ -101,8 +101,6 @@ const jangarDeployScript = readRepoFile('packages/scripts/src/jangar/deploy-serv
 const jangarUpdateScript = readRepoFile('packages/scripts/src/jangar/update-manifests.ts')
 const agentsBuildScript = readRepoFile('packages/scripts/src/agents/build-image.ts')
 const agentsDeployScript = readRepoFile('packages/scripts/src/agents/deploy-service.ts')
-const arcRunnerBuildScript = readRepoFile('packages/scripts/src/arc-runner/build-image.ts')
-const arcRunnerDeployScript = readRepoFile('packages/scripts/src/arc-runner/deploy-service.ts')
 const torghutBuildScript = readRepoFile('packages/scripts/src/torghut/build-image.ts')
 const torghutImageBuildersScript = readRepoFile('packages/scripts/src/torghut/image-builders.ts')
 const torghutWsBuildScript = readRepoFile('packages/scripts/src/torghut/build-ws-image.ts')
@@ -889,7 +887,7 @@ describe('native OCI build workflows', () => {
       expect(workflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
       expect(workflow).toContain("- 'packages/scripts/src/shared/oci.ts'")
       expect(workflow).toContain("- 'nix/oci-push.sh'")
-      if (workflow !== hermesToolchainBuildWorkflow) {
+      if (workflow !== hermesToolchainBuildWorkflow && workflow !== productNixWorkflow) {
         expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
       }
     }
@@ -1498,7 +1496,6 @@ describe('native OCI build workflows', () => {
 
   it('keeps manual migrated app deploy scripts on the shared Nix image helper', () => {
     for (const script of [
-      arcRunnerBuildScript,
       oiratBuildScript,
       bumbaBuildScript,
       atticBuildScript,
@@ -1533,13 +1530,6 @@ describe('native OCI build workflows', () => {
     expect(atticDeployScript).toContain('Non-dry attic:deploy requires --image-digest')
     expect(atticDeployScript).toContain('assertDeployImagePlatforms(imageDigest)')
     expect(atticDeployScript).toContain('gc-cronjob.yaml')
-    expect(arcRunnerDeployScript).not.toContain("from '../shared/docker'")
-    expect(arcRunnerDeployScript).not.toContain('inspectImageDigest')
-    expect(arcRunnerDeployScript).toContain("from './build-image'")
-    expect(arcRunnerDeployScript).toContain('dryRun')
-    expect(arcRunnerDeployScript).toContain('no-apply')
-    expect(arcRunnerDeployScript).toContain('registry.ide-newton.ts.net/lab/arc-runner@sha256:<64 hex>')
-    expect(arcRunnerDeployScript).toContain('image: docker:dind')
     expect(froussardDeployScript).not.toContain("from '../shared/docker'")
     expect(froussardDeployScript).not.toContain('buildAndPushDockerImage')
     expect(froussardDeployScript).not.toContain('inspectImageDigest')

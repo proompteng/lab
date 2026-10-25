@@ -125,6 +125,8 @@ def bootstrap():
                 "identityProviders",
                 "identityProviderMappers",
                 "clients",
+                "loginTheme",
+                "webAuthnPolicyUserVerificationRequirement",
             }
         }
         if not contains(current, scalar):
@@ -223,7 +225,30 @@ def bootstrap():
         request("PUT", client_path, token, {"secret": secret}, expected=(204,))
         if request("GET", client_path + "/client-secret", token).get("value") != secret:
             raise RuntimeError("Dedicated client credential reconciliation failed")
-    request("PUT", path, token, {"enabled": True}, expected=(204,))
+    managed = {
+        key: value
+        for key, value in request("GET", path, token).items()
+        if key.startswith("webAuthnPolicy")
+        and not key.startswith("webAuthnPolicyPasswordless")
+    }
+    managed.update(
+        enabled=True,
+        loginTheme=realm["loginTheme"],
+        webAuthnPolicyUserVerificationRequirement=realm[
+            "webAuthnPolicyUserVerificationRequirement"
+        ],
+    )
+    request(
+        "PUT",
+        path,
+        token,
+        managed,
+        expected=(204,),
+    )
+    if not contains(request("GET", path, token), managed):
+        raise RuntimeError(
+            "Dedicated login theme or passkey policy reconciliation failed"
+        )
     print(
         "Dedicated Tengri realm, immutable GitHub identity and passkey requirements verified"
     )

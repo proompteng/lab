@@ -1,6 +1,6 @@
 # 180. Torghut Resource-Priced Evidence Frontier And Context Spend Escrow (2026-05-08)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

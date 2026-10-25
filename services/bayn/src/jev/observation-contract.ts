@@ -18,5 +18,3 @@ export const JevObservationSchema = Schema.Struct({
     trades: Schema.Array(Schema.Unknown),
   }),
 })
-
-export type JevObservation = typeof JevObservationSchema.Type

@@ -16,6 +16,17 @@ spec:
   restartNonce: 14
   flinkVersion: v2_2
   serviceAccount: torghut-runtime
+  logConfiguration:
+    log4j-console.properties: |-
+      rootLogger.level = INFO
+      rootLogger.appenderRef.console.ref = ConsoleAppender
+      rootLogger.appenderRef.glitchtip.ref = GlitchTip
+      appender.console.name = ConsoleAppender
+      appender.console.type = CONSOLE
+      appender.console.layout.type = PatternLayout
+      appender.console.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+      appender.glitchtip.type = DorvudGlitchTip
+      appender.glitchtip.name = GlitchTip
   flinkConfiguration:
     kubernetes.operator.job.upgrade.last-state-fallback.enabled: "false"
     kubernetes.operator.job.restart.failed: "true"
@@ -72,6 +83,13 @@ spec:
                 secretKeyRef:
                   name: flink-checkpoints
                   key: AWS_SECRET_ACCESS_KEY
+            - name: DORVUD_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: dorvud-glitchtip
+                  key: DORVUD_GLITCHTIP_DSN
+            - name: DORVUD_ERROR_SERVICE
+              value: market-data-archive
           ports:
             - containerPort: 9249
               name: metrics

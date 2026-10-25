@@ -14,8 +14,11 @@ all requirements. Spend time and tokens on decisions, implementation, and eviden
 - Ask before expanding scope, unrequested destructive actions, purchases, or changes to credential identity,
   destinations, or permissions. An authorized rollout includes renewing an expired credential for the same verified
   account through its existing secret-sync path. Prepare the reviewable work before any required approval.
-- Confirm a successful merge, report it, and stop. Deployment, post-merge CI monitoring, Kargo/Argo monitoring, and live
-  verification require an explicit request. A routine fix, ship, or merge request ends at reviewed merge.
+- Match completion to the requested outcome. A routine source change ends at reviewed merge. Requests to move or
+  migrate workloads, deploy, roll out, recover, or verify live behavior authorize the corresponding rollout and runtime
+  proof. Do not stop at merge while that requested outcome remains unfinished.
+- The merge boundary prevents unrequested monitoring, not completion of an authorized rollout. Check CI, Kargo, Argo,
+  and live state only as needed to deliver the requested outcome; do not turn waiting into the task.
 - Preserve unfinished requirements when the user adds feedback. Answer side questions and resume unless redirected.
   Do not turn completion into another cleanup, audit, or monitoring task.
 
@@ -84,8 +87,8 @@ Trust results only when relevant, without degradation, and matching the requeste
   broaden checks only after a change, failure, or unresolved concern justifies it.
 - Separate product failures from missing dependencies, denied network operations, and unavailable environments.
   Report what passed, what failed, and what remains unverified. A blocked check has not passed.
-- For explicitly requested deployment or production verification, verify the exact remote commit, CI, deployed
-  revision/image, and requested live behavior. Argo `Synced`/`Healthy` and readiness endpoints establish infrastructure
+- For authorized deployment, migration, recovery, or live verification, verify the exact remote commit, required CI,
+  deployed revision/image, and requested live behavior. Argo `Synced`/`Healthy` and readiness endpoints establish infrastructure
   state; exercise the product behavior before claiming the release is complete.
 
 ## Code Review Rules
@@ -100,14 +103,18 @@ formatting and lint enforcement to configured tools. Do not expand a focused rev
   `git add -A` in a dirty shared checkout.
 - Build PR descriptions from [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md). Describe final
   behavior and actual validation, fill retained sections, and remove placeholders.
-- Validate locally before pushing. Resolve required CI failures and check results against the current PR commit.
+- Validate locally before pushing. Inspect required gates for the current PR commit at the delivery decision and fix
+  required failures. Do not wait for optional checks or sit in CI/review polling loops with status-only updates.
+  Continue independent authorized work while checks run. If only pending required gates remain, use auto-merge when
+  available and report the exact pending gate; do not spend the turn watching jobs or claim completion prematurely.
 - Let automatic Codex review run. Do not post `@codex review` or repeatedly poll for review signals. Verify actionable
   findings, fix them, add focused evidence, and push before replying and resolving. A fix push does not require a new
   review cycle; unresolved actionable findings block merge.
 - Use GitHub native stacks for dependent PRs. Verify parent relationships with `gh stack view`, keep each layer
   independently reviewable and green, and publish with `gh stack submit --auto --open` when authorized.
 - Squash with `gh pr merge <number> --squash -R proompteng/lab`, or `gh stack merge --yes --squash` for a green stack.
-  Do not delete branches used by shared worktrees. Confirm the merged state and stop at the authorized boundary.
+  Do not delete branches used by shared worktrees. Confirm a completed merge once; report a deferred merge as pending.
+  Stop at the requested outcome, continuing an authorized rollout or migration when it remains unfinished.
 
 ## Repository tools and entry points
 
@@ -137,6 +144,7 @@ does not make `go test ./services/...` cover every module.
 | Image delivery                    | [docs/release-automation.md](docs/release-automation.md)                                                    |
 | AgentRuns                         | [creation guide](docs/agents/agentrun-creation-guide.md), [CRD specification](docs/agents/crd-yaml-spec.md) |
 | Temporal                          | [skills/temporal/SKILL.md](skills/temporal/SKILL.md)                                                        |
+| Autonomous project execution      | [skills/autonomous-agents/SKILL.md](skills/autonomous-agents/SKILL.md)                                       |
 
 ## Infrastructure contracts
 

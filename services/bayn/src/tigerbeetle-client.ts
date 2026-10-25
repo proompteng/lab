@@ -12,15 +12,17 @@ import {
 } from 'tigerbeetle-node'
 import { Data, Effect, Option, Result, Scope, ScopedRef, Semaphore } from 'effect'
 
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { OperationalError, operationalError } from './errors'
 import type {
+  LedgerAccountBalance,
+  LedgerAccountFilter,
   LedgerAccountRecord,
   LedgerCreateResult,
   LedgerQueryFilter,
   LedgerTransferRecord,
 } from './ledger-plan/model'
-import { Pipeable } from './pipeable'
+
 import { withObservedStage } from './telemetry'
 import { operationTimeoutOrElse } from './operation-timeout'
 
@@ -190,7 +192,7 @@ export const parseReplicaEndpoints = (
       })
     : Result.all(configuredAddresses.map(parseReplicaEndpoint))
 
-const validateResolvedReplicaEndpointDataFirst = (
+export const validateResolvedReplicaEndpoint = (
   endpoint: ReplicaEndpoint,
   resolvedAddresses: readonly string[],
 ): Result.Result<string, ReplicaAddressValidationError> => {
@@ -213,8 +215,6 @@ const validateResolvedReplicaEndpointDataFirst = (
   }
   return Result.succeed(`${ipv4Addresses[0]}:${endpoint.port}`)
 }
-
-export const validateResolvedReplicaEndpoint = Pipeable.dual(2, validateResolvedReplicaEndpointDataFirst)
 
 export const validateResolvedReplicaAddresses = (
   addresses: readonly string[],
@@ -245,7 +245,7 @@ const resolveReplicaEndpoint = (
         Effect.flatMap((addresses) => replicaAddressBoundary(validateResolvedReplicaEndpoint(endpoint, addresses))),
       )
 
-const resolveReplicaAddressesDataFirst = (
+export const resolveReplicaAddresses = (
   configuredAddresses: readonly string[],
   resolveHostname: ResolveHostname = lookupIpv4,
 ): Effect.Effect<string[], OperationalError> =>
@@ -257,13 +257,6 @@ const resolveReplicaAddressesDataFirst = (
     ),
     Effect.flatMap((addresses) => replicaAddressBoundary(validateResolvedReplicaAddresses(addresses))),
   )
-
-export const resolveReplicaAddresses = Pipeable.by<
-  (
-    resolveHostname?: ResolveHostname,
-  ) => (configuredAddresses: readonly string[]) => ReturnType<typeof resolveReplicaAddressesDataFirst>,
-  typeof resolveReplicaAddressesDataFirst
->((arguments_) => Array.isArray(arguments_[0]), resolveReplicaAddressesDataFirst)
 
 export interface JournalDependencies {
   readonly createClient: (options: ClientInitArgs) => TigerBeetleClient
@@ -280,6 +273,8 @@ type TigerBeetleNodeClient = Pick<
   | 'lookupTransfers'
   | 'queryAccounts'
   | 'queryTransfers'
+  | 'getAccountTransfers'
+  | 'getAccountBalances'
   | 'destroy'
 >
 
@@ -290,6 +285,8 @@ export interface TigerBeetleClient {
   readonly lookupTransfers: (ids: readonly bigint[]) => Promise<readonly LedgerTransferRecord[]>
   readonly queryAccounts: (filter: LedgerQueryFilter) => Promise<readonly LedgerAccountRecord[]>
   readonly queryTransfers: (filter: LedgerQueryFilter) => Promise<readonly LedgerTransferRecord[]>
+  readonly getAccountTransfers: (filter: LedgerAccountFilter) => Promise<readonly LedgerTransferRecord[]>
+  readonly getAccountBalances: (filter: LedgerAccountFilter) => Promise<readonly LedgerAccountBalance[]>
   readonly destroy: () => void
 }
 
@@ -322,6 +319,8 @@ const adaptTigerBeetleClient = (client: TigerBeetleNodeClient): TigerBeetleClien
   lookupTransfers: (ids) => client.lookupTransfers([...ids]),
   queryAccounts: (filter) => client.queryAccounts(filter),
   queryTransfers: (filter) => client.queryTransfers(filter),
+  getAccountTransfers: (filter) => client.getAccountTransfers(filter),
+  getAccountBalances: (filter) => client.getAccountBalances(filter),
   destroy: () => client.destroy(),
 })
 
@@ -475,7 +474,7 @@ const tigerBeetleRequest = <A>(
     Effect.annotateLogs({ operation }),
   )
 
-const makeTigerBeetleRequestClientDataFirst = (
+export const makeTigerBeetleRequestClient = (
   config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
   dependencies: JournalDependencies = defaultDependencies,
 ) =>
@@ -503,15 +502,3 @@ const makeTigerBeetleRequestClientDataFirst = (
     }
     return client
   })
-
-export const makeTigerBeetleRequestClient = Pipeable.by<
-  (
-    dependencies?: JournalDependencies,
-  ) => (
-    config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
-  ) => ReturnType<typeof makeTigerBeetleRequestClientDataFirst>,
-  typeof makeTigerBeetleRequestClientDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'tigerBeetle' in arguments_[0],
-  makeTigerBeetleRequestClientDataFirst,
-)

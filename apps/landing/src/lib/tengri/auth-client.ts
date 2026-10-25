@@ -22,8 +22,8 @@ async function authRequest(path: string, operationId?: string) {
   return response
 }
 
-export async function startTengriSignIn(stepUp = false) {
-  const response = await authRequest(stepUp ? '/api/auth/step-up' : '/api/auth/login')
+export async function startTengriSignIn(action: 'login' | 'step-up' | 'add-passkey' = 'login') {
+  const response = await authRequest(`/api/auth/${action}`)
   const redirect = redirectSchema.parse(await response.json())
   window.location.assign(redirect.url)
 }

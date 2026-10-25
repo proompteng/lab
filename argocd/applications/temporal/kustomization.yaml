@@ -65,6 +65,14 @@ patches:
         path: /spec/template/spec/containers/0/image
         value: mirror.gcr.io/cassandra:5.0.9@sha256:d35e159439b302146f964919904f84fd3c2cebf347272b8cb8c4368c1cf200e5
       - op: add
+        path: /spec/template/spec/containers/0/startupProbe
+        value:
+          exec:
+            command: ["/bin/sh", "-c", "nodetool status"]
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 90
+      - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
           name: CASSANDRA_NUM_TOKENS

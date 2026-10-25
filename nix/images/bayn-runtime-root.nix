@@ -116,6 +116,7 @@ let
       }
 
       run_bun_install
+      bash ${./normalize-bayn-bun-deps.sh} "$out"
       bash ${./prune-bun-dependency-metadata.sh} "$out"
 
       runHook postInstall

@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 mount -t proc proc /proc
+printf 'tengri\n' > /proc/sys/kernel/hostname
+printf '127.0.0.1 localhost tengri\n::1 localhost\n' > /etc/hosts
+printf '524288\n' > /proc/sys/fs/inotify/max_user_watches
 mount -t sysfs sysfs /sys
 if ! mountpoint -q /dev; then
   mount -t devtmpfs devtmpfs /dev

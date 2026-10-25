@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { Effect, FileSystem, Schema } from 'effect'
+import { Effect, FileSystem, Schema, Result } from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { ReplayBrokerFailure } from './broker'
 import { ReplayBrokerCheckpointSchema } from './broker-checkpoint'
 
@@ -20,7 +20,7 @@ durableTest(
         const directory = yield* fs.makeTempDirectoryScoped()
         const checkpointPath = `${directory}/checkpoint.json`,
           resultPath = `${directory}/result.json`
-        const runId = canonicalHashV1({ attempt: randomUUID() })
+        const runId = Result.getOrThrow(canonicalHashV1Result({ attempt: randomUUID() }))
         const command = (mode: string) =>
           ChildProcess.make(
             process.execPath,

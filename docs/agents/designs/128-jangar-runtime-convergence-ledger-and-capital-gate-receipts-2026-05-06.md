@@ -1,6 +1,6 @@
 # 128. Jangar Runtime Convergence Ledger And Capital Gate Receipts (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-06
 Owner: Gideon Park, Torghut Traders architecture
 Scope: Jangar control-plane resilience, cross-plane dependency quorum convergence, Torghut capital-gate receipts,
@@ -9,13 +9,6 @@ runtime rollout proof, database projection freshness, and rollback-safe handoff 
 Companion Torghut contract:
 
 - `docs/torghut/design-system/v6/132-torghut-dependency-quorum-rehydration-and-profit-inventory-handoff-2026-05-06.md`
-
-Extends:
-
-- `127-jangar-activation-inventory-ledger-and-product-gap-fuses-2026-05-06.md`
-- `126-jangar-projection-witness-exchange-and-material-evidence-products-2026-05-06.md`
-- `125-jangar-quant-proof-replication-and-capital-admission-firebreak-2026-05-06.md`
-- `121-jangar-controller-witness-uplink-and-proof-renewal-train-2026-05-06.md`
 
 ## Decision
 

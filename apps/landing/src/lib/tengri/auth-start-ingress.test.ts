@@ -3,7 +3,7 @@ import path from 'node:path'
 import { expect, test } from 'bun:test'
 import { z } from 'zod'
 
-test('unauthenticated login and step-up reach the edge rate limiter before allocating OAuth state', () => {
+test('all authentication starts reach the edge rate limiter before allocating OAuth state', () => {
   const documents: unknown[] = readFileSync(
     path.resolve(import.meta.dir, '../../../../../argocd/applications/proompteng/ingressroute.yaml'),
     'utf8',
@@ -24,7 +24,9 @@ test('unauthenticated login and step-up reach the edge rate limiter before alloc
   const route = router.spec.routes.find(
     (candidate) =>
       candidate.match.includes('Method(`POST`)') &&
-      ['/api/auth/login', '/api/auth/step-up'].every((pathname) => candidate.match.includes(`Path(\`${pathname}\`)`)),
+      ['/api/auth/login', '/api/auth/step-up', '/api/auth/add-passkey'].every((pathname) =>
+        candidate.match.includes(`Path(\`${pathname}\`)`),
+      ),
   )
   expect(route).toBeDefined()
   expect(route?.priority).toBeGreaterThan(

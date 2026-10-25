@@ -1,18 +1,39 @@
 'use client'
 
-import { ChevronRight, FileDiff, ListChecks, LoaderCircle, TerminalSquare, Wrench } from 'lucide-react'
-import { memo, useRef, type ReactNode } from 'react'
+import {
+  BookOpen,
+  ChevronRight,
+  FileDiff,
+  ListChecks,
+  LoaderCircle,
+  Search,
+  TerminalSquare,
+  Wrench,
+} from 'lucide-react'
+import { memo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkWorkspaceImageBudget } from './markdown-image-budget'
 
 import { cn } from '@/lib/utils'
 import type { TengriCodexEventKind } from '@/lib/tengri/types'
 import type { CodexApprovalDecision } from './codex-events'
 import { CodexCopyButton } from './codex-copy-button'
+import { codexActivityTitle } from './codex-activity'
+import {
+  codexImageUrl,
+  codexMessageAttachments,
+  codexOutputImagePaths,
+  type TengriCodexImage,
+} from '@/lib/tengri/codex-images'
 import { CodexMermaid } from './codex-mermaid'
+import { WorkspaceFileLink, WorkspaceImage } from './workspace-file-link'
 
 type CodexEventCardProps = {
+  agentId?: string
+  activityTitle?: string
+  images?: readonly TengriCodexImage[]
   approvalDecisions?: readonly CodexApprovalDecision[]
   approvalId?: string
   approvalTitle?: string
@@ -23,6 +44,9 @@ type CodexEventCardProps = {
 }
 
 export const CodexEventCard = memo(function CodexEventCard({
+  agentId,
+  activityTitle,
+  images,
   approvalDecisions = ['approve-once', 'approve-session', 'deny'],
   approvalId,
   approvalTitle,
@@ -32,12 +56,24 @@ export const CodexEventCard = memo(function CodexEventCard({
   text,
 }: CodexEventCardProps) {
   if (kind === 'user-message') {
+    const attachments = agentId ? codexMessageAttachments(text) : { text, paths: [] }
+    const body = images?.length ? text.replace(/\[Image\]/g, '').trim() : attachments.text
+    const sources = images?.length
+      ? images.map(codexImageUrl)
+      : attachments.paths.map((path) => `/api/tengri/attachments?${new URLSearchParams({ agentId: agentId!, path })}`)
     return (
       <article
         aria-label="Your message"
         className="ml-auto w-fit min-w-0 max-w-[min(85%,456px)] rounded-2xl bg-white/[0.04] px-3.5 py-2 text-left text-copy-14 text-zinc-100"
       >
-        <Markdown text={text} />
+        {sources.length ? (
+          <div className="mb-2 flex flex-wrap gap-2" aria-label="Sent images">
+            {sources.map((src, index) => (
+              <MessageImage key={`${index}:${src}`} src={src} index={index} />
+            ))}
+          </div>
+        ) : null}
+        {body ? <Markdown text={body} /> : null}
       </article>
     )
   }
@@ -147,21 +183,25 @@ export const CodexEventCard = memo(function CodexEventCard({
       'tool-call': { label: 'Activity', icon: Wrench },
       'tool-output': { label: 'Output', icon: TerminalSquare },
     }[kind]
-    const Icon = presentation.icon
-    const preview = text.trim().split('\n')[0] || presentation.label
+    const outputImages = kind === 'tool-output' || kind === 'tool-call' ? codexOutputImagePaths(text) : []
+    const title = codexActivityTitle(activityTitle ? 'tool-call' : kind, activityTitle || text)
+    const Icon =
+      kind === 'file-diff'
+        ? FileDiff
+        : { file: BookOpen, search: Search, terminal: TerminalSquare, tool: Wrench }[title.icon]
+    const preview = title.text
     return (
       <article aria-label={`Codex ${presentation.label.toLowerCase()}`} className="min-w-0 text-copy-14">
-        <details className="group overflow-hidden rounded-lg">
-          <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-lg px-1 py-1.5 text-zinc-400 outline-none marker:content-none transition-colors hover:bg-white/[0.03] hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 motion-reduce:transition-none">
+        <details className="group/activity-row min-w-0">
+          <summary className="flex min-h-6 cursor-pointer list-none items-center gap-2 rounded px-1 py-0.5 text-zinc-400 outline-none marker:content-none transition-colors hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 motion-reduce:transition-none">
             <Icon className="size-3.5 shrink-0 opacity-80" aria-hidden="true" />
-            <span className="shrink-0 text-label-14">{presentation.label}</span>
+            <span className="min-w-0 truncate text-label-14">{preview}</span>
             <ChevronRight
-              className="size-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+              className="size-3 shrink-0 opacity-0 transition-[opacity,transform] group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 group-open/activity-row:rotate-90 group-open/activity-row:opacity-100 motion-reduce:transition-none"
               aria-hidden="true"
             />
-            <span className="min-w-0 truncate text-label-13-mono text-zinc-400">{preview}</span>
           </summary>
-          <pre className="mt-1 max-h-80 overflow-auto rounded-lg bg-zinc-900/40 px-3 py-3 text-copy-13-mono whitespace-pre-wrap break-words text-zinc-300">
+          <pre className="tengri-chat-scrollbar mt-1 mb-2 ml-6 max-h-80 overflow-auto rounded-md bg-zinc-900/40 px-3 py-2 text-copy-13-mono whitespace-pre text-zinc-300">
             {kind === 'file-diff'
               ? text.split('\n').map((line, index) => (
                   <span
@@ -179,6 +219,9 @@ export const CodexEventCard = memo(function CodexEventCard({
               : text}
           </pre>
         </details>
+        {outputImages.map((path, index) => (
+          <WorkspaceImage key={`${index}:${path}`} src={path} />
+        ))}
       </article>
     )
   }
@@ -198,12 +241,7 @@ export const CodexEventCard = memo(function CodexEventCard({
   if (kind === 'warning' || kind === 'error') {
     return (
       <article
-        className={cn(
-          'rounded-xl border border-l-2 bg-zinc-900/50 px-3.5 py-2.5 text-copy-14',
-          kind === 'error'
-            ? 'border-red-400/40 border-l-red-400/70 text-red-100'
-            : 'border-amber-300/25 border-l-amber-300/65 text-amber-50/88',
-        )}
+        className={cn('text-copy-14', kind === 'error' ? 'text-red-300' : 'text-zinc-400')}
         role={kind === 'error' ? 'alert' : 'status'}
       >
         {text || (kind === 'error' ? 'Codex reported an error.' : 'Codex reported a warning.')}
@@ -211,11 +249,7 @@ export const CodexEventCard = memo(function CodexEventCard({
     )
   }
 
-  if (kind === 'usage') {
-    return text ? <p className="text-label-12 text-zinc-400">{text}</p> : null
-  }
-
-  if (!text || kind === 'thread-state' || kind === 'unknown') return null
+  if (!text || kind === 'thread-state' || kind === 'unknown' || kind === 'usage') return null
   return (
     <article aria-label="Codex response" className="min-w-0 text-left text-copy-14 text-zinc-200">
       <Markdown text={text} />
@@ -251,10 +285,28 @@ function ApprovalButton({
   )
 }
 
+function MessageImage({ src, index }: { src: string; index: number }) {
+  const [failed, setFailed] = useState(false)
+  return failed ? (
+    <span role="status" className="text-label-12 text-zinc-400">
+      Image {index + 1} unavailable
+    </span>
+  ) : (
+    <img
+      src={src}
+      alt={`Attached image ${index + 1}`}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      className="max-h-64 max-w-full rounded-lg object-contain"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
 function Markdown({ text }: { text: string }) {
   return (
     <div className="min-w-0 break-words [&>p+p]:mt-3.5 [&_a]:text-blue-300 [&_a]:underline [&_a]:decoration-blue-300/40 [&_a]:underline-offset-4 [&_blockquote]:my-3.5 [&_blockquote]:border-l-2 [&_blockquote]:border-zinc-600 [&_blockquote]:pl-4 [&_blockquote]:text-zinc-400 [&_:not(pre)>code]:rounded-md [&_:not(pre)>code]:bg-zinc-800/90 [&_:not(pre)>code]:px-1.5 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:font-mono [&_:not(pre)>code]:text-copy-13-mono [&_h1]:mb-3 [&_h1]:text-heading-20 [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-heading-16 [&_h3]:mt-4 [&_h3]:mb-2 [&_h3]:text-heading-14 [&_li+li]:mt-1.5 [&_ol]:my-3.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:my-3.5 [&_ul]:list-disc [&_ul]:pl-5 [&_input]:mr-2 [&_input]:accent-blue-500 [&_hr]:my-5 [&_hr]:border-zinc-800">
-      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
+      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm, remarkWorkspaceImageBudget]}>
         {text}
       </ReactMarkdown>
     </div>
@@ -280,12 +332,8 @@ const markdownComponents: Components = {
   input: ({ checked, type }) => (
     <input aria-label={checked ? 'Completed task' : 'Incomplete task'} checked={checked} disabled type={type} />
   ),
-  a: ({ children, href }) => (
-    <a href={href} rel="noreferrer noopener" target="_blank">
-      {children}
-    </a>
-  ),
-  img: ({ alt }) => <span className="text-white/42">[Image{alt ? `: ${alt}` : ''}]</span>,
+  a: ({ children, href }) => <WorkspaceFileLink href={href}>{children}</WorkspaceFileLink>,
+  img: ({ src, alt }) => <WorkspaceImage src={typeof src === 'string' ? src : undefined} alt={alt} />,
   pre: ({ children, node }) => {
     const code = node?.children[0]
     const fallback = <CodeBlock>{children}</CodeBlock>

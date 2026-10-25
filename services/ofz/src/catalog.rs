@@ -84,8 +84,8 @@ mod tests {
     fn interactive_gets_and_restore_are_privileged() {
         for (surface, operation) in [
             ("gateway", "* {*preview_host_proxy}"),
-            ("gateway", "GET /_tengri/editor/open"),
-            ("gateway", "HEAD /_tengri/editor/open"),
+            ("gateway", "GET /_tengri/preview/open"),
+            ("gateway", "HEAD /_tengri/preview/open"),
             ("controller", "ResumeCodexThread"),
             ("controller", "GetCodexAccount"),
             ("codex", "account/read"),
@@ -98,6 +98,15 @@ mod tests {
                     .permission()
                     .unwrap()
                     .diagnostic
+            );
+        }
+        for method in ["GET", "HEAD"] {
+            assert_eq!(
+                operation_action("gateway", &format!("{method} /_tengri/preview/open")).unwrap(),
+                Some(Action::PreviewAccess)
+            );
+            assert!(
+                operation_action("gateway", &format!("{method} /_tengri/editor/open")).is_err()
             );
         }
     }

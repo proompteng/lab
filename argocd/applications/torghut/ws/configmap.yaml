@@ -9,6 +9,8 @@ metadata:
 data:
   ALPACA_MARKET_TYPE: "equity"
   ALPACA_CRYPTO_LOCATION: "us"
+  ALPACA_CRYPTO_SYMBOLS: "BTC/USD,ETH/USD,SOL/USD"
+  TOPIC_CRYPTO_EVENTS: "bayn.market-data.crypto.v1"
   ALPACA_FEED: "iex"
   # Roll out observation feeds independently; overnight remains disabled until delayed SIP is proven live.
   ALPACA_OBSERVATION_FEEDS: "delayed_sip"

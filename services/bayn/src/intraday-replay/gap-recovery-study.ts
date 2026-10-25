@@ -33,7 +33,7 @@ export const runGapRecoveryStudy = (
     ] as const) {
       if (
         manifest.transport !== 'original-capture' ||
-        receipt.value.schemaVersion !== 'bayn.original-capture-replay-receipt.v1' ||
+        receipt.value.schemaVersion !== 'bayn.original-capture-replay-receipt.v2' ||
         manifest.coverageStartMs > startMs ||
         manifest.coverageEndMs < endMs
       )

@@ -20,6 +20,9 @@ pub const IDLE_MINUTES: i64 = 60;
 )]
 #[serde(rename_all = "camelCase")]
 pub struct MicroVMSpec {
+    pub reservation_id: String,
+    pub runtime_epoch: String,
+    pub policy_version: u64,
     pub display_name: String,
     pub owner_hash: String,
     pub desired_state: MicroVMDesiredState,
@@ -103,6 +106,10 @@ impl Default for MicroVMResources {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MicroVMStatus {
+    #[serde(default)]
+    pub observed_policy_version: u64,
+    #[serde(default)]
+    pub runtime_epoch: String,
     pub phase: MicroVMPhase,
     #[serde(default)]
     pub pod_name: Option<String>,

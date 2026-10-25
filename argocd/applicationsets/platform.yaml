@@ -64,21 +64,6 @@ spec:
                     pod-security.kubernetes.io/warn: privileged
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
-              - name: spire-test
-                path: argocd/applications/spire-test
-                namespace: spire-test
-                renderWithLovely: false
-                annotations:
-                  argocd.argoproj.io/sync-wave: "0"
-                automation: auto
-                enabled: "true"
-                managedNamespaceMetadata:
-                  labels:
-                    pod-security.kubernetes.io/enforce: restricted
-                    pod-security.kubernetes.io/audit: restricted
-                    pod-security.kubernetes.io/warn: restricted
-                  annotations:
-                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: kargo-delivery
                 path: argocd/applications/kargo
                 namespace: lab-delivery
@@ -114,6 +99,32 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
+              - name: valkey-operator
+                path: argocd/applications/valkey-operator
+                namespace: valkey-system
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+                ignoreDifferences:
+                  - group: admissionregistration.k8s.io
+                    kind: MutatingWebhookConfiguration
+                    name: chideat-mutating-webhook-configuration
+                    jqPathExpressions:
+                      - .webhooks[].clientConfig.caBundle
+                  - group: admissionregistration.k8s.io
+                    kind: ValidatingWebhookConfiguration
+                    name: chideat-validating-webhook-configuration
+                    jqPathExpressions:
+                      - .webhooks[].clientConfig.caBundle
               - name: cockroach-operator-system
                 path: argocd/applications/cockroach-operator
                 namespace: cockroach-operator-system
@@ -139,9 +150,11 @@ spec:
               - name: ofz
                 path: argocd/applications/ofz
                 namespace: ofz
+                targetRevision: kargo/ofz
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "0"
+                  kargo.akuity.io/authorized-stage: lab-delivery:ofz
                 automation: auto
                 enabled: "true"
                 managedNamespaceMetadata:
@@ -211,6 +224,21 @@ spec:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
                 enabled: "true"
+              - name: glitchtip
+                path: argocd/applications/glitchtip
+                namespace: glitchtip
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt
@@ -402,6 +430,15 @@ spec:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged
                     pod-security.kubernetes.io/warn: privileged
+              - name: opencode
+                path: argocd/applications/opencode
+                namespace: opencode
+                targetRevision: kargo/opencode
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                  kargo.akuity.io/authorized-stage: lab-delivery:opencode
+                automation: auto
+                enabled: "true"
               - name: hermes
                 path: argocd/applications/hermes
                 namespace: hermes
@@ -664,22 +701,6 @@ spec:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
                 enabled: "false"
-              - name: rune
-                path: argocd/applications/rune
-                namespace: rune
-                targetRevision: kargo/rune
-                annotations:
-                  argocd.argoproj.io/sync-wave: "4"
-                  kargo.akuity.io/authorized-stage: lab-delivery:rune
-                automation: auto
-                enabled: "true"
-                managedNamespaceMetadata:
-                  labels:
-                    pod-security.kubernetes.io/enforce: restricted
-                    pod-security.kubernetes.io/audit: restricted
-                    pod-security.kubernetes.io/warn: restricted
-                  annotations:
-                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: restate
                 path: argocd/applications/restate
                 namespace: restate

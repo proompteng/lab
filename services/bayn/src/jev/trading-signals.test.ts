@@ -1,3 +1,5 @@
+import { jevRequestForSnapshot } from './native.test-support'
+import { exchangeSessions } from '../market-hours'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -5,19 +7,18 @@ import technicalFixture from '../market-data/features/fixtures/technical-indicat
 import { decodeTechnicalMarketFeature, TechnicalReadiness } from '../market-data/features/technical-contract'
 import { featureBarContentHash } from '../market-data/features/contract'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { incorporateMarketRecord } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot, constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
-import { makeJevTradingSignalRequest } from './trading-signals'
 import { decodeJevResponse, jevModel, prepareJevRequest } from './contract'
 
 const snapshotWithTechnical = (candidateTradeMissing = false) => {
   const { snapshot, cut, query, protocol } = streamingFixture()
   const rolling = snapshot.manifest.streaming.features.find((entry) => entry.value.material.symbol === 'AAPL')
   const first = snapshot.bars.find((bar) => bar.symbol === 'AAPL')
-  const session = snapshot.manifest.calendar.sessions[0]
+  const session = exchangeSessions(snapshot.manifest.calendar)[0]
   if (rolling === undefined || first === undefined || session === undefined) throw new Error('Missing signal fixture')
   const open = Date.parse(session.openAt)
   const olderInputs = Array.from({ length: 30 }, (_, index) => {
@@ -58,7 +59,7 @@ const snapshotWithTechnical = (candidateTradeMissing = false) => {
   const feature = Result.getOrThrow(
     decodeTechnicalMarketFeature({
       material,
-      featureId: canonicalHashV1(material),
+      featureId: Result.getOrThrow(canonicalHashV1Result(material)),
       producerRevision: 'jev-signal-fixture',
       computedAtMs: observed,
     }),
@@ -112,13 +113,13 @@ describe('Jev trading signal input', () => {
     expect(
       snapshot.manifest.streaming.technical?.features.some((entry) => entry.value.material.symbol === 'AAPL'),
     ).toBe(true)
-    expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
-    expect(Result.isSuccess(makeJevTradingSignalRequest(snapshot, 'AMZN', 'SPY'))).toBe(true)
+    expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
+    expect(Result.isSuccess(jevRequestForSnapshot(snapshot, 'AMZN'))).toBe(true)
   })
   test('reproduces the recorded simulated source before constructing the same signal input', () => {
     const fixture = simulationFixture()
     const snapshot = Result.getOrThrow(constructSimulatedSnapshot(fixture.cursor, fixture.source, fixture.query))
-    const state = JSON.parse(Result.getOrThrow(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY')).body).state
+    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).state
     expect(state.session.observedAt).toBe(snapshot.manifest.observedAt)
     expect(state.candidate.bars1m).toHaveLength(30)
     expect(state.candidate.quote.ask).toBe(snapshot.latestQuotes['AAPL']?.askPrice)
@@ -126,11 +127,11 @@ describe('Jev trading signal input', () => {
       ...snapshot,
       bars: snapshot.bars.map((bar, index) => (index === 0 ? { ...bar, close: bar.close + 1 } : bar)),
     }
-    expect(Result.isFailure(makeJevTradingSignalRequest(altered, 'AAPL', 'SPY'))).toBe(true)
+    expect(Result.isFailure(jevRequestForSnapshot(altered, 'AAPL'))).toBe(true)
   })
   test('sends snapshot prices, volume, liquidity and computed relative signals without old strategy decisions', () => {
     const { snapshot } = streamingFixture({ AAPL: 0.02, SPY: 0.005 })
-    const request = Result.getOrThrow(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))
+    const request = Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL'))
     const state = JSON.parse(request.body).state
     expect(state.candidate.bars1m).toHaveLength(30)
     expect(state.benchmark.bars1m).toHaveLength(30)
@@ -145,18 +146,22 @@ describe('Jev trading signal input', () => {
     expect(state.candidate.eligible).toBeUndefined()
     expect(state.candidate.rank).toBeUndefined()
     expect(state.news).toBeUndefined()
-    expect(request.request.questions['setup_quality']?.type).toBe('score')
+    expect(Object.keys(request.request.questions)).toEqual(['action', 'setup'])
+    expect(request.request.questions['action']?.type).toBe('choice')
+    expect(state.task.horizonMinutes).toBe(15)
+    expect(state.relativeSignals.lookbackMinutes).toBeGreaterThan(0)
+    expect(state.relativeSignals.horizonMinutes).toBeUndefined()
   })
 
   test('retains contradictory signals for Jev instead of filtering through the old momentum policy', () => {
     const { snapshot } = streamingFixture({ AAPL: -0.02, SPY: 0.005 })
-    const state = JSON.parse(Result.getOrThrow(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY')).body).state
+    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).state
     expect(state.relativeSignals.lookbackReturnBps).toBe(-200)
     expect(state.relativeSignals.excessReturnBps).toBe(-250)
   })
 
   test('transmits technical values in explicit units and preserves individual readiness', () => {
-    const request = Result.getOrThrow(makeJevTradingSignalRequest(snapshotWithTechnical(), 'AAPL', 'SPY'))
+    const request = Result.getOrThrow(jevRequestForSnapshot(snapshotWithTechnical(), 'AAPL'))
     const state = JSON.parse(request.body).state
     expect(state.candidate.technicalAvailability).toBe('RECORDED')
     expect(state.candidate.technicalIndicators.ema12PriceUsd).toEqual({ status: 'READY', value: 123.45 })
@@ -172,10 +177,10 @@ describe('Jev trading signal input', () => {
 
   test('fails for unavailable subjects, stale quotes and identical candidate/benchmark roles', () => {
     const { snapshot } = streamingFixture()
-    expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'MSFT', 'SPY'))).toBe(true)
-    expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'AAPL'))).toBe(true)
+    expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'MSFT'))).toBe(true)
+    expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'SPY'))).toBe(true)
     const stale = { ...snapshot, manifest: { ...snapshot.manifest, observedAt: '2026-09-04T14:31:02.000Z' } }
-    expect(Result.isFailure(makeJevTradingSignalRequest(stale, 'AAPL', 'SPY'))).toBe(true)
+    expect(Result.isFailure(jevRequestForSnapshot(stale, 'AAPL'))).toBe(true)
   })
 
   test('rejects technical evidence from a different window, after observation, or with substituted source content', () => {
@@ -208,7 +213,7 @@ describe('Jev trading signal input', () => {
     ]) {
       const changedValue = {
         ...changed,
-        value: { ...changed.value, featureId: canonicalHashV1(changed.value.material) },
+        value: { ...changed.value, featureId: Result.getOrThrow(canonicalHashV1Result(changed.value.material)) },
       }
       const input = {
         ...snapshot,
@@ -217,7 +222,7 @@ describe('Jev trading signal input', () => {
           streaming: { ...snapshot.manifest.streaming, technical: { ...technical, features: [changedValue] } },
         },
       }
-      expect(Result.isFailure(makeJevTradingSignalRequest(input, 'AAPL', 'SPY'))).toBe(true)
+      expect(Result.isFailure(jevRequestForSnapshot(input, 'AAPL'))).toBe(true)
     }
   })
 

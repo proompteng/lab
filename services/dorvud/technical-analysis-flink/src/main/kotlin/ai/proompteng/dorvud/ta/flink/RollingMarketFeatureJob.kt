@@ -123,7 +123,7 @@ private fun marketFeatureBars(
     .uid("$family-bars-source-v1")
     .flatMap(ParseArchiveBar(mapOf(config.barsTopic to ArchiveRoute("iex", config.universe))))
     .returns(TypeInformation.of(IntradayBarRecord::class.java))
-    .filter { it.marketSession == "regular" && it.final }
+    .filter { it.marketSession == executableIexSession(it.eventTime) && it.final }
 }
 
 internal class RollingMarketFeatureFunction(

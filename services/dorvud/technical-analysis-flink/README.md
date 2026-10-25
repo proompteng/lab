@@ -4,6 +4,18 @@ The TA job consumes the existing Alpaca bars, quotes, and trades. It retains the
 publish rolling market features for Bayn. The separate market-data archive job retains raw records and feature
 messages in ClickHouse. See the [streaming design](../../../docs/bayn/streaming-market-data-design.md).
 
+## Continuous crypto feature branch
+
+The same TA job can consume the native crypto topic with `TA_CRYPTO_TOPIC`, `TA_CRYPTO_LOCATION`, `TA_CRYPTO_SYMBOLS`,
+and `TA_CRYPTO_FEATURES_TOPIC`. This branch publishes `dorvud.crypto-continuous-1m.v2`, using provider minute bars and
+updated bars, the shared indicator calculations, continuous recursive seeds, and bounded canonical correction state.
+It uses no equity session calendar and carries state through midnight and weekends. Raw events remain in the separate
+raw archive. Crypto v2 records a direct `priceWindow` from actual observed bars. Optional technical indicators retain their own
+`WARMING` or `GAP` status and do not delay the price feature. Retired v1 features are not emitted or decoded.
+Derived messages go through Kafka to `signal.crypto_market_features_v1` in the archive job.
+See [the crypto feature contract](../README.md#crypto-flink-features) for readiness, precision, provenance, retention,
+and rollout acceptance. The equity feature contracts below retain their own source and session definitions.
+
 ## Event-time microbars and canonical technical signals
 
 Microbars use Kafka topic, partition, and offset to deduplicate transport redelivery. Each event-time second has its
@@ -89,6 +101,13 @@ batch instead of being silently reduced to 100. The existing flush interval stil
 input is sparse. The bound limits buffered rows while allowing retained corrections to use the configured batching.
 Rollout acceptance checks actual ClickHouse insert sizes and completed Flink checkpoints after savepoint restore.
 
+The raw archive permits bounded batches of up to 10,000 rows, allowing retained quote backlogs to amortize the
+replicated insert cost. Its one-second flush interval still publishes sparse input without waiting for a full batch.
+Each source partition retains one ordered writer, so its archive watermark continues to identify a committed prefix.
+Source and sink checkpoint IDs, consumer offsets, replication quorum and synchronous acknowledgement are unchanged.
+Acceptance requires current quotes within Bayn's existing age limit, a draining retained backlog and successful
+checkpoints; a running Flink job is insufficient.
+
 ## Rolling feature branch
 
 Set `TA_MARKET_FEATURES_TOPIC=torghut.market-features.v1` to enable the branch. It requires the existing
@@ -109,8 +128,8 @@ rolling-only job completed a checkpoint. The committed deployment selects `ROLLI
 rolling-job savepoint. Keep the selection on subsequent restarts; current generated IDs restore new checkpoints.
 An absent or unknown selection fails configuration instead of guessing which topology previously ran.
 
-`dorvud.rolling-price-30m.v1` emits first open, range high and low, last close, total volume, and exact input references
-once 30 contiguous finalized minute bars exist. Prices use the same binary64 multiplication and positive half rounding
+`dorvud.observed-price-window.v1` emits first open, range high and low, last close, total volume, and exact input references
+from the first finalized minute, using up to 30 minutes of actual history. Missing minutes are left unfilled. Prices use the same binary64 multiplication and positive half rounding
 to millionths as Bayn. Volume is rounded per bar before summing as an integer. Values and offsets cross JSON as decimal
 strings. Repeated records do not emit another semantic feature. A canonical correction replaces its previous input
 and creates a new feature ID. State resets when the New York session date advances.
@@ -121,7 +140,7 @@ actual broker calendar and order window. The producer does not request another c
 the historical bar close and does not prove historical Bayn availability.
 
 The wire message contains `material`, its SHA-256 `featureId`, `computedAtMs`, and `producerRevision`. Material includes
-identity, definition hash, exact window boundaries, 30 input references, and values. Canonical JSON sorts object keys,
+identity, definition hash, exact window boundaries, one to 30 input references, and values. Canonical JSON sorts object keys,
 retains array order, and uses compact encoding. The hash excludes computation time and producer revision so restoring
 identical state produces the same semantic ID. Each raw input digest binds the source metadata and binary64 price and
 volume bit patterns, including optional VWAP and trade count. The shared fixture and Bayn decoder bind both runtimes
@@ -264,7 +283,7 @@ Run from `services/dorvud`:
 ```
 
 The Kotlin tests verify gaps, corrections, duplicates, session rollover, rounding, and archival validation. The shared
-fixture lives in `services/bayn/src/market-data/features/fixtures/rolling-price-v1.json`. Regenerate it deliberately
+fixture lives in `services/bayn/src/market-data/features/fixtures/observed-price-window-v1.json`. Regenerate it deliberately
 with the producing test, then verify the TypeScript decoder and inspect the resulting changes:
 
 ```sh

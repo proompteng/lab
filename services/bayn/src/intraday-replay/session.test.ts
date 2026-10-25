@@ -82,6 +82,7 @@ test('every market hour and final boundary run at production cadence with delive
         advance,
         open,
         close,
+        true,
       )
       expect(polls[0]).toBe(open)
       expect(polls[1]).toBe(open + 60_100)
@@ -145,6 +146,7 @@ test('unavailable decision evidence is counted separately from lifecycle waits a
         (at) => TestClock.setTime(at),
         0,
         2,
+        true,
       )
     }).pipe(Effect.provide(TestClock.layer())),
   )
@@ -154,6 +156,7 @@ test('unavailable decision evidence is counted separately from lifecycle waits a
 test('expected warmup, valid no-trade and lifecycle waits preserve complete decision coverage', async () => {
   const observations: RetainedAutonomousCyclePassObservation[] = [
     ...[
+      DecisionReadinessReason.AccountProtection,
       DecisionReadinessReason.LookbackWarmup,
       DecisionReadinessReason.NoEligibleCandidate,
       DecisionReadinessReason.SignalWindowObserved,
@@ -190,9 +193,86 @@ test('expected warmup, valid no-trade and lifecycle waits preserve complete deci
         (at) => TestClock.setTime(at),
         0,
         observations.length - 1,
+        true,
       )
     }).pipe(Effect.provide(TestClock.layer())),
   )
   expect(outcome.unavailableDecisionPassCount).toBe(0)
-  expect(outcome.readinessCounts).toEqual({ LOOKBACK_WARMUP: 1, NO_ELIGIBLE_CANDIDATE: 1, SIGNAL_WINDOW_OBSERVED: 1 })
+  expect(outcome.readinessCounts).toEqual({
+    ACCOUNT_PROTECTION: 1,
+    LOOKBACK_WARMUP: 1,
+    NO_ELIGIBLE_CANDIDATE: 1,
+    SIGNAL_WINDOW_OBSERVED: 1,
+  })
+})
+
+test('UTC reporting windows preserve the pending production poll after measured cleanup', async () => {
+  const boundary = Date.parse('2026-10-19T00:00:00.000Z')
+  const open = boundary - 30_000
+  const close = boundary + 30_000
+  const polls: number[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(open)
+      const runtime = {
+        nextDelayMs: 40_000,
+        advance: Clock.currentTimeMillis.pipe(
+          Effect.map((at) => {
+            polls.push(at)
+            return {
+              observation: {
+                result: 'SUCCESS' as const,
+                outcome: 'WINDOW_CLOSED' as const,
+                observedAt: utcInstantFromEpochMillis(at),
+              },
+            }
+          }),
+        ),
+      }
+      const first = yield* driveReplaySession(runtime, (at) => TestClock.setTime(at), open, boundary, false)
+      expect(polls).toEqual([open])
+      expect(first.nextPollAtMs).toBe(open + 40_000)
+      yield* TestClock.setTime(boundary + 1)
+      const second = yield* driveReplaySession(
+        runtime,
+        (at) => TestClock.setTime(at),
+        Math.max(first.nextPollAtMs, yield* Clock.currentTimeMillis),
+        close,
+        true,
+      )
+      expect(polls).toEqual([open, open + 40_000, close])
+      expect(second.passCount).toBe(2)
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+})
+
+test('final reporting does not repeat a command that already completed at the terminal boundary', async () => {
+  let calls = 0
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000)
+      return yield* driveReplaySession(
+        {
+          nextDelayMs: 265,
+          advance: Effect.sync(() => {
+            calls++
+            return {
+              observation: {
+                result: 'SUCCESS' as const,
+                outcome: 'WINDOW_CLOSED' as const,
+                observedAt: utcInstantFromEpochMillis(1000),
+              },
+            }
+          }),
+        },
+        (at) => TestClock.setTime(at),
+        1265,
+        1000,
+        true,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(calls).toBe(0)
+  expect(result.passCount).toBe(0)
+  expect(result.nextPollAtMs).toBe(1265)
 })

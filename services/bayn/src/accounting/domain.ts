@@ -20,9 +20,8 @@ import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
 import { type AccountingFailure, type AccountingHashOperation, type AccountingMicrosField } from './failure'
 import type { PositionCost, PreparedAccounting } from './model'
 import { decodeAccountingTransaction, type AccountingTransaction } from './schema'
-import { Pipeable } from '../pipeable'
 
-const MICROS = 1_000_000n
+const NOTIONAL_DIVISOR = 1_000_000_000_000n
 type AccountCodeValue = (typeof AccountCode)[keyof typeof AccountCode]
 type TransferCodeValue = (typeof TransferCode)[keyof typeof TransferCode]
 
@@ -75,10 +74,10 @@ const parseAccountingInput = (
   prior: PositionCost,
 ): Result.Result<ParsedAccountingInput, AccountingFailure> =>
   Result.all({
-    quantity: parseMicros('fill.quantityMicros', fill.quantityMicros),
-    price: parseMicros('fill.priceMicros', fill.priceMicros),
+    quantity: parseMicros('fill.quantityAtoms', fill.quantityAtoms),
+    price: parseMicros('fill.priceAtoms', fill.priceAtoms),
     fee: parseMicros('fill.feeMicros', fill.feeMicros),
-    priorQuantity: parseMicros('position.quantityMicros', prior.quantityMicros),
+    priorQuantity: parseMicros('position.quantityAtoms', prior.quantityAtoms),
     priorCost: parseMicros('position.costMicros', prior.costMicros),
   })
 
@@ -96,7 +95,7 @@ const validatePositionCost = (
   if (input.priorQuantity < 0n || input.priorCost < 0n) {
     return failAccounting({
       _tag: 'AccountingNegativePositionCost',
-      quantityMicros: input.priorQuantity,
+      quantityAtoms: input.priorQuantity,
       costMicros: input.priorCost,
     })
   }
@@ -126,8 +125,8 @@ const sellAmounts = (
   if (input.quantity > input.priorQuantity) {
     return failAccounting({
       _tag: 'AccountingSellQuantityExceedsPosition',
-      saleQuantityMicros: input.quantity,
-      positionQuantityMicros: input.priorQuantity,
+      saleQuantityAtoms: input.quantity,
+      positionQuantityAtoms: input.priorQuantity,
     })
   }
   return pipe(
@@ -152,13 +151,13 @@ const calculateAmounts = (fill: Fill, prior: PositionCost): Result.Result<Accoun
     Result.flatMap(validatePositionCost),
     Result.flatMap((input) =>
       pipe(
-        roundDiv(input.quantity * input.price, MICROS),
+        roundDiv(input.quantity * input.price, NOTIONAL_DIVISOR),
         Result.flatMap((notional) =>
           notional <= 0n
             ? failAccounting({
                 _tag: 'AccountingFillNotionalRoundedToZero',
-                quantityMicros: input.quantity,
-                priceMicros: input.price,
+                quantityAtoms: input.quantity,
+                priceAtoms: input.price,
               })
             : fill.side === OrderSide.Buy
               ? Result.succeed(buyAmounts(input, notional))
@@ -372,10 +371,7 @@ const requireLedgerPlanHash = (
     ),
   )
 
-const rebuildAccountingLedgerDataFirst = (
-  input: unknown,
-  ledger: number,
-): Result.Result<LedgerPlan, AccountingFailure> =>
+export const rebuildAccountingLedger = (input: unknown, ledger: number): Result.Result<LedgerPlan, AccountingFailure> =>
   pipe(
     decodeAccountingTransaction(input),
     Result.mapError((cause): AccountingFailure => ({ _tag: 'AccountingTransactionDecodeFailed', cause })),
@@ -396,7 +392,7 @@ const rebuildAccountingLedgerDataFirst = (
             notional: BigInt(transaction.notionalMicros),
             costBasis: BigInt(transaction.costBasisMicros),
             realizedPnl: BigInt(transaction.realizedPnlMicros),
-            quantityDelta: BigInt(transaction.quantityDeltaMicros),
+            quantityDelta: BigInt(transaction.quantityDeltaAtoms),
             costBasisDelta: BigInt(transaction.costBasisDeltaMicros),
             cashDelta: BigInt(transaction.cashDeltaMicros),
           },
@@ -406,9 +402,7 @@ const rebuildAccountingLedgerDataFirst = (
     ),
   )
 
-export const rebuildAccountingLedger = Pipeable.dual(2, rebuildAccountingLedgerDataFirst)
-
-const prepareAccountingDataFirst = (
+export const prepareAccounting = (
   brokerEventId: string,
   fill: Fill,
   prior: PositionCost,
@@ -435,13 +429,13 @@ const prepareAccountingDataFirst = (
                 accountId: fill.accountId,
                 symbol: fill.symbol,
                 side: fill.side,
-                quantityMicros: fill.quantityMicros,
-                priceMicros: fill.priceMicros,
+                quantityAtoms: fill.quantityAtoms,
+                priceAtoms: fill.priceAtoms,
                 notionalMicros: amounts.notional.toString(),
                 feeMicros: fill.feeMicros,
                 costBasisMicros: amounts.costBasis.toString(),
                 realizedPnlMicros: amounts.realizedPnl.toString(),
-                quantityDeltaMicros: amounts.quantityDelta.toString(),
+                quantityDeltaAtoms: amounts.quantityDelta.toString(),
                 costBasisDeltaMicros: amounts.costBasisDelta.toString(),
                 cashDeltaMicros: amounts.cashDelta.toString(),
                 ledgerPlanHash,
@@ -465,8 +459,6 @@ const prepareAccountingDataFirst = (
       ),
     ),
   )
-
-export const prepareAccounting = Pipeable.dual(4, prepareAccountingDataFirst)
 
 export const brokerFeeLedgerPlan = (
   accountId: string,
@@ -504,5 +496,73 @@ export const brokerFeeLedgerPlan = (
               code: TransferCode.fee,
             }),
           ],
+  }
+}
+
+export const cashSettlementLedgerPlan = (
+  accountId: string,
+  settlementId: string,
+  roundingDeltaMicros: string,
+  ledger: number,
+): LedgerPlan => {
+  const net = BigInt(roundingDeltaMicros)
+  const eventId = `cash-settlement:${settlementId}`
+  const leg: AccountingLeg =
+    net >= 0n
+      ? {
+          leg: 'cash-rounding-income',
+          debitName: 'cash',
+          debitCode: AccountCode.cash,
+          creditName: 'cash-rounding-income',
+          creditCode: AccountCode.cashRoundingIncome,
+          amount: net,
+          code: TransferCode.cashRoundingIncome,
+        }
+      : {
+          leg: 'cash-rounding-expense',
+          debitName: 'cash-rounding-expense',
+          debitCode: AccountCode.cashRoundingExpense,
+          creditName: 'cash',
+          creditCode: AccountCode.cash,
+          amount: -net,
+          code: TransferCode.cashRoundingExpense,
+        }
+  const legs = net === 0n ? [] : [leg]
+  return {
+    runKey: stableU128('bayn-paper-account-v1', accountId),
+    runTag: stableU64('bayn-paper-account-v1', accountId),
+    accounts: uniqueAccountSpecs(legs)
+      .map((spec) => makeAccount(accountId, ledger, spec))
+      .toSorted((a, b) => (a.id < b.id ? -1 : 1)),
+    transfers: legs.map((value) => makeTransfer(eventId, eventId, accountId, ledger, value)),
+  }
+}
+
+export const coinFeeLedgerPlan = (
+  accountId: string,
+  activityId: string,
+  symbol: string,
+  costBasisMicros: string,
+  ledger: number,
+): LedgerPlan => {
+  const amount = BigInt(costBasisMicros)
+  const eventId = `coin-fee:${activityId}`
+  const leg: AccountingLeg = {
+    leg: 'coin-fee',
+    debitName: 'fee-expense',
+    debitCode: AccountCode.feeExpense,
+    creditName: `inventory:${symbol}`,
+    creditCode: AccountCode.inventory,
+    amount,
+    code: TransferCode.fee,
+  }
+  const legs = amount === 0n ? [] : [leg]
+  return {
+    runKey: stableU128('bayn-paper-account-v1', accountId),
+    runTag: stableU64('bayn-paper-account-v1', accountId),
+    accounts: uniqueAccountSpecs(legs)
+      .map((spec) => makeAccount(accountId, ledger, spec))
+      .toSorted((a, b) => (a.id < b.id ? -1 : 1)),
+    transfers: legs.map((value) => makeTransfer(eventId, eventId, accountId, ledger, value)),
   }
 }

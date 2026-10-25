@@ -1,7 +1,7 @@
 import { Data, Effect } from 'effect'
 
 import { OrderStatus, ReconciliationStatus } from './contracts'
-import type { Order } from '../broker/alpaca'
+import type { Order } from '../broker/alpaca/model'
 import type { ReconciliationPassResult } from '../reconciler'
 
 export interface BrokerStateVersion {

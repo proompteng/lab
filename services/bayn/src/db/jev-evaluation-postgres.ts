@@ -1,18 +1,15 @@
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Layer, Option, Schema, type Result } from 'effect'
+import { Clock, Effect, Layer, Option, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import { withObservedStage } from '../telemetry'
 import {
   decodeJevEvaluationReceipt,
   decodeJevEvaluationRequest,
   type JevEvaluationReceipt,
   type JevEvaluationRequest,
 } from '../jev/evidence'
-import { JevClaim, JevEvaluationStore, type JevEvaluationClaim } from '../jev/evaluation'
-import { reproduceJevCandidateObservation } from '../jev/observation'
-import { reproduceJevRequestFromVerifiedObservation } from '../jev/trading-signals'
+import { JevEvaluationStore } from '../jev/evaluation'
 import {
   decodeJevBatchPlan,
   decodeJevBatchResult,
@@ -23,14 +20,13 @@ import {
 import { JevPurpose } from '../jev/portfolio'
 import { utcInstantFromEpochMillis } from '../time'
 import { JevResolutionStatus, makeJevResolution, type JevResolution } from '../jev/resolution'
-import { Sha256Schema, strictParseOptions } from '../schemas'
-import { readJevEvaluationEvidence, requireJevCandidateObservations } from './jev-evaluation-read'
+import { strictParseOptions } from '../schemas'
+import { readJevEvaluationEvidence } from './jev-evaluation-read'
 
 const Matches = Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })])
 
 export const makeJevEvaluationStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
-  let verifiedObservation: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>> | undefined
   const persistError = (cause: unknown) =>
     operationalError({
       component: 'database',
@@ -43,9 +39,8 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
       return yield* persistError('Jev evidence must commit independently before inference or decision use')
     }
   })
-  const requireCandidateObservation = (request: JevEvaluationRequest) => requireJevCandidateObservations(sql, [request])
   const read = (input: string) =>
-    readJevEvaluationEvidence(sql, [input]).pipe(Effect.map((evidence) => evidence.get(input) ?? null))
+    readJevEvaluationEvidence(sql, [input]).pipe(Effect.map(({ evidence }) => evidence.get(input) ?? null))
   const lockRequest = (request: JevEvaluationRequest) =>
     sql`
       SELECT payload = ${sql.json(request)} AS matches
@@ -150,69 +145,6 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
     })
   return {
     read,
-    begin: (input: JevEvaluationRequest) =>
-      Effect.gen(function* () {
-        yield* requireAutocommit
-        const request = yield* Effect.fromResult(decodeJevEvaluationRequest(input))
-        const observations = yield* requireCandidateObservation(request)
-        for (const observation of observations) {
-          // requireCandidateObservation checks the freshly read bytes against this identity on every call.
-          // Retain only the latest reproduction so concurrent candidates share its verified source cut.
-          if (verifiedObservation?.contentHash !== observation.content_hash)
-            verifiedObservation = yield* Effect.suspend(() =>
-              Effect.fromResult(reproduceJevCandidateObservation(observation.payload)),
-            ).pipe(withObservedStage('bayn.jev.observation-reproduction'))
-          yield* Effect.fromResult(reproduceJevRequestFromVerifiedObservation(request, verifiedObservation))
-        }
-        return yield* sql.withTransaction(
-          Effect.gen(function* () {
-            const batches = yield* Schema.decodeUnknownEffect(
-              Schema.Tuple([Schema.Struct({ batch_id: Sha256Schema })]),
-              strictParseOptions,
-            )(
-              yield* sql`
-          SELECT batch_id FROM jev_batch_plans
-          WHERE cycle_id = ${request.cycleId}
-            AND authority_generation_hash = ${request.authorityGenerationHash}
-            AND snapshot_id = ${request.snapshotId}
-            AND EXISTS (
-              SELECT 1 FROM jsonb_array_elements(payload->'candidates') AS candidate
-              WHERE candidate->>'status' = 'REQUESTED' AND candidate->'request' = ${sql.json(request)}
-            )
-          FOR SHARE
-        `,
-            )
-            const batchId = batches[0].batch_id
-            const inserted = yield* Schema.decodeUnknownEffect(
-              Schema.Array(Schema.Struct({ request_id: Sha256Schema })),
-              strictParseOptions,
-            )(
-              yield* sql`
-          INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
-          SELECT ${request.requestId}, ${request.cycleId}, ${request.authorityGenerationHash}, ${sql.json(request)}
-          WHERE NOT EXISTS (SELECT 1 FROM jev_batch_results WHERE batch_id = ${batchId})
-          ON CONFLICT DO NOTHING RETURNING request_id
-        `,
-            )
-            if (inserted.length === 1 && inserted[0]?.request_id === request.requestId) {
-              return { status: JevClaim.Acquired } satisfies JevEvaluationClaim
-            }
-            // Both the request ID and immutable candidate slot are unique. Concurrent identical
-            // claims may race on either index; only a readable exact request can be recovered.
-            const evidence = yield* read(request.requestId)
-            if (evidence === null) return yield* persistError('A finalized Jev batch cannot acquire another request')
-            if (evidence.resolution?.status === JevResolutionStatus.Abandoned)
-              return { status: JevClaim.Abandoned, resolution: evidence.resolution } satisfies JevEvaluationClaim
-            if (evidence.resolution?.status === JevResolutionStatus.Recorded && evidence.receipt !== null)
-              return {
-                status: JevClaim.Recorded,
-                receipt: evidence.receipt,
-                resolution: evidence.resolution,
-              } satisfies JevEvaluationClaim
-            return { status: JevClaim.Pending } satisfies JevEvaluationClaim
-          }),
-        )
-      }).pipe(Effect.mapError(persistError)),
     record: (input: JevEvaluationRequest, evidence: JevEvaluationReceipt) =>
       Effect.gen(function* () {
         yield* requireAutocommit

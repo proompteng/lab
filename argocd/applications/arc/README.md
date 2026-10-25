@@ -10,27 +10,36 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - The architecture-neutral controller and listener pods run on AMD64 capacity; runner pods retain their scale set's
   explicit AMD64 or ARM64 selector.
 - Upgrading from ≤0.9.x requires deleting the legacy `actions.github.com` CRDs and reinstalling the controller/runner charts before letting Argo CD reconcile.
-- Keep the custom template (init container + privileged `docker:dind` sidecar with `DOCKER_HOST=unix:///var/run/docker.sock`) when reapplying so Docker builds continue to work under Kubernetes mode.
-- The runner container intentionally waits for `docker version` before starting `run.sh`; without this guard, ARC can register a runner before the dind socket is ready.
-- The `arc-amd64` runner uses one 45Gi generic ephemeral PVC on the existing Turin-only
-  `local-path-turin-nvme-transcend` class. Its `/nix`, `/home/runner/.cache`, `/tmp`, shared `/home/runner/_work`, and Docker data
-  subpaths live on the dedicated rebuildable Transcend NVMe scratch volume rather than the Talos `/var` disk. The init
-  container copies the image's `/nix` tree before the main containers mount the scratch subpath, verifies the mount,
-  capacity, regular-file byte count, regular-file count, and symlink count, then fails closed on any mismatch. The PVC
-  is deleted with the runner Pod; no job or build state is durable. The ARM64 and `analysis-arm64` scale sets retain
-  their existing `emptyDir` workspaces.
-- The 45Gi value is the PVC request; the local-path provisioner does not configure an XFS project quota, so Kubernetes
-  does not enforce a 45Gi per-runner ceiling. The init requires at least 45Gi of free space after copying the image
-  tree and cache. The 2026-09-14 validation snapshot measured about 233GiB free on the Transcend XFS
-  backing partition and found no existing PVC consumers. That is current headroom evidence, not a hard capacity or
-  durability guarantee. A failed scratch bootstrap is a runner admission failure; investigate it before changing the
-  storage class or falling back to `/var`.
-- DinD mounts separate root-owned scratch subpaths at `/var/lib/docker` and `/var/lib/containerd`, covering both the
-  daemon data root and the containerd image store. The runner's Nix store and cache remain owned by UID 1001. Validate
-  `/var` I/O under the actual workload before resuming storage maintenance or increasing build capacity further.
+- Lab runner Pods contain only the runner container. `.github/actions/setup-buildkit` starts a rootful BuildKit OCI
+  worker inside the current ephemeral runner and connects Buildx's remote driver to its private Unix socket. The
+  daemon and its scratch cache belong to that one job and disappear with its runner Pod. There is no shared builder
+  service or persistent cache that a pull request can poison for a later release. Existing registry and GitHub cache
+  scopes retain their policies.
+- The runner keeps UID 1001. Its existing sudo access starts BuildKit as root in the privileged container. This moves
+  the existing rootful build capability out of DinD without adding a sidecar, Docker Engine, Podman, host runtime
+  socket, node configuration, new credential, or cluster permission. Nix-only jobs never start a builder. The external
+  `analysis-arm64` scale set retains its independently owned Docker contract.
+- Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
+  Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
+  signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
+- One `arc-amd64` scale set serves nine AMD64 slots under the existing workflow label. Each runner reserves 16Gi memory. Four cannot fit Ryzen's measured 61.82Gi allocatable. A required two-host spread
+  with `maxSkew: 3` therefore places nine concurrent Pods as three on Ryzen and six on Turin. The minimum remains two.
+  A missing host or insufficient Ryzen headroom leaves excess jobs queued. Re-evaluate this guard before increasing
+  Ryzen's allocatable memory or changing reservations. `arc-arm64` has eight slots on Altra; `analysis-arm64` retains
+  its separate one-slot limit.
+- `local-path-ci-amd64` uses per-class node paths: Turin's Transcend scratch mount and Ryzen's local XFS mount. Other
+  storage classes retain their existing paths. Each runner uses one 45Gi generic ephemeral PVC for `/nix`,
+  `/home/runner/.cache`, `/tmp`, and `/home/runner/_work`. The init copies the image's Nix tree before the
+  main containers mount it, checks XFS and free capacity, then verifies file bytes, counts and symlinks. The PVC is
+  deleted with the runner Pod. ARM64 and `analysis-arm64` retain their existing `emptyDir` workspaces.
+- The 45Gi value is a PVC request. The local-path provisioner does not configure an XFS project quota, so Kubernetes
+  does not enforce a 45Gi per-runner ceiling. The init requires at least 45Gi free after copying the image tree and
+  cache. A failed scratch bootstrap is a runner admission failure; investigate it before changing the class.
+- Ryzen's local partition shares a physical NVMe with Talos `/var`. Moving builds frees Turin's scratch device and
+  avoids Ceph-volume traffic from Ryzen, but does not prove isolation from Ryzen's etcd or control-plane I/O.
 - The AMD64 scratch init requests 2Gi and is limited to 8Gi of memory. Its full Nix-tree bootstrap exceeded the prior
-  512Mi limit and was OOM-killed before the runner could register. This stays within the Pod's existing 16Gi aggregate
-  memory request for runner and DinD, so the init does not increase its scheduling reservation.
+  512Mi limit and was OOM-killed before the runner could register. This stays within the Pod's 16Gi aggregate
+  memory request for the runner, so the init does not increase its scheduling reservation.
 - Tailscale connectivity comes from the Omni-owned node configuration in
   `devices/galactic/omni/cluster-template.yaml`; no sidecar or additional secret is required in the runner pods. Follow
   `devices/galactic/omni/README.md` for changes. The retained Harvester/Ansible fleet configuration is not current Talos
@@ -40,16 +49,34 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 
 ## AMD64 capacity
 
-The `arc-amd64` scale set uses `minRunners: 1` and `maxRunners: 5` in `application.yaml`. One idle runner stays available,
-and the set can scale to five runners. Five 45Gi requests total 225Gi, leaving about 12Gi of the Transcend filesystem
-unallocated. These requests do not reserve space or cap writes; the bootstrap free-space check is also shared across
-runners. Actual concurrent-build usage still needs validation. The Intel disk holds Bayn ledger storage and is no
-longer the target for new AMD64 runner scratch volumes. ARM64 and `analysis-arm64` retain their existing limits.
+The single `arc-amd64` scale set has `minRunners: 2` and `maxRunners: 9`. Keep its existing GitHub identity and label.
+Separate ARC sets with a duplicate label do not provide a reliable combined queue, and ARC 0.14.2 does not update an
+existing registered set's labels. This migration adds neither a second AMD64 set nor a host-specific GitHub label.
 
-The September 8 maintenance throttle reduced AMD64 capacity to `minRunners: 0` and `maxRunners: 1` after five concurrent
-builds saturated Turin's `/var` NVMe, which also held etcd and Ceph monitor data. AMD64 build scratch now uses the separate
-Transcend NVMe PVC described above. Restoring capacity does not establish disk headroom or etcd latency under concurrent
-builds; check those under actual workload before increasing capacity further.
+Ryzen has 128GiB installed, but its current 64GiB GPU reservation leaves 61.82GiB allocatable. Three runners reserve
+48Gi and twelve logical CPUs. The 2026-10-12 native inventory measured 11.94GiB and 6.57 logical CPUs
+for retained workloads after application Ceph clients and Bayn left Ryzen. The resulting request total is about
+59.94GiB and 18.57 logical CPUs. Require fresh non-runner requests below 13.82GiB before promotion. Each single-container runner requests 4 CPUs and 16Gi and permits 20 CPUs and 32Gi, matching the former aggregate
+runner/DinD envelope. The existing memory overcommit policy remains; simultaneous limit-sized bursts can exceed
+Ryzen capacity. Check node pressure and etcd latency during actual builds. No BIOS change or
+reboot is needed now.
+A future all-five Ryzen move requires the [Bosgame memory procedure](../../../devices/ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation)
+and a reviewed revision of the two-host spread.
+
+Apply the local storage class and complete the [Ryzen placement rollout](../../../devices/galactic/scheduling/README.md)
+before promoting ARC through Kargo. Verify the provisioner has reloaded all five per-class path maps, and exercise an
+empty disposable claim on each eligible host before allowing runner scratch creation. Busy Turin runners must finish
+normally. Existing Pods retain their original claims until ARC retires them. ARM64 placement stays on Altra and its
+normal limit increases from five to eight; its minimum stays one and its existing node-local workspaces remain.
+Check Altra's node filesystem and image filesystem before promotion: its 2026-10-12 disk-pressure event recovered
+through native image reclamation and the kubelet's five-minute transition period. Do not override a pressure taint.
+The Kargo Stage continues updating the same three runner scale sets.
+
+Dispatch `.github/workflows/arc-placement-acceptance.yml` from `main` after reconciliation. All nine matrix jobs request
+only `arc-amd64`, exercise local scratch, Nix and a direct BuildKit build with a local file export, then wait at a nine-slot barrier. The final job requires nine
+distinct runner Pods, three on Ryzen and six on Turin, with at least 45 seconds of overlap. This proves ordinary shared-label
+capacity rather than a separate host-pinned test route. Read back memory pressure, etcd latency and NVMe contention
+throughout that window; Ryzen scratch shares its physical NVMe with Talos `/var`.
 
 Capacity changes use a reviewed Git change and the normal runner-image/Kargo delivery path. If storage contention
 returns, restore `minRunners: 0` and `maxRunners: 1` through that path. Existing busy runners finish before the count

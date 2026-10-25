@@ -1,57 +1,6 @@
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
-  name: proompteng
-  namespace: lab-delivery
-  labels:
-    delivery.proompteng.ai/managed-by: kargo
-spec:
-  interval: 1m0s
-  freightCreationPolicy: Automatic
-  freightCreationCriteria:
-    expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/proompteng').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
-  subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        blobless: true
-        strictSemvers: true
-        includePaths:
-          - apps/landing
-          - packages/backend
-          - packages/design
-          - services/tengri
-          - nix/images/proompteng.nix
-          - nix/images/bun-workspace-service.nix
-          - nix/packages.nix
-          - nix/cache-push.sh
-          - nix/ci-nix-oci-summary.sh
-          - nix/ci-run-timed.sh
-          - nix/oci-inspect-archive.sh
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - nix/oci-push.sh
-          - flake.nix
-          - flake.lock
-          - bun.lock
-          - argocd/applications/proompteng
-    - image:
-        repoURL: registry.ide-newton.ts.net/lab/proompteng
-        imageSelectionStrategy: NewestBuild
-        discoveryLimit: 1
-        strictSemvers: true
-        allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}$'
-        platform: linux/amd64
-        cacheByTag: true
----
-apiVersion: kargo.akuity.io/v1alpha1
-kind: Warehouse
-metadata:
   name: app
   namespace: lab-delivery
   labels:
@@ -785,7 +734,6 @@ spec:
           - services/agents
           - charts/agents/crds
           - nix/images/agents.nix
-          - nix/verify-agents-shell-image-lifecycle.sh
           - nix/images/openai-codex-cli.nix
           - .github/workflows/nix-oci-build-common.yml
           - nix/oci-push.sh
@@ -837,57 +785,6 @@ spec:
         strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
-        platform: linux/amd64
-        cacheByTag: true
----
-apiVersion: kargo.akuity.io/v1alpha1
-kind: Warehouse
-metadata:
-  name: tengri
-  namespace: lab-delivery
-  labels:
-    delivery.proompteng.ai/managed-by: kargo
-spec:
-  interval: 1m0s
-  freightCreationPolicy: Automatic
-  freightCreationCriteria:
-    expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/tengri').Tag == 'kargo-sha-' +
-      commitFrom('https://github.com/proompteng/lab.git').ID &&
-      imageFrom('registry.ide-newton.ts.net/lab/nanoagent').Tag == 'kargo-sha-' +
-      commitFrom('https://github.com/proompteng/lab.git').ID
-  subscriptions:
-    - git:
-        # Public HTTPS discovery gets Kargo's HTTP stall detection; the Stage keeps SSH only for pushes.
-        repoURL: https://github.com/proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - apps/landing
-          - services/tengri
-          - services/nanoagent
-          - .github/workflows/tengri-images.yml
-          - packages/scripts/src/tengri
-          - packages/scripts/src/shared/cli.ts
-          - argocd/applications/tengri
-    - image:
-        repoURL: registry.ide-newton.ts.net/lab/tengri
-        imageSelectionStrategy: NewestBuild
-        discoveryLimit: 20
-        strictSemvers: true
-        allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}$'
-        platform: linux/amd64
-        cacheByTag: true
-    - image:
-        repoURL: registry.ide-newton.ts.net/lab/nanoagent
-        imageSelectionStrategy: NewestBuild
-        discoveryLimit: 20
-        strictSemvers: true
-        allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
         cacheByTag: true
 ---
@@ -972,48 +869,10 @@ spec:
   interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
-    expression: imageFrom('registry.ide-newton.ts.net/lab/bayn').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
+    expression: >-
+      imageFrom('registry.ide-newton.ts.net/lab/bayn').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
   subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - services/bayn
-          - packages/scripts/src/bayn
-          - nix/images/bayn.nix
-          - nix/images/bayn-runtime-root.nix
-          - nix/images/bun-workspace-service.nix
-          - nix/images/bun-workspace-deps-source.nix
-          - nix/images/bun-workspace-deps-source.test.sh
-          - nix/images/prune-bun-dependency-metadata.sh
-          - nix/packages.nix
-          - nix/cache-push.sh
-          - nix/ci-nix-oci-summary.sh
-          - nix/ci-run-timed.sh
-          - nix/oci-inspect-archive.sh
-          - nix/oci-push.sh
-          - nix/verify-bayn-image-command.sh
-          - nix/verify-bayn-image-command.test.sh
-          - packages/scripts/src/shared/oci.ts
-          - flake.nix
-          - flake.lock
-          - bun.lock
-          - glob:**/package.json
-          - .npmrc
-          - bunfig.toml
-          - patches
-          - tsconfig.base.json
-          - .github/actions/setup-nix-toolchain
-          - glob:.github/workflows/bayn-*.yml
-          - .github/workflows/common-monorepo.yml
-          - .github/workflows/nix-oci-build-common.yml
-          - argocd/applications/bayn
-          - argocd/applications/kargo
-          - argocd/applicationsets/product.yaml
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bayn
         imageSelectionStrategy: NewestBuild
@@ -1117,38 +976,6 @@ spec:
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
-  name: rune
-  namespace: lab-delivery
-  labels:
-    delivery.proompteng.ai/managed-by: kargo
-spec:
-  interval: 1m0s
-  freightCreationPolicy: Automatic
-  freightCreationCriteria:
-    expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.revision'] != nil &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.revision'] != '' &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Tag == 'kargo-sha-' +
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.revision'] + '-run-' +
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id']
-  subscriptions:
-    - image:
-        repoURL: registry.ide-newton.ts.net/lab/rune
-        imageSelectionStrategy: NewestBuild
-        discoveryLimit: 20
-        strictSemvers: true
-        allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
-        platform: linux/amd64
-        cacheByTag: true
----
-apiVersion: kargo.akuity.io/v1alpha1
-kind: Warehouse
-metadata:
   name: temporal-worker
   namespace: lab-delivery
   labels:
@@ -1185,5 +1012,101 @@ spec:
         strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
+        platform: linux/amd64
+        cacheByTag: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: ofz
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  interval: 1m0s
+  freightCreationPolicy: Automatic
+  freightCreationCriteria:
+    expression: >-
+      imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/ofz').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['ai.proompteng.github-actions-run-id'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['ai.proompteng.tengri-schema'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['ai.proompteng.tengri-schema'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/tengri').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/tengri').Annotations['org.opencontainers.image.revision'] == imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/tengri').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/tengri').Annotations['ai.proompteng.tengri-schema'] == imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['ai.proompteng.tengri-schema'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/nanoagent').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/nanoagent').Annotations['org.opencontainers.image.revision'] == imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/nanoagent').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/nanoagent').Annotations['ai.proompteng.tengri-schema'] == imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['ai.proompteng.tengri-schema'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/proompteng').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/proompteng').Annotations['org.opencontainers.image.revision'] == imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/proompteng').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/proompteng').Annotations['ai.proompteng.tengri-schema'] == imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['ai.proompteng.tengri-schema']
+  subscriptions:
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/ofz
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
+        platform: linux/amd64
+        cacheByTag: true
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/tengri
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - '^kargo-sha-[0-9a-f]{40}$'
+        platform: linux/amd64
+        cacheByTag: true
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/nanoagent
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - '^kargo-sha-[0-9a-f]{40}$'
+        platform: linux/amd64
+        cacheByTag: true
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/proompteng
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - '^kargo-sha-[0-9a-f]{40}$'
+        platform: linux/amd64
+        cacheByTag: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: opencode
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  interval: 1m0s
+  freightCreationPolicy: Automatic
+  freightCreationCriteria:
+    expression: >-
+      imageFrom('registry.ide-newton.ts.net/lab/opencode').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/opencode').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/opencode').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
+  subscriptions:
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/opencode
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - ^kargo-sha-[0-9a-f]{40}$
         platform: linux/amd64
         cacheByTag: true

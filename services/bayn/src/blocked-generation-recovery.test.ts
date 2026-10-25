@@ -4,7 +4,7 @@ import { Effect, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import type { AuthorityGenerationStoreShape } from './db/execution-store'
-import type { BlockedCycleIntentStoreShape } from './execution/intents'
+import type { BlockedCycleIntentStoreShape } from './execution/intents/blocked-cycle'
 import type { WriterFenceService } from './execution/writer-fence'
 import {
   advanceRestrictedGenerationRecovery,
@@ -16,7 +16,7 @@ import { makeGenerationCycleDriver } from './composition/generation-cycle'
 import { Authority, KillState, ReconciliationStatus, type AuthorityState } from './execution/contracts'
 import { OperationalError } from './errors'
 import { reconcileReplayForActivation } from './intraday-replay/runtime'
-import type { RecoveryFirstCycleAdvance } from './observe-composition'
+import type { RecoveryFirstCycleAdvance } from './observe-composition/model'
 import { utcInstantFromEpochMillis } from './time'
 
 describe('terminal generation recovery', () => {
@@ -127,7 +127,7 @@ describe('terminal generation recovery', () => {
           yield* TestClock.adjust(30_000)
         }
         reconciliationStatus = ReconciliationStatus.Exact
-        expect(yield* owned.driver.advance).toEqual(advanced)
+        expect((yield* owned.driver.advance).observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
         expect(yield* owned.needsRebind).toBe(true)
       }).pipe(Effect.provide(TestClock.layer())),
     )
@@ -177,7 +177,7 @@ describe('terminal generation recovery', () => {
           return { _tag: 'NoTerminalGeneration' as const }
         }),
     }
-    const authorityStore: AuthorityGenerationStoreShape = {
+    const authorityStore: Pick<AuthorityGenerationStoreShape, 'ensureAuthorityGeneration'> = {
       ensureAuthorityGeneration: () => Effect.die('not used'),
     }
     const writerFence: WriterFenceService = {

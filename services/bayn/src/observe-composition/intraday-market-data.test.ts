@@ -3,7 +3,7 @@ import { Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { operationalError } from '../errors'
-import { IntradaySnapshotPurpose, type IntradayMarketDataService } from '../market-data'
+import { IntradaySnapshotPurpose, type IntradayMarketDataService } from '../market-data/intraday/model'
 import {
   ActiveExecutionStages,
   ExecutionStageTimings,

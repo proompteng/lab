@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, FileSystem, Layer, Path, Redacted } from 'effect'
+import { Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect'
 
 import { sha256 } from '../hash'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { exportJevStudySession } from '../jev/study-export'
+import { verifyJevStudyInventory } from '../jev/study-inventory'
 import { PostgresClientLive } from './postgres-client'
 
 const testUrl = process.env['BAYN_TEST_POSTGRES_URL']
@@ -80,6 +81,25 @@ postgresTest(
             [plan.batchId, management.batchPlan.batchId].sort(),
           )
           expect(lines.slice(1).every((line) => line.result === null)).toBe(true)
+          const inventory = yield* Effect.fromResult(
+            verifyJevStudyInventory(
+              yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+                yield* fs.readFileString(paths.join(pendingPath, 'inventory.json')),
+              ),
+            ),
+          )
+          expect(inventory.receipt).toEqual(pending)
+          expect(inventory.cycles).toEqual(lines[0].cycles)
+          expect(inventory.batches).toEqual(
+            lines.slice(1).map((line) => ({
+              batchId: line.batchId,
+              cycleId: line.cycleId,
+              observationHash: line.observationHash,
+              purpose: line.purpose,
+              resultHash: null,
+            })),
+          )
+          expect((yield* fs.stat(paths.join(pendingPath, 'inventory.json'))).mode & 0o777).toBe(0o600)
           expect((yield* fs.stat(paths.join(pendingPath, 'batches.ndjson'))).mode & 0o777).toBe(0o600)
           expect((yield* fs.stat(pendingPath)).mode & 0o777).toBe(0o700)
           expect((yield* Effect.result(exportJevStudySession(sql, accountId, sessionDate, pendingPath)))._tag).toBe(

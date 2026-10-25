@@ -1,13 +1,15 @@
 import { expect, test } from 'bun:test'
-import { Deferred, Effect, Exit, Fiber, Ref } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Ref, Semaphore } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
-import type { RecoveryFirstCycleDriver } from '../observe-composition'
+import type { RecoveryFirstCycleDriver } from '../observe-composition/model'
 import type { TerminalGenerationRolloverReceipt } from '../blocked-generation-recovery'
-import { CycleRunnerError } from '../cycle/runner'
+import { CycleRunnerError } from '../cycle/runner/model'
 import type { AutonomousRuntime } from '../app'
-import { ownGenerationCycleDriver, withGenerationRebinding } from './generation-cycle'
+import { runRestateAdvanceWithinTimeout } from '../observe-composition/recovery-driver'
+import { ExecutionStageTimings, type ExecutionStageTiming } from '../telemetry'
+import { makeGenerationCycleDriver, ownGenerationCycleDriver, withGenerationRebinding } from './generation-cycle'
 
 const generationHash = 'a'.repeat(64)
 const deadline = { timeoutMs: 30_000, onTimeout: (error: CycleRunnerError) => Effect.fail(error) }
@@ -37,6 +39,52 @@ const advanced = {
     message: 'mutation autonomous cycle pass did not complete or reconcile within 30000ms',
   },
 }
+
+test.each(['success', 'failure', 'held'] as const)(
+  'generation and cycle deadlines record distinct operation samples for %s',
+  async (outcome) => {
+    const timings = new Map<string, ExecutionStageTiming>()
+    const failure = new CycleRunnerError({
+      operation: 'run-cycle-pass',
+      failure: 'operational',
+      message: 'fixture cycle failure',
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const permit = yield* Semaphore.make(1)
+        const owned = yield* makeGenerationCycleDriver(
+          {
+            generationHash,
+            mode: 'Mutation',
+            readAuthority: Effect.succeed(
+              outcome === 'held' ? { ...restriction, reason: 'operator emergency stop' } : authority,
+            ),
+            reconcileWhenHeld: Effect.void,
+            settle: Effect.die('must not settle a mutation driver'),
+          },
+          {
+            advance: runRestateAdvanceWithinTimeout(
+              permit,
+              outcome === 'failure' ? Effect.fail(failure) : Effect.succeed(advanced),
+              deadline.timeoutMs,
+              Effect.fail,
+            ),
+            ...deadline,
+            nextDelayMs: 30_000,
+          },
+        )
+        const result = yield* Effect.exit(owned.driver.advance)
+        expect(Exit.isSuccess(result)).toBe(outcome !== 'failure')
+      }).pipe(Effect.provideService(ExecutionStageTimings, timings)),
+    )
+    const samples = [...timings.values()]
+    const generation = samples.find(({ stage }) => stage === 'bayn.execution.generation-pass')
+    const cycle = samples.find(({ stage }) => stage === 'bayn.execution.bounded-pass')
+    expect(generation).toMatchObject({ count: 1, failures: outcome === 'failure' ? 1 : 0 })
+    if (outcome === 'held') expect(cycle).toBeUndefined()
+    else expect(cycle).toMatchObject({ count: 1, failures: outcome === 'failure' ? 1 : 0 })
+  },
+)
 
 test.each(['authority', 'cycle', 'settlement'] as const)(
   'the pass deadline includes a stalled %s stage',
@@ -212,8 +260,73 @@ test('close-only recovery waits for settlement and hands off once, including que
       expect(yield* Ref.get(state)).toMatchObject({ effective: Authority.Observe, kill: KillState.Clear })
     }),
   )
-  expect(closePasses).toBe(2)
+  expect(closePasses).toBe(1)
   expect(settlements).toBe(2)
+})
+
+test('a settled flat generation restores without running another cycle pass', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const state = yield* Ref.make(restriction)
+      const owned = yield* makeGenerationCycleDriver(
+        {
+          generationHash,
+          mode: 'CloseOnly',
+          readAuthority: Ref.get(state),
+          reconcileWhenHeld: Effect.die('Recovery is not an operator hold'),
+          settle: Ref.set(state, {
+            ...authority,
+            generationHash: 'b'.repeat(64),
+            maximum: Authority.Observe,
+            effective: Authority.Observe,
+          }).pipe(
+            Effect.as({
+              _tag: 'RolledOver',
+              previousGenerationHash: generationHash,
+              generationHash: 'b'.repeat(64),
+              blockedCycleCount: 0,
+              blockedIntentCount: 0,
+              expiredIntentCount: 0,
+              terminalIntentCount: 0,
+            } as const),
+          ),
+        },
+        { ...deadline, nextDelayMs: 30_000, advance: Effect.die('A flat settled account needs no cycle pass') },
+      )
+      expect((yield* owned.driver.advance).observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
+      expect(yield* owned.needsRebind).toBe(true)
+    }),
+  )
+})
+
+test('an operator hold arriving during settlement prevents another recovery cycle', async () => {
+  let heldReconciliations = 0
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const state = yield* Ref.make(restriction)
+      const owned = yield* makeGenerationCycleDriver(
+        {
+          generationHash,
+          mode: 'CloseOnly',
+          readAuthority: Ref.get(state),
+          reconcileWhenHeld: Effect.sync(() => {
+            heldReconciliations += 1
+          }),
+          settle: Ref.set(state, { ...restriction, reason: 'operator hold' }).pipe(
+            Effect.as({ _tag: 'NotRequired' } as const),
+          ),
+        },
+        { ...deadline, nextDelayMs: 30_000, advance: Effect.die('An operator hold cannot advance recovery') },
+      )
+      expect((yield* owned.driver.advance).observation).toMatchObject({
+        result: 'FAILURE',
+        operation: 'read-authority-slot',
+      })
+      expect(yield* owned.needsRebind).toBe(false)
+      expect((yield* Ref.get(state)).kill).toBe(KillState.Active)
+    }),
+  )
+  expect(heldReconciliations).toBe(1)
 })
 
 test('interrupting recovery finalizes the published driver without settling authority', async () => {
@@ -330,7 +443,6 @@ test('one runtime runs healthy, restricted, OBSERVE rollover and reactivation dr
   )
   expect(transitions).toEqual([
     'Mutation',
-    'CloseOnly',
     'terminal intents and fresh exact flat reconciliation',
     'clear OBSERVE successor',
     'activation verified',

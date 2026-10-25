@@ -1,3 +1,4 @@
+import { codexInputResponseSchema } from './codex-input'
 import { z } from 'zod'
 import { codexModelIdSchema, codexReasoningEffortSchema } from './codex-models'
 import {
@@ -19,10 +20,12 @@ export const tengriPowerSettingsSchema = z.strictObject({
 
 export type TengriPowerSettings = z.infer<typeof tengriPowerSettingsSchema>
 
-const filePath = z
+export const workspaceFilePathSchema = z
   .string()
-  .startsWith('/')
+  .regex(/^\/workspace(?:\/[^/]+)*$/)
   .max(4096)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= 4096, 'Workspace path exceeds 4096 bytes')
+  .refine((value) => !value.split('/').some((segment) => segment === '.' || segment === '..'), 'Invalid workspace path')
   .refine((value) => !value.includes('\u0000') && !value.includes('\r') && !value.includes('\n'), 'Invalid file path')
 const fileContent = z
   .string()
@@ -106,28 +109,40 @@ const previewFragment = z
     'Invalid preview fragment',
   )
 
+export const tengriCreateAgentSchema = z.strictObject({
+  action: z.literal('create-agent'),
+  operationId: z.uuid(),
+  displayName: z.string().trim().min(1).max(64),
+})
+
 export const tengriActionSchema = z.discriminatedUnion('action', [
-  z.strictObject({ action: z.literal('create-agent'), displayName: z.string().trim().min(1).max(64) }),
-  z.strictObject({ action: z.literal('delete-agent'), agentId }),
-  z.strictObject({ action: z.literal('sleep-agent'), agentId }),
-  z.strictObject({ action: z.literal('resume-agent'), agentId }),
+  tengriCreateAgentSchema,
+  z.strictObject({ action: z.literal('delete-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
+  z.strictObject({ action: z.literal('sleep-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
+  z.strictObject({ action: z.literal('resume-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
   z.strictObject({ action: z.literal('update-power-settings'), agentId, power: tengriPowerSettingsSchema }),
-  z.strictObject({ action: z.literal('list-files'), agentId, path: filePath }),
-  z.strictObject({ action: z.literal('read-file'), agentId, path: filePath }),
+  z.strictObject({ action: z.literal('stat-file'), agentId, path: workspaceFilePathSchema }),
+  z.strictObject({ action: z.literal('list-files'), agentId, path: workspaceFilePathSchema }),
+  z.strictObject({ action: z.literal('read-file'), agentId, path: workspaceFilePathSchema }),
   z.strictObject({
     action: z.literal('write-file'),
     agentId,
-    path: filePath,
+    path: workspaceFilePathSchema,
     content: fileContent,
     expectedRevision: fileRevision,
   }),
-  z.strictObject({ action: z.literal('create-directory'), agentId, path: filePath }),
-  z.strictObject({ action: z.literal('move-file'), agentId, sourcePath: filePath, destinationPath: filePath }),
-  z.strictObject({ action: z.literal('delete-file'), agentId, path: filePath, recursive: z.boolean() }),
+  z.strictObject({ action: z.literal('create-directory'), agentId, path: workspaceFilePathSchema }),
+  z.strictObject({
+    action: z.literal('move-file'),
+    agentId,
+    sourcePath: workspaceFilePathSchema,
+    destinationPath: workspaceFilePathSchema,
+  }),
+  z.strictObject({ action: z.literal('delete-file'), agentId, path: workspaceFilePathSchema, recursive: z.boolean() }),
   z.strictObject({
     action: z.literal('search-files'),
     agentId,
-    path: filePath,
+    path: workspaceFilePathSchema,
     query: z
       .string()
       .trim()
@@ -143,7 +158,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     action: z.literal('create-terminal'),
     agentId,
     creationId: terminalCreationId,
-    cwd: filePath,
+    cwd: workspaceFilePathSchema,
     columns: z.number().int().min(20).max(400),
     rows: z.number().int().min(6).max(200),
   }),
@@ -153,12 +168,22 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('codex-login-status'), agentId }),
   z.strictObject({ action: z.literal('codex-login'), agentId }),
   z.strictObject({ action: z.literal('codex-models'), agentId, cursor: z.string().min(1).max(4096).optional() }),
+  z.strictObject({ action: z.literal('active-codex-run'), agentId }),
+  z.strictObject({ action: z.literal('codex-run'), agentId, runId: z.uuid() }),
+  z.strictObject({
+    action: z.literal('list-threads'),
+    agentId,
+    archived: z.boolean(),
+    cursor: z.string().min(1).max(4096).optional(),
+  }),
+  z.strictObject({ action: z.literal('set-thread-archived'), agentId, threadId: codexId, archived: z.boolean() }),
   z.strictObject({ action: z.literal('create-thread'), agentId, ...codexOptions }),
   z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId, ...codexOptions }),
   z
     .strictObject({
       action: z.literal('send-turn'),
       agentId,
+      operationId: z.uuid(),
       threadId: codexId,
       text: codexPrompt,
       images: codexImages,
@@ -168,16 +193,33 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z
     .strictObject({
       action: z.literal('steer-turn'),
+      runId: z.uuid(),
       agentId,
+      operationId: z.uuid(),
       threadId: codexId,
       turnId: codexId,
       text: codexPrompt,
       images: codexImages,
     })
     .refine((input) => Boolean(input.text || input.images.length), 'Add a message or image'),
-  z.strictObject({ action: z.literal('interrupt-turn'), agentId, threadId: codexId, turnId: codexId }),
+  z.strictObject({
+    action: z.literal('interrupt-turn'),
+    agentId,
+    runId: z.uuid(),
+    operationId: z.uuid(),
+  }),
+  z.strictObject({
+    action: z.literal('answer-questions'),
+    runId: z.uuid(),
+    operationId: z.uuid(),
+    agentId,
+    approvalId: codexId,
+    response: codexInputResponseSchema,
+  }),
   z.strictObject({
     action: z.literal('resolve-approval'),
+    runId: z.uuid(),
+    operationId: z.uuid(),
     agentId,
     approvalId: codexId,
     decision: z.enum([
@@ -199,13 +241,19 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     action: z.literal('editor-session'),
     agentId,
     windowId: z.string().regex(/^[a-zA-Z0-9_-]{16,128}$/),
+    renewal: z.boolean(),
   }),
   z.strictObject({ action: z.literal('revoke-editor-sessions') }),
-  z.strictObject({ action: z.literal('browser-session'), agentId }),
+  z.strictObject({
+    action: z.literal('browser-session'),
+    agentId,
+    windowId: z.string().regex(/^[a-zA-Z0-9_-]{16,128}$/),
+    renewal: z.boolean(),
+  }),
   z.strictObject({
     action: z.literal('revoke-preview-session'),
     agentId,
     sessionId: previewSessionId,
-    revocationToken: z.string().max(256).optional(),
+    revocationToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   }),
 ])

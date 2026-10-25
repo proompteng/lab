@@ -1,7 +1,7 @@
 import { Cause, Data, Effect, Exit } from 'effect'
 
 import { CycleState } from '../cycle/model'
-import type { CycleRunnerError } from '../cycle/runner'
+import type { CycleRunnerError } from '../cycle/runner/model'
 import type { CycleRunResult } from '../cycle/runner/model'
 import { canonicalHashV1Result } from '../hash'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
@@ -81,6 +81,7 @@ const classifyAdvance = ({ observation, result }: AdvancePass): UnhashedAdvanceO
   }
   if (
     observation.outcome === 'WAITING' ||
+    observation.outcome === 'ADMISSION_WAITING' ||
     (result?.outcome === 'RECOVERED' && result.action === 'WAITING') ||
     observation.recoveryAction === 'WAITING'
   ) {
@@ -127,6 +128,9 @@ const hashOutcome = (
             ...(observation.recoveryAction === undefined ? {} : { recoveryAction: observation.recoveryAction }),
             ...(observation.waitReason === undefined ? {} : { waitReason: observation.waitReason }),
             ...(observation.readiness === undefined ? {} : { readiness: observation.readiness }),
+            ...(observation.admissionProtection === undefined
+              ? {}
+              : { admissionProtection: observation.admissionProtection }),
           }
         : {
             result: observation.result,

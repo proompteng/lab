@@ -47,6 +47,36 @@ describe('Jev provider contract', () => {
   })
 
   test.each([
+    { favorable: 0.45999999999999996, unfavorable: 0.46, unclear: 0.08 },
+    { favorable: 0.46, unfavorable: 0.45999999999999996, unclear: 0.08 },
+    { favorable: 0.49999999999999994, unfavorable: 0.5, unclear: 0 },
+  ])('preserves a selected maximum tied only by floating-point roundoff %#', (probabilities) => {
+    const response = responseFixture()
+    response.answers.direction.probabilities = probabilities
+    const before = JSON.stringify(response)
+    expect(Result.getOrThrow(decodeJevResponse(requestFixture, response))).toEqual(response)
+    expect(JSON.stringify(response)).toBe(before)
+  })
+
+  test.each([1e-12, 0.001, 0.01, 0.1])(
+    'does not use probability-reporting precision to excuse a nonmaximum choice: %s',
+    (difference) => {
+      const response = responseFixture()
+      response.answers.direction.probabilities = {
+        favorable: 0.46 - difference,
+        unfavorable: 0.46 + difference,
+        unclear: 0.08,
+      }
+      const result = decodeJevResponse(requestFixture, response)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure.message).toBe('Jev selected choice is not a maximum probability')
+        expect(result.failure.question).toBe('direction')
+      }
+    },
+  )
+
+  test.each([
     { favorable: 0.93, unfavorable: 0.05, unclear: 0.01 },
     { favorable: 0.93, unfavorable: 0.05, unclear: 0.03 },
   ])('preserves approximately normalized reported probabilities %#', (probabilities) => {

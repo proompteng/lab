@@ -85,23 +85,22 @@ a fixed pre-rollout timestamp, and fresh metrics arrived after the new Pods
 started. Grafana UI login was not requalified by resetting credentials; native
 observability queries and data ingestion were the acceptance boundary.
 
-| Consumer | Kafka bootstrap service                                           | Topic                           | Ownership                                          |
-| -------- | ----------------------------------------------------------------- | ------------------------------- | -------------------------------------------------- |
-| Tempo 3  | `kafka-kafka-bootstrap.kafka.svc.cluster.local:9093`              | `observability.tempo.traces.v1` | Shared Kafka cluster                               |
-| Mimir    | `observability-mimir-kafka.observability.svc.cluster.local.:9092` | `mimir-ingest`                  | Pre-existing broker bundled with the Mimir release |
+The September acceptance receipts below predate Mimir's later move from its bundled
+broker to shared Kafka. Current GitOps configures both consumers on the shared cluster:
 
-The separate Mimir broker predates this campaign. It was upgraded while preserving
-its existing data and identity; a second Kafka cluster was not introduced for
-Tempo. This topology is not a technical requirement for Mimir. Grafana's
-[production Helm guidance](https://grafana.com/docs/helm-charts/mimir-distributed/latest/run-production-environment-with-helm/)
-says the bundled single broker is for demos and recommends an external Kafka
-backend for production. **Mimir's broker remains an availability limitation.**
-Moving it to shared Kafka requires a separate data/offset migration and cutover;
-changing only its bootstrap address would not transfer existing ingest records.
-The version upgrade does not claim that this existing topology is production HA.
+| Consumer | Kafka bootstrap service                              | Topic                           |
+| -------- | ---------------------------------------------------- | ------------------------------- |
+| Tempo 3  | `kafka-kafka-bootstrap.kafka.svc.cluster.local:9093` | `observability.tempo.traces.v1` |
+| Mimir    | `kafka-kafka-bootstrap.kafka.svc.cluster.local:9093` | `observability.mimir.ingest.v1` |
+
+Mimir's bundled Kafka is disabled in
+[`mimir-values.yaml`](../../argocd/applications/observability/mimir-values.yaml). Use the
+[shared Kafka runbook](mimir-shared-kafka.md) for current validation and recovery.
+The old topology receipt records the September configuration; it does not establish
+the current broker topology. Do not recreate the retired broker from its old upgrade procedure.
 
 Related procedures: [Tempo](tempo-3-migration.md), [Loki](loki-3-migration.md),
-[Mimir](mimir-3-2-upgrade.md), [Mimir Kafka](mimir-kafka-4-3-upgrade.md),
+[Mimir](mimir-3-2-upgrade.md), [Mimir shared Kafka](mimir-shared-kafka.md),
 [Grafana](grafana-13-upgrade.md), and [RGW TLS recovery](mimir-rgw-tls-recovery.md).
 
 ## Recorded native acceptance

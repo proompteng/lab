@@ -1,9 +1,4 @@
-use std::{
-    net::{IpAddr, SocketAddr},
-    pin::Pin,
-    sync::Arc,
-    time::Duration,
-};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use futures::Stream;
 use k8s_openapi::api::core::v1::Secret;
@@ -14,17 +9,17 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{
-    crd::{MicroVM, MicroVMPhase},
-    identity::WorkloadIdentity,
-};
+use crate::identity::WorkloadIdentity;
 
+pub(crate) mod authorization;
 mod codex_history;
 pub use codex_history::CodexHistoryPart;
 mod codex_options;
+mod pool;
 pub(crate) mod rpc;
 
 pub use codex_options::CodexOptions;
+pub use pool::GuestPool;
 
 pub(crate) const GUEST_API_PORT: u16 = 8443;
 pub const EDITOR_PORT: u16 = 13337;
@@ -39,6 +34,8 @@ const GUEST_UNARY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum GuestError {
+    #[error("Codex rejected the operation before dispatch")]
+    CodexOperationRejected,
     #[error("Kubernetes API request failed: {0}")]
     Kubernetes(#[from] kube::Error),
     #[error("SPIFFE guest transport failed: {0}")]
@@ -81,6 +78,16 @@ pub struct GuestClient {
     pub(crate) preview_tls: Option<Arc<rustls::ClientConfig>>,
     pub(crate) rpc: rpc::RpcClient,
     pub(crate) claim_headers: reqwest::header::HeaderMap,
+}
+
+#[derive(Clone)]
+pub(super) struct GuestTransport {
+    base_url: String,
+    token: String,
+    http: reqwest::Client,
+    preview_tls: Option<Arc<rustls::ClientConfig>>,
+    channel: tonic::transport::Channel,
+    claim_headers: reqwest::header::HeaderMap,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -189,59 +196,21 @@ pub struct CodexCallResult {
     pub event_sequence: u64,
 }
 
-impl GuestClient {
-    pub async fn for_agent(
+impl GuestTransport {
+    async fn connect(
         client: Client,
         namespace: &str,
-        agent_id: &str,
+        target: pool::GuestTarget,
         identity: &WorkloadIdentity,
+        issuer: authorization::GuestRequestIssuer,
     ) -> Result<Self, GuestError> {
-        Self::for_agent_incarnation(client, namespace, agent_id, None, identity).await
-    }
-
-    pub async fn for_agent_incarnation(
-        client: Client,
-        namespace: &str,
-        agent_id: &str,
-        incarnation: Option<&str>,
-        identity: &WorkloadIdentity,
-    ) -> Result<Self, GuestError> {
-        let microvms: Api<MicroVM> = Api::namespaced(client.clone(), namespace);
-        let microvm = microvms.get(agent_id).await?;
-        if incarnation.is_some_and(|expected| microvm.metadata.uid.as_deref() != Some(expected)) {
-            return Err(GuestError::Api {
-                status: StatusCode::GONE,
-                message: "This editor session belongs to a previous agent. Reopen Code.".to_owned(),
-            });
-        }
-        let status = microvm
-            .status
-            .as_ref()
-            .filter(|status| {
-                status.phase == MicroVMPhase::Ready
-                    && status.guest_ready
-                    && status.observed_generation >= microvm.metadata.generation.unwrap_or_default()
-            })
-            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
-        let guest_ip = status
-            .pod_ip
-            .as_ref()
-            .ok_or_else(|| GuestError::MissingGuestIp(agent_id.to_owned()))?;
-        let pod_uid = status
-            .pod_uid
-            .as_deref()
-            .filter(|uid| !uid.is_empty())
-            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
-        let slot = microvm
-            .spec
-            .slot
-            .as_ref()
-            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
-        if slot.pod_uid != pod_uid {
-            return Err(GuestError::NotReady(agent_id.to_owned()));
-        }
-        let claim = crate::slot::client::claim_for(&microvm)?;
-        let secret_name = crate::pod::bootstrap_secret_name(&slot.name);
+        let pool::GuestTarget {
+            claim,
+            pod_uid,
+            address,
+            slot_name,
+        } = target;
+        let secret_name = crate::pod::bootstrap_secret_name(&slot_name);
         let secrets: Api<Secret> = Api::namespaced(client, namespace);
         let secret = secrets.get(&secret_name).await?;
         let token_bytes = secret
@@ -252,17 +221,7 @@ impl GuestClient {
         let token = String::from_utf8(token_bytes.0.clone())
             .map_err(|_| GuestError::MissingToken(secret_name))?;
 
-        let ip: IpAddr = guest_ip
-            .parse()
-            .map_err(|_| GuestError::MissingGuestIp(agent_id.to_owned()))?;
-        let port = GUEST_API_PORT;
-        #[cfg(test)]
-        let port = match identity {
-            WorkloadIdentity::Fixture(port) => *port,
-            _ => port,
-        };
-        let address = SocketAddr::new(ip, port);
-        let tls = identity.guest_tls(identity.guest_id(namespace, pod_uid)?)?;
+        let tls = identity.guest_tls(identity.guest_id(namespace, &pod_uid)?)?;
         let channel = identity.guest_channel(address, tls.clone())?;
         let preview_tls = tls.map(|config| {
             let mut config = config.as_ref().clone();
@@ -282,6 +241,10 @@ impl GuestClient {
                 .parse()
                 .map_err(anyhow::Error::from)?,
         );
+        claim_headers.insert(
+            crate::slot::supervisor::RUNTIME_EPOCH_HEADER,
+            claim.runtime_epoch.parse().map_err(anyhow::Error::from)?,
+        );
         let mut http = reqwest::Client::builder()
             .default_headers(claim_headers.clone())
             .redirect(reqwest::redirect::Policy::none())
@@ -297,17 +260,36 @@ impl GuestClient {
             "http"
         };
         let base_url = format!("{scheme}://{address}");
-        let mut rpc = rpc::RpcClient::new(channel, &token)?;
-        rpc.bind_claim(claim);
-        rpc.verify_identity(pod_uid).await?;
+        let rpc = rpc::RpcClient::new(channel.clone(), &token, issuer)?;
+        rpc.verify_identity(&pod_uid).await?;
         Ok(Self {
             base_url,
             token,
             http,
             preview_tls,
-            rpc,
+            channel,
             claim_headers,
         })
+    }
+
+    fn authorize(
+        self,
+        issuer: authorization::GuestRequestIssuer,
+    ) -> Result<GuestClient, GuestError> {
+        Ok(GuestClient {
+            rpc: rpc::RpcClient::new(self.channel, &self.token, issuer)?,
+            base_url: self.base_url,
+            token: self.token,
+            http: self.http,
+            preview_tls: self.preview_tls,
+            claim_headers: self.claim_headers,
+        })
+    }
+}
+
+impl GuestClient {
+    pub async fn codex_activity(&self) -> Result<rpc::proto::CodexActivity, GuestError> {
+        self.rpc.codex_activity().await
     }
 
     pub fn base_url(&self) -> &str {
@@ -322,6 +304,9 @@ impl GuestClient {
 
     pub async fn open_browser(&self) -> Result<(), GuestError> {
         self.rpc.open_browser().await
+    }
+    pub async fn stat_file(&self, path: &str) -> Result<FileEntry, GuestError> {
+        self.rpc.stat_file(path).await
     }
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
         self.rpc.list_files(path).await
@@ -417,13 +402,6 @@ impl GuestClient {
             event_sequence: response.event_sequence,
         })
     }
-    pub async fn resolve_codex_approval(
-        &self,
-        approval_id: &str,
-        decision: &str,
-    ) -> Result<(), GuestError> {
-        self.rpc.resolve_codex_approval(approval_id, decision).await
-    }
     pub async fn watch_codex_events(
         &self,
         after: u64,
@@ -477,15 +455,16 @@ mod tests {
                                 );
                                 assert_eq!(
                                     request.metadata().get("x-tengri-microvm-uid").unwrap(),
-                                    "microvm-uid"
+                                    "11111111-1111-4111-8111-111111111111"
                                 );
                                 assert_eq!(
                                     request.metadata().get("x-tengri-claim-epoch").unwrap(),
                                     "1"
                                 );
                                 Ok(rpc::proto::GuestInfo {
-                                    microvm_id: "current-pod-uid".into(),
-                                    protocol_version: 2,
+                                    microvm_id: "33333333-3333-4333-8333-333333333333".into(),
+                                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                                    ..Default::default()
                                 })
                             })),
                             ..Default::default()
@@ -497,17 +476,17 @@ mod tests {
                 .unwrap();
         });
         for (pod_uid, ready) in [
-            (Some("current-pod-uid"), true),
+            (Some("33333333-3333-4333-8333-333333333333"), true),
             (Some("previous-pod-uid"), false),
             (None, false),
         ] {
             let service = tower::service_fn(
                 move |request: http::Request<kube::client::Body>| async move {
                     let value = if request.uri().path().ends_with("/microvms/agent-fixture") {
-                        serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"agent-fixture","uid":"microvm-uid","generation":1},"spec":{
-                        "displayName":"Guest fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
+                        serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"agent-fixture","uid":"11111111-1111-4111-8111-111111111111","generation":1},"spec":{
+                        "reservationId":"55555555-5555-4555-8555-555555555555","policyVersion":1,"runtimeEpoch":"44444444-4444-4444-8444-444444444444","displayName":"Guest fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
                         "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-10-01T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z",
-                        "slot": {"name":"slot-fixture","podUid":"current-pod-uid","pvcName":"home-fixture","pvcUid":"home-uid","epoch":1}
+                        "slot": {"name":"slot-fixture","podUid":"33333333-3333-4333-8333-333333333333","pvcName":"home-fixture","pvcUid":"home-uid","epoch":1}
                     },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1","podUid":pod_uid}})
                     } else {
                         assert!(
@@ -526,11 +505,15 @@ mod tests {
                     )
                 },
             );
-            let result = GuestClient::for_agent(
+            let result = GuestPool::new(
                 Client::new(service, "tengri"),
                 "tengri",
+                WorkloadIdentity::Fixture(fixture_port),
+            )
+            .for_agent(
                 "agent-fixture",
-                &WorkloadIdentity::Fixture(fixture_port),
+                None,
+                authorization::GuestAuthority::fixture_authorization(),
             )
             .await;
             assert_eq!(
@@ -554,7 +537,7 @@ mod tests {
                 "stale session read a bootstrap secret"
             );
             let value = serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"new-incarnation"},"spec":{
-                "displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
+                "reservationId":"55555555-5555-4555-8555-555555555555","policyVersion":1,"runtimeEpoch":"44444444-4444-4444-8444-444444444444","displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
                 "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
             }});
             Ok::<_, std::io::Error>(
@@ -564,12 +547,15 @@ mod tests {
                     .unwrap(),
             )
         });
-        let result = GuestClient::for_agent_incarnation(
+        let result = GuestPool::new(
             Client::new(service, "tengri"),
             "tengri",
+            WorkloadIdentity::Fixture(8080),
+        )
+        .for_agent(
             "editor-fixture",
             Some("old-incarnation"),
-            &WorkloadIdentity::Fixture(8080),
+            authorization::GuestAuthority::fixture_authorization(),
         )
         .await;
         assert!(matches!(

@@ -1,3 +1,4 @@
+import { sha256 } from '../../hash'
 import {
   bootstrapKafkaPartitions,
   kafkaBootstrapComplete,
@@ -6,10 +7,8 @@ import {
   type KafkaPartitionPosition,
 } from './bootstrap'
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Exit, Logger, Redacted, Result } from 'effect'
+import { Clock, Deferred, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { readFileSync } from 'node:fs'
-import { canonicalHashV1, sha256 } from '../../hash'
-import { CaptureDisposition, type ResearchCaptureEvent } from '../../research-capture/capture'
 import { AuthenticationError } from '@platformatic/kafka'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import technicalFixture from '../features/fixtures/technical-indicators-v1.json'
@@ -19,6 +18,10 @@ import { TestClock } from 'effect/testing'
 import { provideTestLayer } from '../../effect-test-support'
 import { historicalRawArrivals } from '../../testing/historical-streaming-fixture'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
+import { CaptureDisposition } from './transport-evidence'
+import { nativeArrivalCaptureId, type NativeArrivalChunk, type NativeArrivalObservation } from './native-arrival'
+import { makeNativeArrivalJournal, type NativeArrivalCapture, type NativeArrivalEnd } from './native-arrival-journal'
+import { nativeArrivalEpochFixture } from './native-arrival.test-support'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import { reproduceStreamingSnapshot } from './replay'
 import { constructStreamingSnapshot } from './snapshot'
@@ -103,14 +106,198 @@ class FakeTransport implements KafkaProjectionTransport {
   }
 }
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
-  Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
+  Effect.runPromise(Effect.scoped(effect).pipe((self) => provideTestLayer(self, TestClock.layer())))
+
+test('native retention observes the trading consumer cut, including rejected records and repeated deliveries', async () => {
+  await program(
+    Effect.gen(function* () {
+      const transport = new FakeTransport()
+      const captured: NativeArrivalObservation[] = []
+      let captureEpoch: string | undefined
+      const market = yield* makeKafkaMarketProjection(
+        config,
+        [universe],
+        (_config, _epoch, identity, bytes) => {
+          expect(identity).toBe(true)
+          expect(bytes).toBe(true)
+          return transport
+        },
+        undefined,
+        (bootstrap, sources) =>
+          Effect.sync(() => {
+            captureEpoch = bootstrap.epoch
+            expect(sources).toEqual([universe])
+            return {
+              observe: (record) =>
+                Effect.sync(() => {
+                  captured.push(record)
+                }),
+              status: () => ({
+                captureId: '0'.repeat(64),
+                status: 'RECORDING',
+                observedConsumerSequence: captured.length,
+                durableConsumerSequence: 0,
+                queuedCompressedBytes: 0,
+                failure: null,
+              }),
+            }
+          }),
+      )
+      yield* TestClock.adjust(1_000)
+      const record = {
+        topic: 'quotes',
+        partition: 0,
+        offset: '0',
+        timestampMs: 900,
+        leaderEpoch: 1,
+        ...decodeKafkaTransportValue(Buffer.from('{'), true, true),
+      }
+      transport.send(record)
+      transport.send(record)
+      yield* TestClock.adjust(1_000)
+      expect(captured).toHaveLength(2)
+      expect(captured.map((record) => record.consumerSequence)).toEqual([1, 2])
+      expect(captured.map((record) => record.disposition)).toEqual([
+        CaptureDisposition.Rejected,
+        CaptureDisposition.Ignored,
+      ])
+      expect(captured.map((record) => record.record.rawValue)).toEqual([Buffer.from('{'), Buffer.from('{')])
+      expect(captured[0]?.availableAtMs).toBe(captured[1]?.availableAtMs)
+      if (captureEpoch === undefined) throw new Error('Missing native capture epoch')
+      expect((yield* market.status).epoch).toBe(captureEpoch)
+    }),
+  )
+})
+
+test('failed native retention releases Kafka consumption and preserves incomplete evidence across epoch recovery', async () => {
+  const transports: FakeTransport[] = []
+  const captures: NativeArrivalCapture[] = []
+  const chunks: NativeArrivalChunk[] = []
+  const ends: NativeArrivalEnd[] = []
+  await program(
+    Effect.gen(function* () {
+      const writing = yield* Deferred.make<void>()
+      const failWriter = yield* Deferred.make<void>()
+      let appendCalls = 0
+      const market = yield* makeKafkaMarketProjection(
+        config,
+        [universe],
+        () => {
+          const transport = new FakeTransport()
+          transports.push(transport)
+          return transport
+        },
+        undefined,
+        (bootstrap, sources) =>
+          Effect.gen(function* () {
+            const build = nativeArrivalEpochFixture.build
+            const capture = yield* makeNativeArrivalJournal(
+              {
+                ...nativeArrivalEpochFixture,
+                captureId: Result.getOrThrow(nativeArrivalCaptureId(build, bootstrap, sources)),
+                bootstrap,
+                sources,
+              },
+              {
+                begin: () => Effect.void,
+                append: (batch) =>
+                  Effect.gen(function* () {
+                    if (++appendCalls === 1) {
+                      yield* Deferred.succeed(writing, undefined)
+                      yield* Deferred.await(failWriter)
+                      return yield* Effect.die('synthetic native writer defect')
+                    }
+                    chunks.push(...batch)
+                  }),
+                end: (end) => Effect.sync(() => void ends.push(end)),
+              },
+              { chunkBytes: 1, queueBytes: 700 },
+            )
+            captures.push(capture)
+            return capture
+          }),
+      )
+      yield* TestClock.adjust(1_000)
+      const first = transports[0]
+      const capture = captures[0]
+      if (first === undefined || capture === undefined) throw new Error('missing initial consumer capture')
+      const initial = yield* market.read
+      // Malformed records exercise exact delivery retention, not market-content validity or freshness.
+      const record = (offset: string): KafkaConsumedRecord => ({
+        topic: 'quotes',
+        partition: 0,
+        offset,
+        timestampMs: 900,
+        leaderEpoch: 1,
+        ...decodeKafkaTransportValue(Buffer.from('{'), true, true),
+      })
+      first.send(record('0'))
+      yield* Deferred.await(writing)
+      first.send(record('1'))
+      yield* TestClock.adjust(1_000)
+      expect(capture.status()).toMatchObject({
+        status: 'RECORDING',
+        observedConsumerSequence: 2,
+        durableConsumerSequence: 0,
+      })
+      yield* Deferred.succeed(failWriter, undefined)
+      yield* TestClock.adjust(1_000)
+      first.send(record('2'))
+      yield* TestClock.adjust(1_000)
+      expect(capture.status()).toMatchObject({
+        status: 'INCOMPLETE',
+        observedConsumerSequence: 3,
+        durableConsumerSequence: 0,
+      })
+      expect((yield* market.read).projection.epoch).toBe(initial.projection.epoch)
+      expect((yield* market.readForLiquidation).consumerSequence).toBe(3)
+      expect(transports).toHaveLength(1)
+      first.invalidated?.(new Error('synthetic assignment replacement'))
+      expect(Exit.isFailure(yield* Effect.exit(market.read))).toBe(true)
+      yield* TestClock.adjust(3_000)
+      expect(transports).toHaveLength(2)
+      expect(captures).toHaveLength(2)
+      expect((yield* market.read).projection.epoch).not.toBe(initial.projection.epoch)
+      expect(captures[1]?.status()).toMatchObject({
+        status: 'RECORDING',
+        observedConsumerSequence: 0,
+        durableConsumerSequence: 0,
+      })
+      expect(captures[1]?.status().captureId).not.toBe(capture.status().captureId)
+      expect(ends).toHaveLength(1)
+      expect(ends[0]).toMatchObject({
+        captureId: capture.status().captureId,
+        status: 'INCOMPLETE',
+        observedConsumerSequence: 3,
+        durableConsumerSequence: 1,
+      })
+      expect(chunks).toHaveLength(1)
+      expect(chunks[0]?.header.lastConsumerSequence).toBe(1)
+      expect(chunks[0]?.header.captureId).toBe(capture.status().captureId)
+      expect(ends[0]?.lastChunkHash).toBe(chunks[0]?.contentHash)
+      transports[1]?.send(record('0'))
+      yield* TestClock.adjust(1_000)
+      expect(captures[1]?.status()).toMatchObject({
+        status: 'RECORDING',
+        observedConsumerSequence: 1,
+        durableConsumerSequence: 1,
+      })
+      expect(chunks).toHaveLength(2)
+      expect(chunks[1]?.header.captureId).toBe(captures[1]?.status().captureId)
+      expect(ends[0]?.status).toBe('INCOMPLETE')
+    }),
+  )
+  expect(ends.map((end) => end.status)).toEqual(['INCOMPLETE', 'STOPPED'])
+  expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
+})
 
 test('projection cuts preserve current offsets and fresh advancing outputs', async () => {
   await program(
     Effect.gen(function* () {
-      const market = yield* makeKafkaMarketProjection(config, universe, () => new FakeTransport())
+      const market = yield* makeKafkaMarketProjection(config, [universe], () => new FakeTransport())
       yield* TestClock.adjust(1000)
       const initial = yield* market.readForLiquidation
+      expect(initial.consumerSequence).toBe(0)
       const position = initial.positions.find((row) => row.topic === 'quotes')
       if (position === undefined) throw new Error('missing quote position')
       const offsets = initial.projection.offsets as Map<string, string>
@@ -164,7 +351,7 @@ test('projection cuts preserve current offsets and fresh advancing outputs', asy
 test('projection cut offset coercions preserve failure and spread ordering', async () => {
   await program(
     Effect.gen(function* () {
-      const market = yield* makeKafkaMarketProjection(config, universe, () => new FakeTransport())
+      const market = yield* makeKafkaMarketProjection(config, [universe], () => new FakeTransport())
       yield* TestClock.adjust(1000)
       const initial = yield* market.readForLiquidation
       const position = initial.positions.find((row) => row.topic === 'quotes')
@@ -234,7 +421,7 @@ test('projection cuts follow replaced positions and reject an invalidated epoch'
   const transports: FakeTransport[] = []
   await program(
     Effect.gen(function* () {
-      const market = yield* makeKafkaMarketProjection(config, universe, () => {
+      const market = yield* makeKafkaMarketProjection(config, [universe], () => {
         const transport = new FakeTransport()
         transports.push(transport)
         return transport
@@ -249,6 +436,7 @@ test('projection cuts follow replaced positions and reject an invalidated epoch'
       yield* TestClock.adjust(1000)
       const replaced = yield* market.readForLiquidation
       expect(replaced.positions.find((row) => row.topic === 'quotes')?.offset).toBe('20')
+      expect(replaced.deliveredPositions.every((row) => row.offset === '0')).toBeTrue()
       transport.invalidated?.(new Error('replace test epoch'))
       expect(Result.isFailure(yield* market.readForLiquidation.pipe(Effect.result))).toBe(true)
       yield* TestClock.adjust(3000)
@@ -259,97 +447,6 @@ test('projection cuts follow replaced positions and reject an invalidated epoch'
     }),
   )
 })
-
-for (const scenario of [
-  'ready',
-  'queued',
-  'undrained',
-  'fence-ahead',
-  'invalidated',
-  'future-end',
-  'missing-partition',
-  'lookup-failed',
-  'no-sample',
-  'stale-sample',
-  'replacement-failed',
-  'replacement-pending',
-  'frontier-regressed',
-] as const)
-  test(`research interval cut observes only a valid drained epoch: ${scenario}`, async () => {
-    const transport = new FakeTransport()
-    const events: ResearchCaptureEvent[] = []
-    await program(
-      Effect.gen(function* () {
-        const market = yield* makeKafkaMarketProjection(config, universe, () => transport, undefined, {
-          rawValues: true,
-          record: (event) => events.push(event),
-          invalidate: () => undefined,
-        })
-        yield* TestClock.adjust(1000)
-        const request = {
-          intervalId: 'test-interval',
-          coverageStartMs: 0,
-          coverageEndMs: scenario === 'future-end' || scenario === 'stale-sample' ? 30001 : 1000,
-          universeHash: canonicalHashV1(universe),
-          expectedPartitions: positions('0')
-            .map(({ topic, partition }) => ({ topic, partition }))
-            .toSorted((a, b) => a.topic.localeCompare(b.topic)),
-        }
-        if (scenario === 'queued')
-          transport.queue.push({
-            topic: 'quotes',
-            partition: 0,
-            offset: '0',
-            value: '',
-            timestampMs: 0,
-            leaderEpoch: 1,
-          })
-        if (scenario === 'undrained') transport.drained = undefined
-        if (scenario === 'fence-ahead') transport.offsets = async () => positions('1')
-        if (scenario === 'missing-partition') request.expectedPartitions.pop()
-        if (scenario === 'lookup-failed')
-          transport.offsets = async () => {
-            throw new Error('test lookup failed')
-          }
-        if (scenario === 'frontier-regressed') transport.drained = positions('1')
-        if (scenario !== 'no-sample') yield* TestClock.adjust(29000)
-        if (scenario === 'stale-sample') yield* TestClock.adjust(1000)
-        if (scenario === 'replacement-failed') {
-          transport.offsets = async () => {
-            throw new Error('test replacement sample failed')
-          }
-          yield* TestClock.adjust(30000)
-        }
-        let completeLookup: ((value: readonly KafkaPartitionPosition[]) => void) | undefined
-        if (scenario === 'replacement-pending') {
-          transport.offsets = () =>
-            new Promise((resolve) => {
-              completeLookup = resolve
-            })
-          yield* TestClock.adjust(30000)
-        }
-        if (scenario === 'frontier-regressed') {
-          transport.drained = positions('0')
-          yield* TestClock.adjust(1000)
-        }
-        if (scenario === 'invalidated') transport.invalidated?.(new Error('test assignment lost'))
-        const lookups = [...transport.lookups]
-        const result = yield* market.captureInterval(request).pipe(Effect.result)
-        expect(transport.lookups).toEqual(lookups)
-        completeLookup?.(positions('0'))
-        expect(Result.isSuccess(result)).toBe(scenario === 'ready')
-        expect(events.filter((event) => event.kind === 'consumer-interval-cut')).toHaveLength(
-          scenario === 'ready' ? 1 : 0,
-        )
-        expect(transport.closeCount).toBe(0)
-        if (Result.isSuccess(result)) {
-          expect(result.success.finalConsumerSequence).toBe(0)
-          expect(result.success.committedFence.lookupStartedAtMs).toBe(30000)
-          expect(result.success.drainedPositions).toHaveLength(4)
-        }
-      }),
-    )
-  })
 
 test('Kafka capture hashes exact bytes before UTF8 replacement and distinguishes tombstones from empty payloads', () => {
   const left = decodeKafkaTransportValue(Buffer.from([0x80]), true)
@@ -389,94 +486,6 @@ test('Kafka payload sizes are exact without enabling hashes or raw-value retenti
       rawByteLength: bytes.byteLength,
     })
   }
-})
-
-test.each([false, true])('capture observes dispositions and exact transport time (rawValues=%s)', async (rawValues) => {
-  const at = Date.parse('2026-09-11T14:00:02.000Z')
-  const quote = (symbol: string) =>
-    Buffer.from(
-      JSON.stringify({
-        version: 2,
-        provider: 'alpaca',
-        feed: 'iex',
-        delayClass: 'real_time_exchange_only',
-        marketSession: 'regular',
-        channel: 'quotes',
-        symbol,
-        eventTs: new Date(at).toISOString(),
-        ingestTs: new Date(at).toISOString(),
-        payload: { t: new Date(at).toISOString(), bp: 200, ap: 200.01, bs: 100, as: 100 },
-      }),
-    )
-  const transport = new FakeTransport()
-  const payloads = [quote('AAPL'), Buffer.from([0x80]), quote('ZZZ'), quote('ZZZ')]
-  transport.queue = payloads.map((value, index) => ({
-    topic: 'quotes',
-    partition: 0,
-    offset: String(Math.min(index, 2)),
-    timestampMs: at,
-    leaderEpoch: 1,
-    ...decodeKafkaTransportValue(value, true, rawValues),
-  }))
-  const receipts: Array<{ event: ResearchCaptureEvent; atMs: number | undefined }> = []
-  let epoch: string | undefined
-  await program(
-    Effect.gen(function* () {
-      yield* TestClock.setTime(at)
-      const market = yield* makeKafkaMarketProjection(
-        config,
-        universe,
-        (_config, selectedEpoch, captureRaw, captureValues) => {
-          expect(captureRaw).toBe(true)
-          expect(captureValues).toBe(rawValues)
-          epoch = selectedEpoch
-          return transport
-        },
-        undefined,
-        {
-          rawValues,
-          record: (event, atMs) => {
-            receipts.push({ event, atMs })
-          },
-          invalidate: () => undefined,
-        },
-      )
-      yield* TestClock.adjust(1000)
-      const cut = yield* market.read
-      const records = receipts.filter((receipt) => receipt.event.kind === 'market-record')
-      expect(
-        records.map((receipt) => (receipt.event.kind === 'market-record' ? receipt.event.disposition : undefined)),
-      ).toEqual([
-        CaptureDisposition.Accepted,
-        CaptureDisposition.Rejected,
-        CaptureDisposition.Rejected,
-        CaptureDisposition.Ignored,
-      ])
-      expect(
-        records.map((receipt) => (receipt.event.kind === 'market-record' ? receipt.event.consumerSequence : undefined)),
-      ).toEqual([1, 2, 3, 4])
-      expect(
-        records.every((receipt) => receipt.event.kind === 'market-record' && receipt.event.consumerEpoch === epoch),
-      ).toBe(true)
-      expect(records[0]?.atMs).toBe(cut.projection.quotes.get('AAPL')?.availableAtMs)
-      if (rawValues) {
-        expect(records[0]?.event).toMatchObject({
-          originalTransport: {
-            schemaVersion: 'bayn.kafka-original-transport.v1',
-            timestampMs: { kind: 'VALUE', value: at },
-          },
-        })
-      } else expect(records[0]?.event).not.toHaveProperty('originalTransport')
-      expect(records[1]?.event).toMatchObject({
-        rawValueSha256: sha256(Buffer.from([0x80])),
-        rawByteLength: 1,
-        bootstrap: true,
-      })
-      expect(cut.projection.sequence).toBe(3)
-    }),
-  )
-  expect(transport.closeCount).toBe(1)
-  expect(receipts.at(-1)?.event).toMatchObject({ kind: 'consumer-boundary', phase: 'STOPPED', consumerEpoch: epoch })
 })
 
 describe('Kafka bootstrap and scoped consumption', () => {
@@ -522,7 +531,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(bootAtMs)
-        const projection = yield* makeKafkaMarketProjection(config, retainedUniverse, () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [retainedUniverse], () => transport)
         yield* TestClock.adjust('1 second')
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
         for (const record of delayedTrades) transport.send(record)
@@ -566,7 +575,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
       await program(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-          const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+          const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
             const transport = new FakeTransport()
             transport.commit = () => {
               commitAttempts++
@@ -627,7 +636,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
       }))
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => transport)
         yield* TestClock.adjust('2 seconds')
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
         const cut = yield* projection.readForLiquidation
@@ -646,7 +655,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => transport)
         yield* TestClock.adjust('2 seconds')
         transport.offsets = async () => {
           throw new AuthenticationError('private authentication detail')
@@ -679,7 +688,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const market = yield* makeKafkaMarketProjection(config, universe, () => {
+        const market = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -776,7 +785,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const market = yield* makeKafkaMarketProjection(config, universe, () => {
+        const market = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -835,7 +844,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     '%s feature arrival receipts are emitted once after incorporation, excluding transport and semantic retries',
     async (family) => {
       const fixture: unknown = JSON.parse(
-        readFileSync(new URL('../features/fixtures/rolling-price-v1.json', import.meta.url), 'utf8'),
+        readFileSync(new URL('../features/fixtures/observed-price-window-v1.json', import.meta.url), 'utf8'),
       )
       const feature =
         family === 'technical'
@@ -870,7 +879,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
       await program(
         Effect.gen(function* () {
           yield* TestClock.setTime(feature.computedAtMs + 1000)
-          const projection = yield* makeKafkaMarketProjection(config, featureUniverse, () => transport)
+          const projection = yield* makeKafkaMarketProjection(config, [featureUniverse], () => transport)
           yield* TestClock.adjust('100 millis')
           const record = {
             topic: featureTopic,
@@ -913,7 +922,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => transport)
         yield* TestClock.adjust('2 seconds')
         const original = yield* projection.read
         transport.offsets = () =>
@@ -956,7 +965,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => transport)
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
         yield* TestClock.adjust('2 seconds')
         const cut = yield* projection.read
@@ -973,7 +982,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -1011,7 +1020,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     const transports: FakeTransport[] = []
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -1037,6 +1046,46 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
   })
 
+  test('reports a local bootstrap deadline distinctly while preserving fail-closed retry and cleanup', async () => {
+    const transports: FakeTransport[] = []
+    const logs: unknown[] = []
+    const logger = Logger.make(({ message }) => logs.push(message))
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
+          const transport = new FakeTransport()
+          if (transports.length === 0)
+            transport.offsets = async (_topics, timestamp) => positions(timestamp === -1n ? '1' : '0')
+          transports.push(transport)
+          return transport
+        })
+        yield* TestClock.adjust('5 seconds')
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        expect(transports).toHaveLength(1)
+        yield* TestClock.adjust('2 seconds')
+        expect(logs).toContainEqual([
+          'Kafka market projection cycle failed',
+          expect.objectContaining({
+            operation: 'bootstrap',
+            reason: 'BOOTSTRAP_DEADLINE_EXCEEDED',
+            failureCodes: [],
+            retryableBySupervisor: true,
+          }),
+        ])
+        expect(transports[0]?.closeCount).toBe(1)
+        yield* TestClock.adjust('3 seconds')
+        expect((yield* projection.status).failure).toBeUndefined()
+        yield* projection.read
+        expect(logs).toContainEqual([
+          'Kafka market projection recovered',
+          expect.objectContaining({ reason: 'BOOTSTRAP_DEADLINE_EXCEEDED' }),
+        ])
+      }).pipe(Effect.provide(Logger.layer([logger]))),
+    )
+    expect(transports).toHaveLength(2)
+    expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
+  })
+
   test('retains the first invalidation cause and reports recovery without private transport details', async () => {
     const transports: FakeTransport[] = []
     const logs: unknown[] = []
@@ -1044,7 +1093,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     const firstCause = new AuthenticationError('private transport credential detail')
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -1062,7 +1111,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
         expect((yield* projection.read).projection.epoch).not.toBe(prior.projection.epoch)
         expect(logs).toContainEqual([
           'Kafka market projection cycle failed',
-          expect.objectContaining({ failureCodes: ['PLT_KFK_AUTHENTICATION'] }),
+          expect.objectContaining({ reason: 'TRANSPORT_FAILURE', failureCodes: ['PLT_KFK_AUTHENTICATION'] }),
         ])
         expect(logs).toContainEqual([
           'Kafka market projection recovered',
@@ -1078,7 +1127,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     const transports: FakeTransport[] = []
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -1105,7 +1154,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     const transport = new FakeTransport()
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           attempts++
           if (!recovered) throw new Error('connection unavailable')
           return transport
@@ -1134,7 +1183,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     }
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           attempts += 1
           if (attempts === 1) return first
           expect(first.closed).toBe(true)
@@ -1159,7 +1208,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     let attempts = 0
     await program(
       Effect.gen(function* () {
-        yield* makeKafkaMarketProjection(config, universe, () => {
+        yield* makeKafkaMarketProjection(config, [universe], () => {
           attempts += 1
           throw new Error('offline')
         })
@@ -1174,7 +1223,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     const transports: FakeTransport[] = []
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           let cancel: ((positions: readonly KafkaPartitionPosition[]) => void) | undefined
           transport.offsets = () =>

@@ -1,3 +1,5 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
+import { exchangeSessions } from '../../market-hours'
 import { describe, expect, test } from 'bun:test'
 
 import type { ClickhouseClient } from '@effect/sql-clickhouse'
@@ -6,14 +8,14 @@ import type { IntradaySnapshotRequest } from './model'
 import { intradayArchivePageSize, makeIntradayMarketDataQueries } from './queries'
 
 const request: IntradaySnapshotRequest = {
-  calendar: {
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+  calendar: withProviderSessions({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
     source: 'alpaca-v2-calendar',
     requestedRange: { start: '2026-08-18', end: '2026-08-18' },
     timeZone: 'UTC',
     sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
     normalizedResponseHash: 'b'.repeat(64),
-  },
+  }),
   universeId: 'opening-drive-v1',
   universeSymbolHash: 'a'.repeat(64),
   universe: ['AMD'],
@@ -58,15 +60,15 @@ describe('intraday archive queries', () => {
     expect(capture).toContain('FROM signal.intraday_trades_v1')
     expect(capture).not.toContain('has(')
     expect(capture).toContain(
-      `event_ts >= parseDateTime64BestEffort("${request.calendar.sessions[0]!.openAt}", 3, 'UTC')`,
+      `event_ts >= parseDateTime64BestEffort("${exchangeSessions(request.calendar)[0]!.openAt}", 3, 'UTC')`,
     )
     expect(capture).toContain(
-      `event_ts <= parseDateTime64BestEffort("${request.calendar.sessions[0]!.closeAt}", 3, 'UTC')`,
+      `event_ts <= parseDateTime64BestEffort("${exchangeSessions(request.calendar)[0]!.closeAt}", 3, 'UTC')`,
     )
     expect(
       capture.match(
         new RegExp(
-          `event_ts >= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.openAt}", 9, 'UTC'\\)`,
+          `event_ts >= parseDateTime64BestEffort\\("${exchangeSessions(request.calendar)[0]!.openAt}", 9, 'UTC'\\)`,
           'g',
         ),
       ),
@@ -74,7 +76,7 @@ describe('intraday archive queries', () => {
     expect(
       capture.match(
         new RegExp(
-          `event_ts <= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC'\\)`,
+          `event_ts <= parseDateTime64BestEffort\\("${exchangeSessions(request.calendar)[0]!.closeAt}", 9, 'UTC'\\)`,
           'g',
         ),
       ),
@@ -100,7 +102,7 @@ describe('intraday archive queries', () => {
     for (const query of [quotes, trades]) {
       expect(query).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
       expect(query).toContain(
-        `event_ts <= parseDateTime64BestEffort("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC')`,
+        `event_ts <= parseDateTime64BestEffort("${exchangeSessions(request.calendar)[0]!.closeAt}", 9, 'UTC')`,
       )
       expect(query).not.toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)
       expect(query).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)

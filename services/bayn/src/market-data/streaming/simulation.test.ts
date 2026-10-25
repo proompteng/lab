@@ -13,7 +13,7 @@ test('simulated input cut round trips through execution binding with original ti
   const fixture = simulationFixture(Date.parse('2026-09-12T12:00:00Z'))
   const snapshot = Result.getOrThrow(constructSimulatedSnapshot(fixture.cursor, fixture.source, fixture.query))
   const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
-  expect(snapshot.manifest.schemaVersion).toBe('bayn.simulated-market-snapshot.v1')
+  expect(snapshot.manifest.schemaVersion).toBe('bayn.simulated-market-snapshot.v2')
   expect(snapshot.manifest.streaming.features).toHaveLength(7)
   expect(
     snapshot.manifest.streaming.features.every(

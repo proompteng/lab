@@ -12,6 +12,7 @@ on:
       - 'services/tengri/**'
       - 'bun.lock'
       - '.github/workflows/tengri.yaml'
+      - '.github/scripts/install-tengri-chromium.mjs'
   workflow_dispatch:
 
 concurrency:
@@ -43,7 +44,7 @@ jobs:
           --filter @proompteng/design
 
       - name: Install Chromium
-        run: bunx playwright install --with-deps chromium
+        run: node .github/scripts/install-tengri-chromium.mjs
 
       - name: Set up Go
         uses: actions/setup-go@v6

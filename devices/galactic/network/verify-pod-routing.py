@@ -56,6 +56,26 @@ def pod_addresses(node):
     return [str(block.network_address + 10) for block in blocks]
 
 
+def validate_storage_links(node, links):
+    failures = []
+    bonds = [link for link in links if link["ifname"] == "storage0"]
+    if len(bonds) != 1 or not any(
+        address.get("local") == STORAGE[node] and address.get("prefixlen") == 24
+        for link in bonds
+        for address in link.get("addr_info", [])
+    ):
+        failures.append(f"{node}: storage0 does not own its reviewed storage address")
+    members = [link for link in links if link.get("master") == "storage0"]
+    if not members:
+        failures.append(f"{node}: storage0 has no member interface")
+    for member in members:
+        if any(a.get("family") == "inet" for a in member.get("addr_info", [])):
+            failures.append(
+                f"{node}: storage0 member {member['ifname']} retains an IPv4 address"
+            )
+    return failures
+
+
 def route_cases(node):
     _, host, lan = NODES[node]
     for peer, (_, peer_host, _) in NODES.items():
@@ -68,6 +88,22 @@ def route_cases(node):
             if direct
             else str(ipaddress.ip_network(NODES[peer][0]).network_address)
         )
+        if direct:
+            storage_peer = STORAGE[peer]
+            yield f"host source to {storage_peer}", [storage_peer], "storage0", None
+            yield (
+                f"host to {storage_peer}",
+                [storage_peer, "from", host],
+                "storage0",
+                None,
+            )
+            for source in pod_addresses(node):
+                yield (
+                    f"{source} to {storage_peer}",
+                    [storage_peer, "from", source, "iif", "cni0"],
+                    "storage0",
+                    None,
+                )
         for target in pod_addresses(peer):
             yield f"host source to {target}", [target], device, gateway
             yield f"host to {target}", [target, "from", host], device, gateway
@@ -89,14 +125,15 @@ def route_cases(node):
 
 
 def route_matches(node, route, device, gateway, result):
+    expected_source = (
+        STORAGE[node]
+        if route[0] in STORAGE.values()
+        else str(ipaddress.ip_network(NODES[node][0]).network_address)
+    )
     return (
         result.get("dev") == device
         and result.get("gateway") == gateway
-        and (
-            len(route) != 1
-            or result.get("prefsrc")
-            == str(ipaddress.ip_network(NODES[node][0]).network_address)
-        )
+        and (len(route) != 1 or result.get("prefsrc") == expected_source)
     )
 
 
@@ -123,6 +160,23 @@ def main():
             if len(matches) != 1:
                 raise ValueError(f"expected one running Flannel pod on {node}")
             pod = matches[0]["metadata"]["name"]
+            if node in STORAGE:
+                prefix = [
+                    "exec",
+                    pod,
+                    "-c",
+                    "kube-flannel",
+                    "--",
+                    "ip",
+                    "-j",
+                    "address",
+                    "show",
+                ]
+                # Listing all links succeeds even when the required bond is absent.
+                # A missing bond is a failed topology check, not unavailable evidence.
+                failures.extend(validate_storage_links(node, query(prefix)))
+                if failures:
+                    break
             for label, route, device, gateway in route_cases(node):
                 result = query(
                     [

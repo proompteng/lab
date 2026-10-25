@@ -38,27 +38,29 @@ export const makeReplayTimeline = <SourceError, DatabaseError>(
 
 type SessionRuntime<E> = { readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, E>; readonly nextDelayMs: number }
 
-/** Execute every scheduled production command, including the terminal boundary. No entry/close hours are removed. */
+/** Reporting cuts preserve the next production poll; only the final interval forces a terminal pass. */
 export const driveReplaySession = <E>(
   runtime: SessionRuntime<E>,
   advanceTo: (atMs: number) => Effect.Effect<void, ReplayBrokerFailure>,
   firstPollAtMs: number,
   lastPollAtMs: number,
+  finalWindow: boolean,
 ) =>
   Effect.gen(function* () {
     if (
       !Number.isSafeInteger(firstPollAtMs) ||
       !Number.isSafeInteger(lastPollAtMs) ||
-      firstPollAtMs > lastPollAtMs ||
       firstPollAtMs < (yield* Clock.currentTimeMillis)
     )
       return yield* new ReplayBrokerFailure({ message: 'Invalid replay session interval' })
-    let scheduledAtMs = firstPollAtMs
+    const initialTimeMs = yield* Clock.currentTimeMillis
+    let scheduledAtMs =
+      finalWindow && initialTimeMs < lastPollAtMs ? Math.min(firstPollAtMs, lastPollAtMs) : firstPollAtMs
     let passCount = 0
     let failedPassCount = 0
     let unavailableDecisionPassCount = 0
     const readinessCounts: Partial<Record<DecisionReadinessReason, number>> = {}
-    while (true) {
+    while (scheduledAtMs <= lastPollAtMs) {
       yield* advanceTo(scheduledAtMs)
       const pass = yield* runtime.advance
       passCount++
@@ -67,6 +69,7 @@ export const driveReplaySession = <E>(
         const { reason } = pass.observation.readiness
         readinessCounts[reason] = (readinessCounts[reason] ?? 0) + 1
         switch (reason) {
+          case DecisionReadinessReason.AccountProtection:
           case DecisionReadinessReason.LookbackWarmup:
           case DecisionReadinessReason.NoEligibleCandidate:
           case DecisionReadinessReason.SignalWindowObserved:
@@ -84,13 +87,15 @@ export const driveReplaySession = <E>(
       const completedAtMs = yield* Clock.currentTimeMillis
       if (completedAtMs < scheduledAtMs)
         return yield* new ReplayBrokerFailure({ message: 'Execution command moved replay time backwards' })
-      if (completedAtMs >= lastPollAtMs) break
       const delay = pass.nextDelayMs ?? runtime.nextDelayMs
       if (!Number.isSafeInteger(delay) || delay <= 0)
         return yield* new ReplayBrokerFailure({ message: 'Execution command returned an invalid polling delay' })
-      scheduledAtMs = Math.min(completedAtMs + delay, lastPollAtMs)
+      scheduledAtMs = completedAtMs + delay
+      if (finalWindow && completedAtMs < lastPollAtMs) scheduledAtMs = Math.min(scheduledAtMs, lastPollAtMs)
     }
+    yield* advanceTo(Math.max(yield* Clock.currentTimeMillis, lastPollAtMs))
     return {
+      nextPollAtMs: scheduledAtMs,
       firstPollAtMs,
       lastPollAtMs,
       completedAtMs: yield* Clock.currentTimeMillis,

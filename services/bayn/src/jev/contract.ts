@@ -15,6 +15,7 @@ export enum JevFailure {
   Status = 'STATUS',
   Response = 'RESPONSE',
   Timeout = 'TIMEOUT',
+  NotDispatched = 'NOT_DISPATCHED',
 }
 
 export const jevModel = 'jev-1.13.0' as const
@@ -205,7 +206,11 @@ export const decodeJevResponse = (request: JevRequest, input: unknown): Result.R
           continue
         }
         const selected = answer.probabilities[answer.choice]
-        if (selected === undefined || probabilities.some((value) => value > selected)) {
+        const maximum = Math.max(...probabilities)
+        // Decimal probabilities can straddle the same floating-point tie (0.46 vs 0.45999999999999996).
+        // This is a relative machine-precision bound, not the much wider reportingHalfStep allowance.
+        // Retain the provider's choice and numbers unchanged; never promote a meaningfully lower choice.
+        if (selected === undefined || maximum - selected > Number.EPSILON * maximum) {
           return Result.fail(
             new JevContractError({ message: 'Jev selected choice is not a maximum probability', question: name }),
           )

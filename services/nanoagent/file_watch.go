@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,6 +47,7 @@ type expectedFileRename struct {
 	destination           string
 	rawDestination        string
 	fenceDirectory        string
+	fenceLost             bool
 	destinationObserved   bool
 	rawObserved           bool
 	rawEchoPossible       bool
@@ -66,6 +68,7 @@ type completedFileRename struct {
 	destination         string
 	rawDestination      string
 	fenceDirectory      string
+	fenceLost           bool
 	rawEchoPossible     bool
 	rawObserved         bool
 	destinationObserved bool
@@ -154,6 +157,7 @@ func (files *fileWatcher) handleWatcherError(err error) {
 		delete(files.completedRenames, generation)
 	}
 	for source, expected := range files.expectedRenames {
+		expected.fenceLost = true
 		expected.deferredEvents = nil
 		expected.suppressedSource = false
 		expected.suppressedDestination = false
@@ -164,7 +168,7 @@ func (files *fileWatcher) handleWatcherError(err error) {
 
 func (files *fileWatcher) publishResetLocked() {
 	files.sequence++
-	reset := fileEvent{Sequence: files.sequence, Kind: "reset", Path: "/"}
+	reset := fileEvent{Sequence: files.sequence, Kind: "reset", Path: workspacePath}
 	files.buffer = []fileEvent{reset}
 	for id, subscription := range files.subscriptions {
 		delivery := reset
@@ -360,11 +364,11 @@ func (files *fileWatcher) suppressRawEvent(event fileEvent, absolutePath string)
 func (files *fileWatcher) deferExpectedEventLocked(expected *expectedFileRename, deferred deferredFileEvent) {
 	if len(expected.deferredEvents) == 1 &&
 		expected.deferredEvents[0].event.Kind == "reset" &&
-		expected.deferredEvents[0].event.Path == "/" {
+		expected.deferredEvents[0].event.Path == workspacePath {
 		return
 	}
 	if len(expected.deferredEvents) >= fileRenameDeferredEventLimit {
-		expected.deferredEvents = []deferredFileEvent{{event: fileEvent{Kind: "reset", Path: "/"}}}
+		expected.deferredEvents = []deferredFileEvent{{event: fileEvent{Kind: "reset", Path: workspacePath}}}
 		return
 	}
 	expected.deferredEvents = append(expected.deferredEvents, deferred)
@@ -486,6 +490,7 @@ func (files *fileWatcher) publishPairedRename(source string, generation uint64, 
 			destination:         expected.destination,
 			rawDestination:      expected.rawDestination,
 			fenceDirectory:      expected.fenceDirectory,
+			fenceLost:           expected.fenceLost,
 			rawEchoPossible:     expected.rawEchoPossible || files.rawRenameMayArriveLocked(expected.rawSource),
 			rawObserved:         expected.rawObserved,
 			destinationObserved: expected.destinationObserved,
@@ -496,7 +501,7 @@ func (files *fileWatcher) publishPairedRename(source string, generation uint64, 
 		files.invalidateDirectoryLocked(expected.rawSource)
 		for _, deferred := range expected.deferredEvents {
 			if deferred.event.Kind == "reset" {
-				if deferred.event.Path == "/" {
+				if deferred.event.Path == workspacePath {
 					files.publishResetLocked()
 				} else {
 					files.publishScopedResetLocked(deferred.event.Path)
@@ -527,6 +532,10 @@ func (files *fileWatcher) rememberCompletedRenameLocked(completed completedFileR
 	}
 	files.completedRenames[completed.generation] = completed
 	if files.finishCompletedRenameLocked(completed.generation, completed) {
+		return
+	}
+	if completed.fenceDirectory != "" && !completed.fenceLost {
+		// The watched destination supplies an ordered fence even when delivery is delayed.
 		return
 	}
 	time.AfterFunc(files.renameFenceTimeout(), func() {
@@ -583,7 +592,7 @@ func (files *fileWatcher) expireCompletedRename(generation uint64) {
 	files.mu.Lock()
 	defer files.mu.Unlock()
 	completed, found := files.completedRenames[generation]
-	if !found {
+	if !found || (completed.fenceDirectory != "" && !completed.fenceLost) {
 		return
 	}
 	delete(files.completedRenames, generation)
@@ -707,6 +716,23 @@ func (files *fileWatcher) releaseWatchLocked(directory string) {
 	}
 	delete(files.watched, directory)
 	_ = files.watcher.Remove(directory)
+	// A removed source watch cannot produce the echo expected by a rename.
+	// Keep the destination fence until its ordered event arrives, but do not
+	// retain that watch forever waiting for a source event that cannot arrive.
+	for source, expected := range files.expectedRenames {
+		if !files.rawRenameMayArriveLocked(expected.rawSource) {
+			expected.rawEchoPossible = false
+			files.expectedRenames[source] = expected
+		}
+	}
+	for generation, completed := range files.completedRenames {
+		rawSource := filepath.Join(files.workspace.realRoot, strings.TrimPrefix(completed.rawSource, workspacePath))
+		if !files.rawRenameMayArriveLocked(rawSource) {
+			completed.rawEchoPossible = false
+			files.completedRenames[generation] = completed
+			files.finishCompletedRenameLocked(generation, completed)
+		}
+	}
 }
 
 func (files *fileWatcher) invalidateDirectory(directory string) {
@@ -730,7 +756,7 @@ func (files *fileWatcher) invalidateDirectoryLocked(directory string) {
 
 func fileEventMatchesPrefix(event fileEvent, prefix string) bool {
 	if event.Kind == "reset" {
-		return event.Path == "/" || pathWithin(prefix, event.Path) || pathWithin(event.Path, prefix)
+		return event.Path == workspacePath || pathWithin(prefix, event.Path) || pathWithin(event.Path, prefix)
 	}
 	if pathMatchesWatchPrefix(prefix, event.Path) || pathMatchesWatchPrefix(prefix, event.routingPath) {
 		return true
@@ -741,7 +767,7 @@ func fileEventMatchesPrefix(event fileEvent, prefix string) bool {
 }
 
 func pathMatchesWatchPrefix(prefix string, path string) bool {
-	return path != "" && (prefix == "/" || pathWithin(prefix, path))
+	return path != "" && pathWithin(prefix, path)
 }
 
 func parseBoundedInt(value string, minimum, maximum int) (int, error) {

@@ -1,0 +1,67 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: glitchtip
+
+resources:
+  - app-secret.yaml
+  - email-externalsecret.yaml
+  - tailscale-ingress.yaml
+
+helmCharts:
+  - name: glitchtip
+    repo: https://gitlab.com/api/v4/projects/16325141/packages/helm/stable
+    version: 9.0.1
+    releaseName: glitchtip
+    namespace: glitchtip
+    valuesFile: glitchtip-values.yaml
+
+patches:
+  - target:
+      kind: Cluster
+      name: glitchtip-pg
+    patch: |-
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: glitchtip-pg
+        annotations:
+          argocd.argoproj.io/sync-wave: "-2"
+          argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  - target:
+      kind: Job
+      name: glitchtip-migrate
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1hook
+        value: Sync
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "0"
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1hook-delete-policy
+        value: BeforeHookCreation,HookSucceeded
+  - target:
+      kind: Deployment
+      name: glitchtip-web
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: glitchtip-web
+        annotations:
+          argocd.argoproj.io/sync-wave: "1"
+  - target:
+      kind: Pod
+      name: glitchtip-test-connection
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: glitchtip-test-connection

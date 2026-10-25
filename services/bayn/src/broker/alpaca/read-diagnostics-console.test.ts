@@ -72,7 +72,7 @@ test.each(['default', 'json'])(
       expect(fees).toHaveLength(diagnosticLimits.identities)
       for (const fee of fees) {
         expect(fee).toMatchObject({
-          endpoint: '/v2/account/activities/FEE',
+          endpoint: '/v2/account/activities',
           fields: {
             status: { state: 'reported', value: 'executed' },
             entry_sub_type: { state: 'reported', value: 'TAF' },

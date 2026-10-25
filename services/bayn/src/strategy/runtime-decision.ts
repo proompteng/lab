@@ -35,8 +35,8 @@ export type RuntimeStrategyDecision = typeof RuntimeStrategyDecisionSchema.Type
 
 export const runtimeDecisionMatchesStrategy = (decision: RuntimeStrategyDecision, strategyName: string): boolean => {
   switch (decision.schemaVersion) {
-    case 'bayn.jev-entry-target.v1':
-    case 'bayn.jev-exit-target.v1':
+    case 'bayn.jev-entry-target.v6':
+    case 'bayn.jev-exit-target.v5':
       return strategyName === 'jev'
     case 'bayn.intraday-momentum.target.v3':
       return strategyName === 'intraday-momentum'
@@ -49,8 +49,6 @@ export const isFlatExecutionTarget = (
   decision: RuntimeStrategyDecision | undefined,
 ): decision is Extract<
   RuntimeStrategyDecision,
-  { readonly schemaVersion: 'bayn.execution-flat-target.v1' | 'bayn.jev-exit-target.v1' }
+  { readonly schemaVersion: 'bayn.execution-flat-target.v1' | 'bayn.jev-exit-target.v5' }
 > =>
-  decision?.schemaVersion === 'bayn.execution-flat-target.v1' || decision?.schemaVersion === 'bayn.jev-exit-target.v1'
-
-export const runtimeDecisionSessionDate = (decision: RuntimeStrategyDecision): string => decision.sessionDate
+  decision?.schemaVersion === 'bayn.execution-flat-target.v1' || decision?.schemaVersion === 'bayn.jev-exit-target.v5'

@@ -1,6 +1,6 @@
 # 64. Jangar Recovery Epochs and Backlog Seats Contract (2026-03-21)
 
-Status: Approved for implementation (`discover`)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: `2026-03-21`
 Owner: Victor Chen (Jangar Engineering)
 Mission: `codex/swarm-jangar-control-plane-discover`
@@ -16,8 +16,6 @@ Companion doc:
 Extends:
 
 - `63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
-- `62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
-- `61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`
 
 ## Executive summary
 

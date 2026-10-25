@@ -5,8 +5,8 @@ trap 'echo "devbox boot failed at line $LINENO" >&2' ERR
 state=/persist
 export HOME=/root
 mountpoint -q "$state" || { echo 'Persistent block filesystem is not mounted' >&2; exit 1; }
-install -d -m 0700 "$state/nix" "$state/ssh" "$state/machine" "$state/metadata" "$state/docker" "$state/containerd"
-rsync -a --ignore-existing /nix/ "$state/nix/"
+install -d -m 0700 "$state/ssh" "$state/machine" "$state/metadata" "$state/docker" "$state/containerd"
+devbox-seed-nix /nix "$state/nix" /opt/devbox/nix-registration "$(cat /opt/devbox/toolchain-path)"
 install -d -m 0755 "$state/home"
 devbox-seed-home /home/codex "$state/home/codex"
 
@@ -14,7 +14,6 @@ bind() {
   install -d "$2"
   mount --bind "$1" "$2"
 }
-bind "$state/nix" /nix
 bind "$state/home" /home
 bind "$state/docker" /var/lib/docker
 bind "$state/containerd" /var/lib/containerd
@@ -36,8 +35,5 @@ for type in ed25519 rsa; do
   install -m 0644 "$key.pub" "/etc/ssh/ssh_host_${type}_key.pub"
 done
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
-NIX_REMOTE=local /opt/devbox/toolchain/bin/nix-store --load-db < /opt/devbox/nix-registration
-install -d /nix/var/nix/gcroots
-ln -sfn "$(cat /opt/devbox/toolchain-path)" /nix/var/nix/gcroots/devbox-toolchain
 export container=kata
 exec /sbin/init

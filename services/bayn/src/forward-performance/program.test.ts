@@ -9,7 +9,10 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
 import { DateTime, Effect, Redacted, Result } from 'effect'
 
-import { prepareAccounting } from '../accounting/domain'
+import { brokerFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
+import { prepareFeeMatchCorrection, type StoredBrokerFee } from '../accounting/broker-fees'
+import { prepareCashSettlement } from '../accounting/cash-settlement'
+import { hashLedgerPlanResult } from '../ledger-plan'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import type { ForwardPerformanceConfig } from './config'
 import type { HistoricalSignalSnapshotConfig } from '../config/historical-signal'
@@ -17,18 +20,19 @@ import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import type { WriterFenceService } from '../execution/writer-fence'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
-import { canonicalHashV1, sha256 } from '../hash'
-import { readForwardPerformancePostgres } from './postgres'
+import { sha256, canonicalHashV1Result } from '../hash'
+import { readForwardPerformancePostgres } from './postgres/read'
 import {
   bindForwardPerformanceTerminalReferencePrices,
   makeForwardPerformanceMarketVolumeEvidence,
   readForwardPerformanceMarketVolume,
   readForwardPerformanceMarketVolumeWithClient,
-  runForwardPerformance,
   runForwardPerformanceReport,
   type ForwardPerformanceReaders,
 } from './program'
+import { ForwardPerformanceScopeKind } from './report'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
+import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 
 const identityResult = makeBrokerIdentity({
   schemaVersion: 'bayn.broker-identity.v2',
@@ -102,8 +106,9 @@ interface SqlObservation {
 }
 
 interface SqlFixture {
+  readonly cashReportingQuantumMicros?: '1' | '10000' | null
   readonly extraReconciliationDiscrepancy?: boolean
-  readonly preWindowCashResidualMicros?: string
+  readonly cryptoCashMatch?: string
   readonly brokerFeeTimes?: {
     readonly firstObservedAt: string
     readonly postedAt: string | null
@@ -114,7 +119,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
   const query = ((strings: TemplateStringsArray) => {
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
-    if (statement.includes('SELECT fee.data, fee.read_evidence')) {
+    if (statement.includes('FROM broker_fee_accounting_evidence AS fee WHERE fee.account_id')) {
       const times = fixture.brokerFeeTimes
       return Effect.succeed(
         times === undefined
@@ -126,7 +131,11 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                   activityId: 'synthetic-delayed-fee',
                   date: '2026-07-20',
                   netAmountMicros: '-100',
+                  ...(fixture.cryptoCashMatch === undefined ? {} : { cryptoCashFee: true }),
                 },
+                cash_match_corrections: [],
+                matched_cash_micros: fixture.cryptoCashMatch ?? '0',
+                coin_cost_basis_micros: null,
                 read_evidence: {
                   requestId: 'synthetic-fee-read',
                   status: 200,
@@ -139,9 +148,10 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                 tigerbeetle_ledger: 7001,
                 posted: times.postedAt !== null,
                 first_observed_at: new Date(times.firstObservedAt),
+                last_correction_posted_at: null,
                 posted_at: times.postedAt === null ? null : new Date(times.postedAt),
                 includes_generation: true,
-                includes_other_generation: false,
+                includes_other_generation: fixture.cryptoCashMatch !== undefined,
               },
             ],
       )
@@ -182,7 +192,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
         },
       ])
     }
-    if (statement.includes('AS cash_yield_micros')) {
+    if (statement.includes('AS pre_window_accounted_cash_delta_micros')) {
       return Effect.succeed([
         {
           reconciliation_id: hash('a'),
@@ -193,14 +203,16 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
           baseline_cash_micros: '1000',
           opening_account_event_id: hash('c'),
           opening_observed_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-20T13:00:00.000Z')),
+          opening_cash_reporting_quantum_micros:
+            fixture.cashReportingQuantumMicros === undefined ? '1' : fixture.cashReportingQuantumMicros,
           opening_cash_micros: '1000',
           pre_window_accounted_cash_delta_micros: '0',
-          pre_window_cash_residual_micros: fixture.preWindowCashResidualMicros ?? '0',
           closing_account_event_id: hash('d'),
           closing_observed_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-20T21:00:00.000Z')),
+          closing_cash_reporting_quantum_micros:
+            fixture.cashReportingQuantumMicros === undefined ? '1' : fixture.cashReportingQuantumMicros,
           closing_cash_micros: '1200',
           accounted_cash_delta_micros: '0',
-          cash_yield_micros: '200',
         },
       ])
     }
@@ -296,22 +308,24 @@ const marketBarMaterial = [
     publication_asof: '2026-07-20',
   },
 ] as const
-const marketBarsContentHash = canonicalHashV1(marketBarMaterial)
-const marketSessionsContentHash = canonicalHashV1(marketSessionMaterial)
-const marketSnapshotId = canonicalHashV1({
-  schemaVersion: 'signal.adjusted-daily-snapshot.v2',
-  provider: 'alpaca',
-  feed: 'sip',
-  adjustment: 'all',
-  calendarVersion: 'fixture-calendar-v1',
-  requestedStart: '2026-07-19',
-  publicationAsOf: '2026-07-20',
-  symbols: marketSymbols,
-  barsContentHash: marketBarsContentHash,
-  sessionsContentHash: marketSessionsContentHash,
-  universeId: 'cross-asset-taa-v1',
-  universeSymbolHash: marketUniverseSymbolHash,
-})
+const marketBarsContentHash = Result.getOrThrow(canonicalHashV1Result(marketBarMaterial))
+const marketSessionsContentHash = Result.getOrThrow(canonicalHashV1Result(marketSessionMaterial))
+const marketSnapshotId = Result.getOrThrow(
+  canonicalHashV1Result({
+    schemaVersion: 'signal.adjusted-daily-snapshot.v2',
+    provider: 'alpaca',
+    feed: 'sip',
+    adjustment: 'all',
+    calendarVersion: 'fixture-calendar-v1',
+    requestedStart: '2026-07-19',
+    publicationAsOf: '2026-07-20',
+    symbols: marketSymbols,
+    barsContentHash: marketBarsContentHash,
+    sessionsContentHash: marketSessionsContentHash,
+    universeId: 'cross-asset-taa-v1',
+    universeSymbolHash: marketUniverseSymbolHash,
+  }),
+)
 const marketVolumeRequest: ForwardPerformanceMarketVolumeRequest = {
   ...marketVolumeRequestBase,
 }
@@ -344,7 +358,7 @@ const marketSnapshotRows = {
   manifests: [
     {
       ...marketManifestMaterial,
-      manifest_content_hash: canonicalHashV1(marketManifestMaterial),
+      manifest_content_hash: Result.getOrThrow(canonicalHashV1Result(marketManifestMaterial)),
     },
   ],
 }
@@ -353,21 +367,23 @@ const makeMarketSnapshotRevision = (close: string, volume: string, finalizedAt: 
   const bars = marketBarMaterial.map((bar) =>
     bar.session_date === '2026-07-20' ? { ...bar, adjusted_close: close, adjusted_volume: volume } : bar,
   )
-  const barsContentHash = canonicalHashV1(bars)
-  const snapshotId = canonicalHashV1({
-    schemaVersion: 'signal.adjusted-daily-snapshot.v2',
-    provider: 'alpaca',
-    feed: 'sip',
-    adjustment: 'all',
-    calendarVersion: 'fixture-calendar-v1',
-    requestedStart: '2026-07-19',
-    publicationAsOf: '2026-07-20',
-    symbols: marketSymbols,
-    barsContentHash,
-    sessionsContentHash: marketSessionsContentHash,
-    universeId: 'cross-asset-taa-v1',
-    universeSymbolHash: marketUniverseSymbolHash,
-  })
+  const barsContentHash = Result.getOrThrow(canonicalHashV1Result(bars))
+  const snapshotId = Result.getOrThrow(
+    canonicalHashV1Result({
+      schemaVersion: 'signal.adjusted-daily-snapshot.v2',
+      provider: 'alpaca',
+      feed: 'sip',
+      adjustment: 'all',
+      calendarVersion: 'fixture-calendar-v1',
+      requestedStart: '2026-07-19',
+      publicationAsOf: '2026-07-20',
+      symbols: marketSymbols,
+      barsContentHash,
+      sessionsContentHash: marketSessionsContentHash,
+      universeId: 'cross-asset-taa-v1',
+      universeSymbolHash: marketUniverseSymbolHash,
+    }),
+  )
   const manifestMaterial = {
     ...marketManifestMaterial,
     snapshot_id: snapshotId,
@@ -382,7 +398,7 @@ const makeMarketSnapshotRevision = (close: string, volume: string, finalizedAt: 
       manifests: [
         {
           ...manifestMaterial,
-          manifest_content_hash: canonicalHashV1(manifestMaterial),
+          manifest_content_hash: Result.getOrThrow(canonicalHashV1Result(manifestMaterial)),
         },
       ],
     },
@@ -407,6 +423,28 @@ const marketReaderConfig = {
 
 describe('forward performance read program', () => {
   test.each([
+    ['100', 0],
+    ['99', 1],
+  ] as const)(
+    'attributes only incremental crypto cash expense across generations (matched=%s)',
+    async (matched, ambiguous) => {
+      const sql = makeReadOnlySql(
+        { statements: [] },
+        {
+          cryptoCashMatch: matched,
+          brokerFeeTimes: { firstObservedAt: '2026-07-20T21:00:00.000Z', postedAt: '2026-07-20T21:00:00.000Z' },
+        },
+      )
+      const data = await Effect.runPromise(
+        readForwardPerformancePostgres(sql, identityResult.success.accountId, hash('9')),
+      )
+      expect(data.brokerFeeRecords).toHaveLength(1)
+      expect(data.ambiguousBrokerFeeCount).toBe(ambiguous)
+      expect(data.generationBrokerFeeIds).toEqual([])
+    },
+  )
+
+  test.each([
     ['at-cut', '2026-07-20T21:01:00.000Z', '2026-07-20T21:01:00.000Z', 0],
     ['observed-after-cut', '2026-07-20T21:01:00.001Z', '2026-07-20T21:01:00.001Z', 1],
     ['posted-after-cut', '2026-07-20T21:00:00.000Z', '2026-07-20T21:01:00.001Z', 1],
@@ -425,6 +463,13 @@ describe('forward performance read program', () => {
     expect(evidence.brokerFeeRecords?.[0]).not.toHaveProperty('posted_at')
   })
 
+  test('historical snapshots without reporting precision cannot become cash-yield evidence', async () => {
+    const sql = makeReadOnlySql({ statements: [] }, { cashReportingQuantumMicros: null })
+    const evidence = await Effect.runPromise(readForwardPerformancePostgres(sql, identityResult.success.accountId))
+    expect(evidence.cashReportingPrecisionKnown).toBe(false)
+    expect(evidence.cashYieldEvidence).toBeUndefined()
+  })
+
   test('constructs exact immutable Signal volume evidence without rounding fractional microshares', () => {
     const first = success(
       makeForwardPerformanceMarketVolumeEvidence(marketVolumeRequest, marketSnapshotRows, marketEvaluationStart),
@@ -439,10 +484,10 @@ describe('forward performance read program', () => {
       cycleId: marketVolumeRequest.cycleId,
       symbol: 'NVDA',
       executionSessionDate: '2026-07-20',
-      quantityMicros: '123456789',
+      quantityAtoms: '123456789000',
       closePriceMicros: '103000000',
       snapshotId: marketSnapshotId,
-      manifestContentHash: canonicalHashV1(marketManifestMaterial),
+      manifestContentHash: Result.getOrThrow(canonicalHashV1Result(marketManifestMaterial)),
       barsContentHash: marketBarsContentHash,
       finalizedAt: '2026-07-20T21:05:00.000Z',
       requestedStart: '2026-07-19',
@@ -536,7 +581,7 @@ describe('forward performance read program', () => {
       decisionSnapshotAsOfSession: '2026-07-19',
       snapshotId: marketSnapshotId,
       closePriceMicros: '103000000',
-      quantityMicros: '123456789',
+      quantityAtoms: '123456789000',
     })
     expect(
       evidence[0]?.schemaVersion === 'bayn.forward-performance-market-volume-evidence.v1' && evidence[0].snapshotId,
@@ -585,7 +630,7 @@ describe('forward performance read program', () => {
       accountId: identityResult.success.accountId,
       symbol: 'NVDA',
       side: 'BUY' as const,
-      plannedQuantityMicros: '1000000',
+      plannedQuantityAtoms: '1000000000',
       referencePriceMicros: '100000000',
       terminalOrder: {
         eventId: hash('9'),
@@ -595,8 +640,8 @@ describe('forward performance read program', () => {
         accountId: identityResult.success.accountId,
         symbol: 'NVDA',
         side: 'BUY' as const,
-        quantityMicros: '1000000',
-        filledQuantityMicros: '400000',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '400000000',
         status: 'CANCELED' as const,
         occurredAt: '2026-07-20T20:00:00.000Z',
         observedAt: '2026-07-20T21:06:00.000Z',
@@ -634,7 +679,7 @@ describe('forward performance read program', () => {
       accountId: identityResult.success.accountId,
       symbol: 'NVDA',
       side: 'BUY' as const,
-      plannedQuantityMicros: '1000000',
+      plannedQuantityAtoms: '1000000000',
       referencePriceMicros: '100000000',
       intent: {
         intentId,
@@ -644,7 +689,7 @@ describe('forward performance read program', () => {
         decisionHash: hash('7'),
         symbol: 'NVDA',
         side: 'BUY' as const,
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         terminalOutcome: 'BLOCKED' as const,
         createdAt: '2026-07-20T13:00:00.000Z',
         updatedAt: '2026-07-20T13:05:00.000Z',
@@ -667,123 +712,328 @@ describe('forward performance read program', () => {
     })
   })
 
-  test('executes only read-only PostgreSQL statements and never treats zero activity as profitable', async () => {
-    const observation: SqlObservation = { statements: [] }
-    const sql = makeReadOnlySql(observation)
-    let observedCashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined
-    let expenseWriterFence: WriterFenceService | undefined
-    const writerFence: WriterFenceService = { check: Effect.void, transaction: (effect) => effect }
-    const readers: ForwardPerformanceReaders = {
-      inferenceExpenses: (_config, _sql, _accountId, _generation, fence) => {
-        expenseWriterFence = fence
-        return Effect.succeed([])
+  test.each([undefined, hash('9')])(
+    'binds empty report scope %s across read-only and fenced evaluation',
+    async (authorityGenerationHash) => {
+      const observation: SqlObservation = { statements: [] }
+      const sql = makeReadOnlySql(observation)
+      let observedCashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined
+      let expenseWriterFence: WriterFenceService | undefined
+      let postgresGeneration: string | undefined
+      let expenseGeneration: string | undefined
+      const writerFence: WriterFenceService = { check: Effect.void, transaction: (effect) => effect }
+      const readers: ForwardPerformanceReaders = {
+        inferenceExpenses: (_config, _sql, _accountId, generation, fence) => {
+          expenseWriterFence = fence
+          expenseGeneration = generation
+          return Effect.succeed([])
+        },
+        postgres: (client, accountId, generation, fence) => {
+          postgresGeneration = generation
+          return readForwardPerformancePostgres(client, accountId, generation, fence)
+        },
+        marketVolume: () => Effect.succeed([]),
+        ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
+          observedCashYieldEvidence = cashYieldEvidence
+          return Effect.succeed({
+            totals: {
+              realizedGainMicros: '0',
+              cashSettlementRoundingMicros: '0',
+              realizedLossMicros: '0',
+              brokerExecutionFeesMicros: '0',
+              otherChargedCostsMicros: '0',
+              cashYieldMicros: '0',
+            },
+            ledgerExact: true,
+            missingLedgerAccountCount: 0,
+            openPositionCount: 0,
+            cashYieldEvidenceRequired: true,
+          })
+        },
+      }
+
+      const { historicalSignal: _historicalSignal, ...nativeConfig } = config
+      const options = authorityGenerationHash === undefined ? {} : { authorityGenerationHash }
+      const report = await Effect.runPromise(
+        Effect.scoped(
+          runForwardPerformanceReport(nativeConfig, readers, options).pipe(
+            Effect.provideService(PgClient.PgClient, sql),
+          ),
+        ),
+      )
+      const { receipt } = report
+      expect(expenseWriterFence).toBeUndefined()
+      const fencedReport = await Effect.runPromise(
+        Effect.scoped(
+          runForwardPerformanceReport(nativeConfig, readers, { ...options, writerFence }).pipe(
+            Effect.provideService(PgClient.PgClient, sql),
+          ),
+        ),
+      )
+      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v5')
+      expect(postgresGeneration).toBe(authorityGenerationHash)
+      expect(expenseGeneration).toBe(authorityGenerationHash)
+      expect(report.scope).toEqual(
+        authorityGenerationHash === undefined
+          ? { kind: ForwardPerformanceScopeKind.Account }
+          : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash },
+      )
+      expect(expenseWriterFence).toBe(writerFence)
+      expect(fencedReport).toEqual(report)
+      expect(report.positionEpisodes.status).toBe('UNDETERMINED')
+      expect(report.receipt).not.toHaveProperty('positionEpisodes')
+
+      expect(observation.statements.length).toBeGreaterThan(8)
+      expect(observation.statements[0]).toBe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+      expect(
+        observation.statements.filter((statement) =>
+          /\b(?:INSERT|UPDATE|DELETE|TRUNCATE|ALTER|CREATE|DROP|LOCK)\b/i.test(statement),
+        ),
+      ).toEqual([])
+      expect(
+        observation.statements.some((statement) =>
+          statement.includes('JOIN autonomous_cycle_shadow_decisions AS decision'),
+        ),
+      ).toBe(true)
+      expect(
+        observation.statements.some((statement) =>
+          statement.includes(
+            "decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1', 'bayn.observe-shadow-decision.v2', 'bayn.paper-cycle-decision.v2')",
+          ),
+        ),
+      ).toBe(true)
+      const cashYieldStatement = observation.statements.find((statement) =>
+        statement.includes('AS pre_window_accounted_cash_delta_micros'),
+      )
+      expect(cashYieldStatement).toContain(
+        'baseline_snapshot AS ( SELECT opening_snapshot.event_id, opening_snapshot.observed_at, opening_snapshot.cash_micros FROM opening_snapshot',
+      )
+      expect(
+        observation.statements.some(
+          (statement) =>
+            statement.includes('JOIN autonomous_cycle_paper_closures AS closure') &&
+            statement.includes('JOIN autonomous_cycle_paper_close_replans AS replan'),
+        ),
+      ).toBe(true)
+      expect(observation.statements.some((statement) => statement.includes('FROM intents AS intent'))).toBe(true)
+      expect(observation.statements.some((statement) => statement.includes('FROM orders AS observed_order'))).toBe(true)
+      expect(observation.statements.some((statement) => statement.includes('FROM fills AS fill'))).toBe(true)
+      expect(receipt.evidence.status).toBe('INSUFFICIENT_EVIDENCE')
+      expect(receipt.evidence.reasonCodes).toContain('ZERO_COMPLETED_EXECUTIONS')
+      expect(receipt.evidence.reasonCodes).toContain('NON_EXACT_RECONCILIATION')
+      expect(receipt.evidence.reasonCodes).toContain('CASH_YIELD_EVIDENCE_GAP')
+      expect(receipt.profitability).toBe('UNDETERMINED')
+      expect(receipt.executionQuality).toMatchObject({
+        status: 'NOT_ELIGIBLE',
+        reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
+      })
+      expect(receipt.observedCapacity).toMatchObject({
+        status: 'NOT_ELIGIBLE',
+        reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
+      })
+      expect(receipt.window).toMatchObject({
+        reconciliationStatus: 'DISCREPANCY',
+        cashYieldAdjustedExact: false,
+      })
+      expect(observedCashYieldEvidence).toEqual({
+        schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
+        reconciliationId: hash('a'),
+        reconciliationContentHash: hash('b'),
+        reconciledAt: '2026-07-20T21:01:00.000Z',
+        baselineAccountEventId: hash('1'),
+        baselineObservedAt: '2026-07-19T13:00:00.000Z',
+        baselineCashMicros: '1000',
+        baselineCashReportingOffsetMicros: '0',
+        openingAccountEventId: hash('c'),
+        openingObservedAt: '2026-07-20T13:00:00.000Z',
+        openingCashMicros: '1000',
+        openingCashReportingOffsetMicros: '0',
+        openingCashReportingQuantumMicros: '1',
+        preWindowAccountedCashDeltaMicros: '0',
+        preWindowCashResidualMicros: '0',
+        closingAccountEventId: hash('d'),
+        closingObservedAt: '2026-07-20T21:00:00.000Z',
+        closingCashMicros: '1200',
+        closingCashReportingOffsetMicros: '0',
+        closingCashReportingQuantumMicros: '1',
+        accountedCashDeltaMicros: '0',
+        cashYieldMicros: '200',
+      })
+    },
+  )
+
+  test.each([
+    { includeCashCorrection: false, exactCashSource: true },
+    { includeCashCorrection: true, exactCashSource: true },
+    { includeCashCorrection: false, exactCashSource: false },
+  ])('cumulative fee and cash settlement evidence: %j', async ({ includeCashCorrection, exactCashSource }) => {
+    const sql = makeReadOnlySql({ statements: [] })
+    const accountId = identityResult.success.accountId
+    const { fills, accrual, accounting } = coinRoundTrip(0, accountId)
+    const cashSource = fills[0]
+    if (cashSource === undefined) throw new Error('missing synthetic source fill')
+    const settlement = success(
+      prepareCashSettlement(
+        {
+          schemaVersion: 'bayn.broker-cash-settlement.v1',
+          accountId,
+          transactionId: cashSource.transactionId,
+          transactionContentHash: exactCashSource ? cashSource.contentHash : hash('9'),
+          brokerEventId: cashSource.brokerEventId,
+          cashDeltaMicros: cashSource.cashDeltaMicros,
+          occurredAt: cashSource.occurredAt,
+          observedAt: '2026-09-18T16:00:00.000Z',
+          precisionAccountEventId: hash('8'),
+          cashReportingQuantumMicros: '10000',
+        },
+        config.tigerBeetle.ledger,
+      ),
+    )
+    const cashSettlementRecords = [
+      {
+        settlement_id: settlement.settlementId,
+        data: settlement.data,
+        rounding_delta_micros: settlement.roundingDeltaMicros,
+        content_hash: settlement.contentHash,
+        ledger_plan_hash: success(hashLedgerPlanResult(settlement.plan)),
+        tigerbeetle_cluster_id: config.tigerBeetle.clusterId.toString(),
+        tigerbeetle_ledger: config.tigerBeetle.ledger,
+        posted: true,
       },
-      postgres: readForwardPerformancePostgres,
+    ]
+    const fee = coinActivity('82625', accountId)
+    const feeRecords: StoredBrokerFee[] = [fee]
+    const generationBrokerFeeIds: string[] = []
+    if (includeCashCorrection) {
+      const data = {
+        accountId,
+        activityId: 'cash-overrelease',
+        date: fee.data.date,
+        cryptoCashFee: true as const,
+        netAmountMicros: '-200000',
+      }
+      const contentHash = Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...data }))
+      const originalPlan = brokerFeeLedgerPlan(accountId, data.activityId, '10000', 7001)
+      const correction = success(
+        prepareFeeMatchCorrection(
+          {
+            schemaVersion: 'bayn.fee-match-correction.v2',
+            accountId,
+            activityId: data.activityId,
+            accrualId: hash('e'),
+            feeContentHash: contentHash,
+            activityCashMicros: '200000',
+            accrualCashMicros: '210000',
+            readEvidence: fee.read_evidence,
+          },
+          7001,
+        ),
+      )
+      feeRecords.push({
+        ...fee,
+        data,
+        content_hash: contentHash,
+        matched_cash_micros: '210000',
+        coin_cost_basis_micros: null,
+        ledger_plan_hash: success(hashLedgerPlanResult(originalPlan)),
+        cash_match_corrections: [
+          {
+            correction_id: correction.correctionId,
+            data: correction.data,
+            content_hash: correction.contentHash,
+            ledger_plan_hash: success(hashLedgerPlanResult(correction.plan)),
+            tigerbeetle_cluster_id: '2001',
+            tigerbeetle_ledger: 7001,
+            posted: true,
+          },
+        ],
+      })
+      generationBrokerFeeIds.push(data.activityId)
+    }
+    const receipts = accounting.map((prepared) => ({
+      ...success(planAccountingReceipt(prepared, '2001', 7001)),
+      recordedAt: '2026-09-18T16:00:00.000Z',
+    }))
+    const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: () => Effect.succeed([]),
       marketVolume: () => Effect.succeed([]),
-      ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
-        observedCashYieldEvidence = cashYieldEvidence
+      postgres: () =>
+        Effect.succeed({
+          cycles: [],
+          durableExecutionBindings: [],
+          reconciliation: {
+            reconciliationId: hash('1'),
+            contentHash: hash('2'),
+            status: 'EXACT',
+            performanceExact: true,
+            cashYieldAdjustedExact: false,
+            reconciledAt: '2026-09-18T21:00:00.000Z',
+          },
+          startingCapitalMicros: '100000000',
+          cashReportingPrecisionKnown: true,
+          transactions: fills.slice(1),
+          ledgerTransactions: fills,
+          receipts: receipts.slice(1),
+          ledgerReceipts: receipts,
+          transactionEvidence: fills.slice(1).map((transaction) => ({ ...transaction, cycleId: hash('f') })),
+          brokerFeeAccrualRecords: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+          cashSettlementRecords,
+          unaccountedCashSettlementCount: 0,
+          brokerFeeRecords: feeRecords,
+          generationBrokerFeeIds,
+          executionEvidence: [],
+          marketVolumeRequests: [],
+          unclosedCycleCount: 0,
+          unresolvedMutationCount: 0,
+          openPositionCount: 0,
+          accountReconciliation: { reconciledAt: '2026-09-18T21:00:00.000Z', performanceExact: true },
+          unaccountedFillCount: 0,
+          postReconciliationActivityCount: 0,
+        }),
+      ledger: (_config, _accountId, plans, _yield, generationPlans) => {
+        expect(plans).toContainEqual(settlement.plan)
+        expect(generationPlans).not.toContainEqual(settlement.plan)
         return Effect.succeed({
           totals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
+            otherChargedCostsMicros: null,
             cashYieldMicros: '0',
           },
           ledgerExact: true,
           missingLedgerAccountCount: 0,
           openPositionCount: 0,
-          cashYieldEvidenceRequired: true,
+          cashYieldEvidenceRequired: false,
         })
       },
     }
-
-    const { historicalSignal: _historicalSignal, ...nativeConfig } = config
-    const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(nativeConfig, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
-    )
+    if (!exactCashSource) {
+      const failed = await Effect.runPromise(
+        Effect.scoped(
+          runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql), Effect.flip),
+        ),
+      )
+      expect(failed).toMatchObject({
+        operation: 'ledger-read',
+        message: 'Cash settlement does not match its retained source transaction',
+      })
+      return
+    }
     const report = await Effect.runPromise(
-      Effect.scoped(
-        runForwardPerformanceReport(nativeConfig, readers, { writerFence }).pipe(
-          Effect.provideService(PgClient.PgClient, sql),
-        ),
-      ),
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v2')
-    expect(expenseWriterFence).toBe(writerFence)
-    expect(report.receipt).toEqual(receipt)
-    expect(report.positionEpisodes.status).toBe('UNDETERMINED')
-    expect(report.receipt).not.toHaveProperty('positionEpisodes')
-
-    expect(observation.statements.length).toBeGreaterThan(8)
-    expect(observation.statements[0]).toBe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
-    expect(
-      observation.statements.filter((statement) =>
-        /\b(?:INSERT|UPDATE|DELETE|TRUNCATE|ALTER|CREATE|DROP|LOCK)\b/i.test(statement),
-      ),
-    ).toEqual([])
-    expect(
-      observation.statements.some((statement) =>
-        statement.includes('JOIN autonomous_cycle_shadow_decisions AS decision'),
-      ),
-    ).toBe(true)
-    expect(
-      observation.statements.some((statement) =>
-        statement.includes(
-          "decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1')",
-        ),
-      ),
-    ).toBe(true)
-    const cashYieldStatement = observation.statements.find((statement) => statement.includes('AS cash_yield_micros'))
-    expect(cashYieldStatement).toContain(
-      'baseline_snapshot AS ( SELECT opening_snapshot.event_id, opening_snapshot.observed_at, opening_snapshot.cash_micros FROM opening_snapshot',
-    )
-    expect(
-      observation.statements.some(
-        (statement) =>
-          statement.includes('JOIN autonomous_cycle_paper_closures AS closure') &&
-          statement.includes('JOIN autonomous_cycle_paper_close_replans AS replan'),
-      ),
-    ).toBe(true)
-    expect(observation.statements.some((statement) => statement.includes('FROM intents AS intent'))).toBe(true)
-    expect(observation.statements.some((statement) => statement.includes('FROM orders AS observed_order'))).toBe(true)
-    expect(observation.statements.some((statement) => statement.includes('FROM fills AS fill'))).toBe(true)
-    expect(receipt.evidence.status).toBe('INSUFFICIENT_EVIDENCE')
-    expect(receipt.evidence.reasonCodes).toContain('ZERO_COMPLETED_EXECUTIONS')
-    expect(receipt.evidence.reasonCodes).toContain('NON_EXACT_RECONCILIATION')
-    expect(receipt.evidence.reasonCodes).toContain('CASH_YIELD_EVIDENCE_GAP')
-    expect(receipt.profitability).toBe('UNDETERMINED')
-    expect(receipt.executionQuality).toMatchObject({
-      status: 'NOT_ELIGIBLE',
-      reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
+    expect(report.positionEpisodes).toMatchObject({
+      schemaVersion: 'bayn.position-episode-evidence.v4',
+      status: 'MEASURED',
+      completedCount: 0,
+      crossScopeCount: 1,
+      openCount: 0,
     })
-    expect(receipt.observedCapacity).toMatchObject({
-      status: 'NOT_ELIGIBLE',
-      reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
-    })
-    expect(receipt.window).toMatchObject({
-      reconciliationStatus: 'DISCREPANCY',
-      cashYieldAdjustedExact: false,
-    })
-    expect(observedCashYieldEvidence).toEqual({
-      schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
-      reconciliationId: hash('a'),
-      reconciliationContentHash: hash('b'),
-      reconciledAt: '2026-07-20T21:01:00.000Z',
-      baselineAccountEventId: hash('1'),
-      baselineObservedAt: '2026-07-19T13:00:00.000Z',
-      baselineCashMicros: '1000',
-      openingAccountEventId: hash('c'),
-      openingObservedAt: '2026-07-20T13:00:00.000Z',
-      openingCashMicros: '1000',
-      preWindowAccountedCashDeltaMicros: '0',
-      preWindowCashResidualMicros: '0',
-      closingAccountEventId: hash('d'),
-      closingObservedAt: '2026-07-20T21:00:00.000Z',
-      closingCashMicros: '1200',
-      accountedCashDeltaMicros: '0',
-      cashYieldMicros: '200',
-    })
+    expect(report.receipt.totals.brokerExecutionFeesMicros).toBe('0')
+    expect(report.receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
   })
 
   test('keeps performance and expense reads on one cut when new work commits between them', async () => {
@@ -830,6 +1080,7 @@ describe('forward performance read program', () => {
         Effect.succeed({
           totals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: null,
@@ -870,7 +1121,9 @@ describe('forward performance read program', () => {
     expect(
       observation.statements.some(
         (statement) =>
-          statement.includes("scoped_decision.schema_version = 'bayn.paper-cycle-decision.v1'") &&
+          statement.includes(
+            "scoped_decision.schema_version IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')",
+          ) &&
           statement.includes("scoped_decision.document #>> '{bindings,authorityGenerationHash}'") &&
           statement.includes('scoped_intent.authority_generation_hash = scope_generation.generation_hash'),
       ),
@@ -951,6 +1204,7 @@ describe('forward performance read program', () => {
         Effect.succeed({
           totals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -964,8 +1218,8 @@ describe('forward performance read program', () => {
         }),
     }
 
-    const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    const { receipt } = await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
 
     expect(receipt.evidence.reasonCodes).toContain('NON_EXACT_RECONCILIATION')
@@ -985,20 +1239,25 @@ describe('forward performance read program', () => {
     const executionPolicyHash = hash('4')
     const strategyExecutionModelHash = hash('5')
     const fill: Fill = {
-      schemaVersion: 'bayn.paper-fill.v1',
+      schemaVersion: 'bayn.fill.v2',
       accountId: identityResult.success.accountId,
       fillId: 'cash-yield-crossover-fill',
       brokerOrderId: 'cash-yield-crossover-order',
       clientOrderId: 'cash-yield-crossover-client-order',
       symbol: 'NVDA',
       side: OrderSide.Sell,
-      quantityMicros: '1000000',
-      priceMicros: '900',
+      quantityAtoms: '1000000000',
+      priceAtoms: '900000',
       feeMicros: '0',
       occurredAt: '2026-07-20T20:00:00.000Z',
     }
     const prepared = success(
-      prepareAccounting(hash('6'), fill, { quantityMicros: '1000000', costMicros: '1000' }, config.tigerBeetle.ledger),
+      prepareAccounting(
+        hash('6'),
+        fill,
+        { quantityAtoms: '1000000000', costMicros: '1000' },
+        config.tigerBeetle.ledger,
+      ),
     )
     const receiptPlan = success(
       planAccountingReceipt(prepared, config.tigerBeetle.clusterId.toString(), config.tigerBeetle.ledger),
@@ -1013,6 +1272,10 @@ describe('forward performance read program', () => {
       inferenceExpenses: () => Effect.succeed([]),
       postgres: () =>
         Effect.succeed({
+          cashReportingPrecisionKnown: true,
+          brokerFeeAccrualRecords: [],
+          cashSettlementRecords: [],
+          unaccountedCashSettlementCount: 0,
           cycles: [
             {
               cycleId,
@@ -1048,21 +1311,26 @@ describe('forward performance read program', () => {
           },
           startingCapitalMicros: '1000',
           cashYieldEvidence: {
-            schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+            schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
             reconciliationId: hash('7'),
             reconciliationContentHash: hash('8'),
             reconciledAt: '2026-07-20T21:01:00.000Z',
             baselineAccountEventId: hash('b'),
             baselineObservedAt: '2026-07-19T13:00:00.000Z',
             baselineCashMicros: '1000',
+            baselineCashReportingOffsetMicros: '0',
             openingAccountEventId: hash('9'),
             openingObservedAt: '2026-07-20T13:00:00.000Z',
             openingCashMicros: '1000',
+            openingCashReportingOffsetMicros: '0',
+            openingCashReportingQuantumMicros: '1',
             preWindowAccountedCashDeltaMicros: '0',
             preWindowCashResidualMicros: '0',
             closingAccountEventId: hash('a'),
             closingObservedAt: '2026-07-20T21:00:00.000Z',
             closingCashMicros: '2100',
+            closingCashReportingOffsetMicros: '0',
+            closingCashReportingQuantumMicros: '1',
             accountedCashDeltaMicros: prepared.transaction.cashDeltaMicros,
             cashYieldMicros: '200',
           },
@@ -1112,27 +1380,33 @@ describe('forward performance read program', () => {
       },
       ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
         expect(cashYieldEvidence).toEqual({
-          schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+          schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
           reconciliationId: hash('7'),
           reconciliationContentHash: hash('8'),
           reconciledAt: '2026-07-20T21:01:00.000Z',
           baselineAccountEventId: hash('b'),
           baselineObservedAt: '2026-07-19T13:00:00.000Z',
           baselineCashMicros: '1000',
+          baselineCashReportingOffsetMicros: '0',
           openingAccountEventId: hash('9'),
           openingObservedAt: '2026-07-20T13:00:00.000Z',
           openingCashMicros: '1000',
+          openingCashReportingOffsetMicros: '0',
+          openingCashReportingQuantumMicros: '1',
           preWindowAccountedCashDeltaMicros: '0',
           preWindowCashResidualMicros: '0',
           closingAccountEventId: hash('a'),
           closingObservedAt: '2026-07-20T21:00:00.000Z',
           closingCashMicros: '2100',
+          closingCashReportingOffsetMicros: '0',
+          closingCashReportingQuantumMicros: '1',
           accountedCashDeltaMicros: prepared.transaction.cashDeltaMicros,
           cashYieldMicros: '200',
         })
         return Effect.succeed({
           totals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '100',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1147,11 +1421,11 @@ describe('forward performance read program', () => {
       },
     }
 
-    const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    const { receipt } = await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
 
-    expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v3')
+    expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(observedMarketVolumeRequests).toEqual([marketVolumeRequest])
     expect(receipt.evidence).toEqual({
       status: 'SUFFICIENT',
@@ -1173,9 +1447,9 @@ describe('forward performance read program', () => {
         decimal: '0.100000000000',
       },
     })
-    const withLaterFeeEvidence = await Effect.runPromise(
+    const { receipt: withLaterFeeEvidence } = await Effect.runPromise(
       Effect.scoped(
-        runForwardPerformance(config, {
+        runForwardPerformanceReport(config, {
           ...readers,
           postgres: (...args) =>
             readers
@@ -1197,25 +1471,26 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
     const { request, archive, bars } = makeFixture()
     let volumeReads = 0
     let watermarkReads = 0
-    const statement = (strings: TemplateStringsArray) => {
-      const text = strings.join('?')
-      if (text.trim() === '' || text.includes('LIMIT 0')) return Effect.succeed([])
-      if (text.includes('GROUP BY source_topic, source_partition')) {
-        watermarkReads += 1
-        return Effect.succeed(
-          archive.archiveWatermarks.map((item) => ({
-            source_topic: item.sourceTopic,
-            source_partition: String(item.sourcePartition),
-            inclusive_last_offset: item.inclusiveLastOffset,
-          })),
-        )
-      }
-      if (text.includes('FROM signal.intraday_bars_1m_v2')) {
-        volumeReads += 1
-        return Effect.succeed(bars)
-      }
-      return Effect.die(new Error('Unexpected market-data query'))
-    }
+    const statement = (strings: TemplateStringsArray): Effect.Effect<readonly Record<string, unknown>[]> =>
+      Effect.suspend<readonly Record<string, unknown>[], never, never>(() => {
+        const text = strings.join('?')
+        if (text.trim() === '' || text.includes('LIMIT 0')) return Effect.succeed([])
+        if (text.includes('GROUP BY source_topic, source_partition')) {
+          watermarkReads += 1
+          return Effect.succeed(
+            archive.archiveWatermarks.map((item) => ({
+              source_topic: item.sourceTopic,
+              source_partition: String(item.sourcePartition),
+              inclusive_last_offset: item.inclusiveLastOffset,
+            })),
+          )
+        }
+        if (text.includes('toString(volume) AS volume')) {
+          volumeReads += 1
+          return Effect.succeed(bars)
+        }
+        return Effect.die(new Error('Unexpected market-data query'))
+      })
     const client = Object.assign(statement, {
       param: (_type: string, value: unknown) => ({ value }),
     }) as unknown as ClickhouseClient.ClickhouseClient
@@ -1231,7 +1506,7 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
     expect(evidence[0]).toMatchObject({
       decisionSnapshotId: request.decisionSnapshotId,
       sourceFeed: 'iex',
-      quantityMicros: '39000000000',
+      quantityAtoms: '39000000000000',
       archiveRequest: archive,
     })
   },

@@ -1,6 +1,6 @@
 # 206. Jangar Material Evidence Settlement Spine And Repair Dispatch Budget (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-14
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar material readiness, AgentRun failure debt, Torghut revenue-repair evidence custody, database witness
@@ -13,12 +13,9 @@ Companion Torghut contract:
 Extends:
 
 - `205-jangar-controller-ingestion-settlement-and-verification-carry-cutover-2026-05-14.md`
-- `204-jangar-source-bound-verification-carry-exchange-and-repair-slot-reconciliation-2026-05-14.md`
-- `203-jangar-foreclosure-carry-rollout-witness-and-stage-debt-repair-2026-05-14.md`
 - `201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`
 - `188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
 - `187-jangar-stage-credit-ledger-and-runner-slot-futures-2026-05-13.md`
-- `163-jangar-scoped-evidence-debt-and-retained-failure-quarantine-2026-05-07.md`
 
 ## Decision
 

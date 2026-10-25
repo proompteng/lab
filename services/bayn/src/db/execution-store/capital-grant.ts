@@ -24,7 +24,7 @@ import {
   type ExactReconciliationFacts,
 } from '../../execution/capital-grant-algebra'
 import type { WriterFenceService } from '../../execution/writer-fence'
-import { Pipeable } from '../../pipeable'
+
 import {
   authorityStateFromRow,
   researchCapitalGrantGenerationFromRow,
@@ -52,7 +52,7 @@ interface ResearchCapitalGrantRuntimeBinding {
   readonly sourceGenerationHash: string
 }
 
-const makeCapitalGrantInterpreterDataFirst = (
+export const makeCapitalGrantInterpreter = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   config: ExecutionStoreRuntimeConfig,
@@ -330,5 +330,3 @@ const makeCapitalGrantInterpreterDataFirst = (
 
   return { activateResearchCapitalGrant }
 }
-
-export const makeCapitalGrantInterpreter = Pipeable.dual(4, makeCapitalGrantInterpreterDataFirst)

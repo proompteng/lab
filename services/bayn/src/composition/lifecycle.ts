@@ -1,18 +1,14 @@
 import { Result, Schema } from 'effect'
 
-import type { ApplicationPlanFor } from '../app'
-import type { BrokerReadShape } from '../broker/alpaca'
-import { BrokerMutationError } from '../broker/alpaca-mutations'
+import type { ApplicationPlan } from '../app'
+import type { BrokerReadShape } from '../broker/alpaca/model'
+import { BrokerMutationError } from '../broker/alpaca-mutations/model'
 import { Authority, type AuthorityState } from '../execution/contracts'
 import { operationalError } from '../errors'
-import { makeObserveAutonomousCycleStartup } from '../observe-composition'
-import type { IntradayMarketDataService } from '../market-data'
+import { makeObserveAutonomousCycleStartup } from '../observe-composition/startup'
+import type { IntradayMarketDataService } from '../market-data/intraday/model'
 
-export const runtimeBroker = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  read: BrokerReadShape,
-  mutationEnabled: boolean,
-) => ({
+export const runtimeBroker = (plan: ApplicationPlan, read: BrokerReadShape, mutationEnabled: boolean) => ({
   read,
   expectedAccountId: plan.config.alpaca.expectedAccountId,
   executionEligible: mutationEnabled,
@@ -25,7 +21,7 @@ export const observeCycleGenerationHash = (authority: AuthorityState): Result.Re
     : Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority')
 
 export const observeCycle = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
   authorityGenerationHash: string,
   intradayMarketData: IntradayMarketDataService,
 ) => {

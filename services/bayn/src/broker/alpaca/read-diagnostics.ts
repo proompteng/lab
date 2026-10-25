@@ -21,7 +21,7 @@ interface FeeMetadata {
 export type ReadDiagnostic =
   | { readonly endpoint: '/v2/account'; readonly fields: Fields }
   | {
-      readonly endpoint: '/v2/account/activities/FEE'
+      readonly endpoint: '/v2/account/activities'
       readonly fees: readonly FeeMetadata[]
       readonly omitted: number
     }
@@ -135,7 +135,7 @@ export const projectReadDiagnostic = (operation: string, raw: unknown): ReadDiag
           },
         })
       }
-      return { endpoint: '/v2/account/activities/FEE', fees, omitted }
+      return { endpoint: '/v2/account/activities', fees, omitted }
     },
     catch: () => undefined,
   })
@@ -169,7 +169,7 @@ export interface DiagnosticEvent {
   readonly identityHash: string
   readonly account?: { readonly endpoint: '/v2/account'; readonly fields: Fields; readonly evidence: Evidence }
   readonly fees: readonly (FeeMetadata & {
-    readonly endpoint: '/v2/account/activities/FEE'
+    readonly endpoint: '/v2/account/activities'
     readonly evidence: Evidence
   })[]
   readonly omittedRecords: number
@@ -270,7 +270,7 @@ export const makeReadDiagnostics = (
                   : {}),
                 fees: selected.map(({ metadata, evidence }) => ({
                   ...metadata,
-                  endpoint: '/v2/account/activities/FEE',
+                  endpoint: '/v2/account/activities',
                   evidence,
                 })),
                 omittedRecords: omitted,

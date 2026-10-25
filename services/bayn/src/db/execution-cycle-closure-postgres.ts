@@ -1,9 +1,9 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Option, Schema } from 'effect'
 
+import { executionCloseRecoveryExpiry } from '../market-hours'
 import { WriterFence } from '../execution/writer-fence'
 import { canonicalHashV1Result } from '../hash'
-import { JevExitReason } from '../jev/exit'
 import { currentUtcInstant } from '../time'
 import { verifyJevPortfolioSources } from './jev-position-postgres'
 import {
@@ -123,8 +123,8 @@ const makeStore = Effect.gen(function* () {
   const verifyExit = (closure: ExecutionCycleClosure, original?: ExecutionCycleClosure) =>
     Effect.gen(function* () {
       const target = closure.document.strategyDecision
-      if (target?.schemaVersion !== 'bayn.jev-exit-target.v1') {
-        if (original?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v1')
+      if (target?.schemaVersion !== 'bayn.jev-exit-target.v5') {
+        if (original?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5')
           return yield* storeError('bind-replan', 'invariant', 'A Jev close replan cannot discard its exit evidence')
         return
       }
@@ -145,10 +145,24 @@ const makeStore = Effect.gen(function* () {
         const prior = closure.document.replanGenerationHash
         const latest = yield* readLatestReplanByCycleId(sql, closure.cycleId)
         const predecessor = Option.getOrElse(latest, () => original)
+        const [recovery] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ allowed: Schema.Boolean })]),
+        )(
+          yield* sql`SELECT EXISTS(SELECT 1 FROM autonomous_cycles WHERE cycle_id=${closure.cycleId} AND execution_close_at<=${closure.createdAt}::timestamptz) AS allowed`,
+        )
+        const recoveryDeadline =
+          closure.document.executionSession === undefined
+            ? null
+            : executionCloseRecoveryExpiry(closure.document.executionSession.calendar, closure.createdAt)
+        const boundedRecoveryLease =
+          recovery.allowed &&
+          closure.expiresAt > closure.createdAt &&
+          recoveryDeadline !== null &&
+          closure.expiresAt <= recoveryDeadline
         if (
           first !== next ||
           closure.entryDecisionHash !== original.entryDecisionHash ||
-          closure.expiresAt !== original.expiresAt ||
+          (closure.expiresAt !== original.expiresAt && !boundedRecoveryLease) ||
           prior !== predecessor.contentHash ||
           closure.createdAt <= predecessor.createdAt
         )
@@ -167,21 +181,6 @@ const makeStore = Effect.gen(function* () {
       )
         return yield* storeError('bind', 'invariant', 'The initial Jev exit evidence expired before durable commitment')
       yield* verifyJevPortfolioSources(sql, closure.cycleId, target.evidence.portfolio)
-      const trigger = target.evidence.trigger
-      if (trigger.reason === JevExitReason.Model) {
-        const e = trigger.decision.evidence
-        yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
-          yield* sql`
-        SELECT EXISTS (
-          SELECT 1 FROM jev_batch_plans AS plan JOIN jev_batch_results AS result USING (batch_id)
-          JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash
-          WHERE plan.cycle_id = ${closure.cycleId} AND plan.batch_id = ${e.batchPlan.batchId}
-            AND plan.payload = ${sql.json(e.batchPlan)} AND result.payload = ${sql.json(e.batchResult)}
-            AND observation.payload = ${sql.json(e.observation)}
-        ) AS matches
-      `,
-        )
-      }
     })
   const store: ExecutionCycleClosureStoreShape = {
     read: (cycleId) => readByCycleId(sql, cycleId),
@@ -190,14 +189,16 @@ const makeStore = Effect.gen(function* () {
       sql<{ readonly contains: boolean }>`
         SELECT EXISTS (
           SELECT 1
-          FROM autonomous_cycle_paper_closures AS closure,
+          FROM intents AS target
+          JOIN autonomous_cycle_paper_closures AS closure ON closure.cycle_id = target.cycle_id,
           LATERAL jsonb_array_elements_text(closure.document #> '{document,orderedIntentIds}') AS intent(value)
-          WHERE intent.value = ${intentId}
+          WHERE target.intent_id = ${intentId} AND intent.value = target.intent_id
         ) OR EXISTS (
           SELECT 1
-          FROM autonomous_cycle_paper_close_replans AS replan,
+          FROM intents AS target
+          JOIN autonomous_cycle_paper_close_replans AS replan ON replan.cycle_id = target.cycle_id,
           LATERAL jsonb_array_elements_text(replan.document #> '{document,orderedIntentIds}') AS intent(value)
-          WHERE intent.value = ${intentId}
+          WHERE target.intent_id = ${intentId} AND intent.value = target.intent_id
         ) AS contains
       `.pipe(
         Effect.flatMap((rows) => {
@@ -220,7 +221,7 @@ const makeStore = Effect.gen(function* () {
             if (Option.isSome(replay)) return replay.value
             const original = yield* readByCycleId(sql, closure.cycleId)
             if (
-              closure.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v1' &&
+              closure.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' &&
               Option.isNone(original)
             )
               return yield* storeError(

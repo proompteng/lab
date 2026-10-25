@@ -1,6 +1,7 @@
 import type { IntradayQuote } from '../market-data/intraday/model'
 
 export enum JevQuoteReferenceScope {
+  CryptoVenue = 'ALPACA_CRYPTO_US_VENUE',
   ExchangeOnly = 'IEX_EXCHANGE_ONLY_NOT_NBBO',
   Consolidated = 'SIP_CONSOLIDATED',
   DelayedConsolidated = 'DELAYED_SIP_NOT_CURRENT_NBBO',
@@ -8,6 +9,7 @@ export enum JevQuoteReferenceScope {
 
 const referenceScopes: Readonly<Record<IntradayQuote['feed'], JevQuoteReferenceScope>> = {
   iex: JevQuoteReferenceScope.ExchangeOnly,
+  us: JevQuoteReferenceScope.CryptoVenue,
   sip: JevQuoteReferenceScope.Consolidated,
   delayed_sip: JevQuoteReferenceScope.DelayedConsolidated,
 }

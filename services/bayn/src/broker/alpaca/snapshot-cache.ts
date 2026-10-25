@@ -56,7 +56,11 @@ export const captureBrokerObservation = (
     )
     const completedAt = yield* currentUtcInstant
     const candidate = { ...value, startedAt, completedAt, observedAt: startedAt }
-    const observedAt = DateTime.formatIso(DateTime.makeUnsafe(Math.min(...observationTimes(candidate).map(Date.parse))))
+    const observedAt = DateTime.formatIso(
+      DateTime.makeUnsafe(
+        Math.min(...[...observationTimes(candidate), candidate.snapshot.history.orders.observedAt].map(Date.parse)),
+      ),
+    )
     return { ...candidate, observedAt }
   }).pipe(
     Effect.mapError((cause) =>
@@ -75,7 +79,7 @@ export const makeProjectedBrokerRead = (
   fresh: BrokerReadShape,
 ): Effect.Effect<BrokerReadShape, never, BrokerObservations> =>
   Effect.map(BrokerObservations, (observations) => {
-    const cached = observations.read
+    const cached = observations.readState
     const invalidate = observations.invalidate.pipe(Effect.orDie)
     return {
       ...fresh,
@@ -83,7 +87,7 @@ export const makeProjectedBrokerRead = (
         healthSnapshot: cached,
         fresh,
         invalidate,
-        snapshot: cached.pipe(Effect.map((value) => value.snapshot)),
+        snapshot: observations.read.pipe(Effect.map((value) => value.snapshot)),
         submissionSnapshot: (intentId) =>
           observations.readForSubmit(intentId).pipe(
             Effect.map((value) => ({

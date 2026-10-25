@@ -150,7 +150,7 @@ alertmanager:
     enabled: false
   fallbackConfig: |
     # Real fallback config is rendered by External Secrets into the
-    # observability-alertmanager-email Secret and mounted over this file.
+    # observability-alertmanager-email-brevo Secret and mounted over this file.
     route:
       receiver: default-receiver
     receivers:
@@ -161,6 +161,17 @@ alertmanager:
     # Its bound PVC already uses the default rook-ceph-block StorageClass.
     storageClass: null
     size: 1Gi
+
+gateway:
+  nginx:
+    config:
+      serverSnippet: |
+        location = /alertmanager {
+          return 302 "https://grafana.ide-newton.ts.net/alerting/groups?alertmanager=Mimir%20Alertmanager#";
+        }
+        location = /alertmanager/ {
+          return 302 "https://grafana.ide-newton.ts.net/alerting/groups?alertmanager=Mimir%20Alertmanager#";
+        }
 
 kafka:
   enabled: false

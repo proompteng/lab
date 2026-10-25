@@ -1,7 +1,8 @@
+import { equityMarketProfile } from '../jev/markets'
 import { Result } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { IntradayCandidateEvidencePolicy, type IntradaySnapshotQuery } from '../market-data/intraday/model'
 import {
@@ -12,7 +13,7 @@ import {
 } from '../market-data/streaming/historical'
 import { kafkaCaptureDisposition } from '../market-data/streaming/kafka'
 import { emptyStreamingProjection, incorporateSimulatedMarketRecord } from '../market-data/streaming/projection'
-import { captureKafkaTransport } from '../research-capture/capture'
+import { captureKafkaTransport } from '../market-data/streaming/transport-evidence'
 
 export const sixBarOpenMs = Date.parse('2026-09-04T13:30:00.000Z')
 export const sixBarEndMs = sixBarOpenMs + 360_000
@@ -20,10 +21,10 @@ export const sixBarObservedMs = sixBarEndMs + 2_000
 const iso = (at: number) => new Date(at).toISOString()
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 export const sixBarUniverse = {
-  universeId: protocol.universeId,
-  universeSymbolHash: protocol.universeSymbolHash,
-  symbols: protocol.universe,
-  topics: { ...protocol.sourceTopics, features: protocol.streamingInput.featureTopic },
+  universeId: equityMarketProfile.universeId,
+  universeSymbolHash: equityMarketProfile.universeSymbolHash,
+  symbols: equityMarketProfile.universe,
+  topics: { ...equityMarketProfile.sourceTopics, features: equityMarketProfile.streamingInput.featureTopic },
 }
 
 export interface SixBarFixtureInput {
@@ -135,11 +136,11 @@ export const sixBarFixture = (
     })
     projection = next
   }
-  const eventsHash = canonicalHashV1(events)
+  const eventsHash = Result.getOrThrow(canonicalHashV1Result(events))
   const source = {
-    runId: canonicalHashV1({ fixture: 'six-bar-research', eventsHash }),
+    runId: Result.getOrThrow(canonicalHashV1Result({ fixture: 'six-bar-research', eventsHash })),
     sourceManifestHash: eventsHash,
-    featureTopic: sixBarUniverse.topics.features,
+    marketSources: [sixBarUniverse],
     deliveryModel: {
       schemaVersion: 'bayn.original-capture-arrivals.v1',
       description: 'Synthetic original-format receipts, not a captured market session.',
@@ -147,15 +148,18 @@ export const sixBarFixture = (
       captureId: 'SYNTHETIC-six-bar-contract',
       consumerEpoch: 'SYNTHETIC-epoch-1',
       exportManifestHash: eventsHash,
-      intervalReceiptHash: canonicalHashV1(events.map((event) => event.receipt)),
+      intervalReceiptHash: Result.getOrThrow(canonicalHashV1Result(events.map((event) => event.receipt))),
       finalConsumerSequence: events.length,
     },
   } satisfies NonNullable<HistoricalMarketCursor['source']>
   const calendar = Result.getOrThrow(
-    normalizeMarketCalendarResult([{ date: '2026-09-04', open: '09:30', close }], {
-      start: '2026-09-04',
-      end: '2026-09-04',
-    }),
+    normalizeMarketCalendarResult(
+      [{ date: '2026-09-04', open: '09:30', close, session_open: '0930', session_close: close.replace(':', '') }],
+      {
+        start: '2026-09-04',
+        end: '2026-09-04',
+      },
+    ),
   )
   const query: IntradaySnapshotQuery = {
     sessionDate: '2026-09-04',
@@ -163,15 +167,15 @@ export const sixBarFixture = (
     rangeStartAt: iso(sixBarOpenMs),
     rangeEndAt: iso(sixBarEndMs),
     observedAt: iso(sixBarObservedMs),
-    universeId: protocol.universeId,
-    universeSymbolHash: protocol.universeSymbolHash,
-    universe: protocol.universe,
+    universeId: equityMarketProfile.universeId,
+    universeSymbolHash: equityMarketProfile.universeSymbolHash,
+    universe: equityMarketProfile.universe,
     symbols: ['AAPL', 'SPY'],
     candidateSymbols: ['AAPL'],
     candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
-    feed: protocol.feed,
-    delayClass: protocol.delayClass,
-    sourceTopics: protocol.sourceTopics,
+    feed: equityMarketProfile.feed,
+    delayClass: equityMarketProfile.delayClass,
+    sourceTopics: equityMarketProfile.sourceTopics,
     maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
     minimumWatermarkLagMs: 2_000,
   }
@@ -180,7 +184,7 @@ export const sixBarFixture = (
 
 export const replaySixBarFixture = (fixture: ReturnType<typeof sixBarFixture>, observedAtMs = sixBarObservedMs) => {
   let cursor: HistoricalMarketCursor = Result.getOrThrow(
-    createHistoricalMarketCursor(fixture.source.runId, fixture.universe, undefined, fixture.source),
+    createHistoricalMarketCursor(fixture.source.runId, [fixture.universe], undefined, fixture.source),
   )
   for (const event of fixture.events) {
     if (event.availableAtMs > observedAtMs) break

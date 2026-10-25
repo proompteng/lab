@@ -1,8 +1,8 @@
 import { Clock, Effect, Fiber, pipe, Ref, Scope } from 'effect'
 
-import type { LoadedRuntimeConfig } from './config'
+import type { LoadedRuntimeConfig } from './config/model'
 import { operationalError, type OperationalError } from './errors'
-import type { BrokerProbe } from './health'
+import type { BrokerProbe } from './health/model'
 import {
   initialState,
   type AutonomousCyclePassObservation,
@@ -42,8 +42,6 @@ export type ApplicationIdentity<C extends LoadedRuntimeConfig = LoadedRuntimeCon
 }
 
 export type ApplicationPlan = ApplicationIdentity & { readonly _tag: 'AutonomousService' }
-
-export type ApplicationPlanFor<M extends 'AutonomousService'> = M extends 'AutonomousService' ? ApplicationPlan : never
 
 export const makeApplicationPlan = (identity: ApplicationIdentity): ApplicationPlan => ({
   ...identity,

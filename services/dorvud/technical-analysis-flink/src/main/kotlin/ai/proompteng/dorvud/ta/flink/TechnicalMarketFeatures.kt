@@ -7,12 +7,11 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.DateTimeException
 import java.time.Duration
-import java.time.LocalTime
 import java.time.ZoneId
 import kotlin.math.abs
 import kotlin.math.floor
 
-internal const val TECHNICAL_FEATURE_DEFINITION = "dorvud.technical-indicators-1m.v1"
+internal const val TECHNICAL_FEATURE_DEFINITION = "dorvud.technical-indicators-1m.v2"
 internal const val TECHNICAL_FEATURE_SCHEMA = "dorvud.technical-feature.v1"
 private val technicalZone = ZoneId.of("America/New_York")
 private val technicalInterval = Duration.ofMinutes(1)
@@ -89,7 +88,7 @@ internal fun technicalFeatureDefinitionHash(): String =
       listOf(
         TECHNICAL_FEATURE_DEFINITION,
         FEATURE_SESSION_POLICY,
-        "PT1M;session:09:30-16:00;canonical-session-recompute;no-synthetic-bars",
+        "PT1M;IEX-clock-segments:08:00-09:30,09:30-16:00,16:00-17:00;canonical-session-recompute;no-synthetic-bars",
         "EMA:12,26;alpha:2/(n+1);seed:first-close;ready:12,26",
         "MACD:EMA12-EMA26;signal:9;seed:zero;ready:34",
         "RSI:14;gain-loss-alpha:1/14;seed:zero;ready:15;flat:0",
@@ -193,10 +192,14 @@ internal fun advanceTechnicalFeature(
 ): TechnicalFeatureTransition {
   validateMarketFeatureBar(bar, computedAtMs)
   val local = bar.eventTime.atZone(technicalZone)
-  require(local.toLocalTime() >= LocalTime.of(9, 30) && local.toLocalTime() < LocalTime.of(16, 0)) { "outside technical session" }
   val session = local.toLocalDate().toString()
   if (session < previous.sessionDate) return TechnicalFeatureTransition(previous, null)
-  val current = if (session == previous.sessionDate) previous else TechnicalFeatureState(session)
+  val segment = equityFeatureSegmentStart(bar.eventTime)
+  val previousSegment = previous.bars.lastOrNull()?.let { equityFeatureSegmentStart(it.eventTime) }
+  if (session == previous.sessionDate && previousSegment != null && segment < previousSegment) {
+    return TechnicalFeatureTransition(previous, null)
+  }
+  val current = if (session == previous.sessionDate && segment == previousSegment) previous else TechnicalFeatureState(session)
   require(current.bars.all { rollingFeatureKey(it) == rollingFeatureKey(bar) && it.sourceTopic == bar.sourceTopic }) {
     "mixed technical feature identity"
   }
@@ -215,13 +218,7 @@ internal fun advanceTechnicalFeature(
     "technical computation precedes retained input availability"
   }
   require(bars.size <= 390) { "technical session exceeds bounded history" }
-  val open =
-    local
-      .toLocalDate()
-      .atTime(9, 30)
-      .atZone(technicalZone)
-      .toInstant()
-      .toEpochMilli()
+  val open = equityFeatureSegmentStart(bars.last().eventTime)
   val material =
     TechnicalMarketFeatureMaterial(
       provider = bar.provider,

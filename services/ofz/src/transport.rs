@@ -148,9 +148,78 @@ pub fn incoming(
         .filter_map(futures::future::ready)
 }
 
+pub fn server() -> tonic::transport::Server {
+    tonic::transport::Server::builder()
+        .load_shed(true)
+        .concurrency_limit_per_connection(32)
+        .timeout(Duration::from_secs(30))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[derive(Clone)]
+    struct SlowAdmission;
+
+    impl tonic::server::NamedService for SlowAdmission {
+        const NAME: &'static str = "proompteng.authz.v1.AuthorizationService";
+    }
+
+    impl tonic::codegen::Service<tonic::codegen::http::Request<tonic::body::Body>> for SlowAdmission {
+        type Response = tonic::codegen::http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+        >;
+
+        fn poll_ready(
+            &mut self,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _: tonic::codegen::http::Request<tonic::body::Body>) -> Self::Future {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_millis(6100)).await;
+                Ok(Status::permission_denied("policy changed during audit").into_http())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn audit_wait_reaches_the_policy_result_without_extending_a_short_caller_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let incoming = async_stream::stream! {
+            loop { yield listener.accept().await.map(|(stream, _)| stream); }
+        };
+        let task = tokio::spawn(
+            server()
+                .add_service(SlowAdmission)
+                .serve_with_incoming(incoming),
+        );
+        let mut client =
+            crate::proto::authorization_service_client::AuthorizationServiceClient::connect(
+                format!("http://{address}"),
+            )
+            .await
+            .unwrap();
+        let result = client
+            .get_policy_state(crate::proto::GetPolicyStateRequest::default())
+            .await;
+        assert_eq!(result.unwrap_err().code(), tonic::Code::PermissionDenied);
+        let mut request = Request::new(crate::proto::GetPolicyStateRequest::default());
+        request.set_timeout(Duration::from_secs(2));
+        let start = tokio::time::Instant::now();
+        let result = client.get_policy_state(request).await.unwrap_err();
+        assert!(matches!(
+            result.code(),
+            tonic::Code::Cancelled | tonic::Code::DeadlineExceeded
+        ));
+        assert!(start.elapsed() < Duration::from_millis(2500));
+        task.abort();
+    }
     #[test]
     fn headers_cannot_forge_attested_caller_and_old_contracts_are_rejected() {
         let mut request = Request::new(());

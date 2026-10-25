@@ -134,7 +134,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: landing-editor-acceptance
-          workspaces: services/tengri -> target
+          workspaces: |
+            services/tengri -> target
+            services/ofz -> target
 
       - name: Install editor acceptance prerequisites
         if: ${{ matrix.target == 'landing' }}
@@ -149,7 +151,7 @@ jobs:
         run: |
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
-          bunx playwright install --with-deps chromium
+          node .github/scripts/install-tengri-chromium.mjs
           bun run --cwd apps/landing test
           bun run --filter landing build
           bun run --cwd apps/landing test:e2e
@@ -252,23 +254,48 @@ jobs:
               ;;
             root-scripts)
               bun install --frozen-lockfile
-              bun run lint:flamingo-hard-migration
-              bun run scripts/hermes/validate-production.ts
-              bun test scripts/hermes/*.test.ts
-              bun run scripts/kube-router/validate-production.ts
-              bun test scripts/kube-router/*.test.ts
-              bunx oxlint --config .oxlintrc.json scripts/cluster-upgrades/*.test.ts
-              bunx oxfmt --check scripts/cluster-upgrades/*.test.ts
-              bun test scripts/cluster-upgrades/*.test.ts
-              python3 -m unittest discover -s scripts/cluster-upgrades -p 'ceph*_test.py'
-              python3 scripts/cluster-upgrades/temporal_cassandra_gate_test.py
-              python3 scripts/cluster-upgrades/temporal_cassandra_verifier_test.py
-              python3 scripts/cluster-upgrades/temporal_elasticsearch_snapshot_test.py
-              python3 scripts/cluster-upgrades/postgres_upgrade_gate_test.py
-              python3 -m unittest discover -s scripts/forgejo -p '*_test.py'
-              bunx oxlint --config .oxlintrc.json scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
-              bunx oxfmt --check scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
-              bun test scripts/seal-tengri-runtime.test.ts
+              jq -r '.[]' <<< "${CHANGED_FILES_JSON}" > "${RUNNER_TEMP}/root-script-files.txt"
+              plan=$(bun run packages/scripts/src/ci/impact-router.ts \
+                --files "${RUNNER_TEMP}/root-script-files.txt" --map .github/ci/root-script-map.yml)
+              suites=$(jq -r 'if (.validationTargets | index("all")) then
+                ["flamingo", "hermes", "kube-router", "cluster-upgrades", "forgejo", "tengri-secrets"]
+                else .validationTargets end | .[]' <<< "${plan}")
+              printf 'Root script suites: %s\n' "${suites}" | tee -a "${GITHUB_STEP_SUMMARY}"
+              while IFS= read -r suite; do
+                case "${suite}" in
+                  flamingo)
+                    bun run lint:flamingo-hard-migration
+                    ;;
+                  hermes)
+                    bun run scripts/hermes/validate-production.ts
+                    bun test scripts/hermes/*.test.ts
+                    ;;
+                  kube-router)
+                    bun run scripts/kube-router/validate-production.ts
+                    bun test scripts/kube-router/*.test.ts
+                    ;;
+                  cluster-upgrades)
+                    bunx oxlint --config .oxlintrc.json scripts/cluster-upgrades/*.test.ts
+                    bunx oxfmt --check scripts/cluster-upgrades/*.test.ts
+                    bun test scripts/cluster-upgrades/*.test.ts
+                    python3 -m unittest discover -s scripts/cluster-upgrades -p 'ceph*_test.py'
+                    python3 scripts/cluster-upgrades/temporal_cassandra_gate_test.py
+                    python3 scripts/cluster-upgrades/temporal_cassandra_verifier_test.py
+                    python3 scripts/cluster-upgrades/temporal_elasticsearch_snapshot_test.py
+                    python3 scripts/cluster-upgrades/postgres_upgrade_gate_test.py
+                    ;;
+                  forgejo)
+                    python3 -m unittest discover -s scripts/forgejo -p '*_test.py'
+                    ;;
+                  tengri-secrets)
+                    bunx oxlint --config .oxlintrc.json scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
+                    bunx oxfmt --check scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
+                    bun test scripts/seal-tengri-runtime.test.ts
+                    ;;
+                  planner) echo 'No root script suite owns these changes.' ;;
+                  *) echo "Unknown root script suite: ${suite}" >&2; exit 1 ;;
+                esac
+              done <<< "${suites}"
               ;;
             sag)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/sag
@@ -288,6 +315,9 @@ jobs:
               nix run .#lint-argo-workflows
               ;;
             kubeconform)
+              if jq -e 'any(.[]; startswith("argocd/prepared/") or startswith("argocd/applications/ofz/") or startswith("argocd/applications/keycloak/") or startswith("argocd/applications/cloudflare/") or startswith("argocd/applications/tengri/") or startswith("argocd/applications/proompteng/") or . == "services/ofz/test-ha-manifests.sh" or . == "services/ofz/tests/ha_manifests.py" or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c bash services/ofz/test-ha-manifests.sh
+              fi
               mapfile -t changed_manifests < <(jq -r '.[] | select(test("^(argocd|kubernetes)/.*\\.ya?ml$"))' <<< "${CHANGED_MANIFESTS_JSON}")
               if [ "${#changed_manifests[@]}" -gt 0 ]; then
                 nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
@@ -324,7 +354,6 @@ jobs:
               bun run --filter @proompteng/k8s test
               bun run --filter @proompteng/k8s imports:check
               git diff --exit-code -- packages/k8s/src/imports
-              bun run --filter @proompteng/k8s synth:check -- --all
               bun run --filter @proompteng/k8s synth:check -- --all
               git diff --exit-code -- ':(glob)argocd/applications/*/generated/**'
               mapfile -t applications < <(bun run packages/k8s/src/cli.ts list)

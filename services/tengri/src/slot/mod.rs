@@ -1,6 +1,10 @@
+mod admission;
+pub(crate) use admission::REPLAY_STARTUP_FENCE_MS;
 pub mod client;
 #[cfg(all(test, target_os = "linux"))]
 mod kvm_test;
+#[cfg(test)]
+mod probe_output;
 pub mod runner;
 pub mod supervisor;
 mod vmm;
@@ -9,22 +13,26 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, bail, ensure};
 use serde::{Deserialize, Serialize};
-use tokio::{fs, sync::watch};
+use tokio::{
+    fs,
+    sync::{Mutex, watch},
+    task::JoinHandle,
+};
 use vmm::Vmm;
 
-pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-direct-io.1";
+pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.8";
 pub const GUEST_API_PORT: u32 = 1024;
 pub const GUEST_CONTROL_PORT: u32 = 1025;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Claim {
+pub struct Allocation {
     pub microvm_id: String,
     pub microvm_uid: String,
     pub epoch: u64,
 }
 
-impl Claim {
+impl Allocation {
     pub fn validate(&self) -> anyhow::Result<()> {
         for value in [&self.microvm_id, &self.microvm_uid] {
             ensure!(
@@ -37,6 +45,34 @@ impl Claim {
             );
         }
         ensure!(self.epoch > 0, "slot epoch must be positive");
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Claim {
+    pub microvm_id: String,
+    pub microvm_uid: String,
+    pub epoch: u64,
+    pub runtime_epoch: String,
+}
+
+impl Claim {
+    pub fn allocation(&self) -> Allocation {
+        Allocation {
+            microvm_id: self.microvm_id.clone(),
+            microvm_uid: self.microvm_uid.clone(),
+            epoch: self.epoch,
+        }
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        self.allocation().validate()?;
+        ensure!(
+            crate::ofz::canonical_uuid(&self.runtime_epoch),
+            "invalid runtime epoch"
+        );
         Ok(())
     }
 }
@@ -112,7 +148,7 @@ impl SlotState {
             Self::Sleeping {
                 claim: owner,
                 snapshot,
-            } if owner == claim => Ok(snapshot),
+            } if owner.allocation() == claim.allocation() => Ok(snapshot),
             _ => bail!("slot has no committed snapshot for this owner and epoch"),
         }
     }
@@ -165,6 +201,7 @@ pub struct Slot {
     journal: Journal,
     vm: Option<Vmm>,
     pending_sleep: Option<SleepCommit>,
+    journal_write: Mutex<Option<JoinHandle<anyhow::Result<()>>>>,
     #[cfg(test)]
     evict_snapshot: fn(&std::path::Path) -> anyhow::Result<()>,
     state_tx: watch::Sender<SlotState>,
@@ -223,6 +260,7 @@ impl Slot {
             journal,
             vm: None,
             pending_sleep: None,
+            journal_write: Mutex::new(None),
             #[cfg(test)]
             evict_snapshot: vmm::evict_memory,
             state_tx,
@@ -259,10 +297,18 @@ impl Slot {
     async fn persist(&self) -> anyhow::Result<()> {
         let bytes = serde_json::to_vec(&self.journal)?;
         let path = self.config.directory.join("journal.json");
-        tokio::task::spawn_blocking(move || durable_replace(&path, &bytes)).await??;
-        Ok(())
+        let mut pending = self.journal_write.lock().await;
+        // A cancelled lifecycle cannot let its detached fsync overwrite the fencing journal.
+        if let Err(error) = finish_journal_write(&mut pending).await {
+            tracing::error!(error = %error, "interrupted journal write failed");
+        }
+        *pending = Some(tokio::task::spawn_blocking(move || {
+            durable_replace(&path, &bytes)
+        }));
+        finish_journal_write(&mut pending).await
     }
 
+    #[tracing::instrument(name = "journal.persist", skip_all)]
     async fn transition(&mut self, state: SlotState) -> anyhow::Result<()> {
         let completed = matches!(
             state,
@@ -310,7 +356,12 @@ impl Slot {
             )
             .await?;
         }
-        self.vm = Some(Vmm::boot(&self.config).await?);
+        self.vm = Some(Vmm::spawn(&self.config).await?);
+        self.vm
+            .as_mut()
+            .context("missing VMM during boot")?
+            .boot(&self.config)
+            .await?;
         self.vm
             .as_mut()
             .context("missing VMM during preparation")?
@@ -339,11 +390,16 @@ impl Slot {
         result
     }
 
+    #[tracing::instrument(name = "guest.restore", skip_all)]
     async fn restore_vm(&mut self, snapshot: &Snapshot, claim: &Claim) -> anyhow::Result<()> {
         #[cfg(test)]
         let started = std::time::Instant::now();
-        self.vm =
-            Some(Vmm::load(&self.config, &self.config.snapshot_dir(snapshot.generation)).await?);
+        self.vm = Some(Vmm::spawn(&self.config).await?);
+        self.vm
+            .as_mut()
+            .context("missing VMM during load")?
+            .load(&self.config, &self.config.snapshot_dir(snapshot.generation))
+            .await?;
         #[cfg(test)]
         eprintln!(
             "real KVM runner loaded: {:.2} ms cumulative",
@@ -359,9 +415,13 @@ impl Slot {
             "real KVM runner resumed: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        let reply = vmm::guest_command(&self.config.vsock(), &serde_json::json!({
-            "action": "resume", "claim": claim, "unixTimeNanos": chrono::Utc::now().timestamp_nanos_opt().context("host clock overflow")?
-        })).await?;
+        let reply = vmm::guest_command(
+            &self.config.vsock(),
+            &serde_json::json!({
+                "action": "resume", "claim": claim
+            }),
+        )
+        .await?;
         ensure!(
             reply.get("claim") == Some(&serde_json::to_value(claim)?),
             "restored guest claim does not match its slot"
@@ -427,8 +487,7 @@ impl Slot {
                             && vmm::guest_command(
                                 &self.config.vsock(),
                                 &serde_json::json!({
-                                    "action": "resume", "claim": claim,
-                                    "unixTimeNanos": chrono::Utc::now().timestamp_nanos_opt()
+                                    "action": "resume", "claim": claim
                                 }),
                             )
                             .await
@@ -488,6 +547,7 @@ impl Slot {
         Ok(())
     }
 
+    #[tracing::instrument(name = "guest.snapshot.save", skip_all)]
     async fn save_vm(&mut self) -> anyhow::Result<Snapshot> {
         vmm::guest_command(
             &self.config.vsock(),
@@ -526,6 +586,7 @@ impl Slot {
         Ok(Snapshot { generation })
     }
 
+    #[tracing::instrument(name = "guest.snapshot.finalize", skip_all)]
     async fn finish_snapshot(&self, generation: u64) -> anyhow::Result<()> {
         let memory = self.config.snapshot_dir(generation).join("memory.bin");
         #[cfg(not(test))]
@@ -579,6 +640,27 @@ impl Slot {
         }
     }
 
+    async fn fence_execution(&mut self, claim: &Claim) -> anyhow::Result<()> {
+        claim.validate()?;
+        if self.vm.is_none()
+            && matches!(
+                self.state(),
+                SlotState::Vacant { .. } | SlotState::Failed { claim: None, .. }
+            )
+        {
+            return self.persist().await;
+        }
+        ensure!(
+            self.state().claim() == Some(claim),
+            "slot fencing owner or epoch changed"
+        );
+        self.fail(&anyhow::anyhow!("slot lifecycle authority withdrawn"))
+            .await;
+        ensure!(self.vm.is_none(), "cannot prove VMM termination");
+        self.pending_sleep = None;
+        self.persist().await
+    }
+
     pub async fn stop(&mut self, claim: &Claim) -> anyhow::Result<()> {
         claim.validate()?;
         ensure!(
@@ -607,6 +689,17 @@ impl Slot {
     }
 }
 
+async fn finish_journal_write(
+    pending: &mut Option<JoinHandle<anyhow::Result<()>>>,
+) -> anyhow::Result<()> {
+    if let Some(task) = pending.as_mut() {
+        let result = task.await;
+        pending.take();
+        result.context("journal writer stopped")??;
+    }
+    Ok(())
+}
+
 fn durable_replace(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
     use std::io::Write;
     let temporary = path.with_extension("next");
@@ -625,6 +718,244 @@ fn durable_replace(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn disconnected_lifecycle_kills_vmm_and_retains_home_and_claim() {
+        use std::sync::Arc;
+        use tokio::{
+            io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+            net::{UnixListener, UnixStream},
+            sync::Notify,
+            time::timeout,
+        };
+        let mut config = config();
+        config.sockets =
+            PathBuf::from("/tmp").join(format!("tengri-cancel-{}", uuid::Uuid::new_v4()));
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        let owner = claim("owner-a", 1);
+        slot.transition(SlotState::Awake {
+            claim: owner.clone(),
+        })
+        .await
+        .unwrap();
+        fs::write(&config.home_disk, b"retained home history and drafts")
+            .await
+            .unwrap();
+        slot.vm = Some(Vmm::from_child(
+            tokio::process::Command::new("cat")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+        ));
+        let state = slot.subscribe();
+        let frozen = Arc::new(Notify::new());
+        let listener = UnixListener::bind(config.vsock()).unwrap();
+        let guest = tokio::spawn({
+            let frozen = frozen.clone();
+            async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut stream = BufReader::new(stream);
+                let mut line = String::new();
+                stream.read_line(&mut line).await.unwrap();
+                assert_eq!(line, "CONNECT 1025\n");
+                stream.get_mut().write_all(b"OK 1025\n").await.unwrap();
+                line.clear();
+                stream.read_line(&mut line).await.unwrap();
+                let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["action"], "freeze");
+                frozen.notify_one();
+                std::future::pending::<()>().await;
+            }
+        });
+        let slot = Arc::new(Mutex::new(slot));
+        let (server, client) = UnixStream::pair().unwrap();
+        let serving = tokio::spawn(runner::serve_connection(
+            server,
+            slot.clone(),
+            state,
+            config.identity.clone(),
+        ));
+        let (reader, mut writer) = client.into_split();
+        let mut bytes = serde_json::to_vec(&runner::CommandRequest::Sleep {
+            claim: owner.clone(),
+        })
+        .unwrap();
+        bytes.push(b'\n');
+        writer.write_all(&bytes).await.unwrap();
+        timeout(Duration::from_secs(30), frozen.notified())
+            .await
+            .expect("guest fixture must reach freeze before testing cancellation");
+        writer.shutdown().await.unwrap();
+        let mut response = String::new();
+        timeout(
+            Duration::from_secs(2),
+            BufReader::new(reader).read_line(&mut response),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let response: runner::CommandResponse = serde_json::from_str(&response).unwrap();
+        assert!(response.error.unwrap().contains("caller disconnected"));
+        assert!(
+            matches!(response.status.state, SlotState::Failed { claim: Some(ref claim), .. } if claim == &owner)
+        );
+        let slot = slot.lock().await;
+        assert!(
+            slot.vm.is_none(),
+            "the VMM must be terminated and reaped before acknowledgement"
+        );
+        assert_eq!(
+            fs::read(&config.home_disk).await.unwrap(),
+            b"retained home history and drafts"
+        );
+        let reopened = Slot::open(config.clone()).await.unwrap();
+        assert_eq!(reopened.state().claim(), Some(&owner));
+        assert!(reopened.state().restore_snapshot(&owner).is_err());
+        drop(slot);
+        serving.await.unwrap();
+        guest.abort();
+        let _ = guest.await;
+        fs::remove_dir_all(config.directory).await.unwrap();
+        fs::remove_dir_all(config.sockets).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn execution_fence_rejects_foreign_claim_and_stops_completed_restore() {
+        let config = config();
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        let owner = claim("owner-a", 1);
+        slot.transition(SlotState::Awake {
+            claim: owner.clone(),
+        })
+        .await
+        .unwrap();
+        slot.vm = Some(Vmm::from_child(
+            tokio::process::Command::new("cat")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+        ));
+        assert!(slot.fence_execution(&claim("owner-b", 1)).await.is_err());
+        assert!(slot.vm.as_mut().unwrap().running().unwrap());
+        assert!(slot.state().serves(&owner));
+        slot.fence_execution(&owner).await.unwrap();
+        assert!(slot.vm.is_none());
+        assert!(
+            matches!(slot.state(), SlotState::Failed { claim: Some(claim), .. } if claim == &owner)
+        );
+        fs::remove_dir_all(config.directory).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelled_journal_write_cannot_overwrite_execution_fence() {
+        let config = config();
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        let owner = claim("owner-a", 1);
+        slot.transition(SlotState::Awake {
+            claim: owner.clone(),
+        })
+        .await
+        .unwrap();
+        let old_bytes = serde_json::to_vec(&slot.journal).unwrap();
+        let path = config.directory.join("journal.json");
+        let (release, wait) = std::sync::mpsc::channel();
+        let write_path = path.clone();
+        *slot.journal_write.lock().await = Some(tokio::task::spawn_blocking(move || {
+            wait.recv().unwrap();
+            durable_replace(&write_path, &old_bytes)
+        }));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), slot.persist())
+                .await
+                .is_err()
+        );
+        let fence = slot.fence_execution(&owner);
+        tokio::pin!(fence);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut fence)
+                .await
+                .is_err()
+        );
+        release.send(()).unwrap();
+        fence.await.unwrap();
+        let journal: Journal = serde_json::from_slice(&fs::read(&path).await.unwrap()).unwrap();
+        assert!(
+            matches!(journal.state, SlotState::Failed { claim: Some(ref claim), .. } if claim == &owner)
+        );
+        fs::remove_dir_all(config.directory).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn restore_cancellation_retains_the_vmm_handle_until_fenced_and_reaped() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut config = config();
+        fs::create_dir_all(&config.directory).await.unwrap();
+        config.firecracker = config.directory.join("fake-vmm.sh");
+        // The VMM clears its environment; Nix shells cannot resolve bare sleep without PATH.
+        let sleep = std::process::Command::new("sh")
+            .args(["-c", "command -v sleep"])
+            .output()
+            .unwrap();
+        assert!(
+            sleep.status.success(),
+            "sleep fixture dependency is missing"
+        );
+        let sleep = String::from_utf8(sleep.stdout).unwrap();
+        let sleep = sleep.trim().replace('\'', "'\"'\"'");
+        fs::write(
+            &config.firecracker,
+            format!("#!/bin/sh\nprintf started > \"$0.started\"\nexec '{sleep}' 60\n"),
+        )
+        .await
+        .unwrap();
+        fs::set_permissions(&config.firecracker, std::fs::Permissions::from_mode(0o700))
+            .await
+            .unwrap();
+        let snapshot = config.snapshot_dir(1);
+        fs::create_dir(&snapshot).await.unwrap();
+        std::fs::File::create(snapshot.join("memory.bin"))
+            .unwrap()
+            .set_len(8192 << 20)
+            .unwrap();
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        slot.transition(SlotState::Vacant {
+            snapshot: Snapshot { generation: 1 },
+        })
+        .await
+        .unwrap();
+        let owner = claim("owner-a", 1);
+        {
+            let restore = slot.restore(owner.clone());
+            tokio::pin!(restore);
+            let started = async {
+                while !fs::try_exists(config.directory.join("fake-vmm.sh.started"))
+                    .await
+                    .unwrap()
+                {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            };
+            tokio::select! {
+                result = &mut restore => panic!("restore unexpectedly completed: {result:?}"),
+                result = tokio::time::timeout(Duration::from_secs(30), started) => result.expect("VMM fixture must start before testing cancellation"),
+            }
+        }
+        assert!(
+            slot.vm.is_some(),
+            "cancelling API startup must retain the child for termination proof"
+        );
+        assert!(slot.vm.as_mut().unwrap().running().unwrap());
+        slot.fence_execution(&owner).await.unwrap();
+        assert!(slot.vm.is_none());
+        assert!(
+            matches!(slot.state(), SlotState::Failed { claim: Some(claim), .. } if claim == &owner)
+        );
+        fs::remove_dir_all(config.directory).await.unwrap();
+    }
 
     fn config() -> SlotConfig {
         let directory =
@@ -1045,6 +1376,7 @@ mod tests {
             microvm_id: "agent-test".into(),
             microvm_uid: uid.into(),
             epoch,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
         }
     }
 
@@ -1056,6 +1388,19 @@ mod tests {
             snapshot: Snapshot { generation: 2 },
         };
         assert!(sleeping.restore_snapshot(&owner).is_ok());
+        let mut next_runtime = owner.clone();
+        next_runtime.runtime_epoch = "55555555-5555-4555-8555-555555555555".into();
+        assert!(sleeping.restore_snapshot(&next_runtime).is_ok());
+        assert!(
+            !SlotState::Awake {
+                claim: owner.clone()
+            }
+            .serves(&next_runtime)
+        );
+        for invalid in ["", "not-a-runtime", "44444444-4444-4444-8444-44444444444A"] {
+            next_runtime.runtime_epoch = invalid.into();
+            assert!(sleeping.restore_snapshot(&next_runtime).is_err());
+        }
         assert!(sleeping.restore_snapshot(&claim("owner-b", 1)).is_err());
         assert!(sleeping.restore_snapshot(&claim("owner-a", 2)).is_err());
         for state in [

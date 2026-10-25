@@ -1,6 +1,9 @@
-use std::{env, os::unix::fs::PermissionsExt, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    env, future::Future, os::unix::fs::PermissionsExt, path::PathBuf, sync::Arc, time::Duration,
+};
 
 use anyhow::{Context, ensure};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -16,6 +19,15 @@ use tokio::{
 use super::{Claim, FIRECRACKER_VERSION, Slot, SlotConfig, SlotIdentity, SlotState};
 
 pub(super) const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
+pub(super) const FENCING_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum CommandWithdrawn {
+    #[error("slot lifecycle authority withdrawn")]
+    Authority,
+    #[error("slot lifecycle command deadline expired")]
+    Deadline,
+}
 
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "action", rename_all = "camelCase", deny_unknown_fields)]
@@ -24,6 +36,19 @@ pub enum CommandRequest {
     Restore { claim: Claim },
     Sleep { claim: Claim },
     Stop { claim: Claim },
+    Fence { claim: Claim },
+}
+
+impl CommandRequest {
+    pub(super) fn claim(&self) -> Option<&Claim> {
+        match self {
+            Self::Status => None,
+            Self::Restore { claim }
+            | Self::Sleep { claim }
+            | Self::Stop { claim }
+            | Self::Fence { claim } => Some(claim),
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -44,16 +69,40 @@ pub fn sockets_directory() -> PathBuf {
     PathBuf::from("/run/tengri/slot")
 }
 
-pub async fn command(request: &CommandRequest) -> anyhow::Result<SlotStatus> {
-    let stream = UnixStream::connect(sockets_directory().join("control.sock")).await?;
+pub(super) async fn command_at(
+    socket: &std::path::Path,
+    request: &CommandRequest,
+) -> anyhow::Result<SlotStatus> {
+    command_at_until(socket, request, std::future::pending()).await
+}
+
+pub(super) async fn command_at_until(
+    socket: &std::path::Path,
+    request: &CommandRequest,
+    authority_lost: impl Future<Output = ()>,
+) -> anyhow::Result<SlotStatus> {
+    let stream = UnixStream::connect(socket).await?;
     timeout(COMMAND_TIMEOUT, async {
         let (reader, mut writer) = stream.into_split();
         let mut bytes = serde_json::to_vec(request)?;
         bytes.push(b'\n');
         writer.write_all(&bytes).await?;
         let mut reader = BufReader::new(reader).take(16385);
-        let mut response = String::new();
-        reader.read_line(&mut response).await?;
+        let read = async {
+            let mut response = String::new();
+            reader.read_line(&mut response).await?;
+            anyhow::Ok(response)
+        };
+        tokio::pin!(read);
+        let response = tokio::select! {
+            biased;
+            _ = authority_lost => {
+                writer.shutdown().await?;
+                let _ = timeout(FENCING_TIMEOUT, read).await;
+                anyhow::bail!(CommandWithdrawn::Authority);
+            }
+            response = &mut read => response?,
+        };
         ensure!(
             response.len() <= 16384 && response.ends_with('\n'),
             "invalid runner response"
@@ -67,7 +116,7 @@ pub async fn command(request: &CommandRequest) -> anyhow::Result<SlotStatus> {
         Ok(response.status)
     })
     .await
-    .context("slot lifecycle timed out")?
+    .map_err(|_| anyhow::Error::new(CommandWithdrawn::Deadline))?
 }
 
 pub async fn run() -> anyhow::Result<()> {
@@ -110,95 +159,129 @@ pub(super) async fn serve(config: SlotConfig) -> anyhow::Result<()> {
         let slot = slot.clone();
         let state = state.clone();
         let identity = identity.clone();
-        tokio::spawn(async move {
-            let (reader, mut writer) = stream.into_split();
-            let mut line = String::new();
-            let read = timeout(
-                Duration::from_secs(5),
-                BufReader::new(reader).take(4097).read_line(&mut line),
-            )
-            .await;
-            if !matches!(read, Ok(Ok(_))) || line.len() > 4096 || !line.ends_with('\n') {
-                return;
+        tokio::spawn(serve_connection(stream, slot, state, identity));
+    }
+}
+
+pub(super) async fn serve_connection(
+    stream: UnixStream,
+    slot: Arc<Mutex<Slot>>,
+    state: tokio::sync::watch::Receiver<SlotState>,
+    identity: SlotIdentity,
+) {
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader).take(4097);
+    let mut line = String::new();
+    let read = timeout(Duration::from_secs(5), reader.read_line(&mut line)).await;
+    if !matches!(read, Ok(Ok(_))) || line.len() > 4096 || !line.ends_with('\n') {
+        return;
+    }
+    let request = match serde_json::from_str::<CommandRequest>(&line) {
+        Ok(request) => request,
+        Err(_) => return,
+    };
+    let error = match request {
+        CommandRequest::Status => {
+            if let Ok(mut slot) = slot.try_lock() {
+                slot.refresh_liveness().await;
             }
-            let request = match serde_json::from_str::<CommandRequest>(&line) {
-                Ok(request) => request,
-                Err(_) => return,
-            };
-            let error = match request {
-                CommandRequest::Status => {
-                    if let Ok(mut slot) = slot.try_lock() {
-                        slot.refresh_liveness().await;
-                    }
-                    None
-                }
-                request => match slot.try_lock() {
-                    Ok(mut slot) => match request {
-                        CommandRequest::Restore { claim } => slot.restore(claim).await.err(),
-                        CommandRequest::Sleep { claim } => slot.sleep(&claim).await.err(),
-                        CommandRequest::Stop { claim } => slot.stop(&claim).await.err(),
-                        CommandRequest::Status => unreachable!(),
-                    },
-                    Err(_) => {
-                        let expected = match &request {
-                            CommandRequest::Restore { claim } | CommandRequest::Sleep { claim } => {
-                                Some(claim)
-                            }
-                            _ => None,
-                        };
-                        let same_operation = matches!((&request, &*state.borrow()),
-                            (CommandRequest::Restore { claim }, SlotState::Restoring { claim: owner, .. })
-                            | (CommandRequest::Sleep { claim }, SlotState::Saving { claim: owner }) if claim == owner);
-                        if same_operation {
-                            let mut updates = state.clone();
-                            match timeout(
-                                COMMAND_TIMEOUT,
-                                updates.wait_for(|s| {
-                                    !matches!(
-                                        s,
-                                        SlotState::Restoring { .. } | SlotState::Saving { .. }
-                                    )
-                                }),
-                            )
-                            .await
-                            {
-                                Ok(Ok(done))
-                                    if done.claim() == expected
-                                        && matches!(
-                                            (&request, &*done),
-                                            (
-                                                CommandRequest::Restore { .. },
-                                                SlotState::Awake { .. }
-                                            ) | (
-                                                CommandRequest::Sleep { .. },
-                                                SlotState::Sleeping { .. }
-                                            )
-                                        ) =>
-                                {
-                                    None
+            None
+        }
+        request => match slot.try_lock() {
+            Ok(mut slot) => {
+                if let CommandRequest::Fence { claim } = &request {
+                    slot.fence_execution(claim).await.err()
+                } else {
+                    let result = {
+                        let operation = async {
+                            match &request {
+                                CommandRequest::Restore { claim } => {
+                                    slot.restore(claim.clone()).await
                                 }
-                                _ => Some(anyhow::anyhow!(
-                                    "concurrent slot lifecycle did not complete"
-                                )),
+                                CommandRequest::Sleep { claim } => slot.sleep(claim).await,
+                                CommandRequest::Stop { claim } => slot.stop(claim).await,
+                                CommandRequest::Status | CommandRequest::Fence { .. } => {
+                                    unreachable!()
+                                }
                             }
-                        } else {
-                            Some(anyhow::anyhow!("slot lifecycle is busy"))
+                        };
+                        tokio::select! {
+                            biased;
+                            _ = reader.read_u8() => None,
+                            _ = tokio::time::sleep(COMMAND_TIMEOUT) => None,
+                            result = operation => Some(result),
+                        }
+                    };
+                    match result {
+                        Some(result) => result.err(),
+                        None => {
+                            let error = anyhow::anyhow!(
+                                "slot lifecycle caller disconnected or command deadline expired"
+                            );
+                            if let Some(claim) = request.claim()
+                                && slot.state().claim() == Some(claim)
+                                && let Err(fencing) = slot.fence_execution(claim).await
+                            {
+                                tracing::error!(error = %fencing, "cancelled lifecycle could not fence the VMM");
+                            }
+                            Some(error)
                         }
                     }
-                },
-            };
-            let response = CommandResponse {
-                status: SlotStatus {
-                    identity,
-                    state: state.borrow().clone(),
-                },
-                error: error.map(|e| e.to_string()),
-            };
-            if let Ok(mut bytes) = serde_json::to_vec(&response) {
-                bytes.push(b'\n');
-                let _ = writer.write_all(&bytes).await;
+                }
             }
-        });
+            Err(_) => {
+                let expected = match &request {
+                    CommandRequest::Restore { claim } | CommandRequest::Sleep { claim } => {
+                        Some(claim)
+                    }
+                    _ => None,
+                };
+                let same_operation = matches!((&request, &*state.borrow()),
+                            (CommandRequest::Restore { claim }, SlotState::Restoring { claim: owner, .. })
+                            | (CommandRequest::Sleep { claim }, SlotState::Saving { claim: owner }) if claim == owner);
+                if same_operation {
+                    let mut updates = state.clone();
+                    match timeout(
+                        COMMAND_TIMEOUT,
+                        updates.wait_for(|s| {
+                            !matches!(s, SlotState::Restoring { .. } | SlotState::Saving { .. })
+                        }),
+                    )
+                    .await
+                    {
+                        Ok(Ok(done))
+                            if done.claim() == expected
+                                && matches!(
+                                    (&request, &*done),
+                                    (CommandRequest::Restore { .. }, SlotState::Awake { .. })
+                                        | (
+                                            CommandRequest::Sleep { .. },
+                                            SlotState::Sleeping { .. }
+                                        )
+                                ) =>
+                        {
+                            None
+                        }
+                        _ => Some(anyhow::anyhow!(
+                            "concurrent slot lifecycle did not complete"
+                        )),
+                    }
+                } else {
+                    Some(anyhow::anyhow!("slot lifecycle is busy"))
+                }
+            }
+        },
+    };
+    let response = CommandResponse {
+        status: SlotStatus {
+            identity,
+            state: state.borrow().clone(),
+        },
+        error: error.map(|e| e.to_string()),
+    };
+    if let Ok(mut bytes) = serde_json::to_vec(&response) {
+        bytes.push(b'\n');
+        let _ = writer.write_all(&bytes).await;
     }
 }
 
@@ -221,12 +304,27 @@ pub(super) async fn stage_root_disk(
     let token = fs::read_to_string(token_file)
         .await
         .context("read guest bootstrap token")?;
+    let verification_key_path = env::var("TENGRI_GUEST_VERIFICATION_KEY_FILE")
+        .context("TENGRI_GUEST_VERIFICATION_KEY_FILE is required")?;
+    let verification_key = tengri::guest_authorization::GuestVerifier::from_file(
+        std::path::Path::new(&verification_key_path),
+    )?;
+    let recovery_generation =
+        tengri::guest_authorization::recovery_generation_from_file(std::path::Path::new(
+            &env::var("TENGRI_GUEST_RECOVERY_GENERATION_FILE")
+                .context("TENGRI_GUEST_RECOVERY_GENERATION_FILE is required")?,
+        ))?;
     let config_file = directory.join("guest-config.json");
     fs::write(
         &config_file,
         serde_json::to_vec(&json!({
             "podUid": identity.pod_uid, "token": token,
-            "initializeHome": initialize_home
+            "initializeHome": initialize_home,
+            "verificationKey": STANDARD.encode(verification_key.public_key()),
+            "recoveryGeneration": recovery_generation,
+            "errorDsn": env::var("NANOAGENT_SENTRY_DSN").unwrap_or_default(),
+            "traceEndpoint": env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT").unwrap_or_default(),
+            "sourceRevision": env::var("APP_SOURCE_REVISION").unwrap_or_else(|_| "development".into())
         }))?,
     )
     .await?;

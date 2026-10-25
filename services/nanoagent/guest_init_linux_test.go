@@ -27,6 +27,40 @@ func TestUnrecognizedHomeDataIsNeverConsideredBlank(t *testing.T) {
 	}
 }
 
+func TestGuestRuntimeBindingChangesOnlyWhileFrozenForSameAllocation(t *testing.T) {
+	previous := guestClaim{MicroVMID: "agent-a", MicroVMUID: "owner-a", Epoch: 7, RuntimeEpoch: "44444444-4444-4444-8444-444444444444"}
+	next := previous
+	next.RuntimeEpoch = "55555555-5555-4555-8555-555555555555"
+	guest := guestLifecycle{claim: &previous}
+	if err := guest.validateResume(previous); err != nil {
+		t.Fatal(err)
+	}
+	if err := guest.validateResume(next); err == nil {
+		t.Fatal("active guest rebound to another runtime")
+	}
+	guest.frozen = true
+	if err := guest.validateResume(next); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*guestClaim){
+		func(c *guestClaim) { c.MicroVMID = "agent-b" },
+		func(c *guestClaim) { c.MicroVMUID = "owner-b" },
+		func(c *guestClaim) { c.Epoch++ },
+		func(c *guestClaim) { c.RuntimeEpoch = "" },
+		func(c *guestClaim) { c.RuntimeEpoch = "INVALID" },
+	} {
+		invalid := next
+		change(&invalid)
+		if err := guest.validateResume(invalid); err == nil {
+			t.Fatalf("invalid binding accepted: %+v", invalid)
+		}
+	}
+	guest.claim = nil
+	if err := guest.validateResume(next); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWrongSizedZeroHomeIsNotInitialized(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "short-home")
 	if err := os.WriteFile(path, make([]byte, 4096), 0600); err != nil {

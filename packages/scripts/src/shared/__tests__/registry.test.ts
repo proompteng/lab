@@ -24,7 +24,7 @@ const backendBlock = (name: string): string => {
 describe('private registry write-pressure boundary', () => {
   it('shares one upload budget across concurrent mutations and isolates manifest commits', () => {
     expect(haproxyConfig).toContain('stick-table type string len 32 size 1 store bytes_in_rate(1s)')
-    expect(haproxyConfig).toContain('filter bwlim-in registry_upload limit 5m key str(registry)')
+    expect(haproxyConfig).toContain('filter bwlim-in registry_upload limit 10m key str(registry)')
     expect(haproxyConfig).not.toContain('default-limit')
     expect(haproxyConfig).toContain('acl write_request method POST PUT PATCH DELETE')
     expect(haproxyConfig).toContain('acl manifest_write method PUT')

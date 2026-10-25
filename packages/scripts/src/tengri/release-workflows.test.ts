@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test'
-import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -26,173 +25,68 @@ describe('Tengri image workflow', () => {
     expect(validation).toContain('GOWORK=off go vet ./...')
   })
 
-  it('uses three release cycles and reserves fifty cycles for explicit benchmarking', () => {
-    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
-      on: { workflow_dispatch: { inputs: { kvm_samples: { options: string[]; default: string } } } }
-      jobs: {
-        'validate-kvm': { steps: Array<{ name?: string; env?: Record<string, string> }> }
-        publish: { needs: string[] }
-      }
-    }
-    const input = workflow.on.workflow_dispatch.inputs.kvm_samples
-    expect(input.options).toEqual(['3', '50'])
-    expect(input.default).toBe('3')
-    const test = workflow.jobs['validate-kvm'].steps.find(
-      (step) => step.name === 'Verify real guest administration and snapshot lifecycle',
-    )
-    expect(test?.env?.TENGRI_KVM_SAMPLES).toBe(
-      "${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}",
-    )
-    expect(workflow.jobs.publish.needs).toContain('validate-kvm')
-  })
-
-  it('exports registry caches only on main and reuses the native harness cache', () => {
+  it('builds and qualifies each architecture on one builder without publishing PR images', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       jobs: Record<
         string,
-        { steps: Array<{ name?: string; with?: Record<string, unknown>; 'continue-on-error'?: boolean }> }
+        {
+          if?: string
+          strategy?: { matrix: { include: Array<{ architecture: string; runner: string }> } }
+          steps: Array<{
+            name?: string
+            uses?: string
+            run?: string
+            with?: Record<string, unknown>
+            'continue-on-error'?: boolean
+          }>
+        }
       >
     }
-    const runtime = workflow.jobs.build?.steps.find((step) => step.name === 'Build native image')
-    expect(runtime?.with?.['cache-to']).toContain("github.event_name != 'pull_request'")
-    expect(runtime?.with?.['cache-to']).toContain('mode=max')
-    expect(runtime?.with?.['cache-to']).toContain('ignore-error=true')
-    expect(runtime?.['continue-on-error']).not.toBe(true)
-    const harness = workflow.jobs['validate-kvm']?.steps.find((step) => step.name === 'Build native KVM test harness')
-    expect(harness?.with?.['cache-from']).toContain(':cache-kvm-')
-    expect(harness?.with?.['cache-to']).toContain(':cache-kvm-')
-    expect(harness?.with?.['cache-to']).toContain('ignore-error=true')
-    expect(harness?.['continue-on-error']).not.toBe(true)
-    expect(harness?.with?.load).toBe(true)
-    expect(harness?.with?.push).not.toBe(true)
-  })
-
-  it('reuses the runtime release compilation for the native fixture without shipping test binaries', () => {
-    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
-      jobs: Record<string, { steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }> }>
+    const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
+    expect(workflow.jobs.build?.if).toBe(releaseOnly)
+    expect(workflow.jobs.build?.strategy?.matrix.include).toEqual([
+      { architecture: 'amd64', runner: 'arc-amd64' },
+      { architecture: 'arm64', runner: 'arc-arm64' },
+    ])
+    expect(workflow.jobs['validate-kvm']).toBeUndefined()
+    expect(workflow.jobs['validate-tengri']?.if).not.toContain("github.event_name != 'pull_request'")
+    expect(workflow.jobs['validate-nanoagent']?.if).not.toContain("github.event_name != 'pull_request'")
+    const steps = workflow.jobs.build.steps
+    expect(steps.filter((step) => step.uses === './.github/actions/setup-buildkit')).toHaveLength(1)
+    const guestIndex = steps.findIndex((step) => step.name === 'Build nanoagent image')
+    const controllerIndex = steps.findIndex((step) => step.name === 'Build tengri image')
+    expect(guestIndex).toBeGreaterThanOrEqual(0)
+    expect(controllerIndex).toBeGreaterThan(guestIndex)
+    for (const [name, image] of [
+      ['tengri', 'TENGRI_IMAGE'],
+      ['nanoagent', 'NANOAGENT_IMAGE'],
+    ]) {
+      const build = steps.find((step) => step.name === `Build ${name} image`)
+      expect(build?.with?.context).toBe(`services/${name}`)
+      expect(build?.with?.push).toBe(true)
+      expect(build?.with?.['build-args']).toBe('SOURCE_REVISION=${{ github.sha }}')
+      const cache = 'type=registry,ref=${{ env.' + image + ' }}:cache-${{ matrix.architecture }}'
+      expect(build?.with?.['cache-from']).toBe(cache)
+      expect(build?.with?.['cache-to']).toBe(`${cache},mode=max,ignore-error=true`)
+      expect(build?.['continue-on-error']).not.toBe(true)
     }
-    const dockerfile = readFileSync(tengriDockerfilePath, 'utf8')
-    const runtime = dockerfile.split(' AS runtime\n')[1]?.split('\nFROM runtime AS kvm-test')[0]
-    const fixture = dockerfile.split('\nFROM runtime AS kvm-test\n')[1]?.split('\nFROM runtime AS release')[0]
-    expect(dockerfile).toContain('cargo test --locked --release --all-targets')
-    expect(dockerfile).toContain('/out-kvm-test --list --ignored | grep -Fx')
-    expect(runtime).toContain('COPY --from=build /out-tengri /usr/local/bin/tengri')
-    expect(runtime).not.toContain('/out-kvm-test')
-    expect(fixture).toContain('COPY --from=build /out-kvm-test /fixture/kvm-test')
-    expect(fixture).not.toContain('cargo ')
-    expect(existsSync(resolve(repositoryRoot, 'services/tengri/Dockerfile.kvm-test'))).toBe(false)
-    const harness = workflow.jobs['validate-kvm'].steps.find((step) => step.name === 'Build native KVM test harness')
-    expect(harness?.with?.file).toBe('services/tengri/Dockerfile')
-    expect(harness?.with?.target).toBe('kvm-test')
-    expect(harness?.with?.['cache-from']).toContain(
-      'type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}',
+    const pairedBoot = steps.find((step) => step.name === 'Verify paired boot artifact checksums')
+    expect(pairedBoot?.run).toContain('crane export "$guest"')
+    expect(pairedBoot?.run).toContain('sha256sum --check SHA256SUMS')
+    expect(steps.some((step) => step.name === 'Build native KVM test harness')).toBe(false)
+
+    const ofz = YAML.parse(readFileSync(resolve(repositoryRoot, '.github/workflows/ofz.yaml'), 'utf8'))
+    expect(ofz.jobs['build-ofz'].if).toBe(releaseOnly)
+    expect(ofz.jobs['build-ofz'].needs).toBe('validate')
+    expect(ofz.jobs.validate.if).toBeUndefined()
+    const products = YAML.parse(
+      readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
     )
-    const prFixture = workflow.jobs.build.steps.find((step) => step.name === 'Build isolated KVM test image')
-    expect(prFixture?.run).toContain('docker buildx build --load')
-    expect(prFixture?.run).toContain('--cache-from "type=registry,ref=${NANOAGENT_IMAGE}:cache-amd64"')
-    expect(prFixture?.run).toContain('--cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-amd64"')
-    expect(prFixture?.run).toContain('--cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-kvm-amd64"')
-    expect(prFixture?.run).not.toContain('--builder default')
-  })
-
-  it.each(['0', '1', '2', 'invalid'])(
-    'rejects insufficient lifecycle samples %s before touching devices',
-    (samples) => {
-      const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-samples-'))
-      const calls = resolve(fixture, 'calls')
-      try {
-        writeFileSync(resolve(fixture, 'ip'), '#!/bin/sh\nprintf called > "$CALLS"\nexit 42\n', { mode: 0o755 })
-        const result = Bun.spawnSync(['bash', resolve(repositoryRoot, 'services/tengri/test-kvm.sh')], {
-          env: {
-            ...process.env,
-            PATH: `${fixture}:${process.env.PATH}`,
-            CALLS: calls,
-            TENGRI_KVM_TEST_IMAGE: 'private-fixture',
-            TENGRI_KVM_GUEST_IMAGE: 'private-guest',
-            TENGRI_KVM_OUTPUT: fixture,
-            TENGRI_KVM_SAMPLES: samples,
-          },
-        })
-        expect(result.exitCode).not.toBe(0)
-        expect(existsSync(calls)).toBe(false)
-      } finally {
-        rmSync(fixture, { recursive: true, force: true })
-      }
-    },
-  )
-
-  it.each(['missing', 'empty', 'present'])(
-    'requires a retained lifecycle receipt when the fixture exits successfully: %s',
-    (receipt) => {
-      const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-receipt-'))
-      try {
-        writeFileSync(resolve(fixture, 'ip'), '#!/bin/sh\nprintf "1.1.1.1 dev fixture0\\n"\n', { mode: 0o755 })
-        writeFileSync(resolve(fixture, 'cat'), '#!/bin/sh\nprintf "1500\\n"\n', { mode: 0o755 })
-        writeFileSync(
-          resolve(fixture, 'docker'),
-          `#!/bin/sh
-if [ "$1" = cp ]; then
-  case "$2" in *:/work/result.json)
-  case "$RECEIPT" in
-    empty) : > "$3" ;;
-    present) printf '{"resumeSamples":3}\\n' > "$3" ;;
-  esac
-  ;; esac
-fi
-exit 0
-`,
-          { mode: 0o755 },
-        )
-        const result = Bun.spawnSync(['bash', resolve(repositoryRoot, 'services/tengri/test-kvm.sh')], {
-          env: {
-            ...process.env,
-            PATH: `${fixture}:${process.env.PATH}`,
-            RECEIPT: receipt,
-            TENGRI_KVM_TEST_IMAGE: 'private-fixture',
-            TENGRI_KVM_GUEST_IMAGE: 'private-guest',
-            TENGRI_KVM_OUTPUT: fixture,
-            TENGRI_KVM_SAMPLES: '3',
-          },
-        })
-        expect(result.exitCode === 0).toBe(receipt === 'present')
-      } finally {
-        rmSync(fixture, { recursive: true, force: true })
-      }
-    },
-  )
-
-  it.each([false, true])('requires the exact native test before configuring the fixture: %s', (present) => {
-    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-test-list-'))
-    const calls = resolve(fixture, 'calls')
-    const testName =
-      'slot::kvm_test::real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages'
-    try {
-      const entry = readFileSync(resolve(repositoryRoot, 'services/tengri/test-kvm-entry.sh'), 'utf8')
-        .replaceAll('/fixture/kvm-test', resolve(fixture, 'kvm-test'))
-        .replaceAll('/usr/local/bin/tengri-network', resolve(fixture, 'network'))
-      writeFileSync(resolve(fixture, 'entry'), entry)
-      writeFileSync(resolve(fixture, 'kvm-test'), '#!/bin/sh\nprintf "%s\\n" "$TEST_LIST"\n', { mode: 0o755 })
-      writeFileSync(resolve(fixture, 'stat'), '#!/bin/sh\nprintf "65532\\n"\n', { mode: 0o755 })
-      for (const command of ['ip', 'network', 'chmod', 'setpriv']) {
-        writeFileSync(resolve(fixture, command), `#!/bin/sh\nprintf '${command}\\n' >> "$CALLS"\n`, {
-          mode: 0o755,
-        })
-      }
-      const result = Bun.spawnSync(['sh', resolve(fixture, 'entry')], {
-        env: {
-          ...process.env,
-          PATH: `${fixture}:${process.env.PATH}`,
-          CALLS: calls,
-          TEST_LIST: present ? `${testName}: test` : '',
-          TENGRI_KVM_NETWORK_MTU: '1500',
-        },
-      })
-      expect(result.exitCode === 0).toBe(present)
-      expect(existsSync(calls)).toBe(present)
-      if (present) expect(readFileSync(calls, 'utf8')).toContain('setpriv')
-    } finally {
-      rmSync(fixture, { recursive: true, force: true })
+    for (const service of ['proompteng', 'app', 'synthesis', 'docs']) {
+      expect(products.jobs[`build-${service}`].if).toBe(`${releaseOnly} && needs.changes.outputs.${service} == 'true'`)
+      expect(products.jobs[`build-${service}`].with.pr_number).toBeUndefined()
     }
+    expect(products.jobs['verify-app-dependency-closure'].if).toBe("needs.changes.outputs.app == 'true'")
   })
 
   it('publishes signed multi-architecture images for Kargo discovery', () => {
@@ -205,8 +99,8 @@ exit 0
 
     expect(YAML.parse(source).name).toBe('Tengri images')
     expect(source).not.toContain('tengri-release.yml')
-    expect(source).toContain('service: tengri')
-    expect(source).toContain('service: nanoagent')
+    expect(source).toContain('Build tengri image')
+    expect(source).toContain('Build nanoagent image')
     expect(source).toContain('architecture: amd64')
     expect(source).toContain('architecture: arm64')
     expect(source).toContain('cosign sign --yes')
@@ -230,7 +124,7 @@ exit 0
     expect(source).not.toContain('latest_digest')
     expect(source).not.toContain('sha256sum "${index_path}"')
     expect(source).not.toContain('release-contract.json')
-    expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent', 'validate-kvm'])
+    expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent'])
     expect(existsSync(resolve(repositoryRoot, 'argocd/applications/kargo'))).toBe(true)
   })
 
@@ -254,7 +148,7 @@ exit 0
     expect(guestValidation).toContain('bash validate-rootfs.test.sh')
     expect(images.jobs?.publish?.needs).toContain('validate-tengri')
     expect(images.jobs?.publish?.needs).toContain('validate-nanoagent')
-    expect(images.jobs?.publish?.needs).toContain('validate-kvm')
+    expect(images.jobs?.publish?.needs).toContain('build')
   })
 
   it('withholds Kargo aliases until both images and their retained indexes succeed', () => {
@@ -387,83 +281,11 @@ exit 0
     expect(validation).toContain('cargo fmt --check')
     expect(validation).toContain('cargo clippy --locked --all-targets -- -D warnings')
     expect(validation).toContain('cargo test --locked --all-targets')
-    expect(validation).toContain('bash test-authz.sh')
+    expect(validation).toContain('bash test-runtime.sh')
     expect(validation).toContain('bash test-rpc-interop.sh')
     expect(validation).toContain('cargo run --locked --quiet --bin crdgen')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml crd.yaml')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
-  })
-
-  it.each(['save', 'config', 'portable'])('verifies the saved configuration for fixture %s', (scenario) => {
-    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
-      jobs: { build: { steps: Array<{ name?: string; if?: string; run?: string }> } }
-    }
-    const steps = workflow.jobs.build.steps
-    const exported = steps.find((step) => step.name === 'Export native KVM fixture image')
-    const retained = steps.find((step) => step.name === 'Retain native KVM fixture image')
-    expect(exported?.if).toBe("${{ github.event_name == 'pull_request' && matrix.architecture == 'amd64' }}")
-    expect(retained?.if).toBe(exported?.if)
-    expect(exported?.run).not.toMatch(/--device|--cap-add|bash services\/tengri\/test-kvm.sh/)
-
-    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-fixture-export-failure-'))
-    try {
-      const image = `registry.example.test/nanoagent:sha-${'1'.repeat(40)}-amd64`
-      const config = JSON.stringify({ architecture: 'amd64', os: 'linux', rootfs: { type: 'layers', diff_ids: [] } })
-      const digest = createHash('sha256').update(config).digest('hex')
-      const configPath = `blobs/sha256/${digest}`
-      mkdirSync(resolve(fixture, 'blobs/sha256'), { recursive: true })
-      writeFileSync(
-        resolve(fixture, 'manifest.json'),
-        JSON.stringify([{ Config: configPath, RepoTags: [image], Layers: [] }]),
-      )
-      const archive = resolve(fixture, 'image.tar')
-      const archiveFiles = ['manifest.json']
-      if (scenario !== 'config') {
-        writeFileSync(resolve(fixture, configPath), config)
-        archiveFiles.push(configPath)
-      }
-      const saved = Bun.spawnSync(['tar', '-cf', archive, '-C', fixture, ...archiveFiles])
-      expect(saved.exitCode).toBe(0)
-      writeFileSync(
-        resolve(fixture, 'docker'),
-        '#!/bin/sh\nif [ "$1" = save ]; then cat "$FIXTURE_ARCHIVE"; exit "$SAVE_EXIT"; fi\nprintf "sha256:%s\\n" "$MANIFEST_DIGEST"\n',
-        { mode: 0o755 },
-      )
-      const result = Bun.spawnSync(['bash', '-c', exported?.run ?? ''], {
-        cwd: fixture,
-        env: {
-          ...process.env,
-          PATH: `${fixture}:${process.env.PATH}`,
-          SERVICE: 'nanoagent',
-          IMAGE_REPOSITORY: 'registry.example.test/nanoagent',
-          GITHUB_SHA: '1'.repeat(40),
-          PR_HEAD_REVISION: '2'.repeat(40),
-          FIXTURE_ARCHIVE: archive,
-          SAVE_EXIT: scenario === 'save' ? '42' : '0',
-          MANIFEST_DIGEST: 'f'.repeat(64),
-        },
-      })
-      const receiptPath = resolve(fixture, '.artifacts/kvm-fixture/nanoagent.json')
-      const checksumsPath = resolve(fixture, '.artifacts/kvm-fixture/nanoagent-SHA256SUMS')
-      if (scenario === 'portable') {
-        expect(result.exitCode).toBe(0)
-        const receipt: unknown = JSON.parse(readFileSync(receiptPath, 'utf8'))
-        expect(receipt).toEqual({
-          sourceRevision: '1'.repeat(40),
-          prHeadRevision: '2'.repeat(40),
-          image,
-          configDigest: `sha256:${digest}`,
-        })
-        expect(existsSync(checksumsPath)).toBe(true)
-      } else {
-        if (scenario === 'save') expect(result.exitCode).toBe(42)
-        else expect(result.exitCode).not.toBe(0)
-        expect(existsSync(receiptPath)).toBe(false)
-        expect(existsSync(checksumsPath)).toBe(false)
-      }
-    } finally {
-      rmSync(fixture, { recursive: true, force: true })
-    }
   })
 
   it('uses the repository mirror instead of anonymous Docker Hub base pulls', () => {

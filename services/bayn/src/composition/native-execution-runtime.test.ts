@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { context, propagation, trace, TraceFlags } from '@opentelemetry/api'
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import {
   Cause,
   Context,
@@ -16,7 +18,8 @@ import {
 } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
+import type { NativeExecutionRuntime } from '../restate/restate-execution-controller'
 import { config, fixtureRuntime } from '../testing/runtime-fixtures'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
@@ -31,8 +34,8 @@ import {
 } from '../execution/controller-status'
 import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
-import type { RecoveryFirstRuntime } from '../observe-composition'
-import type { CycleRunnerError } from '../cycle/runner'
+import type { RecoveryFirstRuntime } from '../observe-composition/model'
+import type { CycleRunnerError } from '../cycle/runner/model'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { operationalError } from '../errors'
@@ -43,10 +46,7 @@ import {
   executionControllerConfig,
   executionControllerPlanHash,
   failRecoveryFirstCycleDriverSlot,
-  initializeNativeExecutionRuntime,
   initializeNativeExecutionProjectionRuntime,
-  makeManagedNativeExecutionRuntimeAdapter,
-  makeNativeExecutionRuntimeAdapter,
   makePublishedExecutionCycleDriverLive,
   makeRecoveringManagedNativeExecutionRuntimeAdapter,
   NativeExecutionRuntimeError,
@@ -141,7 +141,48 @@ const statusStore = (
   read: () => Effect.succeed(null),
 })
 
-const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousService'> => {
+const readySlot = (current: BoundRecoveryFirstCycleDriver): RecoveryFirstCycleDriverSlot =>
+  Effect.runSync(
+    Effect.gen(function* () {
+      const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
+      yield* Deferred.succeed(ready, undefined)
+      return { ready, state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver: current }) }
+    }),
+  )
+
+const withExecutionRuntime = (
+  slot: RecoveryFirstCycleDriverSlot,
+  use: (runtime: NativeExecutionRuntime) => Promise<void>,
+): Promise<void> =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const resources = Layer.merge(
+          Layer.succeed(PublishedExecutionCycleDriver, slot),
+          Layer.succeed(
+            ExecutionControllerStatusStore,
+            statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+          ),
+        )
+        const managed = yield* ScopedRef.fromAcquire(
+          Effect.acquireRelease(
+            Effect.sync(() => ManagedRuntime.make(resources)),
+            (runtime) => runtime.disposeEffect,
+          ),
+        )
+        const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+          managed,
+          resources,
+          ScopedRef.getUnsafe(managed),
+          { runPromise: Effect.runPromise },
+          controllerPlanHash,
+        )
+        yield* Effect.promise(() => use(runtime))
+      }),
+    ),
+  )
+
+const plan = (overrides: PlanOverrides = {}): ApplicationPlan => {
   const readOnly = overrides.brokerAccess === 'read-only' || overrides.capitalAuthorityKind === 'none'
   return {
     _tag: 'AutonomousService',
@@ -226,7 +267,7 @@ describe('native execution runtime', () => {
       Context.add(JevBatchStore, {
         read: () => Effect.succeed(batch),
         pending: () => Effect.succeed([]),
-        begin: () => Effect.succeed(batch),
+        begin: () => Effect.succeed({ ...batch, dispatches: [] }),
         finish: () => Effect.succeed(batch),
       }),
     ) as Context.Context<RecoveryFirstRuntime>
@@ -424,67 +465,6 @@ describe('native execution runtime', () => {
       )
       expect(defectExit.cause.reasons.some(Cause.isFailReason)).toBe(false)
     }
-  })
-
-  test('publishes the execution driver before the Restate endpoint can be exposed', async () => {
-    let acquired = 0
-    let released = 0
-    const readySlot = Effect.runSync(
-      Effect.gen(function* () {
-        const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
-        yield* Deferred.succeed(ready, undefined)
-        return {
-          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver }),
-          ready,
-        } satisfies RecoveryFirstCycleDriverSlot
-      }),
-    )
-    const execution = ManagedRuntime.make(
-      Layer.merge(
-        Layer.effect(
-          PublishedExecutionCycleDriver,
-          Effect.acquireRelease(
-            Effect.sync(() => {
-              acquired += 1
-              return readySlot
-            }),
-            () =>
-              Effect.sync(() => {
-                released += 1
-              }),
-          ),
-        ),
-        Layer.succeed(
-          ExecutionControllerStatusStore,
-          statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
-        ),
-      ),
-    )
-
-    expect(acquired).toBe(0)
-    await Effect.runPromise(initializeNativeExecutionRuntime(execution))
-    expect(acquired).toBe(1)
-    await execution.dispose()
-    expect(released).toBe(1)
-
-    const failure = new Error('execution dependency unavailable')
-    const failedExecution = ManagedRuntime.make(
-      Layer.merge(
-        Layer.effect(PublishedExecutionCycleDriver, Effect.fail(failure)),
-        Layer.succeed(
-          ExecutionControllerStatusStore,
-          statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
-        ),
-      ),
-    )
-    const observed = await Effect.runPromise(Effect.flip(initializeNativeExecutionRuntime(failedExecution)))
-    await failedExecution.dispose()
-
-    expect(observed).toMatchObject({
-      operation: 'initialize',
-      message: 'native execution controller runtime bootstrap failed',
-      cause: failure,
-    })
   })
 
   test('keeps the owned execution runtime lazy until its first driver acquisition', async () => {
@@ -788,28 +768,11 @@ describe('native execution runtime', () => {
         } satisfies RecoveryFirstCycleDriverSlot
       }),
     )
-    const managed = ManagedRuntime.make(
-      Layer.merge(
-        Layer.succeed(PublishedExecutionCycleDriver, slot),
-        Layer.succeed(
-          ExecutionControllerStatusStore,
-          statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
-        ),
-      ),
-    )
-    const runtime = makeManagedNativeExecutionRuntimeAdapter(
-      managed,
-      {
-        runPromise: (effect, options) => Effect.runPromise(effect, options),
-      },
-      controllerPlanHash,
-    )
-
-    await runtime.advance(command, new AbortController().signal)
-    await Effect.runPromise(Ref.set(slot.state, { _tag: 'Ready', driver: withCall('observe') }))
-    await runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
-    await managed.dispose()
-
+    await withExecutionRuntime(slot, async (runtime) => {
+      await runtime.advance(command, new AbortController().signal)
+      await Effect.runPromise(Ref.set(slot.state, { _tag: 'Ready', driver: withCall('observe') }))
+      await runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
+    })
     expect(calls).toEqual(['restricted', 'observe'])
   })
 
@@ -1315,7 +1278,7 @@ describe('native execution runtime', () => {
     expect(failure.message).toBe('execution controller status projection did not complete')
   })
 
-  test('binds the reserved legacy plan on the first not-ahead post-migration advance', async () => {
+  test('rejects a retired unbound plan without advancing execution or rebinding its projection', async () => {
     let advanceCount = 0
     let projected: ExecutionControllerStatus | undefined
     const legacyStatus: ExecutionControllerStatus = {
@@ -1331,7 +1294,7 @@ describe('native execution runtime', () => {
       completedAt: '2026-08-13T17:59:30.000Z',
       nextDueAt: completedAt,
     }
-    const result = await Effect.runPromise(
+    const failure = await Effect.runPromise(
       executeNativeExecutionAdvance(
         command,
         {
@@ -1356,17 +1319,12 @@ describe('native execution runtime', () => {
             }),
         },
         controllerPlanHash,
-      ),
+      ).pipe(Effect.flip),
     )
 
-    expect(advanceCount).toBe(1)
-    expect(result.outcome._tag).toBe(ExecutionControllerOutcome.Waiting)
-    expect(projected).toMatchObject({
-      planHash: controllerPlanHash,
-      epoch: command.epoch,
-      nextSequence: command.sequence + 1,
-      lastSequence: command.sequence,
-    })
+    expect(failure).toBeInstanceOf(TransientExecutionFailure)
+    expect(advanceCount).toBe(0)
+    expect(projected).toBeUndefined()
   })
 
   test('does not attribute an ahead reserved-legacy completion to the current plan', async () => {
@@ -1421,62 +1379,98 @@ describe('native execution runtime', () => {
     expect(advanceCount).toBe(0)
   })
 
-  test('forwards Restate cancellation into the Effect runner', async () => {
-    const abort = new AbortController()
-    let observedSignal: AbortSignal | undefined
-    const runtime = makeNativeExecutionRuntimeAdapter(
-      Effect.succeed(driver),
-      statusStore((candidate) => ({
-        _tag: 'Applied',
-        status: candidate,
-      })),
-      {
-        runPromise: (effect, options) => {
-          observedSignal = options?.signal
-          return Effect.runPromise(effect, options)
-        },
-      },
-      controllerPlanHash,
-    )
-
-    await runtime.advance(command, abort.signal)
-    expect(observedSignal).toBe(abort.signal)
+  test('execution spans retain the native Restate parent across the Effect runtime boundary', async () => {
+    const provider = new NodeTracerProvider()
+    provider.register()
+    const nativeParent = { traceId: 'b'.repeat(32), spanId: 'c'.repeat(16), traceFlags: TraceFlags.SAMPLED }
+    let observedTraceId: string | undefined
+    let rootParentId: string | undefined
+    try {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tracedDriver = {
+              ...driver,
+              advance: Effect.gen(function* () {
+                const span = yield* Effect.currentSpan.pipe(Effect.orDie)
+                observedTraceId = span.traceId
+                let parent = span.parent
+                while (Option.isSome(parent)) {
+                  rootParentId = parent.value.spanId
+                  parent = parent.value._tag === 'Span' ? parent.value.parent : Option.none()
+                }
+                return { observation: windowClosedObservation }
+              }).pipe(Effect.withSpan('execution-pass-test')),
+            }
+            const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
+            yield* Deferred.succeed(ready, undefined)
+            const slot = {
+              ready,
+              state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver: tracedDriver }),
+            }
+            const store = statusStore((candidate) => ({ _tag: 'Applied', status: candidate }))
+            const resources = Layer.merge(
+              Layer.succeed(PublishedExecutionCycleDriver, slot),
+              Layer.succeed(ExecutionControllerStatusStore, store),
+            )
+            const managed = yield* ScopedRef.fromAcquire(
+              Effect.acquireRelease(
+                Effect.sync(() => ManagedRuntime.make(resources)),
+                (runtime) => runtime.disposeEffect,
+              ),
+            )
+            const runner = { runPromise: Effect.runPromise }
+            const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+              managed,
+              resources,
+              ScopedRef.getUnsafe(managed),
+              runner,
+              controllerPlanHash,
+            )
+            yield* Effect.promise(() =>
+              context.with(trace.setSpanContext(context.active(), nativeParent), () =>
+                runtime.advance(command, new AbortController().signal),
+              ),
+            )
+          }),
+        ),
+      )
+      expect(observedTraceId).toBe(nativeParent.traceId)
+      expect(rootParentId).toBe(nativeParent.spanId)
+    } finally {
+      await provider.shutdown()
+      context.disable()
+      propagation.disable()
+      trace.disable()
+    }
   })
 
-  test('advances with the latest driver after a restricted generation rebind', async () => {
-    const calls: string[] = []
-    const withCall = (name: string): BoundRecoveryFirstCycleDriver => ({
+  test('interrupts an in-flight execution pass when Restate cancels it', async () => {
+    const started = Effect.runSync(Deferred.make<void>())
+    let interrupted = 0
+    const slot = readySlot({
       ...driver,
-      advance: Effect.sync(() => {
-        calls.push(name)
-        return {
-          observation: {
-            result: 'SUCCESS' as const,
-            observedAt: completedAt,
-            outcome: 'WINDOW_CLOSED' as const,
-          },
-        }
-      }),
-    })
-    const current = Effect.runSync(Ref.make<BoundRecoveryFirstCycleDriver | null>(withCall('restricted')))
-    const runtime = makeNativeExecutionRuntimeAdapter(
-      Ref.get(current).pipe(
-        Effect.flatMap((published) =>
-          published === null
-            ? Effect.fail(new NativeExecutionRuntimeError({ operation: 'initialize', message: 'driver unavailable' }))
-            : Effect.succeed(published),
+      advance: Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interrupted += 1
+          }),
         ),
       ),
-      statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
-      { runPromise: (effect, options) => Effect.runPromise(effect, options) },
-      controllerPlanHash,
-    )
-
-    await runtime.advance(command, new AbortController().signal)
-    Effect.runSync(Ref.set(current, withCall('observe')))
-    await runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
-
-    expect(calls).toEqual(['restricted', 'observe'])
+    })
+    await withExecutionRuntime(slot, async (runtime) => {
+      const abort = new AbortController()
+      const pending = runtime.advance(command, abort.signal).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      )
+      await Effect.runPromise(Deferred.await(started))
+      abort.abort()
+      expect(await pending).toBeDefined()
+      expect(interrupted).toBe(1)
+    })
+    expect(interrupted).toBe(1)
   })
 
   test('propagates a preparation failure that occurs after the first driver was published', async () => {
@@ -1495,23 +1489,18 @@ describe('native execution runtime', () => {
         } satisfies RecoveryFirstCycleDriverSlot
       }),
     )
-    const runtime = makeNativeExecutionRuntimeAdapter(
-      readRecoveryFirstCycleDriverSlot(slot),
-      statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
-      { runPromise: (effect, options) => Effect.runPromise(effect, options) },
-      controllerPlanHash,
-    )
+    await withExecutionRuntime(slot, async (runtime) => {
+      await runtime.advance(command, new AbortController().signal)
+      await Effect.runPromise(failRecoveryFirstCycleDriverSlot(slot, failure))
+      const afterFailure = await runtime
+        .advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        )
 
-    await runtime.advance(command, new AbortController().signal)
-    await Effect.runPromise(failRecoveryFirstCycleDriverSlot(slot, failure))
-    const afterFailure = await runtime
-      .advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
-      .then(
-        () => undefined,
-        (error: unknown) => error,
-      )
-
-    expect(afterFailure).toBe(failure)
+      expect(afterFailure).toBe(failure)
+    })
   })
 
   test('makes the old driver unavailable while a replacement is being prepared', async () => {

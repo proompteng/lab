@@ -22,6 +22,18 @@ pub struct Service {
     read_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 
+#[derive(PartialEq, Eq)]
+struct WorkspaceAuthority {
+    owner_id: String,
+    home_uid: uuid::Uuid,
+    reservation_id: uuid::Uuid,
+    home_bytes: u64,
+    runtime_epoch: Option<uuid::Uuid>,
+    running: bool,
+    state: String,
+    owner_active: bool,
+}
+
 impl Service {
     pub fn new(database: Database, native: Native, issuer: Issuer) -> Self {
         Self {
@@ -42,6 +54,208 @@ impl Service {
         self.read_barrier = Some((entered, resume));
         self
     }
+    async fn runtime_authority(
+        &self,
+        uid: &uuid::Uuid,
+    ) -> Result<(WorkspaceAuthority, store::State), Status> {
+        let client = self
+            .database
+            .pool
+            .get()
+            .await
+            .map_err(|_| Status::unavailable("control database pool unavailable"))?;
+        let query = format!(
+            "WITH authority(version,recovery_generation,fenced,now_ms,archive_healthy) AS ({}) SELECT w.owner_id,w.home_uid,w.reservation_id,w.home_bytes,w.runtime_epoch,w.running,w.state,EXISTS(SELECT 1 FROM ofz.memberships m WHERE m.human_id=w.owner_id AND m.role=1),a.version,a.recovery_generation,a.fenced,a.now_ms,a.archive_healthy FROM ofz.workspaces w CROSS JOIN authority a WHERE w.uid=$1",
+            store::STATE_QUERY,
+        );
+        let row = client
+            .query_opt(&query, &[uid])
+            .await
+            .map_err(sql_error)?
+            .ok_or_else(|| Status::not_found("workspace state unavailable"))?;
+        Ok((
+            WorkspaceAuthority {
+                owner_id: row.get(0),
+                home_uid: row.get(1),
+                reservation_id: row.get(2),
+                home_bytes: row.get::<_, i64>(3) as u64,
+                runtime_epoch: row.get(4),
+                running: row.get(5),
+                state: row.get(6),
+                owner_active: row.get(7),
+            },
+            store::State {
+                version: row.get::<_, i64>(8) as u64,
+                recovery_generation: row.get::<_, i64>(9) as u64,
+                fenced: row.get(10),
+                now_ms: row.get::<_, i64>(11) as u64,
+                archive_healthy: row.get(12),
+            },
+        ))
+    }
+
+    async fn workspace_runtime_state(
+        &self,
+        peer: &str,
+        context: proto::RequestContext,
+        workspace_uid: &str,
+        maintenance: Option<(Action, &str)>,
+        stream_receipt_id: &str,
+    ) -> Result<(proto::GetWorkspaceStateResponse, String), Status> {
+        if peer != policy::CONTROLLER_ID {
+            return Err(Status::permission_denied(
+                "controller runtime state required",
+            ));
+        }
+        let before = self.database.state().await?;
+        decision::validate_context(&context, peer, &before)?;
+        if context.actor != Some(decision::workload_actor(peer))
+            || context.workspace_uid != workspace_uid
+        {
+            return Err(Status::permission_denied(
+                "controller workspace context required",
+            ));
+        }
+        let uid = decision::parse_uuid(workspace_uid)?;
+        let revision = decision::workload(&self.native, peer, Action::WorkspaceEnroll).await?;
+        let (authority, after) = self.runtime_authority(&uid).await?;
+        #[cfg(test)]
+        if let Some((entered, resume)) = &self.read_barrier {
+            entered.notify_one();
+            resume.notified().await;
+        }
+        let valid_until = decision::decision_deadline(context.deadline_unix_ms, &before)?;
+        if before.version != after.version
+            || before.recovery_generation != after.recovery_generation
+            || after.now_ms >= valid_until
+        {
+            return Err(Status::aborted("runtime authority changed while reading"));
+        }
+        let runtime_epoch = authority
+            .runtime_epoch
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        let runtime_allowed = (maintenance.is_none() || context.runtime_epoch == runtime_epoch)
+            && authority.running
+            && authority.state == "active"
+            && authority.owner_active
+            && !after.fenced
+            && after.archive_healthy;
+        let (audit_resource, audit_action, audit_allowed, audit_reason, target) = match maintenance
+        {
+            Some((action, target)) => (
+                proto::Resource {
+                    kind: proto::ResourceKind::Workspace as i32,
+                    id: workspace_uid.to_owned(),
+                },
+                action,
+                runtime_allowed,
+                "controller guest maintenance",
+                target,
+            ),
+            None => (
+                policy::platform(),
+                Action::WorkspaceEnroll,
+                true,
+                "controller runtime state",
+                "",
+            ),
+        };
+        let mut receipt = store::receipt(
+            &context,
+            peer,
+            audit_resource.clone(),
+            audit_action,
+            audit_allowed,
+            "",
+            audit_reason,
+        );
+        receipt.revision = revision.clone();
+        receipt.recovery_generation = after.recovery_generation;
+        let audited = self
+            .database
+            .observation_audit(&receipt, target, stream_receipt_id)
+            .await?;
+        let audit_receipt_id = audited.id;
+        let recheck = self.database.state().await?;
+        let window = decision::decision_deadline(context.deadline_unix_ms, &recheck);
+        let revalidated = match &window {
+            Ok(_) => decision::workload(&self.native, peer, Action::WorkspaceEnroll).await,
+            Err(error) => Err(error.clone()),
+        };
+        let (current, finished) = self.runtime_authority(&uid).await?;
+        let validity = window.and_then(|deadline| decision::decision_deadline(deadline, &finished));
+        if revalidated.is_err()
+            || validity.is_err()
+            || current != authority
+            || recheck.version != after.version
+            || recheck.recovery_generation != after.recovery_generation
+            || recheck.fenced != after.fenced
+            || recheck.archive_healthy != after.archive_healthy
+            || finished.version != after.version
+            || finished.recovery_generation != after.recovery_generation
+            || finished.fenced != after.fenced
+            || finished.archive_healthy != after.archive_healthy
+            || finished.now_ms >= context.deadline_unix_ms
+        {
+            let mut denial = store::receipt(
+                &context,
+                peer,
+                audit_resource,
+                audit_action,
+                false,
+                "",
+                "runtime authority changed before disclosure",
+            );
+            denial.revision = match &revalidated {
+                Ok(revision) => revision.clone(),
+                Err(_) => revision,
+            };
+            denial.recovery_generation = finished.recovery_generation;
+            let receipt = self.database.audit(&denial, target).await?;
+            let mut error = revalidated
+                .err()
+                .or_else(|| validity.err())
+                .unwrap_or_else(|| Status::aborted("runtime authority changed before disclosure"));
+            error.metadata_mut().insert(
+                "x-ofz-audit-receipt",
+                receipt
+                    .parse()
+                    .map_err(|_| Status::internal("invalid audit ID"))?,
+            );
+            return Err(error);
+        }
+        let runtime_epoch = current
+            .runtime_epoch
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        let valid_until = validity?;
+        let runtime_allowed = (maintenance.is_none() || context.runtime_epoch == runtime_epoch)
+            && current.running
+            && current.state == "active"
+            && current.owner_active
+            && !finished.fenced
+            && finished.archive_healthy;
+        Ok((
+            proto::GetWorkspaceStateResponse {
+                workspace_uid: workspace_uid.to_owned(),
+                owner_id: current.owner_id,
+                home_uid: current.home_uid.to_string(),
+                reservation_id: current.reservation_id.to_string(),
+                home_bytes: current.home_bytes,
+                runtime_epoch,
+                running: current.running,
+                state: current.state,
+                runtime_allowed,
+                recovery_generation: finished.recovery_generation,
+                valid_until_unix_ms: valid_until,
+                audit_receipt_id,
+                policy_version: finished.version,
+            },
+            audited.revision,
+        ))
+    }
+
     fn acquire(&self) -> Result<OwnedSemaphorePermit, Status> {
         self.capacity
             .clone()
@@ -115,6 +329,138 @@ fn context<T>(value: Option<T>) -> Result<T, Status> {
 
 #[tonic::async_trait]
 impl AuthorizationService for Service {
+    async fn get_workspace_reservation(
+        &self,
+        request: Request<proto::GetWorkspaceReservationRequest>,
+    ) -> Result<Response<proto::GetWorkspaceReservationResponse>, Status> {
+        let _capacity = self.acquire()?;
+        let peer = transport::peer(&request)?;
+        if peer != policy::CONTROLLER_ID {
+            return Err(Status::permission_denied(
+                "controller reservation read required",
+            ));
+        }
+        let request = request.into_inner();
+        let context = context(request.context)?;
+        let human = decision::human(&context)?;
+        let reservation_id = decision::parse_uuid(&request.reservation_id)?;
+        let before = self.database.state().await?;
+        if request.recovery_generation != before.recovery_generation {
+            return Err(Status::unauthenticated("recovery generation changed"));
+        }
+        let access = self
+            .require_access(
+                &peer,
+                context.clone(),
+                Action::WorkspaceCreate,
+                policy::platform(),
+            )
+            .await?;
+        let client = self
+            .database
+            .pool
+            .get()
+            .await
+            .map_err(|_| Status::unavailable("control database pool unavailable"))?;
+        let row = client.query_opt(
+            "SELECT r.owner_id,r.home_bytes,r.state,r.workspace_uid,r.created_at_ms+300000>ofz.now_ms(),w.state FROM ofz.reservations r LEFT JOIN ofz.workspaces w ON w.uid=r.workspace_uid WHERE r.id=$1 AND r.owner_id=$2",
+            &[&reservation_id, &human],
+        ).await.map_err(sql_error)?.ok_or_else(|| Status::permission_denied("capacity reservation unavailable"))?;
+        drop(client);
+        self.finish_read(&access, before.version).await?;
+        if row.get::<_, String>(2) == "released"
+            || matches!(
+                row.get::<_, Option<String>>(5).as_deref(),
+                Some("removing" | "removed")
+            )
+        {
+            return Err(Status::failed_precondition(
+                "workspace reservation released",
+            ));
+        }
+        if row.get::<_, String>(2) == "reserved" && !row.get::<_, bool>(4) {
+            return Err(Status::failed_precondition("workspace reservation expired"));
+        }
+        Ok(Response::new(proto::GetWorkspaceReservationResponse {
+            reservation_id: request.reservation_id,
+            owner_id: row.get(0),
+            home_bytes: row.get::<_, i64>(1) as u64,
+            state: row.get(2),
+            workspace_uid: row
+                .get::<_, Option<uuid::Uuid>>(3)
+                .map(|id| id.to_string())
+                .unwrap_or_default(),
+            recovery_generation: access.recovery_generation,
+            valid_until_unix_ms: access.valid_until_unix_ms,
+            audit_receipt_id: access.audit_receipt_id,
+        }))
+    }
+
+    async fn get_workspace_state(
+        &self,
+        request: Request<proto::GetWorkspaceStateRequest>,
+    ) -> Result<Response<proto::GetWorkspaceStateResponse>, Status> {
+        let _capacity = self.acquire()?;
+        let peer = transport::peer(&request)?;
+        let request = request.into_inner();
+        let (state, _) = self
+            .workspace_runtime_state(
+                &peer,
+                context(request.context)?,
+                &request.workspace_uid,
+                None,
+                &request.stream_receipt_id,
+            )
+            .await?;
+        Ok(Response::new(state))
+    }
+
+    async fn authorize_guest_maintenance(
+        &self,
+        request: Request<proto::AuthorizeGuestMaintenanceRequest>,
+    ) -> Result<Response<proto::AuthorizeGuestMaintenanceResponse>, Status> {
+        let _capacity = self.acquire()?;
+        let peer = transport::peer(&request)?;
+        let request = request.into_inner();
+        let context = context(request.context)?;
+        if !policy::canonical_uuid(&context.runtime_epoch) {
+            return Err(Status::invalid_argument(
+                "maintenance requires a runtime epoch",
+            ));
+        }
+        let (action, target) = maintenance_target(request.purpose, &request.terminal_id)?;
+        if request.purpose != proto::GuestMaintenancePurpose::Probe as i32
+            && !request.stream_receipt_id.is_empty()
+        {
+            return Err(Status::invalid_argument(
+                "maintenance control requires a new audit receipt",
+            ));
+        }
+        let (state, revision) = self
+            .workspace_runtime_state(
+                &peer,
+                context,
+                &request.workspace_uid,
+                Some((action, target)),
+                &request.stream_receipt_id,
+            )
+            .await?;
+        if !state.runtime_allowed {
+            return Err(Status::permission_denied(
+                "guest maintenance runtime is fenced",
+            ));
+        }
+        Ok(Response::new(proto::AuthorizeGuestMaintenanceResponse {
+            decision: Some(proto::CheckResponse {
+                allowed: true,
+                revision,
+                audit_receipt_id: state.audit_receipt_id,
+                valid_until_unix_ms: state.valid_until_unix_ms,
+                recovery_generation: state.recovery_generation,
+                effective_scope: None,
+            }),
+        }))
+    }
     async fn authorize_command(
         &self,
         request: Request<proto::AuthorizeCommandRequest>,
@@ -161,7 +507,7 @@ impl AuthorizationService for Service {
             true,
         )
         .await;
-        let allowed = outcome.as_ref().is_ok_and(|(allowed, _, _, _)| *allowed);
+        let allowed = outcome.as_ref().is_ok_and(|(allowed, _, _, _, _)| *allowed);
         let receipt = store::receipt(
             &context,
             &peer,
@@ -205,6 +551,16 @@ impl AuthorizationService for Service {
             .await
             .map(Response::new)
     }
+    async fn check_connector_agent(
+        &self,
+        request: Request<proto::CheckConnectorAgentRequest>,
+    ) -> Result<Response<proto::CheckConnectorAgentResponse>, Status> {
+        let _capacity = self.acquire()?;
+        let peer = transport::peer(&request)?;
+        crate::connector_agent::check(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
     async fn execute_command(
         &self,
         request: Request<proto::ExecuteCommandRequest>,
@@ -223,11 +579,9 @@ impl AuthorizationService for Service {
     ) -> Result<Response<proto::GetCommandResponse>, Status> {
         let _capacity = self.acquire()?;
         let peer = transport::peer(&request)?;
-        let receipt =
+        let response =
             commands::get(&self.database, &self.native, &peer, request.into_inner()).await?;
-        Ok(Response::new(proto::GetCommandResponse {
-            receipt: Some(receipt),
-        }))
+        Ok(Response::new(response))
     }
     async fn establish_session(
         &self,
@@ -283,6 +637,7 @@ impl AuthorizationService for Service {
             version: state.version,
             recovery_generation: state.recovery_generation,
             fenced: state.fenced,
+            archive_healthy: state.archive_healthy,
         }))
     }
     async fn list_access(
@@ -479,7 +834,7 @@ FROM (
     FROM ofz.workspaces w JOIN ofz.humans h ON h.id=w.owner_id WHERE w.uid=$1
     UNION ALL
     SELECT c.human_id,CASE c.role WHEN 2 THEN 'developer' ELSE 'viewer' END,'',ARRAY[]::integer[],0,
-           'human/'||c.human_id,h.github_id,NULL::jsonb,NULL::jsonb
+           'human/'||c.human_id,h.github_id,c.scope,NULL::jsonb
     FROM ofz.collaborators c JOIN ofz.humans h ON h.id=c.human_id WHERE c.workspace_uid=$1
     UNION ALL
     SELECT agent_id::text,'diagnostic',id::text,actions,expires_at_ms,'grant/'||id::text,'',scope,
@@ -493,3 +848,23 @@ FROM (
       AND EXISTS (SELECT 1 FROM ofz.memberships m WHERE m.human_id=e.human_id AND m.role=1)
 ) roster WHERE cursor>$2 ORDER BY cursor LIMIT $3
 "#;
+
+fn maintenance_target(purpose: i32, terminal_id: &str) -> Result<(Action, &str), Status> {
+    match proto::GuestMaintenancePurpose::try_from(purpose) {
+        Ok(proto::GuestMaintenancePurpose::Probe) if terminal_id.is_empty() => {
+            Ok((Action::WorkspaceMetadataRead, ""))
+        }
+        Ok(proto::GuestMaintenancePurpose::TerminalCleanup)
+            if !terminal_id.is_empty()
+                && terminal_id.len() <= 128
+                && terminal_id
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_')) =>
+        {
+            Ok((Action::TerminalControl, terminal_id))
+        }
+        _ => Err(Status::invalid_argument(
+            "explicit bounded guest maintenance purpose required",
+        )),
+    }
+}

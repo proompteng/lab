@@ -10,10 +10,8 @@ import { evaluateAndPersistForwardPerformanceReceipt } from './db/forward-perfor
 import { WriterFenceLive } from './execution/writer-fence'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 
-export { runForwardPerformance } from './forward-performance'
-
 export const FORWARD_PERFORMANCE_COMMAND_USAGE =
-  'Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help'
+  'Usage: bayn-forward-performance --authority-generation <sha256> [--persist-receipt] | --help'
 
 export class ForwardPerformanceCommandArgumentError extends Data.TaggedError('ForwardPerformanceCommandArgumentError')<{
   readonly message: string
@@ -23,13 +21,12 @@ type ForwardPerformanceCommand =
   | { readonly _tag: 'Help' }
   | {
       readonly _tag: 'Run'
-      readonly options: { readonly authorityGenerationHash?: string; readonly persistReceipt?: boolean }
+      readonly options: { readonly authorityGenerationHash: string; readonly persistReceipt?: boolean }
     }
 
 export const parseForwardPerformanceCommandArgs = (
   args: readonly string[],
 ): Result.Result<ForwardPerformanceCommand, ForwardPerformanceCommandArgumentError> => {
-  if (args.length === 0) return Result.succeed({ _tag: 'Run', options: {} })
   if (args.length === 1 && args[0] === '--help') return Result.succeed({ _tag: 'Help' })
   if (args.length === 2 && args[0] === '--authority-generation') {
     const generation = Schema.decodeUnknownResult(Sha256Schema)(args[1])
@@ -54,12 +51,12 @@ const printUsage = Effect.gen(function* () {
   yield* Stream.run(Stream.make(`${FORWARD_PERFORMANCE_COMMAND_USAGE}\n`), stdio.stdout())
 })
 
-const runProof = (options: { readonly authorityGenerationHash?: string; readonly persistReceipt?: boolean }) =>
+const runProof = (options: { readonly authorityGenerationHash: string; readonly persistReceipt?: boolean }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const config = yield* loadForwardPerformanceConfig()
       const report = yield* Effect.gen(function* () {
-        if (options.persistReceipt === true && options.authorityGenerationHash !== undefined) {
+        if (options.persistReceipt === true) {
           return yield* evaluateAndPersistForwardPerformanceReceipt(options.authorityGenerationHash, (writerFence) =>
             runForwardPerformanceReport(config, undefined, { ...options, writerFence }),
           ).pipe(Effect.timeout(config.operationTimeoutMs))

@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'packages/scripts/**'
+      - '.github/actions/affected-inputs/**'
+      - '.github/ci/**'
       - 'scripts/jangar/**'
       - 'argocd/root.yaml'
       - 'argocd/applications/argocd/**'
@@ -39,6 +41,7 @@ on:
       - 'charts/agents/**'
       - 'argocd/applicationsets/**'
       - '.github/workflows/tengri.yaml'
+      - '.github/scripts/install-tengri-chromium.mjs'
       - 'docs/torghut/ceph-migration.md'
       - 'docs/agents/designs/handoff-common.md'
       - 'docs/agents/primitives/**'
@@ -62,6 +65,8 @@ on:
   pull_request:
     paths:
       - 'packages/scripts/**'
+      - '.github/actions/affected-inputs/**'
+      - '.github/ci/**'
       - 'scripts/jangar/**'
       - '.github/workflows/pull-request.yml'
       - '.github/workflows/scripts-ci.yml'
@@ -99,6 +104,7 @@ on:
       - 'charts/agents/**'
       - 'argocd/applicationsets/**'
       - '.github/workflows/tengri.yaml'
+      - '.github/scripts/install-tengri-chromium.mjs'
       - 'docs/torghut/ceph-migration.md'
       - 'docs/agents/designs/handoff-common.md'
       - 'docs/agents/primitives/**'

@@ -41,6 +41,3 @@ export const operationalError = (input: OperationalErrorInput): OperationalError
 
 export const retryableOperationalError = (input: OperationalErrorInput): OperationalError =>
   makeOperationalError(input, true)
-
-export const formatError = (error: OperationalError): string =>
-  `${error.component}.${error.operation}: ${error.message}`

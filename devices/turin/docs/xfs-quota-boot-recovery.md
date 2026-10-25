@@ -50,9 +50,21 @@ The inode scan waits in `xfs_iwalk_threaded`; the observed flush wait was in `xf
 Distinguish a scan with increasing reads from a flush wait with unchanged counters before choosing recovery.
 Do not repeat power cycles while a scan is progressing or run writable filesystem repair on a mounted volume.
 
+## October 14 recurrence
+
+The same `xfs_qm_flush_one` wait stopped Turin after the Kata r6 maintenance reboot and Kingston enumeration
+recovery. Disk counters stopped changing for more than 30 minutes. A staged configuration disabling
+`diskQuotaSupport` was accepted, and the persistent resource showed `false` before a chassis power cycle.
+That resource readback did not establish which configuration the next boot would load.
+
+The next boot still had `diskQuotaSupport: true` and mounted `/var` with project quotas enabled.
+Its quota check completed from `08:34:09Z` to `08:34:59Z`. CRI, etcd, kubelet, and Tailscale then started.
+The restart recovered the host; quota disabling was not the applied fix. The reason the staged value did
+not become active remains unresolved. Do not use the accepted staging response as proof of persistence.
+
 ## Prevent the unnecessary recount
 
-The proposed change is a Turin-only `VolumeConfig` patch in the authoritative
+The Turin-only `VolumeConfig` patch in the authoritative
 [Omni template](../../galactic/omni/cluster-template.yaml):
 
 ```yaml
@@ -63,8 +75,8 @@ provisioning:
   grow: false
 ```
 
-This change is pending. It disables future automatic growth of the existing expanded volume and keeps project
-quotas enabled. It does not repair quota metadata or prove that the kernel flush-lock bug is fixed.
+This disables future automatic growth of the existing expanded volume and keeps project quotas enabled.
+It does not repair quota metadata or prove that the kernel flush-lock bug is fixed.
 Render, validate, and review the patch through the [Omni workflow](../../galactic/omni/README.md) before applying it.
 Verify a later boot without the temporary growth mount or another quota recount before calling prevention complete.
 
@@ -94,7 +106,13 @@ Once recovery and backfill finish, restore the Git-owned profile through reviewe
 The direct rollback below requires explicit authorization for this runtime change or an authorized emergency procedure:
 
 ```bash
-kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_profile custom
+kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_profile high_client_ops
+for service in client background_recovery background_best_effort; do
+  for setting in res wgt lim; do
+    kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- \
+      ceph config rm osd "osd_mclock_scheduler_${service}_${setting}"
+  done
+done
 kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph config get osd osd_mclock_profile
 ```
 
@@ -120,8 +138,7 @@ print(json.dumps({"osd": sys.argv[1], **{key: config[key] for key in keys}}, ind
 done
 ```
 
-Require `custom` and compare all nine values with the merged
-[Rook values](../../../argocd/applications/rook-ceph/cluster-values.yaml).
-After every OSD uses `custom`, check the monitor store for missing scheduler keys and follow the owning procedure
-for any mismatch. Confirm all effective values again after the last OSD restart before accepting restoration.
+Require `high_client_ops` and compare all nine effective values with Ceph Tentacle's built-in profile in the
+[owning procedure](../../../docs/runbooks/rook-ceph-on-talos.md#scrub-catch-up-posture). The monitor store must not retain
+custom scheduler overrides. Confirm all effective values after the last OSD restart before accepting restoration.
 Record residual scrub or slow-operation warnings separately. Do not purge or recreate OSDs to clear them.

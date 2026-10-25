@@ -1,7 +1,7 @@
 import { DateTime, pipe, Result } from 'effect'
 
-import type { RuntimeBuildMetadata } from '../config'
-import { Pipeable } from '../pipeable'
+import type { RuntimeBuildMetadata } from '../config/model'
+
 import {
   Authority,
   KillState,
@@ -209,7 +209,7 @@ export const nextAuthorityVersion = (current: {
       })
 }
 
-const decideObserveGenerationDataFirst = (
+export const decideObserveGeneration = (
   input: ObserveGenerationRequest,
   current: AuthorityState | undefined,
 ): Result.Result<ObserveGenerationDecision, CapitalGrantAlgebraFailure> => {
@@ -243,9 +243,7 @@ const decideObserveGenerationDataFirst = (
   )
 }
 
-export const decideObserveGeneration = Pipeable.dual(2, decideObserveGenerationDataFirst)
-
-const validateAuthorityObservationDataFirst = (
+export const validateAuthorityObservation = (
   current: AuthorityState,
   observedAt: Date,
 ): Result.Result<void, CapitalGrantAlgebraFailure> => {
@@ -260,9 +258,7 @@ const validateAuthorityObservationDataFirst = (
       })
 }
 
-export const validateAuthorityObservation = Pipeable.dual(2, validateAuthorityObservationDataFirst)
-
-const validateCurrentGenerationHistoryDataFirst = <History extends AuthorityGenerationHistoryFacts>(
+export const validateCurrentGenerationHistory = <History extends AuthorityGenerationHistoryFacts>(
   current: AuthorityState,
   history: History | undefined,
 ): Result.Result<History, CapitalGrantAlgebraFailure> => {
@@ -309,20 +305,11 @@ const validateCurrentGenerationHistoryDataFirst = <History extends AuthorityGene
   return Result.succeed(history)
 }
 
-export const validateCurrentGenerationHistory = Pipeable.generic<
-  <History extends AuthorityGenerationHistoryFacts>(
-    history: History | undefined,
-  ) => (current: AuthorityState) => Result.Result<History, CapitalGrantAlgebraFailure>,
-  typeof validateCurrentGenerationHistoryDataFirst
->(2, validateCurrentGenerationHistoryDataFirst)
-
-const requireUnusedAuthorityGenerationDataFirst = (
+export const requireUnusedAuthorityGeneration = (
   generationHash: string,
   existing: AuthorityGenerationHistoryFacts | undefined,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
   existing === undefined ? Result.succeed(undefined) : fail({ _tag: 'AuthorityGenerationAlreadyUsed', generationHash })
-
-export const requireUnusedAuthorityGeneration = Pipeable.dual(2, requireUnusedAuthorityGenerationDataFirst)
 
 export const validateCapitalGrantSourceAuthority = (
   current: AuthorityState,
@@ -336,7 +323,7 @@ export const validateCapitalGrantSourceAuthority = (
         effective: current.effective,
       })
 
-const validateCapitalGrantPrepareGenerationDataFirst = (
+export const validateCapitalGrantPrepareGeneration = (
   current: AuthorityState,
   binding: { readonly configuredGenerationHash: string },
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
@@ -348,9 +335,7 @@ const validateCapitalGrantPrepareGenerationDataFirst = (
         configuredGenerationHash: binding.configuredGenerationHash,
       })
 
-export const validateCapitalGrantPrepareGeneration = Pipeable.dual(2, validateCapitalGrantPrepareGenerationDataFirst)
-
-const validateLatestExactReconciliationDataFirst = (
+export const validateLatestExactReconciliation = (
   reconciliation: ExactReconciliationFacts | undefined,
   accountId: string,
 ): Result.Result<ExactReconciliationFacts, CapitalGrantAlgebraFailure> => {
@@ -370,9 +355,7 @@ const validateLatestExactReconciliationDataFirst = (
   return Result.succeed(reconciliation)
 }
 
-export const validateLatestExactReconciliation = Pipeable.dual(2, validateLatestExactReconciliationDataFirst)
-
-const validateMutationCoverageDataFirst = (
+export const validateMutationCoverage = (
   baseline: MutationBaselineFacts,
   reconciliation: ExactReconciliationFacts,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
@@ -385,8 +368,6 @@ const validateMutationCoverageDataFirst = (
         latestMutationAt: baseline.latestMutationAt,
         reconciledAt: reconciliation.reconciledAt,
       })
-
-export const validateMutationCoverage = Pipeable.dual(2, validateMutationCoverageDataFirst)
 
 const researchRuntimeMismatch = (
   field: Extract<
@@ -466,7 +447,7 @@ export const deriveResearchCapitalGrantGeneration = (input: {
     Result.map((generation) => ({ current: input.current, generation, reconciliation: input.reconciliation })),
   )
 
-const validateResearchCapitalGrantGenerationReplayDataFirst = (
+export const validateResearchCapitalGrantGenerationReplay = (
   stored: ResearchCapitalGrantGeneration,
   proof: ResearchCapitalGrantProofBinding,
   expectedPreviousGenerationHash: string,
@@ -492,12 +473,7 @@ const validateResearchCapitalGrantGenerationReplayDataFirst = (
         expectedPreviousGenerationHash,
       })
 
-export const validateResearchCapitalGrantGenerationReplay = Pipeable.dual(
-  3,
-  validateResearchCapitalGrantGenerationReplayDataFirst,
-)
-
-const validateCapitalGrantGenerationFreshnessDataFirst = (
+export const validateCapitalGrantGenerationFreshness = (
   reconciliation: ExactReconciliationFacts,
   observedAt: Date,
   staleThresholdMs: number,
@@ -512,12 +488,7 @@ const validateCapitalGrantGenerationFreshnessDataFirst = (
         staleThresholdMs,
       })
 
-export const validateCapitalGrantGenerationFreshness = Pipeable.dual(
-  3,
-  validateCapitalGrantGenerationFreshnessDataFirst,
-)
-
-const decideCapitalGrantActivationDataFirst = (
+export const decideCapitalGrantActivation = (
   current: AuthorityState,
   binding: { readonly configuredGenerationHash: string },
 ): Result.Result<CapitalGrantActivationDecision, CapitalGrantAlgebraFailure> => {
@@ -539,8 +510,6 @@ const decideCapitalGrantActivationDataFirst = (
         configuredGenerationHash: binding.configuredGenerationHash,
       })
 }
-
-export const decideCapitalGrantActivation = Pipeable.dual(2, decideCapitalGrantActivationDataFirst)
 
 export const capitalGrantEffectiveAuthority = (kill: KillState): Authority =>
   kill === KillState.Active ? Authority.Observe : Authority.Execution

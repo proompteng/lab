@@ -66,7 +66,7 @@ export const ImageRepositorySchema = Schema.String.check(Schema.isPattern(/^[a-z
 export const SourceRevisionSchema = Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/))
 export const GitSourceRevisionSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/))
 export const UniverseIdSchema = Schema.Literal('cross-asset-taa-v1')
-export const SymbolSchema = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
+export { InstrumentSymbolSchema as SymbolSchema } from './instruments'
 // The upstream Signal row contract historically accepts one fewer trailing character than Bayn's domain contract.
 export const SignalRowSymbolSchema = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,14}$/))
 export const PositiveIntegerSchema = Schema.Int.check(Schema.isGreaterThan(0))

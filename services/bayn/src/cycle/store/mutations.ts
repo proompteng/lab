@@ -1,14 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
 
-import { Pipeable } from '../../pipeable'
-import {
-  CycleState,
-  intradayCycleEntryAttemptOrdinal,
-  isIntradayCycleIdentity,
-  type AutonomousCycle,
-  type CycleTerminalReason,
-} from '../model'
+import { CycleState, type AutonomousCycle, type CycleTerminalReason } from '../model'
 import { decideBlock, validateBlockedDecision, type BlockDecision } from './decisions'
 import {
   exactlyOneCycle,
@@ -42,10 +35,7 @@ export interface CycleMutationPrimitives {
   readonly lockAuthoritySlot: (candidate: AutonomousCycle) => Effect.Effect<string, CycleStoreInternalError>
 }
 
-const makeCycleMutationPrimitivesDataFirst = (
-  sql: PgClient.PgClient,
-  queries: CycleQueries,
-): CycleMutationPrimitives => {
+export const makeCycleMutationPrimitives = (sql: PgClient.PgClient, queries: CycleQueries): CycleMutationPrimitives => {
   const readLocked: CycleMutationPrimitives['readLocked'] = (operation, cycleId) =>
     queries.selectCycle(cycleId, true).pipe(Effect.flatMap((rows) => exactlyOneCycle(operation, rows)))
 
@@ -127,60 +117,15 @@ const makeCycleMutationPrimitivesDataFirst = (
         ${candidate.identity.schemaVersion}, ${candidate.identity.strategyName},
         ${candidate.identity.qualificationRunId}, ${candidate.identity.strategyProtocolHash},
         ${candidate.identity.accountId},
-        ${isIntradayCycleIdentity(candidate.identity) ? intradayCycleEntryAttemptOrdinal(candidate.identity) : 1},
-        ${
-          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3' &&
-          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4'
-            ? candidate.identity.signalSessionDate
-            : null
-        },
-        ${
-          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3' &&
-          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4'
-            ? candidate.identity.signalCalendarVersion
-            : null
-        },
-        ${candidate.identity.executionPolicy.schemaVersion},
-        ${candidate.identity.executionPolicy.executionPolicyHash},
+        ${candidate.identity.entryAttemptOrdinal}, NULL, NULL,
+        ${candidate.identity.executionPolicy.schemaVersion}, ${candidate.identity.executionPolicy.executionPolicyHash},
         ${candidate.identity.executionPolicy.strategyExecutionModelHash},
-        ${
-          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
-            ? Date.parse(candidate.window.submissionCutoffAt) - Date.parse(candidate.window.submissionOpenAt)
-            : candidate.identity.executionPolicy.submissionWindowMs
-        },
-        ${
-          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v1'
-            ? candidate.identity.executionPolicy.submissionCutoffBeforeOpenMs
-            : candidate.schemaVersion === 'bayn.autonomous-cycle.v2' &&
-                candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
-              ? candidate.identity.executionPolicy.submissionCutoffAfterOpenMs
-              : null
-        },
-        ${
-          candidate.schemaVersion === 'bayn.autonomous-cycle.v3' &&
-          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
-            ? candidate.identity.executionPolicy.submissionCutoffAfterOpenMs
-            : null
-        },
-        ${
-          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
-            ? candidate.identity.executionPolicy.warmupAfterOpenMs
-            : null
-        },
-        ${
-          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
-            ? candidate.identity.executionPolicy.submissionCutoffBeforeCloseMs
-            : null
-        },
+        ${Date.parse(candidate.window.submissionCutoffAt) - Date.parse(candidate.window.submissionOpenAt)}, NULL, NULL,
+        ${candidate.identity.executionPolicy.warmupAfterOpenMs}, ${candidate.identity.executionPolicy.submissionCutoffBeforeCloseMs},
         ${candidate.window.schemaVersion}, ${candidate.window.executionCalendarSchemaVersion},
         ${candidate.window.executionCalendarSource}, ${candidate.window.executionCalendarHash},
         ${candidate.window.executionSessionDate},
-        ${candidate.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' ? candidate.window.signalCloseAt : null},
-        ${
-          candidate.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3'
-            ? candidate.window.publicationDeadlineAt
-            : null
-        },
+        NULL, NULL,
         ${candidate.window.submissionOpenAt}, ${candidate.window.executionOpenAt},
         ${candidate.window.executionCloseAt}, ${candidate.window.submissionCutoffAt},
         ${candidate.state}, NULL, NULL, ${candidate.terminalReason ?? null}, ${candidate.stateVersion},
@@ -191,25 +136,17 @@ const makeCycleMutationPrimitivesDataFirst = (
     `.pipe(Effect.flatMap(decodeMutationRows))
 
   const lockAuthoritySlot: CycleMutationPrimitives['lockAuthoritySlot'] = (candidate) => {
-    const query = isIntradayCycleIdentity(candidate.identity)
-      ? sql<Record<string, unknown>>`
+    const query = sql<Record<string, unknown>>`
             SELECT cycle_id
             FROM autonomous_cycles
             WHERE qualification_run_id = ${candidate.identity.qualificationRunId}
               AND account_id = ${candidate.identity.accountId}
-              AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
+              AND schema_version = 'bayn.autonomous-cycle.v4'
+              AND strategy_name = ${candidate.identity.strategyName}
               AND execution_session_date = ${candidate.identity.executionSessionDate}
-              AND entry_attempt_ordinal = ${intradayCycleEntryAttemptOrdinal(candidate.identity)}
+              AND entry_attempt_ordinal = ${candidate.identity.entryAttemptOrdinal}
             FOR UPDATE
           `
-      : sql<Record<string, unknown>>`
-      SELECT cycle_id
-      FROM autonomous_cycles
-      WHERE qualification_run_id = ${candidate.identity.qualificationRunId}
-        AND account_id = ${candidate.identity.accountId}
-        AND signal_session_date = ${candidate.identity.signalSessionDate}
-      FOR UPDATE
-    `
     return query.pipe(
       Effect.flatMap(decodeMutationRows),
       Effect.flatMap((rows) => {
@@ -223,5 +160,3 @@ const makeCycleMutationPrimitivesDataFirst = (
 
   return { readLocked, requireApplied, blockCycle, insertCycle, lockAuthoritySlot }
 }
-
-export const makeCycleMutationPrimitives = Pipeable.dual(2, makeCycleMutationPrimitivesDataFirst)

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { SubmissionDenialReason } from './submission-denial'
 
 import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -10,19 +11,16 @@ import {
   BrokerMutationError,
   MutationFailure,
   MutationOperation,
-  cancelRequestHash,
   invalidRequest,
-  orderRequestBody,
   type BrokerMutationShape,
   type MutationEvidence,
   type PartialMutationEvidence,
-} from '../broker/alpaca-mutations'
+} from '../broker/alpaca-mutations/model'
+import { orderRequestBody, prepareCancel } from '../broker/alpaca-mutations/decisions'
 import {
   AssetClass,
   AccountStatus,
   BrokerRead,
-  BrokerReadError,
-  BrokerReadErrorKind,
   OrderClass,
   OrderSide as BrokerSide,
   OrderStatus,
@@ -31,7 +29,8 @@ import {
   type BrokerReadShape,
   type Account,
   type Order,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import {
   accountConfigurationObservationSchemaVersion,
   accountConfigurationObservationSource,
@@ -39,7 +38,7 @@ import {
 import { BrokerObservations, observationUnavailable } from '../broker/alpaca/observed-snapshot'
 import { captureBrokerObservation, makeProjectedBrokerRead } from '../broker/alpaca/snapshot-cache'
 import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   Authority,
   IntentState,
@@ -54,19 +53,21 @@ import {
   type RiskDecision,
 } from './contracts'
 import { cancel, dryRunSubmit, ExecutionError, ExecutionFailure, recover, submit } from './coordinator'
-import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
+import { IntentStore, type IntentStoreService, type StoredIntent } from './intents/domain'
 
-const encodedRequest = (value: Intent, closeOnly = false) => Result.getOrThrow(orderRequestBody(value, closeOnly))
+const encodedRequest = (value: Intent) => Result.getOrThrow(orderRequestBody(value))
 import {
   decideFinalSubmitAuthorization,
   decideMutationAuthority,
   decideMutationOutcome,
   decideMutationStart,
   decideMutationStartReplay,
+  mutationIdResult,
+} from './mutations/decisions'
+import {
   MutationEventType,
   MutationStore,
   MutationStoreError,
-  mutationIdResult,
   type MutationAuthoritySnapshot,
   type MutationEvent,
   type MutationIntentTransition,
@@ -76,7 +77,7 @@ import {
   type MutationReplayIntentSnapshot,
   type MutationStartInput,
   type MutationStoreShape,
-} from './mutations'
+} from './mutations/model'
 import { WriterFenceError } from './writer-fence'
 
 const intentId = 'a'.repeat(64)
@@ -85,7 +86,7 @@ const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const initialTime = '1969-12-31T23:59:59.000Z'
 
 const intent: Intent = {
-  schemaVersion: 'bayn.paper-intent.v3',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId,
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: 'b'.repeat(64),
@@ -97,10 +98,11 @@ const intent: Intent = {
   clientOrderId: `b1_${'A'.repeat(43)}`,
   symbol: 'AMD',
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1250000',
+  quantityAtoms: '1250000000',
   notionalLimitMicros: '200000000',
+  limitPriceMicros: '160000000',
   state: IntentState.Approved,
   createdAt: initialTime,
 }
@@ -120,7 +122,7 @@ const riskDecision: RiskDecision = {
 const brokerOrder = (
   status = OrderStatus.Accepted,
   observedAt = '1970-01-01T00:00:01.000Z',
-  representation: 'notional' | 'quantity' = 'notional',
+  representation: 'notional' | 'quantity' = 'quantity',
 ): Order => ({
   accountId,
   brokerOrderId: orderId,
@@ -133,21 +135,22 @@ const brokerOrder = (
   assetClass: AssetClass.UsEquity,
   ...(representation === 'notional'
     ? { notionalMicros: intent.notionalLimitMicros }
-    : { quantityMicros: intent.quantityMicros }),
-  filledQuantityMicros: status === OrderStatus.Filled ? intent.quantityMicros : '0',
+    : { quantityAtoms: intent.quantityAtoms }),
+  filledQuantityAtoms: status === OrderStatus.Filled ? intent.quantityAtoms : '0',
   orderClass: OrderClass.Simple,
-  orderType: BrokerOrderType.Market,
+  orderType: BrokerOrderType.Limit,
+  limitPriceMicros: intent.limitPriceMicros,
   side: BrokerSide.Buy,
   timeInForce: BrokerTimeInForce.Day,
   status,
-  extendedHours: false,
+  extendedHours: true,
   observedAt,
 })
 
 const evidence = (status: number, observedAt: string): MutationEvidence => ({
   requestId: `request-${status}`,
   status,
-  contentHash: canonicalHashV1({ status, observedAt }),
+  contentHash: Result.getOrThrow(canonicalHashV1Result({ status, observedAt })),
   observedAt,
 })
 
@@ -204,7 +207,7 @@ const decisionEvent = (
   overrides: Partial<MutationEvent> = {},
 ): MutationEvent => ({
   schemaVersion: 'bayn.paper-mutation-event.v1',
-  eventId: canonicalHashV1({ operation, eventType, overrides }),
+  eventId: Result.getOrThrow(canonicalHashV1Result({ operation, eventType, overrides })),
   mutationId: resultSuccess(mutationIdResult(intentId, operation)),
   intentId,
   sequence: 1,
@@ -1318,7 +1321,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
   }
   const latest = new Map<MutationOperation, MutationEvent>()
   let submitCalls = 0
-  let submittedCloseOnly: boolean | undefined
   let cancelCalls = 0
   let lookupCalls = 0
   let lookupClientOrderId: string | undefined
@@ -1337,7 +1339,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     const effectiveBrokerOrderId = brokerOrderId ?? previous?.brokerOrderId
     const value: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
-      eventId: canonicalHashV1({ operation, sequence, eventType, occurredAt }),
+      eventId: Result.getOrThrow(canonicalHashV1Result({ operation, sequence, eventType, occurredAt })),
       mutationId: resultSuccess(mutationIdResult(intentId, operation)),
       intentId,
       sequence,
@@ -1369,6 +1371,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
   }
 
   const intentStore: IntentStoreService = {
+    protectionForCycle: () => Effect.succeed([]),
+    beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
     commit: () => Effect.die(new Error('unexpected commit')),
     read: (id) => Effect.succeed(id === intentId ? Option.some(stored) : Option.none()),
   }
@@ -1434,23 +1438,18 @@ const makeHarness = (options: HarnessOptions = {}) => {
       setState(IntentState.Terminal, response.observedAt, TerminalOutcome.Rejected)
       return Effect.succeed(rejected)
     },
-    submitDenied: (_intentId, requestHash, occurredAt) =>
+    submitDenied: (_intentId, requestHash, occurredAt, denialReason) =>
       Effect.gen(function* () {
-        yield* Effect.fromResult(
+        const outcome = yield* Effect.fromResult(
           decideMutationOutcome(
-            { intentId: _intentId, requestHash, occurredAt },
+            { intentId: _intentId, requestHash, occurredAt, ...(denialReason === undefined ? {} : { denialReason }) },
             { _tag: 'SubmitDenied' },
             latest.get(MutationOperation.Submit),
             { state: stored.intent.state, terminalOutcome: stored.intent.terminalOutcome ?? null },
           ),
         )
-        const denied = event(
-          MutationOperation.Submit,
-          MutationEventType.SubmitDenied,
-          requestHash,
-          latest.get(MutationOperation.Submit)?.consistencyDelayMs ?? 1,
-          occurredAt,
-        )
+        const denied = outcome.event
+        latest.set(MutationOperation.Submit, denied)
         setState(IntentState.Terminal, occurredAt, TerminalOutcome.Rejected)
         return denied
       }),
@@ -1603,7 +1602,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           retryable: false,
           status: 404,
           requestId: 'lookup-not-found',
-          contentHash: canonicalHashV1({ code: 404, message: 'order not found' }),
+          contentHash: Result.getOrThrow(canonicalHashV1Result({ code: 404, message: 'order not found' })),
           observedAt,
         })
       }
@@ -1632,15 +1631,14 @@ const makeHarness = (options: HarnessOptions = {}) => {
   }
 
   const mutation: BrokerMutationShape = {
-    submit: (submitted, closeOnly = false) => {
+    submit: (submitted) => {
       submitCalls += 1
-      submittedCloseOnly = closeOnly
       if (latest.get(MutationOperation.Submit)?.eventType !== MutationEventType.SubmitStarted) {
         return Effect.die(new Error('submit happened before SUBMIT_STARTED was durable'))
       }
       if (options.crashAfterSubmit === true) return Effect.die(new Error('injected crash after send'))
       if (options.submitError !== undefined) return Effect.fail(options.submitError)
-      const hash = canonicalHashV1(encodedRequest(submitted, closeOnly))
+      const hash = Result.getOrThrow(canonicalHashV1Result(encodedRequest(submitted)))
       if (options.unknownSubmit === true) {
         return Effect.fail(
           new BrokerMutationError({
@@ -1658,7 +1656,11 @@ const makeHarness = (options: HarnessOptions = {}) => {
     cancel: (brokerOrderId) => {
       cancelCalls += 1
       const response = evidence(204, '1970-01-01T00:00:01.100Z')
-      return Effect.succeed({ requestHash: cancelRequestHash(brokerOrderId), brokerOrderId, evidence: response })
+      return Effect.succeed({
+        requestHash: Result.getOrThrow(prepareCancel(brokerOrderId)).requestHash,
+        brokerOrderId,
+        evidence: response,
+      })
     },
   }
 
@@ -1668,16 +1670,16 @@ const makeHarness = (options: HarnessOptions = {}) => {
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerMutation, mutation),
       Effect.provideService(BrokerRead, read),
-      provideTestLayer(TestClock.layer()),
+      (self) => provideTestLayer(self, TestClock.layer()),
     )
   const provideIntentRead = <A, E>(effect: Effect.Effect<A, E, IntentStore>) =>
-    effect.pipe(Effect.provideService(IntentStore, intentStore), provideTestLayer(TestClock.layer()))
+    effect.pipe(Effect.provideService(IntentStore, intentStore), (self) => provideTestLayer(self, TestClock.layer()))
   const provideRecovery = <A, E>(effect: Effect.Effect<A, E, IntentStore | MutationStore | BrokerRead>) =>
     effect.pipe(
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerRead, read),
-      provideTestLayer(TestClock.layer()),
+      (self) => provideTestLayer(self, TestClock.layer()),
     )
 
   return {
@@ -1687,7 +1689,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
     read,
     mutations: mutationStore,
     calls: () => ({ submit: submitCalls, cancel: cancelCalls, lookup: lookupCalls }),
-    submittedCloseOnly: () => submittedCloseOnly,
     lookupClientOrderId: () => lookupClientOrderId,
     intent: () => stored.intent,
     state: () => stored.intent.state,
@@ -1700,7 +1701,7 @@ const mismatchedSubmissionError = () =>
     failure: MutationFailure.Unknown,
     outcome: MutationOutcome.Unknown,
     message: 'accepted order differs from durable intent',
-    requestHash: canonicalHashV1(encodedRequest(intent)),
+    requestHash: Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent))),
     evidence: evidence(200, '1970-01-01T00:00:00.100Z'),
     brokerOrderId: orderId,
   })
@@ -1810,7 +1811,7 @@ describe('execution coordinator', () => {
       schemaVersion: 'bayn.paper-submit-dry-run.v1',
       intentId,
       clientOrderId: intent.clientOrderId,
-      requestHash: canonicalHashV1(encodedRequest(intent)),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent))),
       request: encodedRequest(intent),
     })
     expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
@@ -1885,16 +1886,21 @@ describe('execution coordinator', () => {
     expect(harness.state()).toBe(IntentState.Acknowledged)
   })
 
-  test('propagates close-only short-cover encoding through the durable submit boundary', async () => {
+  test('uses the common explicit LIMIT request for a close-only short cover', async () => {
     const harness = makeHarness({ submittedOrder: brokerOrder(OrderStatus.Accepted, undefined, 'quantity') })
     const accepted = await Effect.runPromise(harness.provide(submit(intentId, 1_000, true)))
 
     expect(accepted).toMatchObject({
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: canonicalHashV1(encodedRequest(intent, true)),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent))),
     })
-    expect(encodedRequest(intent, true)).toMatchObject({ side: 'buy', qty: '1.25' })
-    expect(harness.submittedCloseOnly()).toBe(true)
+    expect(encodedRequest(intent)).toMatchObject({
+      side: 'buy',
+      qty: '1.25',
+      type: 'limit',
+      time_in_force: 'day',
+      limit_price: '160',
+    })
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
   })
 
@@ -2109,9 +2115,9 @@ describe('execution coordinator', () => {
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
   })
 
-  test('accepts the broker-determined filled quantity for an exact notional market order', async () => {
+  test('records a canceled LIMIT partial fill without changing the submitted quantity', async () => {
     const harness = makeHarness({
-      submittedOrder: { ...brokerOrder(OrderStatus.Filled), filledQuantityMicros: '500000' },
+      submittedOrder: { ...brokerOrder(OrderStatus.Canceled), filledQuantityAtoms: '500000000' },
     })
 
     const result = await Effect.runPromise(harness.provide(submit(intentId, 1_000)))
@@ -2131,6 +2137,7 @@ describe('execution coordinator', () => {
         failure: MutationFailure.InvalidRequest,
         outcome: MutationOutcome.Known,
         message: 'fresh quote crossed the durable order bound before transmission',
+        cause: { tag: 'ExpiredRiskDecision' },
       }),
     })
 
@@ -2145,6 +2152,7 @@ describe('execution coordinator', () => {
     )
 
     expect(result.denied.eventType).toBe(MutationEventType.SubmitDenied)
+    expect(result.denied.denialReason).toBe(SubmissionDenialReason.ExpiredRiskDecision)
     expect(result.replay).toEqual(result.denied)
     expect(harness.intent()).toMatchObject({
       state: IntentState.Terminal,
@@ -2186,7 +2194,7 @@ describe('execution coordinator', () => {
       lookupOrder: {
         ...brokerOrder(OrderStatus.Canceled),
         symbol: 'NVDA',
-        filledQuantityMicros: '1',
+        filledQuantityAtoms: '1000',
       },
       submitError: mismatchedSubmissionError(),
     })
@@ -2259,11 +2267,19 @@ describe('execution coordinator', () => {
           harness.read.orderByClientId(clientOrderId).pipe(
             Effect.map((result) => {
               const { observedAt: _observedAt, ...material } = result.value
-              return { ...result, evidence: { ...result.evidence, contentHash: canonicalHashV1(material) } }
+              return {
+                ...result,
+                evidence: { ...result.evidence, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) },
+              }
             }),
           ),
         account: observe(
           (observedAt): Account => ({
+            cryptoStatus: null,
+            cryptoFeeTier: null,
+            cashReportingQuantumMicros: '1' as const,
+            nonMarginableBuyingPowerMicros: null,
+
             id: accountId,
             status: AccountStatus.Active,
             currency: 'USD',
@@ -2301,20 +2317,32 @@ describe('execution coordinator', () => {
             const cached = yield* makeProjectedBrokerRead(fresh).pipe(
               Effect.provideService(BrokerObservations, {
                 read: observed,
+                readState: observed,
                 readForSubmit: () => observed,
                 invalidate: Effect.sync(() => {
                   available = false
                 }),
               }),
             )
-            const requestHash = canonicalHashV1(encodedRequest(intent))
+            const requestHash = Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent)))
             yield* harness.mutations.beginSubmit(intentId, requestHash, 1_000, initialTime)
             if (operation === MutationOperation.Submit) {
               yield* harness.mutations.submitUnknown(intentId, requestHash, initialTime)
             } else {
               yield* harness.mutations.submitAccepted(intentId, requestHash, orderId, evidence(200, initialTime))
-              yield* harness.mutations.beginCancel(intentId, cancelRequestHash(orderId), orderId, 1_000, initialTime)
-              yield* harness.mutations.cancelUnknown(intentId, cancelRequestHash(orderId), orderId, initialTime)
+              yield* harness.mutations.beginCancel(
+                intentId,
+                Result.getOrThrow(prepareCancel(orderId)).requestHash,
+                orderId,
+                1_000,
+                initialTime,
+              )
+              yield* harness.mutations.cancelUnknown(
+                intentId,
+                Result.getOrThrow(prepareCancel(orderId)).requestHash,
+                orderId,
+                initialTime,
+              )
             }
             yield* TestClock.adjust(2_000)
             expect((yield* readStableBrokerSnapshot(cached, Effect.succeed(initialTime))).history.orders.rows).toEqual(
@@ -2347,7 +2375,7 @@ describe('execution coordinator', () => {
 
   test('recovers SUBMIT_UNKNOWN through verified read capability after mutation authority is removed', async () => {
     const harness = makeHarness({ lookupOrder: brokerOrder(OrderStatus.Filled) })
-    const requestHash = canonicalHashV1(encodedRequest(intent))
+    const requestHash = Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent)))
     const { found, unknown } = await Effect.runPromise(
       harness.provideRecovery(
         Effect.gen(function* () {
@@ -2370,7 +2398,7 @@ describe('execution coordinator', () => {
 
   test('recovers CANCEL_UNKNOWN through verified read capability after mutation authority is removed', async () => {
     const harness = makeHarness()
-    const requestHash = canonicalHashV1(encodedRequest(intent))
+    const requestHash = Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent)))
     const { found, unknown } = await Effect.runPromise(
       harness.provideRecovery(
         Effect.gen(function* () {
@@ -2383,14 +2411,14 @@ describe('execution coordinator', () => {
           )
           yield* harness.mutations.beginCancel(
             intentId,
-            cancelRequestHash(orderId),
+            Result.getOrThrow(prepareCancel(orderId)).requestHash,
             orderId,
             1_000,
             '1970-01-01T00:00:00.200Z',
           )
           const unknown = yield* harness.mutations.cancelUnknown(
             intentId,
-            cancelRequestHash(orderId),
+            Result.getOrThrow(prepareCancel(orderId)).requestHash,
             orderId,
             '1970-01-01T00:00:00.200Z',
           )

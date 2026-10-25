@@ -60,6 +60,7 @@ const earlyNixImageApps = new Set([
   'jangar',
   'oirat',
   'olden',
+  'opencode',
   'proompteng',
   'sag',
   'symphony',
@@ -84,6 +85,7 @@ const appToNixAttr = new Map<string, string>([
   ['jangar', 'jangar-image'],
   ['oirat', 'oirat-image'],
   ['olden', 'olden-image'],
+  ['opencode', 'opencode-image'],
   ['proompteng', 'proompteng-image'],
   ['sag', 'sag-image'],
   ['symphony', 'symphony-image'],
@@ -98,7 +100,6 @@ const appToNixAttr = new Map<string, string>([
 ])
 
 const appToBuildScriptPath = new Map<string, string>([
-  ['arc', 'packages/scripts/src/arc-runner/build-image.ts'],
   ['symphony-jangar', 'packages/scripts/src/symphony/build-image.ts'],
   ['symphony-torghut', 'packages/scripts/src/symphony/build-image.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts'],
@@ -107,7 +108,6 @@ const appToBuildScriptPath = new Map<string, string>([
 ])
 
 const appToDeployScriptPath = new Map<string, string>([
-  ['arc', 'packages/scripts/src/arc-runner/deploy-service.ts'],
   ['symphony-jangar', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['symphony-torghut', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'],
@@ -116,9 +116,11 @@ const appToDeployScriptPath = new Map<string, string>([
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
-  ['rune', ['.github/workflows/rune-images.yml', 'argocd/applications/kargo']],
+  ['arc', ['.github/workflows/arc-runner-build-push.yml', 'argocd/applications/kargo']],
+  ['ofz', ['.github/workflows/ofz.yaml', 'argocd/applications/kargo']],
   ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
   ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
+  ['opencode', ['.github/workflows/opencode-build-push.yml', 'argocd/applications/kargo']],
   ['tengri', ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo']],
   ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
   ['symphony-torghut', ['.github/workflows/symphony-build-push.yaml']],
@@ -159,13 +161,13 @@ type KargoImageContract = {
 
 const kargoImageApps = new Map<string, KargoImageContract>([
   [
-    'rune',
+    'ofz',
     {
       kind: 'promotion-template',
-      bootstrapReferences: ['registry.ide-newton.ts.net/lab/rune:unpromoted'],
-      reason: 'The pinned Rune serving engine is built and signed in CI, then promoted by Kargo',
-      repositories: ['registry.ide-newton.ts.net/lab/rune'],
-      workflowPaths: ['.github/workflows/rune-images.yml', 'argocd/applications/kargo'],
+      bootstrapReferences: ['registry.ide-newton.ts.net/lab/ofz:unpromoted'],
+      reason: 'The Ofz API and audit exporter share one verified CI image promoted by Kargo',
+      repositories: ['registry.ide-newton.ts.net/lab/ofz'],
+      workflowPaths: ['.github/workflows/ofz.yaml', 'argocd/applications/kargo'],
     },
   ],
   [

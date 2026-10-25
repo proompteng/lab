@@ -11,12 +11,12 @@ adapter blocks observations. ClickHouse remains the historical archive and does 
 
 The initial retained-data probe consumed 905,542 records across all 22 partitions in 223 seconds on the slower worker, with no rejections and exact feature matches for all strategy symbols and SPY. The five-minute budget bounds catch-up; normal calendar, exact-window, and quote-freshness checks still run after it.
 
-A replacement consumer captures partition bounds and rebuilds the required 30-minute window before serving entry inputs.
-This is a retained-history catch-up, not a new 30-minute wait after each process starts. Jev's first eligible window
-ends 30 minutes after that exchange session opens, with the existing two-second decision delay; its separate
-warmup is zero. Later worker replacements can use already-published regular-session history as soon as catch-up and
-the existing snapshot checks succeed. Original ingestion/computation times and actual replacement-consumer receipt
-times remain distinct. Premarket bars, prior-day bars, and backdated REST recovery cannot substitute for this window.
+A replacement consumer captures partition bounds and rebuilds actual retained history before serving entry inputs.
+The current strategy uses at most 30 minutes of context and requires the latest completed minute, a matching native
+feature and fresh quotes. It has no 30-bar or contiguous-history admission gate. Equities can first evaluate one
+minute and two seconds after the broker open; crypto uses its current completed history continuously. Missing older
+minutes remain visible gaps. Historical backfills keep their real ingestion and replacement-consumer receipt times.
+Premarket, prior-session, non-final, future and fabricated bars cannot substitute for current session evidence.
 Liquidation snapshots require the quote topic's complete partition cut and a fresh verified quote for each held
 symbol, independently of bar/feature history catch-up. They preserve the full captured partition evidence and replay
 through the same verification path. Non-quote rejections do not block liquidation; quote rejections, missing or stale
@@ -26,6 +26,39 @@ Each consumer epoch uses a new group and explicit bootstrap offsets. It never re
 so it does not write OffsetCommit requests. An offset-coordinator write failure cannot discard a usable in-memory
 projection. Assignment, heartbeat and fetch failures still invalidate the epoch and require reconstruction.
 Durable decision snapshots retain their source cuts and PostgreSQL references independently of the ephemeral consumer.
+
+The native worker also retains the original consumer deliveries in PostgreSQL. `native_arrival_epochs` binds the
+embedded build, both market sources and the actual bootstrap bounds. `native_arrival_chunks` holds hash-linked gzip
+chunks of exact Kafka value bytes, transport timestamps, local availability times, consumer and projection sequences,
+and reducer dispositions. Repeated deliveries, rejected inputs, tombstones and invalidated assignments retain their
+own receipts. The global consumer sequence spans equities and crypto; filtering out another market cannot claim a
+complete original prefix.
+
+Chunk appends and replay reads use the `(capture_id, ordinal)` primary key. Migration 0142 removes the unused global
+content-hash unique index, which caused random reads across unrelated captures on every append. Header and compressed
+byte hash checks, ordered-prefix guards and immutable-row triggers remain enforced. The header hash includes the capture
+ID and ordinal, so a repeated valid header is already rejected by the primary key and prefix guard.
+
+The capture owns one database connection outside the trading writer fence. It compresses batches at 256 KiB, bounds
+each uncompressed chunk to 4 MiB and queued compressed bytes to 64 MiB, and flushes a short tail every second.
+Compression batches yield to Node I/O; the writer groups up to 8 MiB or 256 chunks into one atomic database append.
+Within that transaction, PostgreSQL inserts at most 1 MiB or 16 chunks per statement. This bounds each SQL statement
+while sharing one synchronous durable commit across the append. A failed statement rolls back the whole append.
+An individual valid chunk above the SQL byte target is written whole under the existing chunk and queue bounds.
+Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
+writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
+chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
+A failed write, invalid delivery or individually oversized chunk permanently marks the epoch incomplete; the
+warning/error retains its capture ID and the periodic projection log reports its observed and acknowledged
+delivery counts. Native capture failures also use the error-only GlitchTip boundary; collector failures do not
+interrupt journal finalization. Shutdown drains queued chunks before flushing its remaining observed tail, retries an interrupted
+chunk by exact content and records `native_arrival_ends` only after
+the stored prefix is confirmed. An unsealed or incomplete epoch cannot assert complete capture coverage.
+`readNativeArrivalEpoch` and bounded `readNativeArrivalChunks` verify stored identities and original bytes for research.
+These native records still require interval, source-cut and strategy qualification. They do not recover missing older
+study sessions or authorize an entry, and the current single-universe backtest manifest cannot label a filtered mixed
+market epoch as a complete original capture.
+
 The projection retains 61 bar minutes, 512
 quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
 remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
@@ -71,18 +104,21 @@ adds intraday protocol v3 to the durable authority contracts while preserving v1
 ## Retained-input verification
 
 ```sh
-node dist/streaming-diagnostics-command.js --since 2026-09-11T19:00:00Z
+node dist/streaming-diagnostics-command.js --query query.json
 ```
 
 This bounded probe uses the configured Bayn Kafka identity and the production consumer/reducer. It captures source
 bounds, consumes retained records at explicit offsets in a unique group without committing offsets, verifies exact feature-to-bar
-matches, and closes the connection. Receipt times are the actual diagnostic times. Its output identifies retained
-input joins observed now; it does not claim those features were available in a past trading session. The image
+matches, and closes the connection. The query is an exact `IntradaySnapshotQuery` JSON object with calendar, universe, window and observation time.
+The receipt evaluates eligibility with `selectStreamingInputs`, reports exact missing minute timestamps, quote ages
+and source coordinates, and retains every excluded candidate even when no candidate can trade. Late arrivals
+remain unavailable at the requested observation. A fresh diagnostic consumer cannot recover original historical
+arrival times; use retained original capture evidence for historical availability claims. The image
 check loads this command with `--help` and runs `--codecs` to round-trip gzip, Snappy, LZ4 and Zstd from the
 finished image without network access.
 
 Historical probes may need to consume a large retained backfill whose Kafka timestamps reflect recent publication.
-Use `--bootstrap-timeout-seconds 7200` with `--since` to allow two hours for that read-only bootstrap. The default
+Use `--bootstrap-timeout-seconds 7200` with `--query` to allow two hours for that read-only bootstrap. The default
 is 300 seconds, and the accepted range is 1–14400 seconds (four hours). Estimate the budget from retained record
 count and observed processing rate, allowing time for bounded connection recovery. The receipt records the
 selected `bootstrapTimeoutMs`.
@@ -194,6 +230,8 @@ boundary, and its source-reference suffix matches the currently selected raw bar
 hashes. The producer retains complete session provenance; Bayn independently verifies the decision-window suffix,
 not older raw bars outside its retained window. The full technical payload and source references are hashed into the
 snapshot. Recorded live and simulated snapshots reproduce this evidence and reject changed receipts or availability.
+The selected market source owns the optional topic. Sharing a consumer with equities does not attach their technical
+topic to a crypto snapshot or its bootstrap evidence.
 
 An observed replacement supersedes an older technical receipt for the same session and window, even if its raw
 correction has not arrived yet. Selection and diagnostics leave that window unavailable until the replacement
@@ -222,7 +260,7 @@ with matching technical receipts proves the join.
 ## Simulated execution inputs
 
 `constructSimulatedSnapshot` consumes the incremental historical cursor through the same selection rules as live
-streaming. Its `bayn.simulated-market-snapshot.v1` manifest records the run ID, frozen source-manifest hash, supplied
+streaming. Its `bayn.simulated-market-snapshot.v2` manifest records the run ID, frozen source-manifest hash, supplied
 arrival policy, source positions, raw receipts, and feature payloads. Regenerated features keep their original
 computation timestamps and record the separate simulated availability explicitly.
 
@@ -258,13 +296,16 @@ The separate accounting test still checks reconnecting database clients. These f
 replay, process-crash recovery, or profitability; those require the session runner, retained source manifests, and
 closed-window economic reports.
 
-## Full calendar-session command
+## Continuous replay command
+
+Build the offline commands from the repository root with
+`bun run --filter @proompteng/bayn build:research`, then run:
 
 ```sh
 BAYN_BACKTEST_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:55432/bayn_replay \
 BAYN_BACKTEST_TIGERBEETLE_ADDRESS=127.0.0.1:53000 \
 BAYN_BACKTEST_TIGERBEETLE_CLUSTER_ID=20912 BAYN_BACKTEST_TIGERBEETLE_LEDGER=70912 \
-node dist/backtest-command.js --input session.json --arrivals source.ndjson.gz \
+bun run --filter @proompteng/bayn backtest --input session.json --arrivals source.ndjson.gz \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 
@@ -274,92 +315,49 @@ state and never clears either database. Give each attempt a distinct `replicate`
 PostgreSQL while retaining TigerBeetle under the same run ID is not a fresh run. Database clients close with the command. Individual database and reconciliation operations retain their deadlines; the total backtest length is governed by the selected sessions.
 The normal service composition does not load this command or its virtual clock.
 
-`bayn.backtest.v1` binds consecutive calendar sessions, source manifest, unchanged source-controlled strategy
-and build, opening cash, IOC latency/liquidity/slippage/fee assumptions, and production polling/reconciliation cadence.
-It also retains asset metadata and its observation time. Asset eligibility captured after the session must explicitly
-use `counterfactual-current-asset-eligibility`; it cannot be described as historical as-of evidence. Embedded builds
-must match the input build; source invocations identify their build verification as `development-configured`.
+`bayn.backtest.v5` binds one explicit UTC interval, the unchanged source-controlled strategy and build, opening cash,
+broker assets, execution assumptions and controller cadence. The source must cover the complete interval. UTC reporting
+windows are contiguous, including weekends. The retained Alpaca calendar still controls equities, with a successor
+session after the interval. Crypto remains continuous through the same engine and shared account.
 
-The `bayn.backtest-source.v1` manifest requires `encoding: "ndjson-gzip"` and binds the SHA-256 of the complete compressed NDJSON file, record count, export
-coverage interval, first/last arrival, partition bounds, universe, origin, delivery policy, and explicit `captured-kafka`, `alpaca-rest`, or `archive-reconstruction` transport. Each line uses
-`HistoricalMarketArrivalSchema`. The reader verifies the entire file before execution, then reads bounded chunks
-while retaining the production projection. It rejects duplicate/reversed Kafka coordinates, reversed availability,
-records outside the frozen cuts, and changed bytes/counts. The current Torghut capture profile independently requires
-three bar partitions, thirteen quote partitions, three trade partitions, and three retained feature partitions.
-The offline regenerated feature stream has its own single partition. Captured streams require every partition cut,
-including empty cuts with equal start/end offsets. Record-derived partition inventories cannot establish captured
-source completeness.
+`bayn.backtest-source.v2` binds a complete gzip NDJSON file, its hash and record count, coverage and availability bounds,
+partition cuts, and a nonempty `marketSources` array. Each source contains its universe identity, symbols and topics.
+Sources cannot overlap symbols, universe identities or topics. The native epoch and exported source preserve both
+markets in their global consumer sequence. Filtering another market cannot claim the original prefix.
 
-Archive reconstruction uses a separately hashed `bayn.archive-reconstruction-receipt.v1`: it binds the original query
-hashes, archived response hashes, normalized source hash, retained-coordinate cuts and explicit original-delivery
-limitations. It declares `originalStreamAvailability: NOT_OBSERVED` and `completeness: RETAINED_ROWS_ONLY`; it cannot
-masquerade as a Kafka capture. Original offsets can have gaps where other records were not retained in the archive
-export. Unknown partition offsets are not invented: `archiveUnobservedPartitions` declares each topology partition
-without retained rows, in both manifest and receipt. Declared cuts and unobserved partitions together must match the
-complete known topology exactly, without duplicates or overlaps. Such a declaration is not proof that a Kafka log
-was empty. Records from an unobserved partition, reversed/duplicate coordinates, endpoint substitutions and changed
-receipt bytes still fail. Captured Kafka and REST consecutive-offset checks remain unchanged.
+The reader verifies the complete file before execution, then reads bounded chunks into one production projection.
+Each delivery selects its source by topic. Original v2 arrivals retain exact value bytes, transport timestamps, local
+availability, consumer and reducer sequences, disposition and duplicate delivery. The cursor reproduces each recorded
+disposition. Receipt-only v1 arrivals, mixed capture epochs, missing delivery sequences, changed bytes and reversed
+availability fail verification. Legacy source and simulated-cut contracts cannot create current replay evidence.
+Tombstones and invalidated assignments remain retained for diagnostics. A canonical replay rejects an export containing
+either termination marker before execution. A separately pinned earlier prefix is required to study an unaffected interval.
 
-Archive ingestion timestamps and conservatively delayed per-partition ordering are a development delivery model,
-not the original consumer receipt sequence. Missing bars, feature joins, pricing, and close liquidity remain missing
-and can make a session inconclusive. Neither a complete file hash nor a successful mechanical simulation promotes an
-archive reconstruction into prospective qualification evidence.
-The independently pinned receipt must cover the full exchange session. The file must match its exact first/last arrivals; a quiet opening or closing interval does not fabricate missing events.
-Every partition cut must also equal the independently captured offset receipt. Its separately supplied SHA-256 is
-trusted configuration, outside the editable session input; replacing the receipt without that authority is rejected.
-It rehashes the consumed stream before a final report. Initial and final reconciliation use the configured live
-reconciliation deadline while market time remains simulated.
-There is no 500,000-record or single-observation limit on this path.
+Simulation snapshots use `bayn.simulated-market-snapshot.v2`, `bayn.simulated-input-cut.v2` and
+`bayn.simulated-snapshot-reference.v2`. The full source inventory is retained in each cut; input selection uses the
+query's exact universe. Migration 120 preserves existing immutable simulation rows and permits only current inserts.
 
-The timeline advances available source records, the account-specific PostgreSQL clock, and the Effect clock together.
-Broker submission advances them to its declared arrival time before reading the execution quote. Database I/O does not
-consume modeled market time. The driver executes the native polling cadence from market open through the close,
-including the final boundary; the source-controlled strategy still applies its own warmup and order-risk rules.
-Closing equity is captured at the exact calendar close and fills receive a final reconciliation one millisecond later.
-A regular-session IOC whose modeled arrival reaches or exceeds the close expires at the close without a fill; its
-latency cannot advance execution beyond the closing-equity boundary.
+A separately pinned receipt binds every declared market and cut. Captured Kafka uses `bayn.replay-source-capture.v2`;
+original capture uses `bayn.original-capture-replay-receipt.v2` and its original delivery provenance. The trusted receipt
+hash is supplied separately from the editable input through `--source-receipt-sha256`. File validation repeats after
+consumption, and the receipt hash remains part of the run identity and report.
 
-The new output directory retains `input.json`, `passes.ndjson`, and a hashed `report.json` with broker state, closing
-equity, schedule counts, durable row counts, and the production reconciliation result. Preserve the source file and
-both databases alongside it. A report with missing inputs, failed passes, unresolved orders/positions or accounting
-mismatches is not acceptance. The command reports profitability as `UNPROVEN`: source coverage, realistic execution
-assumptions, independent sessions, and cost sensitivity still require evaluation. The existing durable integration
-test proves a native intent/fill/accounting path; it does not substitute for a retained full-session result or a
-full-process crash/restart test.
+Archive reconstruction uses `bayn.archive-reconstruction-receipt.v2`. It retains original query and response hashes,
+source coordinates and explicit `NOT_OBSERVED` original availability. Partitions without retained records remain
+`archiveUnobservedPartitions`; no empty Kafka offsets are invented. REST uses `bayn.alpaca-rest-replay-receipt.v3`,
+with the dataset, raw chunk and feature receipt hashes, acquired symbols and their exact unacquired complement.
+Those transports retain their modeled availability and cannot qualify as original native captures. See the
+[historical data workflow](../../../README.md#historical-data-workflow) for acquisition and feature production.
 
-Each replayed IOC retains its actual modeled arrival quote, source coordinates and record hash, quote availability
-and age, and the fill, cancellation or rejection reason. Price-limit cancellations include the rounded adverse price
-used by the execution model. Order limits and quantities remain on the same broker order; the report binds the
-latency, slippage, liquidity and fee assumptions. These receipts survive broker checkpoints. Every newly settled IOC retains its execution receipt.
+Captures and reconstructions still validate their complete declared topology. Retained equities use three bar,
+thirteen quote and three trade partitions, plus three feature partitions. A regenerated feature stream has one
+partition. Native crypto uses one three-partition raw topic for bars, quotes and trades, and a separate three-partition
+feature topic. Captured empty cuts require independent offset evidence; a record-derived inventory cannot prove a log empty.
 
-Every pass also retains the production cycle result and broker state. The final report binds the pass file's SHA-256
-and record count. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies a filled or partially filled entry whose immutable
-attempt remains bound through the close. An exact zero-fill IOC cancellation instead completes only after a later exact
-flat reconciliation. The standing mandate may then create the next distinct attempt after at least one minute, while
-the entry cutoff remains open. Each attempt evaluates fresh signals across the strategy candidates. The v4 cycle
-identity and unique PostgreSQL authority slot record an increasing attempt ordinal without a session-wide quota;
-replay uses the same rule through the production engine. No retry reuses an intent, decision, cycle ID, or broker order.
-Entry and quote-backed close limit prices include the production risk policy's bounded allowance, and the modeled arrival price must still
-satisfy that limit before a fill is possible.
-
-For captured Kafka, the required receipt uses `bayn.replay-source-capture.v1` with `capturedAt`, `origin`, `coverageStartMs`,
-`coverageEndMs`, `universe`, and complete `positions` (`topic`, `partition`, `startOffset`, `endOffsetExclusive`).
-Capture the raw cuts with Kafka ListOffsets at both requested boundaries, resolving a missing timestamp match to the
-captured high-water mark. Obtain regenerated-feature extents from the independently retained producer receipt.
-Freeze the receipt and its byte SHA-256 at capture time; do not derive them from whichever records the replay export
-happens to contain. Supply that trusted hash through `--source-receipt-sha256`. The command checks both receipt bytes and
-every manifest cut before touching a database, copies the receipt to its output, and binds its hash into the run ID
-and final report. This establishes completeness relative to the pinned capture authority; it does not authenticate
-market prices or calibrate the data feed.
-
-REST exports use `bayn.alpaca-rest-replay-receipt.v2`, which binds the dataset ID, acquired symbols, unacquired strategy
-candidates, raw chunk hashes, Dorvud feature receipt, final source hash, modeled coordinate policy, and `NOT_OBSERVED`
-original stream availability. The declared universe is a strategy contract, not a claim that every candidate was
-acquired. The receipt must list the exact complement of its acquired symbols; unacquired candidates remain excluded.
-Version 2 normalization includes raw delivery delay after bar finalization. Its virtual
-streams have one partition each. The same source validator and projection consume both transports. See the
-[historical data workflow](../../../README.md#historical-data-workflow) for acquisition, ClickHouse publication,
-verified restoration, and feature production outside the deployed service.
+The timeline advances the source, database clock and Effect clock together. Broker submission advances to its modeled
+arrival before selecting a quote. The same LIMIT, cancellation, partial-fill, fee, recovery and accounting rules apply
+across the interval. Missing decisions, stale valuation, unresolved costs and unclosed exposure remain incomplete
+results. Successful source reproduction does not establish predictive edge, actual PAPER fills or profitability.
 
 ## Process recovery acceptance
 
@@ -379,19 +377,16 @@ authority. The full-session command still requires a fresh database; it does not
 
 ## Bar publication timing
 
-New live and simulated cuts bind `barPublicationPolicy: timely-equivalent-revision.v1`. Original minute bars allow
-60 seconds to finalize plus 10 seconds for publication; `updatedBars` allow the provider's following half-minute
-correction, or 90 seconds plus 10 seconds. Both include the existing five-second clock allowance. This follows
-[Alpaca's updated-bar timing](https://docs.alpaca.markets/us/docs/real-time-stock-pricing-data). These limits are
-independent of `maximumQuoteAgeMs`; executable quote freshness is unchanged.
+Live and simulated cuts bind `barPublicationPolicy: observed-completed-history.v1`. Only the latest completed
+minute retains the publication deadline: 60 seconds to finalize plus 10 seconds for publication, or 90 seconds plus
+10 seconds for an `updatedBars` correction, with the existing five-second clock allowance. Historical finalized
+minutes can arrive through recovery before the decision. Their actual arrival times remain part of the immutable cut.
+Executable quote and trade freshness is unchanged.
 
-The latest bar revision still has to match the exact rolling feature's coordinates and content hash. If consecutive
-revisions have identical market values and identity, the projection retains the first publication as a timing witness,
-including after normal revision-history eviction. The snapshot binds its row, receipt, availability and source cut.
-A changed price, volume, VWAP or trade count starts a new publication history and must meet its own timing limit.
-Reconstruction verifies both deliveries and rejects altered, future or out-of-cut witnesses. The additional retained
-witness is bounded to one per bar revision. Cuts without the policy marker retain the legacy quote-linked timing
-rule and omit publication witnesses; archived snapshot contracts are unchanged.
+Every selected bar revision must match the native feature's exact coordinates and content hash. Equivalent revisions
+retain their original publication witness; changed market values start a new history. Reconstruction verifies both
+actual deliveries and rejects altered, premature, future or out-of-cut evidence. Retired policy markers are rejected;
+there is no alternate legacy timing path.
 
 ## Replay close and coverage acceptance
 

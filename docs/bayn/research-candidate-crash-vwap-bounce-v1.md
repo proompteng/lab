@@ -95,12 +95,12 @@ These are retained claims, not verified returns, OOS validation or proof of a tr
 ## Offline shadow command
 
 Entry point: [hybrid-crash-vwap-shadow-command.ts](../../services/bayn/src/hybrid-crash-vwap-shadow-command.ts), built by
-`bun run build` as `dist/hybrid-crash-vwap-shadow-command.js` (script `hybrid:crash-vwap-shadow`). It is not packaged into
+`bun run build:research` as `dist/research/hybrid-crash-vwap-shadow-command.js` (script `hybrid:crash-vwap-shadow`). It is not packaged into
 the Bayn image or scheduled by GitOps. It reads one session of bars and writes a new record file, refusing to overwrite.
 It has no broker, ledger, model-inference or live-strategy side effects.
 
 ```sh
-BAYN_HYBRID_CRASH_VWAP=shadow node dist/hybrid-crash-vwap-shadow-command.js \
+BAYN_HYBRID_CRASH_VWAP=shadow node dist/research/hybrid-crash-vwap-shadow-command.js \
   --input session-bars.json --input-sha256 <sha256-of-input> --output shadow-record.json
 ```
 

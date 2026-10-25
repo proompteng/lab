@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { advanceHistoricalMarketCursor, createHistoricalMarketCursor } from '../streaming/historical'
 import { decodeRawMarketRecord, RawMarketEventKind } from '../streaming/raw-events'
 import { restCaptureArrivals } from './arrivals'
@@ -8,7 +8,7 @@ import type { StoredHistoricalCapture, VendorHistoricalProvenance } from './mode
 
 const universe = {
   universeId: 'rest-fixture',
-  universeSymbolHash: canonicalHashV1(['AAPL', 'SPY']),
+  universeSymbolHash: Result.getOrThrow(canonicalHashV1Result(['AAPL', 'SPY'])),
   symbols: ['AAPL', 'SPY'],
   topics: {
     bars: 'bars',
@@ -79,7 +79,7 @@ test('REST normalization rounds nanoseconds up and preserves modeled provenance 
   expect(JSON.parse(events[0]?.record.value ?? '').symbol).toBe('AAPL')
 })
 
-test.each(['bid', 'ask', 'both'] as const)('preserves absent %s prices as rejected native records', (side) => {
+test.each(['bid', 'ask', 'both'] as const)('preserves withdrawn %s prices as unavailable native quotes', (side) => {
   const retained = {
     ...quote,
     ...(side === 'ask' || side === 'both' ? { askPrice: 0, askSize: 0 } : {}),
@@ -101,17 +101,19 @@ test.each(['bid', 'ask', 'both'] as const)('preserves absent %s prices as reject
     ap: retained.askPrice,
     as: retained.askSize,
   })
-  const decoded = decodeRawMarketRecord(event.record, universe)
-  expect(Result.isFailure(decoded)).toBe(true)
-  if (Result.isFailure(decoded)) expect(decoded.failure.message).toBe('invalid raw quote row')
+  const decoded = Result.getOrThrow(decodeRawMarketRecord(event.record, universe))
+  expect(decoded.kind).toBe(RawMarketEventKind.Quote)
   const cursor = Result.getOrThrow(
-    advanceHistoricalMarketCursor(Result.getOrThrow(createHistoricalMarketCursor('5'.repeat(64), universe)), event),
+    advanceHistoricalMarketCursor(Result.getOrThrow(createHistoricalMarketCursor('5'.repeat(64), [universe])), event),
   )
   expect(cursor.processedRecords).toBe(1)
-  expect(cursor.projection.quoteHistory.size).toBe(0)
-  expect(cursor.projection.rejections.get('quotes:0')).toMatchObject([
-    { availableAtMs: event.availableAtMs, offset: '0' },
-  ])
+  expect(cursor.projection.quoteHistory.get('AAPL')?.at(-1)?.value).toMatchObject({
+    bidPrice: retained.bidPrice,
+    bidSize: retained.bidSize,
+    askPrice: retained.askPrice,
+    askSize: retained.askSize,
+  })
+  expect(cursor.projection.rejections.size).toBe(0)
 })
 
 test('minute bars arrive only after completion and inclusive endpoint rows remain outside the regular session', () => {

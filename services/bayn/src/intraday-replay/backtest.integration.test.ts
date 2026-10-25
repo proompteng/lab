@@ -1,3 +1,6 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { equityMarketProfile } from '../jev/markets'
+
 import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
@@ -9,19 +12,22 @@ import { TestClock } from 'effect/testing'
 import { PostgresClientLive } from '../db/postgres-client'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
-import { IntentStoreLive, BlockedCycleIntentStoreLive } from '../execution/intents'
-import { MutationStoreLive } from '../execution/mutations'
+import { IntentStoreLive } from '../execution/intents/postgres'
+import { BlockedCycleIntentStoreLive } from '../execution/intents/blocked-cycle-postgres'
+import { MutationStoreLive } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { JournalLive } from '../ledger'
 import { JevClient } from '../jev/client'
+import { jevBacktestOutcome } from '../jev/experiment-economics'
+import { jevInstructions } from '../jev/instructions'
 import { jevModel } from '../jev/contract'
 import { OperationDeadlineClock } from '../operation-timeout'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
-import { prepareBacktest, runBacktest, type BacktestPass } from './backtest'
+import { BacktestIssue, prepareBacktest, runBacktest, type BacktestPass } from './backtest'
 import { postgresMigrations } from '../db/postgres-migrations'
-import { canonicalHashV1OrThrow } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca/model'
 import { IntentState, OrderSide, OrderType, TimeInForce } from '../execution/contracts'
@@ -50,8 +56,8 @@ durableTest(
     if (original === undefined) throw new Error('Missing closing-cut quote')
     const closeMs = Date.parse('2026-09-04T20:00:00.000Z')
     const startMs = closeMs - 1000
-    const runId = canonicalHashV1OrThrow({ test: 'measured-closing-cut', run: randomUUID() })
-    const sourceHash = canonicalHashV1OrThrow({ runId })
+    const runId = Result.getOrThrow(canonicalHashV1Result({ test: 'measured-closing-cut', run: randomUUID() }))
+    const sourceHash = Result.getOrThrow(canonicalHashV1Result({ runId }))
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* postgresMigrations
@@ -60,10 +66,10 @@ durableTest(
         yield* TestClock.setTime(startMs)
         const clock = yield* makeSimulatedExecutionClock(runId, sourceHash, providerClock)
         const universe = {
-          universeId: protocol.universeId,
-          universeSymbolHash: protocol.universeSymbolHash,
-          symbols: protocol.universe,
-          topics: { ...protocol.sourceTopics, features: 'torghut.market-features.v1' },
+          universeId: equityMarketProfile.universeId,
+          universeSymbolHash: equityMarketProfile.universeSymbolHash,
+          symbols: equityMarketProfile.universe,
+          topics: { ...equityMarketProfile.sourceTopics, features: 'torghut.market-features.v1' },
         }
         const quotes = [
           [startMs, 100],
@@ -88,6 +94,7 @@ durableTest(
                         sourceOffset: String(BigInt(original.sourceOffset) + BigInt(consumed)),
                         eventAt: new Date(next[0]).toISOString(),
                         ingestedAt: new Date(next[0]).toISOString(),
+                        marketSession: next[0] < closeMs ? 'regular' : 'post',
                         bidPrice: next[1],
                         askPrice: next[1],
                         bidSize: 100,
@@ -112,7 +119,9 @@ durableTest(
           openingCashMicros: '10000000000',
           assumptions: { latencyMs: 0, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
           fractionalTrading: false,
-          calendar: [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
+          calendar: [
+            { session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' },
+          ],
           assets: [
             Result.getOrThrow(
               normalizeAssetResult(
@@ -131,10 +140,10 @@ durableTest(
             ),
           ],
           advanceToArrival: advanceTo,
-          quoteAt: (symbol, atMs) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs)),
+          quoteAt: (symbol, atMs, source) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs, source)),
         })
         yield* broker.mutation.submit({
-          schemaVersion: 'bayn.paper-intent.v3',
+          schemaVersion: 'bayn.execution-intent.v5',
           intentId: '1'.repeat(64),
           riskDecisionId: '2'.repeat(64),
           authorityGenerationHash: '3'.repeat(64),
@@ -147,9 +156,10 @@ durableTest(
           symbol: 'AAPL',
           side: OrderSide.Buy,
           orderType: OrderType.Limit,
-          timeInForce: TimeInForce.ImmediateOrCancel,
-          quantityMicros: '10000000',
+          timeInForce: TimeInForce.Day,
+          quantityAtoms: '10000000000',
           notionalLimitMicros: '1000000000',
+          limitPriceMicros: '100000000',
           state: IntentState.IoStarted,
           createdAt: new Date(startMs).toISOString(),
         })
@@ -176,7 +186,7 @@ durableTest(
         })
         yield* timing.run(Effect.void)
         const now = yield* Clock.currentTimeMillis
-        const close = yield* broker.completeSession('2026-09-04')
+        const close = yield* broker.valuationAt('2026-09-04T20:00:00.000Z')
         const state = yield* broker.snapshot
         const current = (yield* broker.read.account).value
         expect(now).toBeGreaterThan(closeMs + 50)
@@ -184,7 +194,7 @@ durableTest(
         expect(sourceCut).toBe(now)
         expect(consumed).toBe(3)
         expect(current.equityMicros).toBe((BigInt(state.ledger.cashMicros) + 980000000n).toString())
-        expect(state.ledger.positions[0]?.quantityMicros).toBe('10000000')
+        expect(state.ledger.positions[0]?.quantityAtoms).toBe('10000000000')
         expect(state.fills).toHaveLength(1)
         expect(
           yield* sql`SELECT measured_at, measured_observed_at FROM simulated_execution_clocks
@@ -206,9 +216,9 @@ durableTest(
   30000,
 )
 
-durableTest(
-  'native backtest retains the opening boundary after measured bootstrap latency',
-  async () => {
+durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
+  'native backtest retains %s polling through measured bootstrap and cleanup latency',
+  async (boundary) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing isolated replay databases')
     const url = new URL(baynTestPostgresUrl)
@@ -219,31 +229,43 @@ durableTest(
     )
       throw new Error('Backtest acceptance requires isolated local test databases')
     const retained = retainedReplayFixture()
-    const openMs = Date.parse('2026-09-04T13:30:00Z')
+    const openMs = Date.parse(boundary !== 'UTC-midnight' ? '2026-09-04T13:30:00Z' : '2026-09-04T23:59:30Z')
     const closeMs = openMs + 60_000
-    const source = { ...retained.manifest, coverageStartMs: openMs, coverageEndMs: Date.parse('2026-09-04T20:00:00Z') }
+    const source = {
+      ...retained.manifest,
+      coverageStartMs: Math.min(openMs, retained.manifest.coverageStartMs),
+      coverageEndMs: Math.max(closeMs, retained.manifest.coverageEndMs),
+    }
     const { verification: _verification, ...build } = config.build
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v3',
+          schemaVersion: 'bayn.backtest.v5',
+          jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
           replicate: `measured-bootstrap-${randomUUID()}`,
           inference: {
             mode: 'measured-provider',
+            maximumCalls: 1000,
             model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v2',
+            inputDefinition: 'bayn.jev-trading-signal-state.v21',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
-          allocatedDataCostPerSessionMicros: '0',
-          sessionDates: ['2026-09-04'],
+          allocatedDataCostPerSessionMicros: boundary === 'unknown-data-cost' ? null : '0',
+          interval: { startAt: new Date(openMs).toISOString(), endAt: new Date(closeMs).toISOString() },
           source,
           openingCashMicros: '100000000000',
           fractionalTrading: false,
           calendar: [
-            { date: '2026-09-04', open: '09:30', close: '09:31' },
-            { date: '2026-09-08', open: '09:30', close: '16:00' },
+            {
+              session_open: '0930',
+              session_close: boundary !== 'UTC-midnight' ? '0931' : '1600',
+              date: '2026-09-04',
+              open: '09:30',
+              close: boundary !== 'UTC-midnight' ? '09:31' : '16:00',
+            },
+            { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
           ],
-          assets: retained.input.protocol.universe.map((symbol, index) => ({
+          assets: equityMarketProfile.universe.map((symbol, index) => ({
             id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
             symbol,
             class: 'us_equity',
@@ -255,7 +277,13 @@ durableTest(
           assetObservationAt: '2026-09-04T13:29:00.000Z',
           assetObservationPolicy: 'retained-as-of-session',
           build,
-          assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
+          assumptions: {
+            instruments: replayTestInstruments,
+            latencyMs: 100,
+            slippageBps: 0,
+            availableLiquidityPpm: 1000000,
+            feeMultiplierPpm: 1000000,
+          },
           cadence: {
             pollIntervalMs: 30000,
             reconciliationIntervalMs: 30000,
@@ -324,9 +352,42 @@ durableTest(
         expect(report.brokerState.ledger.openingCashMicros).toBe('100000000000')
         expect(report.brokerState.ledger.positions).toEqual([])
         expect(report.sessions[0]?.schedule.firstPollAtMs).toBe(openMs)
-        expect(report.sessions[0]?.schedule.lastPollAtMs).toBe(closeMs)
+        expect(report.sessions.at(-1)?.schedule.lastPollAtMs).toBe(closeMs)
+        expect(report.sessions).toHaveLength(boundary !== 'UTC-midnight' ? 1 : 2)
+        expect(report.schedule.failedPassCount).toBe(0)
+        expect(report.brokerState.createdAt).toBe(new Date(openMs - 60_000).toISOString())
+        if (boundary === 'UTC-midnight') {
+          const first = report.sessions[0]?.schedule
+          const second = report.sessions[1]?.schedule
+          if (first === undefined || second === undefined) throw new Error('Missing UTC reporting window')
+          expect(second.firstPollAtMs).toBeGreaterThanOrEqual(first.completedAtMs)
+          expect(second.firstPollAtMs).toBeGreaterThanOrEqual(first.nextPollAtMs)
+        }
+        expect(
+          Result.isFailure(
+            jevBacktestOutcome({
+              report,
+              variantBuild: null,
+              instructions: jevInstructions,
+              operatingAllocations: report.sessionDates.map((sessionDate) => ({
+                sessionDate,
+                infrastructure: { costMicros: '0', evidenceHash: report.reportHash },
+                research: { costMicros: '0', evidenceHash: report.reportHash },
+              })),
+            }),
+          ),
+        ).toBe(true)
         expect(report.processedRecords).toBe(source.recordCount)
         expect(report.inference.calls).toEqual([])
+        if (boundary === 'unknown-data-cost') {
+          expect(report.completion).toBe('INCOMPLETE')
+          expect(report.dataCostMicros).toBeNull()
+          expect(report.reconciledNetPnlAfterCostsMicros).toBeNull()
+          expect(report.maximumObservedDrawdownMicros).toBeNull()
+          expect(report.sessions.every((session) => session.allocatedDataCostMicros === null)).toBe(true)
+          expect(report.sessions.every((session) => session.netEquityChangeMicros === null)).toBe(true)
+          expect(report.issues).toContain(BacktestIssue.UnresolvedDataCost)
+        }
       }).pipe(Effect.scoped, Effect.provide(stores), Effect.provide(NodeServices.layer)),
     )
   },

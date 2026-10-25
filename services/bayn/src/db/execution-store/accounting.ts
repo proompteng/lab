@@ -33,14 +33,13 @@ import {
   decodeTransactionRows,
   decodeUnresolvedPredecessor,
 } from './rows'
-import { Pipeable } from '../../pipeable'
 
 export interface AccountingInterpreter {
   readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, ExecutionStoreError>
   readonly verifyCompleted: (inputs: readonly FillEventInput[]) => Effect.Effect<void, ExecutionStoreError>
 }
 
-const makeAccountingInterpreterDataFirst = (
+export const makeAccountingInterpreter = (
   sql: PgClient.PgClient,
   journal: JournalService,
   config: ExecutionStoreRuntimeConfig,
@@ -72,8 +71,14 @@ const makeAccountingInterpreterDataFirst = (
       'account',
       sql<Record<string, unknown>>`
         SELECT
-          COALESCE(sum(transaction.quantity_delta_micros), 0)::text AS quantity_micros,
-          COALESCE(sum(transaction.cost_basis_delta_micros), 0)::text AS cost_micros
+          (COALESCE(sum(transaction.quantity_delta_atoms), 0) -
+            COALESCE((SELECT sum(fee.quantity_atoms) FROM broker_inventory_debits AS fee
+              WHERE fee.account_id = ${input.accountId} AND fee.symbol = ${input.fill.symbol}
+                AND fee.posted AND fee.effective_at <= ${input.occurredAt}::timestamptz), 0))::text AS quantity_atoms,
+          (COALESCE(sum(transaction.cost_basis_delta_micros), 0) -
+            COALESCE((SELECT sum(fee.cost_basis_micros) FROM broker_inventory_debits AS fee
+              WHERE fee.account_id = ${input.accountId} AND fee.symbol = ${input.fill.symbol}
+                AND fee.posted AND fee.effective_at <= ${input.occurredAt}::timestamptz), 0))::text AS cost_micros
         FROM accounting_transactions AS transaction
         JOIN fills AS candidate_fill ON candidate_fill.event_id = transaction.broker_event_id
         WHERE transaction.account_id = ${input.accountId}
@@ -82,7 +87,7 @@ const makeAccountingInterpreterDataFirst = (
       `.pipe(
         Effect.flatMap(decodePositionCost),
         Effect.map(([position]) => ({
-          quantityMicros: position.quantity_micros,
+          quantityAtoms: position.quantity_atoms,
           costMicros: position.cost_micros,
         })),
       ),
@@ -134,10 +139,10 @@ const makeAccountingInterpreterDataFirst = (
       sql<Record<string, unknown>>`
         SELECT
           schema_version, transaction_id, broker_event_id, intent_id, account_id, symbol, side,
-          quantity_micros::text AS quantity_micros, price_micros::text AS price_micros,
+          quantity_atoms::text AS quantity_atoms, price_atoms::text AS price_atoms,
           notional_micros::text AS notional_micros, fee_micros::text AS fee_micros,
           cost_basis_micros::text AS cost_basis_micros, realized_pnl_micros::text AS realized_pnl_micros,
-          quantity_delta_micros::text AS quantity_delta_micros,
+          quantity_delta_atoms::text AS quantity_delta_atoms,
           cost_basis_delta_micros::text AS cost_basis_delta_micros,
           cash_delta_micros::text AS cash_delta_micros, ledger_plan_hash, content_hash, occurred_at
         FROM accounting_transactions
@@ -155,17 +160,17 @@ const makeAccountingInterpreterDataFirst = (
       sql`
         INSERT INTO accounting_transactions (
           transaction_id, schema_version, broker_event_id, intent_id, account_id, symbol, side,
-          quantity_micros, price_micros, notional_micros, fee_micros, cost_basis_micros,
-          realized_pnl_micros, quantity_delta_micros, cost_basis_delta_micros, cash_delta_micros,
+          quantity_atoms, price_atoms, notional_micros, fee_micros, cost_basis_micros,
+          realized_pnl_micros, quantity_delta_atoms, cost_basis_delta_micros, cash_delta_micros,
           ledger_plan_hash, content_hash, occurred_at
         ) VALUES (
           ${prepared.transaction.transactionId}, ${prepared.transaction.schemaVersion},
           ${prepared.transaction.brokerEventId}, ${prepared.transaction.intentId ?? null},
           ${prepared.transaction.accountId}, ${prepared.transaction.symbol}, ${prepared.transaction.side},
-          ${prepared.transaction.quantityMicros}, ${prepared.transaction.priceMicros},
+          ${prepared.transaction.quantityAtoms}, ${prepared.transaction.priceAtoms},
           ${prepared.transaction.notionalMicros}, ${prepared.transaction.feeMicros},
           ${prepared.transaction.costBasisMicros}, ${prepared.transaction.realizedPnlMicros},
-          ${prepared.transaction.quantityDeltaMicros}, ${prepared.transaction.costBasisDeltaMicros},
+          ${prepared.transaction.quantityDeltaAtoms}, ${prepared.transaction.costBasisDeltaMicros},
           ${prepared.transaction.cashDeltaMicros}, ${prepared.transaction.ledgerPlanHash},
           ${prepared.transaction.contentHash}, ${prepared.transaction.occurredAt}
         )
@@ -300,31 +305,39 @@ const makeAccountingInterpreterDataFirst = (
             yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${first.broker}:${first.accountId}`}, 0))`
             const sourceIds = [...new Set(inputs.map((input) => input.sourceEventId))]
             const rows = yield* sql<Record<string, unknown>>`
-              WITH ranked AS (
+              WITH inventory_debits AS MATERIALIZED (
+                SELECT account_id, symbol, quantity_atoms, cost_basis_micros, effective_at, posted
+                FROM broker_inventory_debits
+                WHERE account_id = ${first.accountId} AND posted
+              ), ranked AS (
                 SELECT
                   transaction.schema_version, transaction.transaction_id, transaction.broker_event_id,
                   transaction.intent_id, transaction.account_id, transaction.symbol, transaction.side,
-                  transaction.quantity_micros::text AS quantity_micros,
-                  transaction.price_micros::text AS price_micros,
+                  transaction.quantity_atoms::text AS quantity_atoms,
+                  transaction.price_atoms::text AS price_atoms,
                   transaction.notional_micros::text AS notional_micros,
                   transaction.fee_micros::text AS fee_micros,
                   transaction.cost_basis_micros::text AS cost_basis_micros,
                   transaction.realized_pnl_micros::text AS realized_pnl_micros,
-                  transaction.quantity_delta_micros::text AS quantity_delta_micros,
+                  transaction.quantity_delta_atoms::text AS quantity_delta_atoms,
                   transaction.cost_basis_delta_micros::text AS cost_basis_delta_micros,
                   transaction.cash_delta_micros::text AS cash_delta_micros,
                   transaction.ledger_plan_hash, transaction.content_hash, transaction.occurred_at,
-                  event.source_event_id, event.content_hash AS event_content_hash,
-                  COALESCE(sum(transaction.quantity_delta_micros) OVER (
+                  event.source_event_id, event.normalized_content_hash AS event_content_hash,
+                  (COALESCE(sum(transaction.quantity_delta_atoms) OVER (
                     PARTITION BY transaction.account_id, transaction.symbol
                     ORDER BY historical_fill.source_timestamp COLLATE "C", historical_fill.fill_id COLLATE "C"
                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                  ), 0)::text AS prior_quantity_micros,
-                  COALESCE(sum(transaction.cost_basis_delta_micros) OVER (
+                  ), 0) - COALESCE((SELECT sum(fee.quantity_atoms) FROM inventory_debits AS fee
+                    WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
+                      AND fee.posted AND fee.effective_at <= transaction.occurred_at), 0))::text AS prior_quantity_atoms,
+                  (COALESCE(sum(transaction.cost_basis_delta_micros) OVER (
                     PARTITION BY transaction.account_id, transaction.symbol
                     ORDER BY historical_fill.source_timestamp COLLATE "C", historical_fill.fill_id COLLATE "C"
                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                  ), 0)::text AS prior_cost_micros
+                  ), 0) - COALESCE((SELECT sum(fee.cost_basis_micros) FROM inventory_debits AS fee
+                    WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
+                      AND fee.posted AND fee.effective_at <= transaction.occurred_at), 0))::text AS prior_cost_micros
                 FROM accounting_transactions AS transaction
                 JOIN fills AS historical_fill ON historical_fill.event_id = transaction.broker_event_id
                 JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
@@ -352,7 +365,7 @@ const makeAccountingInterpreterDataFirst = (
                 )
               }
               const expected = yield* expectedAccounting(row.broker_event_id, input, {
-                quantityMicros: row.prior_quantity_micros,
+                quantityAtoms: row.prior_quantity_atoms,
                 costMicros: row.prior_cost_micros,
               })
               yield* liftStoreDecision(
@@ -367,5 +380,3 @@ const makeAccountingInterpreterDataFirst = (
 
   return { account, verifyCompleted }
 }
-
-export const makeAccountingInterpreter = Pipeable.dual(5, makeAccountingInterpreterDataFirst)

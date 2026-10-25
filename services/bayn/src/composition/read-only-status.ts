@@ -1,17 +1,18 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Ref, Result, Schedule } from 'effect'
 
-import { makeApplicationPlan, type ApplicationPlanFor } from '../app'
-import { BrokerSession } from '../broker/alpaca'
-import type { LoadedRuntimeConfig } from '../config'
-import { CycleObservability } from '../cycle/store'
+import { makeApplicationPlan, type ApplicationPlan } from '../app'
+import { BrokerSession } from '../broker/alpaca/session'
+import type { LoadedRuntimeConfig } from '../config/model'
+import { CycleObservability } from '../cycle/store/observability'
 import { ExecutionStoreError, type AuthorityGenerationStoreShape } from '../db/execution-store'
 import { postgresHealthCheck } from '../db/postgres-client'
 import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
 import { ExecutionControllerStatusStore } from '../execution/controller-status'
 import { BrokerAccess } from '../execution/authority'
-import { checkHealth, type CycleObservationBinding } from '../health'
+import { checkHealth } from '../health/program'
+import { type CycleObservationBinding } from '../health/model'
 import { serveHttp } from '../http'
 import { Journal } from '../ledger'
 import { initialState, type RuntimeState } from '../runtime-state'
@@ -26,7 +27,7 @@ import {
   type ConfiguredCapitalActivation,
 } from './capital-activation'
 
-const readOnlyPlan = (plan: ApplicationPlanFor<'AutonomousService'>): ApplicationPlanFor<'AutonomousService'> => {
+const readOnlyPlan = (plan: ApplicationPlan): ApplicationPlan => {
   const config = {
     ...plan.config,
     execution: readOnlyExecutionPolicy(plan),
@@ -36,7 +37,7 @@ const readOnlyPlan = (plan: ApplicationPlanFor<'AutonomousService'>): Applicatio
     parameterHash: plan.parameterHash,
     strategy: plan.strategy,
     strategyProtocolHash: plan.strategyProtocolHash,
-  }) as ApplicationPlanFor<'AutonomousService'>
+  }) as ApplicationPlan
 }
 
 const configuredCapitalActivation = (
@@ -48,11 +49,11 @@ const configuredCapitalActivation = (
     : decodeConfiguredCapitalActivation(serialized, serializedBuildLineage)
 
 export interface ReadOnlyCapitalActivationStore {
-  readonly authority: AuthorityGenerationStoreShape
+  readonly authority: Pick<AuthorityGenerationStoreShape, 'readAuthorityState' | 'readResearchAuthorityGeneration'>
 }
 
 const makeReadOnlyCapitalActivationStore = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
   sql: PgClient.PgClient,
 ): ReadOnlyCapitalActivationStore => ({
   authority: makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), plan.config.alpaca.identity),
@@ -72,7 +73,7 @@ const logActivationUnavailable = (reason: string, cause?: unknown): Effect.Effec
   )
 
 export const refreshReadOnlyCapitalActivation = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   state: Ref.Ref<RuntimeState>,
   store: ReadOnlyCapitalActivationStore,
@@ -136,7 +137,7 @@ export const readOnlyCycleObservationId = (
 export const resolveReadOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   activationRequestRequired: boolean,
-  authority: AuthorityGenerationStoreShape,
+  authority: Pick<AuthorityGenerationStoreShape, 'readAuthorityState'>,
 ): Effect.Effect<CycleObservationBinding, ExecutionStoreError> => {
   const configuredId = readOnlyCycleObservationId(configured)
   if (
@@ -152,35 +153,27 @@ export const resolveReadOnlyCycleObservationId = (
     )
   }
   const readAuthorityState = authority.readAuthorityState
-  return readAuthorityState === undefined
-    ? Effect.fail(
-        new ExecutionStoreError({
-          operation: 'authority',
-          failure: 'invariant',
-          message: 'read-only status authority projection is unavailable',
-        }),
-      )
-    : readAuthorityState.pipe(
-        Effect.flatMap((current) =>
-          Effect.fromResult(observeCycleGenerationHash(current)).pipe(
-            Effect.mapError(
-              (message) =>
-                new ExecutionStoreError({
-                  operation: 'authority',
-                  failure: 'invariant',
-                  message,
-                }),
-            ),
-            Effect.map((bindingId): CycleObservationBinding => ({ _tag: 'Exact', bindingId })),
-          ),
+  return readAuthorityState.pipe(
+    Effect.flatMap((current) =>
+      Effect.fromResult(observeCycleGenerationHash(current)).pipe(
+        Effect.mapError(
+          (message) =>
+            new ExecutionStoreError({
+              operation: 'authority',
+              failure: 'invariant',
+              message,
+            }),
         ),
-      )
+        Effect.map((bindingId): CycleObservationBinding => ({ _tag: 'Exact', bindingId })),
+      ),
+    ),
+  )
 }
 
 export const resolveReadOnlyCycleObservationIdForHealth = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   activationRequestRequired: boolean,
-  authority: AuthorityGenerationStoreShape,
+  authority: Pick<AuthorityGenerationStoreShape, 'readAuthorityState'>,
   operationTimeoutMs: number,
 ): Effect.Effect<CycleObservationBinding> =>
   resolveReadOnlyCycleObservationId(configured, activationRequestRequired, authority).pipe(
@@ -195,7 +188,7 @@ export const resolveReadOnlyCycleObservationIdForHealth = (
   )
 
 export const readOnlyExecutionControllerBinding = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
 ): { readonly controllerKey: string; readonly planHash: string } | undefined => {
   const planHash = plan.config.expectedExecutionControllerPlanHash
   return planHash === undefined
@@ -206,7 +199,7 @@ export const readOnlyExecutionControllerBinding = (
       }
 }
 
-export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlan) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const journal = yield* Journal

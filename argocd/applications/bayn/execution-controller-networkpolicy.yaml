@@ -27,6 +27,17 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: glitchtip
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+              app.kubernetes.io/component: web
+      ports:
+        - port: 8000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: kafka
           podSelector:
             matchLabels:
@@ -55,6 +66,18 @@ spec:
               clickhouse.altinity.com/chi: torghut-clickhouse
       ports:
         - port: 8123
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: observability-mimir
+              app.kubernetes.io/name: mimir
+              app.kubernetes.io/component: gateway
+      ports:
+        - port: 8080
           protocol: TCP
     - to:
         - namespaceSelector:

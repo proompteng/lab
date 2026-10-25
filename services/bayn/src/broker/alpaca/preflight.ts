@@ -22,7 +22,6 @@ import {
   type ReadPreflight,
   type ReadResult,
 } from './model'
-import { Pipeable } from '../../pipeable'
 
 const missingOrderId = '00000000-0000-4000-8000-000000000000'
 const missingClientOrderId = 'bayn-observe-read-proof-does-not-exist'
@@ -85,7 +84,7 @@ const verifyBrokerReadPermissions = (
   })
 }
 
-const verifyBrokerAccountPermissionsDataFirst = (
+export const verifyBrokerAccountPermissions = (
   account: Account,
   configuration: AccountConfigurationObservation,
 ): Result.Result<VerifiedBrokerAccountPermissions, BrokerAccountPreflightFailure> => {
@@ -97,8 +96,6 @@ const verifyBrokerAccountPermissionsDataFirst = (
     fractionalTrading: true,
   })
 }
-
-export const verifyBrokerAccountPermissions = Pipeable.dual(2, verifyBrokerAccountPermissionsDataFirst)
 
 const permissionFailure = (
   connection: BrokerConnection,
@@ -164,7 +161,7 @@ const verifyOrderLookup = (
     ),
   )
 
-const verifyReadAccessDataFirst = (
+export const verifyReadAccess = (
   connection: BrokerConnection,
   read: BrokerReadShape,
 ): Effect.Effect<ReadPreflight, BrokerReadError | BrokerAccountPreflightError> =>
@@ -281,5 +278,3 @@ const verifyReadAccessDataFirst = (
     }),
     Effect.withLogSpan('broker.read.preflight'),
   )
-
-export const verifyReadAccess = Pipeable.dual(2, verifyReadAccessDataFirst)

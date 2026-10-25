@@ -8,20 +8,20 @@ import { applyReplayFill, createReplayLedger, type EconomicReplayFill } from './
 
 const scenario = fc.record({
   // Each generated part is a later partial close of one partially filled entry.
-  parts: fc.array(fc.bigInt({ min: 1n, max: 20_000_000n }), { minLength: 2, maxLength: 8 }),
+  parts: fc.array(fc.bigInt({ min: 1000n, max: 20_000_000_000n }), { minLength: 2, maxLength: 8 }),
   entryPrice: fc.bigInt({ min: 1_000_000n, max: 1_000_000_000n }),
   exitPrice: fc.bigInt({ min: 1_000_000n, max: 1_000_000_000n }),
-  unfilledQuantity: fc.bigInt({ min: 1n, max: 10_000_000n }),
+  unfilledQuantity: fc.bigInt({ min: 1n, max: 10_000_000_000n }),
   feeMultiplier: fc.integer({ min: 1_000_000, max: 10_000_000 }),
   symbol: fc.constantFrom('AAPL', 'NVDA', 'IWM'),
 })
 
 // Deliberately independent of the production fixed-point/notional helper.
-const notional = (quantity: bigint, price: bigint): bigint => (quantity * price + 500_000n) / 1_000_000n
+const notional = (quantity: bigint, price: bigint): bigint => (quantity * price + 500_000_000n) / 1_000_000_000n
 const makeFill = (symbol: string, side: 'buy' | 'sell', quantity: bigint, price: bigint): EconomicReplayFill => ({
   symbol,
   side,
-  quantityMicros: String(quantity),
+  quantityAtoms: String(quantity),
   priceMicros: String(price),
   notionalMicros: String(notional(quantity, price)),
   observedAt: '2026-09-04T14:30:00.000Z',
@@ -50,7 +50,7 @@ describe('replay accounting properties', () => {
         let costBasis = BigInt(entry.notionalMicros)
         expect(ledger.cashMicros).toBe(String(balanceBeforeFees - BigInt(ledger.executionFeesMicros)))
         expect(ledger.positions).toEqual([
-          { symbol: input.symbol, quantityMicros: String(held), costBasisMicros: String(costBasis) },
+          { symbol: input.symbol, quantityAtoms: String(held), costBasisMicros: String(costBasis) },
         ])
         expect(ledger.netRealizedPnlAfterCostsMicros).toBeNull()
         for (const part of input.parts) {
@@ -70,7 +70,7 @@ describe('replay accounting properties', () => {
           expect(ledger.positions).toEqual(
             held === 0n
               ? []
-              : [{ symbol: input.symbol, quantityMicros: String(held), costBasisMicros: String(costBasis) }],
+              : [{ symbol: input.symbol, quantityAtoms: String(held), costBasisMicros: String(costBasis) }],
           )
           expect(ledger.netRealizedPnlAfterCostsMicros).toBe(
             held === 0n ? String(BigInt(ledger.cashMicros) - opening) : null,
@@ -85,7 +85,7 @@ describe('replay accounting properties', () => {
     )
   })
 
-  test('property: a one-micro oversell or forged notional cannot alter the ledger', () => {
+  test('property: a one-atom oversell or forged notional cannot alter the ledger', () => {
     checkProperty(
       'partial-fill-boundaries',
       fc.property(scenario, (input) => {
@@ -107,7 +107,7 @@ describe('replay accounting properties', () => {
           applyReplayFill(ledger, oversell, String(quantity + 1n), intradayMomentumExecutionModel, input.feeMultiplier),
         ).toMatchObject({
           _tag: 'Failure',
-          failure: { _tag: 'IntradayReplayLedgerOversell', positionQuantityMicros: String(quantity) },
+          failure: { _tag: 'IntradayReplayLedgerOversell', positionQuantityAtoms: String(quantity) },
         })
         const exit = makeFill(input.symbol, 'sell', quantity, input.exitPrice)
         for (const delta of [-1n, 1n])

@@ -137,7 +137,8 @@ export const selectAffectedInputs = (
         ...after.workspaceClosure(target.workspaces),
       ])
       const changed = files.some((file) => {
-        if (matchesPaths(file, ['packages/scripts/src/ci/**', '.github/actions/affected-inputs/**'])) return true
+        // Planner implementation and tests are validated by scripts CI, not by rebuilding every consumer.
+        if (matchesPaths(file, ['packages/scripts/src/ci/**', '.github/actions/affected-inputs/**'])) return false
         if (file === 'bun.lock') return !equalDependencies(before, after, target.workspaces)
         if (file === 'package.json') return true
         if (file.endsWith('/package.json')) {

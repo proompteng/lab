@@ -50,6 +50,51 @@ spec:
               "${client[@]}" --multiquery --query "
                 CREATE DATABASE IF NOT EXISTS signal ON CLUSTER default;
 
+                CREATE TABLE IF NOT EXISTS signal.crypto_market_features_v1 ON CLUSTER default
+                (
+                  feature_id FixedString(64),
+                  location LowCardinality(String),
+                  symbol LowCardinality(String),
+                  window_start DateTime64(3, 'UTC'),
+                  window_end DateTime64(3, 'UTC'),
+                  computed_at DateTime64(3, 'UTC'),
+                  archived_at DateTime64(3, 'UTC'),
+                  source_topic LowCardinality(String),
+                  source_partition UInt32,
+                  source_offset UInt64,
+                  payload String CODEC(ZSTD(3))
+                )
+                ENGINE = ReplicatedReplacingMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_crypto_market_features_v1',
+                  '{replica}'
+                )
+                PARTITION BY toYYYYMM(window_end)
+                ORDER BY (location, symbol, window_end, feature_id, source_topic, source_partition, source_offset)
+                TTL toDateTime(window_end) + INTERVAL 30 DAY DELETE;
+
+                CREATE TABLE IF NOT EXISTS signal.crypto_market_events_v1 ON CLUSTER default
+                (
+                  provider LowCardinality(String),
+                  location LowCardinality(String),
+                  channel LowCardinality(String),
+                  symbol LowCardinality(String),
+                  event_ts DateTime64(9, 'UTC'),
+                  ingest_ts DateTime64(9, 'UTC'),
+                  source_topic LowCardinality(String),
+                  source_partition UInt32,
+                  source_offset UInt64,
+                  sequence UInt64,
+                  payload String CODEC(ZSTD(3)),
+                  schema_version UInt16
+                )
+                ENGINE = ReplicatedReplacingMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_crypto_market_events_v1',
+                  '{replica}'
+                )
+                PARTITION BY toYYYYMM(event_ts)
+                ORDER BY (location, symbol, event_ts, source_topic, source_partition, source_offset)
+                TTL toDateTime(event_ts) + INTERVAL 30 DAY DELETE;
+
                 CREATE TABLE IF NOT EXISTS signal.intraday_bars_1m_v1 ON CLUSTER default
                 (
                   provider LowCardinality(String),

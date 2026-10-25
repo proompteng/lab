@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 
-PAYLOAD = b"x" * (8 * 1024 * 1024)
+PAYLOAD = b"x" * (16 * 1024 * 1024)
 DIGEST = hashlib.sha256(PAYLOAD).hexdigest()
 slow_started = threading.Event()
 
@@ -107,7 +107,7 @@ try:
         fast_elapsed = time.monotonic() - start
         assert fast_elapsed < 7, "fast uploads waited behind the stalled upload"
         assert fast_elapsed >= 3, (
-            "concurrent uploads exceeded the shared 5 MiB/s budget"
+            "concurrent uploads exceeded the shared 10 MiB/s budget"
         )
         slow.result()
     print(

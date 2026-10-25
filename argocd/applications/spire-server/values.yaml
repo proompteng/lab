@@ -115,20 +115,6 @@ spire-server:
           enabled: false
         test-keys:
           enabled: false
-        identity-canary:
-          enabled: true
-          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}
-          namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: spire-test
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: spire-identity-canary
-          workloadSelectorTemplates:
-            - k8s:sa:identity-canary
-          ttl: 2m
-          fallback: false
-
         proompteng:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/proompteng
@@ -143,6 +129,21 @@ spire-server:
             - k8s:container-name:proompteng
           ttl: 2m
           fallback: false
+        ofz-api:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/ofz/sa/ofz-api
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ofz-api
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:ofz-api
+            - k8s:container-name:ofz-api
+          ttl: 2m
+          fallback: false
         tengri:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/sa/tengri
@@ -152,7 +153,10 @@ spire-server:
           podSelector:
             matchLabels:
               app.kubernetes.io/name: tengri
-              app.kubernetes.io/component: control-plane
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [control-plane, run-worker]
           workloadSelectorTemplates:
             - k8s:sa:tengri
             - k8s:container-name:tengri
@@ -197,8 +201,11 @@ spire-server:
           podSelector:
             matchLabels:
               app.kubernetes.io/name: tengri
-              app.kubernetes.io/component: control-plane
               spiffe.io/spire-managed-identity: "true"
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [control-plane, run-worker]
           workloadSelectorTemplates:
             - k8s:sa:tengri
             - k8s:container-name:istio-proxy

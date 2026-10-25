@@ -15,11 +15,102 @@ spec:
   imagePullPolicy: IfNotPresent
   enablePDB: true
   enableSuperuserAccess: false
+  managed:
+    roles:
+    - name: ofz_migrator
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 2
+      passwordSecret:
+        name: ofz-migrator-db-auth
+    - name: ofz_api
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 42
+      passwordSecret:
+        name: ofz-api-db-auth
+    - name: ofz_archiver
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 4
+      passwordSecret:
+        name: ofz-archiver-db-auth
+    - name: tengri_migrator
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 2
+      passwordSecret:
+        name: tengri-migrator-db-auth
+    - name: tengri_controller
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 42
+      passwordSecret:
+        name: tengri-controller-db-auth
+    - name: tengri_bff
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 24
+      passwordSecret:
+        name: tengri-bff-db-auth
+    - name: tengri_supervisor
+      ensure: present
+      login: true
+      inherit: false
+      superuser: false
+      createdb: false
+      createrole: false
+      replication: false
+      bypassrls: false
+      connectionLimit: 24
+      passwordSecret:
+        name: tengri-supervisor-db-auth
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   affinity:
-    podAntiAffinityType: preferred
+    podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname
+    tolerations:
+      - key: workload.proompteng.ai/compute-local
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
   resources:
     requests:
       cpu: 250m
@@ -29,7 +120,7 @@ spec:
       memory: 2Gi
   storage:
     storageClass: rook-ceph-block
-    size: 20Gi
+    size: 30Gi
     resizeInUseVolumes: true
   bootstrap:
     initdb:
@@ -43,8 +134,12 @@ spec:
       number: 1
       dataDurability: required
     parameters:
+      archive_timeout: 60s
+      wal_buffers: 16MB
+      wal_sync_method: fdatasync
+      track_wal_io_timing: "on"
       track_commit_timestamp: "on"
-      max_connections: "200"
+      max_connections: "220"
       password_encryption: scram-sha-256
       ssl_min_protocol_version: TLSv1.3
   plugins:

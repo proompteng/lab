@@ -1,3 +1,4 @@
+import { jevMarketForSymbol } from '../jev/markets'
 import { Result } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
@@ -23,7 +24,7 @@ export enum MatchedEvent {
 export interface MatchedLifecycle {
   readonly portfolio: ControlPortfolio
   readonly entry:
-    | { readonly status: 'PENDING'; readonly quantityMicros: bigint; readonly quote: ControlQuote }
+    | { readonly status: 'PENDING'; readonly quantityAtoms: bigint; readonly quote: ControlQuote }
     | { readonly status: 'SKIPPED' }
     | null
   readonly exit: { readonly atMs: number; readonly quote: ControlQuote } | null
@@ -77,15 +78,16 @@ export const stepMatchedLifecycle = (
         return problem('entry-event-order')
       if (atMs + terms.assumptions.latencyMs >= terms.cutoffMs)
         return { ...state, entry: { status: 'SKIPPED' as const } }
-      const rejection = replayQuoteRejection(quote, terms.symbol, atMs, terms.protocol)
+      const rejection = replayQuoteRejection(quote, terms.symbol, atMs, {
+        ...terms.protocol,
+        ...jevMarketForSymbol(terms.symbol),
+      })
       if (rejection !== null || quote === undefined) return problem(rejection ?? 'missing-entry-quote')
-      const quantityMicros = yield* studyEntryQuantity({ ...terms, referencePrice: quote.value.askPrice })
+      const quantityAtoms = yield* studyEntryQuantity({ ...terms, referencePrice: quote.value.askPrice })
       return {
         ...state,
         entry:
-          quantityMicros === 0n
-            ? { status: 'SKIPPED' as const }
-            : { status: 'PENDING' as const, quantityMicros, quote },
+          quantityAtoms === 0n ? { status: 'SKIPPED' as const } : { status: 'PENDING' as const, quantityAtoms, quote },
         quoteHashes: [...state.quoteHashes, quote.recordHash],
       }
     }
@@ -96,7 +98,7 @@ export const stepMatchedLifecycle = (
       const result = yield* applyControlOrder(state.portfolio, {
         ...terms,
         side: OrderSide.Buy,
-        quantityMicros: state.entry.quantityMicros,
+        quantityAtoms: state.entry.quantityAtoms,
         decisionQuote: state.entry.quote,
         arrivalQuote: quote,
         decisionAtMs: terms.decidedAtMs,
@@ -113,8 +115,12 @@ export const stepMatchedLifecycle = (
     if (state.portfolio.inventory.status === 'FLAT') return state
     if (event.kind === MatchedEvent.Poll) {
       if (state.exit !== null) return problem('overlapping-exit-routing')
-      const rejection = replayQuoteRejection(quote, terms.symbol, atMs, terms.protocol)
+      const rejection = replayQuoteRejection(quote, terms.symbol, atMs, {
+        ...terms.protocol,
+        ...jevMarketForSymbol(terms.symbol),
+      })
       const portfolio = yield* triggerControlExit({
+        feeMultiplierPpm: terms.assumptions.feeMultiplierPpm,
         portfolio: state.portfolio,
         protocol: terms.protocol,
         policy: ControlPolicy.RelativeMomentum,
@@ -138,7 +144,7 @@ export const stepMatchedLifecycle = (
     const result = yield* applyControlOrder(state.portfolio, {
       ...terms,
       side: OrderSide.Sell,
-      quantityMicros: BigInt(position.quantityMicros),
+      quantityAtoms: BigInt(position.quantityAtoms),
       decisionQuote: pending.quote,
       arrivalQuote: quote,
       decisionAtMs: pending.atMs,

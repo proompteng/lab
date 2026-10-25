@@ -5,10 +5,11 @@ import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { BrokerObservations } from './broker/alpaca/observed-snapshot'
 import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
-import { BrokerProvider, BrokerSession, decodeBrokerConnection, type BrokerConnection } from './broker/alpaca'
+import { BrokerProvider, decodeBrokerConnection, type BrokerConnection } from './broker/connection'
+import { BrokerSession } from './broker/alpaca/session'
 import { AlpacaHttpClient } from './broker/alpaca/http'
 import { BrokerEnvironment } from './broker/identity'
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { Journal, JournalLive, type TigerBeetleClient } from './ledger'
 import { config as fixtureConfig } from './testing/runtime-fixtures'
 import {
@@ -33,6 +34,12 @@ const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): Tige
   lookupTransfers: async () => [],
   queryAccounts: async () => [],
   queryTransfers: async () => [],
+  getAccountTransfers: async () => {
+    throw new Error('unexpected account transfer history read')
+  },
+  getAccountBalances: async () => {
+    throw new Error('unexpected account balance history read')
+  },
   destroy: () => undefined,
   ...overrides,
 })
@@ -167,7 +174,7 @@ describe('Bayn resource lifecycle', () => {
             : url.pathname === '/v2/orders' ||
                 url.pathname === '/v2/positions' ||
                 url.pathname === '/v2/account/activities/FILL' ||
-                url.pathname === '/v2/account/activities/FEE' ||
+                url.pathname === '/v2/account/activities' ||
                 url.pathname === '/v2/calendar'
               ? []
               : { code: 40410000, message: 'order not found' }
@@ -194,6 +201,7 @@ describe('Bayn resource lifecycle', () => {
           Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
           Effect.provideService(BrokerObservations, {
             read: Effect.die('not read by acquisition'),
+            readState: Effect.die('not read by acquisition'),
             readForSubmit: () => Effect.die('not submitted by acquisition'),
             invalidate: Effect.void,
           }),
@@ -254,6 +262,7 @@ describe('Bayn resource lifecycle', () => {
             Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
             Effect.provideService(BrokerObservations, {
               read: Effect.die('not read by acquisition'),
+              readState: Effect.die('not read by acquisition'),
               readForSubmit: () => Effect.die('not submitted by acquisition'),
               invalidate: Effect.void,
             }),
@@ -360,6 +369,12 @@ describe('Bayn resource lifecycle', () => {
     const client = makeTigerBeetleClient({
       queryAccounts: () => query([]),
       queryTransfers: () => query([]),
+      getAccountTransfers: async () => {
+        throw new Error('unexpected account transfer history read')
+      },
+      getAccountBalances: async () => {
+        throw new Error('unexpected account balance history read')
+      },
       destroy: () => undefined,
     })
 
@@ -394,6 +409,12 @@ describe('Bayn resource lifecycle', () => {
       const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
       const interruptedClient = makeTigerBeetleClient({
         lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
+        getAccountTransfers: async () => {
+          throw new Error('unexpected account transfer history read')
+        },
+        getAccountBalances: async () => {
+          throw new Error('unexpected account balance history read')
+        },
         destroy: () => {
           closeCounts[0] += 1
           Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))

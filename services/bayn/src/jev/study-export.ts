@@ -3,7 +3,6 @@ import { PgClient } from '@effect/sql-pg'
 import { Data, Effect, FileSystem, Path, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
-import { CycleState } from '../cycle/model'
 import {
   IsoDateSchema,
   Sha256Schema,
@@ -14,17 +13,12 @@ import {
 import { decodeJevBatchResult } from './batch'
 import { JevPurpose } from './portfolio'
 import { reproduceJevTradingSignalBatchEvidence } from './trading-signals'
+import { JevStudyCycleSchema, verifyJevStudyInventory, type JevStudyInventory } from './study-inventory'
 
 export class JevStudyExportFailure extends Data.TaggedError('JevStudyExportFailure')<{
   readonly message: string
 }> {}
 
-const CycleSchema = Schema.Struct({
-  cycleId: Sha256Schema,
-  protocolHash: Sha256Schema,
-  state: Schema.Enum(CycleState),
-  decisionHash: Schema.NullOr(Sha256Schema),
-})
 const RowSchema = Schema.Struct({
   batchId: Sha256Schema,
   cycleId: Sha256Schema,
@@ -87,6 +81,7 @@ export const exportJevStudySession = (
       yield* fs.makeDirectory(outputPath, { mode: 0o700 })
       const file = yield* fs.open(paths.join(outputPath, 'batches.ndjson'), { flag: 'wx', mode: 0o600 })
       const digest = createHash('sha256')
+      const batches: JevStudyInventory['batches'][number][] = []
       let bytes = 0
       const write = (value: unknown) =>
         Effect.gen(function* () {
@@ -98,7 +93,7 @@ export const exportJevStudySession = (
           digest.update(encoded)
           bytes += encoded.byteLength
         })
-      const receipt = yield* sql.withTransaction(
+      const exported = yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`
           yield* sql`SET LOCAL statement_timeout = '5s'`
@@ -109,7 +104,7 @@ export const exportJevStudySession = (
             yield* sql`SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "asOf"`,
           )
           const cycles = yield* Schema.decodeUnknownEffect(
-            Schema.Array(CycleSchema),
+            Schema.Array(JevStudyCycleSchema),
             strictParseOptions,
           )(
             yield* sql`
@@ -165,30 +160,54 @@ export const exportJevStudySession = (
             if (lastBatchId !== null && row.batchId <= lastBatchId)
               return yield* new JevStudyExportFailure({ message: 'Batch inventory did not advance' })
             yield* write(row)
+            batches.push({
+              batchId: row.batchId,
+              cycleId: row.cycleId,
+              observationHash: row.observationHash,
+              purpose: row.purpose,
+              resultHash: row.result?.resultHash ?? null,
+            })
             lastBatchId = row.batchId
             batchCount += 1
             if (row.result === null) pendingResultCount += 1
             if (row.purpose === JevPurpose.Entry) entryBatchCount += 1
           }
           return {
-            schemaVersion: 'bayn.jev-study-export.v1',
-            accountBindingHash,
-            sessionDate: scope.sessionDate,
-            asOf: cut.asOf,
-            cycleCount: cycles.length,
-            batchCount,
-            entryBatchCount,
-            managementBatchCount: batchCount - entryBatchCount,
-            pendingResultCount,
-            sourceCoverage: 'RECORDED_OBSERVATIONS_ONLY',
-            qualification: 'UNQUALIFIED',
-            controllerCoverage: 'UNKNOWN',
-          } as const
+            cycles,
+            receipt: {
+              schemaVersion: 'bayn.jev-study-export.v1',
+              accountBindingHash,
+              sessionDate: scope.sessionDate,
+              asOf: cut.asOf,
+              cycleCount: cycles.length,
+              batchCount,
+              entryBatchCount,
+              managementBatchCount: batchCount - entryBatchCount,
+              pendingResultCount,
+              sourceCoverage: 'RECORDED_OBSERVATIONS_ONLY',
+              qualification: 'UNQUALIFIED',
+              controllerCoverage: 'UNKNOWN',
+            } as const,
+          }
         }),
       )
       yield* file.sync
-      const material = { ...receipt, bytes, dataSha256: digest.digest('hex') }
+      const material = { ...exported.receipt, bytes, dataSha256: digest.digest('hex') }
       const report = { ...material, receiptHash: yield* Effect.fromResult(canonicalHashV1Result(material)) }
+      const inventory = yield* Effect.fromResult(
+        verifyJevStudyInventory({
+          schemaVersion: 'bayn.jev-study-inventory.v1',
+          receipt: report,
+          cycles: exported.cycles,
+          batches,
+        }),
+      )
+      const inventoryBytes = new TextEncoder().encode(`${yield* Effect.fromResult(canonicalJsonV1Result(inventory))}\n`)
+      if (inventoryBytes.byteLength > maximumRecordBytes)
+        return yield* new JevStudyExportFailure({ message: 'Session inventory exceeded its retained-data bound' })
+      const inventoryFile = yield* fs.open(paths.join(outputPath, 'inventory.json'), { flag: 'wx', mode: 0o600 })
+      yield* inventoryFile.writeAll(inventoryBytes)
+      yield* inventoryFile.sync
       const receiptFile = yield* fs.open(paths.join(outputPath, 'receipt.json'), { flag: 'wx', mode: 0o600 })
       yield* receiptFile.writeAll(new TextEncoder().encode(`${JSON.stringify(report, null, 2)}\n`))
       yield* receiptFile.sync

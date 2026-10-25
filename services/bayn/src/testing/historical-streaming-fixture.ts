@@ -1,6 +1,7 @@
-import { canonicalHashV1 } from '../hash'
+import { Result } from 'effect'
+import { canonicalHashV1Result } from '../hash'
 import { intradayMomentumBehaviorHash } from '../strategy/intraday-momentum/decision'
-import { streamingFixture } from './streaming-market-fixture'
+import { streamingFixture, streamingFixtureFromRaw } from './streaming-market-fixture'
 
 export const historicalRawArrivals = (
   snapshot: Pick<ReturnType<typeof streamingFixture>['snapshot'], 'bars' | 'quotes' | 'trades'>,
@@ -43,8 +44,25 @@ export const historicalRawArrivals = (
     },
   }))
 
-export const historicalStreamingFixture = (returns?: Readonly<Record<string, number>>) => {
-  const { cut, snapshot, protocol, query } = streamingFixture(returns)
+export const historicalStreamingFixture = (returns?: Readonly<Record<string, number>>, observedTradePrices = false) => {
+  const base = streamingFixture(returns)
+  const firstMinute = base.snapshot.bars[0]?.eventAt
+  const { cut, snapshot, protocol, query } = observedTradePrices
+    ? {
+        ...base,
+        ...streamingFixtureFromRaw(
+          {
+            ...base.snapshot,
+            bars: base.snapshot.bars.map((bar) =>
+              bar.eventAt === firstMinute && bar.symbol !== 'SPY'
+                ? { ...bar, high: Math.max(bar.high, bar.open * 1.05), low: Math.min(bar.low, bar.open * 0.95) }
+                : bar,
+            ),
+          },
+          base.query,
+        ),
+      }
+    : base
   const observedAtMs = Date.parse(snapshot.manifest.observedAt)
   const raw = historicalRawArrivals(snapshot, observedAtMs)
   const features = [...cut.projection.features.values()].flat().map((feature, partition) => ({
@@ -53,10 +71,10 @@ export const historicalStreamingFixture = (returns?: Readonly<Record<string, num
   }))
   const input = {
     schemaVersion: 'bayn.historical-streaming-strategy-input.v1',
-    protocolHash: canonicalHashV1(protocol),
+    protocolHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
     behaviorHash: intradayMomentumBehaviorHash,
     sessionDate: '2026-09-04',
-    calendar: [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
+    calendar: [{ session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' }],
     arrivals: {
       schemaVersion: 'bayn.historical-market-arrivals.v1',
       runId: 'a'.repeat(64),

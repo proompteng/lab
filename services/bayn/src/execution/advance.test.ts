@@ -3,7 +3,8 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Exit, Logger, References, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { CycleRunnerError, type CycleRunResult } from '../cycle/runner'
+import { CycleRunnerError, type CycleRunResult } from '../cycle/runner/model'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { withObservedStage } from '../telemetry'
 import { advanceExecutionOnce } from './advance'
@@ -306,4 +307,34 @@ describe('advanceExecutionOnce', () => {
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) expect(exit.cause.toString()).toContain('TransientExecutionFailure')
   })
+})
+
+test('cycle-free protection remains a waiting receipt after restart and hashes its evidence binding', async () => {
+  const observation = {
+    result: 'SUCCESS',
+    outcome: 'ADMISSION_WAITING',
+    observedAt: '2026-08-13T17:00:01.000Z',
+    readiness: { reason: DecisionReadinessReason.AccountProtection, message: 'DRAWDOWN_EXCEEDED' },
+    admissionProtection: {
+      authorityGenerationHash: 'a'.repeat(64),
+      authorityUpdatedAt: '2026-08-13T16:59:00.000Z',
+      reconciliationId: 'b'.repeat(64),
+      tradingDate: '2026-08-13',
+      validUntil: '2026-08-13T17:01:00.000Z',
+    },
+  } as const satisfies AutonomousCyclePassObservation
+  const first = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+  const replay = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+  expect(first).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000, observation })
+  expect(replay).toEqual(first)
+  const changed = await Effect.runPromise(
+    advanceExecutionOnce(
+      command,
+      driver({
+        ...observation,
+        admissionProtection: { ...observation.admissionProtection, reconciliationId: 'c'.repeat(64) },
+      }),
+    ),
+  )
+  expect(changed.receiptHash).not.toBe(first.receiptHash)
 })

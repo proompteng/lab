@@ -20,7 +20,7 @@ class ForwarderEndpointsTest {
       alpacaKeyId = "key",
       alpacaSecretKey = "secret",
       alpacaMarketType = marketType,
-      alpacaCryptoLocation = "us",
+      cryptoFeed = if (marketType == AlpacaMarketType.CRYPTO) CryptoFeedConfig("us", listOf("BTC/USD"), "crypto-events") else null,
       alpacaFeed = if (marketType == AlpacaMarketType.OPTIONS) "opra" else "iex",
       alpacaStreamUrl = "wss://stream.data.alpaca.markets/",
       alpacaBaseUrl = "https://data.alpaca.markets/",
@@ -78,16 +78,19 @@ class ForwarderEndpointsTest {
   fun `crypto endpoints use crypto paths and skip feed parameter`() {
     val cfg = baseConfig(AlpacaMarketType.CRYPTO)
     assertEquals("wss://stream.data.alpaca.markets/v1beta3/crypto/us", alpacaMarketDataStreamUrl(cfg))
-    assertEquals("https://data.alpaca.markets/v1beta3/crypto/us/bars", alpacaBarsBackfillUrl(cfg))
+    assertFailsWith<IllegalStateException> { alpacaBarsBackfillUrl(cfg) }
     assertFalse(alpacaBarsBackfillNeedsFeed(cfg))
-    assertEquals(listOf("trades", "quotes", "bars"), alpacaMarketDataChannels(cfg))
+    assertEquals(listOf("trades", "quotes", "bars", "updatedBars", "orderbooks"), alpacaMarketDataChannels(cfg))
   }
 
   @Test
   fun `crypto endpoints respect configured location`() {
-    val cfg = baseConfig(AlpacaMarketType.CRYPTO).copy(alpacaCryptoLocation = "eu-1")
+    val cfg =
+      baseConfig(
+        AlpacaMarketType.CRYPTO,
+      ).copy(cryptoFeed = CryptoFeedConfig("eu-1", listOf("BTC/USD"), "crypto-events"))
     assertEquals("wss://stream.data.alpaca.markets/v1beta3/crypto/eu-1", alpacaMarketDataStreamUrl(cfg))
-    assertEquals("https://data.alpaca.markets/v1beta3/crypto/eu-1/bars", alpacaBarsBackfillUrl(cfg))
+    assertFailsWith<IllegalStateException> { alpacaBarsBackfillUrl(cfg) }
   }
 
   @Test

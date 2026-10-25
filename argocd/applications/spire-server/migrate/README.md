@@ -49,8 +49,9 @@ attempt to overwrite the populated target. CI runs this against PostgreSQL 18.6.
    the command line. The tool suppresses driver errors because they can contain credentials or row contents.
 5. Only after the import commits and is verified, merge and reconcile the reviewed three-server HA change.
    Preserve `spire-server-0`'s existing data volume and `proompteng.ai` subdirectory. Each added server gets its own
-   signing-key PVC; all three share PostgreSQL. Restore automated reconciliation and run the SPIRE verifier through
-   at least two rotation windows. Exercise both application gRPC hops and the authenticated desktop.
+   signing-key PVC; all three share PostgreSQL. Restore automated reconciliation and run the SPIRE readiness
+   verifier. Exercise both application gRPC hops and the authenticated desktop, and verify application identity
+   renewal across at least two certificate validity windows.
 6. In the authorized verification window, interrupt one SPIRE server and test renewal through another, then perform
    a CNPG primary switchover and repeat renewal and application requests. Readiness alone does not prove HA.
 

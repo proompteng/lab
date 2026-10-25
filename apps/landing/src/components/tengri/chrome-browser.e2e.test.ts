@@ -1,4 +1,4 @@
-import { expect, test, type WebSocket } from '@playwright/test'
+import { expect, test, type WebSocket as PlaywrightWebSocket } from '@playwright/test'
 import { codexModelFixtures } from './codex-models.fixture'
 
 test.afterEach(async ({ request }, testInfo) => {
@@ -23,10 +23,30 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
 }, testInfo) => {
   test.skip(process.env.TENGRI_EDITOR_BROWSER_FIXTURE !== '1', 'Run the real guest browser acceptance runner')
   test.setTimeout(240_000)
-  const sockets: WebSocket[] = []
+  const sockets: PlaywrightWebSocket[] = []
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket
+    let displaySocket: WebSocket | undefined
+    Object.defineProperty(window, '__tengriTestDisplaySocket', { get: () => displaySocket })
+    window.WebSocket = new Proxy(NativeWebSocket, {
+      construct(target, args) {
+        const socket = Reflect.construct(target, args) as WebSocket
+        if (new URL(String(args[0]), location.href).pathname === '/websockify') displaySocket = socket
+        return socket
+      },
+    })
+  })
   const errors: string[] = []
   const signOutActions: string[] = []
   let authenticated = true
+  let automaticRenewals = 0
+  const leaseExpiries: number[] = []
+  page.on('response', async (response) => {
+    if (new URL(response.url()).pathname === '/_tengri/bootstrap' && response.ok()) {
+      const lease = await response.json().catch(() => null)
+      if (lease?.expiresAt) leaseExpiries.push(Date.parse(lease.expiresAt))
+    }
+  })
   let failRevocation = true
   let browserOrigin = ''
   page.on('pageerror', (error) => errors.push(error.message))
@@ -80,7 +100,11 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
     const action = route.request().postDataJSON()
     let result: unknown = null
     if (action.action === 'browser-session') {
-      const response = await request.get('http://127.0.0.1:33082/_test/browser', { timeout: 300_000 })
+      if (action.renewal) automaticRenewals++
+      const response = await request.get(
+        `http://127.0.0.1:18082/_test/browser?window=${encodeURIComponent(action.windowId)}`,
+        { timeout: 300_000 },
+      )
       expect(response.ok()).toBeTruthy()
       result = await response.json()
       browserOrigin = (result as { previewOrigin: string }).previewOrigin
@@ -90,10 +114,10 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
         await route.fulfill({ status: 503, json: { error: 'Desktop preview sessions could not be revoked' } })
         return
       }
-      const response = await request.post('http://127.0.0.1:33082/_test/revoke-desktop-previews')
+      const response = await request.post('http://127.0.0.1:18082/_test/revoke-desktop-previews')
       expect(response.ok()).toBeTruthy()
     } else if (action.action === 'revoke-preview-session') {
-      const response = await request.post('http://127.0.0.1:33082/_test/revoke', { data: action })
+      const response = await request.post('http://127.0.0.1:18082/_test/revoke', { data: action })
       expect(response.ok()).toBeTruthy()
     } else if (action.action === 'list-files') result = { path: action.path, entries: [] }
     else if (action.action === 'codex-account')
@@ -101,7 +125,7 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
     else if (action.action === 'codex-login-status') result = { active: false }
     else if (action.action === 'list-terminals') result = { sessions: [] }
     else if (action.action === 'codex-models') result = { models: codexModelFixtures, nextCursor: null }
-    else if (action.action === 'list-conversations') result = { threads: [] }
+    else if (action.action === 'list-threads') result = { threads: [], nextCursor: null }
     await route.fulfill({ json: { result } })
   })
   await page.route('**/api/tengri/**/events**', (route) =>
@@ -127,6 +151,9 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   const frame = chrome.getByTitle('Chrome browser').contentFrame()
   const canvas = frame.locator('canvas')
   await expect(frame.locator('#screen')).toHaveAttribute('data-connected', 'true', { timeout: 180_000 })
+  const browserDocument = await frame.locator('#screen').elementHandle()
+  const establishedSockets = sockets.filter((socket) => !socket.isClosed())
+  expect(establishedSockets.length).toBeGreaterThan(0)
   const returnControl = frame.getByRole('button', { name: 'Let agent use browser', exact: true })
   if (await returnControl.isVisible()) {
     await returnControl.click()
@@ -150,9 +177,39 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   await page.keyboard.press('Enter')
   await expect.poll(async () => (await state()).loaded?.url).toBe(humanUrl)
   await expect.poll(async () => (await state()).loaded?.userAgent).toContain('Chrome/')
+  await frame.getByRole('button', { name: 'Take control', exact: true }).click()
+  await expect(frame.getByRole('button', { name: 'Let agent use browser', exact: true })).toBeVisible()
+  expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)
   await page.keyboard.type('Human input works')
+  await expect.poll(async () => (await state()).input?.message).toBe('Human input works')
+  await expect.poll(() => leaseExpiries[0]).toBeTruthy()
+  const initialExpiry = leaseExpiries.at(-1)!
+  const initialRenewalCount = automaticRenewals
+  await expect.poll(() => automaticRenewals, { timeout: 70_000 }).toBeGreaterThan(initialRenewalCount)
+  await expect.poll(() => Date.now(), { timeout: 70_000 }).toBeGreaterThan(initialExpiry + 1000)
+  await expect(frame.locator('#screen')).toHaveAttribute('data-connected', 'true')
+  expect(await browserDocument?.evaluate((node) => node.isConnected)).toBe(true)
+  expect(establishedSockets.every((socket) => !socket.isClosed())).toBe(true)
+  expect((await state()).loaded?.url).toBe(humanUrl)
+  expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)
+  // A dropped display transport must retain the viewer document and the guest's unsent form input.
+  await frame.locator('#screen').evaluate(() => {
+    const socket = (window as Window & { __tengriTestDisplaySocket?: WebSocket }).__tengriTestDisplaySocket
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error('The real display transport is not open')
+    socket.close(4000, 'Fixture transport restart')
+  })
+  await expect.poll(() => sockets.length).toBeGreaterThan(establishedSockets.length)
+  await expect(frame.locator('#screen')).toHaveAttribute('data-connected', 'true')
+  expect(await browserDocument?.evaluate((node) => node.isConnected)).toBe(true)
+  expect((await state()).loaded?.url).toBe(humanUrl)
+  expect((await state()).input?.message).toBe('Human input works')
+  expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)
+  // Reconnect the display's keyboard without changing the guest's retained form focus.
+  await canvas.focus()
   await page.keyboard.press('Enter')
   await expect.poll(async () => (await state()).submitted?.message).toBe('Human input works')
+  await frame.getByRole('button', { name: 'Let agent use browser', exact: true }).click()
+  await expect(frame.getByRole('button', { name: 'Take control', exact: true })).toBeVisible()
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.evaluate(() => navigator.clipboard.writeText('Clipboard input works'))
   await page.keyboard.press(`${modifier}+a`)
@@ -197,7 +254,8 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   await computer({ action: 'key', key: 'alt+Right' })
   await expect.poll(async () => (await state()).loaded?.url).toContain('?second=1')
   await computer({ action: 'key', key: 'ctrl+w' })
-  await computer({ action: 'navigate', url: 'http://127.0.0.1:8080/_test/download' })
+  const download = await computer({ action: 'navigate', url: 'http://127.0.0.1:8080/_test/download' })
+  expect(download.isError, JSON.stringify(download.content)).not.toBe(true)
   await expect.poll(async () => (await state()).download).toBe('CHROMIUM_DOWNLOAD_OK\n')
 
   await frame.getByRole('button', { name: 'Take control', exact: true }).click()

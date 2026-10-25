@@ -69,6 +69,30 @@
 }
 
 @layer utilities {
+  .tengri-chat-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(82 82 91 / 55%) transparent;
+  }
+
+  .tengri-chat-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .tengri-chat-scrollbar::-webkit-scrollbar-track,
+  .tengri-chat-scrollbar::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  .tengri-chat-scrollbar::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgb(82 82 91 / 55%);
+  }
+
+  .tengri-chat-scrollbar::-webkit-scrollbar-button {
+    display: none;
+  }
+
   .font-display {
     font-family:
       var(--font-space-grotesk, 'Space Grotesk'), 'Space Grotesk', var(--font-jetbrains-mono, 'JetBrains Mono'),

@@ -16,7 +16,7 @@ spec:
     metadata:
       annotations:
         kubectl.kubernetes.io/restartedAt: '2026-03-19T06:31:00Z'
-        torghut.proompteng.ai/alloy-config-sha256: f536b9864540d9a7b0f6306cacf6dcbaeb4d9afdbc5ec73ef50d8bb4713407be
+        torghut.proompteng.ai/alloy-config-sha256: 508994fdf02de19d8a1b279617e84616d7b6f63cfeae70877c3578c050497f83
       labels:
         app.kubernetes.io/name: torghut-alloy
         app.kubernetes.io/component: observability

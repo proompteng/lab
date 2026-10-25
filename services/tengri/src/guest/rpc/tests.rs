@@ -14,10 +14,14 @@ async fn identity_is_verified_over_authenticated_grpc() {
     use super::test_server::{TestServer, TestService};
     use std::sync::Arc;
     for (id, version, expected) in [
-        ("expected", 2, true),
-        ("wrong", 2, false),
+        ("expected", tengri::GUEST_API_PROTOCOL_VERSION, true),
+        ("wrong", tengri::GUEST_API_PROTOCOL_VERSION, false),
         ("expected", 0, false),
         ("expected", 1, false),
+        ("expected", 2, false),
+        ("expected", 3, false),
+        ("expected", 4, false),
+        ("expected", 7, false),
     ] {
         let fixture = TestServer::start(TestService {
             get_info: Some(Arc::new(move |request| {
@@ -29,6 +33,7 @@ async fn identity_is_verified_over_authenticated_grpc() {
                 Ok(proto::GuestInfo {
                     microvm_id: id.into(),
                     protocol_version: version,
+                    ..Default::default()
                 })
             })),
             ..Default::default()
@@ -39,6 +44,33 @@ async fn identity_is_verified_over_authenticated_grpc() {
             expected
         );
     }
+}
+
+#[tokio::test]
+async fn grpc_identified_question_control_preserves_the_exact_payload() {
+    let params = serde_json::json!({"threadId":"thread-1","approvalId":"process:17","clientUserMessageId":"11111111-1111-4111-8111-111111111111","response":{"answers":{"target":{"answers":["Staging"]}}}});
+    let expected = params.clone();
+    let fixture = TestServer::start(TestService {
+        codex_call: Some(std::sync::Arc::new(move |request| {
+            let request = request.into_inner();
+            assert_eq!(request.method, "tengri/resolveApproval");
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&request.params_json).unwrap(),
+                expected
+            );
+            Ok(proto::CodexResult {
+                result_json: b"{}".to_vec(),
+                event_sequence: 0,
+            })
+        })),
+        ..Default::default()
+    })
+    .await;
+    fixture
+        .guest
+        .codex_call("tengri/resolveApproval", params)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -59,7 +91,7 @@ async fn grpc_only_guest_rejects_legacy_http_without_discovery_or_fallback() {
     assert!(
         matches!(client.verify_identity("expected").await, Err(GuestError::Api { status: StatusCode::SERVICE_UNAVAILABLE, message }) if message.contains("Sleep and resume"))
     );
-    assert!(client.list_files("/").await.is_err());
+    assert!(client.list_files("/workspace").await.is_err());
     server.abort();
     let paths = paths.lock().unwrap();
     assert_eq!(
@@ -69,6 +101,32 @@ async fn grpc_only_guest_rejects_legacy_http_without_discovery_or_fallback() {
             "/proompteng.runtime.guest.v1.NanoagentService/ListFiles",
         ]
     );
+}
+
+#[tokio::test]
+async fn grpc_stat_reads_native_kind_without_a_directory_listing() {
+    let fixture = TestServer::start(TestService {
+        stat_file: Some(std::sync::Arc::new(|request| {
+            assert_eq!(request.get_ref().path, "/workspace/folder.md");
+            Ok(proto::FileEntry {
+                name: "folder.md".into(),
+                path: request.into_inner().path,
+                directory: true,
+                size: 4096,
+                modified_at: "2026-10-24T00:00:00Z".into(),
+            })
+        })),
+        ..Default::default()
+    })
+    .await;
+    let entry = fixture
+        .guest
+        .stat_file("/workspace/folder.md")
+        .await
+        .unwrap();
+    assert!(entry.directory);
+    assert_eq!(entry.path, "/workspace/folder.md");
+    assert_eq!(entry.size, 4096);
 }
 
 #[tokio::test]
@@ -92,7 +150,7 @@ async fn grpc_read_requires_valid_matching_revision() {
             ..Default::default()
         })
         .await;
-        let result = fixture.guest.read_file("/file").await;
+        let result = fixture.guest.read_file("/workspace/file").await;
         match expected {
             "missing" => assert!(matches!(result, Err(GuestError::MissingFileRevision))),
             "invalid" => assert!(matches!(result, Err(GuestError::InvalidFileRevision))),
@@ -122,7 +180,7 @@ async fn grpc_terminal_creation_reconciles_lost_response() {
     .await;
     let creation = fixture
         .guest
-        .create_terminal("creation-identity", "/", 80, 24)
+        .create_terminal("creation-identity", "/workspace", 80, 24)
         .await
         .unwrap();
     assert_eq!(creation.session.id, "terminal");
@@ -150,7 +208,7 @@ async fn grpc_terminal_creation_validates_the_creation_identity() {
         .await;
         let result = fixture
             .guest
-            .create_terminal("creation-identity", "/", 80, 24)
+            .create_terminal("creation-identity", "/workspace", 80, 24)
             .await;
         assert!(
             matches!(result, Err(GuestError::TerminalCreationIdentityMismatch { created_terminal_id, .. }) if created_terminal_id == created.then(|| "terminal".to_owned()))
@@ -184,13 +242,16 @@ async fn grpc_write_validates_preconditions_and_receipts() {
         })
         .await;
         assert!(matches!(
-            fixture.guest.write_file("/file", b"content", "bad").await,
+            fixture
+                .guest
+                .write_file("/workspace/file", b"content", "bad")
+                .await,
             Err(GuestError::InvalidFileRevision)
         ));
         assert_eq!(
             fixture
                 .guest
-                .write_file("/file", b"content", "missing")
+                .write_file("/workspace/file", b"content", "missing")
                 .await
                 .is_ok(),
             expected
@@ -259,7 +320,11 @@ async fn fixture() -> (Fixture, GuestClient) {
     .await
     .unwrap();
     let tls = identity
-        .guest_tls(identity.guest_id("tengri", "interop-agent").unwrap())
+        .guest_tls(
+            identity
+                .guest_id("tengri", "33333333-3333-4333-8333-333333333333")
+                .unwrap(),
+        )
         .unwrap();
     let channel = identity
         .guest_channel(
@@ -275,7 +340,12 @@ async fn fixture() -> (Fixture, GuestClient) {
         .build()
         .unwrap();
     let guest = GuestClient {
-        rpc: RpcClient::new(channel, "test-bootstrap-token").unwrap(),
+        rpc: RpcClient::new(
+            channel,
+            "test-bootstrap-token",
+            super::super::authorization::GuestAuthorization::fixture_issuer(),
+        )
+        .unwrap(),
         base_url: address,
         token: "test-bootstrap-token".into(),
         http,
@@ -312,7 +382,8 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
                     get_info: Some(Arc::new(|_| {
                         Ok(proto::GuestInfo {
                             microvm_id: "tls-fixture".into(),
-                            protocol_version: 2,
+                            protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                            ..Default::default()
                         })
                     })),
                     ..Default::default()
@@ -343,6 +414,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
                 .guest_channel(address, source.guest_tls(peer.clone()).unwrap())
                 .unwrap(),
             "fixture-token",
+            super::super::authorization::GuestAuthorization::fixture_issuer(),
         )
         .unwrap()
     };
@@ -365,6 +437,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
     let WorkloadIdentity::Spiffe { source, .. } = identity else {
         panic!("missing SPIFFE source")
     };
+    let revision = bff.certificate_revision().unwrap();
     let before = source.svid().unwrap();
     let mut updates = source.updated();
     let mut bff_updates = bff_source.updated();
@@ -376,9 +449,11 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
     .await
     .unwrap();
     assert_ne!(before.cert_chain(), source.svid().unwrap().cert_chain());
+    assert_ne!(revision, bff.certificate_revision().unwrap());
     connect(&bff).verify_identity("tls-fixture").await.unwrap();
     server.abort();
     bff_source.shutdown().await;
+    assert!(bff.certificate_revision().is_err());
 }
 
 async fn attach(
@@ -435,21 +510,67 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     let (fixture, guest) = fixture().await;
     guest.rpc.verify_identity("interop-agent").await.unwrap();
     let target = format!("{}/v1/preview/{}/", guest.base_url, fixture.preview_port);
-    let response = guest
+    let denied = guest
         .http
         .get(&target)
         .bearer_auth(&guest.token)
         .send()
         .await
         .unwrap();
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    let proof = guest
+        .rpc
+        .preview_headers(
+            &http::Method::GET,
+            &format!("/v1/preview/{}/", fixture.preview_port),
+            b"",
+        )
+        .await
+        .unwrap();
+    let response = guest
+        .http
+        .get(&target)
+        .headers(proof)
+        .bearer_auth(&guest.token)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.text().await.unwrap(), "preview-over-mtls");
+    let submit_target = format!("/v1/preview/{}/submit", fixture.preview_port);
+    let proof = guest
+        .rpc
+        .preview_headers(&http::Method::POST, &submit_target, b"bound-request")
+        .await
+        .unwrap();
+    let response = guest
+        .http
+        .post(format!("{}{submit_target}", guest.base_url))
+        .bearer_auth(&guest.token)
+        .headers(proof)
+        .body("bound-request")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.text().await.unwrap(), "POST:bound-request");
     let mut request = format!("{}ws", target.replace("https://", "wss://"))
         .into_client_request()
         .unwrap();
     request.headers_mut().insert(
         "authorization",
         format!("Bearer {}", guest.token).parse().unwrap(),
+    );
+    request.headers_mut().extend(
+        guest
+            .rpc
+            .preview_headers(
+                &http::Method::GET,
+                &format!("/v1/preview/{}/ws", fixture.preview_port),
+                b"",
+            )
+            .await
+            .unwrap(),
     );
     let (mut websocket, _) = connect_async_tls_with_config(
         request,
@@ -468,28 +589,32 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     assert_eq!(response.into_text().unwrap(), "guest:ping");
     websocket.close(None).await.unwrap();
     let rpc = guest.rpc.clone();
-    let directory = guest.create_directory("/files").await.unwrap();
+    let directory = guest.create_directory("/workspace/files").await.unwrap();
     assert!(directory.directory);
-    let mut events = guest.watch_files("/files", None).await.unwrap();
+    let mut events = guest.watch_files("/workspace/files", None).await.unwrap();
     let snapshot = tokio::time::timeout(Duration::from_secs(5), events.next())
         .await
         .unwrap()
         .unwrap()
         .unwrap();
     assert_eq!(snapshot.kind, "reset");
-    assert_eq!(snapshot.path, "/files");
+    assert_eq!(snapshot.path, "/workspace/files");
     let content: Vec<u8> = (0..MAX_GUEST_FILE_BYTES).map(|i| i as u8).collect();
     let write = guest
-        .write_file("/files/binary.dat", &content, "missing")
+        .write_file("/workspace/files/binary.dat", &content, "missing")
         .await
         .unwrap();
     assert_eq!(write.size, content.len() as i64);
     assert_eq!(
-        guest.read_file("/files/binary.dat").await.unwrap().content,
+        guest
+            .read_file("/workspace/files/binary.dat")
+            .await
+            .unwrap()
+            .content,
         content
     );
     let conflict = guest
-        .write_file("/files/binary.dat", b"stale", "missing")
+        .write_file("/workspace/files/binary.dat", b"stale", "missing")
         .await
         .unwrap_err();
     match conflict {
@@ -508,18 +633,32 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
         .unwrap()
         .unwrap();
     assert!(event.sequence > 0);
-    assert_eq!(event.path, "/files/binary.dat");
+    assert_eq!(event.path, "/workspace/files/binary.dat");
     drop(events);
-    let search = guest.search_files("binary", "/files", 10).await.unwrap();
-    assert_eq!(search.entries[0].path, "/files/binary.dat");
-    assert_eq!(guest.list_files("/files").await.unwrap().entries.len(), 1);
-    guest
-        .move_file("/files/binary.dat", "/files/moved.dat")
+    let search = guest
+        .search_files("binary", "/workspace/files", 10)
         .await
         .unwrap();
-    guest.delete_file("/files/moved.dat", false).await.unwrap();
+    assert_eq!(search.entries[0].path, "/workspace/files/binary.dat");
+    assert_eq!(
+        guest
+            .list_files("/workspace/files")
+            .await
+            .unwrap()
+            .entries
+            .len(),
+        1
+    );
+    guest
+        .move_file("/workspace/files/binary.dat", "/workspace/files/moved.dat")
+        .await
+        .unwrap();
+    guest
+        .delete_file("/workspace/files/moved.dat", false)
+        .await
+        .unwrap();
     assert!(matches!(
-        guest.read_file("/.tengri/private").await,
+        guest.read_file("/workspace/.tengri/private").await,
         Err(GuestError::Api {
             status: StatusCode::NOT_FOUND,
             ..
@@ -546,13 +685,6 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     );
     drop(codex);
     assert!(matches!(
-        guest.resolve_codex_approval("missing", "accept").await,
-        Err(GuestError::Api {
-            status: StatusCode::NOT_FOUND,
-            ..
-        })
-    ));
-    assert!(matches!(
         rpc.codex_call("unsupported/method", serde_json::json!({}))
             .await,
         Err(GuestError::Api {
@@ -562,12 +694,12 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     ));
 
     let created = guest
-        .create_terminal("interop-terminal-creation", "/", 80, 24)
+        .create_terminal("interop-terminal-creation", "/workspace", 80, 24)
         .await
         .unwrap();
     assert!(created.created);
     let repeated = guest
-        .create_terminal("interop-terminal-creation", "/", 80, 24)
+        .create_terminal("interop-terminal-creation", "/workspace", 80, 24)
         .await
         .unwrap();
     assert!(!repeated.created);
@@ -643,7 +775,7 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     let mut wrong = guest.rpc.clone();
     wrong.authorization = MetadataValue::try_from("Bearer wrong").unwrap();
     assert!(matches!(
-        wrong.list_files("/").await,
+        wrong.list_files("/workspace").await,
         Err(GuestError::Api {
             status: StatusCode::UNAUTHORIZED,
             ..
@@ -718,11 +850,10 @@ async fn codex_image_storage_failure_does_not_produce_an_input() {
 }
 
 #[tokio::test]
-async fn failed_image_batch_cleans_prior_and_partially_written_attachments() {
+async fn failed_image_batch_preserves_content_addressed_attachments_for_other_runs() {
     use std::sync::{Arc, Mutex};
     let files = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let writes = files.clone();
-    let deletes = files.clone();
     let fixture = TestServer::start(TestService {
         create_directory: Some(Arc::new(|request| {
             Ok(proto::FileEntry {
@@ -746,11 +877,8 @@ async fn failed_image_batch_cleans_prior_and_partially_written_attachments() {
                 revision: revision_for_content(&file.content),
             })
         })),
-        delete_file: Some(Arc::new(move |request| {
-            let file = request.into_inner();
-            assert!(!file.recursive);
-            assert!(deletes.lock().unwrap().remove(&file.path).is_some());
-            Ok(proto::Empty {})
+        delete_file: Some(Arc::new(move |_| {
+            panic!("content-addressed attachments can belong to an accepted run")
         })),
         ..Default::default()
     })
@@ -759,12 +887,14 @@ async fn failed_image_batch_cleans_prior_and_partially_written_attachments() {
         media_type: "image/png".into(),
         content: b"\x89PNG\r\n\x1a\n".to_vec(),
     };
+    let mut second = image.clone();
+    second.content.push(1);
     assert!(
-        crate::grpc::codex_turn_input(&fixture.guest, "Inspect these", &[image.clone(), image])
+        crate::grpc::codex_turn_input(&fixture.guest, "Inspect these", &[image, second])
             .await
             .is_err()
     );
-    assert!(files.lock().unwrap().is_empty());
+    assert_eq!(files.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -791,4 +921,41 @@ async fn image_cleanup_preserves_an_existing_file_rejected_by_create_only_write(
             .await
             .is_err()
     );
+}
+
+#[test]
+fn native_rejection_requires_typed_proof_and_the_exact_status() {
+    let details = RpcDetails {
+        details: vec![RpcDetail {
+            type_url: "type.googleapis.com/proompteng.runtime.guest.v1.OperationFailure".into(),
+            value: proto::OperationFailure {
+                codex_operation_rejected: true,
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        }],
+    }
+    .encode_to_vec();
+    assert!(matches!(
+        rpc_error(Status::with_details(
+            tonic::Code::InvalidArgument,
+            "rejected",
+            details.clone().into()
+        )),
+        GuestError::CodexOperationRejected
+    ));
+    assert!(!matches!(
+        rpc_error(Status::with_details(
+            tonic::Code::Unavailable,
+            "rejected",
+            details.into()
+        )),
+        GuestError::CodexOperationRejected
+    ));
+    assert!(!matches!(
+        rpc_error(Status::invalid_argument(
+            "Codex rejected the operation before dispatch"
+        )),
+        GuestError::CodexOperationRejected
+    ));
 }

@@ -1,29 +1,62 @@
-import { Cause, Clock, Effect, Exit, Redacted, Ref, Result, Semaphore } from 'effect'
+import { Cause, Clock, Effect, Exit, Redacted, Ref, Result, Schema, Semaphore } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevClient, JevError, type JevInference } from '../jev/client'
-import { JevFailure, prepareJevRequest, type JevRequest } from '../jev/contract'
+import { JevFailure, JevRequestSchema, JevResponseSchema, prepareJevRequest } from '../jev/contract'
+import { Sha256Schema, UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
 
-export type ReplayJevCall = {
-  readonly schemaVersion: 'bayn.replay-jev-call.v1'
-  readonly request: JevRequest
-  readonly requestHash: string
-  readonly simulatedStartedAt: string
-  readonly providerStartedAt: string
-  readonly providerCompletedAt: string
-  readonly outcome:
-    | { readonly status: 'RECEIVED'; readonly inference: JevInference }
-    | {
-        readonly status: 'FAILED'
-        readonly failure: JevFailure
-        readonly httpStatus: number | null
-        readonly responseHash: string | null
-        readonly rejectedResponse: unknown
-      }
-    | { readonly status: 'INTERRUPTED' | 'DEFECT' }
+export const makeBoundedReplayJevProvider = (provider: JevClient['Service'], maximumCalls: number) => {
+  let dispatchCount = 0
+  return {
+    dispatchCount: () => dispatchCount,
+    provider: {
+      evaluate: (request: unknown) =>
+        Effect.suspend(() => {
+          if (dispatchCount >= maximumCalls)
+            return Effect.fail(
+              new JevError({
+                failure: JevFailure.NotDispatched,
+                message: 'Frozen replay provider-call budget exhausted',
+              }),
+            )
+          dispatchCount++
+          return provider.evaluate(request)
+        }),
+    },
+  }
 }
+
+export const ReplayJevCallSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.replay-jev-call.v1'),
+  request: JevRequestSchema,
+  requestHash: Sha256Schema,
+  simulatedStartedAt: UtcInstantSchema,
+  providerStartedAt: UtcInstantSchema,
+  providerCompletedAt: UtcInstantSchema,
+  outcome: Schema.Union([
+    Schema.Struct({
+      status: Schema.Literal('RECEIVED'),
+      inference: Schema.Struct({
+        requestHash: Sha256Schema,
+        responseHash: Sha256Schema,
+        startedAt: UtcInstantSchema,
+        completedAt: UtcInstantSchema,
+        response: JevResponseSchema,
+      }),
+    }),
+    Schema.Struct({
+      status: Schema.Literal('FAILED'),
+      failure: Schema.Enum(JevFailure),
+      httpStatus: Schema.NullOr(Schema.Int),
+      responseHash: Schema.NullOr(Sha256Schema),
+      rejectedResponse: Schema.Unknown,
+    }),
+    Schema.Struct({ status: Schema.Literals(['INTERRUPTED', 'DEFECT']) }),
+  ]),
+})
+export type ReplayJevCall = typeof ReplayJevCallSchema.Type
 
 const recordedOutcome = (exit: Exit.Exit<JevInference, JevError>): ReplayJevCall['outcome'] => {
   if (Exit.isSuccess(exit)) return { status: 'RECEIVED', inference: exit.value }
@@ -102,6 +135,8 @@ export const makeReplayJevTiming = (input: {
           }),
           () =>
             Effect.gen(function* () {
+              const failed = yield* Ref.get(failure)
+              if (failed !== undefined) return yield* failed
               const prepared = yield* Effect.fromResult(prepareJevRequest(raw)).pipe(
                 Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Invalid replay Jev request', cause })),
               )
@@ -129,6 +164,14 @@ export const makeReplayJevTiming = (input: {
                   }
                   // Retain paid responses before advancing deadlines can interrupt their native evaluation.
                   yield* input.retain(call)
+                  if (call.outcome.status === 'FAILED' && call.outcome.httpStatus === 402)
+                    yield* Ref.set(
+                      failure,
+                      new ReplayBrokerFailure({
+                        message: 'Jev replay stopped after HTTP 402 payment required',
+                        cause: Exit.isFailure(exit) ? exit.cause : undefined,
+                      }),
+                    )
                   return { exit, providerCompletedAt }
                 }),
               )

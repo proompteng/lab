@@ -1,18 +1,23 @@
 import { expect, test } from 'bun:test'
 import { gzipSync } from 'node:zlib'
 import { NodeServices } from '@effect/platform-node'
-import { Clock, Effect, FileSystem } from 'effect'
+import { Clock, Deferred, Effect, Fiber, FileSystem, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { makeReplayTimeline } from './session'
-import { canonicalHashV1, sha256 } from '../hash'
-import { retainedReplayFixture as fixture } from '../testing/retained-replay-fixture'
+import { sha256, canonicalHashV1Result } from '../hash'
+import { retainedReplayFixture as fixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import {
   openBacktestSource,
+  ReplaySourceFailure,
   validateBacktestSourceCuts,
   validateBacktestSourceManifest,
   validateBacktestSourceReceipt,
 } from './source'
-import { Result } from 'effect'
+import { cryptoMarketProfile } from '../jev/markets'
+import { backtestSourcePartitions } from './source'
+import { emptyStreamingProjection, incorporateMarketRecord } from '../market-data/streaming/projection'
+import { kafkaCaptureDisposition } from '../market-data/streaming/kafka'
+import { CaptureDisposition, captureKafkaTransport } from '../market-data/streaming/transport-evidence'
 
 const archiveTopology = (positions: ReturnType<typeof fixture>['manifest']['positions']) => ({
   positions: positions.filter((position) => position.startOffset !== position.endOffsetExclusive),
@@ -21,16 +26,154 @@ const archiveTopology = (positions: ReturnType<typeof fixture>['manifest']['posi
     .map(({ topic, partition }) => ({ topic, partition })),
 })
 
+test.each(['tombstone', 'assignment-invalidated'] as const)(
+  'original source cannot execute through native consumer termination: %s',
+  async (termination) => {
+    const data = fixture()
+    const consumerEpoch = 'SYNTHETIC-original-terminal-source'
+    const captureId = sha256(consumerEpoch)
+    let projection = emptyStreamingProjection(consumerEpoch)
+    const events = data.events.map((arrival, index) => {
+      const before = projection
+      projection = incorporateMarketRecord(
+        projection,
+        arrival.record,
+        data.manifest.marketSources[0],
+        arrival.availableAtMs,
+      )
+      const raw = Buffer.from(arrival.record.value)
+      const record = arrival.record
+      return {
+        schemaVersion: 'bayn.original-market-arrival.v2' as const,
+        availableAtMs: arrival.availableAtMs,
+        record,
+        originalTransport: captureKafkaTransport(undefined),
+        rawValueBase64: raw.toString('base64'),
+        receipt: {
+          captureId,
+          consumerEpoch,
+          sequence: index + 1,
+          consumerSequence: index + 1,
+          projectionSequence: projection.sequence,
+          disposition: kafkaCaptureDisposition(before, projection),
+          tombstone: false,
+          rawValueSha256: sha256(raw),
+          rawByteLength: raw.byteLength,
+        },
+      }
+    })
+    const last = events.at(-1)
+    if (last === undefined) throw new Error('Missing synthetic source events')
+    const terminal = {
+      ...last,
+      ...(termination === 'tombstone' ? { record: { ...last.record, value: '' }, rawValueBase64: null } : {}),
+      receipt: {
+        ...last.receipt,
+        sequence: events.length + 1,
+        consumerSequence: events.length + 1,
+        disposition: termination === 'tombstone' ? CaptureDisposition.Rejected : CaptureDisposition.Ignored,
+        ...(termination === 'tombstone'
+          ? { tombstone: true, rawValueSha256: null, rawByteLength: null }
+          : { reason: 'assignment-invalidated' }),
+      },
+    }
+    const program = Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      for (const [label, records] of [
+        ['valid', events],
+        ['terminated', [...events, terminal]],
+      ] as const) {
+        const bytes = gzipSync(records.map((record) => JSON.stringify(record)).join('\n') + '\n')
+        const manifest = {
+          ...data.manifest,
+          transport: 'original-capture' as const,
+          dataSha256: sha256(bytes),
+          recordCount: records.length,
+          nativeVisiblePartitions: data.manifest.positions.map(({ topic, partition }) => ({ topic, partition })),
+          deliveryModel: {
+            schemaVersion: 'bayn.original-capture-arrivals.v1' as const,
+            description: 'Synthetic native transport termination regression',
+            tieBreak: 'availability-receipt-sequence' as const,
+            captureId,
+            consumerEpoch,
+            exportManifestHash: '4'.repeat(64),
+            intervalReceiptHash: '5'.repeat(64),
+            finalConsumerSequence: records.length,
+          },
+        }
+        const receiptText = JSON.stringify({
+          schemaVersion: 'bayn.original-capture-replay-receipt.v2',
+          recordedAt: new Date(manifest.coverageEndMs + 1).toISOString(),
+          origin: manifest.origin,
+          coverageStartMs: manifest.coverageStartMs,
+          coverageEndMs: manifest.coverageEndMs,
+          marketSources: manifest.marketSources,
+          positions: manifest.positions,
+          nativeVisiblePartitions: manifest.nativeVisiblePartitions,
+          deliveryModel: manifest.deliveryModel,
+          sourceDataSha256: manifest.dataSha256,
+        })
+        const receipt = Result.getOrThrow(validateBacktestSourceReceipt(receiptText, sha256(receiptText)))
+        const path = `${directory}/${label}.gz`
+        yield* fs.writeFile(path, bytes)
+        const opened = yield* Effect.result(openBacktestSource(path, manifest, data.input.source.runId, receipt))
+        expect(Result.isSuccess(opened)).toBe(label === 'valid')
+      }
+    })
+    await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(NodeServices.layer)))
+  },
+)
+
+test('one source inventory and pinned receipt bind both markets without dropped or overlapping universes', () => {
+  const data = fixture()
+  const equity = data.manifest.marketSources[0]
+  const crypto = {
+    universeId: cryptoMarketProfile.universeId,
+    universeSymbolHash: cryptoMarketProfile.universeSymbolHash,
+    symbols: cryptoMarketProfile.universe,
+    topics: { ...cryptoMarketProfile.sourceTopics, features: cryptoMarketProfile.streamingInput.featureTopic },
+  }
+  const material = { ...data.manifest, marketSources: [equity, crypto] as const }
+  const positions = new Map(
+    data.manifest.positions.map((position) => [`${position.topic}:${position.partition}`, position]),
+  )
+  const manifest = {
+    ...material,
+    positions: backtestSourcePartitions(material).map(
+      ({ topic, partition }) =>
+        positions.get(`${topic}:${partition}`) ?? { topic, partition, startOffset: '0', endOffsetExclusive: '0' },
+    ),
+  }
+  expect(Result.isSuccess(validateBacktestSourceManifest(manifest))).toBe(true)
+  const receipt = retainedReplayCaptureFixture(manifest)
+  expect(Result.isSuccess(validateBacktestSourceCuts(manifest, receipt))).toBe(true)
+  const filtered = { ...data.manifest, marketSources: [equity] as const }
+  expect(Result.isFailure(validateBacktestSourceCuts(filtered, receipt))).toBe(true)
+  expect(Result.isFailure(validateBacktestSourceManifest({ ...manifest, marketSources: [equity] }))).toBe(true)
+  for (const changed of [
+    { ...crypto, universeId: equity.universeId },
+    { ...crypto, symbols: [equity.symbols[0]] },
+    { ...crypto, topics: { ...crypto.topics, features: equity.topics.features } },
+  ])
+    expect(Result.isFailure(validateBacktestSourceManifest({ ...manifest, marketSources: [equity, changed] }))).toBe(
+      true,
+    )
+  expect(
+    Result.isFailure(validateBacktestSourceManifest({ ...manifest, schemaVersion: 'bayn.backtest-source.v1' })),
+  ).toBe(true)
+})
+
 test('archive reconstruction cannot masquerade as a directly captured Kafka stream or prove live availability', () => {
   const data = fixture()
   const manifest = { ...data.manifest, transport: 'archive-reconstruction' as const }
   const { capturedAt, ...cut } = data.capture.value as Extract<
     typeof data.capture.value,
-    { schemaVersion: 'bayn.replay-source-capture.v1' }
+    { schemaVersion: 'bayn.replay-source-capture.v2' }
   >
   const receipt = {
     ...cut,
-    schemaVersion: 'bayn.archive-reconstruction-receipt.v1',
+    schemaVersion: 'bayn.archive-reconstruction-receipt.v2',
     recordedAt: capturedAt,
     origin: manifest.origin,
     queryHashes: ['1'.repeat(64)],
@@ -100,7 +243,7 @@ for (const { name, rolling, technical } of [
 ])
   test(`captured source binds separate rolling and technical partition counts: ${name}`, () => {
     const { regeneratedFeaturesRecordedAtMs: _recordedAt, ...base } = fixture().manifest
-    const topics = { ...base.universe.topics, technicalFeatures: 'torghut.technical-features.v1' }
+    const topics = { ...base.marketSources[0].topics, technicalFeatures: 'torghut.technical-features.v1' }
     const expectedCounts = [
       [topics.bars, 3],
       [topics.quotes, 13],
@@ -111,7 +254,7 @@ for (const { name, rolling, technical } of [
     const manifest = {
       ...base,
       transport: 'captured-kafka' as const,
-      universe: { ...base.universe, topics },
+      marketSources: [{ ...base.marketSources[0], topics }] as const,
       ...(rolling ? { regeneratedFeaturesRecordedAtMs: base.lastAvailableAtMs } : {}),
       ...(technical ? { regeneratedTechnicalFeaturesRecordedAtMs: base.lastAvailableAtMs } : {}),
       positions: expectedCounts
@@ -136,7 +279,7 @@ test('retained source preflights its bytes and advances only available records a
       const path = yield* fs.makeTempFileScoped()
       yield* fs.writeFile(path, gzipSync(data.body))
       const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
-      expect(source.source.sourceManifestHash).toBe(canonicalHashV1(data.manifest))
+      expect(source.source.sourceManifestHash).toBe(Result.getOrThrow(canonicalHashV1Result(data.manifest)))
       yield* source.advanceTo(data.manifest.firstAvailableAtMs - 1)
       expect((yield* source.cursor).processedRecords).toBe(0)
       yield* source.advanceTo(data.manifest.lastAvailableAtMs)
@@ -149,6 +292,68 @@ test('retained source preflights its bytes and advances only available records a
   )
 })
 
+test('the retained source delivers each accepted quote to one scoped broker in availability order', async () => {
+  const data = fixture()
+  const quotes: { at: number; offset: string; topic: string }[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      yield* fs.writeFile(path, gzipSync(data.body))
+      const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
+      yield* Effect.scoped(source.observeBroker(() => Effect.void))
+      yield* source.observeBroker((at, quote) =>
+        Effect.sync(() => {
+          if (quote !== null) {
+            expect(quote.availableAtMs).toBe(at)
+            quotes.push({ at, offset: quote.value.sourceOffset, topic: quote.value.sourceTopic })
+          }
+        }),
+      )
+      expect((yield* Effect.exit(source.observeBroker(() => Effect.void)))._tag).toBe('Failure')
+      yield* source.advanceTo(data.manifest.lastAvailableAtMs)
+      expect(quotes).toEqual(
+        data.events
+          .filter((event) => event.record.topic === data.manifest.marketSources[0].topics.quotes)
+          .map((event) => ({ at: event.availableAtMs, offset: event.record.offset, topic: event.record.topic })),
+      )
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test.each(['failure', 'defect', 'interruption'] as const)(
+  'a broker %s prevents further source advancement',
+  async (kind) => {
+    const data = fixture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const path = yield* fs.makeTempFileScoped()
+        yield* fs.writeFile(path, gzipSync(data.body))
+        const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
+        const entered = yield* Deferred.make<void>()
+        yield* source.observeBroker(() =>
+          kind === 'failure'
+            ? Effect.fail(new ReplaySourceFailure({ message: 'synthetic settlement failure' }))
+            : kind === 'defect'
+              ? Effect.die(new Error('synthetic settlement defect'))
+              : Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+        )
+        if (kind === 'interruption') {
+          const pending = yield* source
+            .advanceTo(data.manifest.lastAvailableAtMs)
+            .pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Deferred.await(entered)
+          yield* Fiber.interrupt(pending)
+        } else expect((yield* Effect.exit(source.advanceTo(data.manifest.lastAvailableAtMs)))._tag).toBe('Failure')
+        const failed = yield* source.cursor
+        expect((yield* Effect.exit(source.advanceTo(data.manifest.lastAvailableAtMs + 1)))._tag).toBe('Failure')
+        expect(yield* source.cursor).toEqual(failed)
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    )
+  },
+)
+
 test('a delayed source tail is consumed after trading stops without advancing execution or database time', async () => {
   const data = fixture()
   const closeMs = data.manifest.lastAvailableAtMs - 35
@@ -160,6 +365,12 @@ test('a delayed source tail is consumed after trading stops without advancing ex
       yield* fs.writeFile(path, gzipSync(data.body))
       const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
       yield* TestClock.setTime(closeMs - 1)
+      const brokerTimes: number[] = []
+      yield* source.observeBroker((at) =>
+        Effect.sync(() => {
+          brokerTimes.push(at)
+        }),
+      )
       const { advanceTo: advance } = yield* makeReplayTimeline(
         source,
         {
@@ -173,10 +384,12 @@ test('a delayed source tail is consumed after trading stops without advancing ex
       yield* advance(closeMs + 1)
       expect((yield* source.cursor).processedRecords).toBeLessThan(data.events.length)
       const beforeTail = [...sqlTimes]
+      const brokerBeforeTail = [...brokerTimes]
       yield* source.finish
       expect((yield* source.cursor).processedRecords).toBe(data.events.length)
       expect(yield* Clock.currentTimeMillis).toBe(closeMs + 1)
       expect(sqlTimes).toEqual(beforeTail)
+      expect(brokerTimes).toEqual(brokerBeforeTail)
       expect((yield* Effect.exit(advance(data.manifest.lastAvailableAtMs)))._tag).toBe('Failure')
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer()), Effect.provide(NodeServices.layer)),
   )
@@ -248,7 +461,7 @@ test('archive reconstruction admits bound retained-coordinate gaps without weake
   }
   const text = JSON.stringify({
     ...data.capture.value,
-    schemaVersion: 'bayn.archive-reconstruction-receipt.v1',
+    schemaVersion: 'bayn.archive-reconstruction-receipt.v2',
     capturedAt: undefined,
     recordedAt: '2026-09-10T00:00:00.000Z',
     origin: manifest.origin,
@@ -356,7 +569,7 @@ test('an entire omitted partition cannot redefine completeness by changing the f
       expect(outcome._tag).toBe('Failure')
       expect(JSON.stringify(outcome)).toContain('every partition in the declared source topology')
       expect(
-        data.manifest.positions.filter((position) => position.topic === data.manifest.universe.topics.quotes),
+        data.manifest.positions.filter((position) => position.topic === data.manifest.marketSources[0].topics.quotes),
       ).toHaveLength(13)
       expect(data.manifest.positions.some((position) => position.startOffset === position.endOffsetExclusive)).toBe(
         true,
@@ -417,4 +630,38 @@ test('capture receipt replacement fails against the separately pinned hash', () 
   const result = validateBacktestSourceReceipt(changed, pinnedHash)
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result)) expect(String(result.failure)).toContain('independently pinned capture hash')
+})
+
+test('native crypto source shares three raw channels with one three-partition topic and separate features', () => {
+  const data = fixture()
+  const native = {
+    ...data.manifest,
+    marketSources: [
+      {
+        universeId: cryptoMarketProfile.universeId,
+        universeSymbolHash: cryptoMarketProfile.universeSymbolHash,
+        symbols: cryptoMarketProfile.universe,
+        topics: { ...cryptoMarketProfile.sourceTopics, features: cryptoMarketProfile.streamingInput.featureTopic },
+      },
+    ] as const,
+  }
+  const topology = backtestSourcePartitions(native)
+  expect(topology).toHaveLength(6)
+  expect(new Set(topology.map((p) => `${p.topic}:${p.partition}`)).size).toBe(6)
+  expect(topology.filter((p) => p.topic === cryptoMarketProfile.sourceTopics.quotes).map((p) => p.partition)).toEqual([
+    0, 1, 2,
+  ])
+  const manifest = { ...native, positions: topology.map((p) => ({ ...p, startOffset: '0', endOffsetExclusive: '0' })) }
+  expect(Result.isSuccess(validateBacktestSourceManifest(manifest))).toBe(true)
+  for (const universe of [
+    { ...manifest.marketSources[0], universeSymbolHash: 'f'.repeat(64) },
+    {
+      ...manifest.marketSources[0],
+      topics: { ...manifest.marketSources[0].topics, features: manifest.marketSources[0].topics.bars },
+    },
+    { ...manifest.marketSources[0], topics: { ...manifest.marketSources[0].topics, bars: 'unreviewed.raw' } },
+  ])
+    expect(Result.isFailure(validateBacktestSourceManifest({ ...manifest, marketSources: [universe] as const }))).toBe(
+      true,
+    )
 })

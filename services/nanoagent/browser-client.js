@@ -8,7 +8,45 @@ const sessionId = location.hostname.split('.')[0].slice(-24)
 const notify = (type, error) => parent.postMessage({ channel, sessionId, type, error }, '*')
 const connection = new URL('/websockify', location.href)
 connection.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-const rfb = new RFB(screen, connection.href, { wsProtocols: ['binary'] })
+let rfb
+let reconnectTimer
+let reconnectAttempts = 0
+let closed = false
+const connect = () => {
+  if (closed) return
+  rfb = new RFB(screen, connection.href, { wsProtocols: ['binary'] })
+  rfb.resizeSession = true
+  rfb.scaleViewport = true
+  rfb.background = '#202124'
+  rfb.qualityLevel = 9
+  rfb.addEventListener('connect', () => {
+    reconnectAttempts = 0
+    status.hidden = true
+    screen.dataset.connected = 'true'
+    notify('ready')
+  })
+  rfb.addEventListener('disconnect', () => {
+    if (closed) return
+    status.hidden = false
+    screen.dataset.connected = 'false'
+    if (reconnectAttempts < 8) {
+      status.textContent = 'Reconnecting to Chrome…'
+      reconnectTimer = window.setTimeout(connect, Math.min(30_000, 1000 * 2 ** reconnectAttempts++))
+    } else {
+      status.textContent = 'Chrome disconnected. Retry to reconnect.'
+      notify('error', status.textContent)
+    }
+  })
+  rfb.addEventListener('securityfailure', () => {
+    closed = true
+    window.clearTimeout(reconnectTimer)
+    notify('error', 'Chrome could not establish a browser session.')
+  })
+  rfb.addEventListener('clipboard', (event) => {
+    copiedText = event.detail.text
+    clipboard.hidden = !copiedText
+  })
+}
 let userControl = false
 const showControl = (value) => {
   userControl = value.userControl
@@ -39,22 +77,6 @@ fetch('/control')
   })
   .then(showControl)
   .catch((error) => notify('error', error.message))
-rfb.resizeSession = true
-rfb.scaleViewport = true
-rfb.background = '#202124'
-rfb.qualityLevel = 9
-rfb.addEventListener('connect', () => {
-  status.hidden = true
-  screen.dataset.connected = 'true'
-  notify('ready')
-})
-rfb.addEventListener('disconnect', () => {
-  status.hidden = false
-  status.textContent = 'Chrome disconnected. Reopen Chrome to reconnect.'
-  screen.dataset.connected = 'false'
-  notify('error', status.textContent)
-})
-rfb.addEventListener('securityfailure', () => notify('error', 'Chrome could not establish a browser session.'))
 document.addEventListener('pointerdown', () => notify('focus'), { capture: true })
 const pasteText = async (text) => {
   const response = await fetch('/paste', {
@@ -75,10 +97,6 @@ document.addEventListener(
   { capture: true },
 )
 let copiedText = ''
-rfb.addEventListener('clipboard', (event) => {
-  copiedText = event.detail.text
-  clipboard.hidden = !copiedText
-})
 clipboard.addEventListener('click', async () => {
   await navigator.clipboard.writeText(copiedText)
   clipboard.hidden = true
@@ -126,4 +144,9 @@ document.addEventListener(
   },
   { capture: true },
 )
-window.addEventListener('pagehide', () => rfb.disconnect())
+window.addEventListener('pagehide', () => {
+  closed = true
+  window.clearTimeout(reconnectTimer)
+  rfb.disconnect()
+})
+connect()

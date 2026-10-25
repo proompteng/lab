@@ -341,13 +341,13 @@ describe('six-bar research observation', () => {
     const fixture = sixBarFixture()
     const events: unknown[] = JSON.parse(JSON.stringify(fixture.events))
     let cursor: HistoricalMarketCursor = Result.getOrThrow(
-      createHistoricalMarketCursor(fixture.source.runId, fixture.universe, undefined, fixture.source),
+      createHistoricalMarketCursor(fixture.source.runId, [fixture.universe], undefined, fixture.source),
     )
     for (const event of events) cursor = Result.getOrThrow(advanceHistoricalMarketCursor(cursor, event))
     expect(Result.getOrThrow(extractSixBarResearchObservation(cursor, fixture.query))).toEqual(available())
     const first = fixture.events[0]!
     const empty = Result.getOrThrow(
-      createHistoricalMarketCursor(fixture.source.runId, fixture.universe, undefined, fixture.source),
+      createHistoricalMarketCursor(fixture.source.runId, [fixture.universe], undefined, fixture.source),
     )
     expect(
       advanceHistoricalMarketCursor(empty, { ...first, record: { ...first.record, value: `${first.record.value} ` } }),
@@ -393,7 +393,7 @@ describe('six-bar research observation', () => {
   test('unbound legacy cursors, future cuts and altered query contracts fail closed', () => {
     const fixture = sixBarFixture()
     const cursor = replaySixBarFixture(fixture)
-    const legacy = Result.getOrThrow(createHistoricalMarketCursor(fixture.source.runId, fixture.universe))
+    const legacy = Result.getOrThrow(createHistoricalMarketCursor(fixture.source.runId, [fixture.universe]))
     expect(extractSixBarResearchObservation(legacy, fixture.query)).toMatchObject({
       _tag: 'Failure',
       failure: { _tag: 'SixBarResearchFailure' },

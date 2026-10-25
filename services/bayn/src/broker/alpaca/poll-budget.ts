@@ -1,15 +1,9 @@
 import { Clock, Effect, Ref } from 'effect'
 import { HttpClient, type HttpClientResponse } from 'effect/http'
-import { randomUUID } from 'node:crypto'
 
 const accountLimit = 200
 const minimumRequestCostMs = 600
 export const brokerObservationQuotaWindowMs = 60_000
-
-type CaptureClaim =
-  | { readonly _tag: 'Claimed' }
-  | { readonly _tag: 'ExpiredUnused'; readonly expiredByMs: number }
-  | { readonly _tag: 'Unavailable' }
 
 interface PollBudgetState {
   readonly scheduledStartAtMs: number
@@ -36,7 +30,6 @@ const resetTime = (value: string | undefined): number => {
 }
 
 export const makeBrokerObservationBudget = Effect.gen(function* () {
-  const pendingCapture = yield* Ref.make<string | null>(null)
   const state = yield* Ref.make<PollBudgetState>({
     scheduledStartAtMs: yield* Clock.currentTimeMillis,
     requests: 0,
@@ -92,25 +85,6 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
       })
     })
   return {
-    prepareCapture: Effect.gen(function* () {
-      const token = yield* Effect.sync(randomUUID)
-      yield* Ref.set(pendingCapture, token)
-      return token
-    }),
-    claimCapture: (token: string, startDeadlineMs: number) =>
-      Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis
-        return yield* Ref.modify(pendingCapture, (pending): [CaptureClaim, string | null] => {
-          if (pending !== token) return [{ _tag: 'Unavailable' }, pending]
-          // Consume even an expired ticket atomically. Only this worker can prove it was never claimed.
-          return [
-            now <= startDeadlineMs
-              ? { _tag: 'Claimed' }
-              : { _tag: 'ExpiredUnused', expiredByMs: now - startDeadlineMs },
-            null,
-          ]
-        })
-      }),
     beginCapture: Effect.gen(function* () {
       while (true) {
         const now = yield* Clock.currentTimeMillis

@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const guestProtocolVersion = 2
+const guestProtocolVersion = 8
 const maxGuestRPCBytes = 10 << 20
 
 type guestRPCServer struct {
@@ -38,18 +38,29 @@ func (server *apiServer) newRPCServer() *grpc.Server {
 		return nil
 	}
 	rpc := grpc.NewServer(
+		grpc.ForceServerCodec(guestRPCCodec{}),
 		grpc.MaxRecvMsgSize(maxGuestRPCBytes), grpc.MaxSendMsgSize(maxGuestRPCBytes),
-		grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (result any, rpcErr error) {
+			defer func() { recordGuestRPC(ctx, info.FullMethod, rpcErr) }()
 			if err := authenticated(ctx); err != nil {
 				return nil, err
 			}
-			return handler(ctx, req)
+			claim, err := server.guestAuthorization.admit(ctx, info.FullMethod, req)
+			if err != nil {
+				return nil, err
+			}
+			result, err = handler(ctx, req)
+			if changed := server.guestAuthorization.requireClaim(claim); changed != nil {
+				return nil, changed
+			}
+			return result, err
 		}),
-		grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (rpcErr error) {
+			defer func() { recordGuestRPC(stream.Context(), info.FullMethod, rpcErr) }()
 			if err := authenticated(stream.Context()); err != nil {
 				return err
 			}
-			return handler(srv, stream)
+			return handler(srv, &authorizedGuestStream{ServerStream: stream, authorization: server.guestAuthorization, method: info.FullMethod})
 		}),
 	)
 	pb.RegisterNanoagentServiceServer(rpc, &guestRPCServer{api: server})
@@ -101,7 +112,11 @@ func protoTerminal(session terminalSessionView) *pb.TerminalSession {
 }
 
 func (server *guestRPCServer) GetInfo(context.Context, *pb.Empty) (*pb.GuestInfo, error) {
-	return &pb.GuestInfo{MicrovmId: server.api.evidence.MicroVMID, ProtocolVersion: guestProtocolVersion}, nil
+	info := &pb.GuestInfo{MicrovmId: server.api.evidence.MicroVMID, ProtocolVersion: guestProtocolVersion}
+	if server.api.codex != nil {
+		info.CodexActivity = server.api.codex.activitySnapshot()
+	}
+	return info, nil
 }
 func (server *guestRPCServer) OpenBrowser(ctx context.Context, _ *pb.Empty) (*pb.Browser, error) {
 	if server.api.browser == nil {
@@ -120,6 +135,17 @@ func (server *guestRPCServer) OpenEditor(ctx context.Context, _ *pb.Empty) (*pb.
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
 	return &pb.Editor{Port: editorPort}, nil
+}
+func (server *guestRPCServer) StatFile(_ context.Context, req *pb.Path) (*pb.FileEntry, error) {
+	relative, err := server.api.workspace.relative(req.Path)
+	if err != nil {
+		return nil, rpcOperationError(err)
+	}
+	result, err := server.api.fileEntryRelative(relative)
+	if err != nil {
+		return nil, rpcOperationError(err)
+	}
+	return protoFile(result), nil
 }
 func (server *guestRPCServer) ListFiles(_ context.Context, req *pb.Path) (*pb.FileList, error) {
 	result, err := server.api.listFiles(req.Path)
@@ -257,6 +283,22 @@ func (server *guestRPCServer) CodexCall(ctx context.Context, req *pb.CodexReques
 	}
 	result, err := server.api.codex.call(ctx, req.Method, req.ParamsJson)
 	if err != nil {
+		if errors.Is(err, errCodexOperationRejected) {
+			failure, detailErr := status.New(codes.InvalidArgument, errCodexOperationRejected.Error()).WithDetails(&pb.OperationFailure{CodexOperationRejected: true})
+			if detailErr != nil {
+				return nil, status.Error(codes.Internal, "encode Codex rejection")
+			}
+			return nil, failure.Err()
+		}
+		if errors.Is(err, errCodexOperationConflict) {
+			return nil, status.Error(codes.AlreadyExists, errCodexOperationConflict.Error())
+		}
+		if errors.Is(err, errCodexThreadActive) {
+			return nil, status.Error(codes.FailedPrecondition, errCodexThreadActive.Error())
+		}
+		if errors.Is(err, errCodexOperationUnknown) {
+			return nil, status.Error(codes.FailedPrecondition, errCodexOperationUnknown.Error())
+		}
 		if isMissingCodexConversation(req.Method, req.ParamsJson, err) {
 			return nil, status.Error(codes.NotFound, codexConversationNotFoundMessage)
 		}
@@ -273,18 +315,6 @@ func (server *guestRPCServer) CodexLogin(context.Context, *pb.Empty) (*pb.CodexL
 	}
 	result := server.api.codex.loginSnapshot()
 	return &pb.CodexLoginState{Active: result.Active, ResultJson: result.Result, StartedAt: result.StartedAt}, nil
-}
-func (server *guestRPCServer) ResolveCodexApproval(ctx context.Context, req *pb.CodexApproval) (*pb.Empty, error) {
-	if server.api.codex == nil {
-		return nil, status.Error(codes.Unavailable, "Codex app-server is disabled")
-	}
-	if err := server.api.codex.resolveApproval(ctx, req.ApprovalId, req.Decision); err != nil {
-		if ctx.Err() != nil {
-			return nil, status.FromContextError(ctx.Err()).Err()
-		}
-		return nil, status.Error(codes.NotFound, err.Error())
-	}
-	return &pb.Empty{}, nil
 }
 func (server *guestRPCServer) WatchCodexEvents(req *pb.CodexWatch, stream grpc.ServerStreamingServer[pb.CodexEvent]) error {
 	if server.api.codex == nil {

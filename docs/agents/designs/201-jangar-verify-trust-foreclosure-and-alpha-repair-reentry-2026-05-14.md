@@ -1,6 +1,6 @@
 # 201. Jangar Verify-Trust Foreclosure And Alpha-Repair Reentry (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-14
 Owner: Victor Chen, Jangar Engineering
 Scope: Jangar control-plane verify trust, source-rollout truth, material-action admission, Torghut alpha-repair reentry,
@@ -15,7 +15,6 @@ Extends:
 - `200-jangar-revenue-repair-settlement-conveyor-and-stage-health-custody-2026-05-14.md`
 - `199-jangar-material-action-custody-flight-recorder-and-merge-reentry-slo-2026-05-14.md`
 - `188-jangar-ready-truth-arbiter-and-stage-credit-cutover-2026-05-13.md`
-- `180-jangar-execution-trust-debt-retirement-and-profit-repair-settlement-2026-05-08.md`
 - `175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`
 
 ## Decision

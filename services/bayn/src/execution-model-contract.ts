@@ -16,7 +16,7 @@ export const usEquityRegularSessionDurationMs = 6.5 * 60 * 60 * 1_000
 const ExecutionModelCommon = {
   assetClass: Schema.Literal('us-equity'),
   precision: Schema.Struct({
-    quantityIncrementMicros: PositiveMicros,
+    quantityIncrementAtoms: PositiveMicros,
     priceIncrementMicros: PositiveMicros,
     minimumBuyNotionalMicros: PositiveMicros,
   }),
@@ -108,14 +108,15 @@ const ExecutionModelV4Base = Schema.Struct({
   }),
 })
 
-const ExecutionModelV5Base = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.execution-model.v5'),
-  venue: Schema.Literal('alpaca-us-equity'),
+const ExecutionModelV6Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-model.v6'),
+  venue: Schema.Literal('alpaca-cash-spot'),
   ...ExecutionModelCommon,
+  assetClass: Schema.Literal('cash-spot'),
   order: Schema.Struct({
     type: Schema.Literal('limit'),
-    timeInForce: Schema.Literal('ioc'),
-    extendedHours: Schema.Literal(false),
+    timeInForce: Schema.Literal('asset-session'),
+    extendedHours: Schema.Literal('equity-data-session'),
     planAfter: Schema.Literal('verified-intraday-window'),
     submitAfter: Schema.Literal('plan-committed'),
     submitBefore: Schema.Literal('intraday-entry-cutoff'),
@@ -134,7 +135,7 @@ const executionModelIssues = (
     | typeof ExecutionModelV2Base.Type
     | typeof ExecutionModelV3Base.Type
     | typeof ExecutionModelV4Base.Type
-    | typeof ExecutionModelV5Base.Type,
+    | typeof ExecutionModelV6Base.Type,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   if (model.partialFills.probabilityPpm > 0 && model.partialFills.filledFractionPpm === 0) {
@@ -156,7 +157,7 @@ const executionModelIssues = (
     })
   }
   if (
-    model.schemaVersion === 'bayn.execution-model.v5' &&
+    model.schemaVersion === 'bayn.execution-model.v6' &&
     model.order.warmupAfterOpenMs + model.order.submissionCutoffBeforeCloseMs >= usEquityRegularSessionDurationMs
   ) {
     issues.push({
@@ -171,33 +172,26 @@ export const ExecutionModelV1Schema = ExecutionModelV1Base.check(Schema.makeFilt
 export const ExecutionModelV2Schema = ExecutionModelV2Base.check(Schema.makeFilter(executionModelIssues))
 export const ExecutionModelV3Schema = ExecutionModelV3Base.check(Schema.makeFilter(executionModelIssues))
 export const ExecutionModelV4Schema = ExecutionModelV4Base.check(Schema.makeFilter(executionModelIssues))
-export const ExecutionModelV5Schema = ExecutionModelV5Base.check(Schema.makeFilter(executionModelIssues))
-export const DailyExecutionModelSchema = Schema.Union([ExecutionModelV2Schema, ExecutionModelV3Schema])
-export const SupportedExecutionModelSchema = DailyExecutionModelSchema
+export const ExecutionModelV6Schema = ExecutionModelV6Base.check(Schema.makeFilter(executionModelIssues))
 export const CycleExecutionModelSchema = Schema.Union([
   ExecutionModelV2Schema,
   ExecutionModelV3Schema,
   ExecutionModelV4Schema,
-  ExecutionModelV5Schema,
+  ExecutionModelV6Schema,
 ])
 export const ExecutionModelSchema = Schema.Union([
   ExecutionModelV1Schema,
   ExecutionModelV2Schema,
   ExecutionModelV3Schema,
   ExecutionModelV4Schema,
-  ExecutionModelV5Schema,
+  ExecutionModelV6Schema,
 ])
-export type DailyExecutionModel = typeof DailyExecutionModelSchema.Type
-export type SupportedExecutionModel = typeof SupportedExecutionModelSchema.Type
 export type CycleExecutionModel = typeof CycleExecutionModelSchema.Type
 export type ExecutionModel = typeof ExecutionModelSchema.Type
 export type QuoteBoundExecutionModel = Extract<
   CycleExecutionModel,
-  { readonly schemaVersion: 'bayn.execution-model.v4' | 'bayn.execution-model.v5' }
+  { readonly schemaVersion: 'bayn.execution-model.v4' | 'bayn.execution-model.v6' }
 >
 
-export const isSupportedExecutionModel = (model: ExecutionModel): model is SupportedExecutionModel =>
-  model.schemaVersion === 'bayn.execution-model.v2' || model.schemaVersion === 'bayn.execution-model.v3'
-
 export const isQuoteBoundExecutionModel = (model: CycleExecutionModel): model is QuoteBoundExecutionModel =>
-  model.schemaVersion === 'bayn.execution-model.v4' || model.schemaVersion === 'bayn.execution-model.v5'
+  model.schemaVersion === 'bayn.execution-model.v4' || model.schemaVersion === 'bayn.execution-model.v6'

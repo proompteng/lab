@@ -1,9 +1,10 @@
+import { strictParseOptions } from '../schemas'
 import { expect, test } from 'bun:test'
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { CycleState, decodeAutonomousCycle } from '../cycle'
-import { type CycleRunResult } from '../cycle/runner'
+import { CycleState, AutonomousCycleSchema } from '../cycle/model'
+import { type CycleRunResult } from '../cycle/runner/model'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { advanceExecutionOnce } from '../execution/advance'
 import {
@@ -23,7 +24,10 @@ const observedAt = native.query.observedAt
 const observedMs = Date.parse(observedAt)
 const instant = (offset: number) => new Date(observedMs + offset).toISOString()
 const cycle = Effect.runSync(
-  decodeAutonomousCycle({
+  Schema.decodeUnknownEffect(
+    AutonomousCycleSchema,
+    strictParseOptions,
+  )({
     ...native.draft,
     state: CycleState.Active,
     bindings: {},
@@ -43,15 +47,15 @@ const waiting = (maximumHoldDueAt = instant(7_000)) =>
   }) as const
 
 test('maximum hold caps a normal wait using the remaining time at the current pass sample', () => {
-  expect(maximumHoldContinuationDelayMs(waiting(), 30_000, observedAt)).toBe(7_000)
+  expect(maximumHoldContinuationDelayMs(waiting(), 30_000, observedAt)).toBe(5_000)
   expect(maximumHoldContinuationDelayMs(waiting(), 30_000, instant(2_000))).toBe(5_000)
   expect(maximumHoldContinuationDelayMs(waiting(instant(1)), 30_000, observedAt)).toBe(1)
 })
 
 test.each([
   [3_000, 7_000, 3_000],
-  [12_000, 7_000, 7_000],
-  [7_000, 7_000, 7_000],
+  [12_000, 7_000, 5_000],
+  [7_000, 7_000, 5_000],
 ] as const)(
   'hold due at %i ms and signal ready at %i ms preserve the earlier continuation (%i ms)',
   (holdOffset, signalOffset, expected) => {
@@ -75,7 +79,7 @@ test.each([DecisionReadinessReason.DecisionPending, DecisionReadinessReason.Snap
     const { waitReason: _waitReason, ...position } = waiting()
     const result = { ...position, readiness: { reason, message: 'Evidence is still unavailable' } }
     expect(decisionReadinessContinuationDelayMs(result, 30_000, observedAt)).toBeUndefined()
-    expect(maximumHoldContinuationDelayMs(result, 30_000, observedAt)).toBe(7_000)
+    expect(maximumHoldContinuationDelayMs(result, 30_000, observedAt)).toBe(5_000)
     expect(result.readiness.reason).toBe(reason)
   },
 )
@@ -87,7 +91,7 @@ test.each([-1, 0])('does not accelerate an elapsed hold deadline without an earl
 test.each([30_000, 30_001, 60_000])(
   'retains a future absolute hold deadline at %i ms while keeping the shorter normal cadence',
   (offset) => {
-    expect(maximumHoldContinuationDelayMs(waiting(instant(offset)), 30_000, observedAt)).toBe(30_000)
+    expect(maximumHoldContinuationDelayMs(waiting(instant(offset)), 30_000, observedAt)).toBe(5_000)
   },
 )
 
@@ -114,7 +118,7 @@ test('rejects absent and invalid timing and preserves a shorter normal continuat
   expect(maximumHoldContinuationDelayMs(waiting('invalid'), 30_000, observedAt)).toBeUndefined()
   expect(maximumHoldContinuationDelayMs(waiting(), 30_000, 'invalid')).toBeUndefined()
   expect(maximumHoldContinuationDelayMs(waiting(), 1_000, observedAt)).toBe(1_000)
-  expect(maximumHoldContinuationDelayMs(waiting(), 7_000, observedAt)).toBe(7_000)
+  expect(maximumHoldContinuationDelayMs(waiting(), 7_000, observedAt)).toBe(5_000)
 })
 
 test('uses the execution close bound, including valid hold deadlines after the entry cutoff', () => {
@@ -125,7 +129,7 @@ test('uses the execution close bound, including valid hold deadlines after the e
       30_000,
       cycle.window.submissionCutoffAt,
     ),
-  ).toBe(7_000)
+  ).toBe(5_000)
   const close = Date.parse(cycle.window.executionCloseAt)
   for (const offset of [0, 1]) {
     expect(
@@ -134,7 +138,7 @@ test('uses the execution close bound, including valid hold deadlines after the e
         30_000,
         new Date(close - 7_000).toISOString(),
       ),
-    ).toBeUndefined()
+    ).toBe(5_000)
   }
 })
 
@@ -157,7 +161,7 @@ test.each([7_000, 30_000, 30_001, 60_000])(
       Effect.gen(function* () {
         yield* TestClock.setTime(observedMs)
         const result = waiting(instant(holdDelayMs))
-        const expectedDelayMs = Math.min(30_000, holdDelayMs)
+        const expectedDelayMs = Math.min(5_000, holdDelayMs)
         const command = {
           controllerKey: 'a'.repeat(64),
           epoch: 1,
@@ -176,14 +180,15 @@ test.each([7_000, 30_000, 30_001, 60_000])(
               observedAt,
               waitReason: result.waitReason,
             } as const,
-            ...(nextDelayMs === undefined ? {} : { nextDelayMs, nextWakeAt: result.maximumHoldDueAt }),
+            ...(nextDelayMs === undefined ? {} : { nextDelayMs, nextWakeAt: instant(nextDelayMs) }),
           }),
           nextDelayMs: 30_000,
         }
         const outcome = yield* advanceExecutionOnce(command, driver)
         expect(outcome).toEqual(yield* advanceExecutionOnce(command, driver))
         expect(outcome.nextDelayMs).toBe(expectedDelayMs)
-        expect(outcome.nextWakeAt).toBe(result.maximumHoldDueAt)
+        expect(outcome.nextWakeAt).toBe(instant(expectedDelayMs))
+        expect(result.maximumHoldDueAt).toBe(instant(holdDelayMs))
         const activated = Result.getOrThrow(
           decideExecutionControllerActivation(null, {
             schemaVersion: 'bayn.execution-controller-activation.v1',
@@ -238,7 +243,7 @@ test.each([7_000, 30_000, 30_001, 60_000])(
         ).toBe('Advance')
         if (holdDelayMs > expectedDelayMs) {
           expect(maximumHoldContinuationDelayMs(result, 30_000, yield* currentUtcInstant)).toBe(
-            Math.min(30_000, holdDelayMs - expectedDelayMs),
+            Math.min(5_000, holdDelayMs - expectedDelayMs),
           )
           yield* TestClock.adjust(holdDelayMs - expectedDelayMs)
         }

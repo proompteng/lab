@@ -101,7 +101,7 @@ const completePreflightResponse = (
     url.pathname === '/v2/positions' ||
     url.pathname === '/v2/orders' ||
     url.pathname === '/v2/account/activities/FILL' ||
-    url.pathname === '/v2/account/activities/FEE' ||
+    url.pathname === '/v2/account/activities' ||
     url.pathname === '/v2/calendar'
   ) {
     return jsonResponse(request, [], requestId)
@@ -154,8 +154,7 @@ describe('Alpaca broker session acquisition retry', () => {
               }
               if (url.pathname === '/v2/account') return response(accountResponse)
               if (url.pathname === '/v2/account/configurations') return response(accountConfigurationResponse)
-              if (['/v2/positions', '/v2/orders', '/v2/account/activities/FEE'].includes(url.pathname))
-                return response([])
+              if (['/v2/positions', '/v2/orders', '/v2/account/activities'].includes(url.pathname)) return response([])
               return yield* Effect.die(new Error('Unexpected request in the paginated capture fixture'))
             }),
           ),
@@ -207,6 +206,7 @@ describe('Alpaca broker session acquisition retry', () => {
       Layer.provide(
         Layer.succeed(BrokerObservations, {
           read: Effect.succeed(observation),
+          readState: Effect.succeed(observation),
           readForSubmit: () => Effect.succeed(observation),
           invalidate: Effect.void,
         }),

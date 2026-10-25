@@ -9,12 +9,7 @@ import {
   ReconciliationStatus,
   TimeInForce,
 } from '../execution/contracts'
-import {
-  legacyReconciliationSchemaVersion,
-  legacyReferenceTargetPlanSchemaVersion,
-  legacyTargetPlannerInputV1SchemaVersion,
-  legacyTargetPlannerInputV2SchemaVersion,
-} from '../execution/legacy-wire'
+import { legacyReconciliationSchemaVersion, legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
 import { IntentPlanSchema, type IntentPlan } from '../execution/intents/domain'
 import {
   IsoDateSchema,
@@ -29,14 +24,6 @@ import {
   UnsignedMicrosSchema,
   UtcInstantSchema,
 } from '../schemas'
-
-export const SignalSessionReferencePricesSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.signal-session-reference-prices.v1'),
-  signalDate: IsoDateSchema,
-  observedAt: UtcInstantSchema,
-  contentHash: Sha256Schema,
-  priceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
-})
 
 export const intradaySnapshotReferencePricesSchemaVersion = 'bayn.intraday-snapshot-reference-prices.v1' as const
 
@@ -157,12 +144,12 @@ const TargetPlannerInputFields = {
   decisionHash: Sha256Schema,
   policyHash: Sha256Schema,
   accountId: StrictNonEmptyStringSchema,
-  signalDate: SignalSessionReferencePricesSchema.fields.signalDate,
+  signalDate: IsoDateSchema,
   targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
-  referencePrices: SignalSessionReferencePricesSchema,
+  referencePrices: ExecutionReferencePricesSchema,
   brokerState: TargetPlannerBrokerStateSchema,
   precision: Schema.Struct({
-    quantityIncrementMicros: PositiveMicrosSchema,
+    quantityIncrementAtoms: PositiveMicrosSchema,
     priceIncrementMicros: PositiveMicrosSchema,
     minimumBuyNotionalMicros: PositiveMicrosSchema,
   }),
@@ -176,22 +163,8 @@ export const quoteBoundTargetPlannerInputSchemaVersion = 'bayn.target-planner-in
 const QuoteBoundLimitExecutionIdentityFields = {
   executionPurpose: Schema.optionalKey(Schema.Literal('forced-close')),
   orderType: Schema.Literal(OrderType.Limit),
-  timeInForce: Schema.Literal(TimeInForce.ImmediateOrCancel),
-  priceReference: Schema.Literal('verified-adverse-quote-boundary'),
-} as const
-
-const FractionalCloseExecutionIdentityFields = {
-  executionPurpose: Schema.Literal('fractional-close'),
-  orderType: Schema.Literal(OrderType.Market),
-  timeInForce: Schema.Literal(TimeInForce.Day),
-  priceReference: Schema.Literal('verified-adverse-quote-boundary'),
-} as const
-
-const ReconciledPositionCloseExecutionIdentityFields = {
-  executionPurpose: Schema.Literal('forced-close'),
-  orderType: Schema.Literal(OrderType.Market),
-  timeInForce: Schema.Literal(TimeInForce.Day),
-  priceReference: Schema.Literal('reconciled-broker-position-mark'),
+  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
+  priceReference: Schema.Literals(['verified-adverse-quote-boundary', 'reconciled-broker-position-mark']),
 } as const
 
 const TargetPlanExecutionSnapshotFields = {
@@ -203,59 +176,21 @@ const QuoteBoundLimitExecutionTermsSchema = Schema.Struct({
   ...QuoteBoundLimitExecutionIdentityFields,
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
-  maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
-  maximumSellQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumBuyQuantityAtoms: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumSellQuantityAtoms: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
-const FractionalCloseExecutionTermsSchema = Schema.Struct({
-  ...FractionalCloseExecutionIdentityFields,
-  snapshotId: Sha256Schema,
-  snapshotContentHash: Sha256Schema,
-  maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
-  maximumSellQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+export const QuoteBoundExecutionTermsSchema = QuoteBoundLimitExecutionTermsSchema
+
+export const TargetPlanExecutionTermsSchema = Schema.Struct({
+  ...QuoteBoundLimitExecutionIdentityFields,
+  ...TargetPlanExecutionSnapshotFields,
 })
-
-const ReconciledPositionCloseExecutionTermsSchema = Schema.Struct({
-  ...ReconciledPositionCloseExecutionIdentityFields,
-  snapshotId: Sha256Schema,
-  snapshotContentHash: Sha256Schema,
-  maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
-  maximumSellQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
-})
-
-export const QuoteBoundExecutionTermsSchema = Schema.Union([
-  QuoteBoundLimitExecutionTermsSchema,
-  FractionalCloseExecutionTermsSchema,
-  ReconciledPositionCloseExecutionTermsSchema,
-])
-
-export const TargetPlanExecutionTermsSchema = Schema.Union([
-  Schema.Struct({ ...QuoteBoundLimitExecutionIdentityFields, ...TargetPlanExecutionSnapshotFields }),
-  Schema.Struct({ ...FractionalCloseExecutionIdentityFields, ...TargetPlanExecutionSnapshotFields }),
-  Schema.Struct({ ...ReconciledPositionCloseExecutionIdentityFields, ...TargetPlanExecutionSnapshotFields }),
-])
 export type TargetPlanExecutionTerms = typeof TargetPlanExecutionTermsSchema.Type
-
-export const TargetPlannerInputV1Schema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyTargetPlannerInputV1SchemaVersion),
-  ...TargetPlannerInputFields,
-})
-
-export const TargetPlannerInputV2Schema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyTargetPlannerInputV2SchemaVersion),
-  ...TargetPlannerInputFields,
-  allocationCapitalMicros: UnsignedMicrosSchema,
-})
 
 const QuoteBoundTargetPlannerInputBase = Schema.Struct({
   schemaVersion: Schema.Literal(quoteBoundTargetPlannerInputSchemaVersion),
   ...TargetPlannerInputFields,
-  referencePrices: ExecutionReferencePricesSchema,
-  precision: Schema.Struct({
-    quantityIncrementMicros: Schema.Union([Schema.Literal('1'), Schema.Literal('1000000')]),
-    priceIncrementMicros: PositiveMicrosSchema,
-    minimumBuyNotionalMicros: PositiveMicrosSchema,
-  }),
   allocationCapitalMicros: UnsignedMicrosSchema,
   executionTerms: QuoteBoundExecutionTermsSchema,
 })
@@ -275,8 +210,8 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
     issues.push({ path: ['executionTerms', 'priceReference'], issue: 'must match the bound reference-price source' })
   }
   const targetSymbols = Object.keys(input.targetWeights).sort()
-  const buyQuantitySymbols = Object.keys(input.executionTerms.maximumBuyQuantityMicros).sort()
-  const sellQuantitySymbols = Object.keys(input.executionTerms.maximumSellQuantityMicros).sort()
+  const buyQuantitySymbols = Object.keys(input.executionTerms.maximumBuyQuantityAtoms).sort()
+  const sellQuantitySymbols = Object.keys(input.executionTerms.maximumSellQuantityAtoms).sort()
   if (
     targetSymbols.length !== buyQuantitySymbols.length ||
     targetSymbols.length !== sellQuantitySymbols.length ||
@@ -287,27 +222,16 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
       issue: 'must contain one buy and sell quantity limit for every target symbol',
     })
   }
-  const quantityIncrement = BigInt(input.precision.quantityIncrementMicros)
-  const marketClose = input.executionTerms.orderType === OrderType.Market
+  const quantityIncrement = BigInt(input.precision.quantityIncrementAtoms)
   const forcedClose = input.executionTerms.executionPurpose !== undefined
-  if (marketClose && input.precision.quantityIncrementMicros !== '1') {
-    issues.push({
-      path: ['precision', 'quantityIncrementMicros'],
-      issue: 'market close must preserve the exact reconciled broker quantity',
-    })
-  }
-  if (!marketClose && input.precision.quantityIncrementMicros !== '1000000') {
-    issues.push({
-      path: ['precision', 'quantityIncrementMicros'],
-      issue: 'quote-bound LIMIT/IOC execution requires whole-share quantity precision',
-    })
-  }
+  if (input.executionTerms.priceReference === 'reconciled-broker-position-mark' && !forcedClose)
+    issues.push({ path: ['executionTerms'], issue: 'a reconciled position mark can only price a forced close' })
   if (forcedClose) {
     if (Object.values(input.targetWeights).some((weight) => weight !== 0)) {
       issues.push({ path: ['targetWeights'], issue: 'forced close must target a flat account' })
     }
     const positionQuantities = new Map(
-      input.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityMicros)]),
+      input.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityAtoms)]),
     )
     if (
       targetSymbols.some((symbol) => {
@@ -315,8 +239,8 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
         const expectedMaximumBuy = currentQuantity < 0n ? -currentQuantity : 0n
         const expectedMaximumSell = currentQuantity > 0n ? currentQuantity : 0n
         return (
-          BigInt(input.executionTerms.maximumBuyQuantityMicros[symbol] ?? '0') !== expectedMaximumBuy ||
-          BigInt(input.executionTerms.maximumSellQuantityMicros[symbol] ?? '0') !== expectedMaximumSell
+          BigInt(input.executionTerms.maximumBuyQuantityAtoms[symbol] ?? '0') !== expectedMaximumBuy ||
+          BigInt(input.executionTerms.maximumSellQuantityAtoms[symbol] ?? '0') !== expectedMaximumSell
         )
       })
     ) {
@@ -328,8 +252,8 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
   }
   if (
     [
-      ...Object.values(input.executionTerms.maximumBuyQuantityMicros),
-      ...Object.values(input.executionTerms.maximumSellQuantityMicros),
+      ...Object.values(input.executionTerms.maximumBuyQuantityAtoms),
+      ...Object.values(input.executionTerms.maximumSellQuantityAtoms),
     ].some((quantity) => BigInt(quantity) % quantityIncrement !== 0n)
   ) {
     issues.push({
@@ -344,19 +268,10 @@ export const QuoteBoundTargetPlannerInputSchema = QuoteBoundTargetPlannerInputBa
   Schema.makeFilter(quoteBoundInputIssues),
 )
 
-export const TargetPlannerInputSchema = Schema.Union([
-  TargetPlannerInputV1Schema,
-  TargetPlannerInputV2Schema,
-  QuoteBoundTargetPlannerInputSchema,
-])
+export const TargetPlannerInputSchema = QuoteBoundTargetPlannerInputSchema
 
-export type SignalSessionReferencePrices = typeof SignalSessionReferencePricesSchema.Type
 export type IntradaySnapshotReferencePrices = typeof IntradaySnapshotReferencePricesSchema.Type
 export type ExecutionReferencePrices = typeof ExecutionReferencePricesSchema.Type
-export type TargetPlannerBrokerState = typeof TargetPlannerBrokerStateSchema.Type
-export type TargetPlannerInputV1 = typeof TargetPlannerInputV1Schema.Type
-export type TargetPlannerInputV2 = typeof TargetPlannerInputV2Schema.Type
-export type QuoteBoundExecutionTerms = typeof QuoteBoundExecutionTermsSchema.Type
 export type QuoteBoundTargetPlannerInput = typeof QuoteBoundTargetPlannerInputSchema.Type
 export type TargetPlannerInput = typeof TargetPlannerInputSchema.Type
 
@@ -364,11 +279,11 @@ export interface PlannedTargetQuantity {
   readonly symbol: string
   readonly targetWeight: number
   readonly referencePriceMicros: string
-  readonly currentQuantityMicros: string
-  readonly targetQuantityMicros: string
+  readonly currentQuantityAtoms: string
+  readonly targetQuantityAtoms: string
 }
 
-export type ReferenceTargetIntent = Omit<IntentPlan, 'schemaVersion' | 'notionalLimitMicros'>
+export type ReferenceTargetIntent = Omit<IntentPlan, 'schemaVersion' | 'notionalLimitMicros' | 'limitPriceMicros'>
 
 export enum TargetPlanStatus {
   Planned = 'PLANNED',
@@ -493,8 +408,8 @@ export const PlannedTargetQuantitySchema = Schema.Struct({
   symbol: SymbolSchema,
   targetWeight: UnitIntervalSchema,
   referencePriceMicros: PositiveMicrosSchema,
-  currentQuantityMicros: SignedMicrosSchema,
-  targetQuantityMicros: UnsignedMicrosSchema,
+  currentQuantityAtoms: SignedMicrosSchema,
+  targetQuantityAtoms: UnsignedMicrosSchema,
 })
 
 export const ReferenceTargetIntentSchema = Schema.Struct({
@@ -507,7 +422,7 @@ export const ReferenceTargetIntentSchema = Schema.Struct({
   side: IntentPlanSchema.fields.side,
   orderType: IntentPlanSchema.fields.orderType,
   timeInForce: IntentPlanSchema.fields.timeInForce,
-  quantityMicros: IntentPlanSchema.fields.quantityMicros,
+  quantityAtoms: IntentPlanSchema.fields.quantityAtoms,
   createdAt: IntentPlanSchema.fields.createdAt,
 })
 

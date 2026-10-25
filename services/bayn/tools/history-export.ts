@@ -5,7 +5,6 @@ import { Cause, DateTime, Effect, FileSystem, Pull, Schema, Stream } from 'effec
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from '../src/hash'
 import {
-  BacktestSourceManifestSchema,
   validateBacktestSourceManifest,
   validateBacktestSourceReceipt,
   type BacktestSourceManifest,
@@ -28,6 +27,7 @@ import {
   readHistoricalChunk,
   readHistoricalDataset,
 } from '../src/market-data/alpaca-history/dataset'
+import { MarketSourceSchema } from '../src/market-data/streaming/raw-events'
 import { restCaptureArrivals } from '../src/market-data/alpaca-history/arrivals'
 import { writeImmutableDatasetFile } from './backfill'
 
@@ -36,7 +36,7 @@ export const HistoricalExportRequestSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.alpaca-history-export.v1'),
   datasetId: Sha256Schema,
   sessionDates: Schema.Array(IsoDateSchema).check(Schema.isMinLength(1), Schema.isUnique()),
-  universe: BacktestSourceManifestSchema.fields.universe,
+  universe: MarketSourceSchema,
   rawDeliveryDelayMs: DelaySchema,
   barFinalizationDelayMs: DelaySchema,
   featureProcessingDelayMs: DelaySchema,
@@ -393,7 +393,7 @@ export const exportHistoricalDataset = (
         return yield* new HistoricalDatasetFailure({ message: 'Historical source is empty' })
       const origin = `alpaca-history:${request.datasetId}`
       const manifest: BacktestSourceManifest = {
-        schemaVersion: 'bayn.backtest-source.v1',
+        schemaVersion: 'bayn.backtest-source.v2',
         encoding: 'ndjson-gzip',
         transport: 'alpaca-rest',
         dataSha256: source.dataSha256,
@@ -415,7 +415,7 @@ export const exportHistoricalDataset = (
             startOffset: '0',
             endOffsetExclusive: String(source.offsets.get(topic) ?? 0),
           })),
-        universe: request.universe,
+        marketSources: [request.universe],
         deliveryModel: {
           schemaVersion: 'bayn.supplied-arrival-times.v1',
           description: `REST as of retrieval; modeled raw delay ${request.rawDeliveryDelayMs}ms, minute-bar finalization delay ${request.barFinalizationDelayMs}ms, Dorvud processing delay ${request.featureProcessingDelayMs}ms. Original stream arrivals and revisions were not observed.`,
@@ -427,7 +427,7 @@ export const exportHistoricalDataset = (
       yield* Effect.fromResult(validateBacktestSourceManifest(manifest))
       const recordedAt = DateTime.formatIso(yield* DateTime.now)
       const receipt = {
-        schemaVersion: 'bayn.alpaca-rest-replay-receipt.v2',
+        schemaVersion: 'bayn.alpaca-rest-replay-receipt.v3',
         recordedAt,
         origin,
         datasetId: request.datasetId,
@@ -443,7 +443,7 @@ export const exportHistoricalDataset = (
         originalStreamAvailability: 'NOT_OBSERVED',
         coverageStartMs: manifest.coverageStartMs,
         coverageEndMs: manifest.coverageEndMs,
-        universe: manifest.universe,
+        marketSources: manifest.marketSources,
         positions: manifest.positions,
       }
       const receiptText = `${yield* Effect.fromResult(canonicalJsonV1Result(receipt))}\n`,

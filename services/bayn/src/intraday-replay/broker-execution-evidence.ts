@@ -1,6 +1,7 @@
 import { Schema } from 'effect'
 import type { IntradayQuote, IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { intradayInstantNanos } from '../market-data/intraday/time'
+import { equityClockSession } from '../equity-hours'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
 import {
   NonNegativeIntegerSchema,
@@ -10,7 +11,7 @@ import {
   UnsignedMicrosSchema,
   UtcInstantSchema,
 } from '../schemas'
-import type { IntradayReplayIocCoreOutcome } from './execution-core'
+import type { ReplayExecutionOutcome } from './execution-core'
 
 export enum ReplayQuoteRejection {
   Missing = 'missing-arrival-quote',
@@ -36,7 +37,7 @@ export const replayQuoteRejection = (
     quote.value.symbol !== symbol ||
     quote.value.feed !== protocol.feed ||
     quote.value.delayClass !== protocol.delayClass ||
-    quote.value.marketSession !== 'regular'
+    quote.value.marketSession !== (protocol.feed === 'us' ? 'continuous' : equityClockSession(quote.value.eventAt))
   )
     return ReplayQuoteRejection.Identity
   if (
@@ -70,7 +71,7 @@ const ArrivalQuoteSchema = Schema.Struct({
 })
 
 export const ReplayOrderExecutionSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-order-execution.v1'),
+  schemaVersion: Schema.Literal('bayn.simulated-order-execution.v2'),
   submittedAt: UtcInstantSchema,
   arrivedAt: UtcInstantSchema,
   maximumQuoteAgeMs: NonNegativeIntegerSchema,
@@ -78,20 +79,20 @@ export const ReplayOrderExecutionSchema = Schema.Struct({
   outcome: Schema.Union([
     Schema.Struct({
       status: Schema.Literal('filled'),
-      filledQuantityMicros: UnsignedMicrosSchema,
+      filledQuantityAtoms: UnsignedMicrosSchema,
       fillPriceMicros: UnsignedMicrosSchema,
       fillNotionalMicros: UnsignedMicrosSchema,
-      unfilledRemainder: Schema.Literals(['none', 'canceled']),
+      remainingQuantityAtoms: UnsignedMicrosSchema,
     }),
     Schema.Struct({
-      status: Schema.Literal('canceled'),
+      status: Schema.Literal('unfilled'),
       reason: Schema.Union([
         Schema.Enum(ReplayQuoteRejection),
         Schema.Literals([
           'outside-regular-session',
           'adverse-price-exceeds-limit',
           'no-displayed-liquidity',
-          'zero-after-whole-share-rounding',
+          'zero-after-instrument-rounding',
         ]),
       ]),
       adversePriceMicros: Schema.NullOr(UnsignedMicrosSchema),
@@ -110,7 +111,7 @@ export const makeReplayOrderExecution = (input: {
   readonly maximumQuoteAgeMs: number
   readonly quote: ObservedMarketValue<IntradayQuote> | undefined
   readonly outcome:
-    | IntradayReplayIocCoreOutcome
+    | ReplayExecutionOutcome
     | {
         readonly status: 'unavailable'
         readonly reason: ReplayQuoteRejection | 'outside-regular-session'
@@ -118,7 +119,7 @@ export const makeReplayOrderExecution = (input: {
 }): ReplayOrderExecution => {
   const { quote, outcome } = input
   return {
-    schemaVersion: 'bayn.simulated-order-execution.v1',
+    schemaVersion: 'bayn.simulated-order-execution.v2',
     submittedAt: input.submittedAt,
     arrivedAt: input.arrivedAt,
     maximumQuoteAgeMs: input.maximumQuoteAgeMs,
@@ -149,22 +150,22 @@ export const makeReplayOrderExecution = (input: {
     outcome:
       outcome.status === 'unavailable'
         ? {
-            status: 'canceled',
+            status: 'unfilled',
             reason: outcome.reason,
             adversePriceMicros: null,
           }
-        : outcome.status === 'canceled'
+        : outcome.status === 'unfilled'
           ? {
-              status: 'canceled',
+              status: 'unfilled',
               reason: outcome.reason,
               adversePriceMicros: outcome.adversePriceMicros.toString(),
             }
           : {
               status: 'filled',
-              filledQuantityMicros: outcome.filledQuantityMicros.toString(),
+              filledQuantityAtoms: outcome.filledQuantityAtoms.toString(),
               fillPriceMicros: outcome.fillPriceMicros.toString(),
               fillNotionalMicros: outcome.fillNotionalMicros.toString(),
-              unfilledRemainder: outcome.unfilledRemainder,
+              remainingQuantityAtoms: outcome.remainingQuantityAtoms.toString(),
             },
   }
 }

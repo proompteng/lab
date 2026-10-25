@@ -1,3 +1,4 @@
+import { SnapshotManifestFields } from '../market-data/streaming/manifest-schema'
 import { IntradayPerformanceVolumeEvidenceSchema } from '../forward-performance/intraday-schema'
 import { validIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
 import { Data, Effect, Result, Schema } from 'effect'
@@ -66,9 +67,9 @@ const ForwardPerformanceExecutionQualitySchema = Schema.Struct({
     Schema.Struct({
       plannedOrderCount: NonNegativeIntegerSchema,
       fillCount: NonNegativeIntegerSchema,
-      plannedQuantityMicros: SignedMicrosSchema,
-      filledQuantityMicros: SignedMicrosSchema,
-      unfilledQuantityMicros: SignedMicrosSchema,
+      plannedQuantityAtoms: SignedMicrosSchema,
+      filledQuantityAtoms: SignedMicrosSchema,
+      unfilledQuantityAtoms: SignedMicrosSchema,
       plannedReferenceNotionalMicros: SignedMicrosSchema,
       executedNotionalMicros: SignedMicrosSchema,
       executionPriceShortfallMicros: SignedMicrosSchema,
@@ -115,18 +116,18 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
       symbol: ReceiptStringSchema,
       windowOpenedAt: UtcInstantSchema,
       windowClosedAt: UtcInstantSchema,
-      filledQuantityMicros: SignedMicrosSchema,
-      marketVolumeQuantityMicros: SignedMicrosSchema,
+      filledQuantityAtoms: SignedMicrosSchema,
+      marketVolumeQuantityAtoms: SignedMicrosSchema,
       intradaySource: Schema.optionalKey(
         Schema.Struct({
-          feed: Schema.Literal('iex'),
-          volumeScope: Schema.Literal('IEX_RECORDED_SESSION_VOLUME'),
+          feed: SnapshotManifestFields.feed,
+          volumeScope: Schema.Literal('RECORDED_COMPLETE_MINUTE_VOLUME'),
           evidenceHash: Sha256Schema,
         }),
       ),
       participationRate: Schema.Struct({
-        numeratorQuantityMicros: SignedMicrosSchema,
-        denominatorQuantityMicros: SignedMicrosSchema,
+        numeratorQuantityAtoms: SignedMicrosSchema,
+        denominatorQuantityAtoms: SignedMicrosSchema,
         decimal: DecimalSchema,
       }),
     }),
@@ -135,8 +136,8 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
   boundedObservedExecutedNotionalMicros: Schema.NullOr(SignedMicrosSchema),
   maximumParticipationRate: Schema.NullOr(
     Schema.Struct({
-      numeratorQuantityMicros: SignedMicrosSchema,
-      denominatorQuantityMicros: SignedMicrosSchema,
+      numeratorQuantityAtoms: SignedMicrosSchema,
+      denominatorQuantityAtoms: SignedMicrosSchema,
       decimal: DecimalSchema,
     }),
   ),
@@ -155,14 +156,16 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
         source.symbol === observation.symbol &&
         source.windowOpenedAt === observation.windowOpenedAt &&
         source.windowClosedAt === observation.windowClosedAt &&
-        source.quantityMicros === observation.marketVolumeQuantityMicros
+        source.sourceFeed === observation.intradaySource.feed &&
+        source.volumeScope === observation.intradaySource.volumeScope &&
+        source.quantityAtoms === observation.marketVolumeQuantityAtoms
       )
     }),
   ),
 )
 
 const ForwardPerformanceReceiptSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v3'),
+  schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v4'),
   bindings: Schema.Struct({
     runtime: ForwardPerformanceBuildBindingSchema,
     source: Schema.NullOr(ForwardPerformanceBuildBindingSchema),
@@ -186,6 +189,7 @@ const ForwardPerformanceReceiptSchema = Schema.Struct({
     brokerExecutionFeesMicros: Schema.NullOr(SignedMicrosSchema),
     otherChargedCostsMicros: Schema.NullOr(SignedMicrosSchema),
     cashYieldMicros: Schema.NullOr(SignedMicrosSchema),
+    cashSettlementRoundingMicros: Schema.NullOr(SignedMicrosSchema),
     grossRealizedPnlMicros: Schema.NullOr(SignedMicrosSchema),
     netRealizedPnlAfterCostsMicros: Schema.NullOr(SignedMicrosSchema),
     netRealizedReturn: Schema.NullOr(
@@ -408,7 +412,7 @@ export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceRec
                 SELECT 1 FROM autonomous_cycle_shadow_decisions AS decision
                 WHERE decision.cycle_id = cycle.cycle_id
                   AND decision.decision_hash = cycle.decision_hash
-                  AND decision.schema_version = 'bayn.paper-cycle-decision.v1'
+                  AND decision.schema_version IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
                   AND decision.document ->> 'mode' = 'PAPER'
                   AND decision.document #>> '{bindings,accountId}' = generation.account_id
                   AND decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id

@@ -1,4 +1,4 @@
-import { Redacted, Result, Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { decodeBrokerConnection, type BrokerConnection } from '../broker/connection'
 import { EmbeddedBuildMetadataSchema, type EmbeddedBuildMetadata } from '../build'
@@ -246,13 +246,5 @@ export const resolveRuntimeConfig = (
   if (Result.isFailure(build)) return Result.fail(build.failure)
   return loadedConfig(parsed, execution.success, build.success, alpaca.success)
 }
-
-export const redactedConfigSummary = (config: LoadedRuntimeConfig) => ({
-  ...config,
-  ...(config.kafka === undefined ? {} : { kafka: { ...config.kafka, password: Redacted.make('[REDACTED]') } }),
-  clickhouse: { ...config.clickhouse, password: Redacted.make('[REDACTED]') },
-  postgres: { ...config.postgres, url: Redacted.make('[REDACTED]') },
-  alpaca: { ...config.alpaca, key: Redacted.make('[REDACTED]'), secret: Redacted.make('[REDACTED]') },
-})
 
 export type { BrokerConnection }

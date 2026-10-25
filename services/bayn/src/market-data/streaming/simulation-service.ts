@@ -13,13 +13,13 @@ import { constructSimulatedSnapshot, type SimulatedSnapshotManifest } from './sn
 
 const VerifiedSimulationReferenceTypeId: unique symbol = Symbol('VerifiedSimulationReference')
 export interface SimulatedSnapshotReference {
-  readonly schemaVersion: 'bayn.simulated-snapshot-reference.v1'
+  readonly schemaVersion: 'bayn.simulated-snapshot-reference.v2'
   readonly manifest: SimulatedSnapshotManifest
   readonly [VerifiedSimulationReferenceTypeId]: true
 }
 const reference = (manifest: SimulatedSnapshotManifest): SimulatedSnapshotReference =>
   Object.freeze({
-    schemaVersion: 'bayn.simulated-snapshot-reference.v1',
+    schemaVersion: 'bayn.simulated-snapshot-reference.v2',
     manifest,
     [VerifiedSimulationReferenceTypeId]: true as const,
   })
@@ -62,7 +62,7 @@ export const makeSimulatedMarketData = (
       verifyReference: (snapshot) =>
         Effect.gen(function* () {
           const manifest = snapshot.manifest
-          if (manifest.schemaVersion !== 'bayn.simulated-market-snapshot.v1')
+          if (manifest.schemaVersion !== 'bayn.simulated-market-snapshot.v2')
             return yield* failure('Simulated market data requires its own source manifest')
           const {
             schemaVersion: _version,

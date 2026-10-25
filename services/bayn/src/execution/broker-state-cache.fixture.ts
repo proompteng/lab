@@ -1,6 +1,8 @@
-import { Effect, Schema } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import { IsoDateSchema } from '../schemas'
-import { OrderCollection, type Account, type Position, type Order, type BrokerReadShape } from '../broker/alpaca'
+import { OrderCollection, type Account, type Position, type Order, type BrokerReadShape } from '../broker/alpaca/model'
+import { normalizeAssetResult } from '../broker/alpaca/normalizers'
+import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca/model'
 import { AccountStatus, Authority, KillState, ReconciliationStatus } from './contracts'
 import type { CachedBrokerState } from './broker-state-cache'
 
@@ -47,7 +49,8 @@ export const cachedBrokerStateFixture = (
       unknownOrderCount: 0,
       accountingHash: '8'.repeat(64),
       account: {
-        schemaVersion: 'bayn.paper-account-snapshot.v1',
+        schemaVersion: 'bayn.paper-account-snapshot.v2',
+        cryptoFeeTier: account.cryptoFeeTier,
         accountId: account.id,
         status: AccountStatus.Active,
         currency: account.currency,
@@ -60,16 +63,15 @@ export const cachedBrokerStateFixture = (
         const material = {
           accountId: position.accountId,
           symbol: position.symbol,
-          quantityMicros: position.quantityMicros,
+          quantityAtoms: position.quantityAtoms,
           averageEntryPriceMicros: position.averageEntryPriceMicros,
+          costBasisMicros: position.costBasisMicros,
           marketPriceMicros: position.marketPriceMicros,
           marketValueMicros: position.marketValueMicros,
           unrealizedPnlMicros: position.unrealizedPnlMicros,
           observedAt: position.observedAt,
         }
-        return position.costBasisMicros === undefined
-          ? { ...material, schemaVersion: 'bayn.paper-position.v1' as const }
-          : { ...material, schemaVersion: 'bayn.position.v2' as const, costBasisMicros: position.costBasisMicros }
+        return { ...material, schemaVersion: 'bayn.position.v2' as const }
       }),
       positionsObservedAt: account.observedAt,
       orders: [],
@@ -112,3 +114,25 @@ export const nativeBrokerStateFixture = (
     },
   },
 })
+
+export const brokerAssetFixture = (symbol: string, observedAt: string) => {
+  const crypto = symbol.includes('/')
+  return Result.getOrThrow(
+    normalizeAssetResult(
+      {
+        id: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
+        symbol,
+        class: crypto ? AssetClass.Crypto : AssetClass.UsEquity,
+        exchange: crypto ? AssetExchange.Crypto : AssetExchange.Nasdaq,
+        status: AssetStatus.Active,
+        tradable: true,
+        fractionable: true,
+        ...(crypto
+          ? { min_order_size: '0.000000001', min_trade_increment: '0.000000001', price_increment: '0.000000001' }
+          : {}),
+      },
+      symbol,
+      observedAt,
+    ),
+  )
+}

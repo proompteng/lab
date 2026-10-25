@@ -1,15 +1,10 @@
-import { Cause, Clock, Duration, Effect, Exit, Fiber, Ref, Result, Schedule } from 'effect'
+import { Cause, Clock, Effect, Exit, Fiber, Ref, Result } from 'effect'
 
-import {
-  OrderCollection,
-  SortDirection,
-  verifyBrokerAccountPermissions,
-  type BrokerAccountPreflightFailure,
-  type BrokerReadError,
-  type BrokerReadShape,
-} from '../broker/alpaca'
-import type { ObservedBrokerSnapshot } from '../broker/alpaca/observed-snapshot'
-import type { RuntimeConfig } from '../config'
+import { OrderCollection, SortDirection, type BrokerReadShape } from '../broker/alpaca/model'
+import { verifyBrokerAccountPermissions, type BrokerAccountPreflightFailure } from '../broker/alpaca/preflight'
+import { type BrokerReadError } from '../broker/alpaca/failures'
+import type { ObservedBrokerState } from '../broker/alpaca/observed-snapshot'
+import type { RuntimeConfig } from '../config/model'
 import { operationalError } from '../errors'
 import { databaseOperation, withinDeadline } from '../operations'
 import { type BrokerConfiguration, type RuntimeState } from '../runtime-state'
@@ -26,7 +21,6 @@ import type {
   HealthProbeResults,
   ProbeResult,
 } from './model'
-import { Pipeable } from '../pipeable'
 
 const probeFailureMessage = <E>(cause: Cause.Cause<E>, fallback: string): string => {
   const errors = Cause.prettyErrors(cause).map((error) => error.message)
@@ -108,17 +102,14 @@ const observeBrokerComponents = (read: BrokerReadShape, timeoutMs: number) =>
     { concurrency: 6 },
   )
 
-const observeBrokerProjection = (
-  snapshot: Effect.Effect<ObservedBrokerSnapshot, BrokerReadError>,
-  timeoutMs: number,
-) => {
+const observeBrokerProjection = (snapshot: Effect.Effect<ObservedBrokerState, BrokerReadError>, timeoutMs: number) => {
   const component = <A>(behavior: string, result: ProbeResult<A>): ProbeResult<A> =>
     result._tag === 'Available'
       ? result
       : { _tag: 'Unavailable', error: `Alpaca ${behavior} unavailable: ${result.error}` }
   return observe(snapshot).pipe(
     Effect.map((result) => {
-      const select = <A>(behavior: string, get: (value: ObservedBrokerSnapshot) => A): ProbeResult<A> =>
+      const select = <A>(behavior: string, get: (value: ObservedBrokerState) => A): ProbeResult<A> =>
         component(behavior, result._tag === 'Available' ? { _tag: 'Available', value: get(result.value) } : result)
       return {
         account: select('account read', (value) => value.snapshot.account),
@@ -293,7 +284,7 @@ const collectHealthProbeResults = (
 
 const defaultCycleObservationBinding: CycleObservationBinding = { _tag: 'Unavailable' }
 
-const checkHealthDataFirst = (
+export const checkHealth = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   dependencies: HealthDependencies,
@@ -329,47 +320,3 @@ const checkHealthDataFirst = (
     })
     yield* interpretHealthLogs(deriveHealthLogDecisions(transition))
   }).pipe(Effect.withLogSpan('health'))
-
-export const checkHealth = Pipeable.by<
-  (
-    state: Ref.Ref<RuntimeState>,
-    dependencies: HealthDependencies,
-    broker?: BrokerProbe,
-    autonomousCycleFiber?: Fiber.Fiber<void, never>,
-    cycleObservation?: CycleObservationBinding,
-    executionController?: ExecutionControllerProbe,
-  ) => (config: RuntimeConfig) => ReturnType<typeof checkHealthDataFirst>,
-  typeof checkHealthDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'healthIntervalMs' in arguments_[0],
-  checkHealthDataFirst,
-)
-
-const runHealthMonitorDataFirst = (
-  config: RuntimeConfig,
-  state: Ref.Ref<RuntimeState>,
-  dependencies: HealthDependencies,
-  broker?: BrokerProbe,
-  autonomousCycleFiber?: Fiber.Fiber<void, never>,
-  cycleObservation: CycleObservationBinding = defaultCycleObservationBinding,
-  executionController?: ExecutionControllerProbe,
-): Effect.Effect<void> =>
-  checkHealth(config, state, dependencies, broker, autonomousCycleFiber, cycleObservation, executionController).pipe(
-    Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
-    Effect.asVoid,
-  )
-
-export const runHealthMonitor = Pipeable.by<
-  (
-    state: Ref.Ref<RuntimeState>,
-    dependencies: HealthDependencies,
-    broker?: BrokerProbe,
-    autonomousCycleFiber?: Fiber.Fiber<void, never>,
-    cycleObservation?: CycleObservationBinding,
-    executionController?: ExecutionControllerProbe,
-  ) => (config: RuntimeConfig) => ReturnType<typeof runHealthMonitorDataFirst>,
-  typeof runHealthMonitorDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'healthIntervalMs' in arguments_[0],
-  runHealthMonitorDataFirst,
-)

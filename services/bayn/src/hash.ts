@@ -256,38 +256,6 @@ const hashCanonicalJsonResult = (canonicalJson: string): Result.Result<string, C
 export const canonicalHashV1Result = (value: unknown): Result.Result<string, CanonicalHashFailure> =>
   pipe(canonicalJsonV1Result(value), Result.flatMap(hashCanonicalJsonResult))
 
-const compatibilityError = (failure: CanonicalJsonFailure): unknown => {
-  switch (failure.reason) {
-    case 'cycle':
-      return new TypeError(`${failure.path} contains a cycle`)
-    case 'invalid-unicode-key':
-      return new TypeError(`${failure.path} contains an invalid Unicode key`)
-    case 'invalid-unicode-surrogate':
-      return new TypeError(`${failure.path} contains an invalid Unicode surrogate`)
-    case 'non-data-property':
-      return new TypeError(`${failure.path} must be an enumerable data property`)
-    case 'non-dense-array':
-      return new TypeError(`${failure.path} must be a dense array without custom properties`)
-    case 'non-finite-number':
-      return new TypeError(`${failure.path} contains a non-finite number`)
-    case 'non-json-type':
-      return new TypeError(`${failure.path} contains a non-JSON ${failure.actualType} value`)
-    case 'non-plain-object':
-      return new TypeError(`${failure.path} must contain only plain JSON objects`)
-    case 'symbol-key':
-      return new TypeError(`${failure.path} contains a symbol key`)
-    case 'introspection-failed':
-    case 'sha256-failed':
-      return failure.cause
-  }
-}
-
-export const canonicalHashV1OrThrow = (value: unknown): string =>
-  pipe(canonicalHashV1Result(value), Result.getOrThrowWith(compatibilityError))
-
-/** @deprecated Use canonicalHashV1Result. This alias remains while callers migrate to total canonicalization. */
-export const canonicalHashV1 = canonicalHashV1OrThrow
-
 export const stableU128 = (...parts: readonly string[]): bigint => {
   const bytes = createHash('sha256').update(parts.join('\u001f')).digest().subarray(0, 16)
   let value = 0n

@@ -1,4 +1,4 @@
-import { TargetPlanReason, TargetPlanStatus, type BlockedTargetPlanReason } from '../target-planner'
+import { TargetPlanReason, TargetPlanStatus, type BlockedTargetPlanReason } from '../target-planner/index'
 import { CycleState, CycleTerminalReason, type CycleCompletionState } from './model'
 
 export const cycleTerminalReasonForBlockedTargetPlan = (reason: BlockedTargetPlanReason): CycleTerminalReason => {

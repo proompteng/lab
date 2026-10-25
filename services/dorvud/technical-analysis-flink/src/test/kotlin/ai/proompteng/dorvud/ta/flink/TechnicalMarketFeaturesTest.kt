@@ -9,6 +9,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 class TechnicalMarketFeaturesTest {
   private val start = Instant.parse("2026-09-11T13:30:00Z")
   private val computed = start.plusSeconds(24 * 3600).toEpochMilli()
@@ -78,6 +79,7 @@ class TechnicalMarketFeaturesTest {
       Json {
         encodeDefaults = true
         prettyPrint = true
+        prettyPrintIndent = "  "
       }
     if (System.getProperty("writeMarketFeatureFixture") ==
       "true"
@@ -282,5 +284,32 @@ class TechnicalMarketFeaturesTest {
     assertEquals(nextState, advanceTechnicalFeature(nextState, bar(389), computed + 86400_000, "a".repeat(40)).state)
     assertEquals(restored, processTechnicalFeature(restored, correction.copy(high = -1.0), computed, "a".repeat(40)).state)
     assertNull(advanceTechnicalFeature(restored, bar(389), computed, "a".repeat(40)).feature)
+  }
+
+  @Test fun `technical readiness restarts in each segment without changing regular math`() {
+    val pre =
+      bar(
+        0,
+      ).copy(
+        eventTime = Instant.parse("2026-09-11T12:00:00Z"),
+        ingestionTime = Instant.parse("2026-09-11T12:01:01Z"),
+        marketSession = "pre",
+      )
+    val first = advanceTechnicalFeature(TechnicalFeatureState(), pre, computed, "a".repeat(40))
+    assertEquals(1, assertNotNull(first.feature).material.inputs.size)
+    assertEquals(
+      TechnicalReadiness.WARMING,
+      first.feature
+        ?.material
+        ?.values
+        ?.ema12PriceMicros
+        ?.status,
+    )
+    val regular = advanceTechnicalFeature(first.state, bar(0), computed, "a".repeat(40))
+    assertEquals(1, assertNotNull(regular.feature).material.inputs.size)
+    assertEquals(start.toEpochMilli(), regular.feature?.material?.windowStartMs)
+    val correction = advanceTechnicalFeature(regular.state, pre.copy(sourceOffset = 100), computed, "a".repeat(40))
+    assertEquals(regular.state, correction.state)
+    assertNull(correction.feature)
   }
 }

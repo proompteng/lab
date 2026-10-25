@@ -1,4 +1,3 @@
-import { BarPublicationPolicy } from '../intraday/bar-publication'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../../hash'
@@ -75,8 +74,6 @@ export const reproduceStreamingSnapshot = (
       manifest.streaming,
       strictParseOptions,
     ).pipe(Result.mapError((cause) => fail('Invalid recorded streaming evidence', cause)))
-    if (evidence.barPublications !== undefined && evidence.barPublicationPolicy === undefined)
-      return yield* Result.fail(fail('Publication witnesses require an explicit timing policy'))
     const bounds = yield* Result.try({
       try: () =>
         bootstrapKafkaPartitions(
@@ -142,11 +139,14 @@ export const reproduceStreamingSnapshot = (
       ...(manifest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
+      ...(manifest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
+      ...(manifest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: manifest.benchmarkSymbols }),
     }
     const reproduced = yield* constructStreamingSnapshot(
       { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
       query,
-      evidence.barPublicationPolicy ?? BarPublicationPolicy.LegacyQuoteAge,
     )
     if (
       (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(
@@ -254,8 +254,6 @@ export const reproduceSimulatedSnapshot = (
       SimulatedSnapshotEvidenceSchema,
       strictParseOptions,
     )(manifest.streaming).pipe(Result.mapError((cause) => fail('Invalid simulated input cut', cause)))
-    if (evidence.barPublications !== undefined && evidence.barPublicationPolicy === undefined)
-      return yield* Result.fail(fail('Publication witnesses require an explicit timing policy'))
     if (canonicalPositions(evidence.positions).some((position, index) => position !== evidence.positions[index]))
       return yield* Result.fail(fail('Simulated source positions are not canonical'))
     const {
@@ -269,18 +267,9 @@ export const reproduceSimulatedSnapshot = (
       sequence: _sequence,
       ...source
     } = evidence
-    if (evidence.technicalFeatureTopic !== evidence.technical?.topic)
+    const universe = evidence.marketSources.find((source) => source.universeId === manifest.universeId)
+    if (universe === undefined || universe.topics.technicalFeatures !== evidence.technical?.topic)
       return yield* Result.fail(fail('Technical source differs from the simulated input cut'))
-    const universe: StreamingUniverse = {
-      universeId: manifest.universeId,
-      universeSymbolHash: manifest.universeSymbolHash,
-      symbols: manifest.universe,
-      topics: {
-        ...manifest.sourceTopics,
-        features: evidence.featureTopic,
-        ...(evidence.technicalFeatureTopic === undefined ? {} : { technicalFeatures: evidence.technicalFeatureTopic }),
-      },
-    }
     const bounds = new Map(
       evidence.positions.map((position) => [
         topicPartitionKey(position.topic, position.partition),
@@ -333,13 +322,17 @@ export const reproduceSimulatedSnapshot = (
       ...(manifest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
+      ...(manifest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
+      ...(manifest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: manifest.benchmarkSymbols }),
     }
 
     const reproduced = yield* constructSimulatedSnapshot(
       {
         runId: evidence.runId,
         source,
-        universe,
+        marketSources: evidence.marketSources,
         projection: {
           ...projection,
           offsets: new Map(
@@ -361,7 +354,6 @@ export const reproduceSimulatedSnapshot = (
       },
       source,
       query,
-      evidence.barPublicationPolicy ?? BarPublicationPolicy.LegacyQuoteAge,
     )
     if (
       (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(

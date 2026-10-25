@@ -1,18 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: tengri
   labels:
-    app.kubernetes.io/name: tengri
     app.kubernetes.io/component: control-plane
+    app.kubernetes.io/name: tengri
+  name: tengri
+  namespace: tengri
 spec:
-  replicas: 1
-  strategy:
-    type: Recreate
+  replicas: 2
   selector:
     matchLabels:
-      app.kubernetes.io/name: tengri
       app.kubernetes.io/component: control-plane
+      app.kubernetes.io/name: tengri
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
   template:
     metadata:
       annotations:
@@ -23,37 +27,48 @@ spec:
         sidecar.istio.io/proxyMemory: 64Mi
         sidecar.istio.io/proxyMemoryLimit: 256Mi
       labels:
-        sidecar.istio.io/inject: "true"
-        app.kubernetes.io/name: tengri
         app.kubernetes.io/component: control-plane
+        app.kubernetes.io/name: tengri
         app.kubernetes.io/part-of: tengri
+        sidecar.istio.io/inject: "true"
         spiffe.io/spire-managed-identity: "true"
     spec:
-      serviceAccountName: tengri
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/component: control-plane
+                  app.kubernetes.io/name: tengri
+              topologyKey: kubernetes.io/hostname
       automountServiceAccountToken: true
-      enableServiceLinks: false
-      terminationGracePeriodSeconds: 30
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
-        seccompProfile:
-          type: RuntimeDefault
       containers:
-        - name: tengri
-          image: registry.ide-newton.ts.net/lab/tengri
-          imagePullPolicy: IfNotPresent
-          ports:
-            - name: grpc
-              containerPort: 50051
-              protocol: TCP
-            - name: gateway
-              containerPort: 8080
-              protocol: TCP
-            - name: preview
-              containerPort: 8081
-              protocol: TCP
-          env:
+        - env:
+            - name: SENTRY_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: tengri-observability
+                  key: SENTRY_DSN
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: tengri-observability
+                  key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            - name: OFZ_GRPC_ENDPOINT
+              value: ofz-api.ofz.svc.cluster.local:9443
+            - name: TENGRI_INTERNAL_HMAC_KEY_FILE
+              value: /var/run/tengri/internal/TENGRI_INTERNAL_HMAC_SECRET
+            - name: TENGRI_DATABASE_DSN
+              value: host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=tengri_control
+                user=tengri_controller sslmode=require
+            - name: TENGRI_DATABASE_PASSWORD_FILE
+              value: /var/run/tengri/database/password
+            - name: TENGRI_DATABASE_CA_FILE
+              value: /var/run/tengri/database-ca/ca.crt
+            - name: TENGRI_GUEST_SIGNING_KEY_FILE
+              value: /var/run/tengri/guest-signing/key
+            - name: TENGRI_GUEST_RECOVERY_GENERATION_FILE
+              value: /var/run/tengri/guest-signing/recovery-generation
             - name: SPIFFE_ENDPOINT_SOCKET
               value: unix:///spiffe-workload-api/spire-agent.sock
             - name: SPIFFE_TRUST_DOMAIN
@@ -67,8 +82,8 @@ spec:
             - name: TENGRI_DEFAULT_IMAGE
               valueFrom:
                 configMapKeyRef:
-                  name: tengri-release
                   key: NANOAGENT_IMAGE
+                  name: tengri-release
             - name: TENGRI_PUBLIC_URL
               value: https://tengri.proompteng.ai
             - name: TENGRI_PREVIEW_URL_TEMPLATE
@@ -77,77 +92,115 @@ spec:
               value: https://proompteng.ai
             - name: TENGRI_PREVIEW_ADDRESS
               value: 0.0.0.0:8081
-            - name: TENGRI_RUNTIME_SECRET_DIRECTORY
-              value: /var/run/secrets/tengri-runtime
-            - name: TENGRI_AUTHZ_ENDPOINT
-              value: http://ofz.ofz.svc.cluster.local:8443
-            - name: TENGRI_AUTHZ_KEY_FILE
-              value: /var/run/secrets/tengri-authz/preshared_key
             - name: TENGRI_POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-          envFrom:
-            - secretRef:
-                name: tengri-runtime
-          startupProbe:
-            httpGet:
-              path: /livez
-              port: gateway
-            periodSeconds: 2
-            failureThreshold: 30
-            timeoutSeconds: 2
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: gateway
-            periodSeconds: 5
-            failureThreshold: 3
-            timeoutSeconds: 5
+            - name: TENGRI_RESTATE_INGRESS
+              value: http://restate.restate.svc.cluster.local:8080
+          image: registry.ide-newton.ts.net/lab/tengri
+          imagePullPolicy: IfNotPresent
           livenessProbe:
+            failureThreshold: 3
             httpGet:
               path: /livez
               port: gateway
             periodSeconds: 15
-            failureThreshold: 3
             timeoutSeconds: 2
+          name: tengri
+          ports:
+            - containerPort: 50051
+              name: grpc
+              protocol: TCP
+            - containerPort: 8080
+              name: gateway
+              protocol: TCP
+            - containerPort: 8081
+              name: preview
+              protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /readyz
+              port: gateway
+            periodSeconds: 5
+            timeoutSeconds: 5
           resources:
-            requests:
-              cpu: 200m
-              memory: 192Mi
             limits:
               cpu: "1"
               memory: 512Mi
+            requests:
+              cpu: 200m
+              memory: 192Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
-              drop: [ALL]
-            readOnlyRootFilesystem: true
+              drop:
+                - ALL
             privileged: false
+            readOnlyRootFilesystem: true
             runAsNonRoot: true
+          startupProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /livez
+              port: gateway
+            periodSeconds: 2
+            timeoutSeconds: 2
           volumeMounts:
-            - name: workload-api
-              mountPath: /spiffe-workload-api
+            - mountPath: /spiffe-workload-api
+              name: workload-api
               readOnly: true
-            - name: runtime-secret
-              mountPath: /var/run/secrets/tengri-runtime
+            - mountPath: /tmp
+              name: tmp
+            - mountPath: /var/run/tengri/internal
+              name: internal-request-key
               readOnly: true
-            - name: authz-secret
-              mountPath: /var/run/secrets/tengri-authz
+            - mountPath: /var/run/tengri/database
+              name: database
               readOnly: true
-            - name: tmp
-              mountPath: /tmp
+            - mountPath: /var/run/tengri/database-ca
+              name: database-ca
+              readOnly: true
+            - mountPath: /var/run/tengri/guest-signing
+              name: guest-signing
+              readOnly: true
+      enableServiceLinks: false
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: tengri
+      terminationGracePeriodSeconds: 30
       volumes:
-        - name: workload-api
-          csi:
+        - name: internal-request-key
+          secret:
+            defaultMode: 288
+            secretName: tengri-internal-request-key
+        - name: database
+          secret:
+            defaultMode: 288
+            secretName: tengri-controller-db
+        - name: database-ca
+          secret:
+            defaultMode: 288
+            secretName: ofz-database-ca
+        - name: guest-signing
+          secret:
+            defaultMode: 288
+            items:
+              - key: key
+                path: key
+              - key: recovery-generation
+                path: recovery-generation
+            secretName: tengri-guest-signing
+        - csi:
             driver: csi.spiffe.io
             readOnly: true
-        - name: runtime-secret
-          secret:
-            secretName: tengri-runtime
-        - name: authz-secret
-          secret:
-            secretName: tengri-spicedb-key
-        - name: tmp
-          emptyDir:
+          name: workload-api
+        - emptyDir:
             sizeLimit: 64Mi
+          name: tmp

@@ -23,19 +23,25 @@ import {
 
 describe('Finder model', () => {
   test('keeps breadcrumb navigation inside the workspace', () => {
-    expect(finderBreadcrumbs('/src/my folder')).toEqual([
-      { name: 'Workspace', path: '/' },
-      { name: 'src', path: '/src' },
-      { name: 'my folder', path: '/src/my folder' },
+    expect(finderBreadcrumbs('/workspace/src/my folder')).toEqual([
+      { name: 'Workspace', path: '/workspace' },
+      { name: 'src', path: '/workspace/src' },
+      { name: 'my folder', path: '/workspace/src/my folder' },
     ])
-    expect(finderBreadcrumbs('/')).toEqual([{ name: 'Workspace', path: '/' }])
+    expect(finderBreadcrumbs('/workspace')).toEqual([{ name: 'Workspace', path: '/workspace' }])
   })
 
   test('sorts naturally in both directions without changing the server order', () => {
     const entries = [
-      { name: 'file10.ts', path: '/file10.ts', directory: false, size: 10, modifiedAt: '2026-09-01T00:00:00Z' },
-      { name: 'file2.ts', path: '/file2.ts', directory: false, size: 2, modifiedAt: '2026-09-02T00:00:00Z' },
-      { name: 'src', path: '/src', directory: true, size: 0, modifiedAt: '' },
+      {
+        name: 'file10.ts',
+        path: '/workspace/file10.ts',
+        directory: false,
+        size: 10,
+        modifiedAt: '2026-09-01T00:00:00Z',
+      },
+      { name: 'file2.ts', path: '/workspace/file2.ts', directory: false, size: 2, modifiedAt: '2026-09-02T00:00:00Z' },
+      { name: 'src', path: '/workspace/src', directory: true, size: 0, modifiedAt: '' },
     ]
     expect(sortFinderEntries(entries, { column: 'name', direction: 'ascending' }).map((entry) => entry.name)).toEqual([
       'file2.ts',
@@ -53,7 +59,9 @@ describe('Finder model', () => {
 
   test('normalizes absolute paths without allowing root escape', () => {
     expect(normalizeFinderPath('/workspace//src/./app/../index.ts')).toBe('/workspace/src/index.ts')
-    expect(normalizeFinderPath('/')).toBe('/')
+    expect(normalizeFinderPath('/workspace')).toBe('/workspace')
+    expect(normalizeFinderPath('/')).toBeNull()
+    expect(normalizeFinderPath('/workspace/../other')).toBeNull()
     expect(normalizeFinderPath('/workspace/file ')).toBe('/workspace/file ')
     expect(normalizeFinderPath(' /workspace')).toBeNull()
     expect(normalizeFinderPath('workspace')).toBeNull()
@@ -62,7 +70,7 @@ describe('Finder model', () => {
   })
 
   test('uses the Nanoagent API root for the workspace', () => {
-    expect(FINDER_WORKSPACE_PATH).toBe('/')
+    expect(FINDER_WORKSPACE_PATH).toBe('/workspace')
   })
 
   test('refreshes recursive search only while Finder is active', () => {
@@ -72,14 +80,14 @@ describe('Finder model', () => {
   })
 
   test('clears stale rename state when refreshed results no longer contain the item', () => {
-    const renamed = { path: '/src/old.ts' }
-    expect(retainVisibleFinderEntry(renamed, [{ path: '/src/new.ts' }])).toBeNull()
+    const renamed = { path: '/workspace/src/old.ts' }
+    expect(retainVisibleFinderEntry(renamed, [{ path: '/workspace/src/new.ts' }])).toBeNull()
     expect(retainVisibleFinderEntry(renamed, [renamed])).toBe(renamed)
   })
 
   test('allows rename only for a visible non-root item while no mutation is pending', () => {
-    expect(finderCanBeginRename({ path: '/src/index.ts' }, false)).toBe(true)
-    expect(finderCanBeginRename({ path: '/src/index.ts' }, true)).toBe(false)
+    expect(finderCanBeginRename({ path: '/workspace/src/index.ts' }, false)).toBe(true)
+    expect(finderCanBeginRename({ path: '/workspace/src/index.ts' }, true)).toBe(false)
     expect(finderCanBeginRename({ path: FINDER_WORKSPACE_PATH }, false)).toBe(false)
     expect(finderCanBeginRename(null, false)).toBe(false)
   })
@@ -92,61 +100,64 @@ describe('Finder model', () => {
   })
 
   test('builds child and rename paths without rewriting invalid names', () => {
-    expect(finderChildPath('/', 'src')).toBe('/src')
+    expect(finderChildPath('/workspace/workspace', 'src')).toBe('/workspace/workspace/src')
     expect(finderChildPath('/workspace', 'src')).toBe('/workspace/src')
     expect(finderChildPath('/workspace', ' source ')).toBe('/workspace/ source ')
     expect(finderChildPath('/workspace', '../src')).toBeNull()
     expect(finderChildPath('/workspace', 'src/index.ts')).toBeNull()
     expect(finderRenamePath('/workspace/old.ts', 'new.ts')).toBe('/workspace/new.ts')
     expect(finderRenamePath('/workspace/old.ts', ' new.ts ')).toBe('/workspace/ new.ts ')
-    expect(finderRenamePath('/', 'new')).toBeNull()
+    expect(finderRenamePath('/workspace', 'new')).toBeNull()
   })
 
   test('supports replacement, additive toggles, and stable contiguous ranges', () => {
-    const entries = ['/a', '/b', '/c', '/d'].map((path) => ({ path }))
-    const replaced = updateFinderSelection(new Set(['/a']), entries, '/c', '/a', {
+    const entries = ['/workspace/a', '/workspace/b', '/workspace/c', '/workspace/d'].map((path) => ({ path }))
+    const replaced = updateFinderSelection(new Set(['/workspace/a']), entries, '/workspace/c', '/workspace/a', {
       additive: false,
       range: false,
     })
-    expect([...replaced.selected]).toEqual(['/c'])
+    expect([...replaced.selected]).toEqual(['/workspace/c'])
 
-    const added = updateFinderSelection(new Set(['/a']), entries, '/c', '/a', { additive: true, range: false })
-    expect([...added.selected]).toEqual(['/a', '/c'])
+    const added = updateFinderSelection(new Set(['/workspace/a']), entries, '/workspace/c', '/workspace/a', {
+      additive: true,
+      range: false,
+    })
+    expect([...added.selected]).toEqual(['/workspace/a', '/workspace/c'])
 
-    const firstRange = updateFinderSelection(new Set(['/a']), entries, '/c', '/a', {
+    const firstRange = updateFinderSelection(new Set(['/workspace/a']), entries, '/workspace/c', '/workspace/a', {
       additive: false,
       range: true,
     })
-    expect([...firstRange.selected]).toEqual(['/a', '/b', '/c'])
-    expect(firstRange.anchorPath).toBe('/a')
+    expect([...firstRange.selected]).toEqual(['/workspace/a', '/workspace/b', '/workspace/c'])
+    expect(firstRange.anchorPath).toBe('/workspace/a')
 
-    const secondRange = updateFinderSelection(firstRange.selected, entries, '/d', firstRange.anchorPath, {
+    const secondRange = updateFinderSelection(firstRange.selected, entries, '/workspace/d', firstRange.anchorPath, {
       additive: false,
       range: true,
     })
-    expect([...secondRange.selected]).toEqual(['/a', '/b', '/c', '/d'])
-    expect(secondRange.anchorPath).toBe('/a')
+    expect([...secondRange.selected]).toEqual(['/workspace/a', '/workspace/b', '/workspace/c', '/workspace/d'])
+    expect(secondRange.anchorPath).toBe('/workspace/a')
   })
 
   test('protects the workspace root and removes redundant descendant delete targets', () => {
     expect(
       finderDeletionTargets([
-        { directory: true, path: '/' },
-        { directory: true, path: '/src' },
-        { directory: false, path: '/src/index.ts' },
-        { directory: false, path: '/README.md' },
+        { directory: true, path: '/workspace' },
+        { directory: true, path: '/workspace/src' },
+        { directory: false, path: '/workspace/src/index.ts' },
+        { directory: false, path: '/workspace/README.md' },
       ]),
     ).toEqual([
-      { directory: true, path: '/src' },
-      { directory: false, path: '/README.md' },
+      { directory: true, path: '/workspace/src' },
+      { directory: false, path: '/workspace/README.md' },
     ])
   })
 
   test('describes delete targets with their disambiguating paths', () => {
-    expect(finderDeletionDescription([{ path: '/src/index.ts' }])).toContain('/src/index.ts')
-    expect(finderDeletionDescription([{ path: '/src/index.ts' }, { path: '/test/index.ts' }])).toContain(
-      '/test/index.ts',
-    )
+    expect(finderDeletionDescription([{ path: '/workspace/src/index.ts' }])).toContain('/workspace/src/index.ts')
+    expect(
+      finderDeletionDescription([{ path: '/workspace/src/index.ts' }, { path: '/workspace/test/index.ts' }]),
+    ).toContain('/workspace/test/index.ts')
   })
 
   test('previews only textual content types', () => {

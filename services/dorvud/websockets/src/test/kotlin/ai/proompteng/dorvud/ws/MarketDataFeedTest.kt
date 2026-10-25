@@ -55,6 +55,7 @@ class MarketDataFeedTest {
   fun `routes each feed only to its configured topics`() {
     fun runtime(feed: EquityFeed): FeedRuntimeConfig =
       FeedRuntimeConfig(
+        marketType = AlpacaMarketType.EQUITY,
         feed = feed.id,
         equityFeed = feed,
         channels = listOf("trades", "quotes", "bars", "updatedBars"),
@@ -72,9 +73,9 @@ class MarketDataFeedTest {
         core = feed == EquityFeed.Iex,
       )
 
-    val topics = EquityFeed.entries.map { feed -> runtime(feed).topicFor("bars", AlpacaMarketType.EQUITY) }
+    val topics = EquityFeed.entries.map { feed -> runtime(feed).topicFor("bars") }
     assertEquals(listOf("iex.bars", "sip.bars", "delayed_sip.bars", "overnight.bars"), topics)
-    assertEquals("observation.status", runtime(EquityFeed.Overnight).topicFor("status", AlpacaMarketType.EQUITY))
-    assertEquals(null, runtime(EquityFeed.Overnight).topicFor("status", AlpacaMarketType.OPTIONS))
+    assertEquals("observation.status", runtime(EquityFeed.Overnight).topicFor("status"))
+    assertEquals(null, runtime(EquityFeed.Overnight).copy(marketType = AlpacaMarketType.OPTIONS).topicFor("status"))
   }
 }

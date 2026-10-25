@@ -45,6 +45,10 @@ spec:
             - "8000"
             - --model
             - unsloth/Qwen3.6-35B-A3B-NVFP4
+            - --revision
+            - 739af1e7aac320af1682ed1e0cce369af4c5265d
+            - --tokenizer-revision
+            - 739af1e7aac320af1682ed1e0cce369af4c5265d
             - --served-model-name
             - qwen36-flamingo
             - --trust-remote-code
@@ -68,7 +72,13 @@ spec:
             - qwen3_coder
             - --optimization-level
             - "2"
+            - --middleware
+            - serving_identity.ServingIdentityMiddleware
           env:
+            - name: PYTHONPATH
+              value: /opt/flamingo
+            - name: FLAMINGO_SERVING_IMAGE
+              value: sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2
             - name: HF_HOME
               value: /models/huggingface
             - name: VLLM_CACHE_ROOT
@@ -115,11 +125,17 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            - name: serving-identity
+              mountPath: /opt/flamingo
+              readOnly: true
             - name: model-cache
               mountPath: /models
             - name: shm
               mountPath: /dev/shm
       volumes:
+        - name: serving-identity
+          configMap:
+            name: flamingo-serving-identity
         - name: model-cache
           persistentVolumeClaim:
             claimName: flamingo-model-cache

@@ -16,7 +16,7 @@ cleanup() {
     mv -- "$work/go" "$HOME/.local/go"
   fi
   local command
-  for command in brew nvim fd lazygit gdu-go btm kubectl; do
+  for command in brew fd lazygit gdu-go btm kubectl; do
     if [[ -e "$work/$command" || -L "$work/$command" ]]; then
       rm -f -- "$prefix/bin/$command"
       mv -- "$work/$command" "$prefix/bin/$command"
@@ -33,7 +33,10 @@ cp -- "$HOME/.config/nvim/init.lua" "$work/init.lua"
 trap cleanup EXIT
 
 # Upgrade untouched generated configs, while preserving edits and the plugin lockfile.
-sha256sum "$HOME/.config/nvim/lazy-lock.json" > "$work/plugins.sha256"
+mkdir -p "$HOME/.local/share/nvim/lazy/custom-plugin"
+printf 'retained user plugin\n' > "$HOME/.local/share/nvim/lazy/custom-plugin/fixture"
+[[ -f "$HOME/.config/nvim/lazy-lock.json" ]] || printf '{}\n' > "$HOME/.config/nvim/lazy-lock.json"
+sha256sum "$HOME/.local/share/nvim/lazy/custom-plugin/fixture" "$HOME/.config/nvim/lazy-lock.json" > "$work/plugins.sha256"
 sed 's/icons_enabled = true/icons_enabled = false/' "$work/init.lua" > "$HOME/.config/nvim/init.lua"
 old_init_hash="$(sha256sum "$HOME/.config/nvim/init.lua" | cut -d ' ' -f 1)"
 awk -v hash="$old_init_hash" 'NR == 2 { $1 = hash } { print }' "$work/receipt" > "$receipt"
@@ -49,13 +52,11 @@ cmp -- "$work/custom.lua" "$HOME/.config/nvim/init.lua"
 sha256sum --check "$work/plugins.sha256"
 cp -- "$work/init.lua" "$HOME/.config/nvim/init.lua"
 
-for command in brew nvim; do
-  mv -- "$prefix/bin/$command" "$work/$command"
-  printf '#!/usr/bin/env bash\nexit 97\n' > "$prefix/bin/$command"
-  chmod 0755 "$prefix/bin/$command"
-done
+mv -- "$prefix/bin/brew" "$work/brew"
+printf '#!/usr/bin/env bash\nexit 97\n' > "$prefix/bin/brew"
+chmod 0755 "$prefix/bin/brew"
 
-# Prepared homes must not spawn either package manager or editor on resume.
+# Prepared homes must not spawn either package manager on resume.
 "$bootstrap" --install-only
 cmp -- "$receipt" "$work/receipt"
 

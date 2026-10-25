@@ -38,3 +38,40 @@ export async function readCodexImage(file: File): Promise<TengriCodexImage> {
 export function codexImageUrl(image: TengriCodexImage): string {
   return `data:${image.mediaType};base64,${image.data}`
 }
+
+export function isCodexAttachmentPath(path: string): boolean {
+  return /^\/workspace\/\.tengri-attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpe?g|webp)$/.test(
+    path,
+  )
+}
+
+export function codexMessageAttachments(text: string) {
+  const paths: string[] = []
+  const body = text
+    .replace(/\[Local image: ([^\]\n]+)\]/g, (marker, path: string) => {
+      if (!isCodexAttachmentPath(path) || paths.length >= MAX_CODEX_IMAGES) return marker
+      paths.push(path)
+      return ''
+    })
+    .trim()
+  return { text: body, paths }
+}
+
+export function isWorkspaceImagePath(path: string): boolean {
+  return (
+    path.startsWith('/workspace/') &&
+    path.length <= 4096 &&
+    /\.(png|jpe?g|webp)$/i.test(path) &&
+    ![...path].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) &&
+    !/[?#\\]/.test(path) &&
+    !path.split('/').some((part) => part === '..' || part === '.')
+  )
+}
+
+export function codexOutputImagePaths(text: string): string[] {
+  const candidate = text.trim().replace(/^View image: /, '')
+  // Tool output is plain text. Markdown examples in source, logs, or command
+  // arguments must not initiate image reads. Actual image outputs use a path;
+  // assistant Markdown images are handled by the Markdown renderer instead.
+  return isWorkspaceImagePath(candidate) ? [candidate] : []
+}

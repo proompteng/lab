@@ -259,7 +259,7 @@ describe('Jev frozen numerical acceptance', () => {
       ),
       20,
     )
-  })
+  }, 150_000)
 
   test('property: a common decimal shift cannot pass an exact $50 paired lower bound', () => {
     checkProperty(

@@ -1,16 +1,20 @@
 # Ofz
 
-Ofz provides the shared SpiceDB service and the official SpiceDB Playground in the `ofz` namespace.
-The platform ApplicationSet owns its namespace and reconciles these manifests from `main`.
+Ofz provides the central authorization API, independent audit exporter, shared SpiceDB service and official
+SpiceDB Playground in the `ofz` namespace. The platform ApplicationSet owns the namespace. Kargo promotes
+the immutable API image and complete reviewed configuration to `kargo/ofz`; Argo reconciles that branch.
+The API begins fenced. Publishing this configuration does not establish a completed Tengri cutover.
 
 ## Components
 
 | Component | Configuration |
 | --- | --- |
 | SpiceDB | Three replicas of upstream `v1.56.2`, pinned to its multi-architecture image digest |
-| PostgreSQL | CNPG PostgreSQL 18.6, three instances, one required synchronous standby, 20 GiB per instance |
-| Backups | Barman Cloud plugin, continuous WAL archiving, daily base backup at 10:30 UTC, 14-day retention |
+| PostgreSQL | CNPG PostgreSQL 18.6, three instances, one required synchronous standby, 30 GiB per instance |
+| Backups | Barman Cloud plugin, WAL archived within 60 seconds, daily base backup at 10:30 UTC, 35-day recovery window on Ceph S3 |
 | Playground | Two replicas of upstream `v0.3.1`, pinned to its multi-architecture image digest |
+| Authorization API | Two replicas, exact SPIFFE mTLS, SQL-backed sessions and policy commands |
+| Audit exporter | Two replicas with one SQL lease, versioned COMPLIANCE archive on Ceph S3 |
 | Browser endpoint | <https://ofz.ide-newton.ts.net>, through the lab's Tailscale ingress |
 | SpiceDB API | `ofz.ofz.svc.cluster.local:50051` for gRPC and port `8443` for the HTTP gateway |
 
@@ -22,29 +26,48 @@ The upstream Playground image runs with a non-root user and a read-only filesyst
 its entrypoint-generated Nginx configuration so only `/tmp` needs a writable mount.
 
 These are upstream platform images. Reviewed changes pin their versions and digests directly, as with the SpiceDB
-operator. No repository image build or Kargo promotion is involved.
+operator. Their upstream versions remain pinned in source; the repository-owned API and exporter image follows Kargo.
 
 ## Credentials and data
 
 CNPG generates `ofz-db-app`. The SpiceDB operator reads its `uri` key directly. Both migration jobs and serving pods
 verify PostgreSQL's TLS certificate with `ofz-db-ca`. `track_commit_timestamp=on` enables the SpiceDB Watch API.
 
+The WAL buffer is 16 MiB, matching one WAL segment. Forced archive switches pad the segment, so a smaller buffer can
+cause repeated buffer evictions and small writes while authorization commits wait. `fdatasync` lets the primary and
+standbys batch WAL writes before their durable flush. WAL I/O timing is enabled for live
+readback through `pg_stat_io`. PostgreSQL still requires `fsync`, full-page writes and one synchronous standby.
+Changing `wal_buffers` requires a CNPG rolling restart and switchover; verify all three instances, replication and
+actual authenticated app requests after reconciliation. Reverting these parameters through Git follows the same
+rollout and preserves the database and workspace volumes.
+
 `ofz-spicedb-key` contains the API preshared key. Its namespace-bound SealedSecret is committed here. The preshared key
-grants access to the whole SpiceDB API; distribute it only to trusted backend services. The API uses plaintext
+grants access to the whole SpiceDB API; only the Ofz API and owner bootstrap jobs receive it. The native API uses plaintext
 transport inside the cluster and has no ingress route. Browser access uses Tailscale HTTPS and requires tailnet access.
 The Tailscale operator provisions the private DNS name and certificate without a separate Pi-hole entry.
 
-The database, its inherited resources, the backup ObjectStore, and the bucket claim are retained during Argo pruning
-or Application deletion. Ceph provides both database storage and the backup bucket. These backups do not protect
-against loss of the entire Ceph cluster.
+The database, its inherited resources and backup ObjectStore are retained during Argo pruning or Application deletion.
+Ceph provides database storage, physical base backups and WAL. The private S3 gateway serves the
+`ofz-database-backups` bucket through a separate namespace-scoped writer. Thirty-day COMPLIANCE retention protects
+immutable versions. The old `cnpg-ofz` bucket remains protected and is outside the active destination.
 
-Tengri is the first consuming application. Its controller checks the `tengri_workspace.access` permission for
-GitHub subjects represented by their existing SHA-256 hashes. The owner-only schema is maintained in
-[`services/tengri/src/authz.zed`](../../../services/tengri/src/authz.zed). On the first rollout Tengri installs it only
-if the shared service has no schema, then enrolls retained workspaces. Existing shared schemas are preserved.
-See [Tengri's authorization contract](../../../services/tengri/README.md#workspace-authorization) for enrollment,
-revocation, credential rotation, and real SpiceDB acceptance tests. PostgreSQL persists the shared schema and
-relationships; application services call SpiceDB rather than querying that database directly.
+Tengri consumes the typed Ofz API. The final schema is maintained in
+[`services/ofz/schema.zed`](../../../services/ofz/schema.zed); controllers and BFFs hold no native SpiceDB key.
+The [control-plane runbook](control-plane/README.md) describes managed roles, checksum-bound migration hooks,
+archive credentials and fenced bootstrap. The [Ceph recovery store](../../../services/ofz/recovery.md)
+holds both the audit archive and separate database buckets. These backups share the live database storage's failure
+domain. PostgreSQL persists the native relationship datastore and the separate `ofz_control`
+and `tengri_control` databases. Application roles have distinct schema/table permissions.
+
+Separated Tengri pools require two connections per process for schema/readiness and leadership operations,
+in addition to request writes. The managed controller role permits 42 connections, covering two replicas and one
+rolling-update surge with twelve request and two coordination connections each. The supervisor role permits 24 connections for six slots with two
+request and two coordination connections each. Apply this role limit through the Ofz promotion before deploying
+the separated Tengri pools. CNPG updates the roles online and rolls the three database instances to apply the
+220-connection server limit. This leaves 32 connections beyond simultaneous application rolling surges.
+Verify all three instances are ready and report 220 connections before the Tengri rollout. Database privileges,
+credentials and runtime migration checksums stay unchanged. Reverting the pool separation precedes any reduction
+of these connection budgets.
 
 ## Validate before deployment
 
@@ -63,8 +86,9 @@ and Tailscale operator must be available before the first reconciliation.
 ## Verify the deployed service
 
 After an authorized rollout, check the exact Argo revision, running image digests, three database instances, three
-SpiceDB replicas, two Playground replicas, and the completed initial backup. The sync waves create the bucket and
-credentials before PostgreSQL, then let the SpiceDB operator migrate the datastore and start the service.
+SpiceDB replicas, two Playground replicas, and the completed initial backup. Initialize the independent NUC buckets
+before reconciliation. The sync waves install writer credentials before PostgreSQL, then let the SpiceDB operator
+migrate the datastore and start the service. Verify an isolated physical restore before the Tengri identity cutover.
 
 ```bash
 kubectl --context galactic-tailscale -n argocd get application ofz
@@ -81,7 +105,7 @@ python3 argocd/applications/ofz/verify-api.py --endpoint http://127.0.0.1:18443
 unset OFZ_TEST_TOKEN
 ```
 
-The check refuses an existing application schema. On a new instance it tests schema writes, relationship writes,
+The following historical bootstrap check refuses an existing application schema. Do not run it after Ofz bootstrap. On a new instance it tests schema writes, relationship writes,
 allowed and denied checks, revocation at the returned revision, and rejected credentials. It then removes its test
 relationships and schema. Stop the port-forward after validation. After application integration, use that
 application's permission fixtures instead of this bootstrap check.

@@ -37,11 +37,17 @@ test('retains the native streaming cut when projecting a completed cycle market-
   ])
 })
 
-test('retains unverified historical decision identities without aborting accounting reads', () => {
+test.each([
+  { schemaVersion: 'unsupported-historical-decision' },
+  {
+    schemaVersion: 'bayn.paper-cycle-decision.v2',
+    strategyDecision: { schemaVersion: 'bayn.jev-exit-target.v1', reason: 'JEV_EXIT' },
+  },
+])('retains unverified historical decision identities without aborting accounting reads: %j', (document) => {
   const row = Schema.decodeUnknownSync(CycleDecisionRow)({
     cycle_id: 'a'.repeat(64),
     decision_hash: 'b'.repeat(64),
-    document: { schemaVersion: 'unsupported-historical-decision' },
+    document,
     created_at: new Date('2026-09-10T19:50:00.000Z'),
   })
   expect(verifyPerformanceDecisions([row, row])).toEqual({

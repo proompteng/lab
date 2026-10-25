@@ -1,6 +1,7 @@
 import { Cause, Data, Result, pipe } from 'effect'
 
-import type { BrokerReadError, Observed } from '../broker/alpaca'
+import type { BrokerReadError } from '../broker/alpaca/failures'
+import type { Observed } from '../broker/alpaca/model'
 import {
   renderBrokerObservationError,
   sourceTimestamp,
@@ -14,8 +15,9 @@ import { reconciliationIncompleteRestrictionReason } from '../execution/authorit
 import type { BrokerSnapshot, ReconciliationReport } from '../db/reconciliation'
 import type { WriterFenceError } from '../execution/writer-fence'
 import type { CanonicalHashFailure } from '../hash'
-import type { ReconciledBrokerState, ReconciliationRiskContext } from '../reconciliation'
-import { Pipeable } from '../pipeable'
+import type { ReconciledBrokerState, ReconciliationRiskContext } from './broker-model'
+
+import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 
 export const maximumRows = 10_000
 export const ordersPageSize = 500
@@ -29,10 +31,11 @@ export type OrderEventInput = Extract<BrokerEventInput, { readonly _tag: 'Order'
 
 export interface NormalizedBrokerSnapshot {
   readonly account: AccountEventInput
+  readonly cashReportingQuantumMicros: CashReportingQuantum
   readonly positions: PositionSnapshotInput
   readonly orderEvents: readonly OrderEventInput[]
   readonly fillEvents: readonly FillEventInput[]
-  readonly fees: readonly Observed<import('../broker/alpaca').FeeActivity>[]
+  readonly fees: readonly Observed<import('../broker/alpaca/model').FeeActivity>[]
 }
 
 export interface ReconciliationWriteDecision {
@@ -51,7 +54,7 @@ export interface ReconciliationPassResult {
 export type PaginationFailureReason =
   | 'OrderPageTooLarge'
   | 'OrderSubmittedAtMissing'
-  | 'OrderHistoryNotAscending'
+  | 'OrderHistoryNotDescending'
   | 'OrderTimestampCursorDidNotAdvance'
   | 'DuplicateOrder'
   | 'OrderHistoryTooLarge'
@@ -104,17 +107,13 @@ export class ReconciliationError extends Data.TaggedError('ReconciliationError')
 
 export type ReconciliationPassError = BrokerReadError | ExecutionStoreError | ReconciliationError | WriterFenceError
 
-const paginationFailureDataFirst = (reason: PaginationFailureReason, message: string): ReconciliationError =>
+export const paginationFailure = (reason: PaginationFailureReason, message: string): ReconciliationError =>
   new ReconciliationError({ operation: 'pagination', message, failure: { _tag: 'Pagination', reason } })
 
-export const paginationFailure = Pipeable.dual(2, paginationFailureDataFirst)
-
-const snapshotFailureDataFirst = (reason: SnapshotFailureReason, message: string): ReconciliationError =>
+export const snapshotFailure = (reason: SnapshotFailureReason, message: string): ReconciliationError =>
   new ReconciliationError({ operation: 'snapshot', message, failure: { _tag: 'Snapshot', reason } })
 
-export const snapshotFailure = Pipeable.dual(2, snapshotFailureDataFirst)
-
-const historyHashFailureDataFirst = (side: HistorySnapshotSide, error: HistoryHashFailure): ReconciliationError =>
+export const historyHashFailure = (side: HistorySnapshotSide, error: HistoryHashFailure): ReconciliationError =>
   new ReconciliationError({
     operation: 'snapshot',
     message:
@@ -125,16 +124,12 @@ const historyHashFailureDataFirst = (side: HistorySnapshotSide, error: HistoryHa
     failure: { _tag: 'HistoryHash', side, error },
   })
 
-export const historyHashFailure = Pipeable.dual(2, historyHashFailureDataFirst)
-
-const validationFailureDataFirst = (reason: ValidationFailureReason, detail: string): ReconciliationError =>
+export const validationFailure = (reason: ValidationFailureReason, detail: string): ReconciliationError =>
   new ReconciliationError({
     operation: 'normalization',
     message: detail,
     failure: { _tag: 'Validation', reason, detail },
   })
-
-export const validationFailure = Pipeable.dual(2, validationFailureDataFirst)
 
 const normalizationFailure = (
   stage: NormalizationStage,
@@ -153,7 +148,7 @@ const normalizationFailure = (
     },
   })
 
-const mapObservationFailureDataFirst = <A>(
+export const mapObservationFailure = <A>(
   stage: NormalizationStage,
   identity: string | undefined,
   result: Result.Result<A, BrokerObservationError>,
@@ -163,22 +158,10 @@ const mapObservationFailureDataFirst = <A>(
     Result.mapError((error) => normalizationFailure(stage, identity, error)),
   )
 
-export const mapObservationFailure = Pipeable.generic<
-  <A>(
-    identity: string | undefined,
-    result: Result.Result<A, BrokerObservationError>,
-  ) => (stage: NormalizationStage) => Result.Result<A, ReconciliationError>,
-  typeof mapObservationFailureDataFirst
->(3, mapObservationFailureDataFirst)
-
-const normalizeTimestampDataFirst = (
+export const normalizeTimestamp = (
   stage: Extract<NormalizationStage, 'order-timestamp' | 'fill-ordering'>,
   identity: string,
   value: string,
 ): Result.Result<string, ReconciliationError> => mapObservationFailure(stage, identity, sourceTimestamp(value))
 
-export const normalizeTimestamp = Pipeable.dual(3, normalizeTimestampDataFirst)
-
-const compareTextDataFirst = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
-
-export const compareText = Pipeable.dual(2, compareTextDataFirst)
+export const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)

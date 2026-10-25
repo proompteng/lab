@@ -104,7 +104,7 @@ export const restCaptureArrivals = (input: {
               eventTs: row.eventAt,
               ingestTs: new Date(availableAtMs).toISOString(),
               version: 2,
-              seq: ordinal,
+              seq: ordinal + 1,
               ...(capture.kind === 'bars' ? { isFinal: true } : {}),
               payload,
               provenance: {

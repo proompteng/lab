@@ -18,8 +18,10 @@ Target the internal production platform, `platform:lab`. Customer organizations,
 customer tenant qualification require a separate scope decision. Unrelated lab applications are outside this migration.
 
 One owner executes the plan. Use native GitHub stacks and the repository's existing review and delivery gates. Do not
-spawn subagents. Perform one hard migration and remove the previous enforcement contract. Preserve retained homes,
-conversations, drafts, and approved ownership. Plan creation does not start implementation or deployment.
+spawn subagents. Perform one hard migration and remove the previous enforcement contract. On 2026-10-13 the owner
+explicitly authorized deleting the existing experimental workspaces and homes and creating new workspaces afterward.
+This supersedes retained-data import and migration rehearsals for this cutover. Do not implement a legacy-data migrator
+or a compatibility path. Normal new-workspace durability and recovery requirements still apply.
 
 ## Architecture decisions
 
@@ -200,10 +202,10 @@ home. Restart requires revoking or rotating exposed credentials and rebuilding a
 Keep original history and homes retained. An API revoke cannot erase copied credentials or stop an existing root process.
 Complete IdP disable/sign-out as part of the workflow and reconcile out-of-band identity changes.
 
-Use an independent S3-compatible destination for WAL, tested base backups, immutable audit, home mappings, and retained
-homes. Keep 30 days of database point-in-time recovery. A physical Ofz backup includes its three application/datastore
-databases at one recovery point. Keep decryption and identity-recovery authority outside cluster-administrator
-credentials. Current Ceph-local backups do not satisfy this boundary.
+Ofz and Keycloak use the Ceph S3 object store for WAL, tested base backups and immutable audit. Keep 30 days of database
+point-in-time recovery. A physical Ofz backup includes its three application/datastore databases at one recovery point.
+The October 25 recovery migration explicitly replaces the NUC destination with Ceph. These copies share the live
+databases' Ceph failure domain and do not provide recovery from loss of that cluster. Home recovery is a separate scope.
 
 Restore with application access fenced. Reconcile policy versions, complete command receipts, pending operations,
 current membership, and workspace/home UIDs. Invalidate restored sessions, tickets, and agent credentials through a new
@@ -216,39 +218,40 @@ Every phase needs local validation, staging behavior, and relevant performance/f
 against exact commits, image digests, schema hash, and configuration. Use existing CI and automatic Codex review.
 Resolve actionable findings before merge. Implement phases in order, using native dependent PRs where useful.
 
-| Phase                           | Owned paths and work                                                                                                       | Exit gate                                                                                                                                              |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| P1. Contracts                   | `proto/proompteng/authz/v1/authz.proto`, final schema, permission/profile catalog, and service-operation inventory         | Role matrix, expiry, live parent revocation, and unknown/unclassified-action tests pass in disposable SpiceDB.                                         |
-| P2. Ofz API                     | `services/ofz`, database migrations, typed commands/checks, admission, audit outbox, and `argocd/applications/ofz`         | Crash at every command boundary, lost response, stale version, and concurrent quota/role changes cannot duplicate an effect or resurrect a grant.      |
-| P3. Identity and administration | Landing auth/session code, Keycloak definitions, membership operations, and Access UI                                      | Browser tests cover admission, verified identity mapping, MFA, role changes, last-administrator protection, quotas, and session revocation.            |
-| P4. Shared state and HA         | `services/tengri/src/tickets.rs`, controller leadership, shared state, replica/database definitions, and Keycloak failover | Cross-replica redemption is exactly once; stale leaders are rejected; replica loss and database switchover preserve policy and slot correctness.       |
-| P5. Runtime enforcement         | Controller/Nanoagent RPCs, observers, gateways, files, terminal, Codex, browser/editor, and workspace UI                   | Full role/service matrix passes; read-only tests cause zero guest side effects; live revocation closes every channel on time.                          |
-| P6. Agents and brokers          | Restricted MCP/HTTP routes, proof-key adapter, grants UI, Kubernetes broker/roles, and connector integration               | Actual external-agent calls, proof replay, wrong targets, parent revocation, path escape, native RBAC denial, SSRF, and output-limit tests pass.       |
-| P7. Operations                  | Offboarding/quarantine workflows, independent audit/backups, alerts, and recovery runbooks                                 | Privileged offboarding and isolated restore pass, including copied-credential checkpoints, missing journal intervals, and revoked-after-backup grants. |
-| P8. Hard cutover                | One-shot migrator, version/epoch handshake, legacy removal, credential rotation, GitOps wiring, and qualification evidence | Two staging migration rehearsals, complete browser acceptance, failure probes, and a 24-hour mixed-workload soak pass on the exact release.            |
+| Phase                           | Owned paths and work                                                                                                       | Exit gate                                                                                                                                               |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1. Contracts                   | `proto/proompteng/authz/v1/authz.proto`, final schema, permission/profile catalog, and service-operation inventory         | Role matrix, expiry, live parent revocation, and unknown/unclassified-action tests pass in disposable SpiceDB.                                          |
+| P2. Ofz API                     | `services/ofz`, database migrations, typed commands/checks, admission, audit outbox, and `argocd/applications/ofz`         | Crash at every command boundary, lost response, stale version, and concurrent quota/role changes cannot duplicate an effect or resurrect a grant.       |
+| P3. Identity and administration | Landing auth/session code, Keycloak definitions, membership operations, and Access UI                                      | Browser tests cover admission, verified identity mapping, MFA, role changes, last-administrator protection, quotas, and session revocation.             |
+| P4. Shared state and HA         | `services/tengri/src/tickets.rs`, controller leadership, shared state, replica/database definitions, and Keycloak failover | Cross-replica redemption is exactly once; stale leaders are rejected; replica loss and database switchover preserve policy and slot correctness.        |
+| P5. Runtime enforcement         | Controller/Nanoagent RPCs, observers, gateways, files, terminal, Codex, browser/editor, and workspace UI                   | Full role/service matrix passes; read-only tests cause zero guest side effects; live revocation closes every channel on time.                           |
+| P6. Agents and brokers          | Restricted MCP/HTTP routes, proof-key adapter, grants UI, Kubernetes broker/roles, and connector integration               | Actual external-agent calls, proof replay, wrong targets, parent revocation, path escape, native RBAC denial, SSRF, and output-limit tests pass.        |
+| P7. Operations                  | Offboarding/quarantine workflows, independent audit/backups, alerts, and recovery runbooks                                 | Privileged offboarding and isolated restore pass, including copied-credential checkpoints, missing journal intervals, and revoked-after-backup grants.  |
+| P8. Hard cutover                | Delete old workspaces and homes, version/epoch handshake, legacy removal, credential rotation, and GitOps wiring           | Old guests, homes and grants are absent; new-workspace browser acceptance, failure probes, and a 24-hour mixed-workload soak pass on the exact release. |
 
-Relevant existing checks include Tengri Rust tests, `services/tengri/test-authz.sh`, Landing tests and focused browser
+Relevant existing checks include Tengri Rust tests, `services/tengri/test-runtime.sh`, Landing tests and focused browser
 E2E, generated-protocol checks, affected formatting/lint, and manifest rendering/validation. Add new Ofz integration and
 failure probes as owned implementation work. A blocked environment check is not a pass.
 
 ## Hard migration procedure
 
-- [ ] Rehearse the complete migration in staging and record the exact image/schema/configuration set.
-- [ ] Obtain the reviewed maintenance window and fence old callers before changing authority.
-- [ ] Export current Ofz grants and verified MicroVM/home UID mappings. Preserve revoked-enrollment markers.
-- [ ] Apply the final schema and seed only approved current relationships against UID resources. Never infer a missing
-      grant from an owner label.
-- [ ] Verify owners, membership, denial cases, quota reservations, command receipts, and preserved data before opening
-      access.
+- [x] Block old workspace creation for the authorized cutover with the `tengri-ofz-cutover` admission policy.
+- [x] Delete both old MicroVMs through the running controller. Verify guest Pod, home PVC/PV, slot Lease and old
+      SpiceDB relationship deletion; do not carry their data or grants into the new contract.
+- [ ] Apply the final schema and bootstrap the explicitly approved platform administrators. New workspace grants come
+      only from new Ofz reservations and UID enrollment, never from old owner labels.
 - [ ] Rotate the native SpiceDB key, remove its controller mount, and reject old credentials and incompatible callers.
-- [ ] Activate the new BFF, controller, Ofz, guest, and broker contracts together through reviewed Kargo/Argo desired
-      state. Delete old name-based graph objects and the legacy authorization path after validation.
+- [ ] Activate the new BFF, controller, Ofz, guest, and broker contracts through reviewed Kargo/Argo desired state.
+      Verify the exact image/schema/configuration set before removing the `tengri-ofz-cutover` admission policy and binding.
+- [ ] Verify fresh workspace creation, membership, denial cases, quota reservations, command receipts, files, terminal,
+      editor and conversation behavior against the deployed contract.
 - [ ] Record remote commits, publication receipts, Freight/Stage, generated Kargo revision, Argo revision, actual images,
-      schema hash, migration receipt, and product acceptance for an explicitly authorized production rollout.
+      schema hash and product acceptance.
 
-Keep production preparation in staging until the coordinated cutover is ready. Do not bypass promotion gates or run
-two production authorization implementations. Recovery uses a known-safe new-contract image or forward fix. Any
-database restore remains fenced until revocation and current-membership reconciliation succeeds.
+The existing-data deletion is authorized and complete. No retained-data import or staging migration rehearsal is
+required. Do not bypass image validation or run two production authorization implementations. Recovery uses a
+known-safe new-contract image or forward fix. Any future database restore remains fenced until revocation and
+current-membership reconciliation succeeds.
 
 ## Enterprise release acceptance
 
@@ -268,7 +271,7 @@ The following are targets to prove, not measured properties of the current deplo
 | Audit                  | Durable mutation/access receipts and at most 60 seconds of independent immutable archive lag.                                                           |
 | Authorization recovery | Independent RPO at most five minutes and isolated RTO at most 60 minutes, with restored credentials invalidated and uncertain grants denied.            |
 | Home recovery          | Independent RPO at most 24 hours and complete current-size home restore within four hours, verified by checksums and history.                           |
-| Product preservation   | Retained homes, workspace/draft isolation, editor/browser/terminal behavior, and exact large-conversation restoration pass.                             |
+| Product behavior       | Newly created homes, workspace/draft isolation, editor/browser/terminal behavior, and large-conversation save/restore pass.                             |
 | Review                 | Required CI at the exact release heads, automatic review findings resolved, and a separate review of trust boundaries and recovery evidence.            |
 
 Use the prior 14,944,963-byte, 2,074-item, 27-turn conversation as a required regression fixture. Require complete
@@ -292,7 +295,7 @@ BFF, Ofz, controller, supervisor, guest, and brokers without recording private c
 ## Source and operating references
 
 - [Tengri implementation and host boundary](../../services/tengri/README.md)
-- [Current authorization code](../../services/tengri/src/authz.rs), [schema](../../services/tengri/src/authz.zed),
+- [Current authorization code](../../services/tengri/src/authz.rs), [central schema](../../services/ofz/schema.zed),
   [ticket state](../../services/tengri/src/tickets.rs), and [BFF authentication](../../apps/landing/src/lib/tengri/auth.ts)
 - [Ofz datastore and backup configuration](../../argocd/applications/ofz/README.md)
 - [Keycloak desired state](../../argocd/applications/keycloak/keycloak.yaml)

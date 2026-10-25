@@ -10,8 +10,9 @@ import {
   UnsignedMicrosSchema,
 } from '../../schemas'
 import { TechnicalMarketFeatureSchema } from '../features/technical-contract'
-import { RollingMarketFeatureSchema } from '../features/contract'
+import { NativeMarketFeatureSchema } from '../features/native-feature'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
+import { MarketSourcesSchema } from './raw-events'
 
 const PositionFields = { topic: StrictNonEmptyStringSchema, partition: NonNegativeIntegerSchema }
 const Timestamp = NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(253402300799999))
@@ -52,7 +53,7 @@ const StreamingRecordReceiptSchema = Schema.Struct({
   contentHash: Sha256Schema,
 })
 const CutFields = {
-  barPublicationPolicy: Schema.optionalKey(Schema.Literal(BarPublicationPolicy.TimelyEquivalentRevision)),
+  barPublicationPolicy: Schema.Literal(BarPublicationPolicy.ObservedHistory),
   technical: Schema.optionalKey(TechnicalSnapshotEvidenceSchema),
   positions: Schema.Array(Schema.Struct({ ...PositionFields, offset: UnsignedMicrosSchema })).check(
     Schema.isMinLength(1),
@@ -73,7 +74,7 @@ const CutFields = {
       offset: UnsignedMicrosSchema,
       availableAtMs: Timestamp,
       sequence: PositiveIntegerSchema,
-      value: RollingMarketFeatureSchema,
+      value: NativeMarketFeatureSchema,
     }),
   ),
 } as const
@@ -106,13 +107,12 @@ export const SimulatedSnapshotSourceSchema = Schema.Struct({
     }),
     OriginalCaptureDeliverySchema,
   ]),
-  featureTopic: StrictNonEmptyStringSchema,
-  technicalFeatureTopic: Schema.optionalKey(StrictNonEmptyStringSchema),
+  marketSources: MarketSourcesSchema,
   regeneratedFeaturesRecordedAtMs: Schema.optionalKey(Timestamp),
   regeneratedTechnicalFeaturesRecordedAtMs: Schema.optionalKey(Timestamp),
 })
 export const SimulatedSnapshotEvidenceSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-input-cut.v1'),
+  schemaVersion: Schema.Literal('bayn.simulated-input-cut.v2'),
   ...SimulatedSnapshotSourceSchema.fields,
   ...CutFields,
 })

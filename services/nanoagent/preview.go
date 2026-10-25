@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/proompteng/lab/services/nanoagent/internal/guestauth"
 )
 
 var dangerousForwardHeaders = []string{
@@ -19,6 +21,13 @@ var dangerousForwardHeaders = []string{
 	"X-Forwarded-For",
 	"X-Forwarded-Host",
 	"X-Forwarded-Proto",
+	guestauth.ContextHeader,
+	guestauth.SignatureHeader,
+	guestClaimUIDHeader,
+	guestClaimEpochHeader,
+	guestRuntimeEpochHeader,
+	"X-Tengri-Leader-Owner",
+	"X-Tengri-Leader-Generation",
 }
 
 type previewRequestTracker struct {

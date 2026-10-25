@@ -14,27 +14,3 @@ data:
   bucket: bayn-research
   prefix: captures/v1/
   endpoint: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: bayn-research-storage
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: bayn-execution-controller
-  policyTypes:
-    - Egress
-  egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: rook-ceph
-          podSelector:
-            matchLabels:
-              app: rook-ceph-rgw
-              rook_cluster: rook-ceph
-              rook_object_store: objectstore
-      ports:
-        - port: 8080
-          protocol: TCP

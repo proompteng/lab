@@ -23,6 +23,7 @@ func childProcessEnvironment(source []string, extra ...string) []string {
 		_, overridden := overrides[key]
 		if found &&
 			(key == bootstrapTokenEnvironmentKey ||
+				key == "SENTRY_DSN" || key == "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" || key == "APP_SOURCE_REVISION" ||
 				key == bootstrapTokenFDEnvironmentKey ||
 				key == reexecWrapperEnvironmentKey ||
 				strings.HasPrefix(key, "SPIFFE_") || strings.HasPrefix(key, "SPIRE_") ||

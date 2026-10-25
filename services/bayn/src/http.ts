@@ -1,21 +1,24 @@
 import { createServer } from 'node:http'
 
 import { NodeHttpServer } from '@effect/platform-node'
-import { Clock, Effect, Ref, Scope } from 'effect'
+import { Clock, Effect, Metric, Ref, Scope } from 'effect'
+import { PrometheusMetrics } from 'effect/observability'
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http'
 
-import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
+import type { RuntimeBuildMetadata, RuntimeConfig } from './config/model'
 import type { RuntimeProvenance } from './contracts'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
-import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle/model'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import { isReady, type AutonomousCyclePassObservation, type DependencyHealth, type RuntimeState } from './runtime-state'
-import { Pipeable } from './pipeable'
+
 import { defaultJevProtocolDocument } from './jev/protocol'
+import { telemetryHeartbeat } from './telemetry'
+import { accountTradingDate } from './time'
 
 export type HttpResponseDecision =
   | {
@@ -142,11 +145,15 @@ const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined
     outcome: pass.outcome,
     ...(pass.recoveryAction === undefined ? {} : { recoveryAction: pass.recoveryAction }),
     ...(pass.waitReason === undefined ? {} : { waitReason: pass.waitReason }),
+    ...(pass.admissionProtection === undefined ? {} : { admissionProtection: pass.admissionProtection }),
     ...(pass.readiness === undefined
       ? {}
       : {
           readiness: {
             reason: pass.readiness.reason,
+            ...(pass.readiness.accountProtectionReasons === undefined
+              ? {}
+              : { accountProtectionReasons: pass.readiness.accountProtectionReasons }),
             ...(pass.readiness.availableAt === undefined ? {} : { availableAt: pass.readiness.availableAt }),
             ...(pass.readiness.symbol === undefined ? {} : { symbol: pass.readiness.symbol }),
             ...(pass.readiness.eventAt === undefined ? {} : { eventAt: pass.readiness.eventAt }),
@@ -285,6 +292,7 @@ const publicCycleSnapshot = (snapshot: RuntimeState['cycle']['current']) =>
         cycleId: snapshot.cycleId,
         signalSessionDate: snapshot.signalSessionDate,
         executionSessionDate: snapshot.executionSessionDate,
+        executionCalendarSchemaVersion: snapshot.executionCalendarSchemaVersion,
         phase: snapshot.phase,
         snapshotId: snapshot.snapshotId,
         decisionHash: snapshot.decisionHash,
@@ -332,7 +340,7 @@ const publicCycleState = (state: RuntimeState) =>
         error: cyclePresentationReason(state.cycle.error),
       }
 
-const statusFactsDataFirst = (
+export const statusFacts = (
   state: RuntimeState,
   execution: ExecutionPolicy,
   provenance: RuntimeProvenance,
@@ -406,17 +414,6 @@ const statusFactsDataFirst = (
   } as const
 }
 
-export const statusFacts = Pipeable.dual(4, statusFactsDataFirst)
-
-const statusResponseDecisionDataFirst = (
-  state: RuntimeState,
-  execution: ExecutionPolicy,
-  provenance: RuntimeProvenance,
-  provenanceVerification: RuntimeBuildMetadata['verification'],
-): HttpResponseDecision => jsonDecision(statusFacts(state, execution, provenance, provenanceVerification))
-
-export const statusResponseDecision = Pipeable.dual(4, statusResponseDecisionDataFirst)
-
 const appendFailure = (failures: readonly string[], name: string, failed: boolean): readonly string[] =>
   failed && !failures.includes(name) ? [...failures, name] : failures
 
@@ -454,6 +451,28 @@ export const runtimeHealthIsFresh = (state: RuntimeState, input: RuntimeHealthFr
 
 const runtimeReadyWithFreshness = (state: RuntimeState, freshness?: RuntimeHealthFreshnessInput): boolean =>
   isReady(state) && (freshness === undefined || runtimeHealthIsFresh(state, freshness))
+
+export const statusReadinessResponseDecision = (
+  state: RuntimeState,
+  freshness: RuntimeHealthFreshnessInput,
+): HttpResponseDecision => {
+  const failedDependencies: string[] = (['postgresql', 'tigerBeetle', 'cycle'] as const).filter(
+    (name) => state.health.dependencies[name].status !== 'AVAILABLE',
+  )
+  if (!runtimeHealthIsFresh(state, freshness)) failedDependencies.push('health')
+  if (state.status !== 'READY' && state.status !== 'DEGRADED') failedDependencies.push('startup')
+  const ready = failedDependencies.length === 0
+  return jsonDecision(
+    {
+      ready,
+      status: state.status,
+      checkedAt: state.health.checkedAt,
+      probeSequence: state.health.sequence,
+      failedDependencies,
+    },
+    ready ? 200 : 503,
+  )
+}
 
 export const readinessResponseDecision = (
   state: RuntimeState,
@@ -579,15 +598,41 @@ const readySessionConditions = new Set([
   ExecutionSessionCondition.Rearming,
 ])
 
+const hasCurrentAdmissionProtection = (state: RuntimeState, checkedAtMs: number): boolean => {
+  const pass = state.autonomousCycleLoop.lastPass
+  if (
+    pass?.result !== 'SUCCESS' ||
+    pass.outcome !== 'ADMISSION_WAITING' ||
+    pass.readiness?.reason !== DecisionReadinessReason.AccountProtection ||
+    pass.admissionProtection === undefined ||
+    state.cycle.current !== null ||
+    state.cycle.unfinishedCycleCount !== 0 ||
+    !Number.isSafeInteger(checkedAtMs)
+  )
+    return false
+  const proof = pass.admissionProtection
+  return (
+    proof.authorityGenerationHash === state.cycle.authority?.generationHash &&
+    proof.authorityUpdatedAt === state.cycle.authority.updatedAt &&
+    proof.reconciliationId === state.cycle.reconciliation?.reconciliationId &&
+    proof.tradingDate === accountTradingDate(new Date(checkedAtMs).toISOString()) &&
+    Date.parse(pass.observedAt) <= checkedAtMs &&
+    checkedAtMs < Date.parse(proof.validUntil)
+  )
+}
+
 const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) => {
   const session = state.cycle.current ?? state.cycle.last
   const checkedAtMs = Date.parse(state.health.checkedAt ?? '')
   const firstObservationMs =
     session === null
       ? Number.NaN
-      : Date.parse(session.submissionOpenAt) +
-        defaultJevProtocolDocument.lookbackMinutes * 60_000 +
-        defaultJevProtocolDocument.decisionDelaySeconds * 1_000
+      : session.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+        ? Date.parse(session.submissionOpenAt)
+        : Math.max(
+            Date.parse(session.submissionOpenAt),
+            Date.parse(session.executionOpenAt) + 60_000 + defaultJevProtocolDocument.decisionDelaySeconds * 1_000,
+          )
   const deadlineMs =
     session === null
       ? Number.NaN
@@ -612,9 +657,11 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   ) {
     return result(ExecutionSessionCondition.Blocked)
   }
-  if (session === null || !Number.isFinite(checkedAtMs) || !executionPrerequisitesReady(state, runtimeReady)) {
+  if (!Number.isFinite(checkedAtMs) || !executionPrerequisitesReady(state, runtimeReady)) {
     return result(ExecutionSessionCondition.Unavailable)
   }
+  if (hasCurrentAdmissionProtection(state, checkedAtMs)) return result(ExecutionSessionCondition.Blocked)
+  if (session === null) return result(ExecutionSessionCondition.Unavailable)
   if (checkedAtMs >= Date.parse(session.executionCloseAt)) return result(ExecutionSessionCondition.Closed)
   if (state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined) {
     return result(
@@ -628,27 +675,31 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
     return result(
       session.phase === CycleState.NoTrade
         ? ExecutionSessionCondition.Abstaining
-        : session.phase === CycleState.Completed
+        : session.phase === CycleState.Completed || session.terminalReason === CycleTerminalReason.UnusedEntryExpired
           ? ExecutionSessionCondition.Rearming
           : ExecutionSessionCondition.Blocked,
     )
   }
   if (state.cycle.current.phase !== CycleState.Active) return result(ExecutionSessionCondition.Unavailable)
   if (checkedAtMs < Date.parse(session.submissionOpenAt)) return result(ExecutionSessionCondition.Preopen)
-  if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
   const pass = state.autonomousCycleLoop.lastPass
-  if (
+  const readiness =
     pass?.result === 'SUCCESS' &&
+    pass.outcome !== 'ADMISSION_WAITING' &&
     pass.readiness !== undefined &&
     Date.parse(pass.observedAt) >= Date.parse(session.updatedAt)
-  ) {
-    if (pass.readiness.reason === DecisionReadinessReason.NoEligibleCandidate)
+      ? pass.readiness
+      : undefined
+  if (readiness?.reason === DecisionReadinessReason.AccountProtection) return result(ExecutionSessionCondition.Blocked)
+  if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
+  if (readiness !== undefined) {
+    if (readiness.reason === DecisionReadinessReason.NoEligibleCandidate)
       return result(ExecutionSessionCondition.Abstaining)
-    if (pass.readiness.reason === DecisionReadinessReason.InferenceUnavailable)
+    if (readiness.reason === DecisionReadinessReason.InferenceUnavailable)
       return result(ExecutionSessionCondition.EvaluationUnavailable)
     if (
-      pass.readiness.reason !== DecisionReadinessReason.DecisionPending &&
-      pass.readiness.reason !== DecisionReadinessReason.SignalWindowObserved
+      readiness.reason !== DecisionReadinessReason.DecisionPending &&
+      readiness.reason !== DecisionReadinessReason.SignalWindowObserved
     ) {
       return result(ExecutionSessionCondition.InputUnavailable)
     }
@@ -658,7 +709,7 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   )
 }
 
-const renderPrometheusMetricsDataFirst = (
+export const renderPrometheusMetrics = (
   state: RuntimeState,
   config: Pick<
     RuntimeConfig,
@@ -1281,14 +1332,15 @@ const renderPrometheusMetricsDataFirst = (
       (condition) =>
         `bayn_execution_session_condition{condition="${condition.toLowerCase()}"} ${condition === sessionReadiness.condition ? 1 : 0}`,
     ),
+    '# HELP bayn_operation_metrics_expected This service revision requires native operation metrics in production.',
+    '# TYPE bayn_operation_metrics_expected gauge',
+    `bayn_operation_metrics_expected{source_revision="${prometheusLabel(provenance.sourceRevision)}"} 1`,
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,
   ]
   return `${lines.join('\n')}\n`
 }
-
-export const renderPrometheusMetrics = Pipeable.dual(4, renderPrometheusMetricsDataFirst)
 
 const interpretResponseDecision = (
   decision: HttpResponseDecision,
@@ -1335,10 +1387,14 @@ const registerHttpRoutes = (
     Effect.map(({ current, nowMs }) => readinessResponseDecision(current, { nowMs, leaseMs: freshnessLeaseMs })),
     Effect.flatMap(interpretResponseDecision),
   )
+  const statusReady = currentStateAndTime.pipe(
+    Effect.map(({ current, nowMs }) => statusReadinessResponseDecision(current, { nowMs, leaseMs: freshnessLeaseMs })),
+    Effect.flatMap(interpretResponseDecision),
+  )
   const status = currentStateAndTime.pipe(
     Effect.map(({ current, nowMs }) =>
       jsonDecision(
-        statusFactsDataFirst(
+        statusFacts(
           current,
           config.execution,
           provenance,
@@ -1350,18 +1406,31 @@ const registerHttpRoutes = (
     Effect.flatMap(interpretResponseDecision),
   )
   const metrics = currentStateAndTime.pipe(
-    Effect.map(({ current, nowMs }) =>
-      textDecision(
-        renderPrometheusMetricsDataFirst(
-          current,
-          config,
-          provenance,
-          provenanceVerification,
-          runtimeReadyWithFreshness(current, { nowMs, leaseMs: freshnessLeaseMs }),
-        ),
-        'text/plain; version=0.0.4; charset=utf-8',
-        { 'cache-control': 'no-store' },
-      ),
+    Effect.flatMap(({ current, nowMs }) =>
+      Effect.gen(function* () {
+        yield* Metric.update(
+          telemetryHeartbeat.pipe(
+            Metric.withAttributes({
+              namespace: 'bayn',
+              service: 'bayn',
+              source_revision: provenance.sourceRevision,
+            }),
+          ),
+          nowMs / 1000,
+        )
+        const native = yield* PrometheusMetrics.format()
+        return textDecision(
+          renderPrometheusMetrics(
+            current,
+            config,
+            provenance,
+            provenanceVerification,
+            runtimeReadyWithFreshness(current, { nowMs, leaseMs: freshnessLeaseMs }),
+          ) + native,
+          'text/plain; version=0.0.4; charset=utf-8',
+          { 'cache-control': 'no-store' },
+        )
+      }),
     ),
     Effect.flatMap(interpretResponseDecision),
   )
@@ -1372,13 +1441,14 @@ const registerHttpRoutes = (
   return Effect.gen(function* () {
     yield* router.add('GET', '/livez', interpretResponseDecision(jsonDecision({ service: 'bayn', live: true })))
     yield* router.add('GET', '/readyz', ready)
+    yield* router.add('GET', '/status-readyz', statusReady)
     yield* router.add('GET', '/metrics', metrics)
     yield* router.add('GET', '/v1/status', status)
     yield* router.add('*', '*', fallback)
   })
 }
 
-const serveHttpDataFirst = (
+export const serveHttp = (
   config: HttpConfig,
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
@@ -1393,14 +1463,3 @@ const serveHttpDataFirst = (
     const handler = router.asHttpEffect().pipe(Effect.orDie)
     yield* HttpServer.serveEffect(handler)
   })
-
-export const serveHttp = Pipeable.dual(4, serveHttpDataFirst)
-
-export const serveHttpWithCurrentTime = (
-  config: HttpConfig,
-  state: Ref.Ref<RuntimeState>,
-  provenance: RuntimeProvenance,
-  provenanceVerification: RuntimeBuildMetadata['verification'],
-  currentTimeMillis: Effect.Effect<number>,
-): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
-  serveHttpDataFirst(config, state, provenance, provenanceVerification, currentTimeMillis)

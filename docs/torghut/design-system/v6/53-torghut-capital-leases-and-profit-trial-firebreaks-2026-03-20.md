@@ -1,6 +1,6 @@
 # 53. Torghut Capital Leases and Profit-Trial Firebreaks (2026-03-20)
 
-Status: Approved for implementation (`plan`)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Executive summary
 

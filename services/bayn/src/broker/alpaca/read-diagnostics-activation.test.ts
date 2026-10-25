@@ -4,7 +4,7 @@ import { Clock, Effect, Logger, Redacted, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import { makeBaynBrokerObservations } from '../../restate/restate-broker-observations'
 import {
@@ -63,7 +63,7 @@ test('normal broker polling emits diagnostics while native deployment activation
             accrued_fees: '0',
             pending_reg_taf_fees: '0.01',
           }
-        : url.pathname === '/v2/account/activities/FEE'
+        : url.pathname === '/v2/account/activities'
           ? [
               {
                 activity_type: 'FEE',
@@ -97,13 +97,19 @@ test('normal broker polling emits diagnostics while native deployment activation
         { controllerKey, sourceRevision, pollIntervalMs: 10_000, operationTimeoutMs: 30_000 },
         {
           activate: async () => undefined,
-          preparePoll: async () => 'synthetic-capture',
-          nextPollNotBeforeMs: async () => 0,
           poll: (signal) =>
             execute(
               Effect.gen(function* () {
                 const snapshot = yield* captureBrokerObservation(read, yield* currentUtcInstant, 30_000)
-                return { _tag: 'Published', snapshotHash: canonicalHashV1(snapshot), nextPollNotBeforeMs: 0 } as const
+                return {
+                  poll: {
+                    _tag: 'Published',
+                    snapshotHash: Result.getOrThrow(canonicalHashV1Result(snapshot)),
+                    nextPollNotBeforeMs: 0,
+                  },
+                  startedAtMs: Date.parse(snapshot.startedAt),
+                  completedAtMs: Date.parse(snapshot.completedAt),
+                } as const
               }),
               { signal },
             ),
@@ -112,6 +118,9 @@ test('normal broker polling emits diagnostics while native deployment activation
       const observationContext = {
         key: controllerKey,
         get: async (key: string) => durable.get(key) ?? null,
+        clear: (key: string) => {
+          durable.delete(key)
+        },
         set: (key: string, value: unknown) => {
           durable.set(key, value)
         },
@@ -178,6 +187,7 @@ test('normal broker polling emits diagnostics while native deployment activation
           attemptCompletedSignal: new AbortController().signal,
         }),
         objectClient: () => ({
+          prepareActivation: async () => null,
           status: async () => (executionActivated ? waitingState : null),
           activate: async () => {
             executionActivated = true
@@ -198,7 +208,7 @@ test('normal broker polling emits diagnostics while native deployment activation
       const blocked = yield* Effect.promise(() =>
         execution
           .activateDeployment(context, {
-            schemaVersion: 'bayn.execution-deployment-activation.v1',
+            schemaVersion: 'bayn.execution-deployment-activation.v2',
             controllerKey,
             planHash,
             sourceRevision,
@@ -220,7 +230,7 @@ test('normal broker polling emits diagnostics while native deployment activation
       expect(ticks).toHaveLength(1)
       expect(requests.every((request) => request.method === 'GET')).toBe(true)
       expect(requests.filter((request) => request.path === '/v2/account')).toHaveLength(3)
-      expect(requests.filter((request) => request.path === '/v2/account/activities/FEE')).toHaveLength(6)
+      expect(requests.filter((request) => request.path === '/v2/account/activities')).toHaveLength(6)
     }).pipe(
       Effect.provideService(HttpClient.HttpClient, client),
       Effect.provide(TestClock.layer()),

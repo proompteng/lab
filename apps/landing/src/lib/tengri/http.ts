@@ -4,6 +4,7 @@ import { getTengriIdentity } from '@/lib/tengri/auth'
 import { TengriUnavailableError } from '@/lib/tengri/grpc'
 import { MAX_EDITABLE_FILE_BYTES } from '@/lib/tengri/schemas'
 import { OfzError } from './ofz'
+import { reportServerError } from '@/lib/observability/server'
 
 type RateWindow = { count: number; resetsAt: number }
 export type ReadTengriJsonBodyOptions = Readonly<{
@@ -61,6 +62,15 @@ export async function getRateLimitedTengriIdentity(request: Request) {
 }
 
 export function tengriRouteError(error: unknown) {
+  const status =
+    error instanceof OfzError || error instanceof TengriUnavailableError
+      ? error.status
+      : error instanceof SyntaxError
+        ? 400
+        : error instanceof Error && error.name === 'AbortError'
+          ? 499
+          : 500
+  if (status >= 500) reportServerError(error, 'tengri.request', status)
   if (error instanceof OfzError) {
     return Response.json(
       { error: error.message, auditReceiptId: error.auditReceiptId },

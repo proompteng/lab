@@ -1,6 +1,7 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { ControlExit } from './control-portfolio'
@@ -26,12 +27,18 @@ const quote = (t: number, overrides: Partial<IntradayQuote> = {}) => {
     askSize: 1000,
     ...overrides,
   }
-  return { value, sequence: 1, availableAtMs: t, recordHash: canonicalHashV1(value) }
+  return { value, sequence: 1, availableAtMs: t, recordHash: Result.getOrThrow(canonicalHashV1Result(value)) }
 }
 const terms = {
   symbol: 'AAPL',
   protocol: fixture.protocol,
-  assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
+  assumptions: {
+    instruments: replayTestInstruments,
+    latencyMs: 100,
+    slippageBps: 0,
+    availableLiquidityPpm: 1000000,
+    feeMultiplierPpm: 1000000,
+  },
   entryBudgetMicros: '10000000000',
   decidedAtMs: at,
   cutoffMs: at + 30 * 60000,
@@ -50,11 +57,28 @@ const entry = () =>
     at + 100,
   )
 
+test('a matched arm realizes the native net-profit target before its stop or holding deadline', () => {
+  const crossed = quote(at + 5100, { bidPrice: 102, askPrice: 102.02 })
+  const triggered = step(entry(), MatchedEvent.Poll, at + 5100, crossed)
+  expect(triggered.portfolio.inventory).toMatchObject({ status: 'EXITING', reason: ControlExit.ProfitTarget })
+  const flat = step(
+    triggered,
+    MatchedEvent.ExitArrival,
+    at + 5200,
+    quote(at + 5200, { bidPrice: 102, askPrice: 102.02 }),
+  )
+  expect(finishMatchedLifecycle(flat).status).toBe('RESOLVED')
+  expect(flat.portfolio.episodes[0]?.reason).toBe(ControlExit.ProfitTarget)
+  const net = flat.portfolio.ledger.netRealizedPnlAfterCostsMicros
+  if (net === null) throw new Error('Completed matched profit exit requires known net execution P&L')
+  expect(BigInt(net)).toBeGreaterThan(0n)
+})
+
 test('protective trigger survives partial fills and an unchanged quote cannot replenish liquidity', () => {
   const stopped = step(entry(), MatchedEvent.Poll, at + 5100, quote(at + 5100, { bidPrice: 99, askPrice: 99.02 }))
   const arrival = quote(at + 5200, { bidPrice: 99, askPrice: 99.02, bidSize: 1 })
   const partial = step(stopped, MatchedEvent.ExitArrival, at + 5200, arrival)
-  expect(partial.portfolio.ledger.positions[0]?.quantityMicros).toBe('98000000')
+  expect(partial.portfolio.ledger.positions[0]?.quantityAtoms).toBe('98000000000')
   expect(finishMatchedLifecycle(partial).status).toBe('UNRESOLVED')
   expect(finishMatchedLifecycle(partial).netExecutionPnlMicros).toBeNull()
   const exhausted = step(
@@ -63,7 +87,7 @@ test('protective trigger survives partial fills and an unchanged quote cannot re
     at + 10200,
     arrival,
   )
-  expect(exhausted.portfolio.ledger.positions[0]?.quantityMicros).toBe('98000000')
+  expect(exhausted.portfolio.ledger.positions[0]?.quantityAtoms).toBe('98000000000')
   expect(finishMatchedLifecycle(exhausted).status).toBe('UNRESOLVED')
   expect(finishMatchedLifecycle(exhausted).netExecutionPnlMicros).toBeNull()
   const flat = step(step(exhausted, MatchedEvent.Poll, at + 15100), MatchedEvent.ExitArrival, at + 15200)

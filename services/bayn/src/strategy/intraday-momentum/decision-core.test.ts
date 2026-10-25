@@ -1,15 +1,15 @@
+import { decodeIntradayMomentumProtocol, defaultIntradayMomentumProtocolDocument } from './protocol'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { decideIntradayMomentumCore, type IntradayMomentumCoreInput } from './decision-core'
-import { decodeDefaultIntradayMomentumProtocol } from './protocol'
 
 const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 
 const observedAt = '2026-08-18T16:00:02.000Z'
 const evidenceAt = '2026-08-18T16:00:01.000Z'
 const makeInput = (candidateMidpoint: number): IntradayMomentumCoreInput => {
-  const protocol = success(decodeDefaultIntradayMomentumProtocol())
+  const protocol = success(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
   const symbols = [...protocol.candidateSymbols, protocol.benchmarkSymbol]
   const rollingPrices = Object.fromEntries(
     symbols.map((symbol) => [

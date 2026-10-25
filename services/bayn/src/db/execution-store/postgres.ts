@@ -4,7 +4,8 @@ import { postgresWallClock, type DatabaseClock } from '../clock'
 
 import { WriterFence, WriterFenceError, type WriterFenceService } from '../../execution/writer-fence'
 import { Journal } from '../../ledger'
-import { makeReconciliation, restrictAuthority } from '../reconciliation'
+import { makeReconciliation, restrictAuthority, ReconciliationStoreError } from '../reconciliation'
+import { withObservedStage } from '../../telemetry'
 import { makeAccountingInterpreter } from './accounting'
 import { makeAuthorityPostgres } from './authority-shared'
 import { makeBrokerEventInterpreter } from './broker-events'
@@ -51,8 +52,26 @@ export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig, cl
       accounting,
       valuation,
       reconciliation: {
+        retainCashReporting: (snapshot) =>
+          runExecutionOperation('reconciliation', reconciliation.retainCashReporting(snapshot)),
         bindings: (accountId) => runExecutionOperation('bindings', reconciliation.bindings(accountId)),
-        reconcile: (snapshot) => runExecutionOperation('reconciliation', reconciliation.reconcile(snapshot)),
+        reconcile: (accountId, snapshot) =>
+          reconciliation.reconcile(accountId, snapshot).pipe(
+            Effect.mapError((cause) =>
+              cause instanceof ReconciliationStoreError
+                ? executionStoreError({
+                    operation: 'reconciliation',
+                    failure: cause.failure,
+                    message: 'execution reconciliation operation failed',
+                    cause,
+                  })
+                : cause,
+            ),
+            withObservedStage('bayn.execution-store.operation', {
+              dependency: 'postgresql',
+              operation: 'reconciliation',
+            }),
+          ),
       },
       authorityGeneration: {
         ensureAuthorityGeneration: (input) =>

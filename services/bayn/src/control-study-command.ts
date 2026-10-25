@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Clock, Config, Context, Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect'
 import { TestClock } from 'effect/testing'
 
@@ -7,12 +7,15 @@ import { ControlStudyFailure } from './intraday-replay/control-portfolio'
 import { ControlInputCoverage, runControlPreflight } from './intraday-replay/control-preflight'
 import {
   ControlManagementMode,
+  ControlEntryMode,
   ControlStudyInputSchema,
   runControlStudy,
   type ControlStudyManagement,
 } from './intraday-replay/control-study'
 import { prepareBacktest } from './intraday-replay/backtest'
 import { JevClient, JevClientLive } from './jev/client'
+import { JevHttpClientLive } from './jev/http'
+import { makeBoundedReplayJevProvider } from './intraday-replay/jev-timing'
 import { validateBacktestSourceReceipt } from './intraday-replay/source'
 
 const usage =
@@ -113,21 +116,24 @@ export const runControlStudyCommand = (rawArgs: readonly string[]) =>
       return
     }
     let management: ControlStudyManagement
-    if (input.management === ControlManagementMode.Jev) {
+    if (input.entry === ControlEntryMode.Jev) {
       if (evidenceDirectory === undefined)
         return yield* new ControlStudyFailure({ message: 'JEV controls require a new evidence directory' })
       const prepared = yield* Effect.fromResult(prepareBacktest(input.backtest, receipt))
       const providerClock = yield* Clock.clockWith(Effect.succeed)
       const providerContext = yield* Layer.build(
         JevClientLive(yield* Config.Redacted('BAYN_JEV_API_KEY'), prepared.protocol.inferenceValidityMs).pipe(
-          Layer.provide(NodeHttpClient.layerNodeHttp),
+          Layer.provide(JevHttpClientLive(yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY'))),
         ),
       )
       management = {
-        mode: ControlManagementMode.Jev,
+        mode: input.management,
         evidenceDirectory,
         providerClock,
-        provider: Context.get(providerContext, JevClient),
+        provider: makeBoundedReplayJevProvider(
+          Context.get(providerContext, JevClient),
+          prepared.input.inference.maximumCalls,
+        ).provider,
       }
     } else {
       if (evidenceDirectory !== undefined)

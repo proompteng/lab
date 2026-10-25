@@ -21,12 +21,14 @@ entry=$(jq -er .kataCatalogEntry "$lock")
 upstream=$(jq -er .upstreamCatalog "$lock")
 catalog=$(jq -er '.catalogRepository + ":" + .talos' "$lock")
 expected_digest=$(jq -er .catalogDigest "$lock")
-readonly source_ref entry upstream catalog expected_digest
+previous_digest=$(jq -r '.previousCatalogDigest // empty' "$lock")
+readonly source_ref entry upstream catalog expected_digest previous_digest
 [[ "$source_ref" =~ @sha256:[0-9a-f]{64}$ ]]
 [[ "$entry" =~ :[^/@]+@sha256:[0-9a-f]{64}$ ]]
 [[ "$upstream" =~ @sha256:[0-9a-f]{64}$ ]]
 [[ "${entry##*@}" == "${source_ref##*@}" ]]
 [[ "$expected_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+[[ -z "$previous_digest" || "$previous_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
 
 mkdir -p -- "$2"
 output=$(cd -- "$2" && pwd)
@@ -37,6 +39,7 @@ verify() {
 }
 
 if [[ "$1" == build ]]; then
+  python3 -m unittest discover -s "$release_dir/tests" -v
   verify "$source_ref" >"$output/kata-signature.json"
   crane manifest "$source_ref" >"$output/kata-index.json"
   jq -e '
@@ -69,13 +72,16 @@ immutable="${catalog%:*}@$digest"
 cosign sign --yes "$immutable"
 verify "$immutable" >"$output/catalog-signature.json"
 
-# Never change the catalog underneath an existing Talos-version installer cache.
 crane ls "${catalog%:*}" >"$output/catalog-tags.txt"
 if grep -Fxq "${catalog##*:}" "$output/catalog-tags.txt"; then
-  [[ "$(crane digest "$catalog")" == "$digest" ]] || {
-    echo "refusing to replace an existing catalog with different contents: $catalog" >&2
-    exit 1
-  }
+  current_digest=$(crane digest "$catalog")
+  if [[ "$current_digest" != "$digest" ]]; then
+    [[ -n "$previous_digest" && "$current_digest" == "$previous_digest" ]] || {
+      echo "catalog replacement does not match the reviewed previous digest: $catalog" >&2
+      exit 1
+    }
+    crane tag "$immutable" "${catalog##*:}"
+  fi
 else
   crane tag "$immutable" "${catalog##*:}"
 fi

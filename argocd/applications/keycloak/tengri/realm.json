@@ -2,6 +2,7 @@
   "realm": "tengri",
   "enabled": true,
   "displayName": "Tengri",
+  "loginTheme": "tengri",
   "sslRequired": "all",
   "registrationAllowed": false,
   "loginWithEmailAllowed": false,
@@ -35,7 +36,7 @@
   ],
   "webAuthnPolicyAttestationConveyancePreference": "none",
   "webAuthnPolicyAuthenticatorAttachment": "not specified",
-  "webAuthnPolicyUserVerificationRequirement": "required",
+  "webAuthnPolicyUserVerificationRequirement": "discouraged",
   "webAuthnPolicyCreateTimeout": 60,
   "webAuthnPolicyAvoidSameAuthenticatorRegister": true,
   "attributes": {

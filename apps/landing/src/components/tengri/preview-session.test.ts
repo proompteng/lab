@@ -3,13 +3,17 @@ import { safePreviewLaunchUrl, safePreviewSessionOrigin } from './preview-sessio
 
 describe('owner-scoped preview URLs', () => {
   const id = 'a'.repeat(24)
-  const ticket = `${'a'.repeat(32)}.${'b'.repeat(32)}`
+  const ticket = `${'a'.repeat(42)}A`
   test('accepts only the configured gateway and a one-use fragment ticket', () => {
     const url = `https://tengri.proompteng.ai/v1/preview/open#${ticket}`
     expect(safePreviewLaunchUrl(url, 'https://tengri.proompteng.ai')).toBe(url)
     for (const invalid of [
       url.replace('tengri.proompteng.ai', 'evil.example'),
       url.replace('#', '?ticket='),
+      url.replace(ticket, `${'a'.repeat(32)}.${'b'.repeat(32)}`),
+      url.replace(ticket, 'a'.repeat(42)),
+      url.replace(ticket, 'a'.repeat(44)),
+      url.replace(ticket, `${'a'.repeat(42)}B`),
       'javascript:alert(1)',
     ]) {
       expect(safePreviewLaunchUrl(invalid, 'https://tengri.proompteng.ai')).toBe('')

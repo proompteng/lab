@@ -20,14 +20,14 @@ import {
 } from './runtime'
 import { makeJevTradingSignalBatch } from './trading-signals'
 
-const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSize = 100) => {
+const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSize = 100, quoteAt?: string) => {
   const fixture = nativeJevFixture()
   const retained = nativeJevDecisionEvidence(fixture)
   const batchPlan = Result.getOrThrow(
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V3,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const decision = Result.getOrThrow(
@@ -45,7 +45,16 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
     {
       ...fixture.snapshot,
       quotes: fixture.snapshot.quotes.map((quote) =>
-        quote.symbol === 'AAPL' ? { ...quote, bidPrice, askPrice, bidSize, askSize } : quote,
+        quote.symbol === 'AAPL'
+          ? {
+              ...quote,
+              bidPrice,
+              askPrice,
+              bidSize,
+              askSize,
+              ...(quoteAt === undefined ? {} : { eventAt: quoteAt, ingestedAt: quoteAt }),
+            }
+          : quote,
       ),
     },
     query,
@@ -54,12 +63,34 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
 }
 
 describe('Jev entry execution quote eligibility', () => {
+  test.each([0, -10000, 10000])('entry compilation preserves the stop boundary at offset %s micros', (offset) => {
+    const original = pricingFixture(100, 100.02)
+    const plan = original.decision.exitPolicy.plans['AAPL']
+    if (plan === undefined) throw new Error('Missing selected fixture plan')
+    const bid = (Number(plan.levels.stopPriceMicros) + offset) / 1_000_000
+    const { fixture, decision, pricing } = pricingFixture(bid, bid + 0.01)
+    const compiled = compileJevEntry(decision, fixture.snapshot, pricing)
+    expect(Result.isSuccess(compiled)).toBe(offset > 0)
+    if (Result.isFailure(compiled))
+      expect(compiled.failure).toMatchObject({ readiness: DecisionReadinessReason.NoEligibleCandidate })
+  })
+
+  test('an approved entry compiles with a fresh execution quote from before the minute boundary', () => {
+    const quoteAt = '2026-09-04T14:29:59.000Z'
+    const { fixture, decision, pricing } = pricingFixture(100, 100.02, 100, 100, quoteAt)
+    expect(decision.selectedSymbols).toEqual(['AAPL'])
+    const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
+    expect(compiled.entryQuotes['AAPL']?.eventAt).toBe(quoteAt)
+    expect(compiled.entryQuotes['AAPL']?.maximumAgeMs).toBeLessThanOrEqual(fixture.protocol.maximumQuoteAgeMs)
+    expect(compiled.priceMicros['AAPL']).toBe('100020000')
+  })
+
   test('a fresh narrow execution quote compiles after an eligible model decision', () => {
     const { fixture, decision, pricing } = pricingFixture(100, 100.02)
     expect(decision.selectedSymbols).toEqual(['AAPL'])
     const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
     expect(compiled.priceMicros['AAPL']).toBe('100020000')
-    expect(compiled.maximumBuyQuantityMicros['AAPL']).toBe('100000000')
+    expect(compiled.maximumBuyQuantityAtoms['AAPL']).toBe(decision.exitPolicy.plans['AAPL']?.maximumQuantityAtoms)
   })
 
   test.each([
@@ -78,8 +109,22 @@ describe('Jev entry execution quote eligibility', () => {
   })
 
   test('the existing exact spread boundary remains eligible', () => {
-    const { fixture, decision, pricing } = pricingFixture(199.95, 200.05)
+    const { fixture, decision, pricing } = pricingFixture(99.975, 100.025)
     expect(Result.isSuccess(compileJevEntry(decision, fixture.snapshot, pricing))).toBe(true)
+  })
+
+  test('a narrow refreshed quote above the inference-bound cost ceiling cannot enter', () => {
+    const original = nativeJevFixture().snapshot.latestQuotes['AAPL']
+    if (original === undefined) throw new Error('Missing fixture quote')
+    const ask = original.askPrice * 1.001 + 0.02
+    const { fixture, decision, pricing } = pricingFixture(ask - 0.01, ask)
+    const compiled = compileJevEntry(decision, fixture.snapshot, pricing)
+    expect(Result.isFailure(compiled)).toBe(true)
+    if (Result.isFailure(compiled)) {
+      expect(compiled.failure).toBeInstanceOf(JevAwaitingEvidence)
+      if (compiled.failure instanceof JevAwaitingEvidence)
+        expect(compiled.failure.message).toContain('entry cost price ceiling')
+    }
   })
 
   test('a rejected execution quote cannot reopen its consumed signal window', async () => {
@@ -124,28 +169,26 @@ describe('Jev entry execution quote eligibility', () => {
         expect(calls).toEqual({ snapshots: 1, observations: 1, batches: 1 })
       }).pipe(
         Effect.provideService(CandidateObservationStore, {
-          record: (observation) =>
-            Effect.sync(() => {
-              calls.observations += 1
-              latestWindow = Option.some(observation.payload.manifest.rangeEndAt)
-            }),
+          record: () => Effect.die('Observation admission must be owned by the batch store'),
           latestJevWindowEnd: () => Effect.sync(() => latestWindow),
         }),
         Effect.provideService(JevBatchStore, {
           pending: () => Effect.succeed([]),
           read: () => unused,
           finish: () => unused,
-          begin: (plan) =>
+          begin: (plan, observation) =>
             Effect.gen(function* () {
+              calls.observations += 1
+              latestWindow = Option.some(observation.manifest.rangeEndAt)
               calls.batches += 1
               yield* TestClock.adjust(100)
               const now = yield* Clock.currentTimeMillis
-              return { plan, result: nativeJevBatchResult(plan, new Date(now).toISOString()) }
+              return { plan, dispatches: [], result: nativeJevBatchResult(plan, new Date(now).toISOString()) }
             }),
         }),
         Effect.provideService(JevEvaluationStore, {
           read: () => unused,
-          begin: () => unused,
+
           record: () => unused,
           abandon: () => unused,
         }),

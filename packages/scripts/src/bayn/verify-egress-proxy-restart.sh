@@ -36,7 +36,7 @@ verify_proxy() {
       docker logs "$container"
       return 1
     fi
-    if docker exec "$container" bash -c 'exec 3<>/dev/tcp/127.0.0.1/3128' 2>/dev/null; then
+    if docker exec "$container" bash -c 'exec 3<>/dev/tcp/127.0.0.1/3128; exec 4<>/dev/tcp/127.0.0.1/3129' 2>/dev/null; then
       ready=true
       break
     fi
@@ -47,10 +47,15 @@ verify_proxy() {
     return 1
   fi
   docker exec "$container" bash -euc '
-    exec 3<>/dev/tcp/127.0.0.1/3128
-    printf "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n" >&3
-    IFS= read -r -t 5 response <&3
-    [[ "$response" == "HTTP/1.1 403 "* ]]
+    for probe in 3128/example.com 3128/opencode.ai 3129/example.com 3129/api.typesafe.ai; do
+      port="${probe%/*}"
+      host="${probe#*/}"
+      exec 3<>"/dev/tcp/127.0.0.1/$port"
+      printf "CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\n\r\n" "$host" "$host" >&3
+      IFS= read -r -t 5 response <&3
+      [[ "$response" == "HTTP/1.1 403 "* ]]
+      exec 3<&- 3>&-
+    done
   '
 }
 
@@ -58,4 +63,4 @@ verify_proxy
 docker kill --signal KILL "$container" >/dev/null
 docker start "$container" >/dev/null
 verify_proxy
-printf 'PASS: pinned Squid starts with a stale PID 1 file, survives an abrupt restart, and rejects an unlisted CONNECT destination.\n'
+printf 'PASS: pinned Squid starts with a stale PID 1 file, survives an abrupt restart, and enforces both listeners before destination DNS.\n'

@@ -21,11 +21,11 @@ spec:
   requestedFreight:
     - origin:
         kind: Warehouse
-        name: proompteng
+        name: ofz
       sources:
-        direct: true
+        stages: [tengri]
         autoPromotionOptions:
-          selectionPolicy: NewestFreight
+          selectionPolicy: MatchUpstream
   promotionTemplate:
     spec:
       steps:
@@ -36,7 +36,7 @@ spec:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
@@ -694,8 +694,6 @@ spec:
           config:
             path: ./out/argocd/applications/arc/application.yaml
             updates:
-              - key: spec.sources.1.helm.valuesObject.template.spec.initContainers.0.image
-                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.1.helm.valuesObject.template.spec.containers.0.image
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.2.helm.valuesObject.template.spec.initContainers.0.image
@@ -1629,10 +1627,7 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
-    # Freight identity follows the Warehouse's HTTPS source; promotion writes still use the sealed SSH key.
-    - name: freightGitRepo
-      value: https://github.com/proompteng/lab.git
-    - name: pushGitRepo
+    - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
       value: kargo/tengri
@@ -1649,11 +1644,11 @@ spec:
   requestedFreight:
     - origin:
         kind: Warehouse
-        name: tengri
+        name: ofz
       sources:
-        direct: true
+        stages: [ofz]
         autoPromotionOptions:
-          selectionPolicy: NewestFreight
+          selectionPolicy: MatchUpstream
   promotionTemplate:
     spec:
       steps:
@@ -1664,12 +1659,12 @@ spec:
             message: tengri images must be built from the same commit
         - uses: git-clone
           config:
-            repoURL: ${{ vars.pushGitRepo }}
+            repoURL: ${{ vars.gitRepo }}
             author:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.freightGitRepo).ID }}
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
@@ -1933,7 +1928,7 @@ spec:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
@@ -1946,13 +1941,26 @@ spec:
             inPath: ${{ vars.srcPath }}
             outPath: ${{ vars.outPath }}
         - uses: yaml-parse
-          as: bayn
+          as: baynDeployment
+          config:
+            path: ./src/argocd/applications/bayn/deployment.yaml
+            outputs:
+              - name: hasLineage
+                fromExpression: any(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
+              - name: lineageIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
+              - name: digestIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
+        - uses: yaml-parse
+          as: baynLineage
+          if: ${{ outputs.baynDeployment.hasLineage }}
           config:
             path: ./src/argocd/applications/bayn/deployment.yaml
             outputs:
               - name: lineage
-                fromExpression: fromJSON(find(spec.template.spec.containers[0].env, .name ==
-                  'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE').value)
+                fromExpression: fromJSON(find(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE').value)
         - uses: kustomize-set-image
           config:
             path: ./out/argocd/applications/bayn
@@ -1961,59 +1969,90 @@ spec:
                 newName: ${{ vars.imageRepo }}
                 digest: ${{ imageFrom(vars.imageRepo).Digest }}
         - uses: yaml-update
+          if: ${{ outputs.baynDeployment.hasLineage }}
           config:
             path: ./out/argocd/applications/bayn/deployment.yaml
             updates:
-              - key: spec.template.spec.containers.0.env.0.value
-                value: ${{ commitFrom(vars.gitRepo).ID }}
-              - key: spec.template.spec.containers.0.env.5.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynDeployment.lineageIndex) + '.value' }}
+                value: "${{ asJSON({schemaVersion: outputs.baynLineage.lineage.schemaVersion, requestHash: outputs.baynLineage.lineage.requestHash, authoredActivation: outputs.baynLineage.lineage.authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/bayn/deployment.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynDeployment.sourceIndex) + '.value' }}
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynDeployment.digestIndex) + '.value' }}
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
-              - key: spec.template.spec.containers.0.env.13.value
-                value: "${{ asJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
-                  outputs.bayn.lineage.requestHash, authoredActivation:
-                  outputs.bayn.lineage.authoredActivation, activation: {sourceRevision:
-                  commitFrom(vars.gitRepo).ID, imageRepository: vars.imageRepo, imageDigest:
-                  imageFrom(vars.imageRepo).Digest } }) }}"
+        - uses: yaml-parse
+          as: baynController
+          config:
+            path: ./src/argocd/applications/bayn/execution-controller.yaml
+            outputs:
+              - name: hasLineage
+                fromExpression: any(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
+              - name: lineageIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
+              - name: digestIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
+        - uses: yaml-update
+          if: ${{ outputs.baynController.hasLineage }}
+          config:
+            path: ./out/argocd/applications/bayn/execution-controller.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynController.lineageIndex) + '.value' }}
+                value: "${{ asJSON({schemaVersion: outputs.baynLineage.lineage.schemaVersion, requestHash: outputs.baynLineage.lineage.requestHash, authoredActivation: outputs.baynLineage.lineage.authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/bayn/execution-controller.yaml
             updates:
-              - key: spec.template.spec.containers.0.env.0.value
-                value: ${{ commitFrom(vars.gitRepo).ID }}
-              - key: spec.template.spec.containers.0.env.2.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynController.sourceIndex) + '.value' }}
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynController.digestIndex) + '.value' }}
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
-              - key: spec.template.spec.containers.0.env.9.value
-                value: "${{ asJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
-                  outputs.bayn.lineage.requestHash, authoredActivation:
-                  outputs.bayn.lineage.authoredActivation, activation: {sourceRevision:
-                  commitFrom(vars.gitRepo).ID, imageRepository: vars.imageRepo, imageDigest:
-                  imageFrom(vars.imageRepo).Digest } }) }}"
               - key: spec.template.spec.containers.0.image
                 value: ${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-parse
+          as: baynActivation
+          config:
+            path: ./src/argocd/applications/bayn/execution-activation.yaml
+            outputs:
+              - name: hasLineage
+                fromExpression: any(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
+              - name: lineageIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
+              - name: digestIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
+              - name: generationIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_EXECUTION_ACTIVATION_GENERATION'))
+        - uses: yaml-update
+          if: ${{ outputs.baynActivation.hasLineage }}
+          config:
+            path: ./out/argocd/applications/bayn/execution-activation.yaml
+            updates:
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.lineageIndex) + '.value' }}
+                value: "${{ asJSON({schemaVersion: outputs.baynLineage.lineage.schemaVersion, requestHash: outputs.baynLineage.lineage.requestHash, authoredActivation: outputs.baynLineage.lineage.authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/bayn/execution-activation.yaml
             updates:
-              - key: spec.template.spec.containers.0.env.1.value
-                value: ${{ commitFrom(vars.gitRepo).ID }}
-              - key: spec.template.spec.containers.0.env.3.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.sourceIndex) + '.value' }}
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.digestIndex) + '.value' }}
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
-              - key: spec.template.spec.containers.0.env.10.value
-                value: "${{ asJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
-                  outputs.bayn.lineage.requestHash, authoredActivation:
-                  outputs.bayn.lineage.authoredActivation, activation: {sourceRevision:
-                  commitFrom(vars.gitRepo).ID, imageRepository: vars.imageRepo, imageDigest:
-                  imageFrom(vars.imageRepo).Digest } }) }}"
-              - key: spec.template.spec.containers.0.env.0.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.generationIndex) + '.value' }}
                 value: ${{ trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
               - key: spec.template.spec.containers.0.image
                 value: ${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}
               - key: metadata.name
-                value: bayn-execution-activate-${{ commitFrom(vars.gitRepo).ID[0:12] }}
+                value: bayn-execution-activate-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
               - key: metadata.labels.app\.kubernetes\.io/version
-                value: sha-${{ commitFrom(vars.gitRepo).ID[0:12] }}
+                value: sha-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
               - key: spec.template.metadata.labels.app\.kubernetes\.io/version
-                value: sha-${{ commitFrom(vars.gitRepo).ID[0:12] }}
+                value: sha-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
         - uses: git-commit
           as: commit
           config:
@@ -2021,7 +2060,7 @@ spec:
             message: |
               kargo(bayn): promote ${{ ctx.targetFreight.name }}
 
-              Source commit: ${{ commitFrom(vars.gitRepo).ID }}
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
         - uses: git-push
           as: push
           retry:
@@ -2033,7 +2072,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m0s
+            timeout: 30m0s
             errorThreshold: 3
           config:
             apps:
@@ -2209,89 +2248,6 @@ spec:
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
-  name: rune
-  namespace: lab-delivery
-  labels:
-    delivery.proompteng.ai/managed-by: kargo
-spec:
-  vars:
-    - name: gitRepo
-      value: git@github.com:proompteng/lab.git
-    - name: targetBranch
-      value: kargo/rune
-    - name: srcPath
-      value: ./src
-    - name: outPath
-      value: ./out
-    - name: imageRepo
-      value: registry.ide-newton.ts.net/lab/rune
-  requestedFreight:
-    - origin:
-        kind: Warehouse
-        name: rune
-      sources:
-        direct: true
-        autoPromotionOptions:
-          selectionPolicy: NewestFreight
-  promotionTemplate:
-    spec:
-      steps:
-        - uses: git-clone
-          config:
-            repoURL: ${{ vars.gitRepo }}
-            author:
-              name: Kargo
-              email: kargo@proompteng.ai
-            checkout:
-              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
-                path: ${{ vars.srcPath }}
-              - branch: ${{ vars.targetBranch }}
-                create: true
-                path: ${{ vars.outPath }}
-        - uses: git-clear
-          config:
-            path: ${{ vars.outPath }}
-        - uses: copy
-          config:
-            inPath: ${{ vars.srcPath }}
-            outPath: ${{ vars.outPath }}
-        - uses: kustomize-set-image
-          config:
-            path: ./out/argocd/applications/rune
-            images:
-              - image: ${{ vars.imageRepo }}
-                newName: ${{ vars.imageRepo }}
-                digest: ${{ imageFrom(vars.imageRepo).Digest }}
-        - uses: git-commit
-          as: commit
-          config:
-            path: ${{ vars.outPath }}
-            message: |
-              kargo(rune): promote ${{ ctx.targetFreight.name }}
-
-              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
-              Build run: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
-        - uses: git-push
-          as: push
-          config:
-            path: ${{ vars.outPath }}
-            targetBranch: ${{ vars.targetBranch }}
-        - uses: argocd-update
-          as: deploy
-          retry:
-            timeout: 4h0m0s
-            errorThreshold: 3
-          config:
-            apps:
-              - name: rune
-                namespace: argocd
-                sources:
-                  - repoURL: https://github.com/proompteng/lab.git
-                    desiredRevision: ${{ outputs.commit.commit }}
----
-apiVersion: kargo.akuity.io/v1alpha1
-kind: Stage
-metadata:
   name: temporal-worker
   namespace: lab-delivery
   labels:
@@ -2367,6 +2323,183 @@ spec:
           config:
             apps:
               - name: temporal
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: ofz
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/ofz
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/ofz
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: ofz
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/ofz
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/ofz/kustomization.yaml
+            updates:
+              - key: commonAnnotations.delivery\.proompteng\.ai/source-revision
+                value: ${{ quote(imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision']) }}
+              - key: commonAnnotations.delivery\.proompteng\.ai/image-digest
+                value: ${{ quote(imageFrom(vars.imageRepo).Digest) }}
+              - key: commonAnnotations.delivery\.proompteng\.ai/github-run-id
+                value: ${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id']) }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: 'kargo(ofz): promote ${{ ctx.targetFreight.name }}
+
+
+              Source: ${{ imageFrom(vars.imageRepo).Annotations[''org.opencontainers.image.revision''] }}
+
+              Build: ${{ imageFrom(vars.imageRepo).Annotations[''ai.proompteng.github-actions-run-id''] }}
+
+              '
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: ofz
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: opencode
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/opencode
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/opencode
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: opencode
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/opencode
+            images:
+              - image: opencode-main
+                newName: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(opencode): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: opencode
                 namespace: argocd
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git

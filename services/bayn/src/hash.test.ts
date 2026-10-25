@@ -2,8 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import { DateTime, Result } from 'effect'
 
 import {
-  canonicalHashV1,
-  canonicalHashV1OrThrow,
   canonicalHashV1Result,
   canonicalJsonV1Result,
   renderCanonicalJsonFailure,
@@ -28,16 +26,18 @@ describe('canonical hashing', () => {
 
     expect(canonicalJsonV1Result(value)).toEqual(Result.succeed(canonical))
     expect(canonicalHashV1Result(value)).toEqual(Result.succeed(hash))
-    expect(canonicalHashV1(value)).toBe(hash)
-    expect(canonicalHashV1OrThrow(value)).toBe(hash)
-    expect(canonicalHashV1({ b: 2, a: 1 })).toBe(canonicalHashV1({ a: 1, b: 2 }))
+    expect(Result.getOrThrow(canonicalHashV1Result({ b: 2, a: 1 }))).toBe(
+      Result.getOrThrow(canonicalHashV1Result({ a: 1, b: 2 })),
+    )
   })
 
   test('preserves valid Unicode exactly and rejects invalid value or key surrogates as data', () => {
     expect(canonicalJsonV1Result({ emoji: '\ud83d\ude00', composed: 'é', decomposed: 'e\u0301' })).toEqual(
       Result.succeed('{"composed":"é","decomposed":"é","emoji":"😀"}'),
     )
-    expect(canonicalHashV1({ value: 'é' })).not.toBe(canonicalHashV1({ value: 'e\u0301' }))
+    expect(Result.getOrThrow(canonicalHashV1Result({ value: 'é' }))).not.toBe(
+      Result.getOrThrow(canonicalHashV1Result({ value: 'e\u0301' })),
+    )
 
     expect(failureOf(canonicalJsonV1Result({ invalid: '\ud800' }))).toEqual({
       _tag: 'CanonicalJsonFailure',

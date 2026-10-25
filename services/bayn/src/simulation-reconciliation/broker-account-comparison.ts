@@ -1,6 +1,7 @@
 import { HashMap, HashSet, Option, Result, pipe } from 'effect'
 
 import { AccountStatus, DiscrepancyKind, type Position } from '../execution/contracts'
+import { reportedPositionBasis } from '../reconciliation/position-cost-reporting'
 import {
   absolute,
   compareValue,
@@ -8,7 +9,6 @@ import {
   indexUnique,
   instant,
   integer,
-  roundMicrosProduct,
   type DiscrepancyInput,
   type ProjectedPosition,
   type ReconciliationAccountSource,
@@ -21,6 +21,25 @@ export interface PositionComparison {
   readonly discrepancies: readonly DiscrepancyInput[]
 }
 
+const matchesReportedBasis = (input: {
+  readonly priceAtomsDenominator: bigint
+  readonly priceAtomsNumerator: bigint
+  readonly quantity: bigint
+  readonly averagePriceMicros: bigint
+  readonly costMicros: bigint
+}): boolean => {
+  const { priceAtomsDenominator, priceAtomsNumerator, quantity, averagePriceMicros, costMicros } = input
+  const { averageMicros, atomAverageMicros, weightedCost, atomAverageCost, microAverageCost } = reportedPositionBasis(
+    priceAtomsNumerator,
+    priceAtomsDenominator,
+    quantity,
+  )
+  return (
+    (averagePriceMicros === averageMicros && (costMicros === weightedCost || costMicros === microAverageCost)) ||
+    (averagePriceMicros === atomAverageMicros && costMicros === atomAverageCost)
+  )
+}
+
 const comparePosition = (
   snapshot: ReconciliationSnapshot,
   observed: HashMap.HashMap<string, Position>,
@@ -29,44 +48,84 @@ const comparePosition = (
 ): ReconciliationDecision<PositionComparison> => {
   const expectedPosition = Option.getOrUndefined(HashMap.get(projected, symbol))
   const observedPosition = Option.getOrUndefined(HashMap.get(observed, symbol))
-  const expectedQuantityText = expectedPosition?.quantityMicros ?? '0'
-  const observedQuantityText = observedPosition?.quantityMicros ?? '0'
+  const expectedQuantityText = expectedPosition?.quantityAtoms ?? '0'
+  const observedQuantityText = observedPosition?.quantityAtoms ?? '0'
   const expectedCostText = expectedPosition?.costBasisMicros ?? '0'
   return pipe(
     Result.all({
       expectedQuantity: integer('projected-position-quantity', symbol, expectedQuantityText),
       observedQuantity: integer('position-quantity', symbol, observedQuantityText),
       expectedCost: integer('projected-position-cost', symbol, expectedCostText),
+      basisDenominator: integer(
+        'projected-position-quantity',
+        symbol,
+        expectedPosition?.costBasisAnchor?.priceAtomsDenominator ?? expectedQuantityText,
+      ),
+      basisNumerator: integer(
+        'projected-position-cost',
+        symbol,
+        expectedPosition?.costBasisAnchor?.priceAtomsNumerator ?? expectedCostText,
+      ).pipe(
+        Result.map((value) =>
+          expectedPosition?.costBasisAnchor === null || expectedPosition === undefined
+            ? value * 1_000_000_000_000n
+            : value,
+        ),
+      ),
+      averagePrice: integer('position-average-price', symbol, observedPosition?.averageEntryPriceMicros ?? '0'),
       observedCost:
         observedPosition === undefined
           ? Result.succeed(0n)
-          : observedPosition.schemaVersion === 'bayn.position.v2'
-            ? integer('position-cost-basis', symbol, observedPosition.costBasisMicros)
-            : roundMicrosProduct(symbol, observedPosition.quantityMicros, observedPosition.averageEntryPriceMicros),
+          : integer('position-cost-basis', symbol, observedPosition.costBasisMicros),
     }),
-    Result.flatMap(({ expectedCost, expectedQuantity, observedCost, observedQuantity }) =>
-      pipe(
-        Result.all({
-          quantity: compareValue(
-            snapshot.accountId,
-            DiscrepancyKind.Position,
-            `${symbol}:quantity`,
-            expectedQuantity.toString(),
-            observedQuantity.toString(),
-          ),
-          cost: compareValue(
-            snapshot.accountId,
-            DiscrepancyKind.Position,
-            `${symbol}:cost`,
-            expectedCost.toString(),
-            observedCost.toString(),
-          ),
-        }),
-        Result.map(({ cost, quantity }) => ({
-          difference: absolute(expectedQuantity - observedQuantity),
-          discrepancies: [...quantity, ...cost],
-        })),
-      ),
+    Result.flatMap(
+      ({
+        expectedCost,
+        expectedQuantity,
+        observedCost,
+        observedQuantity,
+        averagePrice,
+        basisDenominator,
+        basisNumerator,
+      }) => {
+        // A partial disposal preserves the verified entry average, while posted fills allocate whole micros.
+        // Both broker fields must reproduce from that basis; ledger and cash amounts remain exact.
+        const reportedAverageMatches =
+          expectedQuantity === observedQuantity &&
+          observedQuantity > 0n &&
+          expectedCost > 0n &&
+          basisDenominator > 0n &&
+          basisNumerator > 0n &&
+          matchesReportedBasis({
+            priceAtomsDenominator: basisDenominator,
+            priceAtomsNumerator: basisNumerator,
+            quantity: observedQuantity,
+            averagePriceMicros: averagePrice,
+            costMicros: observedCost,
+          })
+        return pipe(
+          Result.all({
+            quantity: compareValue(
+              snapshot.accountId,
+              DiscrepancyKind.Position,
+              `${symbol}:quantity`,
+              expectedQuantity.toString(),
+              observedQuantity.toString(),
+            ),
+            cost: compareValue(
+              snapshot.accountId,
+              DiscrepancyKind.Position,
+              `${symbol}:cost`,
+              expectedCost.toString(),
+              (reportedAverageMatches ? expectedCost : observedCost).toString(),
+            ),
+          }),
+          Result.map(({ cost, quantity }) => ({
+            difference: absolute(expectedQuantity - observedQuantity),
+            discrepancies: [...quantity, ...cost],
+          })),
+        )
+      },
     ),
   )
 }
@@ -151,7 +210,7 @@ export const compareEquity = (snapshot: ReconciliationSnapshot): ReconciliationD
     Result.flatMap(({ expected, observed }) =>
       pipe(
         // Separate responses are not atomic, even when their receipt timestamps coincide.
-        snapshot.positions.some((position) => position.quantityMicros !== '0')
+        snapshot.positions.some((position) => position.quantityAtoms !== '0')
           ? Result.succeed<readonly DiscrepancyInput[]>([])
           : compareValue(
               snapshot.accountId,

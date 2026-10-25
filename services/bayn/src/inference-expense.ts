@@ -61,6 +61,28 @@ export const InferenceExpenseQuoteSchema = Schema.Struct({
 })
 export type InferenceExpenseQuote = typeof InferenceExpenseQuoteSchema.Type
 
+export interface InferenceExpenseRecord {
+  readonly quote: InferenceExpenseQuote
+  readonly verifiedAt: string | null
+}
+
+export interface InferenceExpenseSnapshot {
+  readonly evidence: Pick<InferenceCostEvidence, 'accountBindingHash' | 'sessionDate' | 'asOf'>
+  readonly quotes: readonly InferenceExpenseRecord[]
+}
+
+export enum InferenceExpenseCoverageIssue {
+  MissingQuote = 'MISSING_FROZEN_QUOTE',
+  UnverifiedLedger = 'UNVERIFIED_LEDGER',
+  UnknownUsage = 'UNKNOWN_USAGE',
+  UnpricedUsage = 'UNPRICED_USAGE',
+}
+
+type InferenceExpenseRequestCoverage = Pick<
+  InferenceExpenseQuote['line'],
+  'requestId' | 'model' | 'purpose' | 'usageStatus' | 'receiptHash' | 'resolutionHash'
+> & { readonly issues: readonly InferenceExpenseCoverageIssue[] }
+
 export const makeInferenceExpenseQuote = (
   source: InferenceExpenseSource,
   rateCard: {
@@ -140,6 +162,20 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
       )
         return yield* Result.fail(
           new InferenceCostError({ message: 'Unknown inference usage cannot carry a priced expense' }),
+        )
+    } else if (line.usageStatus === InferenceUsageStatus.NotDispatched) {
+      if (
+        line.receiptHash === null ||
+        line.inputTokens !== '0' ||
+        line.outputTokens !== '0' ||
+        line.estimatedCostPicoUsd !== '0' ||
+        line.rateHash !== null ||
+        quote.rate !== null
+      )
+        return yield* Result.fail(
+          new InferenceCostError({
+            message: 'Undispatched inference expense requires a receipt, zero usage and cost, and no tariff',
+          }),
         )
     } else {
       if (line.receiptHash === null || line.inputTokens === null || line.outputTokens === null)
@@ -229,21 +265,44 @@ export const verifyInferenceExpenseCoverage = (
     let missingQuoteCount = 0
     let unverifiedRequestCount = 0
     let gapRequestCount = 0
+    const requestsWithCoverageIssues: InferenceExpenseRequestCoverage[] = []
     for (const line of original.requests) {
+      const issues: InferenceExpenseCoverageIssue[] = []
       const matches = (byRequest.get(line.requestId) ?? []).filter(
         (row) => row.quote.line.receiptHash === line.receiptHash,
       )
       if (matches.length === 0) {
         missingQuoteCount++
-        continue
+        issues.push(InferenceExpenseCoverageIssue.MissingQuote)
+      } else {
+        const current = matches[0]
+        if (matches.length !== 1 || current === undefined)
+          return yield* Result.fail(
+            new InferenceCostError({ message: 'Inference expense request has conflicting frozen coverage' }),
+          )
+        if (current.verifiedAt === null) {
+          unverifiedRequestCount++
+          issues.push(InferenceExpenseCoverageIssue.UnverifiedLedger)
+        }
+        if (current.quote.line.estimatedCostPicoUsd === null) {
+          gapRequestCount++
+          issues.push(
+            current.quote.line.usageStatus === InferenceUsageStatus.Unknown
+              ? InferenceExpenseCoverageIssue.UnknownUsage
+              : InferenceExpenseCoverageIssue.UnpricedUsage,
+          )
+        }
       }
-      const current = matches[0]
-      if (matches.length !== 1 || current === undefined)
-        return yield* Result.fail(
-          new InferenceCostError({ message: 'Inference expense request has conflicting frozen coverage' }),
-        )
-      if (current.verifiedAt === null) unverifiedRequestCount++
-      if (current.quote.line.estimatedCostPicoUsd === null) gapRequestCount++
+      if (issues.length > 0)
+        requestsWithCoverageIssues.push({
+          requestId: line.requestId,
+          model: line.model,
+          purpose: line.purpose,
+          usageStatus: line.usageStatus,
+          receiptHash: line.receiptHash,
+          resolutionHash: line.resolutionHash,
+          issues,
+        })
     }
     return {
       sourceAsOf: evidence.asOf,
@@ -251,6 +310,7 @@ export const verifyInferenceExpenseCoverage = (
       missingQuoteCount,
       unverifiedRequestCount,
       gapRequestCount,
+      requestsWithCoverageIssues,
       completeMeteredCoverage: missingQuoteCount === 0 && unverifiedRequestCount === 0 && gapRequestCount === 0,
     }
   })
@@ -261,6 +321,54 @@ export const inferenceExpenseScope = (accountBindingHash: string, sessionDate: s
 export interface InferenceExpensePlan {
   readonly accounts: readonly LedgerAccountRecord[]
   readonly transfers: readonly LedgerTransferRecord[]
+}
+
+export const inferenceExpensePosting = (
+  scope: string,
+  transferIdentity: string,
+  evidenceHash: string,
+  amount: bigint,
+): InferenceExpensePlan => {
+  const account = (code: number): LedgerAccountRecord => ({
+    id: stableU128(`${scope}:account:${code}`),
+    debits_pending: 0n,
+    debits_posted: 0n,
+    credits_pending: 0n,
+    credits_posted: 0n,
+    user_data_128: stableU128(scope),
+    user_data_64: stableU64(scope),
+    user_data_32: inferenceExpenseSchemaVersion,
+    reserved: 0,
+    ledger: inferenceExpenseLedger,
+    code,
+    flags: 1 << 3,
+    timestamp: 0n,
+  })
+  const expense = account(510)
+  const clearing = account(230)
+  return {
+    accounts: [expense, clearing],
+    transfers:
+      amount === 0n
+        ? []
+        : [
+            {
+              id: stableU128(transferIdentity),
+              debit_account_id: expense.id,
+              credit_account_id: clearing.id,
+              amount,
+              pending_id: 0n,
+              user_data_128: stableU128(evidenceHash),
+              user_data_64: stableU64(scope),
+              user_data_32: inferenceExpenseSchemaVersion,
+              timeout: 0,
+              ledger: inferenceExpenseLedger,
+              code: 1,
+              flags: 0,
+              timestamp: 0n,
+            },
+          ],
+  }
 }
 
 export const buildInferenceExpensePlan = (
@@ -282,41 +390,15 @@ export const buildInferenceExpensePlan = (
         )
       pricedRequests.set(requestKey, quote.quoteHash)
       const scope = inferenceExpenseScope(quote.accountBindingHash, quote.sessionDate)
-      const account = (code: number): LedgerAccountRecord => ({
-        id: stableU128(`${scope}:account:${code}`),
-        debits_pending: 0n,
-        debits_posted: 0n,
-        credits_pending: 0n,
-        credits_posted: 0n,
-        user_data_128: stableU128(scope),
-        user_data_64: stableU64(scope),
-        user_data_32: inferenceExpenseSchemaVersion,
-        reserved: 0,
-        ledger: inferenceExpenseLedger,
-        code,
-        flags: 1 << 3,
-        timestamp: 0n,
-      })
-      const expense = account(510)
-      const clearing = account(230)
-      accounts.set(expense.id, expense)
-      accounts.set(clearing.id, clearing)
-      if (amount === '0') continue
-      const transfer: LedgerTransferRecord = {
-        id: stableU128(`bayn.inference-expense.transfer.v1:${quote.accountBindingHash}:${quote.line.requestId}`),
-        debit_account_id: expense.id,
-        credit_account_id: clearing.id,
-        amount: BigInt(amount),
-        pending_id: 0n,
-        user_data_128: stableU128(quote.quoteHash),
-        user_data_64: stableU64(scope),
-        user_data_32: inferenceExpenseSchemaVersion,
-        timeout: 0,
-        ledger: inferenceExpenseLedger,
-        code: 1,
-        flags: 0,
-        timestamp: 0n,
-      }
+      const posting = inferenceExpensePosting(
+        scope,
+        `bayn.inference-expense.transfer.v1:${quote.accountBindingHash}:${quote.line.requestId}`,
+        quote.quoteHash,
+        BigInt(amount),
+      )
+      for (const account of posting.accounts) accounts.set(account.id, account)
+      const transfer = posting.transfers[0]
+      if (transfer === undefined) continue
       const previous = transfers.get(transfer.id)
       if (previous !== undefined && !transferMetadataMatches(previous, transfer))
         return yield* Result.fail(

@@ -1,3 +1,4 @@
+import { canonicalHashV1Result } from '../hash'
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
@@ -34,12 +35,12 @@ import {
   type IntentPlan,
   type PreparedCommit,
   type StoredIntent,
-} from './intents'
+} from './intents/domain'
 
 const hash = (digit: string): string => digit.repeat(64)
 
 const input: IntentPlan = {
-  schemaVersion: 'bayn.paper-intent-plan.v1',
+  schemaVersion: 'bayn.intent-plan.v3',
   strategyName: 'risk-balanced-trend',
   cycleId: hash('1'),
   decisionHash: hash('2'),
@@ -47,10 +48,11 @@ const input: IntentPlan = {
   accountId: 'paper-account-1',
   symbol: 'NVDA',
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   notionalLimitMicros: '200000000',
+  limitPriceMicros: '200000000',
   createdAt: '2026-07-22T10:00:00.000Z',
 }
 
@@ -67,28 +69,29 @@ const riskState = (generationHash = hash('a'), maximum = Authority.Execution) =>
 })
 
 const paperIntent: Intent = {
-  schemaVersion: 'bayn.paper-intent.v3',
+  schemaVersion: 'bayn.execution-intent.v5',
   authorityGenerationHash: hash('a'),
-  intentId: '6f3b7a528607ed8804f55c5fe23a0c47a4d6f72abf2bb9a41a69d93368d9c8ac',
+  intentId: 'df59c104e41085f3213adc39de60c4a66bd5fb602e05a28e951e4bb20f2875b8',
   strategyName: input.strategyName,
   cycleId: input.cycleId,
   decisionHash: input.decisionHash,
   policyHash: input.policyHash,
   accountId: input.accountId,
-  clientOrderId: 'b1_bzt6UoYH7YgE9Vxf4joMR6TW9yq_K7mkGmnZM2jZyKw',
+  clientOrderId: 'b1_31nBBOQQhfMhOtw53mDEpmvV-2AuBaKOlR5Lsg8odbg',
   symbol: input.symbol,
   side: input.side,
   orderType: input.orderType,
   timeInForce: input.timeInForce,
-  quantityMicros: input.quantityMicros,
+  quantityAtoms: input.quantityAtoms,
   notionalLimitMicros: input.notionalLimitMicros,
+  limitPriceMicros: input.limitPriceMicros,
   state: IntentState.Planned,
   createdAt: input.createdAt,
 }
 
 const approvedDecision: RiskDecision = {
   schemaVersion: 'bayn.paper-risk-decision.v1',
-  decisionId: 'dfb3ec0a5fda18eb05a9869870039f694c18d3639907963ef26e5a9cafcd50cd',
+  decisionId: '49382df77419307b1bd14aaef003ba8e32453a5e0b92b064f5dacd10cc949ddd',
   inputHash: hash('d'),
   intentId: paperIntent.intentId,
   policyHash: paperIntent.policyHash,
@@ -147,9 +150,11 @@ const storedRow = {
   side: paperIntent.side,
   order_type: paperIntent.orderType,
   time_in_force: paperIntent.timeInForce,
-  quantity_micros: paperIntent.quantityMicros,
+  quantity_atoms: paperIntent.quantityAtoms,
   notional_limit_micros: paperIntent.notionalLimitMicros,
+  limit_price_micros: paperIntent.limitPriceMicros,
   replan_generation_hash: null,
+  protection: null,
   state: IntentState.Approved,
   terminal_outcome: null,
   state_version: 2,
@@ -174,7 +179,7 @@ describe('deterministic execution intents', () => {
     expect(first.clientOrderId).toHaveLength(46)
     expect(first.state).toBe(IntentState.Planned)
     expect(first.riskDecisionId).toBeUndefined()
-    expect(first.schemaVersion).toBe('bayn.paper-intent.v2')
+    expect(first.schemaVersion).toBe('bayn.reference-intent.v4')
   })
 
   test('binds account, strategy, cycle, decision, and target material', async () => {
@@ -186,10 +191,9 @@ describe('deterministic execution intents', () => {
       { ...input, decisionHash: hash('5') },
       { ...input, symbol: 'AMD' },
       { ...input, side: OrderSide.Sell },
-      { ...input, orderType: OrderType.Limit },
-      { ...input, timeInForce: TimeInForce.GoodUntilCanceled },
-      { ...input, quantityMicros: '2000000' },
-      { ...input, notionalLimitMicros: '300000000' },
+      { ...input, limitPriceMicros: '201000000', notionalLimitMicros: '201000000' },
+      { ...input, quantityAtoms: '2000000000', notionalLimitMicros: '400000000' },
+      { ...input, notionalLimitMicros: '300000000', limitPriceMicros: '300000000' },
     ]
     const planned = await Effect.runPromise(Effect.forEach(variants, plan))
 
@@ -215,7 +219,7 @@ describe('deterministic execution intents', () => {
 
   test('rejects malformed plans before deriving an identity', async () => {
     const result = await Effect.runPromiseExit(
-      plan({ ...input, cycleId: 'not-a-hash', quantityMicros: '0', extra: true }),
+      plan({ ...input, cycleId: 'not-a-hash', quantityAtoms: '0', extra: true }),
     )
 
     expect(Exit.isFailure(result)).toBe(true)
@@ -234,7 +238,7 @@ describe('deterministic execution intents', () => {
     expect(first).toEqual(replay)
     expect(derivedId).toBe(first.intentId)
     expect(first).toMatchObject({
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: 'bayn.execution-intent.v5',
       authorityGenerationHash: hash('a'),
       state: IntentState.Planned,
     })
@@ -243,7 +247,7 @@ describe('deterministic execution intents', () => {
     expect(rotated.clientOrderId).not.toBe(first.clientOrderId)
   })
 
-  test('derives the v3 identity without authority state and rejects malformed material', async () => {
+  test('derives the v4 identity without authority state and rejects malformed material', async () => {
     const [baseline, changedTime, changedGeneration] = await Effect.runPromise(
       Effect.all([
         executionIntentIdForPlan(input, hash('a')),
@@ -287,12 +291,57 @@ describe('pure intent commit decisions', () => {
     expect(Result.isSuccess(result)).toBe(true)
     if (Result.isSuccess(result)) {
       expect(result.success).toEqual({ _tag: 'PreparedCommit', intent: paperIntent, decision: approvedDecision })
-      expect(result.success.intent.intentId).toBe('6f3b7a528607ed8804f55c5fe23a0c47a4d6f72abf2bb9a41a69d93368d9c8ac')
-      expect(result.success.intent.clientOrderId).toBe('b1_bzt6UoYH7YgE9Vxf4joMR6TW9yq_K7mkGmnZM2jZyKw')
+      expect(result.success.intent.intentId).toBe('df59c104e41085f3213adc39de60c4a66bd5fb602e05a28e951e4bb20f2875b8')
+      expect(result.success.intent.clientOrderId).toBe('b1_31nBBOQQhfMhOtw53mDEpmvV-2AuBaKOlR5Lsg8odbg')
       expect(result.success.decision.decisionId).toBe(
-        'dfb3ec0a5fda18eb05a9869870039f694c18d3639907963ef26e5a9cafcd50cd',
+        '49382df77419307b1bd14aaef003ba8e32453a5e0b92b064f5dacd10cc949ddd',
       )
     }
+  })
+
+  test('native strategy prices survive construction, immutable identity and commit verification', async () => {
+    const intent = await Effect.runPromise(
+      planExecutionIntent(
+        {
+          ...input,
+          protection: {
+            _tag: 'Bracket',
+            stopPriceMicros: '198000000',
+            stopLimitPriceMicros: '197800000',
+            profitLimitPriceMicros: '203000000',
+          },
+        },
+        riskState(),
+      ),
+    )
+    const { decisionId: _decisionId, ...material } = { ...approvedDecision, intentId: intent.intentId }
+    const decision = { ...material, decisionId: Result.getOrThrow(canonicalHashV1Result(material)) }
+    const prepared = validateCommitIdentity(intent, decision)
+    expect(Result.isSuccess(prepared)).toBe(true)
+    expect(
+      Result.isFailure(
+        validateCommitIdentity(
+          { ...intent, protection: { ...intent.protection, stopPriceMicros: '197990000' } },
+          decision,
+        ),
+      ),
+    ).toBe(true)
+    if (Result.isFailure(prepared)) throw new Error('Native commit must preserve the strategy terms')
+    const changed: StoredIntent = {
+      intent: {
+        ...intent,
+        protection: {
+          _tag: 'Bracket',
+          stopPriceMicros: '197990000',
+          stopLimitPriceMicros: '197800000',
+          profitLimitPriceMicros: '203000000',
+        },
+        state: IntentState.Planned,
+      },
+      stateVersion: 1,
+      updatedAt: intent.createdAt,
+    }
+    expect(Result.isFailure(classifyExistingCommit([changed], prepared.success))).toBe(true)
   })
 
   test('rejects malformed intent input through the exact decode failure without defecting', () => {
@@ -308,13 +357,13 @@ describe('pure intent commit decisions', () => {
     }
   })
 
-  test('totalizes the exported reference identity helper without changing its golden ID', () => {
+  test('totalizes the exported reference identity helper with its explicit-price golden ID', () => {
     const golden = intentIdForPlan(input)
     const invalid = intentIdForPlan({ ...input, strategyName: 'invalid\ud800strategy' })
 
     expect(golden).toMatchObject({
       _tag: 'Success',
-      success: 'bbfe217b000266231ce1c29b8e3d447ad0e60903d287ee3e40a33aa964394fac',
+      success: 'e38cf5c95605dd243d7ec5989a12841ee84cc55e32b2b058c701460671b2dd49',
     })
     expect(Result.isFailure(invalid)).toBe(true)
     if (Result.isFailure(invalid)) {

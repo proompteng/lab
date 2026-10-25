@@ -1,6 +1,6 @@
 # 56. Torghut Capability Leases and Profit Clocks (2026-03-20)
 
-Status: Ready for merge (discover architecture lane)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Executive summary
 

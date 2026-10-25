@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 fixture_mode="${1:-control}"
-case "$fixture_mode" in control|identity) ;; *) printf 'Expected control or identity fixture\n' >&2; exit 2 ;; esac
+case "$fixture_mode" in control|bootstrap|archive|identity|runtime|editor|failover) ;; *) printf 'Expected control, bootstrap, archive, identity, runtime, editor or failover fixture\n' >&2; exit 2 ;; esac
 fixture_dir="$(mktemp -d)"
 fixture_name="ofz-control-$(basename "$fixture_dir" | tr '[:upper:]' '[:lower:]')"
 fixture_database="$fixture_name-db"
+fixture_standby="$fixture_name-standby"
 fixture_network="$fixture_name-net"
 fixture_tunnel_pid=''
 docker_args=()
@@ -15,7 +17,7 @@ fi
 fixture_docker() { docker "${docker_args[@]}" "$@"; }
 cleanup() {
   if [[ -n "$fixture_tunnel_pid" ]]; then kill "$fixture_tunnel_pid" 2>/dev/null || true; fi
-  fixture_docker rm -f "$fixture_name" "$fixture_database" >/dev/null 2>&1 || true
+  fixture_docker rm -f "$fixture_name" "$fixture_database" "$fixture_standby" >/dev/null 2>&1 || true
   fixture_docker network rm "$fixture_network" >/dev/null 2>&1 || true
   rm -rf "$fixture_dir"
 }
@@ -24,16 +26,22 @@ openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 -subj '/CN=Ofz disposa
   -keyout "$fixture_dir/ca.key" -out "$fixture_dir/ca.crt" >/dev/null 2>&1
 openssl req -new -newkey rsa:2048 -nodes -subj '/CN=localhost' \
   -keyout "$fixture_dir/server.key" -out "$fixture_dir/server.csr" >/dev/null 2>&1
-printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' > "$fixture_dir/server.ext"
+printf 'subjectAltName=DNS:localhost,DNS:%s,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' "$fixture_database" > "$fixture_dir/server.ext"
 openssl x509 -req -in "$fixture_dir/server.csr" -CA "$fixture_dir/ca.crt" -CAkey "$fixture_dir/ca.key" \
   -CAcreateserial -days 1 -sha256 -extfile "$fixture_dir/server.ext" -out "$fixture_dir/server.crt" >/dev/null 2>&1
 printf 'ofz-policy-fixture' > "$fixture_dir/native.key"
 fixture_docker network create "$fixture_network" >/dev/null
+if [[ "$fixture_mode" == failover ]]; then
+  # Docker permits an explicit service IP only with an explicitly configured subnet.
+  fixture_subnet="$(fixture_docker network inspect --format '{{(index .IPAM.Config 0).Subnet}}' "$fixture_network")"
+  fixture_docker network rm "$fixture_network" >/dev/null
+  fixture_docker network create --subnet "$fixture_subnet" "$fixture_network" >/dev/null
+fi
 postgres_image=ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
 spicedb_image=ghcr.io/authzed/spicedb@sha256:aa96009a0477f8a759149823407d47ad16d1a74390bae3102b3b0b7143502764
 # shellcheck disable=SC2016
 fixture_docker run --detach --name "$fixture_database" --network "$fixture_network" --publish 127.0.0.1::5432 \
-  --tmpfs /tmp:rw,size=268435456,mode=1777 --memory 512m --entrypoint bash "$postgres_image" -ec \
+  --tmpfs /tmp:rw,size=268435456,mode=1777 --memory 1g --entrypoint bash "$postgres_image" -ec \
   'for attempt in $(seq 1 300); do if test -f /tmp/fixture-ready; then break; fi; sleep 0.1; done; test -f /tmp/fixture-ready; initdb -D /tmp/ofz-data --auth=trust -U postgres >/dev/null; printf "local all all trust\nhostnossl all all 0.0.0.0/0 reject\nhostssl all postgres 0.0.0.0/0 trust\nhostssl all all 0.0.0.0/0 scram-sha-256\n" > /tmp/ofz-data/pg_hba.conf; exec postgres -D /tmp/ofz-data -c track_commit_timestamp=on -c listen_addresses="*" -c ssl=on -c ssl_cert_file=/tmp/server.crt -c ssl_key_file=/tmp/server.key' >/dev/null
 fixture_docker exec --user 0 -i "$fixture_database" sh -ec 'cat > /tmp/server.crt' < "$fixture_dir/server.crt"
 fixture_docker exec --user 0 -i "$fixture_database" sh -ec 'cat > /tmp/server.key' < "$fixture_dir/server.key"
@@ -53,6 +61,11 @@ fixture_docker run --detach --name "$fixture_name" --network "$fixture_network" 
   --http-enabled=true --telemetry-endpoint='' --skip-release-check=true --log-level=warn >/dev/null
 fixture_port="$(fixture_docker port "$fixture_name" 8443/tcp | sed 's/.*://')"
 fixture_pg_port="$(fixture_docker port "$fixture_database" 5432/tcp | sed 's/.*://')"
+fixture_pg_target="127.0.0.1:$fixture_pg_port"
+if [[ "$fixture_mode" == failover ]]; then
+  fixture_primary_ip="$(fixture_docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$fixture_database")"
+  fixture_pg_target="$fixture_primary_ip:5432"
+fi
 if [[ -n "${OFZ_FIXTURE_SSH:-}" ]]; then
   read -r local_pg local_native < <(python3 - <<'PY'
 import socket
@@ -62,13 +75,16 @@ with socket.socket() as a, socket.socket() as b:
 PY
   )
   ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes \
-    -L "127.0.0.1:$local_pg:127.0.0.1:$fixture_pg_port" \
+    -L "127.0.0.1:$local_pg:$fixture_pg_target" \
     -L "127.0.0.1:$local_native:127.0.0.1:$fixture_port" "$OFZ_FIXTURE_SSH" &
   fixture_tunnel_pid=$!
   fixture_pg_port="$local_pg"
   fixture_port="$local_native"
 fi
 export OFZ_TEST_DSN="host=localhost port=$fixture_pg_port dbname=ofz_control user=postgres sslmode=require"
+if [[ "$fixture_mode" == failover && -z "${OFZ_FIXTURE_SSH:-}" ]]; then
+  export OFZ_TEST_DSN="host=localhost hostaddr=$fixture_primary_ip port=5432 dbname=ofz_control user=postgres sslmode=require"
+fi
 export OFZ_TEST_CA_FILE="$fixture_dir/ca.crt"
 export OFZ_TEST_NATIVE_KEY_FILE="$fixture_dir/native.key"
 export OFZ_TEST_NATIVE_ENDPOINT="http://127.0.0.1:$fixture_port"
@@ -76,9 +92,56 @@ for attempt in $(seq 1 60); do
   if curl --silent --fail --max-time 1 "$OFZ_TEST_NATIVE_ENDPOINT/healthz" >/dev/null; then
     if [[ "$fixture_mode" == control ]]; then
       cargo test --locked --lib control_integration -- --ignored --nocapture
-    else
-      : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.7.3 distribution}"
+    elif [[ "$fixture_mode" == bootstrap ]]; then
       cargo build --locked
+      OFZ_BOOTSTRAP_CLI_FIXTURE="$PWD/target/debug/ofz" \
+        cargo test --locked --lib bootstrap::tests::real_bootstrap_activation_and_interrupted_retries \
+        -- --ignored --exact --nocapture 2>&1 | tee "$fixture_dir/bootstrap-test.log"
+      grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$fixture_dir/bootstrap-test.log"
+    elif [[ "$fixture_mode" == archive ]]; then
+      cargo build --locked
+      OFZ_BOOTSTRAP_CLI_FIXTURE="$PWD/target/debug/ofz" \
+        uv run --locked --project audit-export python audit-export/test_archive.py 2>&1 | tee "$fixture_dir/archive-test.log"
+      grep -Fq 'PASS: versioned compliance archive;' "$fixture_dir/archive-test.log"
+    elif [[ "$fixture_mode" == runtime || "$fixture_mode" == editor || "$fixture_mode" == failover ]]; then
+      if [[ "$fixture_mode" == failover ]]; then
+        cargo test --locked --lib control_integration -- --ignored --nocapture
+      fi
+      fixture_docker exec -i "$fixture_database" psql -U postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+CREATE ROLE tengri_migrator LOGIN PASSWORD 'runtime-fixture';
+CREATE ROLE tengri_bff LOGIN PASSWORD 'runtime-fixture';
+CREATE ROLE tengri_controller LOGIN PASSWORD 'runtime-fixture';
+CREATE ROLE tengri_supervisor LOGIN PASSWORD 'runtime-fixture';
+CREATE DATABASE tengri_control OWNER tengri_migrator;
+SQL
+      printf 'runtime-fixture' > "$fixture_dir/runtime.password"
+      cargo build --locked
+      OFZ_DATABASE_DSN="${OFZ_TEST_DSN/ofz_control user=postgres/tengri_control user=tengri_migrator}" \
+        OFZ_DATABASE_PASSWORD_FILE="$fixture_dir/runtime.password" OFZ_DATABASE_CA_FILE="$fixture_dir/ca.crt" \
+        target/debug/ofz migrate-runtime
+      export TENGRI_DATABASE_DSN="${OFZ_TEST_DSN/ofz_control user=postgres/tengri_control user=tengri_controller}"
+      export TENGRI_DATABASE_PASSWORD_FILE="$fixture_dir/runtime.password"
+      export TENGRI_DATABASE_CA_FILE="$fixture_dir/ca.crt"
+      export TENGRI_RUNTIME_STATE_FIXTURE=1
+      if [[ "$fixture_mode" == runtime ]]; then
+        cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri "${2:-runtime_shared_state}" -- --ignored --nocapture --test-threads=1
+      elif [[ "$fixture_mode" == editor ]]; then
+        export TENGRI_BFF_DATABASE_DSN="postgres://tengri_bff@localhost:$fixture_pg_port/tengri_control"
+        bash ../nanoagent/test-vscode-browser.sh "${@:2}"
+      elif [[ "$fixture_mode" == failover ]]; then
+        # shellcheck source=tests/database-failover.sh
+        source tests/database-failover.sh
+        export TENGRI_DATABASE_FAILOVER_FIXTURE=1
+        prepare_database_failover "$fixture_database" "$fixture_standby" "$fixture_network" "$fixture_primary_ip" "$postgres_image" "$fixture_dir" "${docker_args[@]}"
+        cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri \
+          runtime_state_test::physical_database_promotion_preserves_authority_and_consumed_capabilities \
+          -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$fixture_dir/promotion-test.log"
+        grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$fixture_dir/promotion-test.log"
+      fi
+    else
+      : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.7.4 distribution}"
+      cargo build --locked
+      cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri --no-run
       cd ../../apps/landing
       OFZ_IDENTITY_FIXTURE=1 bun test src/lib/tengri/identity.e2e.test.ts
     fi

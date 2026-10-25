@@ -37,6 +37,9 @@ spec:
       rootLogger.level = INFO
       rootLogger.appenderRef.console.ref = ConsoleAppender
       rootLogger.appenderRef.rolling.ref = RollingFileAppender
+      rootLogger.appenderRef.glitchtip.ref = GlitchTip
+      appender.glitchtip.type = DorvudGlitchTip
+      appender.glitchtip.name = GlitchTip
 
       # Uncomment this if you want to _only_ change Flink's logging
       #logger.flink.name = org.apache.flink
@@ -164,6 +167,13 @@ spec:
               value: sha-a5091e63aaef285f750ea2e35d8f5f70eb91a1d4
             - name: TORGHUT_TA_COMMIT
               value: a5091e63aaef285f750ea2e35d8f5f70eb91a1d4
+            - name: DORVUD_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: dorvud-glitchtip
+                  key: DORVUD_GLITCHTIP_DSN
+            - name: DORVUD_ERROR_SERVICE
+              value: torghut-ta
           ports:
             - containerPort: 9249
               name: metrics

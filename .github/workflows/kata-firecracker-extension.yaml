@@ -31,7 +31,7 @@ permissions:
 env:
   IMAGE: registry.ide-newton.ts.net/lab/talos-kata-runtimes
   KATA_SOURCE_COMMIT: 894e1956bb340752b30f7ad49879972234a0098c
-  VERSION: 4.1.0-talos-v1.13.9-r5
+  VERSION: 4.1.0-talos-v1.13.9-r6
 
 jobs:
   changes:
@@ -157,9 +157,7 @@ jobs:
             "devices/galactic/extensions/kata/artifacts/${{ matrix.architecture }}"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: network=host
+        uses: ./.github/actions/setup-buildkit
 
       - name: Build native extension image
         uses: docker/build-push-action@v6
@@ -168,6 +166,7 @@ jobs:
           platforms: linux/${{ matrix.architecture }}
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           tags: ${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.architecture }}
+          labels: org.opencontainers.image.version=${{ env.VERSION }}
           cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
           provenance: mode=max
           sbom: true
@@ -188,9 +187,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: network=host
+        uses: ./.github/actions/setup-buildkit
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.10.0
@@ -243,8 +240,7 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
-      # Installer images contain a large artifacts layer. Keep registry traffic bounded while
-      # the Docker client uploads that layer in resumable chunks.
+      # Installer images contain a large artifacts layer. Keep registry imports serial.
       max-parallel: 1
       matrix:
         include:
@@ -263,6 +259,8 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.10.0
+
+      - uses: ./.github/actions/setup-buildkit
 
       - name: Build installer
         id: build
@@ -284,24 +282,15 @@ jobs:
           SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/kata-firecracker-extension.yaml@refs/heads/main
         run: |
           set -euo pipefail
-          tag="installer-v1.13.9-kata-4.1.0-r5-${{ matrix.profile }}"
+          tag="installer-v1.13.9-kata-4.1.0-r6-${{ matrix.profile }}"
           reference="${IMAGE}:${tag}"
-          source_reference="$(
-            tar -xOf "${INSTALLER_TAR}" manifest.json |
-              jq -er '
-                if length == 1 and (.[0].RepoTags | length) == 1 then
-                  .[0].RepoTags[0]
-                else
-                  error("installer archive must contain exactly one tagged image")
-                end
-              '
-          )"
-          docker image load --input "${INSTALLER_TAR}"
-          docker image tag "${source_reference}" "${reference}"
+          tar -xOf "${INSTALLER_TAR}" manifest.json | jq -e \
+            'length == 1 and (.[0].RepoTags | length) == 1' >/dev/null
+          regctl registry set "${IMAGE%%/*}" --tls enabled --blob-chunk 4194304 --blob-max 4194304 --req-concurrent 1
           push_log="$(mktemp)"
           trap 'rm -f "${push_log}"' EXIT
           for attempt in 1 2 3 4; do
-            if docker image push "${reference}" 2>&1 | tee "${push_log}"; then
+            if regctl image import "${reference}" "${INSTALLER_TAR}" 2>&1 | tee "${push_log}"; then
               break
             fi
             if ! grep -Eiq \

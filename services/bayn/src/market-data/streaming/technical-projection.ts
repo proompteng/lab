@@ -107,6 +107,7 @@ export const incorporateTechnicalRecord = (
   const state: StreamingProjection = {
     ...previous,
     sequence: previous.sequence + 1,
+    sources: new Map(previous.sources).set(universe.universeId, universe),
     featureArrival: null,
     technicalFeatureArrival: null,
     technicalTopic: record.topic,

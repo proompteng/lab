@@ -6,8 +6,22 @@ import type { ForwardPerformanceEvidenceInput, ForwardPerformanceReceipt } from 
 import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { measurePositionEpisodes, type PositionEpisodeEvidence } from './position-episodes'
 
+export enum ForwardPerformanceScopeKind {
+  Account = 'ACCOUNT',
+  AuthorityGeneration = 'AUTHORITY_GENERATION',
+}
+
+export type ForwardPerformanceReportScope =
+  | { readonly kind: ForwardPerformanceScopeKind.Account }
+  | {
+      readonly kind: ForwardPerformanceScopeKind.AuthorityGeneration
+      readonly authorityGenerationHash: string
+    }
+
 export interface ForwardPerformanceReport {
-  readonly schemaVersion: 'bayn.forward-performance-report.v2'
+  readonly schemaVersion: 'bayn.forward-performance-report.v5'
+  /** Requested query scope; this does not supply missing financial source or strategy evidence. */
+  readonly scope: ForwardPerformanceReportScope
   readonly receipt: ForwardPerformanceReceipt
   readonly positionEpisodes: PositionEpisodeEvidence
   readonly inferenceExpenses: readonly ForwardInferenceExpenseSession[]
@@ -18,6 +32,7 @@ export interface ForwardPerformanceReport {
 export const makeForwardPerformanceReport = (
   input: ForwardPerformanceEvidenceInput,
   inferenceExpenses: readonly ForwardInferenceExpenseSession[],
+  authorityGenerationHash?: string,
 ): Result.Result<ForwardPerformanceReport, ForwardPerformanceDomainFailure> =>
   Result.gen(function* () {
     const receipt = yield* makeForwardPerformanceReceipt(input)
@@ -30,8 +45,13 @@ export const makeForwardPerformanceReport = (
         }),
       ),
     )
+    const scope: ForwardPerformanceReportScope =
+      authorityGenerationHash === undefined
+        ? { kind: ForwardPerformanceScopeKind.Account }
+        : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash }
     const material = {
-      schemaVersion: 'bayn.forward-performance-report.v2' as const,
+      schemaVersion: 'bayn.forward-performance-report.v5' as const,
+      scope,
       receipt,
       positionEpisodes,
       inferenceExpenses,

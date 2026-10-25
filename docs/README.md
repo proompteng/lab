@@ -25,6 +25,7 @@ Start here when deciding which documentation to trust.
 
 ## Active Architecture Proposals
 
+- Bayn Jev instruction research, native comparison and qualification: [GEPA and native Jev evaluation](bayn/jev-optimization.md)
 - Bayn raw Kafka streams and Dorvud/Flink features: [streaming market data design](bayn/streaming-market-data-design.md)
 - Tengri RAM-releasing creation and resume: [KVM and TAP lifecycle design](tengri/kvm-tap-design.md)
 - Tengri cross-service authorization: [Ofz enterprise implementation plan](tengri/ofz-enterprise-authorization-plan.md)

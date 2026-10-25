@@ -1,7 +1,56 @@
 use super::*;
 use crate::guest::rpc::{RpcClient, proto};
+use crate::metrics::{Latency, Metrics};
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+
+struct TerminalTimings<'a> {
+    metrics: &'a Metrics,
+    attach: Option<Instant>,
+    first_output: Option<Instant>,
+    heartbeat: Option<Instant>,
+}
+
+impl<'a> TerminalTimings<'a> {
+    fn new(metrics: &'a Metrics, now: Instant) -> Self {
+        Self {
+            metrics,
+            attach: Some(now),
+            first_output: Some(now),
+            heartbeat: None,
+        }
+    }
+
+    fn input(&mut self, input: &proto::TerminalInput, now: Instant) {
+        if matches!(input.action, Some(proto::terminal_input::Action::Ping(_))) {
+            self.heartbeat.get_or_insert(now);
+        }
+    }
+
+    fn output(&mut self, output: &proto::TerminalOutput, now: Instant) {
+        use proto::terminal_output::Event;
+        let observation = match &output.event {
+            Some(Event::Ready(_)) => self
+                .attach
+                .take()
+                .map(|start| (Latency::TerminalAttach, start)),
+            Some(Event::Output(data)) if !data.data.is_empty() => self
+                .first_output
+                .take()
+                .map(|start| (Latency::TerminalFirstOutput, start)),
+            Some(Event::Pong(_)) => self
+                .heartbeat
+                .take()
+                .map(|start| (Latency::TerminalHeartbeat, start)),
+            _ => None,
+        };
+        if let Some((kind, start)) = observation {
+            self.metrics
+                .observe_latency(kind, now.saturating_duration_since(start));
+        }
+    }
+}
 
 pub(super) fn attachment(id: &str, query: &[(String, String)]) -> proto::TerminalAttach {
     let value = |name: &str| {
@@ -34,6 +83,7 @@ pub(super) async fn bridge(
     activity: ActivityTracker,
     agent_id: String,
 ) {
+    let mut timings = TerminalTimings::new(crate::metrics::global(), Instant::now());
     let (sender, receiver) = mpsc::channel(1);
     if sender
         .send(proto::TerminalInput {
@@ -58,7 +108,10 @@ pub(super) async fn bridge(
                 let Some(Ok(message)) = message else { break };
                 activity.touch(&agent_id);
                 if matches!(message, AxumMessage::Close(_)) { break; }
-                if let Some(input) = input(message) && sender.send(input).await.is_err() { break; }
+                if let Some(input) = input(message) {
+                    timings.input(&input, Instant::now());
+                    if sender.send(input).await.is_err() { break; }
+                }
             }
             message = outputs.message() => {
                 let message = match message {
@@ -69,6 +122,7 @@ pub(super) async fn bridge(
                         break;
                     }
                 };
+                timings.output(&message, Instant::now());
                 let Some(message) = output(message) else { break };
                 activity.touch(&agent_id);
                 if browser.send(message).await.is_err() { break; }
@@ -149,6 +203,60 @@ fn output(message: proto::TerminalOutput) -> Option<AxumMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn timings_measure_first_output_once_and_match_guest_pongs_to_pending_pings() {
+        use proto::terminal_input::Action;
+        use proto::terminal_output::Event;
+
+        let metrics = Metrics::default();
+        let start = Instant::now();
+        let mut timings = TerminalTimings::new(&metrics, start);
+        let ready = proto::TerminalOutput {
+            event: Some(Event::Ready(proto::TerminalReady::default())),
+        };
+        let empty = proto::TerminalOutput {
+            event: Some(Event::Output(proto::TerminalData::default())),
+        };
+        let output = proto::TerminalOutput {
+            event: Some(Event::Output(proto::TerminalData {
+                sequence: 1,
+                data: vec![1],
+            })),
+        };
+        let pong = proto::TerminalOutput {
+            event: Some(Event::Pong(proto::Empty {})),
+        };
+        let ping = proto::TerminalInput {
+            action: Some(Action::Ping(proto::Empty {})),
+        };
+        timings.output(&pong, start);
+        timings.output(&ready, start + Duration::from_millis(10));
+        timings.output(&ready, start + Duration::from_millis(20));
+        timings.output(&empty, start + Duration::from_millis(30));
+        timings.output(&output, start + Duration::from_millis(80));
+        timings.output(&output, start + Duration::from_millis(150));
+        timings.input(&ping, start + Duration::from_millis(200));
+        timings.input(&ping, start + Duration::from_millis(205));
+        timings.output(&pong, start + Duration::from_millis(230));
+        timings.output(&pong, start + Duration::from_millis(250));
+        let rendered = metrics.render(
+            &[],
+            crate::tickets::TicketStats {
+                pending: 0,
+                previews: 0,
+            },
+        );
+        for (kind, sum) in [
+            ("attach", "0.01"),
+            ("first_output", "0.08"),
+            ("heartbeat", "0.03"),
+        ] {
+            assert!(rendered.contains(&format!("tengri_terminal_{kind}_seconds_sum {sum}\n")));
+            assert!(rendered.contains(&format!("tengri_terminal_{kind}_seconds_count 1\n")));
+        }
+    }
 
     #[test]
     fn browser_frames_preserve_bytes_sequences_and_control_fields() {

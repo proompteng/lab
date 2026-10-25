@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Effect, Exit, Result } from 'effect'
 
 import { operationalError } from '../errors'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
 import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
 import { candidateObservationLog, CandidateObservationStore, recordCandidateObservation } from './candidate-observation'
@@ -13,7 +13,7 @@ test('retains reproducible input evidence while keeping the routine candidate lo
   if (manifest.schemaVersion !== 'bayn.streaming-market-snapshot.v1') throw new Error('expected streaming evidence')
   const replay = Result.getOrThrow(reproduceStreamingSnapshot(manifest, observation.payload.rows))
   expect(replay.manifest).toEqual(snapshot.manifest)
-  expect(canonicalHashV1(observation.payload)).toBe(observation.contentHash)
+  expect(Result.getOrThrow(canonicalHashV1Result(observation.payload))).toBe(observation.contentHash)
   const log = candidateObservationLog(observation)
   expect(log.contentHash).toBe(observation.contentHash)
   expect(log.selectedSymbols).toEqual(observation.payload.decision.selectedSymbols)

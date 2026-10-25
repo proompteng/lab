@@ -63,7 +63,7 @@ let
       export JAVA_HOME=${pkgs.jdk21_headless}
       mkdir -p "$GRADLE_USER_HOME"
 
-      gradle --no-daemon --project-cache-dir "$TMPDIR/gradle-project-cache" :technical-analysis-flink:uberJar
+      gradle --no-daemon --project-cache-dir "$TMPDIR/gradle-project-cache" :technical-analysis-flink:uberJar :platform:glitchtipJar
 
       runHook postBuild
     '';
@@ -72,6 +72,7 @@ let
       runHook preInstall
       mkdir -p "$out"
       cp technical-analysis-flink/build/libs/technical-analysis-flink-all.jar "$out/app.jar"
+      cp platform/build/libs/dorvud-glitchtip.jar "$out/dorvud-glitchtip.jar"
       test -f "$out/app.jar"
       runHook postInstall
     '';
@@ -126,8 +127,9 @@ let
     installPhase = ''
       runHook preInstall
 
-      mkdir -p "$out/opt/flink/usrlib" "$out/opt/flink/plugins/s3-fs-hadoop"
+      mkdir -p "$out/opt/flink/usrlib" "$out/opt/flink/lib" "$out/opt/flink/plugins/s3-fs-hadoop"
       cp ${appJar}/app.jar "$out/opt/flink/usrlib/app.jar"
+      cp ${appJar}/dorvud-glitchtip.jar "$out/opt/flink/lib/dorvud-glitchtip.jar"
       cp ${s3Plugin} "$out/opt/flink/plugins/s3-fs-hadoop/flink-s3-fs-hadoop-2.2.1.jar"
 
       runHook postInstall

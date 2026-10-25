@@ -1,6 +1,6 @@
 import { jevModel, type JevRequest, type JevResponse } from './contract'
 import { Result } from 'effect'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { makeJevEvaluationRequest } from './evidence'
 
 export const requestFixture = {
@@ -45,14 +45,14 @@ export const evaluationRequestFixture = () =>
       symbol: 'AAPL',
       observedAt: '1970-01-01T00:00:00.000Z',
       expiresAt: '1970-01-01T00:00:05.000Z',
-      requestHash: canonicalHashV1(requestFixture),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(requestFixture)),
       request: requestFixture,
     }),
   )
 
 export const inferenceFixture = (at = '1970-01-01T00:00:00.000Z') => ({
-  requestHash: canonicalHashV1(requestFixture),
-  responseHash: canonicalHashV1(responseFixture()),
+  requestHash: Result.getOrThrow(canonicalHashV1Result(requestFixture)),
+  responseHash: Result.getOrThrow(canonicalHashV1Result(responseFixture())),
   startedAt: at,
   completedAt: at,
   response: responseFixture(),

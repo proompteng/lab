@@ -1,15 +1,21 @@
+import { jevMarketForSymbol } from './markets'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { IntradaySnapshotPurpose } from '../market-data'
+import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
-import { decideJevManagement } from './decision'
-import { decideJevExit, jevProtectiveQuoteIsFresh, JevExitReason, JevExitTargetSchema } from './exit'
-import { nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
-import { makeJevObservation } from './observation'
+import {
+  decideJevExit,
+  jevProfitTargetHoldingDeadlineAt,
+  jevProfitTargetLimitFloors,
+  jevProtectiveQuoteIsFresh,
+  JevExitReason,
+  JevExitTargetSchema,
+} from './exit'
+import { nativeJevFixture } from './native.test-support'
 import { JevPurpose } from './portfolio'
 import { jevProtectiveQuoteDiagnostics, JevQuoteReferenceScope } from './quote-diagnostics'
 import { jevPricingQuery } from './runtime'
@@ -45,6 +51,97 @@ const portfolioWithBrokerAge = (ageMs: number) => {
 }
 
 describe('native Jev exit targets', () => {
+  test.each([
+    [0.051, 0, true],
+    [0.002, 0, false],
+    [-0.02, 0, false],
+    [0.05, 10_001, false],
+    [0.05, -1, false],
+  ])('profit exit requires a verified net target: change %s, quote age %i', (change, ageMs, accepted) => {
+    const fixture = nativeJevFixture(JevPurpose.Manage, '2026-09-04T14:30:32.000Z')
+    if (fixture.portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected held position')
+    const evidence = {
+      cycleId: fixture.draft.identity.cycleId,
+      sessionDate: fixture.snapshot.manifest.sessionDate,
+      protocol: fixture.protocol,
+      portfolio: fixture.portfolio,
+      observedAt: fixture.observation.payload.observedAt,
+    }
+    const query = Result.getOrThrow(
+      jevPricingQuery(
+        fixture.draft,
+        fixture.protocol,
+        fixture.snapshot.manifest.calendar,
+        evidence.observedAt,
+        ['AAPL'],
+        IntradaySnapshotPurpose.Liquidation,
+      ),
+    )
+    const raw = makeIntradayMomentumTestSnapshot(
+      fixture.protocol,
+      { ...query, archiveWatermarks: [] },
+      { AAPL: change },
+    )
+    const quoteAt = new Date(Date.parse(evidence.observedAt) - ageMs).toISOString()
+    const snapshot = streamingFixtureFromRaw(
+      { ...raw, quotes: raw.quotes.map((quote) => ({ ...quote, eventAt: quoteAt, ingestedAt: quoteAt })) },
+      query,
+    ).snapshot
+    const trigger = {
+      reason: JevExitReason.ProfitTarget,
+      manifest: snapshot.manifest,
+      rows: Result.getOrThrow(persistIntradayRecordRows(snapshot)),
+    }
+    const result = decideJevExit({ ...evidence, trigger })
+    expect(Result.isSuccess(result)).toBe(accepted)
+    if (!Result.isSuccess(result)) return
+    const plan = fixture.portfolio.exitPolicy.plans['AAPL']
+    if (plan === undefined) throw new Error('Expected the sealed exit plan')
+    const reference = [{ symbol: 'AAPL', referencePriceMicros: plan.levels.profitLimitPriceMicros }]
+    const deadline = Result.getOrThrow(jevProfitTargetHoldingDeadlineAt(result.success))
+    if (deadline === undefined) throw new Error('Expected the actual holding deadline')
+    expect(Result.getOrThrow(jevProfitTargetLimitFloors(result.success, evidence.observedAt, reference))).toEqual({
+      AAPL: BigInt(plan.levels.profitLimitPriceMicros),
+    })
+    expect(Result.getOrThrow(jevProfitTargetLimitFloors(result.success, deadline, reference))).toEqual({})
+    expect(
+      Result.getOrThrow(
+        jevProfitTargetLimitFloors(result.success, evidence.observedAt, [
+          { symbol: 'AAPL', referencePriceMicros: plan.levels.stopPriceMicros },
+        ]),
+      ),
+    ).toEqual({})
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(JevExitTargetSchema)(result.success))).toEqual(result.success)
+    expect(
+      Result.isFailure(
+        Schema.decodeUnknownResult(JevExitTargetSchema)({
+          ...result.success,
+          schemaVersion: 'bayn.jev-exit-target.v1',
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decideJevExit({ ...evidence, trigger: { ...trigger, manifest: { ...snapshot.manifest, feed: 'sip' } } }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(Schema.decodeUnknownResult(JevExitTargetSchema)({ ...result.success, reason: 'JEV_EXIT' })),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decideJevExit({
+          ...evidence,
+          portfolio: {
+            ...fixture.portfolio,
+            exitPolicy: { ...fixture.portfolio.exitPolicy, profitTargetNetBps: 1 },
+          },
+          trigger,
+        }),
+      ),
+    ).toBe(true)
+  })
+
   test('an exchange-only wide-spread stop is diagnosed without suppressing the protective exit', () => {
     const held = nativeJevFixture(JevPurpose.Manage, '2026-09-04T14:30:32.000Z')
     const observedAt = held.observation.payload.observedAt
@@ -78,14 +175,14 @@ describe('native Jev exit targets', () => {
     const target = Result.getOrThrow(decideJevExit(material))
     const quote = snapshot.latestQuotes['AAPL']
     if (quote === undefined) throw new Error('Missing synthetic protective quote')
-    const diagnostic = jevProtectiveQuoteDiagnostics(quote, held.protocol.maximumSpreadBps)
+    const diagnostic = jevProtectiveQuoteDiagnostics(quote, jevMarketForSymbol('AAPL').maximumEntrySpreadBps)
     expect(diagnostic).toMatchObject({
       referenceScope: JevQuoteReferenceScope.ExchangeOnly,
       pairedFeedComparisonAvailable: false,
       quoteEventAt: quote.eventAt,
-      entrySpreadLimitBps: held.protocol.maximumSpreadBps,
+      entrySpreadLimitBps: jevMarketForSymbol('AAPL').maximumEntrySpreadBps,
     })
-    expect(diagnostic.spreadBpsApprox).toBeGreaterThan(held.protocol.maximumSpreadBps)
+    expect(diagnostic.spreadBpsApprox).toBeGreaterThan(jevMarketForSymbol('AAPL').maximumEntrySpreadBps)
     expect(diagnostic).not.toHaveProperty('bidPrice')
     expect(diagnostic).not.toHaveProperty('askPrice')
     expect(target.targetWeights).toEqual({ AAPL: 0 })
@@ -134,6 +231,22 @@ describe('native Jev exit targets', () => {
       ...evidence,
       portfolio: {
         ...portfolio,
+        exitPolicy: {
+          ...portfolio.exitPolicy,
+          plans: Object.fromEntries(
+            Object.entries(portfolio.exitPolicy.plans).map(([symbol, plan]) => [
+              symbol,
+              {
+                ...plan,
+                levels: {
+                  ...plan.levels,
+                  sourceEndAt: new Date(Math.floor(firstAt / 60_000) * 60_000).toISOString(),
+                  sourceStartAt: new Date(Math.floor(firstAt / 60_000) * 60_000 - 15 * 60_000).toISOString(),
+                },
+              },
+            ]),
+          ),
+        },
         entryFills: portfolio.entryFills.map((fill, index) => ({
           ...fill,
           occurredAt: new Date(firstAt + index * 1000).toISOString(),
@@ -146,32 +259,6 @@ describe('native Jev exit targets', () => {
       expect(result.success.commitDeadlineAt).toBe(
         new Date(Date.parse(evidence.observedAt) + fixture.protocol.maximumQuoteAgeMs).toISOString(),
       )
-  })
-
-  test('a model exit retains its inference deadline with a valid cached broker cut', () => {
-    const portfolio = portfolioWithBrokerAge(23_039)
-    const observation = Result.getOrThrow(
-      makeJevObservation({
-        cycleId: fixture.draft.identity.cycleId,
-        authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
-        protocol: fixture.protocol,
-        portfolio,
-        snapshot: fixture.snapshot,
-      }),
-    )
-    const decision = Result.getOrThrow(
-      decideJevManagement(nativeJevDecisionEvidence({ ...fixture, portfolio, observation }, 'exit')),
-    )
-    const target = Result.getOrThrow(
-      decideJevExit({
-        ...evidence,
-        portfolio,
-        observedAt: decision.evidence.decidedAt,
-        trigger: { reason: JevExitReason.Model, decision },
-      }),
-    )
-    expect(target.commitDeadlineAt).toBe(decision.evidence.batchPlan.expiresAt)
-    expect(target.targetWeights).toEqual({ AAPL: 0 })
   })
 
   test('protective quote freshness preserves nanosecond boundaries and rejects future bids', () => {
@@ -238,33 +325,6 @@ describe('native Jev exit targets', () => {
     if (Result.isFailure(result))
       expect(result.failure).toMatchObject({ _tag: 'JevAwaitingEvidence', availableAt: '2026-09-04T14:30:00.001Z' })
   })
-  test('reproduces an exit for exactly the held position from the complete model response', () => {
-    const decision = Result.getOrThrow(decideJevManagement(nativeJevDecisionEvidence(fixture, 'exit')))
-    const material = {
-      ...evidence,
-      observedAt: decision.evidence.decidedAt,
-      trigger: { reason: JevExitReason.Model, decision },
-    }
-    const target = Result.getOrThrow(decideJevExit(material))
-    expect(target.targetWeights).toEqual({ AAPL: 0 })
-    expect(target.commitDeadlineAt).toBe(decision.evidence.batchPlan.expiresAt)
-    expect(
-      Result.getOrThrow(Schema.decodeUnknownResult(JevExitTargetSchema)(JSON.parse(JSON.stringify(target)))),
-    ).toEqual(target)
-    for (const altered of [
-      { ...target, targetWeights: { AAPL: 0.1 } },
-      { ...target, reason: JevExitReason.MaximumHold },
-      { ...target, commitDeadlineAt: '2026-09-04T20:00:00.000Z' },
-      { ...target, cycleId: '0'.repeat(64) },
-      { ...target, entryDecisionHash: '0'.repeat(64) },
-    ])
-      expect(Result.isFailure(Schema.decodeUnknownResult(JevExitTargetSchema)(altered))).toBe(true)
-    const hold = Result.getOrThrow(decideJevManagement(nativeJevDecisionEvidence(fixture, 'hold')))
-    expect(
-      Result.isFailure(decideJevExit({ ...material, trigger: { reason: JevExitReason.Model, decision: hold } })),
-    ).toBe(true)
-  })
-
   test('the holding limit starts at the first real partial fill and does not require inference', () => {
     if (fixture.portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected held position')
     const firstAt = Date.parse(evidence.observedAt) - fixture.protocol.maximumHoldingMinutes * 60_000
@@ -272,6 +332,22 @@ describe('native Jev exit targets', () => {
       ...evidence,
       portfolio: {
         ...fixture.portfolio,
+        exitPolicy: {
+          ...fixture.portfolio.exitPolicy,
+          plans: Object.fromEntries(
+            Object.entries(fixture.portfolio.exitPolicy.plans).map(([symbol, plan]) => [
+              symbol,
+              {
+                ...plan,
+                levels: {
+                  ...plan.levels,
+                  sourceEndAt: new Date(Math.floor(firstAt / 60_000) * 60_000).toISOString(),
+                  sourceStartAt: new Date(Math.floor(firstAt / 60_000) * 60_000 - 15 * 60_000).toISOString(),
+                },
+              },
+            ]),
+          ),
+        },
         entryFills: fixture.portfolio.entryFills.map((fill, index) => ({
           ...fill,
           occurredAt: new Date(firstAt + index * 1000).toISOString(),

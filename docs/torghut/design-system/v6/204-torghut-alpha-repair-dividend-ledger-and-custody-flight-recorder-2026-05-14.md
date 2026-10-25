@@ -1,6 +1,6 @@
 # 204. Torghut Alpha Repair Dividend Ledger And Custody Flight Recorder (2026-05-14)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

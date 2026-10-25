@@ -154,6 +154,7 @@ spec:
         - GRANT SELECT ON signal.intraday_quotes_v1
         - GRANT SELECT ON signal.intraday_trades_v1
         - GRANT SELECT ON signal.intraday_features_v1
+        - GRANT SELECT ON signal.crypto_market_events_v1
         - GRANT SELECT ON signal.snapshot_manifests_v1
         - GRANT SELECT ON signal.snapshot_manifests_v2
       signal_publisher/password_sha256_hex:
@@ -175,6 +176,8 @@ spec:
         - GRANT INSERT ON signal.intraday_quotes_v1
         - GRANT INSERT ON signal.intraday_trades_v1
         - GRANT INSERT ON signal.intraday_features_v1
+        - GRANT INSERT ON signal.crypto_market_events_v1
+        - GRANT INSERT ON signal.crypto_market_features_v1
         - GRANT SELECT, INSERT ON signal.snapshot_manifests_v1
         - GRANT SELECT, INSERT ON signal.snapshot_manifests_v2
       default/password_sha256_hex:

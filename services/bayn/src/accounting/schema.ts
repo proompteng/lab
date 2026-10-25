@@ -13,7 +13,7 @@ import {
   UtcInstantSchema as UtcInstant,
   strictParseOptions,
 } from '../schemas'
-import { Pipeable } from '../pipeable'
+
 import { legacyAccountingTransactionSchemaVersion } from '../execution/legacy-wire'
 
 export const AccountingTransactionSchema = Schema.Struct({
@@ -24,13 +24,13 @@ export const AccountingTransactionSchema = Schema.Struct({
   accountId: NonEmptyString,
   symbol: SymbolName,
   side: Schema.Enum(OrderSide),
-  quantityMicros: PositiveMicros,
-  priceMicros: PositiveMicros,
+  quantityAtoms: PositiveMicros,
+  priceAtoms: PositiveMicros,
   notionalMicros: PositiveMicros,
   feeMicros: UnsignedMicros,
   costBasisMicros: UnsignedMicros,
   realizedPnlMicros: SignedMicros,
-  quantityDeltaMicros: SignedMicros,
+  quantityDeltaAtoms: SignedMicros,
   costBasisDeltaMicros: SignedMicros,
   cashDeltaMicros: SignedMicros,
   ledgerPlanHash: Sha256,
@@ -40,8 +40,4 @@ export const AccountingTransactionSchema = Schema.Struct({
 
 export type AccountingTransaction = typeof AccountingTransactionSchema.Type
 
-const decodeAccountingTransactionDataFirst = Schema.decodeUnknownResult(AccountingTransactionSchema, strictParseOptions)
-
-export const decodeAccountingTransaction = Pipeable.dual(1, (input: unknown) =>
-  decodeAccountingTransactionDataFirst(input),
-)
+export const decodeAccountingTransaction = Schema.decodeUnknownResult(AccountingTransactionSchema, strictParseOptions)

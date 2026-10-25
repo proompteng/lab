@@ -4,7 +4,7 @@ import { TestClock } from 'effect/testing'
 
 import { CycleState, CycleTerminalReason } from '../cycle/model'
 import { makeInitialCycle } from '../cycle/store/decisions'
-import type { CycleMutationReceipt, CycleStoreShape } from '../cycle/store'
+import type { CycleMutationReceipt, CycleStoreShape } from '../cycle/store/model'
 import type { JevBatchStore } from '../jev/batch-evaluation'
 import { operationalError } from '../errors'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
@@ -23,7 +23,6 @@ const base = (receipt: CycleMutationReceipt): CycleStoreShape => ({
   readAuthoritySlot: () => Effect.succeed(Option.none()),
   readDecisionDocument: () => Effect.succeed(Option.none()),
   readOldestUnfinished: () => Effect.succeed(Option.none()),
-  bindSnapshot: () => Effect.succeed(receipt),
   activate: () => Effect.succeed(receipt),
   bindDecision: () => Effect.succeed(receipt),
   finish: () => Effect.succeed(receipt),

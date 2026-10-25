@@ -67,16 +67,19 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
     ),
   ) as { data: Record<string, string> }
   const groups = YAML.parse(config.data['graf-rules.yaml'] ?? '') as {
-    groups: { name: string; rules: Rule[] }[]
+    groups: { name: string; interval: string; rules: Rule[] }[]
   }
-  const selected = groups.groups
-    .find(({ name }) => name === 'bayn-cycle-operations.rules')
-    ?.rules.filter(({ alert }) => ['BaynInputWindowUnavailable', 'BaynExecutionWindowUnready'].includes(alert))
+  const group = groups.groups.find(({ name }) => name === 'bayn-cycle-operations.rules')
+  if (group === undefined) throw new Error('Missing Bayn rule group')
+  expect(group.interval).toBe('15s')
+  const selected = group.rules.filter(({ alert }) =>
+    ['BaynInputWindowUnavailable', 'BaynExecutionWindowUnready'].includes(alert),
+  )
   if (selected?.length !== 2) throw new Error('Both input-window alert rules are required')
   const input = selected.find(({ alert }) => alert === 'BaynInputWindowUnavailable')
   const generic = selected.find(({ alert }) => alert === 'BaynExecutionWindowUnready')
   if (input === undefined || generic === undefined) throw new Error('Missing alert rule')
-  expect(input.for).toBe('1m')
+  expect(input.for).toBe('0s')
   expect(input.labels).toEqual({ severity: 'warning', team: 'trading', service: 'bayn', notify: 'email' })
 
   const sample = { labels: '{job="bayn",namespace="bayn",service="bayn"}', value: 1 }
@@ -102,6 +105,13 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
   }
 
   check('complete gate set fires only the dedicated input alert', series(), true)
+  check(
+    'a one-minute admission reports an input failure before its exclusive cutoff',
+    series({ first: '0+0x10', cutoff: '60+0x10' }),
+    true,
+    false,
+    '30s',
+  )
   check('healthy inputs', series({ input: '0+0x10', ready: '1+0x10' }), false)
   check('preopen and warmup despite an old input condition', series({ first: '180+0x10' }), false, true)
   check('submission cutoff is exclusive', series({ cutoff: '120+0x10' }), false)
@@ -170,7 +180,7 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
     check(`runtime cannot join across ${label}`, [...series({ runtime: null }), ...wrong], false, true)
   }
   cases.push({
-    name: 'first observation is inclusive and a full minute is required',
+    name: 'first observation is inclusive and immediately actionable',
     interval: '30s',
     input_series: series(),
     promql_expr_test: [
@@ -178,18 +188,18 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
       { expr: input.expr, eval_time: '1m', exp_samples: [sample] },
     ],
     alert_rule_test: [
-      { alertname: input.alert, eval_time: '1m', exp_alerts: [] },
-      { alertname: input.alert, eval_time: '90s', exp_alerts: [] },
+      { alertname: input.alert, eval_time: '1m', exp_alerts: [alert(input)] },
+      { alertname: input.alert, eval_time: '90s', exp_alerts: [alert(input)] },
       { alertname: input.alert, eval_time: '2m', exp_alerts: [alert(input)] },
     ],
   })
   cases.push({
-    name: 'recovery before the minute resets pending and clears the notification',
+    name: 'observed input failure fires immediately and recovery clears the notification',
     interval: '30s',
     input_series: series({ input: '1 1 1 0 1 1 1 0 0' }),
     alert_rule_test: [
       { alertname: input.alert, eval_time: '90s', exp_alerts: [] },
-      { alertname: input.alert, eval_time: '150s', exp_alerts: [] },
+      { alertname: input.alert, eval_time: '150s', exp_alerts: [alert(input)] },
       { alertname: input.alert, eval_time: '3m', exp_alerts: [alert(input)] },
       { alertname: input.alert, eval_time: '210s', exp_alerts: [] },
     ],
@@ -198,13 +208,13 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
   try {
     writeFileSync(
       join(directory, 'rules.yaml'),
-      YAML.stringify({ groups: [{ name: 'bayn-input-window', rules: selected }] }),
+      YAML.stringify({ groups: [{ name: 'bayn-input-window', interval: group.interval, rules: selected }] }),
     )
     writeFileSync(
       join(directory, 'tests.yaml'),
       YAML.stringify({
         rule_files: ['rules.yaml'],
-        evaluation_interval: '30s',
+        evaluation_interval: group.interval,
         tests: cases,
       }),
     )

@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,9 +46,14 @@ type codexRPCMessage struct {
 	Error  json.RawMessage `json:"error,omitempty"`
 }
 
+type codexUnsentRequestError struct{ error }
+
+func (err *codexUnsentRequestError) Unwrap() error { return err.error }
+
 type codexPendingResult struct {
 	result        json.RawMessage
 	err           json.RawMessage
+	localErr      error
 	eventSequence uint64
 }
 
@@ -76,6 +84,8 @@ type codexSubscription struct {
 }
 
 type codexApproval struct {
+	raw         json.RawMessage
+	inputParams json.RawMessage
 	generation  *codexProcessGeneration
 	method      string
 	permissions json.RawMessage
@@ -85,24 +95,34 @@ type codexApproval struct {
 }
 
 type codexProcessGeneration struct {
-	ready   chan struct{}
-	failure error
+	id       string
+	ready    chan struct{}
+	failure  error
+	commands map[codexTurnIdentity]map[string]struct{}
 }
 
 type codexSupervisor struct {
-	binary          string
-	browserMCP      bool
-	cwd             string
-	closed          atomic.Bool
-	requestID       atomic.Uint64
-	writePermit     chan struct{}
-	loginMu         sync.Mutex
-	responseTimeout time.Duration
+	binary            string
+	browserMCP        bool
+	cwd               string
+	closed            atomic.Bool
+	requestID         atomic.Uint64
+	writePermit       chan struct{}
+	loginMu           sync.Mutex
+	relayMu           sync.Mutex
+	relayRoot         string
+	connectorsEnabled bool
+	operationMu       sync.Mutex
+	responseTimeout   time.Duration
 
 	mu              sync.Mutex
 	command         *exec.Cmd
 	stdin           io.WriteCloser
 	generation      *codexProcessGeneration
+	workRequests    map[string]struct{}
+	activeTurns     map[string]string
+	workChangedAt   time.Time
+	workUnknown     bool
 	pending         map[string]chan codexPendingResult
 	approvals       map[string]codexApproval
 	activeLoginID   string
@@ -121,22 +141,38 @@ type codexSupervisor struct {
 
 func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 	supervisor := &codexSupervisor{
-		binary:          binary,
-		cwd:             cwd,
-		writePermit:     make(chan struct{}, 1),
-		responseTimeout: codexResponseWriteTimeout,
-		generation:      newCodexProcessGeneration(),
-		pending:         make(map[string]chan codexPendingResult),
-		approvals:       make(map[string]codexApproval),
-		subscriptions:   make(map[uint64]codexSubscription),
-		shutdown:        make(chan struct{}),
+		binary:            binary,
+		connectorsEnabled: os.Getenv("TENGRI_CONNECTORS_ENABLED") == "true",
+		cwd:               cwd,
+		writePermit:       make(chan struct{}, 1),
+		responseTimeout:   codexResponseWriteTimeout,
+		generation:        newCodexProcessGeneration(),
+		workRequests:      make(map[string]struct{}),
+		activeTurns:       make(map[string]string),
+		workChangedAt:     time.Now(),
+		pending:           make(map[string]chan codexPendingResult),
+		approvals:         make(map[string]codexApproval),
+		subscriptions:     make(map[uint64]codexSubscription),
+		shutdown:          make(chan struct{}),
 	}
 	supervisor.writePermit <- struct{}{}
 	return supervisor
 }
 
 func newCodexProcessGeneration() *codexProcessGeneration {
-	return &codexProcessGeneration{ready: make(chan struct{})}
+	return &codexProcessGeneration{id: fmt.Sprintf("%x", randBytes()), ready: make(chan struct{}), commands: make(map[codexTurnIdentity]map[string]struct{})}
+}
+
+func randBytes() []byte {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		panic("create Codex process identity: " + err.Error())
+	}
+	return value
+}
+
+func approvalKey(generation *codexProcessGeneration, id json.RawMessage) string {
+	return generation.id + ":" + normalizeRequestID(id)
 }
 
 func (supervisor *codexSupervisor) start() {
@@ -192,6 +228,7 @@ func (supervisor *codexSupervisor) runProcess() error {
 		"--model", "gpt-6.1-sol",
 		"--sandbox", "danger-full-access",
 		"--ask-for-approval", "on-request",
+		"-c", "features.apps=false",
 	}
 	if supervisor.browserMCP {
 		binary, err := os.Executable()
@@ -218,7 +255,6 @@ func (supervisor *codexSupervisor) runProcess() error {
 	if err != nil {
 		return err
 	}
-	command.Stderr = io.Discard
 	if err := command.Start(); err != nil {
 		return err
 	}
@@ -243,7 +279,7 @@ func (supervisor *codexSupervisor) runProcess() error {
 		},
 	})
 	if err == nil {
-		_, err = supervisor.request(ctx, "initialize", initialize, false)
+		_, err = supervisor.request(ctx, "initialize", initialize, false, nil)
 	}
 	cancel()
 	if err != nil {
@@ -259,6 +295,10 @@ func (supervisor *codexSupervisor) runProcess() error {
 	supervisor.mu.Lock()
 	closeSignal(generation.ready)
 	supervisor.mu.Unlock()
+	supervisor.publish("tengri/runtimeReady", "", map[string]any{
+		"method": "tengri/runtimeReady",
+		"params": map[string]string{"generationId": generation.id},
+	})
 	waitErr := command.Wait()
 	processErr := errors.New("Codex app-server exited")
 	if waitErr != nil {
@@ -284,9 +324,9 @@ func (supervisor *codexSupervisor) close() {
 	}
 	supervisor.approvals = make(map[string]codexApproval)
 	supervisor.mu.Unlock()
-	shutdownError, _ := json.Marshal(map[string]string{"message": "Codex app-server is shutting down"})
+	shutdownError := errors.New("Codex app-server is shutting down")
 	for _, response := range pending {
-		response <- codexPendingResult{err: shutdownError}
+		response <- codexPendingResult{localErr: shutdownError}
 	}
 	if command != nil && command.Process != nil {
 		killProcessGroup(command)
@@ -309,7 +349,68 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 	if method == "account/login/start" {
 		return supervisor.startLogin(ctx, params)
 	}
-	return supervisor.request(ctx, method, params, true)
+	if method == "thread/archive" {
+		return supervisor.archiveThread(ctx, params)
+	}
+	if strings.HasPrefix(method, "relay/") {
+		return supervisor.relayCall(ctx, method, params)
+	}
+	if method == "tengri/pending" {
+		return supervisor.pendingApprovals(params)
+	}
+	if method == "tengri/operation" {
+		var input struct {
+			ID     string `json:"operationId"`
+			Thread string `json:"threadId"`
+			Turn   string `json:"turnId"`
+		}
+		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) {
+			return codexCallResult{}, errors.New("invalid operation identity")
+		}
+		op, err := readCodexOperation(filepath.Join(supervisor.cwd, ".tengri", "codex-operations", input.ID+".json"))
+		if err != nil || op.Thread != input.Thread {
+			return codexCallResult{}, errors.New("operation receipt is unavailable")
+		}
+		supervisor.mu.Lock()
+		alive := op.Generation != "" && supervisor.generation.id == op.Generation && supervisor.generation.failure == nil
+		supervisor.mu.Unlock()
+		terminal := supervisor.terminalStatus(input.Thread, input.Turn, op.Generation)
+		raw, err := json.Marshal(map[string]any{"generationAlive": alive, "state": op.State, "terminalStatus": terminal})
+		return codexCallResult{result: raw}, err
+	}
+	if method == "tengri/reconcileOperation" {
+		var input struct {
+			ID     string `json:"operationId"`
+			Thread string `json:"threadId"`
+		}
+		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) {
+			return codexCallResult{}, errors.New("invalid operation identity")
+		}
+		supervisor.operationMu.Lock()
+		defer supervisor.operationMu.Unlock()
+		path := filepath.Join(supervisor.cwd, ".tengri", "codex-operations", input.ID+".json")
+		op, err := readCodexOperation(path)
+		if err != nil || op.Thread != input.Thread {
+			return codexCallResult{}, errCodexOperationUnknown
+		}
+		if op.State != "completed" {
+			op, err = supervisor.reconcileOperation(ctx, op)
+			if err != nil {
+				return codexCallResult{}, err
+			}
+			if err := writeCodexOperation(path, op); err != nil {
+				return codexCallResult{}, errCodexOperationUnknown
+			}
+		}
+		if len(op.Error) != 0 {
+			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationRejected, codexRPCErrorFromRaw(op.Error))
+		}
+		return codexCallResult{result: op.Result}, nil
+	}
+	if method == "turn/start" || method == "turn/steer" || method == "turn/interrupt" || method == "tengri/resolveApproval" {
+		return supervisor.operation(ctx, method, params)
+	}
+	return supervisor.request(ctx, method, params, true, nil)
 }
 
 func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.RawMessage) (codexCallResult, error) {
@@ -336,7 +437,7 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 	if previousLoginID != "" {
 		cancelParams, _ := json.Marshal(map[string]string{"loginId": previousLoginID})
 		cancelContext, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_, cancelErr := supervisor.request(cancelContext, "account/login/cancel", cancelParams, true)
+		_, cancelErr := supervisor.request(cancelContext, "account/login/cancel", cancelParams, true, nil)
 		cancel()
 		if cancelErr != nil {
 			return codexCallResult{}, fmt.Errorf("cancel previous Codex device login: %w", cancelErr)
@@ -347,7 +448,7 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 		}
 		supervisor.mu.Unlock()
 	}
-	result, err := supervisor.request(ctx, "account/login/start", params, true)
+	result, err := supervisor.request(ctx, "account/login/start", params, true, nil)
 	if err != nil {
 		return codexCallResult{}, err
 	}
@@ -398,12 +499,18 @@ func (supervisor *codexSupervisor) request(
 	method string,
 	params json.RawMessage,
 	waitReady bool,
+	generation *codexProcessGeneration,
 ) (codexCallResult, error) {
-	var generation *codexProcessGeneration
+	params, err := codexGuestThreadParams(method, params)
+	if err != nil {
+		return codexCallResult{}, err
+	}
 	if waitReady {
-		supervisor.mu.Lock()
-		generation = supervisor.generation
-		supervisor.mu.Unlock()
+		if generation == nil {
+			supervisor.mu.Lock()
+			generation = supervisor.generation
+			supervisor.mu.Unlock()
+		}
 		if err := supervisor.waitForGeneration(ctx, generation); err != nil {
 			return codexCallResult{}, err
 		}
@@ -419,21 +526,30 @@ func (supervisor *codexSupervisor) request(
 		supervisor.mu.Unlock()
 		return codexCallResult{}, errors.New("Codex app-server restarted before the request could be sent")
 	}
+	if method == "turn/start" || method == "turn/steer" {
+		supervisor.workRequests[key] = struct{}{}
+		supervisor.workChangedAt = time.Now()
+	}
 	supervisor.pending[key] = response
 	stdin := supervisor.stdin
 	supervisor.mu.Unlock()
 	if stdin == nil {
-		supervisor.removePending(key)
+		supervisor.removeUnsentRequest(key)
 		return codexCallResult{}, errors.New("Codex app-server is unavailable")
 	}
 	message, err := json.Marshal(map[string]any{"id": id, "method": method, "params": json.RawMessage(params)})
 	if err != nil {
-		supervisor.removePending(key)
+		supervisor.removeUnsentRequest(key)
 		return codexCallResult{}, err
 	}
 	err = supervisor.writeToProcess(ctx, generation, stdin, append(message, '\n'))
 	if err != nil {
-		supervisor.removePending(key)
+		var unsent *codexUnsentRequestError
+		if errors.As(err, &unsent) {
+			supervisor.removeUnsentRequest(key)
+		} else {
+			supervisor.removePending(key)
+		}
 		return codexCallResult{}, err
 	}
 	select {
@@ -441,8 +557,11 @@ func (supervisor *codexSupervisor) request(
 		supervisor.removePending(key)
 		return codexCallResult{}, ctx.Err()
 	case result := <-response:
+		if result.localErr != nil {
+			return codexCallResult{}, result.localErr
+		}
 		if len(result.err) > 0 && string(result.err) != "null" {
-			return codexCallResult{}, codexRPCErrorFromRaw(result.err)
+			return codexCallResult{eventSequence: result.eventSequence, generation: generation}, codexRPCErrorFromRaw(result.err)
 		}
 		return codexCallResult{
 			result:        result.result,
@@ -490,6 +609,7 @@ func (supervisor *codexSupervisor) readMessagesWithLimit(
 	for {
 		line, size, oversized, readErr := readBoundedCodexLine(buffered, lineLimit)
 		if oversized {
+			supervisor.markWorkUnknown(generation)
 			supervisor.publish("tengri/eventOmitted", "", codexOversizedProtocolMessage(size))
 		} else if len(bytes.TrimSpace(line)) > 0 {
 			var message codexRPCMessage
@@ -499,6 +619,8 @@ func (supervisor *codexSupervisor) readMessagesWithLimit(
 				} else if message.Method != "" {
 					supervisor.handleServerMessage(generation, message, line)
 				}
+			} else {
+				supervisor.markWorkUnknown(generation)
 			}
 		}
 		if readErr != nil {
@@ -549,6 +671,10 @@ func codexOversizedProtocolMessage(size int) json.RawMessage {
 func (supervisor *codexSupervisor) resolveResponse(message codexRPCMessage) {
 	key := normalizeRequestID(message.ID)
 	supervisor.mu.Lock()
+	if _, working := supervisor.workRequests[key]; working {
+		delete(supervisor.workRequests, key)
+		supervisor.workChangedAt = time.Now()
+	}
 	pending := supervisor.pending[key]
 	delete(supervisor.pending, key)
 	eventSequence := supervisor.sequence
@@ -566,17 +692,31 @@ func (supervisor *codexSupervisor) handleServerMessage(
 	if !supervisor.isCurrentGeneration(generation) {
 		return
 	}
+	supervisor.observeCommands(generation, message)
+	if message.Method == "turn/completed" {
+		if err := supervisor.recordTerminal(generation, message.Params); err != nil {
+			supervisor.publish("error", "", map[string]any{"method": "error", "params": map[string]string{"message": "Codex terminal receipt could not be persisted; recovery may require reconciliation"}})
+		}
+	}
+	supervisor.observeWork(generation, message)
 	if message.Method == "serverRequest/resolved" {
 		var params struct {
 			RequestID json.RawMessage `json:"requestId"`
 		}
 		if json.Unmarshal(message.Params, &params) == nil && len(params.RequestID) > 0 {
 			supervisor.mu.Lock()
-			id := normalizeRequestID(params.RequestID)
+			id := approvalKey(generation, params.RequestID)
 			if approval, found := supervisor.approvals[id]; found && approval.generation == generation {
 				delete(supervisor.approvals, id)
 			}
 			supervisor.mu.Unlock()
+			var event map[string]any
+			if json.Unmarshal(raw, &event) == nil {
+				if params, ok := event["params"].(map[string]any); ok {
+					params["requestId"] = id
+					raw, _ = json.Marshal(event)
+				}
+			}
 		}
 	}
 	if message.Method == "account/login/completed" {
@@ -599,7 +739,7 @@ func (supervisor *codexSupervisor) handleServerMessage(
 	}
 	approvalID := ""
 	if len(message.ID) > 0 {
-		approvalID = normalizeRequestID(message.ID)
+		approvalID = approvalKey(generation, message.ID)
 		switch message.Method {
 		case "currentTime/read":
 			_ = supervisor.respondRawForGenerationWithin(
@@ -608,6 +748,18 @@ func (supervisor *codexSupervisor) handleServerMessage(
 				map[string]any{"currentTimeAt": time.Now().Unix()},
 			)
 			return
+		case "item/tool/requestUserInput":
+			if err := validateCodexInputRequest(message.Method, message.Params); err != nil {
+				supervisor.respondErrorForGeneration(generation, message.ID, err.Error())
+				return
+			}
+			supervisor.mu.Lock()
+			if supervisor.generation != generation || generation.failure != nil {
+				supervisor.mu.Unlock()
+				return
+			}
+			supervisor.approvals[approvalID] = codexApproval{generation: generation, method: message.Method, inputParams: append(json.RawMessage(nil), message.Params...), rawID: append(json.RawMessage(nil), message.ID...)}
+			supervisor.mu.Unlock()
 		case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "execCommandApproval", "applyPatchApproval":
 			supervisor.mu.Lock()
 			if supervisor.generation != generation || generation.failure != nil {
@@ -647,6 +799,16 @@ func (supervisor *codexSupervisor) handleServerMessage(
 			}
 			supervisor.mu.Unlock()
 		case "mcpServer/elicitation/request":
+			if codexMCPApprovalDecisions(message.Params) == nil && validateCodexInputRequest(message.Method, message.Params) == nil {
+				supervisor.mu.Lock()
+				if supervisor.generation != generation || generation.failure != nil {
+					supervisor.mu.Unlock()
+					return
+				}
+				supervisor.approvals[approvalID] = codexApproval{generation: generation, method: message.Method, inputParams: append(json.RawMessage(nil), message.Params...), rawID: append(json.RawMessage(nil), message.ID...)}
+				supervisor.mu.Unlock()
+				break
+			}
 			decisions := codexApprovalDecisions(message.Method, message.Params)
 			if decisions != nil && len(raw) > codexEventMaxBytes {
 				raw = boundedCodexMCPApproval(message, decisions)
@@ -703,7 +865,41 @@ func (supervisor *codexSupervisor) handleServerMessage(
 	if !supervisor.isCurrentGeneration(generation) {
 		return
 	}
+	supervisor.mu.Lock()
+	if approval, found := supervisor.approvals[approvalID]; found && approval.generation == generation {
+		approval.raw = append(json.RawMessage(nil), raw...)
+		supervisor.approvals[approvalID] = approval
+	}
+	supervisor.mu.Unlock()
 	supervisor.publish(message.Method, approvalID, json.RawMessage(raw))
+}
+
+func (supervisor *codexSupervisor) pendingApprovals(params json.RawMessage) (codexCallResult, error) {
+	var input struct {
+		Thread string `json:"threadId"`
+	}
+	if json.Unmarshal(params, &input) != nil || input.Thread == "" {
+		return codexCallResult{}, errors.New("threadId is required")
+	}
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	result := make([]map[string]any, 0)
+	for id, approval := range supervisor.approvals {
+		var message struct {
+			Params struct {
+				Thread string `json:"threadId"`
+			} `json:"params"`
+		}
+		if approval.generation == supervisor.generation && json.Unmarshal(approval.raw, &message) == nil && message.Params.Thread == input.Thread {
+			result = append(result, map[string]any{"approvalId": id, "raw": approval.raw})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i]["approvalId"].(string) < result[j]["approvalId"].(string) })
+	raw, err := json.Marshal(result)
+	if len(result) > 32 || len(raw) > 512<<10 {
+		return codexCallResult{}, errors.New("pending approvals exceed the durable snapshot limit")
+	}
+	return codexCallResult{result: raw}, err
 }
 
 func (supervisor *codexSupervisor) isCurrentGeneration(generation *codexProcessGeneration) bool {
@@ -743,6 +939,9 @@ func (supervisor *codexSupervisor) resolveApproval(ctx context.Context, id, deci
 }
 
 func codexApprovalResult(approval codexApproval, decision string) (map[string]any, error) {
+	if len(approval.inputParams) > 0 {
+		return nil, errors.New("this request requires a user answer, not an approval decision")
+	}
 	encodedDecision := approval.decisions[decision]
 	if approval.decisions == nil {
 		encodedDecision = defaultCodexApprovalDecisions()[decision]
@@ -1097,9 +1296,9 @@ func (supervisor *codexSupervisor) writeToProcess(
 ) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return &codexUnsentRequestError{ctx.Err()}
 	case <-supervisor.shutdown:
-		return errors.New("Codex app-server is shutting down")
+		return &codexUnsentRequestError{errors.New("Codex app-server is shutting down")}
 	case <-supervisor.writePermit:
 	}
 
@@ -1323,13 +1522,16 @@ func (supervisor *codexSupervisor) failProcess(err error) {
 	pending := supervisor.pending
 	supervisor.pending = make(map[string]chan codexPendingResult)
 	supervisor.approvals = make(map[string]codexApproval)
+	supervisor.workRequests = make(map[string]struct{})
+	supervisor.activeTurns = make(map[string]string)
+	supervisor.workChangedAt = time.Now()
+	supervisor.workUnknown = false
 	supervisor.clearLoginLocked()
 	supervisor.loginOperation = nil
 	supervisor.loginCompleted = nil
 	supervisor.mu.Unlock()
-	encoded, _ := json.Marshal(map[string]string{"message": err.Error()})
 	for _, channel := range pending {
-		channel <- codexPendingResult{err: encoded}
+		channel <- codexPendingResult{localErr: err}
 	}
 }
 
@@ -1399,9 +1601,29 @@ func codexResumeThreadID(params json.RawMessage) (string, bool) {
 	return input.ThreadID, input.ThreadID != ""
 }
 
+var errCodexThreadActive = errors.New("Wait for the response to finish before archiving this chat")
+
+func (supervisor *codexSupervisor) archiveThread(ctx context.Context, params json.RawMessage) (codexCallResult, error) {
+	var input struct {
+		ThreadID string `json:"threadId"`
+	}
+	if json.Unmarshal(params, &input) != nil || input.ThreadID == "" {
+		return codexCallResult{}, errors.New("threadId is required")
+	}
+	supervisor.operationMu.Lock()
+	defer supervisor.operationMu.Unlock()
+	supervisor.mu.Lock()
+	_, active := supervisor.activeTurns[input.ThreadID]
+	supervisor.mu.Unlock()
+	if active {
+		return codexCallResult{}, errCodexThreadActive
+	}
+	return supervisor.request(ctx, "thread/archive", params, true, nil)
+}
+
 func allowedCodexMethod(method string) bool {
 	switch method {
-	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt":
+	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/list", "thread/archive", "thread/unarchive", "thread/start", "thread/read", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt", "tengri/pending", "tengri/operation", "tengri/reconcileOperation", "tengri/resolveApproval", "relay/identity", "relay/configure", "relay/remove":
 		return true
 	default:
 		return false

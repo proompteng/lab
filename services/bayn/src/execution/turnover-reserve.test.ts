@@ -7,7 +7,7 @@ const input = {
   filledTurnoverMicros: 160_000_000_000n,
   maximumTurnoverMicros: 200_000_000_000n,
   otherReservedMicros: 0n,
-  quantityMicros: 200_000_000n,
+  quantityAtoms: 200000000000n,
   entryLimitPriceMicros: 100_000_000n,
   exitReferencePriceMicros: 100_000_000n,
   exitAllowanceBps: 0n,
@@ -23,11 +23,11 @@ test('reserves both filled-entry upper bound and expected liquidation, including
 })
 
 test('a partial fill supports only its actual smaller inventory; unsettled commitments remain separately reserved', () => {
-  const partial = Result.getOrThrow(assessEntryTurnoverReserve({ ...input, quantityMicros: 100_000_000n }))
+  const partial = Result.getOrThrow(assessEntryTurnoverReserve({ ...input, quantityAtoms: 100000000000n }))
   expect(partial.expectedExitMicros).toBe(10_000_000_000n)
   expect(partial.remainingMicros).toBe(20_000_000_000n)
   const pending = Result.getOrThrow(
-    assessEntryTurnoverReserve({ ...input, quantityMicros: 100_000_000n, otherReservedMicros: 20_000_000_001n }),
+    assessEntryTurnoverReserve({ ...input, quantityAtoms: 100000000000n, otherReservedMicros: 20_000_000_001n }),
   )
   expect(pending.admitted).toBe(false)
 })
@@ -36,13 +36,13 @@ test('rounds fractional notional upward and fails invalid reserve inputs', () =>
   const fractional = Result.getOrThrow(
     assessEntryTurnoverReserve({
       ...input,
-      quantityMicros: 1n,
+      quantityAtoms: 1000n,
       entryLimitPriceMicros: 1n,
       exitReferencePriceMicros: 1n,
     }),
   )
   expect(fractional.entryMicros).toBe(1n)
   expect(fractional.expectedExitMicros).toBe(1n)
-  expect(Result.isFailure(assessEntryTurnoverReserve({ ...input, quantityMicros: -1n }))).toBe(true)
+  expect(Result.isFailure(assessEntryTurnoverReserve({ ...input, quantityAtoms: -1n }))).toBe(true)
   expect(Result.isFailure(assessEntryTurnoverReserve({ ...input, entryLimitPriceMicros: 0n }))).toBe(true)
 })

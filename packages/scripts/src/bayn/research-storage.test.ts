@@ -96,26 +96,18 @@ test('native research storage uses a unique retained OBC with operator-owned ref
   )
 })
 
-test('the capture egress allowance selects only execution workers and the objectstore RGW pod port', () => {
+test('retained research storage does not grant the trading worker bucket credentials or egress', () => {
   const resources = manifests('argocd/applications/bayn/research-storage.yaml')
-  const policy = resources.find((resource) => resource.kind === 'NetworkPolicy')
-  expect(policy.spec).toEqual({
-    podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } },
-    policyTypes: ['Egress'],
-    egress: [
-      {
-        to: [
-          {
-            namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'rook-ceph' } },
-            podSelector: {
-              matchLabels: { app: 'rook-ceph-rgw', rook_cluster: 'rook-ceph', rook_object_store: 'objectstore' },
-            },
-          },
-        ],
-        ports: [{ port: 8080, protocol: 'TCP' }],
-      },
-    ],
-  })
+  expect(resources.map((resource) => resource.kind)).toEqual(['Secret', 'ConfigMap'])
+  const controller = YAML.parse(read('argocd/applications/bayn/execution-controller.yaml'))
+  const containers = controller.spec.template.spec.containers
+  for (const container of containers) {
+    for (const env of container.env) {
+      expect(env.name).not.toStartWith('BAYN_RESEARCH_CAPTURE_')
+      expect(env.valueFrom?.secretKeyRef?.name).not.toBe('bayn-research-captures')
+      expect(env.valueFrom?.secretKeyRef?.name).not.toBe('bayn-research-capture')
+    }
+  }
   const secret = resources.find((resource) => resource.kind === 'Secret')
   expect(secret.metadata.annotations['reflector.v1.k8s.emberstack.com/reflects']).toBe(
     'rook-ceph/rook-ceph-object-user-objectstore-bayn-research-capture',

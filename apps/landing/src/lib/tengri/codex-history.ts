@@ -14,6 +14,13 @@ const PAGE_SIZE = 100
 
 type JsonRecord = Record<string, unknown>
 
+export class CodexHistoryInterruptedError extends Error {
+  constructor() {
+    super('Codex conversation recovery was interrupted')
+    this.name = 'CodexHistoryInterruptedError'
+  }
+}
+
 export async function readCodexHistory(
   response: Response,
   threadId: string,
@@ -50,7 +57,8 @@ export async function readCodexHistory(
       if (pending.length > MAX_RECORD_CHARACTERS) throw invalidHistory('history page is too large')
       if (done) break
     }
-    if (pending.length || !completed) throw invalidHistory('history stream ended before completion')
+    if (!completed) throw new CodexHistoryInterruptedError()
+    if (pending.length) throw invalidHistory('data after completion')
     return history.finish()
   } finally {
     signal?.removeEventListener('abort', abort)

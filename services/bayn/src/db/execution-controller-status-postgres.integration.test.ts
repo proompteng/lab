@@ -192,6 +192,32 @@ describePostgres('PostgreSQL execution controller diagnostics', () => {
     expect(result.stored).toEqual(next)
   })
 
+  test('does not silently rebind a retired unbound plan at the same epoch and sequence', async () => {
+    const retired = {
+      schemaVersion: 1 as const,
+      controllerKey: 'retired',
+      planHash: '0'.repeat(64),
+      active: true,
+      epoch: 3,
+      nextSequence: 9,
+      lastSequence: 8,
+      lastOutcome: ExecutionControllerOutcome.Blocked,
+      lastReceiptHash: 'a'.repeat(64),
+      completedAt: '2026-08-13T17:00:00.000Z',
+      nextDueAt: '2026-08-13T17:00:30.000Z',
+    }
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* ExecutionControllerStatusStore
+        yield* store.project(retired)
+        const rebound = yield* store.project({ ...retired, planHash: 'f'.repeat(64) }).pipe(Effect.flip)
+        return { rebound, stored: yield* store.read('retired') }
+      }),
+    )
+    expect(result.rebound).toMatchObject({ operation: 'project', failure: 'conflict' })
+    expect(result.stored).toEqual(retired)
+  })
+
   test('normalizes the exact pre-cutover every-session pass observation at the persistence boundary', async () => {
     const stored = await runtime.runPromise(
       Effect.gen(function* () {

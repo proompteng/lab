@@ -1,4 +1,5 @@
 import { Result, Schema } from 'effect'
+import { equityClockSession, equityFeatureSegmentStartMs } from '../../equity-hours'
 import { strictParseOptions } from '../../schemas'
 import type { IntradayBar } from '../intraday/model'
 import { intradayInstantNanos } from '../intraday/time'
@@ -17,20 +18,11 @@ export enum TechnicalFeatureContract {
   V1 = 'dorvud.technical-feature.v1',
 }
 export enum TechnicalFeatureDefinition {
-  Indicators1m = 'dorvud.technical-indicators-1m.v1',
+  Indicators1m = 'dorvud.technical-indicators-1m.v2',
 }
-export enum TechnicalReadiness {
-  Ready = 'READY',
-  Warming = 'WARMING',
-  Gap = 'GAP',
-  SourceMissing = 'SOURCE_MISSING',
-  ZeroVolume = 'ZERO_VOLUME',
-}
+import { TechnicalReadiness, TechnicalFeatureValueSchema } from './feature-core'
+export { TechnicalReadiness, TechnicalFeatureValueSchema } from './feature-core'
 
-export const TechnicalFeatureValueSchema = Schema.Struct({
-  status: Schema.Enum(TechnicalReadiness),
-  value: Schema.NullOr(Schema.String.check(Schema.isPattern(/^(?:0|-?[1-9][0-9]*)$/))),
-})
 export const TechnicalMarketValuesSchema = Schema.Struct({
   ema12PriceMicros: TechnicalFeatureValueSchema,
   ema26PriceMicros: TechnicalFeatureValueSchema,
@@ -62,8 +54,8 @@ export type TechnicalMarketFeature = typeof TechnicalMarketFeatureSchema.Type
 
 export const technicalFeatureDefinitionMaterial = [
   TechnicalFeatureDefinition.Indicators1m,
-  MarketFeatureSessionPolicy.RegularNewYork,
-  'PT1M;session:09:30-16:00;canonical-session-recompute;no-synthetic-bars',
+  MarketFeatureSessionPolicy.IexClockSegments,
+  'PT1M;IEX-clock-segments:08:00-09:30,09:30-16:00,16:00-17:00;canonical-session-recompute;no-synthetic-bars',
   'EMA:12,26;alpha:2/(n+1);seed:first-close;ready:12,26',
   'MACD:EMA12-EMA26;signal:9;seed:zero;ready:34',
   'RSI:14;gain-loss-alpha:1/14;seed:zero;ready:15;flat:0',
@@ -82,12 +74,6 @@ const newYorkDate = new Intl.DateTimeFormat('en-CA', {
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
-})
-const newYorkTime = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'America/New_York',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
 })
 const fail = (reason: MarketFeatureFailure['reason'], message: string, cause?: unknown) =>
   new MarketFeatureFailure({ reason, message, ...(cause === undefined ? {} : { cause }) })
@@ -129,7 +115,7 @@ export const decodeTechnicalMarketFeature = (
       material.windowEndMs <= material.windowStartMs ||
       material.windowEndMs - material.windowStartMs > 390 * 60_000 ||
       newYorkDate.format(material.windowStartMs) !== material.sessionDate ||
-      newYorkTime.format(material.windowStartMs) !== '09:30' ||
+      material.windowStartMs !== equityFeatureSegmentStartMs(material.windowEndMs - 1) ||
       feature.computedAtMs + marketFeatureClockSkewAllowanceMs < material.windowEndMs
     )
       return yield* Result.fail(fail('window', 'Invalid technical session window or computation time'))
@@ -226,7 +212,7 @@ export const technicalFeatureMatchesBars = (feature: TechnicalMarketFeature, bar
         bar.universeId !== material.universeId ||
         bar.universeSymbolHash !== material.universeSymbolHash ||
         bar.symbol !== material.symbol ||
-        bar.marketSession !== 'regular' ||
+        bar.marketSession !== equityClockSession(bar.eventAt) ||
         !bar.final ||
         reference.eventTimeNanos !== String(intradayInstantNanos(bar.eventAt)) ||
         reference.ingestionTimeNanos !== String(intradayInstantNanos(bar.ingestedAt)) ||

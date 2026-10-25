@@ -5,8 +5,8 @@ import { readFileSync } from 'node:fs'
 const [certificate, key] = process.argv.slice(2)
 const targetPort = (host) => {
   if (host === 'desktop.tengri.localhost:3443') return 3143
-  if (host === 'gateway.tengri.localhost:3443') return 33082
-  if (/^tengri-[a-z0-9]{24}\.tengri\.localhost:3443$/.test(host ?? '')) return 33083
+  if (host === 'gateway.tengri.localhost:3443') return 18082
+  if (/^tengri-[a-z0-9]{24}\.tengri\.localhost:3443$/.test(host ?? '')) return 18083
   return null
 }
 const options = (request, port) => ({
@@ -20,6 +20,16 @@ const server = https.createServer({ cert: readFileSync(certificate), key: readFi
   const port = targetPort(request.headers.host)
   if (!port) {
     response.writeHead(404).end()
+    return
+  }
+  const path = request.url?.split('?')[0]
+  if (
+    port === 3143 &&
+    request.method === 'GET' &&
+    (path === '/api/tengri/events' || path === '/api/tengri/files/events')
+  ) {
+    response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' })
+    response.write(': fixture\n\n')
     return
   }
   const upstream = http.request(options(request, port), (remote) => {

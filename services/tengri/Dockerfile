@@ -5,7 +5,7 @@ ARG RUST_BASE_IMAGE=mirror.gcr.io/rust
 ARG RUST_VERSION=1.90.0
 ARG FIRECRACKER_RUST_VERSION=1.95.0
 
-FROM --platform=$BUILDPLATFORM ${RUST_BASE_IMAGE}:${RUST_VERSION}-bookworm AS build
+FROM --platform=$BUILDPLATFORM ${RUST_BASE_IMAGE}:${RUST_VERSION}-bookworm AS chef
 
 ARG TARGETARCH
 
@@ -14,17 +14,32 @@ RUN apt-get update -o Acquire::Retries=3 && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
+RUN CARGO_BUILD_JOBS=2 cargo install --locked cargo-chef --version 0.1.74
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY src ./src
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS build
+ARG TARGETARCH
+COPY --from=planner /src/recipe.json recipe.json
+RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && \
+    CARGO_BUILD_JOBS=2 cargo chef cook --locked --release --bin tengri --recipe-path recipe.json && \
+    CARGO_BUILD_JOBS=2 cargo chef cook --locked --release --bin tengri --tests --recipe-path recipe.json
+
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
+COPY migrations ./migrations
+COPY fixtures ./fixtures
+COPY --from=ofz-proto / /ofz/proto/
+COPY --from=ofz-catalog /operations.json /ofz/operations.json
+ENV OFZ_PROTO_ROOT=/ofz/proto OFZ_CATALOG_PATH=/ofz/operations.json
 COPY src ./src
 RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && \
-    (CARGO_BUILD_JOBS=2 cargo test --locked --release --all-targets > /tmp/tengri-build.log 2>&1 || \
+    (CARGO_BUILD_JOBS=2 cargo test --locked --release --bin tengri > /tmp/tengri-build.log 2>&1 || \
       { cat /tmp/tengri-build.log; exit 1; }) && \
     cat /tmp/tengri-build.log && \
-    kvm_test="$(sed -nE 's/^ *Running unittests src\/main.rs \((.*)\)$/\1/p' /tmp/tengri-build.log)" && \
-    test -n "$kvm_test" && cp "$kvm_test" /out-kvm-test && \
-    /out-kvm-test --list --ignored | grep -Fx \
-      'slot::kvm_test::real_guest_restores_files_codex_and_the_same_shell_without_resident_snapshot_pages: test' && \
     CARGO_BUILD_JOBS=2 cargo build --locked --release --bin tengri && \
     cp target/release/tengri /out-tengri && \
     test -s /out-tengri
@@ -59,11 +74,15 @@ RUN curl -fsSL --retry 3 -o /tmp/firecracker-source.tgz \
     tar -xzf /tmp/firecracker-source.tgz --strip-components=1 -C /firecracker && \
     rm /tmp/firecracker-source.tgz
 COPY firecracker-memory-direct-io.patch /tmp/firecracker-memory-direct-io.patch
+COPY firecracker-async-workers.patch /tmp/firecracker-async-workers.patch
+COPY firecracker-memory-sparse.patch /tmp/firecracker-memory-sparse.patch
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-registry \
     --mount=type=cache,target=/firecracker/target,id=tengri-firecracker-target-${TARGETARCH} \
     set -eu; \
     test "$(dpkg --print-architecture)" = "$TARGETARCH"; \
     patch --fuzz=0 -p1 < /tmp/firecracker-memory-direct-io.patch; \
+    patch --fuzz=0 -p1 < /tmp/firecracker-async-workers.patch; \
+    patch --fuzz=0 -p1 < /tmp/firecracker-memory-sparse.patch; \
     case "$TARGETARCH" in \
       amd64) fc_target=x86_64-unknown-linux-musl ;; \
       arm64) fc_target=aarch64-unknown-linux-musl ;; \
@@ -71,12 +90,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-re
     esac; \
     test -s "resources/seccomp/${fc_target}.json"; \
     rustup target add "$fc_target"; \
+    cargo test --locked --release --target "$fc_target" -p vmm --lib \
+      vstate::memory::tests::test_sparse_full_snapshot_bytes_and_existing_zero_overwrite -- --exact; \
+    cargo test --locked --release --target "$fc_target" -p vmm --lib vstate::memory::tests::test_dump; \
     cargo build --locked --release --target "$fc_target" --bin firecracker; \
     cp "target/${fc_target}/release/firecracker" /out-firecracker; \
     file /out-firecracker | grep -E 'statically linked|static-pie linked'; \
     /out-firecracker --version
 
 FROM ${DEBIAN_BASE_IMAGE}:bookworm-slim AS runtime
+
+ARG SOURCE_REVISION=development
+ENV APP_SOURCE_REVISION=${SOURCE_REVISION}
 
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates e2fsprogs iproute2 nftables && \
@@ -93,16 +118,3 @@ COPY --chmod=0555 network.sh /usr/local/bin/tengri-network
 USER 65532:65532
 EXPOSE 50051 8080
 ENTRYPOINT ["/usr/local/bin/tengri"]
-
-FROM runtime AS kvm-test
-USER 0:0
-RUN apt-get update -o Acquire::Retries=3 && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends util-linux && \
-    rm -rf /var/lib/apt/lists/*
-COPY --from=build /out-kvm-test /fixture/kvm-test
-COPY --from=nanoagent-tests /out/nanoagent-tests /fixture/nanoagent-tests
-COPY --from=nanoagent-tests /out/test-guest-admin.sh /fixture/test-guest-admin.sh
-COPY --chmod=0555 test-kvm-entry.sh /fixture/entry
-ENTRYPOINT ["/fixture/entry"]
-
-FROM runtime AS release

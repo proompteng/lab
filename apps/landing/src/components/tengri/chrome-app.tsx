@@ -1,66 +1,46 @@
 'use client'
 
+import { reportBrowserFailure } from '@/lib/observability/client'
+
 import { LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import type { TengriPreviewSession } from '@/lib/tengri/types'
-import { runTengriAction } from './client'
-import { safePreviewLaunchUrl, safePreviewSessionOrigin } from './preview-session'
+import { useDesktopPreview } from './use-desktop-preview'
 
 export function ChromeApp({
   agentId,
+  desktopId,
+  windowId,
   onFocus,
   previewGatewayOrigin,
 }: {
   agentId: string
+  desktopId: string
+  windowId: string
   onFocus: () => void
   previewGatewayOrigin: string
 }) {
-  const [session, setSession] = useState<TengriPreviewSession | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
-  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    if (error) reportBrowserFailure('chrome.connection')
+  }, [error])
   const frame = useRef<HTMLIFrameElement>(null)
   const focus = useRef(onFocus)
   focus.current = onFocus
 
+  const preview = useDesktopPreview({
+    action: 'browser-session',
+    agentId,
+    frame,
+    previewGatewayOrigin,
+    windowId: `${desktopId}-${windowId}`,
+  })
+  const { session, connectionGeneration } = preview
+  const connectionError = preview.error || error
   useEffect(() => {
-    const controller = new AbortController()
-    let disposed = false
-    let issued: TengriPreviewSession | null = null
     setReady(false)
-    setSession(null)
     setError('')
-    const revoke = (value: TengriPreviewSession) =>
-      runTengriAction(
-        {
-          action: 'revoke-preview-session',
-          agentId,
-          sessionId: value.id,
-          revocationToken: new URL(value.launchUrl).hash.slice(1),
-        },
-        { keepalive: true },
-      ).catch(() => undefined)
-    void runTengriAction<TengriPreviewSession>({ action: 'browser-session', agentId }, controller.signal)
-      .then((value) => {
-        issued = value
-        if (disposed) {
-          void revoke(value)
-          return
-        }
-        const launchUrl = safePreviewLaunchUrl(value.launchUrl, previewGatewayOrigin)
-        const previewOrigin = safePreviewSessionOrigin(value.previewOrigin, value.id)
-        if (!launchUrl || !previewOrigin) throw new Error('Tengri returned an invalid browser session')
-        setSession({ ...value, launchUrl, previewOrigin })
-      })
-      .catch((cause: unknown) => {
-        if (!disposed) setError(cause instanceof Error ? cause.message : 'Chrome could not be started')
-      })
-    return () => {
-      disposed = true
-      controller.abort()
-      if (issued) void revoke(issued)
-    }
-  }, [agentId, attempt, previewGatewayOrigin])
+  }, [session, connectionGeneration])
 
   useEffect(() => {
     if (!session) return
@@ -81,7 +61,6 @@ export function ChromeApp({
         setError('')
       } else if (message.type === 'focus') focus.current()
       else if (message.type === 'error') {
-        setReady(false)
         setError('error' in message && typeof message.error === 'string' ? message.error : 'Chrome disconnected')
       }
     }
@@ -99,9 +78,10 @@ export function ChromeApp({
     <div className="relative h-full w-full bg-[#202124]">
       {session ? (
         <iframe
+          key={connectionGeneration}
           ref={frame}
           title="Chrome browser"
-          src={session.launchUrl}
+          src={connectionGeneration ? session.previewOrigin : session.launchUrl}
           data-window-default-focus
           className="h-full w-full border-0"
           allow={`clipboard-read ${session.previewOrigin}; clipboard-write ${session.previewOrigin}`}
@@ -109,15 +89,25 @@ export function ChromeApp({
           sandbox="allow-same-origin allow-scripts"
         />
       ) : null}
-      {!ready || error ? (
-        <div className="absolute inset-0 z-10 grid place-content-center gap-3 bg-[#202124] p-8 text-center text-sm text-zinc-400">
-          {error ? (
+      {preview.renewalFrame}
+      {!ready || connectionError ? (
+        <div
+          className={
+            ready && !preview.error
+              ? 'absolute inset-x-3 top-3 z-10 flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900/95 p-3 text-sm text-zinc-200'
+              : 'absolute inset-0 z-10 grid place-content-center gap-3 bg-[#202124] p-8 text-center text-sm text-zinc-400'
+          }
+        >
+          {connectionError ? (
             <>
-              <p role="alert">{error}</p>
+              <p role="alert">{connectionError}</p>
               <button
                 type="button"
                 className="justify-self-center rounded-lg bg-white/8 px-4 py-2 text-zinc-200 outline-none hover:bg-white/12 focus-visible:ring-2 focus-visible:ring-blue-400"
-                onClick={() => setAttempt((value) => value + 1)}
+                onClick={() => {
+                  setError('')
+                  preview.retry()
+                }}
               >
                 Reconnect Chrome
               </button>

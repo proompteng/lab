@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import {
   CycleOperationsCondition,
   deriveCycleOperationsStatusResult,
@@ -32,7 +32,6 @@ import type {
   HealthTransitionInput,
   ProbeResult,
 } from './model'
-import { Pipeable } from '../pipeable'
 
 const dependencyHealth = <A>(result: ProbeResult<A>, checkedAt: string | null): DependencyHealth => ({
   status: result._tag === 'Available' ? 'AVAILABLE' : 'UNAVAILABLE',
@@ -315,7 +314,7 @@ const deriveNextRuntimeState = (
   }
 }
 
-const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTransitionInput): HealthTransition => {
+export const deriveHealthTransition = (current: RuntimeState, input: HealthTransitionInput): HealthTransition => {
   const checkedAt = input.clock._tag === 'Available' ? input.clock.checkedAt : null
   const clockFailure = input.clock._tag === 'Unavailable' ? input.clock.failure : null
   const clockError =
@@ -361,8 +360,6 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
     clockFailure,
   }
 }
-
-export const deriveHealthTransition = Pipeable.dual(2, deriveHealthTransitionDataFirst)
 
 const runtimeStatusLogDecision = (transition: HealthTransition): HealthLogDecision | null => {
   if (transition.next.status === transition.current.status) return null

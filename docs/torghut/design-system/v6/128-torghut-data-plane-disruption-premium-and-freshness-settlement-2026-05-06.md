@@ -1,6 +1,6 @@
 # 128. Torghut Data-Plane Disruption Premium And Freshness Settlement (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

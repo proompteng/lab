@@ -41,6 +41,11 @@ Use `git_write` with an owned `sessionId` for `ls-remote`. Git configuration can
 helpers, so remote inspection requires execution authority.
 `git cat-file` permits raw object and batch inspection while rejecting filter and textconv execution.
 `git rev-list` permits explicit commit-listing options and rejects output files, external diff drivers, and alternate-ref commands.
+`git branch` forces listing mode, so bare name patterns cannot create branches; creation, deletion, moves and editor
+execution require `git_write`. Sessionless reads can inspect the shared `/workspace/lab` checkout. Managed worktrees
+remain private to the authenticated subject that opened them, even when `git worktree list` exposes their paths.
+Cross-subject access returns `REPO_SESSION_FORBIDDEN`; use an owned session or the shared read-only checkout instead of
+retrying a foreign worktree. Shared refs may be cached and do not establish fresh upstream state.
 
 The old `shell_run`, `shell_start`, `shell_read`, `shell_kill` and `shell_status` tools are removed.
 

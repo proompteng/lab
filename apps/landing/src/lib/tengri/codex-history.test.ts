@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { readCodexHistory, type CodexHistoryPage } from './codex-history'
+import { CodexHistoryInterruptedError, readCodexHistory, type CodexHistoryPage } from './codex-history'
 
 const metadata: CodexHistoryPage = {
   type: 'page',
@@ -103,6 +103,20 @@ test('decodes fragmented UTF-8 and NDJSON records', async () => {
   })
   const restored = await read(new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson' } }))
   expect(JSON.parse(restored.rawJson).thread.turns[0].items[0].text).toBe('世界 🌍')
+})
+
+test('identifies premature EOF as an interruption without returning partial history', async () => {
+  await expect(read(response([metadata, items([], null), turns([])], false))).rejects.toBeInstanceOf(
+    CodexHistoryInterruptedError,
+  )
+})
+
+test('keeps data after a completed history stream a permanent validation failure', async () => {
+  const failure = await read(response([metadata, items([], null), turns([])], true, '{')).catch(
+    (error: unknown) => error,
+  )
+  expect(failure).toBeInstanceOf(Error)
+  expect(failure).not.toBeInstanceOf(CodexHistoryInterruptedError)
 })
 
 test('rejects incomplete, corrupt, mismatched, and out-of-order streams without returning partial history', async () => {

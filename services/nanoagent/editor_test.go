@@ -86,10 +86,10 @@ func TestEditorBrowserFixture(t *testing.T) {
 	if home == "" {
 		t.Fatal("TENGRI_EDITOR_TEST_HOME is required")
 	}
-	api, err := newAPIServer(apiConfig{bootstrapToken: "editor-browser-fixture", codeServerBinary: binary,
+	api, err := newAPIServer(apiConfig{guestAuthorization: fixtureGuestAuthorization(t), bootstrapToken: "editor-browser-fixture", codeServerBinary: binary,
 		homeRoot: home, workspaceRoot: filepath.Join(home, "workspace"), shell: "/bin/bash",
 		browserBinary: os.Getenv("TENGRI_BROWSER_TEST_BINARY"), browserBootstrap: os.Getenv("TENGRI_BROWSER_TEST_BOOTSTRAP"),
-		browserAssets: os.Getenv("TENGRI_BROWSER_TEST_ASSETS"), evidence: evidence{MicroVMID: "editor-fixture"}})
+		browserAssets: os.Getenv("TENGRI_BROWSER_TEST_ASSETS"), evidence: evidence{MicroVMID: "33333333-3333-4333-8333-333333333333"}})
 	if err != nil {
 		t.Fatal(err)
 	}

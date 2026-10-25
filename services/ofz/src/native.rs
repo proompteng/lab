@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tonic::Status;
 
 use crate::{DECISION_TIMEOUT, policy::OFZ_ID, policy::workload_object_id};
@@ -111,6 +112,78 @@ pub struct Native {
 }
 
 impl Native {
+    pub(crate) async fn install_schema(&self) -> Result<Vec<u8>, Status> {
+        self.post("/v1/schema/write", json!({"schema": crate::SCHEMA}))
+            .await?;
+        self.schema_hash().await
+    }
+
+    pub(crate) async fn schema_hash(&self) -> Result<Vec<u8>, Status> {
+        let response = self.post("/v1/schema/read", json!({})).await?;
+        let schema = response["schemaText"]
+            .as_str()
+            .filter(|schema| !schema.is_empty())
+            .ok_or_else(|| Status::unavailable("missing installed authorization schema"))?;
+        Ok(Sha256::digest(schema.as_bytes()).to_vec())
+    }
+
+    pub(crate) async fn platform_matches(&self, expected: &[Relationship]) -> Result<bool, Status> {
+        let bytes = self
+            .post_bytes(
+                "/v1/relationships/read",
+                json!({
+                    "consistency": {"fullyConsistent": true},
+                    "relationshipFilter": {"resourceType": "platform"},
+                    "optionalLimit": expected.len() + 1,
+                }),
+            )
+            .await?;
+        let mut found = vec![false; expected.len()];
+        let mut revision = None;
+        for line in bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let envelope: Value = serde_json::from_slice(line)
+                .map_err(|_| Status::unavailable("invalid native relationship stream"))?;
+            let result = &envelope["result"];
+            let token = result["readAt"]["token"]
+                .as_str()
+                .filter(|token| !token.is_empty())
+                .ok_or_else(|| Status::unavailable("incomplete native relationship stream"))?;
+            if revision
+                .as_deref()
+                .is_some_and(|previous| previous != token)
+            {
+                return Err(Status::unavailable("native relationship snapshot changed"));
+            }
+            revision = Some(token.to_owned());
+            let value = &result["relationship"];
+            if value["subject"]
+                .get("optionalRelation")
+                .is_some_and(|relation| relation != "")
+                || value
+                    .get("optionalCaveat")
+                    .is_some_and(|caveat| !caveat.is_null())
+            {
+                return Ok(false);
+            }
+            let relationship: Relationship = serde_json::from_value(value.clone())
+                .map_err(|_| Status::unavailable("invalid native relationship"))?;
+            let Some(index) = expected
+                .iter()
+                .position(|expected| *expected == relationship)
+            else {
+                return Ok(false);
+            };
+            if found[index] {
+                return Ok(false);
+            }
+            found[index] = true;
+        }
+        Ok(found.into_iter().all(|found| found))
+    }
+
     pub fn new(endpoint: &str, key_path: PathBuf) -> Result<Self, Status> {
         let url = reqwest::Url::parse(endpoint)
             .map_err(|_| Status::invalid_argument("invalid native endpoint"))?;
@@ -151,6 +224,11 @@ impl Native {
     }
 
     async fn post(&self, path: &str, body: Value) -> Result<Value, Status> {
+        serde_json::from_slice(&self.post_bytes(path, body).await?)
+            .map_err(|_| Status::unavailable("invalid authorization datastore response"))
+    }
+
+    async fn post_bytes(&self, path: &str, body: Value) -> Result<Vec<u8>, Status> {
         let key = tokio::fs::read_to_string(&self.key_path)
             .await
             .map_err(|_| Status::unavailable("native credential unavailable"))?;
@@ -178,9 +256,9 @@ impl Native {
             }
             bytes.extend_from_slice(&chunk);
         }
-        let value: Value = serde_json::from_slice(&bytes)
-            .map_err(|_| Status::unavailable("invalid authorization datastore response"))?;
         if !status.is_success() {
+            let value: Value = serde_json::from_slice(&bytes)
+                .map_err(|_| Status::unavailable("invalid authorization datastore response"))?;
             if status == reqwest::StatusCode::PRECONDITION_FAILED
                 || value["code"].as_i64() == Some(9)
             {
@@ -190,9 +268,10 @@ impl Native {
                 "authorization datastore rejected request",
             ));
         }
-        Ok(value)
+        Ok(bytes)
     }
 
+    #[tracing::instrument(name = "spicedb.check", skip_all)]
     pub async fn check(&self, checks: &[Check]) -> Result<(bool, String), Status> {
         if checks.is_empty() || checks.len() > 64 {
             return Err(Status::invalid_argument("invalid permission check batch"));
@@ -238,6 +317,7 @@ impl Native {
         Ok((allowed, revision.into()))
     }
 
+    #[tracing::instrument(name = "spicedb.applied", skip_all)]
     pub async fn applied(&self, operation: &str) -> Result<(bool, String), Status> {
         self.check(&[Check::new(
             "applied_command",
@@ -249,6 +329,17 @@ impl Native {
         .await
     }
 
+    #[cfg(test)]
+    pub(crate) async fn write_fixture_relationships(
+        &self,
+        updates: &[Update],
+    ) -> Result<(), Status> {
+        self.post("/v1/relationships/write", json!({"updates": updates}))
+            .await
+            .map(|_| ())
+    }
+
+    #[tracing::instrument(name = "spicedb.apply", skip_all)]
     pub async fn apply(
         &self,
         operation: &str,

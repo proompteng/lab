@@ -99,7 +99,10 @@ const rawConfig = Config.all({
   startDate: Config.schema(IsoDateSchema, 'SIGNAL_START_DATE'),
   calendarVersion: nonEmptyString('SIGNAL_CALENDAR_VERSION').pipe(Config.withDefault('alpaca-us-equity-calendar-v1')),
   finalizationLagMinutes: positiveInteger('SIGNAL_FINALIZATION_LAG_MINUTES', 90),
-  operationTimeoutMs: positiveInteger('SIGNAL_OPERATION_TIMEOUT_MS', 60_000),
+  operationTimeoutMs: Config.schema(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1_000)),
+    'SIGNAL_OPERATION_TIMEOUT_MS',
+  ).pipe(Config.withDefault(60_000)),
   sourceRevision: Config.schema(SourceRevision, 'SIGNAL_CODE_REVISION'),
   imageRepository: Config.schema(ImageRepository, 'SIGNAL_IMAGE_REPOSITORY'),
   imageDigest: Config.schema(ImageDigest, 'SIGNAL_IMAGE_DIGEST'),

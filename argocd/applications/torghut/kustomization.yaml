@@ -3,6 +3,7 @@ kind: Kustomization
 configurations:
   - kustomizeconfig.yaml
 resources:
+  - glitchtip-dsn.yaml
   - codex-auth-externalsecret.yaml
   - postgres-upgrade-final-backup.yaml
   - cnpg-torghut-db-objectbucketclaim.yaml

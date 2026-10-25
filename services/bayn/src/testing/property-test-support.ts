@@ -11,16 +11,19 @@ const integerOption = (name: string, fallback: number, minimum: number, maximum:
 }
 
 /** Fixed CI corpus; opt-in mutation campaigns retain fast-check's minimized input and replay coordinates. */
-export const checkProperty = <T>(name: string, property: fc.IProperty<T>, defaultRuns = 100): void => {
+const options = (defaultRuns: number) => {
   const path = process.env['BAYN_PROPERTY_PATH']
-  const details = fc.check(property, {
+  return {
     seed: integerOption('BAYN_PROPERTY_SEED', 20261003, -2147483648, 2147483647),
     numRuns: integerOption('BAYN_PROPERTY_RUNS', defaultRuns, 1, 100_000),
     ...(path === undefined ? {} : { path }),
     // A time-limited campaign must fail rather than silently accept an incomplete corpus.
     interruptAfterTimeLimit: 120_000,
     markInterruptAsFailure: true,
-  })
+  }
+}
+
+const report = <T>(name: string, details: fc.RunDetails<T>): void => {
   if (!details.failed) return
   const directory = new URL('../../.fuzz-failures/', import.meta.url)
   mkdirSync(directory, { recursive: true })
@@ -43,3 +46,12 @@ export const checkProperty = <T>(name: string, property: fc.IProperty<T>, defaul
   )
   throw new Error(`${fc.defaultReportMessage(details)}\nMinimized regression: ${artifact.pathname}`)
 }
+
+export const checkProperty = <T>(name: string, property: fc.IProperty<T>, defaultRuns = 100): void =>
+  report(name, fc.check(property, options(defaultRuns)))
+
+export const checkAsyncProperty = async <T>(
+  name: string,
+  property: fc.IAsyncProperty<T>,
+  defaultRuns = 100,
+): Promise<void> => report(name, await fc.check(property, options(defaultRuns)))

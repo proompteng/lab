@@ -1,7 +1,17 @@
 import { Schema } from 'effect'
 
-import { Sha256Schema, UtcInstantSchema } from '../../schemas'
-import { CycleWaitReasonSchema, DecisionReadinessSchema } from './readiness'
+import { IsoDateSchema, Sha256Schema, UtcDatabaseInstantSchema, UtcInstantSchema } from '../../schemas'
+import { CycleWaitReasonSchema, DecisionReadinessReason, DecisionReadinessSchema } from './readiness'
+
+export const AdmissionProtectionEvidenceSchema = Schema.Struct({
+  authorityGenerationHash: Sha256Schema,
+  authorityUpdatedAt: UtcDatabaseInstantSchema,
+  reconciliationId: Sha256Schema,
+  tradingDate: IsoDateSchema,
+  validUntil: UtcInstantSchema,
+})
+
+export type AdmissionProtectionEvidence = typeof AdmissionProtectionEvidenceSchema.Type
 
 export const maximumRetainedJevObservationReferences = 16
 export const JevObservationReferencesSchema = Schema.Struct({
@@ -21,6 +31,7 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
     jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     outcome: Schema.Literals([
       'WAITING',
+      'ADMISSION_WAITING',
       'WINDOW_CLOSED',
       'ALREADY_ACQUIRED',
       'ALREADY_TERMINAL',
@@ -33,16 +44,27 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
     ),
     waitReason: Schema.optionalKey(CycleWaitReasonSchema),
     readiness: Schema.optionalKey(DecisionReadinessSchema),
+    admissionProtection: Schema.optionalKey(AdmissionProtectionEvidenceSchema),
     nextWakeAt: Schema.optionalKey(UtcInstantSchema),
   }).check(
     Schema.makeFilter(
-      (observation) =>
-        (observation.recoveryAction === undefined || observation.outcome === 'RECOVERED') &&
-        (observation.outcome === 'WAITING'
-          ? observation.waitReason === 'BROKER_OBSERVATION_PENDING' && observation.readiness === undefined
-          : observation.recoveryAction === 'WAITING'
-            ? (observation.waitReason === undefined) !== (observation.readiness === undefined)
-            : observation.waitReason === undefined && observation.readiness === undefined),
+      (observation) => {
+        if (observation.recoveryAction !== undefined && observation.outcome !== 'RECOVERED') return false
+        if (observation.outcome === 'ADMISSION_WAITING')
+          return (
+            observation.waitReason === undefined &&
+            observation.readiness?.reason === DecisionReadinessReason.AccountProtection &&
+            observation.admissionProtection !== undefined &&
+            observation.admissionProtection.validUntil > observation.observedAt &&
+            observation.nextWakeAt === undefined
+          )
+        if (observation.admissionProtection !== undefined) return false
+        if (observation.outcome === 'WAITING')
+          return observation.waitReason === 'BROKER_OBSERVATION_PENDING' && observation.readiness === undefined
+        if (observation.recoveryAction === 'WAITING')
+          return (observation.waitReason === undefined) !== (observation.readiness === undefined)
+        return observation.waitReason === undefined && observation.readiness === undefined
+      },
       { expected: 'exactly one readiness or lifecycle reason on each tagged waiting pass and none on other passes' },
     ),
   ),

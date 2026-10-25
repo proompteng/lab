@@ -8,6 +8,9 @@ option go_package = "github.com/proompteng/lab/gen/proompteng/authz/v1;authzv1";
 // All methods require an attested, explicitly allowed SPIFFE workload identity.
 service AuthorizationService {
   rpc Check(CheckRequest) returns (CheckResponse);
+  // Connector broker only: authenticates an agent's proof-bound grant before
+  // returning an operation-specific decision and server-derived actor context.
+  rpc CheckConnectorAgent(CheckConnectorAgentRequest) returns (CheckConnectorAgentResponse);
   rpc AuthorizeCommand(AuthorizeCommandRequest) returns (AuthorizeCommandResponse);
   rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse);
   rpc GetCommand(GetCommandRequest) returns (GetCommandResponse);
@@ -17,6 +20,12 @@ service AuthorizationService {
   rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
   rpc InspectSession(InspectSessionRequest) returns (InspectSessionResponse);
   rpc GetPolicyState(GetPolicyStateRequest) returns (GetPolicyStateResponse);
+  // Exact controller identity only. Denied runtime state remains visible so it can be fenced.
+  rpc GetWorkspaceState(GetWorkspaceStateRequest) returns (GetWorkspaceStateResponse);
+  // Exact controller identity only. This never grants general guest control.
+  rpc AuthorizeGuestMaintenance(AuthorizeGuestMaintenanceRequest) returns (AuthorizeGuestMaintenanceResponse);
+  // Exact controller identity only, with the initiating human session checked by Ofz.
+  rpc GetWorkspaceReservation(GetWorkspaceReservationRequest) returns (GetWorkspaceReservationResponse);
 }
 
 enum Action {
@@ -61,6 +70,9 @@ enum Action {
   ACTION_SESSION_INSPECT = 38;
   ACTION_WORKSPACE_POLICY_READ = 39;
   ACTION_SESSION_REVOKE = 40;
+  ACTION_CONNECTOR_CREATE = 41;
+  ACTION_CONNECTOR_MANAGE = 42;
+  ACTION_CONNECTOR_INVOKE = 43;
 }
 
 enum ResourceKind {
@@ -106,6 +118,11 @@ message ObservationScope {
   bool browser_screenshot = 4;
   uint32 max_bytes = 5;
   uint32 max_items = 6;
+  // Exact reviewed gateway operations. Empty grants cannot use CheckConnectorAgent;
+  // legacy diagnostic ConnectorRead grants retain their existing contract.
+  repeated string connector_operations = 7;
+  // Server-owned epoch captured when a connector capability is issued.
+  string connector_runtime_epoch = 8;
 }
 
 message CheckRequest {
@@ -123,6 +140,42 @@ message CheckResponse {
   string audit_receipt_id = 3;
   uint64 valid_until_unix_ms = 4;
   uint64 recovery_generation = 5;
+  ObservationScope effective_scope = 6;
+}
+
+message CheckConnectorAgentRequest {
+  string grant_id = 1;
+  string credential = 2;
+  string proof = 3;
+  bytes request_hash = 4;
+  string connection_id = 5;
+  string operation = 6;
+  // Selected by the trusted broker from the reviewed provider catalog.
+  Action action = 7;
+}
+
+message CheckConnectorAgentResponse {
+  RequestContext context = 1;
+  CheckResponse decision = 2;
+}
+
+enum GuestMaintenancePurpose {
+  GUEST_MAINTENANCE_PURPOSE_UNSPECIFIED = 0;
+  GUEST_MAINTENANCE_PURPOSE_PROBE = 1;
+  GUEST_MAINTENANCE_PURPOSE_TERMINAL_CLEANUP = 2;
+}
+
+message AuthorizeGuestMaintenanceRequest {
+  RequestContext context = 1;
+  string workspace_uid = 2;
+  GuestMaintenancePurpose purpose = 3;
+  string terminal_id = 4;
+  // Probe may reuse its durable observation receipt; terminal cleanup must audit each submission.
+  string stream_receipt_id = 5;
+}
+
+message AuthorizeGuestMaintenanceResponse {
+  CheckResponse decision = 1;
 }
 
 // Permission-only preflight before resolving external command subjects. The result
@@ -165,6 +218,8 @@ message SetWorkspaceRole {
   string human_id = 2;
   WorkspaceRole role = 3;
   bool enabled = 4;
+  // Viewer content access is explicit. Omission grants metadata only.
+  ObservationScope scope = 5;
 }
 
 message TransferWorkspace {
@@ -195,6 +250,14 @@ message SetTargetAccess {
   bool enabled = 4;
 }
 
+// BFF only. Creation binds the immutable connection UUID to the authenticated
+// human. Subsequent enable/disable requires its current owner permission.
+message ConfigureConnector {
+  string connection_id = 1;
+  bool create = 2;
+  bool enabled = 3;
+}
+
 message SetQuota {
   string human_id = 1;
   uint32 total_workspaces = 2;
@@ -210,10 +273,33 @@ message EnrollWorkspace {
   string reservation_id = 5;
 }
 
+message BeginWorkspaceEnrollment {
+  string reservation_id = 1;
+  string workspace_uid = 2;
+  string owner_id = 3;
+}
+
 // Reserve capacity before allocating any Kubernetes or guest resource.
 message ReserveWorkspace {
   string reservation_id = 1;
   uint64 home_bytes = 2;
+}
+
+message GetWorkspaceReservationRequest {
+  RequestContext context = 1;
+  string reservation_id = 2;
+  uint64 recovery_generation = 3;
+}
+
+message GetWorkspaceReservationResponse {
+  string reservation_id = 1;
+  string owner_id = 2;
+  uint64 home_bytes = 3;
+  string state = 4;
+  string workspace_uid = 5;
+  uint64 recovery_generation = 6;
+  uint64 valid_until_unix_ms = 7;
+  string audit_receipt_id = 8;
 }
 
 message ReleaseReservation {
@@ -228,6 +314,12 @@ message SetWorkspaceRuntime {
 
 message RemoveWorkspace {
   string workspace_uid = 1;
+}
+
+message CompleteWorkspaceRemoval {
+  string workspace_uid = 1;
+  string home_uid = 2;
+  string reservation_id = 3;
 }
 
 message EmergencyAccess {
@@ -260,6 +352,9 @@ message ExecuteCommandRequest {
     ReserveWorkspace reserve_workspace = 15;
     ReleaseReservation release_reservation = 16;
     SetWorkspaceRuntime set_workspace_runtime = 17;
+    CompleteWorkspaceRemoval complete_workspace_removal = 18;
+    ConfigureConnector configure_connector = 21;
+    BeginWorkspaceEnrollment begin_workspace_enrollment = 20;
   }
 }
 
@@ -280,6 +375,8 @@ message CommandReceipt {
   string agent_credential = 6;
   // True when recovery observed an applied marker after losing the original write receipt.
   bool recovered_revision = 7;
+  // Original committed runtime intent, preserved across retries and later transitions.
+  SetWorkspaceRuntime runtime_intent = 8;
 }
 
 message ExecuteCommandResponse {
@@ -287,6 +384,8 @@ message ExecuteCommandResponse {
 }
 message GetCommandResponse {
   CommandReceipt receipt = 1;
+  // For RemoveWorkspace, true only after the controller confirms exact home destruction.
+  bool workspace_removed = 2;
 }
 
 message GetCommandRequest {
@@ -420,4 +519,29 @@ message GetPolicyStateResponse {
   uint64 version = 1;
   uint64 recovery_generation = 2;
   bool fenced = 3;
+  bool archive_healthy = 4;
+}
+
+message GetWorkspaceStateRequest {
+  RequestContext context = 1;
+  string workspace_uid = 2;
+  // Receipt binding only. Current policy and runtime state are always read again.
+  string stream_receipt_id = 3;
+}
+
+message GetWorkspaceStateResponse {
+  string workspace_uid = 1;
+  string owner_id = 2;
+  string home_uid = 3;
+  string reservation_id = 4;
+  uint64 home_bytes = 5;
+  string runtime_epoch = 6;
+  bool running = 7;
+  string state = 8;
+  // Requires healthy current authority, active owner membership and running, non-quarantined state.
+  bool runtime_allowed = 9;
+  uint64 recovery_generation = 10;
+  uint64 valid_until_unix_ms = 11;
+  string audit_receipt_id = 12;
+  uint64 policy_version = 13;
 }

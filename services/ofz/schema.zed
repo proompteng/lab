@@ -16,6 +16,7 @@ definition platform {
 
     permission admit = member
     permission create_workspace = member
+    permission create_connector = member
     permission manage_members = administrator & member
     permission manage_quotas = administrator & member
     permission manage_targets = administrator & member
@@ -87,8 +88,12 @@ definition kube_namespace {
 
 definition connector_connection {
     relation platform: platform
+    relation owner: human
     relation reader: human
+    relation caller: human
     permission read = reader & platform->admit
+    permission invoke = caller & platform->admit
+    permission manage = owner & platform->admit
 }
 
 // Used only by the serialized command reconciler. The marker and policy version

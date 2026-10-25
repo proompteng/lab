@@ -1,12 +1,10 @@
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
+import { instrumentMarket } from '../instruments'
 import { Result } from 'effect'
 
-import {
-  MutationOperation,
-  compatibleOrderRequestBody,
-  orderPriceBoundaryMicros,
-  orderRequestNotionalMicros,
-} from '../broker/alpaca-mutations'
-import { CycleTerminalReason } from '../cycle'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { recordedOrderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations/decisions'
+import { CycleTerminalReason } from '../cycle/model'
 import type { CycleCompletionWaitReason, CycleWaitingDetails } from '../cycle/runner/readiness'
 import {
   Authority,
@@ -15,24 +13,19 @@ import {
   OrderType,
   ReconciliationStatus,
   TerminalOutcome,
-  TimeInForce,
   type Intent,
   type Order,
   type Position,
 } from '../execution/contracts'
-import { legacyOrderV2SchemaVersion, legacyPositionSchemaVersion } from '../execution/legacy-wire'
-import { MutationEventType, type MutationEvent } from '../execution/mutations'
-import type { PlannedTargetQuantity } from '../target-planner'
-import { Pipeable } from '../pipeable'
+import { legacyOrderV2SchemaVersion } from '../execution/legacy-wire'
+import { MutationEventType, type MutationEvent } from '../execution/mutations/model'
 
-const quantityScale = 1_000_000n
-
-export const countOpenPositions = (positions: readonly Pick<Position, 'quantityMicros'>[]): number =>
-  positions.filter((position) => BigInt(position.quantityMicros) !== 0n).length
+export const countOpenPositions = (positions: readonly Pick<Position, 'quantityAtoms'>[]): number =>
+  positions.filter((position) => BigInt(position.quantityAtoms) !== 0n).length
 
 export interface ExecutionCycleFillInput {
   readonly intents: readonly Pick<Intent, 'intentId' | 'state' | 'terminalOutcome'>[]
-  readonly orders?: readonly Pick<Order, 'intentId' | 'filledQuantityMicros'>[]
+  readonly orders?: readonly Pick<Order, 'intentId' | 'filledQuantityAtoms'>[]
 }
 
 export const executionCycleHasFilledIntent = (input: ExecutionCycleFillInput): boolean => {
@@ -44,12 +37,16 @@ export const executionCycleHasFilledIntent = (input: ExecutionCycleFillInput): b
     ) ||
     orders.some(
       (order) =>
-        order.intentId !== undefined && intentIds.has(order.intentId) && BigInt(order.filledQuantityMicros) > 0n,
+        order.intentId !== undefined && intentIds.has(order.intentId) && BigInt(order.filledQuantityAtoms) > 0n,
     )
   )
 }
 
-export type ExecutionIntentTerminalDisposition = 'FILLED' | 'BENIGN_ZERO_FILL_IOC' | 'PARTIAL_FILL_IOC' | 'UNSUCCESSFUL'
+export type ExecutionIntentTerminalDisposition =
+  | 'FILLED'
+  | 'BENIGN_ZERO_FILL_LIMIT'
+  | 'PARTIAL_FILL_LIMIT'
+  | 'UNSUCCESSFUL'
 
 export interface ExecutionIntentTerminalDispositionInput {
   readonly phase: 'ENTRY' | 'CLOSE'
@@ -59,7 +56,7 @@ export interface ExecutionIntentTerminalDispositionInput {
     | 'clientOrderId'
     | 'intentId'
     | 'orderType'
-    | 'quantityMicros'
+    | 'quantityAtoms'
     | 'side'
     | 'state'
     | 'symbol'
@@ -72,10 +69,10 @@ export interface ExecutionIntentTerminalDispositionInput {
     | 'accountId'
     | 'brokerOrderId'
     | 'clientOrderId'
-    | 'filledQuantityMicros'
+    | 'filledQuantityAtoms'
     | 'intentId'
     | 'orderType'
-    | 'quantityMicros'
+    | 'quantityAtoms'
     | 'side'
     | 'status'
     | 'symbol'
@@ -92,7 +89,7 @@ export const decideExecutionIntentTerminalDisposition = (
     input.phase !== 'ENTRY' ||
     input.intent.terminalOutcome !== TerminalOutcome.Canceled ||
     input.intent.orderType !== OrderType.Limit ||
-    input.intent.timeInForce !== TimeInForce.ImmediateOrCancel ||
+    input.intent.timeInForce !== cashSpotLimitTimeInForce(instrumentMarket(input.intent.symbol)) ||
     input.acceptedBrokerOrderId === undefined
   ) {
     return 'UNSUCCESSFUL'
@@ -107,79 +104,16 @@ export const decideExecutionIntentTerminalDisposition = (
       order.side === input.intent.side &&
       order.orderType === input.intent.orderType &&
       order.timeInForce === input.intent.timeInForce &&
-      order.quantityMicros === input.intent.quantityMicros,
+      order.quantityAtoms === input.intent.quantityAtoms,
   )
   const order = matchingOrders.length === 1 ? matchingOrders[0] : undefined
   if (order?.status !== OrderStatus.Canceled) return 'UNSUCCESSFUL'
-  const filledQuantity = BigInt(order.filledQuantityMicros)
-  if (filledQuantity === 0n) return 'BENIGN_ZERO_FILL_IOC'
-  return filledQuantity > 0n && filledQuantity < BigInt(input.intent.quantityMicros)
-    ? 'PARTIAL_FILL_IOC'
+  const filledQuantity = BigInt(order.filledQuantityAtoms)
+  if (filledQuantity === 0n) return 'BENIGN_ZERO_FILL_LIMIT'
+  return filledQuantity > 0n && filledQuantity < BigInt(input.intent.quantityAtoms)
+    ? 'PARTIAL_FILL_LIMIT'
     : 'UNSUCCESSFUL'
 }
-
-const executionClosePlanNeedsResidualReplanDataFirst = (
-  intents: readonly Pick<Intent, 'state'>[],
-  openPositionCount: number,
-): boolean =>
-  intents.length > 0 && intents.every((intent) => intent.state === IntentState.Terminal) && openPositionCount > 0
-
-/** A settled close plan must be replaced when authoritative positions remain open. */
-export const executionClosePlanNeedsResidualReplan = Pipeable.dual(2, executionClosePlanNeedsResidualReplanDataFirst)
-
-const comparePositionSymbol = (left: Position, right: Position): number =>
-  left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0
-
-const divideAwayFromZero = (numerator: bigint): bigint => {
-  const magnitude = numerator < 0n ? -numerator : numerator
-  const rounded = magnitude === 0n ? 0n : (magnitude + quantityScale - 1n) / quantityScale
-  return numerator < 0n ? -rounded : rounded
-}
-
-const projectMutationPosition = (
-  positions: readonly Position[],
-  target: PlannedTargetQuantity,
-  accountId: string,
-  observedAt: string,
-): readonly Position[] => {
-  const retained = positions.filter((position) => position.symbol !== target.symbol)
-  const quantity = BigInt(target.targetQuantityMicros)
-  if (quantity === 0n) return retained
-  const previous = positions.find((position) => position.symbol === target.symbol)
-  const referencePrice = BigInt(target.referencePriceMicros)
-  const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
-  const projected: Position = {
-    schemaVersion: legacyPositionSchemaVersion,
-    accountId: previous?.accountId ?? accountId,
-    symbol: target.symbol,
-    quantityMicros: target.targetQuantityMicros,
-    averageEntryPriceMicros: averageEntryPrice.toString(),
-    marketPriceMicros: target.referencePriceMicros,
-    marketValueMicros: divideAwayFromZero(quantity * referencePrice).toString(),
-    unrealizedPnlMicros: divideAwayFromZero(quantity * (referencePrice - averageEntryPrice)).toString(),
-    observedAt: previous?.observedAt ?? observedAt,
-  }
-  return [...retained, projected].sort(comparePositionSymbol)
-}
-
-const projectWorstCasePendingMutationPositionDataFirst = (
-  positions: readonly Position[],
-  target: PlannedTargetQuantity,
-  accountId: string,
-  observedAt: string,
-): readonly Position[] => {
-  const current = positions.find((position) => position.symbol === target.symbol)
-  const currentQuantity = current === undefined ? 0n : BigInt(current.quantityMicros)
-  const targetQuantity = BigInt(target.targetQuantityMicros)
-  return targetQuantity <= currentQuantity
-    ? positions
-    : projectMutationPosition(positions, target, accountId, observedAt)
-}
-
-export const projectWorstCasePendingMutationPosition = Pipeable.dual(
-  4,
-  projectWorstCasePendingMutationPositionDataFirst,
-)
 
 export type PreparedMutationIntentDecision =
   | { readonly _tag: 'Submit' }
@@ -194,7 +128,7 @@ export type PreparedMutationIntentDecisionFailure = {
   readonly eventType?: MutationEventType
 }
 
-const decidePreparedMutationIntentDataFirst = (
+export const decidePreparedMutationIntent = (
   intent: Intent,
   latest: MutationEvent | undefined,
 ): Result.Result<PreparedMutationIntentDecision, PreparedMutationIntentDecisionFailure> => {
@@ -211,7 +145,7 @@ const decidePreparedMutationIntentDataFirst = (
           message: 'accepted nonterminal submit lacks a durable broker order identity',
         })
       }
-      const representation = compatibleOrderRequestBody(intent, latest.requestHash)
+      const representation = recordedOrderRequestBody(intent, latest.requestHash)
       if (Result.isFailure(representation)) {
         return Result.fail({
           _tag: 'PreparedMutationIntentDecisionFailure',
@@ -221,19 +155,7 @@ const decidePreparedMutationIntentDataFirst = (
         })
       }
       const request = representation.success
-      const requestNotionalMicros = orderRequestNotionalMicros(request)
-      if ('notional' in request && requestNotionalMicros === undefined) {
-        return Result.fail({
-          _tag: 'PreparedMutationIntentDecisionFailure',
-          intentId: intent.intentId,
-          eventType: latest.eventType,
-          message: 'accepted submit has an invalid immutable notional representation',
-        })
-      }
-      const orderRepresentation =
-        requestNotionalMicros === undefined
-          ? { quantityMicros: intent.quantityMicros }
-          : { notionalMicros: requestNotionalMicros }
+      const orderRepresentation = { quantityAtoms: intent.quantityAtoms }
       const limitPrice = 'limit_price' in request ? orderPriceBoundaryMicros(intent) : Result.succeed(undefined)
       if (Result.isFailure(limitPrice)) {
         return Result.fail({
@@ -256,7 +178,7 @@ const decidePreparedMutationIntentDataFirst = (
           orderType: 'limit_price' in request ? OrderType.Limit : OrderType.Market,
           timeInForce: intent.timeInForce,
           ...orderRepresentation,
-          filledQuantityMicros: '0',
+          filledQuantityAtoms: '0',
           ...(limitPrice.success === undefined ? {} : { limitPriceMicros: limitPrice.success.toString() }),
           status: OrderStatus.New,
           observedAt: latest.occurredAt,
@@ -282,8 +204,6 @@ const decidePreparedMutationIntentDataFirst = (
   }
 }
 
-export const decidePreparedMutationIntent = Pipeable.dual(2, decidePreparedMutationIntentDataFirst)
-
 export type PendingMutationObservationDecision =
   | { readonly _tag: 'StableOpen'; readonly order: Order }
   | { readonly _tag: 'Recover'; readonly reason: 'missing' | 'terminal'; readonly order?: Order }
@@ -304,11 +224,11 @@ const pendingOrderIdentityMatches = (expected: Order, observed: Order): boolean 
   observed.side === expected.side &&
   observed.orderType === expected.orderType &&
   observed.timeInForce === expected.timeInForce &&
-  observed.quantityMicros === expected.quantityMicros &&
+  observed.quantityAtoms === expected.quantityAtoms &&
   observed.notionalMicros === expected.notionalMicros &&
   observed.limitPriceMicros === expected.limitPriceMicros
 
-const decidePendingMutationObservationDataFirst = (
+export const decidePendingMutationObservation = (
   expected: Order,
   observedOrders: readonly Order[],
 ): Result.Result<PendingMutationObservationDecision, PreparedMutationIntentDecisionFailure> => {
@@ -336,8 +256,6 @@ const decidePendingMutationObservationDataFirst = (
     : Result.succeed({ _tag: 'StableOpen', order: observed })
 }
 
-export const decidePendingMutationObservation = Pipeable.dual(2, decidePendingMutationObservationDataFirst)
-
 export type PreparedMutationIntentAdmissionFailure = {
   readonly _tag: 'PreparedMutationIntentAdmissionFailure'
   readonly reason:
@@ -350,7 +268,7 @@ export type PreparedMutationIntentAdmissionFailure = {
   readonly message: string
 }
 
-const decidePreparedMutationIntentAdmissionDataFirst = (
+export const decidePreparedMutationIntentAdmission = (
   prepared: PreparedMutationIntentDecision,
   effectiveAuthority: Authority,
   observedAt: string,
@@ -406,22 +324,6 @@ const decidePreparedMutationIntentAdmissionDataFirst = (
   return Result.succeed(undefined)
 }
 
-export const decidePreparedMutationIntentAdmission = Pipeable.by<
-  (
-    effectiveAuthority: Authority,
-    observedAt: string,
-    expiresAt: string,
-    unknownMutationCount: number,
-    reconciliationStatus?: ReconciliationStatus,
-    accountingExact?: boolean,
-    unknownOrderCount?: number,
-  ) => (prepared: PreparedMutationIntentDecision) => ReturnType<typeof decidePreparedMutationIntentAdmissionDataFirst>,
-  typeof decidePreparedMutationIntentAdmissionDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null,
-  decidePreparedMutationIntentAdmissionDataFirst,
-)
-
 export const decidePreparedCloseIntentAdmission = (
   prepared: PreparedMutationIntentDecision,
   observedAt: string,
@@ -470,13 +372,6 @@ export const decidePreparedCloseIntentAdmission = (
   return Result.succeed(undefined)
 }
 
-const appendPendingMutationOrderDataFirst = (orders: readonly Order[], pending: Order): readonly Order[] =>
-  orders.some((order) => order.brokerOrderId === pending.brokerOrderId || order.clientOrderId === pending.clientOrderId)
-    ? orders
-    : [...orders, pending]
-
-export const appendPendingMutationOrder = Pipeable.dual(2, appendPendingMutationOrderDataFirst)
-
 export interface ExecutionCycleIntentTerminalEvidence {
   readonly state: IntentState
   readonly terminalOutcome?: TerminalOutcome
@@ -501,7 +396,7 @@ export type ExecutionPhaseCompletionDecision =
       readonly reason: CycleCompletionWaitReason
     }
 
-const decideExecutionPhaseCompletionDataFirst = (
+export const decideExecutionPhaseCompletion = (
   phase: 'ENTRY' | 'CLOSE',
   documentCreatedAt: string,
   intents: readonly ExecutionCycleIntentTerminalEvidence[],
@@ -516,7 +411,8 @@ const decideExecutionPhaseCompletionDataFirst = (
         intent.terminalOutcome !== TerminalOutcome.Filled &&
         !(
           phase === 'ENTRY' &&
-          (intent.terminalDisposition === 'BENIGN_ZERO_FILL_IOC' || intent.terminalDisposition === 'PARTIAL_FILL_IOC')
+          (intent.terminalDisposition === 'BENIGN_ZERO_FILL_LIMIT' ||
+            intent.terminalDisposition === 'PARTIAL_FILL_LIMIT')
         ),
     )
   ) {
@@ -542,8 +438,6 @@ const decideExecutionPhaseCompletionDataFirst = (
   return { _tag: 'Complete' }
 }
 
-export const decideExecutionPhaseCompletion = Pipeable.dual(4, decideExecutionPhaseCompletionDataFirst)
-
 export type PreparedMutationRecoveryDecision =
   | { readonly _tag: 'NoRecovery' }
   | { readonly _tag: 'ObservePending'; readonly event: MutationEvent }
@@ -553,7 +447,7 @@ export type PreparedMutationRecoveryDecision =
       readonly event: MutationEvent
     }
 
-const decidePreparedMutationRecoveryDataFirst = (
+export const decidePreparedMutationRecovery = (
   intent: Intent,
   latestSubmit: MutationEvent | undefined,
   latestCancel: MutationEvent | undefined,
@@ -618,8 +512,6 @@ const decidePreparedMutationRecoveryDataFirst = (
   return Result.succeed({ _tag: 'Recover', operation: MutationOperation.Submit, event: latestSubmit })
 }
 
-export const decidePreparedMutationRecovery = Pipeable.dual(3, decidePreparedMutationRecoveryDataFirst)
-
 export type PreparedMutationCycleStep =
   | { readonly _tag: 'RunCycle' }
   | {
@@ -648,17 +540,13 @@ export type PreparedMutationCycleStep =
 
 export type BoundMutationCycleOutcome = Exclude<PreparedMutationCycleStep, { readonly _tag: 'Execute' }>
 
-const mutationRecoveryIsDueDataFirst = (event: MutationEvent, observedAt: string): boolean =>
+export const mutationRecoveryIsDue = (event: MutationEvent, observedAt: string): boolean =>
   Date.parse(observedAt) >= Date.parse(event.occurredAt) + event.consistencyDelayMs
 
-export const mutationRecoveryIsDue = Pipeable.dual(2, mutationRecoveryIsDueDataFirst)
-
-const executionSubmitExpiresAtDataFirst = (documentExpiresAt: string, riskDecisionExpiresAt: string): string =>
+export const executionSubmitExpiresAt = (documentExpiresAt: string, riskDecisionExpiresAt: string): string =>
   riskDecisionExpiresAt < documentExpiresAt ? riskDecisionExpiresAt : documentExpiresAt
 
-export const executionSubmitExpiresAt = Pipeable.dual(2, executionSubmitExpiresAtDataFirst)
-
-const expiredExecutionPlanTerminalReasonDataFirst = (
+export const expiredExecutionPlanTerminalReason = (
   observedAt: string,
   submitExpiresAt: string,
   submissionCutoffAt: string,
@@ -668,8 +556,6 @@ const expiredExecutionPlanTerminalReasonDataFirst = (
     : observedAt >= submissionCutoffAt
       ? CycleTerminalReason.MissedSubmission
       : CycleTerminalReason.Risk
-
-export const expiredExecutionPlanTerminalReason = Pipeable.dual(3, expiredExecutionPlanTerminalReasonDataFirst)
 
 export type MutationIntentSettlementDecision =
   | {

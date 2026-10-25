@@ -9,10 +9,10 @@ import {
   rollingFeatureDefinitionMaterial,
 } from '../market-data/features/contract'
 import { kafkaBootstrapDeadlineMs, KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
-import { defaultExecutionModel } from './execution-model/model'
 
 // Shared feature-window contract for the active and retained intraday protocols.
 export const intradayLookbackMinutes = 30
+export const intradayMinimumCompletedHistoryMs = 60_000
 export const intradayDecisionDelaySeconds = 2
 
 export const intradayUniverse = {
@@ -44,14 +44,15 @@ export const intradaySourceTopics = Object.freeze({
   trades: 'torghut.trades.v1',
 } as const)
 
-export const intradayExecutionModel: Extract<ExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v5' }> =
+export const intradayExecutionModel: Extract<ExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v6' }> =
   Object.freeze({
-    ...defaultExecutionModel,
-    schemaVersion: 'bayn.execution-model.v5',
+    schemaVersion: 'bayn.execution-model.v6',
+    venue: 'alpaca-cash-spot',
+    assetClass: 'cash-spot',
     order: Object.freeze({
       type: 'limit',
-      timeInForce: 'ioc',
-      extendedHours: false,
+      timeInForce: 'asset-session',
+      extendedHours: 'equity-data-session',
       planAfter: 'verified-intraday-window',
       submitAfter: 'plan-committed',
       submitBefore: 'intraday-entry-cutoff',
@@ -60,13 +61,40 @@ export const intradayExecutionModel: Extract<ExecutionModel, { readonly schemaVe
       fillPriceReference: 'limit-or-better',
       buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
       warmupAfterOpenMs: 0,
-      submissionCutoffBeforeCloseMs: 5 * 60_000,
+      submissionCutoffBeforeCloseMs: 300000,
     }),
     precision: Object.freeze({
-      ...defaultExecutionModel.precision,
-      quantityIncrementMicros: '1000000',
+      quantityIncrementAtoms: '1',
+      priceIncrementMicros: '100',
+      minimumBuyNotionalMicros: '1000000',
     }),
-  })
+    priceImpact: {
+      halfSpreadBps: 2.5,
+      slippageBps: 2.5,
+    },
+    fees: {
+      scheduleVersion: 'alpaca-brokerage-2026-07-01',
+      commissionBps: 0,
+      secSellBps: 0.206,
+      tafSellPerShareMicros: '195',
+      tafMaximumPerOrderMicros: '9790000',
+      catPerShareMicros: '3',
+      aggregation: 'session-by-fee-type',
+      roundingIncrementMicros: '10000',
+    },
+    cash: {
+      annualYieldBps: 0,
+      dayCount: 'actual-365',
+      accrual: 'session-open',
+    },
+    partialFills: {
+      policy: 'deterministic-hash',
+      probabilityPpm: 100000,
+      filledFractionPpm: 500000,
+      remainder: 'cancel',
+    },
+    doubleCostMultiplier: 2,
+  } satisfies Extract<ExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v6' }>)
 
 export const intradayFeatureTopic = 'torghut.market-features.v1' as const
 export const intradayStreamingContract = Object.freeze({
@@ -74,7 +102,7 @@ export const intradayStreamingContract = Object.freeze({
   snapshotSchemaVersion: 'bayn.streaming-market-snapshot.v1',
   featureTopic: intradayFeatureTopic,
   featureSchemaVersion: MarketFeatureContract.V1,
-  requiredDefinitionId: MarketFeatureDefinition.RollingPrice30m,
+  requiredDefinitionId: MarketFeatureDefinition.ObservedPriceWindow,
   requiredDefinitionHash: sha256(JSON.stringify(rollingFeatureDefinitionMaterial)),
   clockSkewAllowanceMs: marketFeatureClockSkewAllowanceMs,
   bootstrapTimestampPolicy: KafkaBootstrapTimestampPolicy.ProducerClock,
@@ -86,7 +114,7 @@ export const IntradayStreamingInputSchema = Schema.Struct({
   snapshotSchemaVersion: Schema.Literal(intradayStreamingContract.snapshotSchemaVersion),
   featureTopic: Schema.Literal(intradayFeatureTopic),
   featureSchemaVersion: Schema.Literal(MarketFeatureContract.V1),
-  requiredDefinitionId: Schema.Literal(MarketFeatureDefinition.RollingPrice30m),
+  requiredDefinitionId: Schema.Literal(MarketFeatureDefinition.ObservedPriceWindow),
   requiredDefinitionHash: Schema.Literal(intradayStreamingContract.requiredDefinitionHash),
   clockSkewAllowanceMs: Schema.Literal(marketFeatureClockSkewAllowanceMs),
   bootstrapTimestampPolicy: Schema.Literal(KafkaBootstrapTimestampPolicy.ProducerClock),

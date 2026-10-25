@@ -1,12 +1,13 @@
+import { isCryptoMarketFeature } from './market-data/features/crypto-contract'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle/model'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
 import { DecisionReadinessReason, snapshotReadiness } from './cycle/runner/readiness'
 import { ExecutionControllerOutcome } from './execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
-import { executionSessionPreflightReady, renderPrometheusMetrics, statusResponseDecision } from './http'
+import { executionSessionPreflightReady, renderPrometheusMetrics, statusFacts } from './http'
 import type { RuntimeState } from './runtime-state'
 import { config, provenance, readyState } from './testing/runtime-fixtures'
 import { streamingFixture } from './testing/streaming-market-fixture'
@@ -42,6 +43,7 @@ const sessionState = (checkedAt = '2026-10-01T13:20:00.000Z'): RuntimeState => {
         accountId,
         signalSessionDate: '2026-10-01',
         executionSessionDate: '2026-10-01',
+        executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
         phase: CycleState.Active,
         snapshotId: null,
         publicationDeadlineAt: null,
@@ -111,16 +113,14 @@ const sessionState = (checkedAt = '2026-10-01T13:20:00.000Z'): RuntimeState => {
 }
 
 const expectSession = (state: RuntimeState, condition: string, ready: boolean) =>
-  expect(statusResponseDecision(state, config.execution, provenance, config.build.verification)).toMatchObject({
-    body: {
-      executionSession: {
-        condition,
-        ready,
-        executionSessionDate: '2026-10-01',
-        controllerPlanHash: 'f'.repeat(64),
-        firstObservationAt: '2026-10-01T14:00:02.000Z',
-        decisionDeadlineAt: '2026-10-01T14:01:02.000Z',
-      },
+  expect(statusFacts(state, config.execution, provenance, config.build.verification)).toMatchObject({
+    executionSession: {
+      condition,
+      ready,
+      executionSessionDate: '2026-10-01',
+      controllerPlanHash: 'f'.repeat(64),
+      firstObservationAt: '2026-10-01T13:31:02.000Z',
+      decisionDeadlineAt: '2026-10-01T13:32:02.000Z',
     },
   })
 
@@ -132,16 +132,16 @@ test('pre-open execution prerequisites are ready before a snapshot or decision e
   expect(metrics).toContain('bayn_execution_session_preflight_ready 1\n')
   expect(metrics).toContain('bayn_cycle_decision_bound 0\n')
   expect(metrics).toContain(
-    `bayn_cycle_decision_deadline_timestamp_seconds ${Date.parse('2026-10-01T14:01:02Z') / 1000}\n`,
+    `bayn_cycle_decision_deadline_timestamp_seconds ${Date.parse('2026-10-01T13:32:02Z') / 1000}\n`,
   )
 })
 
 test.each([
   ['2026-10-01T13:30:00.000Z', 'WARMUP', true],
-  ['2026-10-01T14:00:01.999Z', 'WARMUP', true],
-  ['2026-10-01T14:00:02.000Z', 'AWAITING_DECISION', true],
-  ['2026-10-01T14:01:01.999Z', 'AWAITING_DECISION', true],
-  ['2026-10-01T14:01:02.000Z', 'DECISION_LAGGING', false],
+  ['2026-10-01T13:31:01.999Z', 'WARMUP', true],
+  ['2026-10-01T13:31:02.000Z', 'AWAITING_DECISION', true],
+  ['2026-10-01T13:32:01.999Z', 'AWAITING_DECISION', true],
+  ['2026-10-01T13:32:02.000Z', 'DECISION_LAGGING', false],
   ['2026-10-01T19:55:00.000Z', 'CLOSED', false],
 ] as const)('classifies the unbound session at %s as %s', (checkedAt, condition, ready) => {
   expectSession(sessionState(checkedAt), condition, ready)
@@ -250,13 +250,16 @@ test.each([
   if (scenario === 'mismatched feature')
     features.set(
       symbol,
-      (features.get(symbol) ?? []).map((receipt) => ({
-        ...receipt,
-        value: {
-          ...receipt.value,
-          material: { ...receipt.value.material, windowStartMs: receipt.value.material.windowStartMs + 60_000 },
-        },
-      })),
+      (features.get(symbol) ?? []).map((receipt) => {
+        if (isCryptoMarketFeature(receipt.value)) throw new Error('expected equity fixture')
+        return {
+          ...receipt,
+          value: {
+            ...receipt.value,
+            material: { ...receipt.value.material, windowStartMs: receipt.value.material.windowStartMs + 60_000 },
+          },
+        }
+      }),
     )
   if (scenario === 'late feature')
     features.set(
@@ -336,7 +339,7 @@ test('a new intraday attempt gets its own bounded decision deadline', () => {
   const cycle = state.cycle.current
   if (cycle === null) throw new Error('fixture cycle missing')
   expect(
-    statusResponseDecision(
+    statusFacts(
       {
         ...state,
         cycle: { ...state.cycle, current: { ...cycle, createdAt: '2026-10-01T15:00:00.000Z' } },
@@ -346,9 +349,109 @@ test('a new intraday attempt gets its own bounded decision deadline', () => {
       config.build.verification,
     ),
   ).toMatchObject({
-    body: {
-      executionSession: { condition: 'AWAITING_DECISION', ready: true, decisionDeadlineAt: '2026-10-01T15:01:00.000Z' },
+    executionSession: { condition: 'AWAITING_DECISION', ready: true, decisionDeadlineAt: '2026-10-01T15:01:00.000Z' },
+  })
+})
+
+const protectedAdmissionState = (): RuntimeState => {
+  const checkedAt = '2026-10-01T20:01:00.000Z'
+  const state = sessionState(checkedAt)
+  const current = state.cycle.current
+  if (current === null) throw new Error('fixture cycle missing')
+  return {
+    ...state,
+    cycle: {
+      ...state.cycle,
+      current: null,
+      last: {
+        ...current,
+        phase: CycleState.Blocked,
+        terminalReason: CycleTerminalReason.UnusedEntryExpired,
+        terminalAt: '2026-10-01T20:00:00.000Z',
+      },
+      unfinishedCycleCount: 0,
     },
+    autonomousCycleLoop: {
+      ...state.autonomousCycleLoop,
+      lastPass: {
+        result: 'SUCCESS',
+        outcome: 'ADMISSION_WAITING',
+        observedAt: checkedAt,
+        readiness: { reason: DecisionReadinessReason.AccountProtection, message: 'DRAWDOWN_EXCEEDED' },
+        admissionProtection: {
+          authorityGenerationHash: 'b'.repeat(64),
+          authorityUpdatedAt: checkedAt,
+          reconciliationId: 'd'.repeat(64),
+          tradingDate: '2026-10-01',
+          validUntil: '2026-10-01T20:02:00.000Z',
+        },
+      },
+    },
+  }
+}
+
+test('current cycle-free account protection takes precedence over historical closed cycles and absent history', () => {
+  const state = protectedAdmissionState()
+  for (const candidate of [state, { ...state, cycle: { ...state.cycle, last: null } }]) {
+    expect(statusFacts(candidate, config.execution, provenance, config.build.verification)).toMatchObject({
+      operational: { ready: true },
+      executionSession: { condition: 'BLOCKED', ready: false, cycleId: candidate.cycle.last?.cycleId ?? null },
+    })
+    const metrics = renderPrometheusMetrics(candidate, config, provenance, config.build.verification)
+    expect(metrics).toContain('bayn_execution_session_condition{condition="blocked"} 1\n')
+    expect(metrics).toContain('bayn_execution_session_ready 0\n')
+  }
+})
+
+test('expired or superseded cycle-free protection cannot override current session facts', () => {
+  const state = protectedAdmissionState()
+  const pass = state.autonomousCycleLoop.lastPass
+  if (pass?.result !== 'SUCCESS' || pass.admissionProtection === undefined) throw new Error('fixture proof missing')
+  for (const admissionProtection of [
+    { ...pass.admissionProtection, authorityGenerationHash: 'f'.repeat(64) },
+    { ...pass.admissionProtection, authorityUpdatedAt: '2026-10-01T20:01:00.000001Z' },
+    { ...pass.admissionProtection, reconciliationId: 'f'.repeat(64) },
+    { ...pass.admissionProtection, tradingDate: '2026-09-30' as const },
+    { ...pass.admissionProtection, validUntil: pass.observedAt },
+  ]) {
+    const candidate = {
+      ...state,
+      autonomousCycleLoop: { ...state.autonomousCycleLoop, lastPass: { ...pass, admissionProtection } },
+    }
+    expect(statusFacts(candidate, config.execution, provenance, config.build.verification)).toMatchObject({
+      executionSession: { condition: 'CLOSED', ready: false },
+    })
+  }
+  const future = {
+    ...state,
+    autonomousCycleLoop: {
+      ...state.autonomousCycleLoop,
+      lastPass: { ...pass, observedAt: '2026-10-01T20:01:00.001Z' },
+    },
+  }
+  expect(statusFacts(future, config.execution, provenance, config.build.verification)).toMatchObject({
+    executionSession: { condition: 'CLOSED', ready: false },
+  })
+  const last = state.cycle.last
+  if (last === null) throw new Error('fixture cycle missing')
+  const executing = {
+    ...state,
+    cycle: {
+      ...state.cycle,
+      current: {
+        ...last,
+        phase: CycleState.Active,
+        decisionHash: 'a'.repeat(64),
+        terminalReason: null,
+        terminalAt: null,
+        submissionCutoffAt: '2026-10-01T20:55:00.000Z',
+        executionCloseAt: '2026-10-01T21:00:00.000Z',
+      },
+      unfinishedCycleCount: 1,
+    },
+  }
+  expect(statusFacts(executing, config.execution, provenance, config.build.verification)).toMatchObject({
+    executionSession: { condition: 'EXECUTING', ready: true },
   })
 })
 
@@ -377,17 +480,15 @@ test('controller startup without a durable completion cannot establish session r
 test('a healthy runtime with no eligible session does not imply session readiness', () => {
   const state = sessionState()
   expect(
-    statusResponseDecision(
+    statusFacts(
       { ...state, cycle: { ...state.cycle, current: null, last: null } },
       config.execution,
       provenance,
       config.build.verification,
     ),
   ).toMatchObject({
-    body: {
-      operational: { ready: true },
-      executionSession: { condition: 'UNAVAILABLE', ready: false, executionSessionDate: null },
-    },
+    operational: { ready: true },
+    executionSession: { condition: 'UNAVAILABLE', ready: false, executionSessionDate: null },
   })
 })
 
@@ -444,4 +545,112 @@ test('no eligible candidate remains ordinary abstention after the decision deadl
   const metrics = renderPrometheusMetrics(abstaining, config, provenance, config.build.verification)
   expect(metrics).toContain('bayn_execution_session_ready 1\n')
   expect(metrics).toContain('bayn_execution_session_condition{condition="decision_lagging"} 0\n')
+})
+
+test('an unused entry expiry reports rearming during the market rotation cooldown', () => {
+  const state = sessionState('2026-10-01T14:00:30.000Z')
+  const current = state.cycle.current
+  if (current === null) throw new Error('fixture cycle missing')
+  expectSession(
+    {
+      ...state,
+      cycle: {
+        ...state.cycle,
+        current: null,
+        last: { ...current, phase: CycleState.Blocked, terminalReason: CycleTerminalReason.UnusedEntryExpired },
+      },
+    },
+    'REARMING',
+    true,
+  )
+})
+
+test.each([
+  [null, 'AWAITING_DECISION', true],
+  [DecisionReadinessReason.AccountProtection, 'BLOCKED', false],
+  [DecisionReadinessReason.SnapshotUnavailable, 'INPUT_UNAVAILABLE', false],
+  [DecisionReadinessReason.InferenceUnavailable, 'EVALUATION_UNAVAILABLE', false],
+] as const)(
+  'continuous admission immediately reports %s evidence without an equity warmup',
+  (reason, condition, ready) => {
+    const state = sessionState('2026-10-01T13:30:00.000Z')
+    const current = state.cycle.current
+    if (current === null) throw new Error('fixture cycle missing')
+    const continuous: RuntimeState = {
+      ...state,
+      cycle: {
+        ...state.cycle,
+        current: {
+          ...current,
+          executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1',
+          createdAt: current.submissionOpenAt,
+          updatedAt: current.submissionOpenAt,
+          submissionCutoffAt: '2026-10-01T13:31:00.000Z',
+          executionCloseAt: '2026-10-01T13:49:00.000Z',
+        },
+      },
+      autonomousCycleLoop: {
+        ...state.autonomousCycleLoop,
+        lastPass:
+          reason === null
+            ? null
+            : {
+                result: 'SUCCESS',
+                outcome: 'RECOVERED',
+                recoveryAction: 'WAITING',
+                observedAt: state.health.checkedAt ?? '',
+                readiness: { reason, message: 'fixture unavailable' },
+              },
+      },
+    }
+    expect(statusFacts(continuous, config.execution, provenance, config.build.verification)).toMatchObject({
+      executionSession: {
+        condition,
+        ready,
+        firstObservationAt: current.submissionOpenAt,
+        decisionDeadlineAt: '2026-10-01T13:31:00.000Z',
+      },
+    })
+  },
+)
+
+test('account protection takes precedence over equity first-minute warmup', () => {
+  const state = sessionState('2026-10-01T13:30:10.000Z')
+  expectSession(
+    {
+      ...state,
+      autonomousCycleLoop: {
+        ...state.autonomousCycleLoop,
+        lastPass: {
+          result: 'SUCCESS',
+          outcome: 'RECOVERED',
+          recoveryAction: 'WAITING',
+          observedAt: state.health.checkedAt ?? '',
+          readiness: { reason: DecisionReadinessReason.AccountProtection, message: 'DRAWDOWN_EXCEEDED' },
+        },
+      },
+    },
+    'BLOCKED',
+    false,
+  )
+})
+
+test('equity admission uses the later of the first completed minute and submission opening', () => {
+  const state = sessionState('2026-10-01T13:45:00.000Z')
+  const current = state.cycle.current
+  if (current === null) throw new Error('fixture cycle missing')
+  const result = statusFacts(
+    { ...state, cycle: { ...state.cycle, current: { ...current, submissionOpenAt: '2026-10-01T13:45:00.000Z' } } },
+    config.execution,
+    provenance,
+    config.build.verification,
+  )
+  expect(result).toMatchObject({
+    executionSession: {
+      condition: 'AWAITING_DECISION',
+      ready: true,
+      firstObservationAt: '2026-10-01T13:45:00.000Z',
+      decisionDeadlineAt: '2026-10-01T13:46:00.000Z',
+    },
+  })
 })

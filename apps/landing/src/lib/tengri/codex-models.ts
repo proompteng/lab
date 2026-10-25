@@ -50,12 +50,12 @@ export type TengriCodexModelPage = { models: TengriCodexModel[]; nextCursor: str
 
 export const codexSelectionSchema = z.strictObject({
   model: codexModelIdSchema,
-  reasoningEffort: z.union([z.literal('default'), codexReasoningEffortSchema]),
+  reasoningEffort: codexReasoningEffortSchema,
 })
 export type TengriCodexSelection = z.infer<typeof codexSelectionSchema>
 
 export function defaultCodexSelection(): TengriCodexSelection {
-  return { model: DEFAULT_CODEX_MODEL, reasoningEffort: 'default' }
+  return { model: DEFAULT_CODEX_MODEL, reasoningEffort: 'high' }
 }
 
 export function parseCodexModelPage(rawJson: string): TengriCodexModelPage {
@@ -69,7 +69,7 @@ export function codexOptionsForSelection(
 ): TengriCodexOptions | null {
   const model = models.find((model) => model.model === selection.model)
   if (!model) return null
-  const effort = selection.reasoningEffort === 'default' ? model.defaultReasoningEffort : selection.reasoningEffort
+  const effort = selection.reasoningEffort
   if (!model.supportedReasoningEfforts.some((option) => option.reasoningEffort === effort)) return null
   return { model: model.model, reasoningEffort: effort }
 }

@@ -210,6 +210,7 @@ test('critical Ceph alerts opt into the configured email route', () => {
   expect(criticalRules.map((rule) => rule.alert)).toEqual([
     'CephClusterHealthError',
     'CephSlowOps',
+    'CephOsdReadLatencyHigh',
     'CephOsdCommitLatencyCritical',
   ])
 
@@ -228,7 +229,96 @@ test('critical Ceph alerts opt into the configured email route', () => {
   for (const rule of criticalRules) expect(rule.labels).toMatchObject({ severity: 'critical', notify: 'email' })
 })
 
-test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub or recovery overrides', () => {
+test('warnings require explicit email opt-in and use the existing receiver with a four-hour repeat', () => {
+  const externalSecret = YAML.parse(
+    readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
+  )
+  const alertmanager = YAML.parse(externalSecret.spec.target.template.data['alertmanager_fallback_config.yaml'])
+  const route = alertmanager.route.routes.find((entry: { matchers: string[] }) =>
+    entry.matchers.includes('severity = "warning"'),
+  )
+  expect(route).toEqual({
+    receiver: 'critical-email',
+    matchers: ['severity = "warning"', 'notify = "email"'],
+    group_wait: '10s',
+    group_interval: '2m',
+    repeat_interval: '4h',
+    continue: false,
+  })
+  expect(alertmanager.route.receiver).toBe('default-receiver')
+  expect(alertmanager.receivers.map((entry: { name: string }) => entry.name)).toEqual([
+    'default-receiver',
+    'critical-email',
+  ])
+})
+
+test('Mimir email UI links select its provisioned Grafana Alertmanager without redirecting API paths', () => {
+  const mimir = YAML.parse(readRepoFile('argocd/applications/observability/mimir-values.yaml'))
+  const grafana = YAML.parse(readRepoFile('argocd/applications/observability/grafana-values.yaml'))
+  const datasource = grafana.datasources['datasources.yaml'].datasources.find(
+    (source: { type: string }) => source.type === 'alertmanager',
+  )
+  expect(datasource).toBeDefined()
+  expect(datasource.url).toBe('http://observability-mimir-gateway.observability.svc.cluster.local')
+  expect(datasource.access).toBe('proxy')
+  expect(datasource.jsonData).toMatchObject({ implementation: 'mimir', handleGrafanaManagedAlerts: false })
+
+  const externalUrl = new URL(mimir.mimir.structuredConfig.alertmanager.external_url)
+  expect(externalUrl.origin).toBe('https://mimir.ide-newton.ts.net')
+  const uiPath = externalUrl.pathname
+  const snippet = mimir.gateway.nginx.config.serverSnippet
+  const redirects = Array.from(snippet.matchAll(/location\s+(=)?\s+([^\s{]+)\s*\{\s*return\s+302\s+"([^"]+)";\s*\}/g))
+  expect(redirects.map((match) => [match[1], match[2]])).toEqual([
+    ['=', uiPath],
+    ['=', `${uiPath}/`],
+  ])
+  for (const match of redirects) {
+    const target = new URL(match[3])
+    expect(target.origin).toBe('https://grafana.ide-newton.ts.net')
+    expect(target.pathname).toBe('/alerting/groups')
+    expect(target.searchParams.get('alertmanager')).toBe(datasource.name)
+    expect(match[3].endsWith('#')).toBe(true)
+  }
+})
+
+test('alert email uses Brevo SMTP credentials from the existing secret store', () => {
+  const externalSecret = YAML.parse(
+    readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
+  )
+  const kustomization = YAML.parse(readRepoFile('argocd/applications/observability/kustomization.yaml'))
+  const alertmanagerPatch = kustomization.patches.find(
+    (entry: { target?: { name?: string } }) => entry.target?.name === 'observability-mimir-alertmanager',
+  )
+  const volume = YAML.parse(alertmanagerPatch.patch).find(
+    (entry: { value?: { name?: string } }) => entry.value?.name === 'alertmanager-fallback-config',
+  ).value
+  expect(externalSecret.spec.target.name).toBe('observability-alertmanager-email-brevo')
+  expect(volume.secret.secretName).toBe(externalSecret.spec.target.name)
+  expect(volume.secret.optional).not.toBe(true)
+  const template = externalSecret.spec.target.template.data
+  const alertmanager = YAML.parse(template['alertmanager_fallback_config.yaml'])
+  expect(externalSecret.spec.secretStoreRef).toEqual({ kind: 'ClusterSecretStore', name: 'onepassword-infra' })
+  expect(alertmanager.global).toMatchObject({
+    smtp_smarthost: 'smtp-relay.brevo.com:587',
+    smtp_auth_username: '{{ .smtp_username }}',
+    smtp_auth_password: '{{ .smtp_password }}',
+    smtp_require_tls: true,
+  })
+  expect(template['smtp-username']).toBe('{{ .smtp_username }}')
+  expect(
+    externalSecret.spec.data.map((entry: { secretKey: string; remoteRef: { key: string } }) => [
+      entry.secretKey,
+      entry.remoteRef.key,
+    ]),
+  ).toEqual([
+    ['smtp_username', 'brevo/username'],
+    ['smtp_password', 'brevo/password'],
+    ['smtp_from', 'brevo/from'],
+    ['email_to', 'brevo/to'],
+  ])
+})
+
+test('Ceph bounded scrubs retain calibrated capacity without ineffective scrub or recovery overrides', () => {
   const values = YAML.parse(readRepoFile('argocd/applications/rook-ceph/cluster-values.yaml'))
   const config = values.cephClusterSpec.cephConfig
   for (const key of [
@@ -239,10 +329,10 @@ test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub 
     'osd_scrub_sleep',
   ])
     expect(config.osd[key]).toBeUndefined()
-  expect(config.osd.osd_mclock_profile).toBe('custom')
+  expect(config.osd.osd_mclock_profile).toBe('high_client_ops')
   expect(config.osd.osd_scrub_begin_hour).toBe('0')
   expect(config.osd.osd_scrub_end_hour).toBe('0')
-  expect(config.osd.osd_max_scrubs).toBe('3')
+  expect(config.osd.osd_max_scrubs).toBe('1')
   expect([0, 1, 2, 3, 4, 5].map((id) => config[`osd.${id}`].osd_mclock_max_capacity_iops_hdd)).toEqual([
     '210',
     '250',

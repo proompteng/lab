@@ -81,7 +81,7 @@ async function getClient() {
   })
   client = new grpc.Client(target, credentials, {
     'grpc.max_receive_message_length': 1_048_576,
-    'grpc.max_send_message_length': 65536,
+    'grpc.max_send_message_length': 128 * 1024,
   })
   const current = client
   setTimeout(() => current.close(), Math.max(0, material.expiresAt - Date.now())).unref()
@@ -96,8 +96,15 @@ export async function ofzCall<I extends DescMessage, O extends DescMessage>(
 ): Promise<MessageShape<O>> {
   const connection = await getClient()
   const metadata = new grpc.Metadata()
+  const { injectTrace } = await import('@/lib/observability/server')
+  injectTrace((key, value) => metadata.set(key, value))
   metadata.set('x-ofz-contract-version', '1')
   const request = create(method.input, input)
+  const renewal =
+    method.localName === 'check' &&
+    'streamReceiptId' in request &&
+    typeof request.streamReceiptId === 'string' &&
+    request.streamReceiptId.length > 0
   return new Promise((resolve, reject) => {
     const call = connection.makeUnaryRequest(
       `/${method.parent.typeName}/${method.name}`,
@@ -105,7 +112,7 @@ export async function ofzCall<I extends DescMessage, O extends DescMessage>(
       (value) => fromBinary(method.output, value),
       request,
       metadata,
-      { deadline: Date.now() + (method.localName === 'check' ? 2000 : 5000) },
+      { deadline: Date.now() + (renewal ? 2000 : 30_000) },
       (error, value) => {
         signal?.removeEventListener('abort', cancel)
         if (error) {

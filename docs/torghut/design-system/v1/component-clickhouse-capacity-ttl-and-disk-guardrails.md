@@ -121,7 +121,7 @@ Exporter telemetry for this path:
    - Check ClickHouse disk free.
 2. **Reduce write pressure**:
    - Temporarily pause TA writes by suspending `FlinkDeployment/torghut-ta` to prevent thrash.
-   - Runbook: `v1/operations-pause-ta-writes.md`
+   - Use the current [TA recovery procedures](../../../../argocd/applications/torghut/README.md) for pause and resume.
 3. **Reclaim disk**:
    - Drop old partitions if TTL cannot catch up fast enough.
    - Reduce retention TTLs _only via code-reviewed DDL change_.

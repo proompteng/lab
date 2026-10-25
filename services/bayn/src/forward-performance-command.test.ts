@@ -23,9 +23,9 @@ describe('forward-performance command arguments', () => {
     expect(Result.isFailure(parseForwardPerformanceCommandArgs(['--persist-receipt']))).toBe(true)
   })
 
-  test('preserves explicit help and the existing account-history invocation', () => {
+  test('preserves explicit help and rejects an unbounded account-history invocation', () => {
     expect(Result.getOrThrow(parseForwardPerformanceCommandArgs(['--help']))).toEqual({ _tag: 'Help' })
-    expect(Result.getOrThrow(parseForwardPerformanceCommandArgs([]))).toEqual({ _tag: 'Run', options: {} })
+    expect(Result.isFailure(parseForwardPerformanceCommandArgs([]))).toBe(true)
   })
 
   test('the command rejects a malformed generation before loading runtime configuration', () => {

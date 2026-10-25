@@ -1,6 +1,9 @@
 import importlib.util
+import contextlib
+import io
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 spec = importlib.util.spec_from_file_location(
@@ -25,6 +28,68 @@ def nodes():
 
 
 class TopologyGateTest(unittest.TestCase):
+    def test_missing_live_bond_returns_failure_instead_of_unknown(self):
+        pods = [
+            {
+                "metadata": {"name": name},
+                "spec": {"nodeName": name},
+                "status": {"phase": "Running"},
+            }
+            for name in routing.NODES
+        ]
+        with (
+            patch.object(
+                routing, "query", side_effect=[{"items": nodes()}, {"items": pods}, []]
+            ),
+            patch.object(routing.sys, "argv", ["verify-pod-routing.py"]),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(routing.main(), 1)
+        self.assertIn("storage0 does not own", output.getvalue())
+
+    def test_storage_bond_member_must_not_retain_its_old_address(self):
+        links = [
+            {
+                "ifname": "storage0",
+                "addr_info": [
+                    {"family": "inet", "local": "10.100.0.11", "prefixlen": 24}
+                ],
+            },
+            {
+                "ifname": "enp1s0f1np1",
+                "master": "storage0",
+                "addr_info": [
+                    {"family": "inet", "local": "10.100.0.11", "prefixlen": 24}
+                ],
+            },
+        ]
+        self.assertTrue(routing.validate_storage_links("talos-192-168-1-85", links))
+        links[1]["addr_info"] = []
+        self.assertEqual(
+            routing.validate_storage_links("talos-192-168-1-85", links), []
+        )
+
+    def test_missing_bond_address_or_member_is_rejected(self):
+        self.assertTrue(
+            routing.validate_storage_links(
+                "turin", [{"ifname": "storage0", "addr_info": []}]
+            )
+        )
+
+    def test_masqueraded_service_reply_cannot_use_a_bond_member(self):
+        route = ["10.100.0.12", "from", "10.244.4.10", "iif", "cni0"]
+        self.assertTrue(
+            any(case[1] == route for case in routing.route_cases("talos-192-168-1-85"))
+        )
+        result = {"dev": "enp1s0f1np1"}
+        self.assertFalse(
+            routing.route_matches("talos-192-168-1-85", route, "storage0", None, result)
+        )
+        result["dev"] = "storage0"
+        self.assertTrue(
+            routing.route_matches("talos-192-168-1-85", route, "storage0", None, result)
+        )
+
     def test_reviewed_topology_passes(self):
         self.assertEqual(routing.validate_nodes(nodes()), [])
 

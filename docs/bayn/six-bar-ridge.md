@@ -84,11 +84,11 @@ statistical registration or economic qualification. The following offline comman
 
 ## Causal execution training command
 
-`bayn-ridge-training` is bundled in the Bayn image and is also callable from
-`services/bayn/src/ridge-training-command.ts`. It does not construct a model provider, broker client or live journal.
+`bayn-ridge-training` is an offline command built by `bun run --filter @proompteng/bayn build:research`.
+Run it with `bun run --filter @proompteng/bayn ridge:training`. It does not construct a model provider, broker client or live journal.
 
 ```sh
-bayn-ridge-training \
+node services/bayn/dist/research/ridge-training-command.js \
   --input training-input.json --input-sha256 <raw-input-byte-sha256> \
   --arrivals original-arrivals.ndjson.gz \
   --source-receipt original-replay-receipt.json --source-receipt-sha256 <raw-receipt-byte-sha256> \
@@ -96,7 +96,7 @@ bayn-ridge-training \
 ```
 
 The strict `bayn.ridge-training-input.v1` input contains `sampling: INDEPENDENT_SERIAL_FIXED_CANDIDATES`,
-the exact full protocol `candidateSymbols`, an existing `bayn.backtest.v3` `backtest`, full raw research `calendar`,
+the exact full protocol `candidateSymbols`, an existing `bayn.backtest.v5` `backtest`, full raw research `calendar`,
 `expectedCalendarHash`, chronological `sessions`, `fitCutoffAt`, fixed `allocationBudgetMicros`,
 `decisionLatencyMs`, and `turnoverPolicy`. Each session contains its date, UTC open/close and first decision,
 and a `TRAINING`, `VALIDATION` or `HOLDOUT` partition. Declared sessions must be a contiguous slice of the
@@ -139,13 +139,16 @@ for any real-data fit; a command build does not establish that such a corpus exi
 
 ## Offline paired portfolio
 
-`bayn.control-study-input.v6` opts into `SIX_BAR_RIDGE_V1` versus `SIX_BAR_TRAINING_MEAN_V1` through the
+`bayn.control-study-input.v7` with `entry: "DETERMINISTIC"` opts into `SIX_BAR_RIDGE_V1` versus `SIX_BAR_TRAINING_MEAN_V1` through the
 existing `bayn-control-study` command. It requires mechanical management and a v2 artifact. The baseline
 assigns the training-only weighted target mean to every admissible candidate. It does not use the full model
 intercept. Strictly positive scores beat cash; exact ties choose ascending symbol order.
 
-Both policies retain the native 30-minute warmup and two-second delay, with session-open anchored polls. Six
-completed bars determine the feature window, not earlier entry eligibility. They use independent portfolios with
+Both policies poll from the first completed session minute plus the native two-second delay. The first poll is
+rounded up to the configured session-open cadence. During the first five completed minutes they retain evidenced
+cash decisions with `six-completed-session-minutes-required`; no six-bar score exists yet. After that, six actual
+contiguous bars and the required quote and trade evidence determine feature availability. Missing inputs remain
+explicit and make the study incomplete. They use independent portfolios with
 identical initial capital and rules. Different entries can change subsequent cash, risk and opportunity
 availability. This is a policy-level comparison, not exposure-matched alpha.
 

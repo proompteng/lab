@@ -2,7 +2,6 @@ import { expect, test } from 'bun:test'
 import { Context, Deferred, Effect, Fiber, Layer, ManagedRuntime, Result } from 'effect'
 
 import { KafkaMarketFailure, KafkaMarketProjection } from '../market-data/streaming/kafka'
-import type { ResearchCaptureSession } from '../research-capture/session'
 import { prewarmNativeMarketProjection } from './native-execution-runtime'
 
 class TradingKernel extends Context.Service<TradingKernel, { readonly market: typeof KafkaMarketProjection.Service }>()(
@@ -53,7 +52,7 @@ test('prewarm shares one read-only projection with concurrent lazy kernels and a
   const f = fixture()
   await Effect.runPromise(
     Effect.gen(function* () {
-      const prewarmed = yield* prewarmNativeMarketProjection(undefined, f.projection)
+      const prewarmed = yield* prewarmNativeMarketProjection(f.projection)
       if (prewarmed === null) throw new Error('Expected read-only prewarm')
       expect(f.calls).toEqual({ acquire: 1, close: 0, read: 0, driver: 0, broker: 0, model: 0, grant: 0 })
       const layer = f.kernel.pipe(Layer.provide(prewarmed))
@@ -86,7 +85,7 @@ test('prewarm does not label rebuilding signal history as ready or read a signal
   const f = fixture()
   await Effect.runPromise(
     Effect.gen(function* () {
-      const prewarmed = yield* prewarmNativeMarketProjection(undefined, f.projection)
+      const prewarmed = yield* prewarmNativeMarketProjection(f.projection)
       if (prewarmed === null) throw new Error('Expected read-only prewarm')
       const market = yield* KafkaMarketProjection.pipe(Effect.provide(prewarmed))
       expect(yield* market.status).toEqual({ epoch: 'test-epoch', ready: false, sequence: 0 })
@@ -104,7 +103,7 @@ test('a later endpoint startup failure releases the prewarmed projection exactly
   const f = fixture()
   const result = await Effect.runPromise(
     Effect.gen(function* () {
-      yield* prewarmNativeMarketProjection(undefined, f.projection)
+      yield* prewarmNativeMarketProjection(f.projection)
       return yield* Effect.fail('endpoint startup failed')
     }).pipe(Effect.scoped, Effect.result),
   )
@@ -127,9 +126,7 @@ test('a typed projection acquisition failure is retained and releases its partia
         }),
     ).pipe(Effect.andThen(Effect.fail('projection acquisition failed'))),
   )
-  const result = await Effect.runPromise(
-    prewarmNativeMarketProjection(undefined, failed).pipe(Effect.scoped, Effect.result),
-  )
+  const result = await Effect.runPromise(prewarmNativeMarketProjection(failed).pipe(Effect.scoped, Effect.result))
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result))
     expect(result.failure).toMatchObject({
@@ -160,31 +157,10 @@ test('interrupted projection acquisition releases resources without creating a t
           Effect.andThen(Effect.never),
         ),
       )
-      const worker = yield* prewarmNativeMarketProjection(undefined, blocked).pipe(Effect.scoped, Effect.forkChild)
+      const worker = yield* prewarmNativeMarketProjection(blocked).pipe(Effect.scoped, Effect.forkChild)
       yield* Deferred.await(entered)
       yield* Fiber.interrupt(worker)
       expect(f.calls).toEqual({ acquire: 1, close: 1, read: 0, driver: 0, broker: 0, model: 0, grant: 0 })
     }).pipe(Effect.scoped),
   )
-})
-
-test('configured research capture keeps its lazy recorder and consumer ownership', async () => {
-  const f = fixture()
-  const capture: ResearchCaptureSession = {
-    observer: {
-      rawValues: true,
-      record: () => {
-        throw new Error('Unexpected capture')
-      },
-      invalidate: () => {},
-    },
-    workerObserver: undefined,
-    status: Effect.succeed({ phase: 'waiting' }),
-    start: () => Effect.die('Prewarm must not start SQL/S3 recording'),
-    bind: () => {
-      throw new Error('Prewarm must not bind a capture consumer')
-    },
-  }
-  expect(await Effect.runPromise(prewarmNativeMarketProjection(capture, f.projection).pipe(Effect.scoped))).toBeNull()
-  expect(f.calls).toEqual({ acquire: 0, close: 0, read: 0, driver: 0, broker: 0, model: 0, grant: 0 })
 })

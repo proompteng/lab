@@ -35,6 +35,19 @@ while read -r kind resolver _; do
     ip daddr $resolver tcp dport 53 accept"
 done < /etc/resolv.conf
 [ -n "$dns_rules" ]
+telemetry_rules=''
+if [ -n "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}" ]; then
+  [ "$OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" = 'http://observability-tempo-v3-distributor.observability.svc.cluster.local:4318/v1/traces' ]
+  for destination in 'observability-tempo-v3-distributor.observability.svc.cluster.local:4318' 'glitchtip-web.glitchtip.svc.cluster.local:80'; do
+    telemetry_addresses="$(getent ahostsv4 "${destination%:*}" | awk '{print $1}' | sort -u)"
+    [ -n "$telemetry_addresses" ] || { echo 'Telemetry service has no IPv4 address' >&2; exit 1; }
+    for address in $telemetry_addresses; do
+      case "$address" in *[!0-9.]*|'') exit 1 ;; esac
+      telemetry_rules="$telemetry_rules
+    ip daddr $address tcp dport ${destination##*:} accept"
+    done
+  done
+fi
 nft -f - <<EOF
 table inet tengri {
   set protected {
@@ -53,6 +66,7 @@ table inet tengri {
     meta nfproto != ipv4 drop
     ip saddr != 10.250.0.2 drop
     $dns_rules
+    $telemetry_rules
     ip daddr @protected drop
     accept
   }

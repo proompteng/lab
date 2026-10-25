@@ -50,6 +50,23 @@ uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or man
 
 ## Normal production path
 
+`product-nix-images.yml` builds and publishes App, Docs, Proompteng, and Synthesis images only from `main`.
+Pull requests retain the owning application build and validation jobs, plus App's native dependency-closure checks.
+They do not create unused product image archives or PR registry caches.
+
+Ofz, Tengri, Nanoagent and Proompteng form one release cohort in the `ofz` Warehouse. All four immutable images
+must name the same source commit and publish the same `ai.proompteng.tengri-schema` fingerprint. Ofz retains its
+successful run-qualified build receipt; Tengri and Nanoagent retain their paired native qualification gate. The three
+production workflows watch the same cohort inputs so a component change cannot strand a partially built release.
+
+The `ofz` Stage promotes first. Its Argo sync must finish the checksum-bound `migrate-runtime` hook and the healthy
+Ofz rollout before Freight is verified. The `tengri` Stage accepts only that verified upstream Freight, and
+`proompteng` accepts the same Freight only after Tengri is verified. Both consumers use `MatchUpstream` and cannot
+promote directly from the Warehouse. A failed migration therefore prevents either consumer from rolling out.
+The BFF, controller and supervisor independently verify the installed migration checksums before serving.
+The retired per-consumer Warehouses are removed; existing Freight has no Warehouse owner reference and remains
+subject to the existing retention policy.
+
 Every application image follows this transaction:
 
 1. Merge the reviewed source pull request to `main`.
@@ -74,11 +91,9 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
-Rune also takes its source commit from the built image. Its Warehouse requires the repository's source annotation,
-a nonempty revision, and a successful build receipt whose run-qualified tag matches both the revision and run ID.
-The Stage checks out that verified image revision. Only Rune source, workflow, and deployment paths trigger its
-image build; shared Kargo and platform ApplicationSet changes do not compile CUDA. There is no independent Git
-subscription to select an earlier commit when an atomic push ends beyond the last Rune path change.
+Bayn's research worker and CPU-only OpenCode proposer consume the same immutable Bayn image through
+`lab-delivery/bayn`. The dedicated Bayn model image, Warehouse and Stage are retired. Shared Flamingo serving remains
+independent, with its pinned serving identity verified by research receipts.
 
 An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
 Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the
@@ -97,10 +112,14 @@ overwrite that branch or its managed deployment metadata. If an Application is r
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
 authorized break-glass direct deployment is an incident action, not a normal release path.
 
-Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Stage updates the public service,
-execution worker, and activation hook to the same source and digest, and carries the existing authored research
+Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
+main-published immutable image. The selected image owns the exact source revision used for checkout, runtime bindings
+and activation lineage, so a newer unpublished main commit cannot hold a completed release. Its Stage updates the
+public service, execution worker, and activation hook to the same source and digest, and carries the existing authored research
 request into the new build lineage. The separate `bayn-release` workflow and promotion holds have been removed.
 The native hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk contracts.
+Bayn resolves environment positions by name and converts each `findIndex` result to a string in `yaml-parse`.
+Kargo v1.11.4 returns a Go `int` for a bare index, which its promotion-state deep copy rejects before persistence.
 
 ## Application enrollment
 
@@ -167,3 +186,10 @@ evidence, then restore Kargo control through Git/configuration afterward.
 
 Historical release-branch and Image Updater documents are not current operating instructions; consult Git history when
 auditing an old transaction.
+
+The standalone `opencode` Application uses `lab/opencode`, Warehouse/Stage
+`opencode`, and `kargo/opencode`. Its personal development server and isolated
+Bayn research gateway consume the same promoted immutable image. Bayn workers
+remain on `lab/bayn`; research receipts record both worker and gateway source
+revisions. The [OpenCode migration contract](../services/opencode/README.md)
+requires offline state verification before the new research gateway can start.

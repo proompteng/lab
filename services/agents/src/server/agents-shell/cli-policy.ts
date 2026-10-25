@@ -10,6 +10,27 @@ const READ_ONLY_GIT_COMMANDS = new Set([
   'describe',
 ])
 const GIT_GLOBAL_FLAGS = new Set(['--no-pager', '--paginate', '--no-optional-locks', '--literal-pathspecs'])
+const BRANCH_LIST_FLAGS = new Set([
+  '--list',
+  '--all',
+  '--remotes',
+  '--verbose',
+  '--contains',
+  '--no-contains',
+  '--merged',
+  '--no-merged',
+  '--points-at',
+  '--format',
+  '--sort',
+  '--color',
+  '--no-color',
+  '--column',
+  '--no-column',
+  '--abbrev',
+  '--no-abbrev',
+  '--ignore-case',
+  '--omit-empty',
+])
 const REV_LIST_FLAGS = new Set([
   '-n',
   '--max-count',
@@ -143,9 +164,18 @@ const commandIndex = (args: readonly string[], values: ReadonlySet<string>, flag
   return args.length
 }
 
-export const requireReadOnlyGitArgs = (args: readonly string[]) => {
+export const readOnlyGitArgs = (args: readonly string[]): string[] => {
   const index = commandIndex(args, new Set(), GIT_GLOBAL_FLAGS)
   const command = args[index]
+  if (command === 'branch') {
+    const options = args.slice(index + 1)
+    if (options.length === 1 && options[0] === '--show-current') return [...args]
+    for (const arg of options) {
+      if (!arg.startsWith('-') || BRANCH_LIST_FLAGS.has(arg.split('=', 1)[0]) || /^-[arv]+$/.test(arg)) continue
+      throw new Error(`git branch inspection does not allow option ${arg}; use git_write for branch changes`)
+    }
+    return [...args.slice(0, index + 1), '--list', ...options]
+  }
   if (command === 'rev-list') {
     for (const arg of args.slice(index + 1)) {
       if (arg === '--') break
@@ -153,7 +183,7 @@ export const requireReadOnlyGitArgs = (args: readonly string[]) => {
       if (!arg.startsWith('-') || REV_LIST_FLAGS.has(option) || /^-(?:n)?\d+$/.test(arg)) continue
       throw new Error(`git rev-list inspection does not allow option ${arg}; use git_write for other modes`)
     }
-    return
+    return [...args]
   }
   if (command === 'cat-file') {
     for (const arg of args.slice(index + 1)) {
@@ -162,11 +192,12 @@ export const requireReadOnlyGitArgs = (args: readonly string[]) => {
         continue
       throw new Error(`git cat-file inspection does not allow option ${arg}; use git_write for filter execution`)
     }
-    return
+    return [...args]
   }
-  if (READ_ONLY_GIT_COMMANDS.has(command)) return
-  if (command === 'worktree' && args[index + 1] === 'list') return
-  if (command === 'remote' && args.length === index + 2 && ['-v', '--verbose'].includes(args[index + 1])) return
+  if (READ_ONLY_GIT_COMMANDS.has(command)) return [...args]
+  if (command === 'worktree' && args[index + 1] === 'list') return [...args]
+  if (command === 'remote' && args.length === index + 2 && ['-v', '--verbose'].includes(args[index + 1]))
+    return [...args]
   throw new Error(`git supports read-only repository inspection only; use git_write for git ${command}`)
 }
 

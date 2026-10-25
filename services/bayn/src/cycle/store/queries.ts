@@ -126,9 +126,7 @@ export const makeCycleQueries = (
   }
 
   const selectCycleByAuthoritySlot: CycleQueries['selectCycleByAuthoritySlot'] = (slot) => {
-    const query =
-      'executionSessionDate' in slot
-        ? sql<Record<string, unknown>>`
+    const query = sql<Record<string, unknown>>`
           SELECT
             cycle_id, schema_version, identity_schema_version, strategy_name,
             qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
@@ -145,30 +143,12 @@ export const makeCycleQueries = (
           FROM autonomous_cycles
           WHERE qualification_run_id = ${slot.qualificationRunId}
             AND account_id = ${slot.accountId}
-            AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
+            AND schema_version = 'bayn.autonomous-cycle.v4'
+            AND strategy_name = 'jev'
             AND execution_session_date = ${slot.executionSessionDate}
           ORDER BY entry_attempt_ordinal DESC
           LIMIT 1
         `
-        : sql<Record<string, unknown>>`
-      SELECT
-        cycle_id, schema_version, identity_schema_version, strategy_name,
-        qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
-        signal_session_date::text AS signal_session_date, signal_calendar_version,
-        execution_policy_schema_version, execution_policy_hash,
-        strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
-        submission_cutoff_after_open_ms, warmup_after_open_ms, submission_cutoff_before_close_ms,
-        window_schema_version, execution_calendar_schema_version,
-        execution_calendar_source, execution_calendar_hash,
-        execution_session_date::text AS execution_session_date,
-        signal_close_at, publication_deadline_at, submission_open_at,
-        execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
-        decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
-      FROM autonomous_cycles
-      WHERE qualification_run_id = ${slot.qualificationRunId}
-        AND account_id = ${slot.accountId}
-        AND signal_session_date = ${slot.signalSessionDate}
-    `
     return query.pipe(Effect.flatMap(decodeStoredCycles))
   }
 
@@ -275,7 +255,7 @@ export const makeCycleQueries = (
                     FROM orders AS partial_order
                     WHERE partial_order.account_id = intent.account_id
                       AND partial_order.intent_id = intent.intent_id
-                      AND partial_order.filled_quantity_micros > 0
+                      AND partial_order.filled_quantity_atoms > 0
                   )
                 )
                 OR (
@@ -299,7 +279,7 @@ export const makeCycleQueries = (
           FROM autonomous_cycle_shadow_decisions AS stored
           WHERE stored.cycle_id = cycle.cycle_id
             AND stored.decision_hash = cycle.decision_hash
-            AND stored.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
+            AND stored.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v2'
             AND stored.document ->> 'mode' = 'PAPER'
             AND stored.document #>> '{targetPlan,status}' = 'PLANNED'
           LIMIT 1
@@ -467,7 +447,7 @@ export const makeCycleQueries = (
         : sql`true`
     const jev =
       document.mode === legacyExecutionAuthorityToken &&
-      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v1'
+      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v6'
         ? document.strategyDecision.evidence
         : undefined
     const jevEvidence =

@@ -40,7 +40,7 @@ enum class AlpacaMarketType {
 internal fun defaultAlpacaMarketDataChannels(marketType: AlpacaMarketType): List<String> =
   when (marketType) {
     AlpacaMarketType.EQUITY -> listOf("trades", "quotes", "bars", "updatedBars")
-    AlpacaMarketType.CRYPTO -> listOf("trades", "quotes", "bars")
+    AlpacaMarketType.CRYPTO -> listOf("trades", "quotes", "bars", "updatedBars", "orderbooks")
     AlpacaMarketType.OPTIONS -> listOf("trades", "quotes")
   }
 
@@ -48,7 +48,6 @@ data class ForwarderConfig(
   val alpacaKeyId: String,
   val alpacaSecretKey: String,
   val alpacaMarketType: AlpacaMarketType,
-  val alpacaCryptoLocation: String,
   val alpacaFeed: String,
   val alpacaStreamUrl: String,
   val alpacaBaseUrl: String,
@@ -79,6 +78,7 @@ data class ForwarderConfig(
   val kafka: KafkaProducerSettings,
   val topics: TopicConfig,
   val observationFeeds: List<ObservationFeedConfig> = emptyList(),
+  val cryptoFeed: CryptoFeedConfig? = null,
   val healthPort: Int = 8080,
   val metricsPort: Int = 9090,
   val healthNotReadyKillAfterMs: Long = 180_000,
@@ -141,17 +141,10 @@ data class ForwarderConfig(
       val alpacaFeed =
         mergedEnv["ALPACA_FEED"]?.trim()?.lowercase()
           ?: if (alpacaMarketType == AlpacaMarketType.OPTIONS) "opra" else "iex"
-      val alpacaCryptoLocation = mergedEnv["ALPACA_CRYPTO_LOCATION"]?.trim()?.lowercase() ?: "us"
-      if (
-        alpacaMarketType == AlpacaMarketType.CRYPTO &&
-        alpacaCryptoLocation !in setOf("us", "us-1", "eu-1")
-      ) {
-        error("ALPACA_CRYPTO_LOCATION must be one of: us, us-1, eu-1 when ALPACA_MARKET_TYPE=crypto")
-      }
       val allowedChannels =
         when (alpacaMarketType) {
           AlpacaMarketType.EQUITY -> listOf("trades", "quotes", "bars", "updatedBars")
-          AlpacaMarketType.CRYPTO -> listOf("trades", "quotes", "bars")
+          AlpacaMarketType.CRYPTO -> defaultAlpacaMarketDataChannels(AlpacaMarketType.CRYPTO)
           AlpacaMarketType.OPTIONS -> listOf("trades", "quotes")
         }
       val allowedByLower = allowedChannels.associateBy { it.lowercase() }
@@ -307,12 +300,14 @@ data class ForwarderConfig(
         )
       val coreSubscriptionCount =
         if (jangarSymbolsUrl != null && symbolAllowlist.isNotEmpty()) symbolAllowlist.size else staticSymbols.size
-      requireMarketDataSubscriptionBudget(
-        alpacaFeed,
-        alpacaMarketDataChannels.associateWith { channel ->
-          alpacaMarketDataSymbolOverrides[channel]?.size ?: coreSubscriptionCount
-        },
-      )
+      if (alpacaMarketType != AlpacaMarketType.CRYPTO) {
+        requireMarketDataSubscriptionBudget(
+          alpacaFeed,
+          alpacaMarketDataChannels.associateWith { channel ->
+            alpacaMarketDataSymbolOverrides[channel]?.size ?: coreSubscriptionCount
+          },
+        )
+      }
       observationFeeds.forEach { observation ->
         requireMarketDataSubscriptionBudget(
           observation.feed.id,
@@ -392,11 +387,22 @@ data class ForwarderConfig(
           ?: marketDataChannelFreshnessMaxMs
       if (marketDataReadIdleTimeoutMs <= 0) error("ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS must be > 0")
 
+      val cryptoFeed = CryptoFeedConfig.fromEnv(mergedEnv, alpacaMarketType, staticSymbols)
+      cryptoFeed?.let { crypto ->
+        val otherTopics =
+          (listOf(topics) + observationFeeds.map { it.topics }).flatMap {
+            listOfNotNull(it.trades, it.quotes, it.bars1m, it.status, it.tradeUpdates, it.tradeUpdatesV2)
+          }
+        require(crypto.topic !in otherTopics) { "crypto market data requires its own topic" }
+        require(shardCount == 1) { "crypto ingestion requires one websocket owner" }
+      }
+      if (alpacaMarketType == AlpacaMarketType.CRYPTO) {
+        require(jangarSymbolsUrl == null && !enableBarsBackfill) { "native crypto ingestion requires static pairs and websocket events" }
+      }
       return ForwarderConfig(
         alpacaKeyId = mergedEnv.getValue("ALPACA_KEY_ID"),
         alpacaSecretKey = mergedEnv.getValue("ALPACA_SECRET_KEY"),
         alpacaMarketType = alpacaMarketType,
-        alpacaCryptoLocation = alpacaCryptoLocation,
         alpacaFeed = alpacaFeed,
         alpacaStreamUrl = mergedEnv["ALPACA_STREAM_URL"] ?: "wss://stream.data.alpaca.markets",
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",
@@ -427,6 +433,7 @@ data class ForwarderConfig(
         kafka = kafka,
         topics = topics,
         observationFeeds = observationFeeds,
+        cryptoFeed = cryptoFeed,
         healthPort = mergedEnv["HEALTH_PORT"]?.toIntOrNull() ?: 8080,
         metricsPort = mergedEnv["METRICS_PORT"]?.toIntOrNull() ?: 9090,
         healthNotReadyKillAfterMs = healthNotReadyKillAfterMs,

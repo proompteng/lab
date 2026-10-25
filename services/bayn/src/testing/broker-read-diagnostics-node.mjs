@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { Effect, Layer, Logger, ManagedRuntime, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1 } from '../hash.ts'
+import { canonicalHashV1Result } from '../hash.ts'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity.ts'
 import { makeReadDiagnostics, projectReadDiagnostic } from '../broker/alpaca/read-diagnostics.ts'
 
@@ -19,7 +19,7 @@ const identity = Result.getOrThrow(
 const evidence = {
   requestId: 'synthetic-request',
   status: 200,
-  contentHash: canonicalHashV1({ synthetic: 'response' }),
+  contentHash: Result.getOrThrow(canonicalHashV1Result({ synthetic: 'response' })),
   observedAt: '2025-06-11T08:00:00.000Z',
 }
 const account = projectReadDiagnostic('account', {

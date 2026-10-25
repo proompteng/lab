@@ -15,10 +15,7 @@ Read this document as:
 - the architecture-reset rationale that explained why empirical truth mattered more than more autonomy, and
 - the dated doc29 closeout record for truthful promotion gating.
 
-Do not treat it as the single current next-work checklist. For that, use:
-
-- `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
-- `docs/torghut/design-system/v6/32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
+For current operational priorities, use [Torghut documentation](../../README.md), source, GitOps, and runtime evidence.
 
 ## Executive Summary
 
@@ -139,8 +136,6 @@ Supporting design documents inspected:
 
 - `docs/torghut/architecture.md`
 - `docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md`
-- `docs/torghut/design-system/v6/13-production-gap-closure-master-plan-2026-03-03.md`
-- `docs/torghut/design-system/v5/09-fully-autonomous-quant-llm-torghut-novel-alpha-system.md`
 
 ### Verified repo facts
 

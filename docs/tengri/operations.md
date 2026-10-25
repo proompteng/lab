@@ -55,12 +55,14 @@ The plaintext inputs are these case-sensitive environment variables:
 - `BETTER_AUTH_SECRET`: at least 32 random bytes for encrypted, stateless web sessions.
 - `GITHUB_CLIENT_ID`: the Tengri GitHub OAuth application client ID.
 - `GITHUB_CLIENT_SECRET`: the matching GitHub OAuth application client secret.
-- `TENGRI_INTERNAL_HMAC_SECRET`: one base64url signing key of at least 32 bytes, or `new,current` during rotation. The
-  controller and BFF must receive the same value.
+- `TENGRI_INTERNAL_HMAC_SECRET`: one 32-byte signing key encoded as exactly 64 lowercase hexadecimal characters
+  (`openssl rand -hex 32`). The controller and BFF must receive the same value. Base64url keys and comma-separated
+  rotation bundles are rejected.
 - `TENGRI_TICKET_SIGNING_SECRET`: at least 32 random bytes for one-use terminal and preview tickets.
 
 The BFF reads the first four values. The controller reads the final two. Both manifests must be generated in one run so
-the controller and BFF receive the same HMAC signing bundle. The sealing script validates every input, keeps plaintext
+the controller and BFF receive the same HMAC signing key. Rotate that single key as part of the coordinated rollout;
+both services must use the replacement before admitting traffic. The sealing script validates every input, keeps plaintext
 out of command arguments and files, uses namespace/name-bound strict scope, and writes only encrypted manifests. Before
 sealing, it also submits a random invalid authorization code with the production callback URL and requires GitHub to
 return `bad_verification_code`. GitHub returns `incorrect_client_credentials` for a wrong client pair and
@@ -180,6 +182,61 @@ Claimed slots keep their image during releases and ordinary sleep. Unused old-im
 CAS, stopped, and retired with the same proof-before-deletion rule. Fresh replacements never inherit another owner's
 memory, home, token, or snapshot. Sleeping homes still occupy one of the six owner slots. No other owner is evicted.
 
+### Replacing a claimed guest while retaining its home
+
+Use this procedure during an authorized maintenance window when a paired release changes the guest API or snapshot
+contract. Keep image publication held until enrollment is complete. Preserve the existing MicroVM, home PVC,
+filesystem, owner grant, credentials, and native conversations. The replacement cold-boots once; it cannot resume the
+old memory snapshot.
+
+1. Qualify the complete Ofz, Tengri, Nanoagent, and Proompteng image cohort from one reviewed source. Record the four
+   digests and the original successful publication runs. Freeze that source for the maintenance window and verify
+   no other main native workflow occupies its publisher concurrency before taking the workspace offline.
+   Finish active work and reconcile uncertain external effects.
+   An idle browser, a transcript, or a sleeping snapshot alone does not establish that work completed.
+2. Finish authenticated workspace sleep, or verify that normal automatic Sleep has completed. Require desired and
+   observed Sleep, the reaped Firecracker process, and no other storage writer. A sleeping journal must name the exact
+   runtime claim. A prepared vacant journal must have a positive snapshot generation, no runtime claim, and the same
+   MicroVM and Lease allocation, image, Pod and home identities. It does not prove native execution acceptance.
+   Accept only an absent activity pin or `idle-sleep/<exact runtime epoch>`; another pin blocks the migration.
+   Require all Restate run and control invocations to be terminal. Capture a fresh baseline after work finishes:
+   MicroVM, Lease, Pod and PVC UIDs; filesystem UUID; representative file hashes; and native conversation identities.
+3. Record the Tengri Application's UID, source, and sync policy. Confirm its owning ApplicationSet preserves
+   [`argocd.argoproj.io/skip-reconcile`](https://argo-cd.readthedocs.io/en/release-3.4/user-guide/skip_reconcile/),
+   then set that annotation to `true` on only this Application. Preserve its sync
+   policy and Kargo metadata. Quiesce the old controller with UID/resourceVersion preconditions and verify its Pods
+   have terminated before changing the retained binding.
+4. Delete only the fenced slot Pod incarnation with UID/resourceVersion preconditions. Verify termination and safe
+   volume detachment. If fencing or storage custody is uncertain, retain the claim and stop. Never delete the home
+   PVC, clear a storage lock, or force-detach its volume to proceed.
+5. Keep the Lease UID, holder identity, slot epoch, home name and home UID. Set its image annotation and the original
+   MicroVM's image to the qualified Nanoagent digest. Verify the home initialization annotation remains `complete`.
+   Retain the old Lease Pod UID and MicroVM slot binding for now. These references prevent pool recreation while the
+   old controller is absent. Use fresh resourceVersion preconditions for each change.
+6. Release the original successful publishers through the existing hold. Rerun only the native publisher and web
+   index publisher against their unchanged architecture artifacts. Verify all four index digests remain exact, and
+   require successful signing and artifact retention before aliases appear. Retain a queued publisher: cancelling a latest attempt with no jobs can
+   prevent rerunning its original job. Do not rebuild or substitute a guest digest after enrollment.
+7. Follow the same Freight through Ofz migration and rollout, then the generated `kargo/tengri` commit. Verify that
+   commit selects the qualified controller and guest digests before removing the Application's temporary
+   `skip-reconcile` annotation. Let Argo restore the reviewed controller replicas from Git.
+8. After the new controller revision is present, clear only the old Lease Pod UID annotation, then clear
+   `MicroVM.spec.slot`. Keep the home and allocation identity unchanged. The controller prepares a new Pod from the
+   enrolled image, records its actual UID, and binds it to the existing MicroVM. Do not invent or copy a successor Pod
+   UID, replace the Lease, or assign another prepared home.
+9. Verify the new slot and registered Restate worker, then complete the upstream Tengri verification and downstream
+   Proompteng promotion. Resume through authenticated Ofz lifecycle control. Read back the unchanged filesystem UUID,
+   retained files and conversations. Exercise run recovery, approval, cancellation, worker replacement, and active-run
+   sleep exclusion before reopening normal work.
+
+After product acceptance, verify that no competing unqualified native publisher is active, then restore
+`TENGRI_PREPARED_SLOT_CUTOVER_READY=true` for normal delivery. Keep the Application unpaused and its source, sync policy
+and Kargo metadata intact. Set the publication hold again before a future incompatible guest API or snapshot change.
+
+If the replacement fails, keep traffic closed and retain the home and claim for repair. Once the new guest writes,
+never restore its older memory snapshot against the advanced disk. Recovery must use a reviewed compatible image
+cohort and an explicit retained-home cold boot.
+
 ## Permission review and hard cutover
 
 Implementation and read-only validation can proceed before rollout. New device/identity grants and execution of a KVM
@@ -202,7 +259,12 @@ builds the desktop and makes that same source revision eligible for its automati
 The device plugin supplies only KVM/TUN, using existing ready-node labels. The TAP init container gets NET_ADMIN only in
 the Pod network namespace. The runner starts with MKNOD/SETUID/SETGID only to create its private block-device inode and
 drop UID/GID. Runtime and Firecracker capability sets must all be empty. The supervisor alone receives SPIFFE CSI access.
-No permission change to host device inodes, node configuration, namespace labels, or scheduling is needed.
+The Async block engine requires the generated, runner-only seccomp profile. Omni's native Talos
+`machine.seccompProfiles` manages it at `/var/lib/kubelet/seccomp/profiles/tengri-runner.json`; only the runner selects
+`profiles/tengri-runner.json`. Other containers retain RuntimeDefault. Validate the complete current machine
+configuration and require a no-reboot server dry run on each target before syncing the approved profile change.
+The existing Alloy collector also needs the scoped NetworkPolicy ingress to slot health port 8080 for responsiveness
+metrics. Host device inode permissions, namespace labels and scheduling do not change.
 
 Before merging a change that would automatically reconcile new SPIRE permissions or expose a new Kargo image pair,
 require authorization for that effect or keep delivery held at the PR boundary. Do not treat a manual sync omission as
@@ -212,8 +274,9 @@ A reviewed cutover follows this order:
 
 1. Complete native builds, component checks, isolated KVM acceptance, and permission review. Record exact source,
    paired artifacts, kernel/Firecracker pins, measurement boundary, p50/p95/max, RAM release, failures, and exclusions.
-2. Through reviewed GitOps, reconcile only approved device/host-SPIRE prerequisites. Verify actual allocations and
-   supervisor identity without modifying nodes. Confirm the slot admission policy and its Deny binding are installed
+2. Through reviewed GitOps and the [Omni procedure](../../devices/galactic/omni/README.md), reconcile only approved
+   device, host-SPIRE and native seccomp prerequisites. Read back the profile resource and file on each target;
+   verify actual allocations and supervisor identity. Confirm the slot admission policy and its Deny binding are installed
    before KVM/TUN allocations are advertised. Before the initial device Application enrollment, record zero advertised
    `runtime.proompteng.ai/kvm-tun` capacity across all nodes and zero existing Pod requests or limits for that resource
    across all namespaces, including pending Pods. A new admission policy does not fence earlier allocations. If either
@@ -317,6 +380,17 @@ for five minutes. Both use kube-state-metrics, so a healthy controller scrape or
 An occupied, healthy pool does not fire either alert. The existing quota rejection alert covers exhausted capacity.
 All Tengri alerts link back to this runbook and use bounded labels; owner hashes,
 agent IDs, terminal IDs, prompts, file contents, and ticket material must never appear in metrics.
+
+Fixed-bucket histograms distinguish guest connection setup and identity verification
+(`tengri_guest_connect_seconds`), guest terminal attachment (`tengri_terminal_attach_seconds`),
+first nonempty PTY output (`tengri_terminal_first_output_seconds`), and control-plane-to-guest terminal ping
+round trips (`tengri_terminal_heartbeat_seconds`). Terminal timings start after the WebSocket upgrade;
+they exclude frontend API requests, browser transport, and rendering. A reattached terminal with no new output
+does not produce a first-output observation until bytes arrive, so that series is diagnostic, not a startup alert.
+The heartbeat alert requires at least ten observations in five minutes and p95 above 100 ms for five minutes.
+Guest connection p95 above 300 ms requires at least five observations in fifteen minutes and five minutes of delay.
+An idle histogram does not establish responsiveness. Correlate these timings with the Ceph read/queue alerts
+and browser measurements before attributing a stall to a specific layer.
 
 For a missing slot Pod, inspect its Lease, MicroVM, and original home PVC. Follow the fenced recovery procedure above
 before resetting a binding. Pod absence alone does not prove that its former storage writer stopped. Preserve the

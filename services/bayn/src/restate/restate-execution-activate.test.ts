@@ -93,7 +93,7 @@ describe('native Restate execution activation', () => {
     expect(restateExecutionActivationRequest(config, token)).toEqual({
       path: `/restate/send/BaynExecutionController/${config.controllerKey}/activateDeployment`,
       body: {
-        schemaVersion: 'bayn.execution-deployment-activation.v1',
+        schemaVersion: 'bayn.execution-deployment-activation.v2',
         controllerKey: config.controllerKey,
         planHash: config.planHash,
         sourceRevision: config.sourceRevision,
@@ -105,29 +105,6 @@ describe('native Restate execution activation', () => {
       timeoutMs: 30_000,
     })
     expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBe(480_000)
-  })
-
-  test('binds a rotation request and its idempotency identity to the exact previous controller', () => {
-    const previousBinding = { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) }
-    const rotating = { ...config, previousBinding }
-    const request = restateExecutionActivationRequest(rotating, token)
-
-    expect(request.body).toEqual({
-      schemaVersion: 'bayn.execution-deployment-activation.v1',
-      controllerKey: config.controllerKey,
-      planHash: config.planHash,
-      sourceRevision: config.sourceRevision,
-      previousBinding,
-    })
-    expect(request.headers['idempotency-key']).toBe(restateExecutionActivationIdempotencyKey(rotating))
-    expect(request.headers['idempotency-key']).not.toBe(restateExecutionActivationIdempotencyKey(config))
-    expect(
-      restateExecutionActivationIdempotencyKey({
-        ...rotating,
-        previousBinding: { ...previousBinding, planHash: 'f'.repeat(64) },
-      }),
-    ).not.toBe(request.headers['idempotency-key'])
-    expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBeLessThan(900_000)
   })
 
   test('reuses the Job identity across fresh container and replacement Pod configuration loads', async () => {

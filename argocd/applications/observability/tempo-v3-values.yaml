@@ -80,12 +80,24 @@ blockBuilder:
   replicas: 3
   affinity: |
     podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchLabels:
-              app.kubernetes.io/instance: observability-tempo-v3
-              app.kubernetes.io/component: block-builder
-          topologyKey: kubernetes.io/hostname
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/instance: observability-tempo-v3
+                app.kubernetes.io/component: block-builder
+            topologyKey: kubernetes.io/hostname
+  topologySpreadConstraints: |
+    - maxSkew: 1
+      minDomains: 2
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      nodeTaintsPolicy: Honor
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/instance: observability-tempo-v3
+          app.kubernetes.io/component: block-builder
   resources:
     requests:
       cpu: 200m
@@ -113,12 +125,24 @@ liveStore:
     failureThreshold: 3
   affinity: |
     podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchLabels:
-              app.kubernetes.io/instance: observability-tempo-v3
-              app.kubernetes.io/component: live-store
-          topologyKey: kubernetes.io/hostname
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/instance: observability-tempo-v3
+                app.kubernetes.io/component: live-store
+            topologyKey: kubernetes.io/hostname
+  topologySpreadConstraints: |
+    - maxSkew: 1
+      minDomains: 2
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      nodeTaintsPolicy: Honor
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/instance: observability-tempo-v3
+          app.kubernetes.io/component: live-store
   resources:
     requests:
       cpu: 200m

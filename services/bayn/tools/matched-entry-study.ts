@@ -12,7 +12,7 @@ import { SignalStudyFailure } from '../src/intraday-replay/signal-study'
 import { validateBacktestSourceReceipt } from '../src/intraday-replay/source'
 import { strictParseOptions } from '../src/schemas'
 
-const verifyRegisteredCheckout = (sourceRevision: string) =>
+export const verifyRegisteredCheckout = (sourceRevision: string) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     // Bind the source executing this command, independently of the caller's working directory.

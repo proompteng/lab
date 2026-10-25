@@ -9,6 +9,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 class RollingMarketFeaturesTest {
   private val start = Instant.parse("2026-09-11T13:30:00Z")
   private val computed = Instant.parse("2026-09-11T14:00:02Z").toEpochMilli()
@@ -52,13 +53,14 @@ class RollingMarketFeaturesTest {
     assertEquals(30, feature.material.inputs.size)
     assertEquals(start.toEpochMilli(), feature.material.windowStartMs)
     assertEquals(computed - 2000, feature.material.windowEndMs)
-    val fixture = java.io.File("../../bayn/src/market-data/features/fixtures/rolling-price-v1.json")
+    val fixture = java.io.File("../../bayn/src/market-data/features/fixtures/observed-price-window-v1.json")
     if (System.getProperty("writeMarketFeatureFixture") == "true") {
       fixture.parentFile.mkdirs()
       fixture.writeText(
         Json {
           encodeDefaults = true
           prettyPrint = true
+          prettyPrintIndent = "  "
         }.encodeToString(RollingMarketFeature.serializer(), feature) + "\n",
       )
     }
@@ -142,11 +144,19 @@ class RollingMarketFeaturesTest {
     assertEquals(ordered, reversed)
   }
 
-  @Test fun `gap stays unavailable and late bar completes the same window`() {
+  @Test fun `observed history emits across a gap and a late bar corrects the same window`() {
     val incomplete = complete((0..29).filter { it != 12 })
-    assertNull(incomplete.feature)
+    assertEquals(29, assertNotNull(incomplete.feature).material.inputs.size)
     val recovered = advanceRollingFeature(incomplete.state, bar(12), computed, "test-revision")
     assertEquals(complete().feature, recovered.feature)
+  }
+
+  @Test fun `first completed minute emits without a thirty minute warmup`() {
+    val feature =
+      assertNotNull(advanceRollingFeature(RollingFeatureState(), bar(0), start.plusSeconds(62).toEpochMilli(), "test-revision").feature)
+    assertEquals(1, feature.material.inputs.size)
+    assertEquals(start.toEpochMilli(), feature.material.windowStartMs)
+    assertEquals(start.plusSeconds(60).toEpochMilli(), feature.material.windowEndMs)
   }
 
   @Test fun `duplicates do not emit and corrections replace rather than accumulate`() {
@@ -211,7 +221,7 @@ class RollingMarketFeaturesTest {
     val original = complete()
     val tomorrow = bar(0).copy(eventTime = start.plusSeconds(86400), ingestionTime = start.plusSeconds(86461), sourceOffset = 200)
     val reset = advanceRollingFeature(original.state, tomorrow, computed + 86400_000, "test-revision")
-    assertNull(reset.feature)
+    assertEquals(1, assertNotNull(reset.feature).material.inputs.size)
     assertEquals(1, reset.state.bars.size)
     assertEquals(reset.state, advanceRollingFeature(reset.state, bar(29), computed + 86400_000, "test-revision").state)
   }
@@ -221,5 +231,56 @@ class RollingMarketFeaturesTest {
     assertEquals(100000000, featureMicros(100.00000049))
     assertFailsWith<IllegalArgumentException> { featureMicros(Double.NaN) }
     assertFailsWith<IllegalArgumentException> { featureMicros(Double.MAX_VALUE) }
+  }
+
+  @Test fun `extended segments publish their first minute and isolate regular history`() {
+    val pre =
+      bar(
+        0,
+      ).copy(
+        eventTime = Instant.parse("2026-09-11T12:00:00Z"),
+        ingestionTime = Instant.parse("2026-09-11T12:01:01Z"),
+        marketSession = "pre",
+      )
+    val first = advanceRollingFeature(RollingFeatureState(), pre, computed, "test-revision")
+    assertEquals(1, assertNotNull(first.feature).material.inputs.size)
+    assertEquals(pre.eventTime.toEpochMilli(), first.feature?.material?.windowStartMs)
+    val regular = advanceRollingFeature(first.state, bar(0), computed, "test-revision")
+    assertEquals(1, assertNotNull(regular.feature).material.inputs.size)
+    assertEquals(start.toEpochMilli(), regular.feature?.material?.windowStartMs)
+    val correction = advanceRollingFeature(regular.state, pre.copy(sourceOffset = 100), computed, "test-revision")
+    assertEquals(regular.state, correction.state)
+    assertNull(correction.feature)
+    val post =
+      bar(
+        0,
+      ).copy(
+        eventTime = Instant.parse("2026-09-11T20:00:00Z"),
+        ingestionTime = Instant.parse("2026-09-11T20:01:01Z"),
+        marketSession = "post",
+        sourceOffset = 101,
+      )
+    val after = advanceRollingFeature(regular.state, post, post.ingestionTime.toEpochMilli(), "test-revision")
+    assertEquals(1, assertNotNull(after.feature).material.inputs.size)
+    assertEquals(post.eventTime.toEpochMilli(), after.feature?.material?.windowStartMs)
+  }
+
+  @Test fun `IEX bars outside entitled hours and forged phases fail`() {
+    val cases =
+      listOf(
+        "2026-09-11T11:59:00Z" to "pre",
+        "2026-09-11T21:00:00Z" to "post",
+        "2026-09-11T12:00:00Z" to "regular",
+      )
+    for ((at, phase) in cases) {
+      assertFailsWith<IllegalArgumentException> {
+        advanceRollingFeature(
+          RollingFeatureState(),
+          bar(0).copy(eventTime = Instant.parse(at), marketSession = phase),
+          computed,
+          "test-revision",
+        )
+      }
+    }
   }
 }

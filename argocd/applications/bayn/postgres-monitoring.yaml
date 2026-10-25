@@ -140,3 +140,33 @@ data:
         - wal_enabled:
             usage: GAUGE
             description: Whether WAL I/O timings are currently collected
+    bayn_generation_index:
+      primary: true
+      target_databases: [bayn]
+      query: |
+        SELECT COALESCE(bool_and(idx.indisvalid), false)::integer AS valid,
+               COALESCE(bool_and(idx.indisready), false)::integer AS ready,
+               COALESCE(sum(stats.idx_scan), 0) AS scans_total,
+               COALESCE(sum(stats.idx_tup_read), 0) AS tuples_read_total,
+               COALESCE(sum(stats.idx_tup_fetch), 0) AS tuples_fetched_total
+        FROM pg_catalog.pg_stat_user_indexes AS stats
+        JOIN pg_catalog.pg_index AS idx ON idx.indexrelid = stats.indexrelid
+        WHERE stats.schemaname = 'public'
+          AND stats.relname = 'autonomous_cycle_shadow_decisions'
+          AND stats.indexrelname = 'autonomous_cycle_shadow_decisions_generation_idx'
+      metrics:
+        - valid:
+            usage: GAUGE
+            description: Generation lookup index exists and is valid; zero includes absence
+        - ready:
+            usage: GAUGE
+            description: Generation lookup index exists and accepts new entries
+        - scans_total:
+            usage: COUNTER
+            description: Generation index scans since PostgreSQL statistics reset
+        - tuples_read_total:
+            usage: COUNTER
+            description: Generation index entries read since PostgreSQL statistics reset
+        - tuples_fetched_total:
+            usage: COUNTER
+            description: Generation index heap tuples fetched since PostgreSQL statistics reset

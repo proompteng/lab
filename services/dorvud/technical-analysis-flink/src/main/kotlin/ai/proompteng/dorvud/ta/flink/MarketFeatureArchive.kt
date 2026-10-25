@@ -69,12 +69,13 @@ internal fun decodeArchivedMarketFeature(
   require(record.partition >= 0 && record.offset >= 0) { "invalid feature source coordinates" }
   require(
     material.windowStartMs in 0..253_402_300_799_999L && material.windowEndMs in 0..253_402_300_799_999L &&
-      material.windowStartMs % 60_000 == 0L && material.windowEndMs - material.windowStartMs == 1_800_000L,
+      material.windowStartMs % 60_000 == 0L && material.windowEndMs % 60_000 == 0L &&
+      material.windowEndMs - material.windowStartMs in 60_000L..1_800_000L,
   ) {
     "invalid feature window"
   }
   require(
-    material.inputs.size == FEATURE_LOOKBACK_MINUTES &&
+    material.inputs.size in 1..FEATURE_LOOKBACK_MINUTES &&
       feature.computedAtMs in (material.windowEndMs - FEATURE_MAX_CLOCK_SKEW_MS)..253_402_300_799_999L &&
       feature.computedAtMs <= archivedAtMs + FEATURE_MAX_CLOCK_SKEW_MS,
   ) {
@@ -100,11 +101,22 @@ internal fun decodeArchivedMarketFeature(
   ) {
     "feature window spans sessions"
   }
+  val windowStart = Instant.ofEpochMilli(material.windowStartMs)
+  val windowLast = Instant.ofEpochMilli(material.windowEndMs - 1)
+  require(
+    executableIexSession(windowStart) != null && executableIexSession(windowLast) != null &&
+      equityFeatureSegmentStart(windowStart) == equityFeatureSegmentStart(windowLast),
+  ) { "feature window crosses executable IEX clock segments" }
   val coordinates = mutableSetOf<String>()
-  for ((index, input) in material.inputs.withIndex()) {
+  var previousEvent = material.windowStartMs.toBigInteger() * 1_000_000L.toBigInteger() - 1.toBigInteger()
+  for (input in material.inputs) {
+    val event = input.eventTimeNanos.toBigInteger()
     require(
-      input.eventTimeNanos == ((material.windowStartMs + index * 60_000).toBigInteger() * 1_000_000L.toBigInteger()).toString(),
-    ) { "feature inputs are not contiguous" }
+      event > previousEvent && event >= material.windowStartMs.toBigInteger() * 1_000_000L.toBigInteger() &&
+        event < material.windowEndMs.toBigInteger() * 1_000_000L.toBigInteger() &&
+        event % 60_000_000_000L.toBigInteger() == 0.toBigInteger(),
+    ) { "feature inputs are unordered or outside the completed window" }
+    previousEvent = event
     require(input.ingestionTimeNanos.matches(Regex("0|[1-9][0-9]*"))) { "invalid input availability timestamp" }
     require(
       input.ingestionTimeNanos.toBigInteger() + FEATURE_MAX_CLOCK_SKEW_MS.toBigInteger() * 1_000_000L.toBigInteger() >=
@@ -131,6 +143,9 @@ internal fun decodeArchivedMarketFeature(
         route.universe.symbolHash == material.universeSymbolHash &&
         material.symbol in route.universe.symbols,
     ) { "feature universe does not match archive route" }
+  }
+  require(previousEvent + 60_000_000_000L.toBigInteger() == material.windowEndMs.toBigInteger() * 1_000_000L.toBigInteger()) {
+    "feature lacks the latest completed minute"
   }
   require(
     material.inputs

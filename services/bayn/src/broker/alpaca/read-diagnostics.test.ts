@@ -3,7 +3,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Logger, Redacted, Result } from '
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { alpacaLiveBaseUrl, alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
 import { make } from './http'
@@ -56,7 +56,7 @@ const account = {
 const evidence = (index = 1): ReadEvidence => ({
   requestId: `synthetic-request-${index}`,
   status: 200,
-  contentHash: canonicalHashV1({ index }),
+  contentHash: Result.getOrThrow(canonicalHashV1Result({ index })),
   observedAt: '2026-10-03T08:00:00.000Z',
 })
 const clocked = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect.pipe(Effect.provide(TestClock.layer())))
@@ -173,7 +173,7 @@ describe('bounded observational broker diagnostics', () => {
       },
     }
     expect(projectReadDiagnostic('fee-activities', [row])).toEqual({
-      endpoint: '/v2/account/activities/FEE',
+      endpoint: '/v2/account/activities',
       fees: [],
       omitted: 1,
     })
@@ -181,7 +181,7 @@ describe('bounded observational broker diagnostics', () => {
     const rows = Array.from({ length: 129 }, (_, index) => fee(index))
     Object.defineProperty(rows, 'slice', { value: () => Array.from({ length: 1_000 }, (_, index) => fee(index)) })
     const projected = projectReadDiagnostic('fee-activities', rows)
-    expect(projected?.endpoint === '/v2/account/activities/FEE' && projected.fees.length).toBe(128)
+    expect(projected?.endpoint === '/v2/account/activities' && projected.fees.length).toBe(128)
     expect(projected).toMatchObject({ omitted: 1 })
     const fields = projectReadDiagnostic('account', {
       get accrued_fees() {
@@ -468,11 +468,11 @@ describe('bounded observational broker diagnostics', () => {
           expect(Object.keys(actual).sort()).toEqual(['evidence', 'value'])
           expect(Object.keys(actualFees).sort()).toEqual(['evidence', 'value'])
           expect(actual.value.cashMicros).toBe('76543210000')
-          expect(actual.evidence.contentHash).toBe(canonicalHashV1(account))
+          expect(actual.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(account)))
           expect(actualFees.value).toEqual({
             items: [{ accountId, activityId: fee().id, date: fee().date, netAmountMicros: '-10000' }],
           })
-          expect(actualFees.evidence.contentHash).toBe(canonicalHashV1([fee()]))
+          expect(actualFees.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([fee()])))
         }
       }).pipe(
         Effect.provideService(HttpClient.HttpClient, client),
@@ -494,7 +494,7 @@ describe('bounded observational broker diagnostics', () => {
     const client = HttpClient.make((request, url) => {
       calls += 1
       expect(request.method).toBe('GET')
-      expect(['/v2/account', '/v2/account/activities/FEE']).toContain(url.pathname)
+      expect(['/v2/account', '/v2/account/activities']).toContain(url.pathname)
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -510,6 +510,11 @@ describe('bounded observational broker diagnostics', () => {
         const original = yield* read.account
         const feeRead = yield* read.feeActivities()
         expect(original.value).toEqual({
+          cryptoStatus: null,
+          cryptoFeeTier: null,
+          cashReportingQuantumMicros: '10000' as const,
+          nonMarginableBuyingPowerMicros: null,
+
           id: accountId,
           status: AccountStatus.Active,
           currency: 'USD',
@@ -525,8 +530,8 @@ describe('bounded observational broker diagnostics', () => {
         expect(feeRead.value).toEqual({
           items: [{ accountId, activityId: fee().id, date: fee().date, netAmountMicros: '-10000' }],
         })
-        expect(original.evidence.contentHash).toBe(canonicalHashV1(account))
-        expect(feeRead.evidence.contentHash).toBe(canonicalHashV1([fee()]))
+        expect(original.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(account)))
+        expect(feeRead.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([fee()])))
         expect(events).toHaveLength(0)
         yield* TestClock.adjust(60_000)
         const repeated = yield* read.account

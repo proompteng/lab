@@ -85,6 +85,7 @@ def inventory(context, verify):
             namespace == "arc"
             and meta.get("labels", {}).get("actions.github.com/scale-set-name")
             == "arc-amd64"
+            and meta.get("labels", {}).get("app.kubernetes.io/component") == "runner"
         ):
             runners.append(pod)
         for volume in spec.get("volumes", []):
@@ -168,8 +169,8 @@ def inventory(context, verify):
             for v in pod["spec"].get("volumes", [])
             if claim_name(pod, v)
         ]
-        assert mounted == ["local-path-ryzen"], (
-            "AMD64 runner scratch is not exclusively Ryzen local storage"
+        assert mounted == ["local-path-ci-amd64"], (
+            "AMD64 runner scratch does not use the per-host CI local class"
         )
     print(
         "PASS: Ryzen has local CI scratch, no application Ceph clients, and its Ceph monitor remains in quorum"
@@ -316,6 +317,7 @@ def probe_admission(context):
     for storage in (
         "local-path",
         "local-path-ryzen",
+        "local-path-ci-amd64",
         "local-path-turin-nvme-intel",
         "local-path-turin-nvme-transcend",
         "rook-ceph-block",

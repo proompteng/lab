@@ -1,12 +1,17 @@
-import { Clock, Context, Data, Effect } from 'effect'
+import { Context, Data, Effect } from 'effect'
 
 import type { OperationalError } from '../errors'
-import { decodeJevBatchPlan, JevCandidatePlanStatus, type JevBatchPlan, type JevBatchResult } from './batch'
-import { evaluateJevOnce } from './evaluation'
+import { decodeJevBatchPlan, type JevBatchPlan, type JevBatchResult } from './batch'
+import { evaluateClaimedJevOnce, type JevDispatch } from './evaluation'
+import type { JevObservation } from './observation'
 
 export interface JevBatchEvidence {
   readonly plan: JevBatchPlan
   readonly result: JevBatchResult | null
+}
+
+export interface JevBatchAdmission extends JevBatchEvidence {
+  readonly dispatches: readonly JevDispatch[]
 }
 
 export class JevBatchExpired extends Data.TaggedError('JevBatchExpired')<{
@@ -25,37 +30,30 @@ export class JevBatchStore extends Context.Service<
       cycleId: string,
       authorityGenerationHash?: string,
     ) => Effect.Effect<readonly string[], OperationalError>
-    readonly begin: (plan: JevBatchPlan) => Effect.Effect<JevBatchEvidence, OperationalError | JevBatchExpired>
+    readonly begin: (
+      plan: JevBatchPlan,
+      observation: JevObservation,
+    ) => Effect.Effect<JevBatchAdmission, OperationalError | JevBatchExpired>
     readonly finish: (batchId: string) => Effect.Effect<JevBatchEvidence, OperationalError>
   }
 >()('@proompteng/bayn/JevBatchStore') {}
 
-export const evaluateJevBatch = (input: unknown) =>
+export const evaluateJevBatch = (input: unknown, observation: JevObservation) =>
   Effect.gen(function* () {
     const plan = yield* Effect.fromResult(decodeJevBatchPlan(input))
     const store = yield* JevBatchStore
-    const saved = yield* store.begin(plan)
-    if (saved.result !== null) return saved
-    if ((yield* Clock.currentTimeMillis) < Date.parse(plan.expiresAt)) {
-      yield* Effect.forEach(
-        plan.candidates,
-        (candidate) =>
-          candidate.status === JevCandidatePlanStatus.Excluded
-            ? Effect.void
-            : evaluateJevOnce(candidate.request).pipe(
-                Effect.asVoid,
-                Effect.catchTag('JevEvidenceError', () => Effect.void),
-              ),
-        { concurrency: plan.candidates.length, discard: true },
-      )
-    }
+    const saved = yield* store.begin(plan, observation)
+    if (saved.result !== null) return { plan: saved.plan, result: saved.result }
+    yield* Effect.forEach(
+      saved.dispatches,
+      (dispatch) =>
+        evaluateClaimedJevOnce(dispatch).pipe(
+          Effect.asVoid,
+          Effect.catchTag('JevEvidenceError', () => Effect.void),
+        ),
+      { concurrency: Math.max(1, saved.dispatches.length), discard: true },
+    )
     return yield* store.finish(plan.batchId)
-  })
-
-export const recoverJevBatch = (batchId: string) =>
-  Effect.gen(function* () {
-    const store = yield* JevBatchStore
-    return yield* store.finish(batchId)
   })
 
 export const recoverPendingJevBatches = (cycleId: string, authorityGenerationHash: string) =>

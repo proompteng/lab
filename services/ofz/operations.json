@@ -1,13 +1,50 @@
 [
   {
     "surface": "controller",
+    "operation": "ConnectorAgent",
+    "action": "ACTION_CODEX_CONTROL",
+    "dispatch": "Default-off connector gate precedes authentication, workspace admission and guest effects"
+  },
+  {
+    "surface": "codex",
+    "operation": "relay/identity",
+    "action": "ACTION_CODEX_CONTROL",
+    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+  },
+  {
+    "surface": "codex",
+    "operation": "relay/configure",
+    "action": "ACTION_CODEX_CONTROL",
+    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+  },
+  {
+    "surface": "codex",
+    "operation": "relay/remove",
+    "action": "ACTION_CODEX_CONTROL",
+    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+  },
+  {
+    "surface": "ofz",
+    "operation": "CheckConnectorAgent",
+    "action": "ACTION_CONNECTOR_EXECUTE",
+    "dispatch": "Default-off connector gate precedes database, replay and authorization effects"
+  },
+  {
+    "surface": "controller",
+    "operation": "GetRequestAudience",
+    "public": true,
+    "internal_only": true,
+    "dispatch": "Pinned BFF mTLS only; returns a process incarnation, with no user or workspace authority"
+  },
+  {
+    "surface": "controller",
     "operation": "CreateAgent",
     "action": "ACTION_WORKSPACE_CREATE"
   },
   {
     "surface": "controller",
     "operation": "ListAgents",
-    "action": "ACTION_PLATFORM_ADMIT"
+    "action": "ACTION_WORKSPACE_METADATA_READ"
   },
   {
     "surface": "controller",
@@ -21,23 +58,13 @@
   },
   {
     "surface": "controller",
-    "operation": "SleepAgent",
-    "action": "ACTION_WORKSPACE_SLEEP"
-  },
-  {
-    "surface": "controller",
-    "operation": "ResumeAgent",
-    "action": "ACTION_WORKSPACE_RESUME"
-  },
-  {
-    "surface": "controller",
     "operation": "UpdatePowerSettings",
     "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
   },
   {
     "surface": "controller",
-    "operation": "DeleteAgent",
-    "action": "ACTION_WORKSPACE_DELETE"
+    "operation": "StatFile",
+    "action": "ACTION_FILES_OBSERVE"
   },
   {
     "surface": "controller",
@@ -111,6 +138,16 @@
   },
   {
     "surface": "controller",
+    "operation": "ListCodexThreads",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "SetCodexThreadArchived",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
     "operation": "GetCodexLogin",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -132,6 +169,16 @@
   {
     "surface": "controller",
     "operation": "SendCodexInput",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "GetCodexRun",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "GetActiveCodexRun",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -194,6 +241,11 @@
     "surface": "guest",
     "operation": "OpenBrowser",
     "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "StatFile",
+    "action": "ACTION_FILES_OBSERVE"
   },
   {
     "surface": "guest",
@@ -262,11 +314,6 @@
   },
   {
     "surface": "guest",
-    "operation": "ResolveCodexApproval",
-    "action": "ACTION_CODEX_CONTROL"
-  },
-  {
-    "surface": "guest",
     "operation": "WatchCodexEvents",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -294,6 +341,21 @@
   {
     "surface": "codex",
     "operation": "mcpServerStatus/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/archive",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/unarchive",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -332,6 +394,31 @@
     "action": "ACTION_CODEX_CONTROL"
   },
   {
+    "surface": "codex",
+    "operation": "thread/read",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/operation",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/pending",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/reconcileOperation",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/resolveApproval",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
     "surface": "bff",
     "operation": "create-agent",
     "action": "ACTION_WORKSPACE_CREATE"
@@ -355,6 +442,11 @@
     "surface": "bff",
     "operation": "update-power-settings",
     "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
+  },
+  {
+    "surface": "bff",
+    "operation": "stat-file",
+    "action": "ACTION_FILES_OBSERVE"
   },
   {
     "surface": "bff",
@@ -438,7 +530,27 @@
   },
   {
     "surface": "bff",
+    "operation": "list-threads",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "set-thread-archived",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
     "operation": "resume-thread",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "active-codex-run",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "codex-run",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -454,6 +566,11 @@
   {
     "surface": "bff",
     "operation": "interrupt-turn",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "answer-questions",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -523,13 +640,13 @@
   },
   {
     "surface": "gateway",
-    "operation": "GET /_tengri/editor/open",
-    "action": "ACTION_EDITOR_OPEN"
+    "operation": "GET /_tengri/preview/open",
+    "action": "ACTION_PREVIEW_ACCESS"
   },
   {
     "surface": "gateway",
-    "operation": "HEAD /_tengri/editor/open",
-    "action": "ACTION_EDITOR_OPEN"
+    "operation": "HEAD /_tengri/preview/open",
+    "action": "ACTION_PREVIEW_ACCESS"
   },
   {
     "surface": "gateway",
@@ -613,6 +730,25 @@
   },
   {
     "surface": "ofz",
+    "operation": "GetWorkspaceState",
+    "action": "ACTION_WORKSPACE_ENROLL",
+    "internal_only": true
+  },
+  {
+    "surface": "ofz",
+    "operation": "AuthorizeGuestMaintenance",
+    "action": "ACTION_WORKSPACE_ENROLL",
+    "internal_only": true,
+    "dispatch": "guest maintenance purpose"
+  },
+  {
+    "surface": "ofz",
+    "operation": "GetWorkspaceReservation",
+    "action": "ACTION_WORKSPACE_CREATE",
+    "internal_only": true
+  },
+  {
+    "surface": "ofz",
     "operation": "AuthorizeCommand",
     "action": "ACTION_POLICY_CHECK"
   },
@@ -688,6 +824,11 @@
   },
   {
     "surface": "bff_http",
+    "operation": "GET /api/tengri/attachments",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "bff_http",
     "operation": "GET /api/tengri/files/events",
     "action": "ACTION_FILES_OBSERVE"
   },
@@ -745,6 +886,16 @@
   },
   {
     "surface": "supervisor",
+    "operation": "GET /metrics",
+    "public": true
+  },
+  {
+    "surface": "supervisor",
+    "operation": "HEAD /metrics",
+    "public": true
+  },
+  {
+    "surface": "supervisor",
     "operation": "GET /slot/status",
     "internal_only": true,
     "action": "ACTION_WORKSPACE_ENROLL"
@@ -752,6 +903,12 @@
   {
     "surface": "supervisor",
     "operation": "HEAD /slot/status",
+    "internal_only": true,
+    "action": "ACTION_WORKSPACE_ENROLL"
+  },
+  {
+    "surface": "supervisor",
+    "operation": "POST /slot/fence",
     "internal_only": true,
     "action": "ACTION_WORKSPACE_ENROLL"
   },
@@ -967,6 +1124,12 @@
     "operation": "POST /api/auth/step-up",
     "public": true,
     "dispatch": "Pre-admission OAuth exchange; Ofz establishes a session only after verified identity and active membership."
+  },
+  {
+    "surface": "bff_auth",
+    "operation": "POST /api/auth/add-passkey",
+    "public": true,
+    "dispatch": "GitHub and an existing passkey authorize Keycloak credential enrollment; Ofz establishes a session only after verified identity and active membership."
   },
   {
     "surface": "bff_auth",

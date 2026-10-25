@@ -1,10 +1,13 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { jevRequestForSnapshot } from '../jev/native.test-support'
+import { equityMarketProfile } from '../jev/markets'
+import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { OrderSide } from '../execution/contracts'
 import { nativeJevFixture } from '../jev/native.test-support'
-import { makeJevTradingSignalRequest } from '../jev/trading-signals'
 import { featureBarContentHash } from '../market-data/features/contract'
 import technicalFixture from '../market-data/features/fixtures/technical-indicators-v1.json'
 import { decodeTechnicalMarketFeature, TechnicalReadiness } from '../market-data/features/technical-contract'
@@ -29,10 +32,10 @@ import {
 
 // Independently valid snapshots, identical prices, different optional model inputs.
 const technicalSnapshots = (ema = '123450000', offset = '0', availabilityDelayMs = 0) => {
-  const { snapshot, cut, query, protocol } = streamingFixture()
+  const { snapshot, cut, query } = streamingFixture()
   const rolling = snapshot.manifest.streaming.features.find((entry) => entry.value.material.symbol === 'AAPL')
   const first = snapshot.bars.find((bar) => bar.symbol === 'AAPL')
-  const session = snapshot.manifest.calendar.sessions[0]
+  const session = exchangeSessions(snapshot.manifest.calendar)[0]
   if (rolling === undefined || first === undefined || session === undefined) throw new Error('Missing fixture')
   const open = Date.parse(session.openAt)
   const older = Array.from({ length: 30 }, (_, index) => {
@@ -54,8 +57,8 @@ const technicalSnapshots = (ema = '123450000', offset = '0', availabilityDelayMs
   })
   const material = {
     ...technicalFixture.material,
-    universeId: protocol.universeId,
-    universeSymbolHash: protocol.universeSymbolHash,
+    universeId: equityMarketProfile.universeId,
+    universeSymbolHash: equityMarketProfile.universeSymbolHash,
     sessionDate: query.sessionDate,
     windowStartMs: open,
     windowEndMs: Date.parse(query.rangeEndAt),
@@ -70,7 +73,7 @@ const technicalSnapshots = (ema = '123450000', offset = '0', availabilityDelayMs
   const feature = Result.getOrThrow(
     decodeTechnicalMarketFeature({
       material,
-      featureId: canonicalHashV1(material),
+      featureId: Result.getOrThrow(canonicalHashV1Result(material)),
       producerRevision: 'incremental-audit-fixture',
       computedAtMs: Date.parse(query.observedAt),
     }),
@@ -79,10 +82,10 @@ const technicalSnapshots = (ema = '123450000', offset = '0', availabilityDelayMs
     { ...cut.projection, technicalTopic: topic },
     { topic, partition: 0, offset, value: JSON.stringify(feature) },
     {
-      universeId: protocol.universeId,
-      universeSymbolHash: protocol.universeSymbolHash,
-      symbols: protocol.universe,
-      topics: { ...protocol.sourceTopics, features: rolling.topic, technicalFeatures: topic },
+      universeId: equityMarketProfile.universeId,
+      universeSymbolHash: equityMarketProfile.universeSymbolHash,
+      symbols: equityMarketProfile.universe,
+      topics: { ...equityMarketProfile.sourceTopics, features: rolling.topic, technicalFeatures: topic },
     },
     Date.parse(query.observedAt) + availabilityDelayMs,
   )
@@ -109,11 +112,11 @@ const technicalSnapshots = (ema = '123450000', offset = '0', availabilityDelayMs
 
 test('matched reproduction distinguishes technical input presence that changes the actual Jev request', () => {
   const { withTechnical, withoutTechnical } = technicalSnapshots()
-  const actual = Result.getOrThrow(makeJevTradingSignalRequest(withTechnical, 'AAPL', 'SPY'))
-  const missing = Result.getOrThrow(makeJevTradingSignalRequest(withoutTechnical, 'AAPL', 'SPY'))
+  const actual = Result.getOrThrow(jevRequestForSnapshot(withTechnical, 'AAPL'))
+  const missing = Result.getOrThrow(jevRequestForSnapshot(withoutTechnical, 'AAPL'))
   expect(actual.requestHash).not.toBe(missing.requestHash)
-  expect(canonicalHashV1(matchedObservationMaterial(withTechnical))).not.toBe(
-    canonicalHashV1(matchedObservationMaterial(withoutTechnical)),
+  expect(Result.getOrThrow(canonicalHashV1Result(matchedObservationMaterial(withTechnical)))).not.toBe(
+    Result.getOrThrow(canonicalHashV1Result(matchedObservationMaterial(withoutTechnical))),
   )
 })
 
@@ -121,21 +124,20 @@ test('matched reproduction binds changed technical values and their exact source
   const original = technicalSnapshots().withTechnical
   const differentValue = technicalSnapshots('99900000').withTechnical
   const differentSource = technicalSnapshots('123450000', '1').withTechnical
-  const request = (snapshot: typeof original) =>
-    Result.getOrThrow(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY')).requestHash
+  const request = (snapshot: typeof original) => Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).requestHash
   expect(request(original)).not.toBe(request(differentValue))
   expect(request(original)).toBe(request(differentSource))
   for (const changed of [differentValue, differentSource])
-    expect(canonicalHashV1(matchedObservationMaterial(original))).not.toBe(
-      canonicalHashV1(matchedObservationMaterial(changed)),
+    expect(Result.getOrThrow(canonicalHashV1Result(matchedObservationMaterial(original)))).not.toBe(
+      Result.getOrThrow(canonicalHashV1Result(matchedObservationMaterial(changed))),
     )
 })
 
 test('future technical availability is excluded by real snapshot construction before model input', () => {
   const { withTechnical: future, withoutTechnical } = technicalSnapshots('123450000', '0', 1)
   expect(future.manifest.streaming.technical?.features).toHaveLength(0)
-  const request = Result.getOrThrow(makeJevTradingSignalRequest(future, 'AAPL', 'SPY'))
-  const absent = Result.getOrThrow(makeJevTradingSignalRequest(withoutTechnical, 'AAPL', 'SPY'))
+  const request = Result.getOrThrow(jevRequestForSnapshot(future, 'AAPL'))
+  const absent = Result.getOrThrow(jevRequestForSnapshot(withoutTechnical, 'AAPL'))
   expect(request.requestHash).toBe(absent.requestHash)
 })
 
@@ -147,11 +149,11 @@ test('matched reproduction binds the context that determines model quote ages an
       observedAt: new Date(Date.parse(query.observedAt) + 1000).toISOString(),
     }),
   )
-  expect(Result.getOrThrow(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY')).requestHash).not.toBe(
-    Result.getOrThrow(makeJevTradingSignalRequest(later, 'AAPL', 'SPY')).requestHash,
+  expect(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).requestHash).not.toBe(
+    Result.getOrThrow(jevRequestForSnapshot(later, 'AAPL')).requestHash,
   )
-  expect(canonicalHashV1(matchedObservationMaterial(snapshot))).not.toBe(
-    canonicalHashV1(matchedObservationMaterial(later)),
+  expect(Result.getOrThrow(canonicalHashV1Result(matchedObservationMaterial(snapshot)))).not.toBe(
+    Result.getOrThrow(canonicalHashV1Result(matchedObservationMaterial(later))),
   )
 })
 
@@ -159,7 +161,13 @@ const fixture = nativeJevFixture()
 const observedAt = Date.parse(fixture.observation.payload.observedAt)
 const baseQuote = fixture.snapshot.latestQuotes['AAPL']
 if (baseQuote === undefined) throw new Error('Missing lifecycle quote')
-const assumptions = { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 }
+const assumptions = {
+  instruments: replayTestInstruments,
+  latencyMs: 100,
+  slippageBps: 0,
+  availableLiquidityPpm: 1000000,
+  feeMultiplierPpm: 1000000,
+}
 const modelDelayMs = 5000
 
 const quoteAt = (symbol: string, atMs: number) => {
@@ -176,7 +184,12 @@ const quoteAt = (symbol: string, atMs: number) => {
     bidSize: 1000,
     askSize: 1000,
   }
-  return { value, sequence: atMs - observedAt, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
+  return {
+    value,
+    sequence: atMs - observedAt,
+    availableAtMs: atMs,
+    recordHash: Result.getOrThrow(canonicalHashV1Result(value)),
+  }
 }
 
 const replay = (symbol: string, decidedAtMs: number, missingPoll = false) => {
@@ -210,15 +223,15 @@ const replay = (symbol: string, decidedAtMs: number, missingPoll = false) => {
 }
 
 const registration: MatchedRegistration = {
-  schemaVersion: 'bayn.matched-entry-registration.v1',
-  definitionHash: canonicalHashV1(matchedEntryDefinition),
+  schemaVersion: 'bayn.matched-entry-registration.v2',
+  definitionHash: Result.getOrThrow(canonicalHashV1Result(matchedEntryDefinition)),
   sourceRevision: 'a'.repeat(40),
-  protocolHash: canonicalHashV1(fixture.protocol),
+  protocolHash: Result.getOrThrow(canonicalHashV1Result(fixture.protocol)),
   registeredAt: '2026-09-03T00:00:00.000Z',
   dataRole: MatchedDataRole.Prospective,
   sessionDates: ['2026-09-04', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11'],
   latencyMs: assumptions.latencyMs,
-  executionAssumptionsHash: canonicalHashV1(assumptions),
+  executionAssumptionsHash: Result.getOrThrow(canonicalHashV1Result(assumptions)),
   latencyEvidenceHash: 'c'.repeat(64),
   capacityEvidenceHash: 'd'.repeat(64),
 }
@@ -231,19 +244,21 @@ test('real lifecycle and summary can favor Jev selection while immediate momentu
   const summary = summarizeMatchedPairs(
     registration,
     Array.from({ length: 20 }, (_, index) => ({
-      batchId: canonicalHashV1({ index }),
+      batchId: Result.getOrThrow(canonicalHashV1Result({ index })),
       sessionDate: registration.sessionDates[index % 5] ?? '',
       jevSymbol: 'AMZN',
       momentumSymbol: 'AAPL',
       modelAvailable: true,
       jev,
-      momentum: delayed,
+      delayedMomentum: delayed,
+      immediateMomentum: immediate,
+      timingAvailable: true,
       inferenceCostMicros: '1000000',
       sharedOperatingCostMicros: '0',
     })),
     [],
   )
-  expect(summary.recommendation).toBe(MatchedRecommendation.TestPortfolio)
+  expect(summary.recommendation).toBe(MatchedRecommendation.Stop)
   const net = (outcome: typeof immediate) => {
     if (outcome.netExecutionPnlMicros === null) throw new Error('Expected complete synthetic outcome')
     return BigInt(outcome.netExecutionPnlMicros)
@@ -265,13 +280,15 @@ test('missing post-entry observations cannot be dropped after seeing model selec
     registration,
     [
       {
-        batchId: canonicalHashV1({ missingPoll: true }),
+        batchId: Result.getOrThrow(canonicalHashV1Result({ missingPoll: true })),
         sessionDate: registration.sessionDates[0] ?? '',
         jevSymbol: 'AMZN',
         momentumSymbol: 'AAPL',
         modelAvailable: true,
         jev: incomplete,
-        momentum: complete,
+        delayedMomentum: complete,
+        immediateMomentum: complete,
+        timingAvailable: true,
         inferenceCostMicros: '1000000',
         sharedOperatingCostMicros: '0',
       },
@@ -279,7 +296,7 @@ test('missing post-entry observations cannot be dropped after seeing model selec
     [],
   )
   expect(summary.completion).toBe('INCOMPLETE')
-  expect(summary.means.incrementalBudgetReturnBps).toBeNull()
+  expect(summary.means.totalBudgetReturnBps).toBeNull()
 })
 
 test('an earlier abstention changes the next opportunity through each portfolio own inventory', () => {
@@ -287,7 +304,7 @@ test('an earlier abstention changes the next opportunity through each portfolio 
   const buy = (symbol: string, decisionAtMs: number) => ({
     symbol,
     side: OrderSide.Buy,
-    quantityMicros: 10_000_000n,
+    quantityAtoms: 10000000000n,
     protocol: fixture.protocol,
     assumptions,
     decisionAtMs,

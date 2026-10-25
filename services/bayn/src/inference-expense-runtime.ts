@@ -1,8 +1,9 @@
+import { makeResearchStore, projectResearchExpenses } from './research-inference/store'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Effect, Layer } from 'effect'
 
-import type { LoadedRuntimeConfig } from './config'
+import type { LoadedRuntimeConfig } from './config/model'
 import { PostgresClientLive } from './db/postgres-client'
 import { postgresMigrations } from './db/postgres-migrations'
 import {
@@ -17,7 +18,7 @@ import { InferenceCostError } from './inference-costs'
 import { makeTigerBeetleRequestClient, type TigerBeetleRequestClient } from './tigerbeetle-client'
 
 export const runInferenceExpensePass = Effect.fn('bayn.inference-expense.pass')(function* (
-  store: ReturnType<typeof makeInferenceExpenseStore>,
+  store: Pick<ReturnType<typeof makeInferenceExpenseStore>, 'newSources' | 'freeze' | 'pending' | 'acknowledge'>,
   client: TigerBeetleRequestClient,
   rateCard: Parameters<typeof makeInferenceExpenseQuote>[1] = inferenceExpenseRateCard,
 ) {
@@ -73,15 +74,17 @@ export const startInferenceExpenseProjection = (config: LoadedRuntimeConfig) =>
         const sql = yield* PgClient.PgClient
         yield* postgresMigrations
         const client = yield* makeTigerBeetleRequestClient(config)
+        yield* inferenceExpenseLoop(projectResearchExpenses(makeResearchStore(sql), client)).pipe(Effect.forkScoped)
         const store = makeInferenceExpenseStore(sql, config.alpaca.expectedAccountId)
         return yield* inferenceExpenseLoop(runInferenceExpensePass(store, client))
       }),
     ).pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- independent background accounting owns its database and platform resources
       Effect.provide(
-        PostgresClientLive({ operationTimeoutMs: config.operationTimeoutMs, postgres: config.postgres }).pipe(
-          Layer.provideMerge(NodeServices.layer),
-        ),
+        PostgresClientLive(
+          { operationTimeoutMs: config.operationTimeoutMs, postgres: config.postgres },
+          { maxConnections: 2, applicationName: 'bayn-inference-expenses' },
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
     )
     return yield* inferenceExpenseLoop(owned).pipe(

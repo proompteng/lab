@@ -267,9 +267,6 @@ func (manager *terminalManager) create(creationID, cwd string, columns, rows uin
 	if len(manager.sessions) >= maxTerminalSessions {
 		return terminalSessionView{}, false, errors.New("at most four terminal sessions are allowed")
 	}
-	if strings.TrimSpace(cwd) == "" {
-		cwd = "/"
-	}
 	resolved, err := manager.workspace.resolveExisting(cwd)
 	if err != nil {
 		return terminalSessionView{}, false, err

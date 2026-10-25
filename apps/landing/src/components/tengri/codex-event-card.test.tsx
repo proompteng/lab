@@ -4,8 +4,84 @@ import { renderToString } from 'react-dom/server'
 
 import { CodexLogin } from './agent-chat'
 import { CodexEventCard } from './codex-event-card'
+import { WorkspaceFileLinkProvider } from './workspace-file-link'
 
 describe('Codex event rows', () => {
+  test('renders local references as preview controls and web references as external links', () => {
+    const html = renderToString(
+      createElement(
+        WorkspaceFileLinkProvider,
+        { agentId: 'microvm-ada' },
+        createElement(CodexEventCard, {
+          kind: 'assistant-text',
+          text: '[Status](/workspace/lab/docs/tengri/ofz-implementation-status.md:177) and [Website](https://example.com)',
+        }),
+      ),
+    )
+    expect(html).toContain('Preview /workspace/lab/docs/tengri/ofz-implementation-status.md:177')
+    expect(html).not.toContain('href="/workspace/')
+    expect(html).toContain('href="https://example.com"')
+    expect(html).toContain('target="_blank"')
+  })
+
+  test('renders sent image thumbnails for pending and restored user messages', () => {
+    const pending = renderToString(
+      createElement(CodexEventCard, {
+        kind: 'user-message',
+        text: 'Inspect this\n[Image]',
+        images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo=' }],
+      }),
+    )
+    expect(pending).toContain('data:image/png;base64,iVBORw0KGgo=')
+    expect(pending).toContain('Attached image 1')
+    expect(pending).not.toContain('[Image]')
+    const restored = renderToString(
+      createElement(CodexEventCard, {
+        kind: 'user-message',
+        agentId: 'microvm-ada',
+        text: 'Inspect this\n[Local image: /workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111.png]',
+      }),
+    )
+    expect(restored).toContain('/api/tengri/attachments?')
+    expect(restored).toContain('agentId=microvm-ada')
+    expect(restored).not.toContain('[Local image:')
+    expect(restored).toContain('Inspect this')
+  })
+
+  test('renders agent workspace images while keeping remote Markdown images disabled', () => {
+    const html = renderToString(
+      createElement(
+        WorkspaceFileLinkProvider,
+        { agentId: 'microvm-ada' },
+        createElement(CodexEventCard, {
+          kind: 'assistant-text',
+          text: '![Generated chart](/workspace/chart.png)\n\n![Remote](https://example.com/tracker.png)',
+        }),
+        createElement(CodexEventCard, { kind: 'tool-output', text: '/workspace/generated.png' }),
+      ),
+    )
+    expect(html).toContain('alt="Generated chart"')
+    expect(html).toContain('path=%2Fworkspace%2Fchart.png')
+    expect(html).toContain('path=%2Fworkspace%2Fgenerated.png')
+    expect(html).not.toContain('src="https://example.com')
+  })
+
+  test('bounds and deduplicates local Markdown images including reference links', () => {
+    const text =
+      Array.from({ length: 8 }, (_, index) => `![Plot ${index}](/workspace/plot-${index}.png)`).join('\n\n') +
+      '\n\n![Repeated](/workspace/plot-0.png)\n\n![Reference][plot]\n\n[plot]: /workspace/plot-7.png'
+    const html = renderToString(
+      createElement(
+        WorkspaceFileLinkProvider,
+        { agentId: 'microvm-ada' },
+        createElement(CodexEventCard, { kind: 'assistant-text', text }),
+      ),
+    )
+    expect(html.match(/<img /g)).toHaveLength(4)
+    expect(html).toContain('preview limit reached')
+    expect(html).toContain('repeated image')
+  })
+
   test('recognizes Mermaid fences while retaining source for server rendering and loading', () => {
     const html = renderToString(
       createElement(CodexEventCard, {

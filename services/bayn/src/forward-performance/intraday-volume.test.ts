@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { IntradayPerformanceVolumeEvidenceSchema } from './intraday-schema'
 import {
@@ -26,8 +26,8 @@ test.each([
     ...original,
     candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
   }
-  const hashed = { ...material, contentHash: canonicalHashV1(material) }
-  const decisionManifest = { ...hashed, snapshotId: canonicalHashV1(hashed) }
+  const hashed = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  const decisionManifest = { ...hashed, snapshotId: Result.getOrThrow(canonicalHashV1Result(hashed)) }
   const currentRequest = { ...request, decisionManifest, decisionSnapshotId: decisionManifest.snapshotId }
   const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(currentRequest, archive, bars))
   if (evidence === undefined) throw new Error('expected complete policy-bound performance evidence')
@@ -48,12 +48,12 @@ test('reads a complete native session with exact microshares and an explicit IEX
   const { request, archive, bars } = makeIntradayPerformanceFixture()
   const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars))
   expect(evidence).toMatchObject({
-    quantityMicros: '39000000000',
+    quantityAtoms: '39000000000000',
     closePriceMicros: '218690000',
     barCount: 390,
     sourceFeed: 'iex',
     finalizedAt: '2026-09-11T20:00:02.000Z',
-    volumeScope: 'IEX_RECORDED_SESSION_VOLUME',
+    volumeScope: 'RECORDED_COMPLETE_MINUTE_VOLUME',
   })
   if (evidence === undefined) throw new Error('expected complete native evidence')
   expect(validIntradayPerformanceVolumeEvidence(evidence)).toBe(true)
@@ -78,8 +78,8 @@ test('reads a complete native session with exact microshares and an explicit IEX
             accountId: 'test-account',
             symbol: 'NVDA',
             side: 'BUY',
-            quantityMicros: '45000000',
-            filledQuantityMicros: '18000000',
+            quantityAtoms: '45000000000',
+            filledQuantityAtoms: '18000000000',
             status: 'CANCELED',
             occurredAt: '2026-09-11T14:01:41.000Z',
             observedAt: '2026-09-11T14:01:42.000Z',
@@ -101,7 +101,7 @@ test('binds a streaming partial fill to a verified session close without changin
   expect(evidence).toMatchObject({
     decisionManifest: request.decisionManifest,
     decisionSnapshotId: request.decisionSnapshotId,
-    quantityMicros: '39000000000',
+    quantityAtoms: '39000000000000',
     closePriceMicros: '218690000',
     missingMinutes: [],
   })
@@ -133,8 +133,8 @@ test('binds a streaming partial fill to a verified session close without changin
       accountId: 'test-account',
       symbol: request.symbol,
       side: 'BUY' as const,
-      quantityMicros: '39000000',
-      filledQuantityMicros: '18000000',
+      quantityAtoms: '39000000000',
+      filledQuantityAtoms: '18000000000',
       status: 'CANCELED' as const,
       occurredAt: '2026-09-04T14:30:04.000Z',
       observedAt: '2026-09-04T14:30:05.000Z',
@@ -155,7 +155,7 @@ test('retains session archive partitions that supplied no decision-window record
   expect(request.decisionManifest.lineage.some((source) => source.sourcePartition === 1)).toBe(false)
   const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars))
   if (evidence === undefined) throw new Error('expected a complete session across both bar partitions')
-  expect(evidence).toMatchObject({ archiveRequest: archive, barCount: 390, quantityMicros: '39000000000' })
+  expect(evidence).toMatchObject({ archiveRequest: archive, barCount: 390, quantityAtoms: '39000000000000' })
   expect(validIntradayPerformanceVolumeEvidence(evidence)).toBe(true)
   expect(
     Result.isFailure(
@@ -180,8 +180,8 @@ test('rejects streaming cut tampering and an archive that has not retained the c
       positions: manifest.streaming.positions.map((position) => ({ ...position, offset: '0' })),
     },
   }
-  const withHash = { ...changed, contentHash: canonicalHashV1(changed) }
-  const tampered = { ...withHash, snapshotId: canonicalHashV1(withHash) }
+  const withHash = { ...changed, contentHash: Result.getOrThrow(canonicalHashV1Result(changed)) }
+  const tampered = { ...withHash, snapshotId: Result.getOrThrow(canonicalHashV1Result(withHash)) }
   expect(
     Result.isFailure(
       intradayPerformanceDecisionRequest({
@@ -214,7 +214,7 @@ test('preserves an observed closing mark while reporting missing minutes and wit
   expect(incomplete).toMatchObject({
     barCount: 389,
     missingMinutes: [request.windowOpenedAt],
-    quantityMicros: '38900000000',
+    quantityAtoms: '38900000000000',
   })
   expect(Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars.slice(0, -1)))).toBeUndefined()
   expect(
@@ -241,7 +241,7 @@ test('rejects mixed feeds, duplicate minutes, premature bars, after-cutoff inges
     { ...first, source_partition: '2147483648' },
     { ...first, ingested_at: first.event_at },
     { ...first, ingested_at: '2026-09-11T21:00:00.001Z' },
-    { ...first, volume: '1.00000001' },
+    { ...first, volume: '1.0000000001' },
   ])
     expect(Result.isFailure(makeIntradayPerformanceVolumeEvidence(request, archive, [bad, ...bars.slice(1)]))).toBe(
       true,
@@ -269,6 +269,11 @@ test('rejects tampered decision identity, shifted session or cutoff, and rehashe
     { ...material, decisionManifest: { ...material.decisionManifest, universeId: 'another-universe' } },
     { ...material, barCount: 389 },
   ]) {
-    expect(validIntradayPerformanceVolumeEvidence({ ...change, contentHash: canonicalHashV1(change) })).toBe(false)
+    expect(
+      validIntradayPerformanceVolumeEvidence({
+        ...change,
+        contentHash: Result.getOrThrow(canonicalHashV1Result(change)),
+      }),
+    ).toBe(false)
   }
 })

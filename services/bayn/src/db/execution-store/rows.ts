@@ -25,7 +25,6 @@ import {
   strictParseOptions,
 } from '../../schemas'
 import { AccountingReceiptRowSchema, AccountingTransactionRowSchema } from '../accounting-rows'
-import { Pipeable } from '../../pipeable'
 
 export const EventKind = Schema.Literals(['ACCOUNT', 'POSITION', 'ORDER', 'FILL'])
 export const EventRow = Schema.Struct({
@@ -48,14 +47,14 @@ export const CompletedAccountingRow = Schema.Struct({
   ...AccountingTransactionRowSchema.fields,
   source_event_id: NonEmptyString,
   event_content_hash: Sha256,
-  prior_quantity_micros: Schema.String,
+  prior_quantity_atoms: Schema.String,
   prior_cost_micros: Schema.String,
 })
 export type CompletedAccountingRow = typeof CompletedAccountingRow.Type
 
 export const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 export const PositionCostRow = Schema.Tuple([
-  Schema.Struct({ quantity_micros: Schema.String, cost_micros: Schema.String }),
+  Schema.Struct({ quantity_atoms: Schema.String, cost_micros: Schema.String }),
 ])
 export const UnresolvedPredecessorRow = Schema.Tuple([Schema.Struct({ unresolved: Schema.Boolean })])
 export const AccountBaselineRow = Schema.Tuple([Schema.Struct({ exists: Schema.Boolean })])
@@ -170,6 +169,27 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.intraday-momentum.protocol.v3',
       'bayn.jev.protocol.v1',
       'bayn.jev.protocol.v2',
+      'bayn.jev.protocol.v3',
+      'bayn.jev.protocol.v4',
+      'bayn.jev.protocol.v5',
+      'bayn.jev.protocol.v6',
+      'bayn.jev.protocol.v7',
+      'bayn.jev.protocol.v8',
+      'bayn.jev.protocol.v9',
+      'bayn.jev.protocol.v10',
+      'bayn.jev.protocol.v11',
+      'bayn.jev.protocol.v12',
+      'bayn.jev.protocol.v13',
+      'bayn.jev.protocol.v14',
+      'bayn.jev.protocol.v15',
+      'bayn.jev.protocol.v16',
+      'bayn.jev.protocol.v17',
+      'bayn.jev.protocol.v18',
+      'bayn.jev.protocol.v19',
+      'bayn.jev.protocol.v20',
+      'bayn.jev.protocol.v21',
+      'bayn.jev.protocol.v22',
+      'bayn.jev.protocol.v23',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),
@@ -203,138 +223,87 @@ export const MutationBaselineRow = Schema.Tuple([
 export const DatabaseInstantRow = Schema.Tuple([Schema.Struct({ activated_at: UtcSourceTimestampSchema })])
 export const AuthorityRestrictionInput = Schema.Struct({ reason: NonEmptyString, updatedAt: UtcInstant })
 
-const decodeEventInputDataFirst = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)
+export const decodeEventInput = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)
 
-export const decodeEventInput = Pipeable.dual(1, (input: unknown) => decodeEventInputDataFirst(input))
-const decodeFillInputDataFirst = Schema.decodeUnknownEffect(FillEventInputSchema, strictParseOptions)
+export const decodeFillInput = Schema.decodeUnknownEffect(FillEventInputSchema, strictParseOptions)
 
-export const decodeFillInput = Pipeable.dual(1, (input: unknown) => decodeFillInputDataFirst(input))
-const decodePositionSnapshotInputDataFirst = Schema.decodeUnknownEffect(PositionSnapshotInputSchema, strictParseOptions)
+export const decodePositionSnapshotInput = Schema.decodeUnknownEffect(PositionSnapshotInputSchema, strictParseOptions)
 
-export const decodePositionSnapshotInput = Pipeable.dual(1, (input: unknown) =>
-  decodePositionSnapshotInputDataFirst(input),
-)
-const decodeValuationInputDataFirst = Schema.decodeUnknownEffect(ValuationInputSchema, strictParseOptions)
+export const decodeValuationInput = Schema.decodeUnknownEffect(ValuationInputSchema, strictParseOptions)
 
-export const decodeValuationInput = Pipeable.dual(1, (input: unknown) => decodeValuationInputDataFirst(input))
-const decodeEventRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(EventRow), strictParseOptions)
+export const decodeEventRows = Schema.decodeUnknownEffect(Schema.Array(EventRow), strictParseOptions)
 
-export const decodeEventRows = Pipeable.dual(1, (input: unknown) => decodeEventRowsDataFirst(input))
-const decodeHistoryEventRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(HistoryEventRow), strictParseOptions)
+export const decodeHistoryEventRows = Schema.decodeUnknownEffect(Schema.Array(HistoryEventRow), strictParseOptions)
 
-export const decodeHistoryEventRows = Pipeable.dual(1, (input: unknown) => decodeHistoryEventRowsDataFirst(input))
-const decodeCompletedAccountingRowsDataFirst = Schema.decodeUnknownEffect(
+export const decodeCompletedAccountingRows = Schema.decodeUnknownEffect(
   Schema.Array(CompletedAccountingRow),
   strictParseOptions,
 )
 
-export const decodeCompletedAccountingRows = Pipeable.dual(1, (input: unknown) =>
-  decodeCompletedAccountingRowsDataFirst(input),
-)
-const decodeLastSequenceDataFirst = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
+export const decodeLastSequence = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
 
-export const decodeLastSequence = Pipeable.dual(1, (input: unknown) => decodeLastSequenceDataFirst(input))
-const decodePositionCostDataFirst = Schema.decodeUnknownEffect(PositionCostRow, strictParseOptions)
+export const decodePositionCost = Schema.decodeUnknownEffect(PositionCostRow, strictParseOptions)
 
-export const decodePositionCost = Pipeable.dual(1, (input: unknown) => decodePositionCostDataFirst(input))
-const decodeUnresolvedPredecessorDataFirst = Schema.decodeUnknownEffect(UnresolvedPredecessorRow, strictParseOptions)
+export const decodeUnresolvedPredecessor = Schema.decodeUnknownEffect(UnresolvedPredecessorRow, strictParseOptions)
 
-export const decodeUnresolvedPredecessor = Pipeable.dual(1, (input: unknown) =>
-  decodeUnresolvedPredecessorDataFirst(input),
-)
-const decodeAccountBaselineDataFirst = Schema.decodeUnknownEffect(AccountBaselineRow, strictParseOptions)
+export const decodeAccountBaseline = Schema.decodeUnknownEffect(AccountBaselineRow, strictParseOptions)
 
-export const decodeAccountBaseline = Pipeable.dual(1, (input: unknown) => decodeAccountBaselineDataFirst(input))
-const decodeAccountIdDataFirst = Schema.decodeUnknownEffect(NonEmptyString, strictParseOptions)
+export const decodeAccountId = Schema.decodeUnknownEffect(NonEmptyString, strictParseOptions)
 
-export const decodeAccountId = Pipeable.dual(1, (input: unknown) => decodeAccountIdDataFirst(input))
-const decodeTransactionRowsDataFirst = Schema.decodeUnknownEffect(
+export const decodeTransactionRows = Schema.decodeUnknownEffect(
   Schema.Array(AccountingTransactionRowSchema),
   strictParseOptions,
 )
 
-export const decodeTransactionRows = Pipeable.dual(1, (input: unknown) => decodeTransactionRowsDataFirst(input))
-const decodeReceiptRowsDataFirst = Schema.decodeUnknownEffect(
+export const decodeReceiptRows = Schema.decodeUnknownEffect(
   Schema.Array(AccountingReceiptRowSchema),
   strictParseOptions,
 )
 
-export const decodeReceiptRows = Pipeable.dual(1, (input: unknown) => decodeReceiptRowsDataFirst(input))
-const decodeAccountRowsDataFirst = Schema.decodeUnknownEffect(AccountRow, strictParseOptions)
+export const decodeAccountRows = Schema.decodeUnknownEffect(AccountRow, strictParseOptions)
 
-export const decodeAccountRows = Pipeable.dual(1, (input: unknown) => decodeAccountRowsDataFirst(input))
-const decodePositionRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(PositionRow), strictParseOptions)
+export const decodePositionRows = Schema.decodeUnknownEffect(Schema.Array(PositionRow), strictParseOptions)
 
-export const decodePositionRows = Pipeable.dual(1, (input: unknown) => decodePositionRowsDataFirst(input))
-const decodePositionSnapshotRowsDataFirst = Schema.decodeUnknownEffect(
+export const decodePositionSnapshotRows = Schema.decodeUnknownEffect(
   Schema.Array(PositionSnapshotRow),
   strictParseOptions,
 )
 
-export const decodePositionSnapshotRows = Pipeable.dual(1, (input: unknown) =>
-  decodePositionSnapshotRowsDataFirst(input),
-)
-const decodeEventIdRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(EventIdRow), strictParseOptions)
+export const decodeEventIdRows = Schema.decodeUnknownEffect(Schema.Array(EventIdRow), strictParseOptions)
 
-export const decodeEventIdRows = Pipeable.dual(1, (input: unknown) => decodeEventIdRowsDataFirst(input))
-const decodeSnapshotIdRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(SnapshotIdRow), strictParseOptions)
+export const decodeSnapshotIdRows = Schema.decodeUnknownEffect(Schema.Array(SnapshotIdRow), strictParseOptions)
 
-export const decodeSnapshotIdRows = Pipeable.dual(1, (input: unknown) => decodeSnapshotIdRowsDataFirst(input))
-const decodeValuationRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(ValuationRow), strictParseOptions)
+export const decodeValuationRows = Schema.decodeUnknownEffect(Schema.Array(ValuationRow), strictParseOptions)
 
-export const decodeValuationRows = Pipeable.dual(1, (input: unknown) => decodeValuationRowsDataFirst(input))
-const decodeEnsureAuthorityGenerationInputDataFirst = Schema.decodeUnknownEffect(
+export const decodeEnsureAuthorityGenerationInput = Schema.decodeUnknownEffect(
   EnsureAuthorityGenerationInputSchema,
   strictParseOptions,
 )
 
-export const decodeEnsureAuthorityGenerationInput = Pipeable.dual(1, (input: unknown) =>
-  decodeEnsureAuthorityGenerationInputDataFirst(input),
-)
-const decodeAuthorityStateRowsDataFirst = Schema.decodeUnknownEffect(AuthorityStateRows, strictParseOptions)
+export const decodeAuthorityStateRows = Schema.decodeUnknownEffect(AuthorityStateRows, strictParseOptions)
 
-export const decodeAuthorityStateRows = Pipeable.dual(1, (input: unknown) => decodeAuthorityStateRowsDataFirst(input))
-const decodeAuthorityStateObservationRowsDataFirst = Schema.decodeUnknownEffect(
+export const decodeAuthorityStateObservationRows = Schema.decodeUnknownEffect(
   AuthorityStateObservationRows,
   strictParseOptions,
 )
 
-export const decodeAuthorityStateObservationRows = Pipeable.dual(1, (input: unknown) =>
-  decodeAuthorityStateObservationRowsDataFirst(input),
-)
-const decodeAuthorityGenerationRowsDataFirst = Schema.decodeUnknownEffect(AuthorityGenerationRows, strictParseOptions)
+export const decodeAuthorityGenerationRows = Schema.decodeUnknownEffect(AuthorityGenerationRows, strictParseOptions)
 
-export const decodeAuthorityGenerationRows = Pipeable.dual(1, (input: unknown) =>
-  decodeAuthorityGenerationRowsDataFirst(input),
-)
-const decodeActivationReconciliationRowsDataFirst = Schema.decodeUnknownEffect(
+export const decodeActivationReconciliationRows = Schema.decodeUnknownEffect(
   ActivationReconciliationRows,
   strictParseOptions,
 )
 
-export const decodeActivationReconciliationRows = Pipeable.dual(1, (input: unknown) =>
-  decodeActivationReconciliationRowsDataFirst(input),
-)
-const decodeMutationBaselineDataFirst = Schema.decodeUnknownEffect(MutationBaselineRow, strictParseOptions)
+export const decodeMutationBaseline = Schema.decodeUnknownEffect(MutationBaselineRow, strictParseOptions)
 
-export const decodeMutationBaseline = Pipeable.dual(1, (input: unknown) => decodeMutationBaselineDataFirst(input))
-const decodeDatabaseInstantDataFirst = Schema.decodeUnknownEffect(DatabaseInstantRow, strictParseOptions)
+export const decodeDatabaseInstant = Schema.decodeUnknownEffect(DatabaseInstantRow, strictParseOptions)
 
-export const decodeDatabaseInstant = Pipeable.dual(1, (input: unknown) => decodeDatabaseInstantDataFirst(input))
-const decodeBrokerEventDataFirst = Schema.decodeUnknownEffect(BrokerEventSchema, strictParseOptions)
+export const decodeBrokerEvent = Schema.decodeUnknownEffect(BrokerEventSchema, strictParseOptions)
 
-export const decodeBrokerEvent = Pipeable.dual(1, (input: unknown) => decodeBrokerEventDataFirst(input))
-const decodeReceiptDataFirst = Schema.decodeUnknownEffect(AccountingReceiptSchema, strictParseOptions)
+export const decodeReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, strictParseOptions)
 
-export const decodeReceipt = Pipeable.dual(1, (input: unknown) => decodeReceiptDataFirst(input))
-const decodeValuationDataFirst = Schema.decodeUnknownEffect(ValuationSchema, strictParseOptions)
+export const decodeValuation = Schema.decodeUnknownEffect(ValuationSchema, strictParseOptions)
 
-export const decodeValuation = Pipeable.dual(1, (input: unknown) => decodeValuationDataFirst(input))
-const decodeTransactionDataFirst = Schema.decodeUnknownEffect(AccountingTransactionSchema, strictParseOptions)
+export const decodeTransaction = Schema.decodeUnknownEffect(AccountingTransactionSchema, strictParseOptions)
 
-export const decodeTransaction = Pipeable.dual(1, (input: unknown) => decodeTransactionDataFirst(input))
-const decodeAuthorityRestrictionDataFirst = Schema.decodeUnknownEffect(AuthorityRestrictionInput, strictParseOptions)
-
-export const decodeAuthorityRestriction = Pipeable.dual(1, (input: unknown) =>
-  decodeAuthorityRestrictionDataFirst(input),
-)
+export const decodeAuthorityRestriction = Schema.decodeUnknownEffect(AuthorityRestrictionInput, strictParseOptions)

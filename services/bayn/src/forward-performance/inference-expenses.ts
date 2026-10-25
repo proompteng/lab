@@ -3,7 +3,7 @@ import { Effect, Result, Schema } from 'effect'
 
 import type { ForwardPerformanceConfig } from './config'
 import { InferenceCostError, makeInferenceCostReport, type InferenceCostEvidence } from '../inference-costs'
-import { readInferenceCostEvidence } from '../inference-costs-postgres'
+import { readInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { verifyInferenceExpenseCoverage, type InferenceExpenseQuote } from '../inference-expense'
 import { makeInferenceExpenseStore } from '../inference-expense-postgres'
 import { readInferenceExpenseLedger } from '../inference-expense-journal'
@@ -22,6 +22,8 @@ export interface ForwardInferenceExpenseSession {
   readonly gapRequestCount: number
   readonly completeMeteredCoverage: boolean
   readonly exactSessionLedger: true
+  readonly ledgerTimestampMax: string
+  readonly verifiedSessionTransferCount: number
   readonly invoiceReconciled: false
 }
 
@@ -56,9 +58,17 @@ export const summarizeForwardInferenceExpenses = (
       sessionDate: evidence.sessionDate,
       authorityGenerationHash: authorityGenerationHash ?? null,
       knownEstimatedCostPicoUsd: known.toString(),
-      ...coverage,
+      sourceAsOf: coverage.sourceAsOf,
+      claimedRequestCount: coverage.claimedRequestCount,
+      missingQuoteCount: coverage.missingQuoteCount,
+      unverifiedRequestCount: coverage.unverifiedRequestCount,
+      gapRequestCount: coverage.gapRequestCount,
+      completeMeteredCoverage: coverage.completeMeteredCoverage,
       invoiceReconciled: false,
-    } satisfies Omit<ForwardInferenceExpenseSession, 'exactSessionLedger'>
+    } satisfies Omit<
+      ForwardInferenceExpenseSession,
+      'exactSessionLedger' | 'ledgerTimestampMax' | 'verifiedSessionTransferCount'
+    >
   })
 
 export const readForwardInferenceExpenses = (
@@ -89,20 +99,17 @@ export const readForwardInferenceExpenses = (
     const store = makeInferenceExpenseStore(sql, accountId)
     return yield* Effect.forEach(sessions, ({ sessionDate }) =>
       Effect.gen(function* () {
-        const evidence = yield* readInferenceCostEvidence(sql, accountId, sessionDate, writerFence)
-        const frozen = yield* store.session(sessionDate)
+        const snapshot = yield* readInferenceExpenseSnapshot(sql, accountId, sessionDate, writerFence)
+        const { evidence, quotes: frozen } = snapshot
         yield* Effect.fromResult(verifyInferenceExpenseCoverage(evidence, accountId, frozen))
-        yield* readInferenceExpenseLedger(
-          client,
-          evidence.accountBindingHash,
-          sessionDate,
-          frozen.map(({ quote }) => quote),
-        )
+        const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
         return {
           ...(yield* Effect.fromResult(
             summarizeForwardInferenceExpenses(evidence, accountId, frozen, authorityGenerationHash),
           )),
           exactSessionLedger: true as const,
+          ledgerTimestampMax: ledger.ledgerTimestampMax,
+          verifiedSessionTransferCount: ledger.verifiedSessionTransferCount,
         }
       }),
     )

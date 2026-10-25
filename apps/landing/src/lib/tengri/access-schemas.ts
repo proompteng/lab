@@ -24,11 +24,52 @@ export const accessResourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('namespace'), id: z.string().regex(/^galactic\/[0-9a-f-]{36}$/) }).strict(),
   z.object({ kind: z.literal('connector'), id: workspaceUidSchema }).strict(),
 ])
+const utf8 = new TextEncoder()
+export const MAX_ACCESS_COMMAND_BYTES = 64 * 1024
+const credentialSegments = new Set([
+  '.ssh',
+  '.aws',
+  '.kube',
+  '.codex',
+  '.config',
+  '.git',
+  '.npmrc',
+  '.netrc',
+  '.pypirc',
+  'credentials.json',
+  'auth.json',
+])
+const fileRootSchema = z.string().refine(
+  (root) =>
+    root.startsWith('/workspace/') &&
+    utf8.encode(root).byteLength <= 4096 &&
+    !/[\\\p{Cc}\p{Cs}]/u.test(root) &&
+    root
+      .split('/')
+      .slice(1)
+      .every(
+        (segment) =>
+          segment !== '' &&
+          segment !== '.' &&
+          segment !== '..' &&
+          !credentialSegments.has(segment) &&
+          segment !== '.env' &&
+          !segment.startsWith('.env.'),
+      ),
+  'Use a canonical path under /workspace without credential directories or files',
+)
+const observationIdSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (id) => utf8.encode(id).byteLength <= 128 && !/[/\\\p{Cc}\p{Cs}]/u.test(id),
+    'Use a thread or terminal ID with no path separators or control characters, within 128 bytes',
+  )
 export const observationScopeSchema = z
   .object({
-    fileRoots: z.array(z.string().min(2).max(4096)).max(16),
-    threadIds: z.array(z.string().min(1).max(128)).max(32),
-    terminalIds: z.array(z.string().min(1).max(128)).max(16),
+    fileRoots: z.array(fileRootSchema).max(16),
+    threadIds: z.array(observationIdSchema).max(32),
+    terminalIds: z.array(observationIdSchema).max(16),
     browserScreenshot: z.boolean(),
     maxBytes: z.number().int().min(1).max(1_048_576),
     maxItems: z.number().int().min(1).max(200),
@@ -43,7 +84,13 @@ const common = {
     .max(500)
     .regex(/^[^\p{Cc}]+$/u, 'Use a single line reason without control characters'),
 }
-export const accessCommandSchema = z.discriminatedUnion('action', [
+const collaborator = {
+  ...common,
+  action: z.literal('collaborator'),
+  workspaceUid: workspaceUidSchema,
+  login: githubLoginSchema,
+}
+const commandSchema = z.discriminatedUnion('action', [
   z
     .object({
       ...common,
@@ -53,16 +100,20 @@ export const accessCommandSchema = z.discriminatedUnion('action', [
       enabled: z.boolean(),
     })
     .strict(),
-  z
-    .object({
-      ...common,
-      action: z.literal('collaborator'),
-      workspaceUid: workspaceUidSchema,
-      login: githubLoginSchema,
-      role: z.enum(['developer', 'viewer']),
-      enabled: z.boolean(),
-    })
-    .strict(),
+  z.discriminatedUnion('enabled', [
+    z.object({ ...collaborator, role: z.enum(['developer', 'viewer']), enabled: z.literal(false) }).strict(),
+    z.discriminatedUnion('role', [
+      z.object({ ...collaborator, role: z.literal('developer'), enabled: z.literal(true) }).strict(),
+      z
+        .object({
+          ...collaborator,
+          role: z.literal('viewer'),
+          enabled: z.literal(true),
+          scope: observationScopeSchema.optional(),
+        })
+        .strict(),
+    ]),
+  ]),
   z
     .object({ ...common, action: z.literal('transfer'), workspaceUid: workspaceUidSchema, login: githubLoginSchema })
     .strict(),
@@ -119,4 +170,8 @@ export const accessCommandSchema = z.discriminatedUnion('action', [
     })
     .strict(),
 ])
+export const accessCommandSchema = commandSchema.refine(
+  (command) => utf8.encode(JSON.stringify(command)).byteLength <= MAX_ACCESS_COMMAND_BYTES,
+  'Access request exceeds 64 KiB. Reduce the selected targets or reason.',
+)
 export type AccessCommand = z.infer<typeof accessCommandSchema>

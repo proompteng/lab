@@ -1,3 +1,9 @@
+import { ObservedFeeActivitySchema } from '../broker/fee-activity'
+import { NativeProtectionSchema } from '../execution/contracts'
+import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
+import { replayFeeActivity } from './broker-fees'
+import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
+import { InstrumentSymbolSchema } from '../instruments'
 import { Data, Result, Schema } from 'effect'
 import {
   AssetClass,
@@ -9,7 +15,7 @@ import {
   TradeActivityType,
 } from '../broker/alpaca/model'
 import { canonicalHashV1Result } from '../hash'
-import { historicalMarketOrderRequestBody, limitIocOrderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import {
   OrderSide as DomainSide,
   OrderType as DomainOrderType,
@@ -23,14 +29,13 @@ import {
   Sha256Schema,
   SignedMicrosSchema,
   StrictNonEmptyStringSchema,
-  SymbolSchema,
   UnsignedMicrosSchema,
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
 import { applyReplayFill, createReplayLedger } from './ledger'
 import { ReplayOrderExecutionSchema } from './broker-execution-evidence'
-import type { ReplayBrokerConfig, ReplayBrokerFill, ReplayBrokerState } from './broker'
+import type { ReplayBrokerConfig, ReplayBrokerFill, ReplayBrokerState, ReplayOrder } from './broker'
 
 const OrderFields = {
   accountId: StrictNonEmptyStringSchema,
@@ -43,36 +48,42 @@ const OrderFields = {
   canceledAt: Schema.optionalKey(UtcInstantSchema),
   failedAt: Schema.optionalKey(UtcInstantSchema),
   assetId: StrictNonEmptyStringSchema,
-  symbol: SymbolSchema,
-  assetClass: Schema.Literal(AssetClass.UsEquity),
-  quantityMicros: PositiveMicrosSchema,
-  filledQuantityMicros: UnsignedMicrosSchema,
+  symbol: InstrumentSymbolSchema,
+  assetClass: Schema.Literals([AssetClass.UsEquity, AssetClass.Crypto]),
+  quantityAtoms: PositiveMicrosSchema,
+  filledQuantityAtoms: UnsignedMicrosSchema,
   filledAveragePriceMicros: Schema.optionalKey(PositiveMicrosSchema),
-  orderClass: Schema.Literal(OrderClass.Simple),
-  status: Schema.Literals([OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Rejected]),
-  extendedHours: Schema.Literal(false),
+  orderClass: Schema.Literals([OrderClass.Simple, OrderClass.Bracket, OrderClass.OneCancelsOther]),
+  status: Schema.Literals([
+    OrderStatus.New,
+    OrderStatus.Held,
+    OrderStatus.PartiallyFilled,
+    OrderStatus.Filled,
+    OrderStatus.Canceled,
+    OrderStatus.Expired,
+    OrderStatus.Rejected,
+  ]),
+  extendedHours: Schema.Boolean,
   observedAt: UtcInstantSchema,
+  parentBrokerOrderId: Schema.optionalKey(StrictNonEmptyStringSchema),
+  nativeProtection: Schema.optionalKey(NativeProtectionSchema),
+  firstArrivedAt: Schema.optionalKey(UtcInstantSchema),
+  stopTriggeredAt: Schema.optionalKey(UtcInstantSchema),
 }
-const OrderSchema = Schema.Union([
-  Schema.Struct({
-    ...OrderFields,
-    side: Schema.Enum(OrderSide),
-    orderType: Schema.Literal(OrderType.Limit),
-    timeInForce: Schema.Literal(TimeInForce.ImmediateOrCancel),
-    limitPriceMicros: PositiveMicrosSchema,
-  }),
-  Schema.Struct({
-    ...OrderFields,
-    side: Schema.Literal(OrderSide.Sell),
-    orderType: Schema.Literal(OrderType.Market),
-    timeInForce: Schema.Literal(TimeInForce.Day),
-  }),
-])
+const OrderSchema = Schema.Struct({
+  ...OrderFields,
+  side: Schema.Enum(OrderSide),
+  orderType: Schema.Literals([OrderType.Limit, OrderType.StopLimit]),
+  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel, TimeInForce.GoodUntilCanceled]),
+  limitPriceMicros: PositiveMicrosSchema,
+  stopPriceMicros: Schema.optionalKey(PositiveMicrosSchema),
+})
 const EconomicFillSchema = Schema.Struct({
-  symbol: SymbolSchema,
+  executionIndex: NonNegativeIntegerSchema,
+  symbol: InstrumentSymbolSchema,
   side: Schema.Enum(OrderSide),
   observedAt: UtcInstantSchema,
-  quantityMicros: PositiveMicrosSchema,
+  quantityAtoms: PositiveMicrosSchema,
   priceMicros: PositiveMicrosSchema,
   notionalMicros: PositiveMicrosSchema,
   brokerOrderId: StrictNonEmptyStringSchema,
@@ -85,12 +96,13 @@ const EconomicFillSchema = Schema.Struct({
   }),
 })
 export const ReplayBrokerCheckpointSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v1'),
+  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v10'),
   configurationHash: Sha256Schema,
   sourceManifestHash: Sha256Schema,
   observedAt: UtcInstantSchema,
   state: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v1'),
+    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v7'),
+    createdAt: UtcInstantSchema,
     runId: Sha256Schema,
     accountId: StrictNonEmptyStringSchema,
     ledger: Schema.Struct({
@@ -99,8 +111,8 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
       executionFeesMicros: UnsignedMicrosSchema,
       positions: Schema.Array(
         Schema.Struct({
-          symbol: SymbolSchema,
-          quantityMicros: PositiveMicrosSchema,
+          symbol: InstrumentSymbolSchema,
+          quantityAtoms: PositiveMicrosSchema,
           costBasisMicros: PositiveMicrosSchema,
         }),
       ),
@@ -112,34 +124,33 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
         requestHash: Sha256Schema,
         order: OrderSchema,
         deliveryFailure: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-        execution: Schema.optionalKey(ReplayOrderExecutionSchema),
+        executions: Schema.Array(ReplayOrderExecutionSchema),
       }),
     ),
     fills: Schema.Array(
       Schema.Struct({
         accountId: StrictNonEmptyStringSchema,
         activityId: StrictNonEmptyStringSchema,
-        cumulativeQuantityMicros: PositiveMicrosSchema,
-        leavesQuantityMicros: UnsignedMicrosSchema,
-        priceMicros: PositiveMicrosSchema,
-        quantityMicros: PositiveMicrosSchema,
+        cumulativeQuantityAtoms: PositiveMicrosSchema,
+        leavesQuantityAtoms: UnsignedMicrosSchema,
+        priceAtoms: PositiveMicrosSchema,
+        quantityAtoms: PositiveMicrosSchema,
         side: Schema.Enum(OrderSide),
-        symbol: SymbolSchema,
+        symbol: InstrumentSymbolSchema,
         transactionTime: UtcInstantSchema,
         brokerOrderId: StrictNonEmptyStringSchema,
         type: Schema.Enum(TradeActivityType),
         orderStatus: Schema.Enum(OrderStatus),
       }),
     ),
-    fees: Schema.Array(
+    fees: Schema.Array(ObservedFeeActivitySchema),
+    sessionCloses: Schema.Array(
       Schema.Struct({
-        accountId: StrictNonEmptyStringSchema,
-        activityId: StrictNonEmptyStringSchema,
-        date: IsoDateSchema,
-        netAmountMicros: SignedMicrosSchema,
+        sessionDate: IsoDateSchema,
+        equityMicros: UnsignedMicrosSchema,
+        valuationQualified: Schema.Boolean,
       }),
     ),
-    sessionCloses: Schema.Array(Schema.Struct({ sessionDate: IsoDateSchema, equityMicros: UnsignedMicrosSchema })),
   }),
   checkpointHash: Sha256Schema,
 })
@@ -156,10 +167,28 @@ export const replayBrokerConfigurationHash = (config: ReplayBrokerConfig) =>
     openingCashMicros: config.openingCashMicros,
     protocol: config.protocol,
     assumptions: config.assumptions,
+    cryptoFeeSchedule: cryptoTakerFeeSchedule,
     fractionalTrading: config.fractionalTrading,
     assets: config.assets,
     calendar: config.calendar,
   })
+
+export const replayQuantityAtFill = (state: ReplayBrokerState, order: ReplayOrder, index: number): bigint => {
+  const parent = state.orders.find((entry) => entry.order.brokerOrderId === order.parentBrokerOrderId)?.order
+  if (parent === undefined || order.orderType !== OrderType.StopLimit) return BigInt(order.quantityAtoms)
+  const profitId =
+    parent.nativeProtection?._tag === 'Oco'
+      ? parent.brokerOrderId
+      : state.orders.find(
+          (entry) =>
+            entry.order.parentBrokerOrderId === parent.brokerOrderId && entry.order.orderType === OrderType.Limit,
+        )?.order.brokerOrderId
+  const disposed = state.ledger.fills
+    .slice(0, index)
+    .filter((fill) => fill.brokerOrderId === profitId)
+    .reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n)
+  return BigInt(parent.quantityAtoms) - disposed
+}
 
 /** Recompute exact economics and activities before any restored state can answer a production broker read. */
 export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrokerConfig) =>
@@ -175,6 +204,12 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
     )
       return yield* fail('Broker checkpoint hash, source or configuration does not match this run')
     const state = decoded.state
+    if (
+      state.createdAt > decoded.observedAt ||
+      state.orders.some(({ order }) => order.submittedAt < state.createdAt) ||
+      state.ledger.fills.some((fill) => fill.observedAt < state.createdAt)
+    )
+      return yield* fail('Broker checkpoint account inception does not bound its activity and observation')
     const orderIds = new Set<string>(),
       clientIds = new Set<string>()
     for (const { order, requestHash } of state.orders) {
@@ -188,105 +223,211 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         order.observedAt > decoded.observedAt ||
         order.createdAt > order.observedAt ||
         config.assets.find((asset) => asset.symbol === order.symbol)?.assetId !== order.assetId ||
-        BigInt(order.filledQuantityMicros) > BigInt(order.quantityMicros)
+        order.assetClass !== config.assets.find((asset) => asset.symbol === order.symbol)?.assetClass ||
+        BigInt(order.filledQuantityAtoms) > BigInt(order.quantityAtoms)
       )
         return yield* fail('Broker checkpoint order identity, time or quantity is invalid')
       const common = {
         clientOrderId: order.clientOrderId,
         symbol: order.symbol,
         side: order.side === OrderSide.Buy ? DomainSide.Buy : DomainSide.Sell,
-        quantityMicros: order.quantityMicros,
+        quantityAtoms: order.quantityAtoms,
       }
-      const body = yield* order.orderType === OrderType.Market
-        ? historicalMarketOrderRequestBody({
-            ...common,
-            orderType: DomainOrderType.Market,
-            timeInForce: DomainTimeInForce.Day,
-            notionalLimitMicros: '1',
-          })
-        : limitIocOrderRequestBody({
-            ...common,
-            orderType: DomainOrderType.Limit,
-            timeInForce: DomainTimeInForce.ImmediateOrCancel,
-            notionalLimitMicros: (
-              (BigInt(order.limitPriceMicros) * BigInt(order.quantityMicros)) /
-              1000000n
-            ).toString(),
-          })
+      const parent = state.orders.find((entry) => entry.order.brokerOrderId === order.parentBrokerOrderId)
+      const root = parent?.order ?? order
+      const terms = root.nativeProtection
       if (
-        requestHash !== (yield* canonicalHashV1Result(body)) ||
-        (order.status === OrderStatus.Filled && order.filledQuantityMicros !== order.quantityMicros) ||
-        (order.status === OrderStatus.Rejected &&
-          (order.filledQuantityMicros !== '0' || order.failedAt === undefined)) ||
-        (order.status === OrderStatus.Canceled &&
-          (order.canceledAt === undefined || order.filledQuantityMicros === order.quantityMicros)) ||
+        parent !== undefined &&
+        (terms === undefined || terms._tag === 'StopLimit' || requestHash !== parent.requestHash)
+      )
+        return yield* fail('Generated protection child has no matching submitted parent')
+      if (order.parentBrokerOrderId !== undefined && parent === undefined)
+        return yield* fail('Generated protection child references an absent parent')
+      const body =
+        parent !== undefined
+          ? null
+          : yield* orderRequestBody({
+              ...common,
+              orderType: order.orderType === OrderType.StopLimit ? DomainOrderType.StopLimit : DomainOrderType.Limit,
+              timeInForce:
+                order.timeInForce === TimeInForce.Day
+                  ? DomainTimeInForce.Day
+                  : order.timeInForce === TimeInForce.GoodUntilCanceled
+                    ? DomainTimeInForce.GoodUntilCanceled
+                    : DomainTimeInForce.ImmediateOrCancel,
+              ...(order.nativeProtection === undefined ? {} : { protection: order.nativeProtection }),
+              limitPriceMicros: order.limitPriceMicros,
+              notionalLimitMicros: (
+                (BigInt(order.limitPriceMicros) * BigInt(order.quantityAtoms) +
+                  (order.side === OrderSide.Buy ? 999999999n : 0n)) /
+                1000000000n
+              ).toString(),
+            })
+      if (
+        (body !== null &&
+          (requestHash !== (yield* canonicalHashV1Result(body)) || order.extendedHours !== body.extended_hours)) ||
+        (order.status === OrderStatus.Filled && order.filledQuantityAtoms !== order.quantityAtoms) ||
+        (order.status === OrderStatus.Rejected && order.failedAt === undefined) ||
+        ([OrderStatus.Canceled, OrderStatus.Expired].includes(order.status) &&
+          ((order.status === OrderStatus.Canceled && order.canceledAt === undefined) ||
+            order.filledQuantityAtoms === order.quantityAtoms)) ||
         [order.updatedAt, order.submittedAt, order.filledAt, order.canceledAt, order.failedAt].some(
           (at) => at !== undefined && (at < order.createdAt || at > decoded.observedAt),
         )
       )
         return yield* fail('Broker checkpoint request or terminal status is inconsistent')
+      if (terms !== undefined && terms._tag !== 'StopLimit' && parent === undefined) {
+        const legs = state.orders
+          .filter((entry) => entry.order.parentBrokerOrderId === order.brokerOrderId)
+          .map((entry) => entry.order)
+        if (
+          Result.isFailure(
+            verifyProtectionGroup(
+              { ...order, legs },
+              { symbol: order.symbol, quantityAtoms: order.quantityAtoms, protection: terms },
+            ),
+          )
+        )
+          return yield* fail('Broker checkpoint protection group differs from submitted strategy terms')
+      }
+      if (
+        order.orderType === OrderType.StopLimit &&
+        (order.stopPriceMicros === undefined ||
+          (order.stopTriggeredAt !== undefined &&
+            (order.stopTriggeredAt < order.createdAt ||
+              order.stopTriggeredAt > order.updatedAt ||
+              state.orders
+                .find((entry) => entry.order.brokerOrderId === order.brokerOrderId)
+                ?.executions.some(
+                  (execution) =>
+                    execution.arrivedAt === order.stopTriggeredAt &&
+                    execution.quote !== null &&
+                    Math.round(execution.quote.bidPrice * 1_000_000) <= Number(order.stopPriceMicros),
+                ) !== true)))
+      )
+        return yield* fail('Broker checkpoint stop trigger lacks its executable quote')
+      const record = state.orders.find((entry) => entry.order.brokerOrderId === order.brokerOrderId)
+      if (
+        ([OrderStatus.New, OrderStatus.PartiallyFilled, OrderStatus.Filled].includes(order.status) ||
+          (record?.executions.length ?? 0) > 0) &&
+        order.firstArrivedAt === undefined
+      )
+        return yield* fail('A working or executed order requires its retained broker arrival')
+      if (
+        order.firstArrivedAt !== undefined &&
+        (Date.parse(order.firstArrivedAt) < Date.parse(order.submittedAt) + config.assumptions.latencyMs ||
+          order.firstArrivedAt > order.updatedAt ||
+          (order.stopTriggeredAt !== undefined && order.stopTriggeredAt < order.firstArrivedAt) ||
+          record?.executions.some((execution) => execution.arrivedAt < (order.firstArrivedAt ?? '')) === true)
+      )
+        return yield* fail('Broker arrival must precede every order execution and follow routing latency')
       orderIds.add(order.brokerOrderId)
       clientIds.add(order.clientOrderId)
     }
     let ledger = yield* createReplayLedger<ReplayBrokerFill>(config.openingCashMicros)
     const expectedFills: (typeof state.fills)[number][] = []
     const expectedFees: (typeof state.fees)[number][] = []
-    const filledIds = new Set<string>()
+    const filledOrders = new Map<
+      string,
+      { quantity: bigint; notional: bigint; lastFillAt: string; indices: Set<number> }
+    >()
     let previousFillAt = ''
     for (const fill of state.ledger.fills) {
-      const order = state.orders.find((entry) => entry.order.brokerOrderId === fill.brokerOrderId)?.order
+      const record = state.orders.find((entry) => entry.order.brokerOrderId === fill.brokerOrderId)
+      const order = record?.order
+      const prior = filledOrders.get(fill.brokerOrderId)
+      const execution = record?.executions[fill.executionIndex - 1]
       if (
         order === undefined ||
-        filledIds.has(fill.brokerOrderId) ||
+        fill.executionIndex <= 0 ||
+        prior?.indices.has(fill.executionIndex) === true ||
+        execution?.outcome.status !== 'filled' ||
+        execution.outcome.filledQuantityAtoms !== fill.quantityAtoms ||
+        execution.outcome.fillPriceMicros !== fill.priceMicros ||
+        execution.outcome.fillNotionalMicros !== fill.notionalMicros ||
+        execution.arrivedAt !== fill.observedAt ||
         fill.clientOrderId !== order.clientOrderId ||
         fill.symbol !== order.symbol ||
         fill.side !== order.side ||
-        fill.quantityMicros !== order.filledQuantityMicros ||
-        fill.priceMicros !== order.filledAveragePriceMicros ||
-        fill.observedAt !== order.filledAt ||
         fill.observedAt < order.createdAt ||
         fill.observedAt < previousFillAt ||
         fill.observedAt > decoded.observedAt ||
         fill.quoteSource.availableAtMs > Date.parse(fill.observedAt)
       )
-        return yield* fail('Broker checkpoint fill is not bound to its order and arrival')
+        return yield* fail('Broker checkpoint fill is not bound to its order and quote evaluation')
+      const quantityAtFill = replayQuantityAtFill(state, order, state.ledger.fills.indexOf(fill))
+      const totalQuantity = (prior?.quantity ?? 0n) + BigInt(fill.quantityAtoms)
+      const totalNotional = (prior?.notional ?? 0n) + BigInt(fill.notionalMicros)
       const next = yield* applyReplayFill(
         ledger,
         fill,
-        order.quantityMicros,
+        (quantityAtFill - (prior?.quantity ?? 0n)).toString(),
         config.protocol.executionModel,
         config.assumptions.feeMultiplierPpm,
       )
-      const fee = BigInt(next.executionFeesMicros) - BigInt(ledger.executionFeesMicros)
-      if (fee !== 0n)
-        expectedFees.push({
-          accountId: state.accountId,
-          activityId: `fee::${fill.brokerOrderId}`,
-          date: yield* Schema.decodeUnknownResult(IsoDateSchema)(fill.observedAt.slice(0, 10)),
-          netAmountMicros: (-fee).toString(),
-        })
+      const fee = replayFeeActivity(
+        state.accountId,
+        fill,
+        ledger.executionFeesMicros,
+        next.executionFeesMicros,
+        config.assumptions.feeMultiplierPpm,
+      )
+      if (fee !== null) expectedFees.push({ ...fee, date: yield* Schema.decodeUnknownResult(IsoDateSchema)(fee.date) })
+      const complete = totalQuantity === quantityAtFill
       expectedFills.push({
         accountId: state.accountId,
-        activityId: `fill::${fill.brokerOrderId}`,
-        cumulativeQuantityMicros: fill.quantityMicros,
-        leavesQuantityMicros: (BigInt(order.quantityMicros) - BigInt(fill.quantityMicros)).toString(),
-        priceMicros: fill.priceMicros,
-        quantityMicros: fill.quantityMicros,
+        activityId: `fill::${String(expectedFills.length).padStart(16, '0')}::${fill.brokerOrderId}::${fill.executionIndex}`,
+        cumulativeQuantityAtoms: totalQuantity.toString(),
+        leavesQuantityAtoms: (quantityAtFill - totalQuantity).toString(),
+        priceAtoms: (BigInt(fill.priceMicros) * 1000n).toString(),
+        quantityAtoms: fill.quantityAtoms,
         side: fill.side,
         symbol: fill.symbol,
         transactionTime: fill.observedAt,
         brokerOrderId: fill.brokerOrderId,
-        type: order.status === OrderStatus.Filled ? TradeActivityType.Fill : TradeActivityType.PartialFill,
-        orderStatus: order.status,
+        type: complete ? TradeActivityType.Fill : TradeActivityType.PartialFill,
+        orderStatus: complete
+          ? OrderStatus.Filled
+          : order.timeInForce !== TimeInForce.ImmediateOrCancel
+            ? OrderStatus.PartiallyFilled
+            : OrderStatus.Canceled,
       })
-      filledIds.add(fill.brokerOrderId)
+      filledOrders.set(fill.brokerOrderId, {
+        quantity: totalQuantity,
+        notional: totalNotional,
+        lastFillAt: fill.observedAt,
+        indices: new Set([...(prior?.indices ?? []), fill.executionIndex]),
+      })
       previousFillAt = fill.observedAt
       ledger = next
     }
+    for (const { order, executions } of state.orders) {
+      const fills = filledOrders.get(order.brokerOrderId)
+      if (
+        BigInt(order.filledQuantityAtoms) !== (fills?.quantity ?? 0n) ||
+        (fills !== undefined &&
+          (order.filledAt !== fills.lastFillAt ||
+            order.filledAveragePriceMicros !==
+              ((fills.notional * 1_000_000_000n + fills.quantity / 2n) / fills.quantity).toString())) ||
+        (order.status === OrderStatus.New &&
+          (order.filledQuantityAtoms !== '0' ||
+            (executions.length === 0 &&
+              order.parentBrokerOrderId === undefined &&
+              order.orderType !== OrderType.StopLimit))) ||
+        (order.status === OrderStatus.PartiallyFilled &&
+          (fills === undefined || fills.quantity >= BigInt(order.quantityAtoms))) ||
+        executions.some(
+          (execution, index) =>
+            execution.submittedAt !== order.submittedAt ||
+            execution.arrivedAt < order.submittedAt ||
+            execution.arrivedAt > order.updatedAt ||
+            (index > 0 && execution.arrivedAt < (executions[index - 1]?.arrivedAt ?? '')) ||
+            (execution.outcome.status === 'filled' && fills?.indices.has(index + 1) !== true),
+        )
+      )
+        return yield* fail('Broker checkpoint order status or execution history does not reconstruct exactly')
+    }
     if (
-      state.orders.some(
-        ({ order }) => BigInt(order.filledQuantityMicros) > 0n !== filledIds.has(order.brokerOrderId),
-      ) ||
       (yield* canonicalHashV1Result(ledger)) !== (yield* canonicalHashV1Result(state.ledger)) ||
       (yield* canonicalHashV1Result(expectedFills)) !== (yield* canonicalHashV1Result(state.fills)) ||
       (yield* canonicalHashV1Result(expectedFees)) !== (yield* canonicalHashV1Result(state.fees))
@@ -308,8 +449,12 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         config.calendar.filter((session) => session.date === close.sessionDate),
         { start: close.sessionDate, end: close.sessionDate },
       )
-      const session = calendar.sessions[0]
-      if (session === undefined || session.closeAt > decoded.observedAt)
+      const session = calendar.providerSessions[0]
+      if (
+        session === undefined ||
+        session.regularCloseAt > decoded.observedAt ||
+        session.regularCloseAt < state.createdAt
+      )
         return yield* fail('Broker checkpoint records a close before market close')
     }
     return decoded
@@ -320,7 +465,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
 export const makeReplayBrokerCheckpoint = (config: ReplayBrokerConfig, state: ReplayBrokerState, observedAt: string) =>
   Result.gen(function* () {
     const material = {
-      schemaVersion: 'bayn.simulated-broker-checkpoint.v1' as const,
+      schemaVersion: 'bayn.simulated-broker-checkpoint.v10' as const,
       configurationHash: yield* replayBrokerConfigurationHash(config),
       sourceManifestHash: config.sourceManifestHash,
       observedAt,

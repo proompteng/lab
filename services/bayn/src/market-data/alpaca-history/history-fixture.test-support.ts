@@ -17,9 +17,13 @@ export const historyFixtureHttp = HttpClient.make((request) => {
   for (const [key, value] of request.urlParams) url.searchParams.set(key, value)
   const symbols = (url.searchParams.get('symbols') ?? '').split(',')
   const date = (url.searchParams.get('start') ?? '2026-09-11').slice(0, 10)
-  const times = Array.from({ length: 35 }, (_, index) =>
-    new Date(Date.parse(`${date}T13:30:00Z`) + index * 60_000).toISOString(),
-  )
+  const sessionStart = Date.parse(`${date}T13:30:00Z`)
+  const start = Date.parse(url.searchParams.get('start') ?? `${date}T00:00:00Z`)
+  const end = Date.parse(url.searchParams.get('end') ?? `${date}T23:59:59.999Z`)
+  const times = Array.from({ length: 35 }, (_, index) => ({
+    t: new Date(sessionStart + index * 60_000).toISOString(),
+    index,
+  })).filter(({ t }) => Date.parse(t) >= start && Date.parse(t) <= end)
   const response = url.pathname.endsWith('/calendar')
     ? ['2026-09-10', '2026-09-11'].map((date) => ({
         date,
@@ -34,7 +38,7 @@ export const historyFixtureHttp = HttpClient.make((request) => {
           bars: Object.fromEntries(
             symbols.map((symbol) => [
               symbol,
-              times.map((t, i) => ({
+              times.map(({ t, index: i }) => ({
                 t,
                 o: 100 + i / 10,
                 h: 101 + i / 10,
@@ -53,7 +57,7 @@ export const historyFixtureHttp = HttpClient.make((request) => {
             quotes: Object.fromEntries(
               symbols.map((symbol) => [
                 symbol,
-                times.map((t) => ({ t, bp: 100, bs: 10, ap: 100.1, as: 20, bx: 'V', ax: 'V', c: ['R'], z: 'C' })),
+                times.map(({ t }) => ({ t, bp: 100, bs: 10, ap: 100.1, as: 20, bx: 'V', ax: 'V', c: ['R'], z: 'C' })),
               ]),
             ),
             next_page_token: null,
@@ -62,7 +66,7 @@ export const historyFixtureHttp = HttpClient.make((request) => {
             trades: Object.fromEntries(
               symbols.map((symbol) => [
                 symbol,
-                times.map((t, i) => ({ t, p: 100, s: 10, i, x: 'V', c: [' '], z: 'C' })),
+                times.map(({ t, index: i }) => ({ t, p: 100, s: 10, i, x: 'V', c: [' '], z: 'C' })),
               ]),
             ),
             next_page_token: null,

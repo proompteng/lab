@@ -63,15 +63,38 @@ removed Bayn backfill path or grant Bayn write access.
 ## Rollout, evidence, and rollback
 
 GitOps creates the sealed writer credential, applies the least-privilege ClickHouse user, runs the additive schema hook,
-and renders only the scheduled CronJob. A suspended CronJob is not retained because Argo marks it `Suspended` and waits
+and normally renders only the scheduled CronJob. A suspended CronJob is not retained because Argo marks it `Suspended` and waits
 indefinitely for `Healthy`. The ClickHouse operator may restart replicas sequentially when its user configuration
 changes; verify both replicas before promotion. Image promotion pins the source SHA and multi-platform digest without
 changing scheduled-writer activation.
 
 When a historical publication is required, a separate reviewed GitOps change creates one bounded Job with a unique
-name and leaves the CronJob inactive for that interval. Never resume or reapply a completed Job under the same name;
-Kubernetes Job templates are immutable. Remove the one-off resource after retaining its evidence, then reactivate the
-CronJob in a reviewed change. The base application retains no dormant backfill Job.
+name. Prevent overlap with the scheduled writer: either leave the CronJob inactive for that interval, or enforce an
+absolute start deadline that leaves the Job's full `activeDeadlineSeconds` before the next scheduled run. The Job must
+check that deadline before importing the publisher or making external calls. Keep the completed Job until its
+resource is removed through GitOps; a TTL would let Argo recreate it. Never resume or reapply a completed Job under
+the same name; Kubernetes Job templates are immutable.
+
+The October 13 recovery completed at 17:02:01 UTC on its first attempt, publishing January 4, 2016 through
+October 12, 2026. Source `864e832055368f64e1cbacfef257c11e62717311` produced snapshot
+`2c0e62168fa44be12852b348f6f5601e4b7486736c307c108acfc66b8af974dd` with 13,545 bars and 2,709 exchange sessions
+for the five-symbol `cross-asset-taa-v1` universe. Independent readback verified the canonical bar, session and
+manifest hashes on both replicas, with exactly one manifest and no duplicate keys per replica. The completed Job
+and its provenance replacements were removed through GitOps after retaining its logs and verification receipt.
+The scheduled writer remains active; the base application retains no dormant backfill Job.
+
+The original recovery failed on a 120-second server deadline and a 60-second quorum wait. The scheduled writer now
+allows one hour with three retries. Each insert keeps two-replica quorum and derives its 144-second quorum wait and
+162-second server clock limit from the unchanged 180-second client budget. Unknown outcomes remain partial; a retry
+verifies retained rows and inserts only the exact missing rows. A timeout or Job retry cannot finalize a snapshot.
+The recovery's existing CronJob owner reference recorded its genuine completion in `lastSuccessfulTime`; it does
+not substitute for the two scheduled observations required below.
+
+`SignalAdjustedDailyPublicationMissed` alerts when the latest scheduled run remains newer than the last successful
+completion for two hours, followed by a five-minute hold. That budget covers the CronJob's one-hour start deadline
+and one-hour active lifetime. The alert also handles a first scheduled run that has never succeeded, deduplicates
+kube-state-metrics replicas, resolves after a successful owned recovery, and stays clear over weekends after success.
+The collector retains both CronJob timestamps; no additional Kubernetes permissions or Job collector are required.
 
 Completion evidence requires the bounded backfill plus two distinct scheduled publication observations. For each one,
 retain the Job name, source revision, image digest, universe ID and symbol hash, snapshot ID, publication as-of date,

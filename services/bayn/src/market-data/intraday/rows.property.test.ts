@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
 
-import { canonicalHashV1, canonicalJsonV1Result } from '../../hash'
+import { canonicalJsonV1Result, canonicalHashV1Result } from '../../hash'
 import { checkProperty } from '../../testing/property-test-support'
 import { decodeRawMarketRecord, RawMarketEventKind } from '../streaming/raw-events'
 import { normalizeBar, normalizeQuote, normalizeTrade } from './verification'
@@ -141,12 +141,16 @@ describe('market boundary properties', () => {
         const rows = inputs.map(rowsFor)
         const evidence = { records: rows, source: { provider: 'alpaca', revision: 1 } }
         const canonical = Result.getOrThrow(canonicalJsonV1Result(evidence))
-        expect(canonicalHashV1(reverseKeys(evidence))).toBe(canonicalHashV1(evidence))
-        expect(Result.getOrThrow(canonicalJsonV1Result(JSON.parse(canonical)))).toBe(canonical)
-        expect(canonicalHashV1({ ...evidence, source: { provider: 'alpaca', revision: 2 } })).not.toBe(
-          canonicalHashV1(evidence),
+        expect(Result.getOrThrow(canonicalHashV1Result(reverseKeys(evidence)))).toBe(
+          Result.getOrThrow(canonicalHashV1Result(evidence)),
         )
-        expect(canonicalHashV1([evidence, 'end'])).not.toBe(canonicalHashV1(['end', evidence]))
+        expect(Result.getOrThrow(canonicalJsonV1Result(JSON.parse(canonical)))).toBe(canonical)
+        expect(
+          Result.getOrThrow(canonicalHashV1Result({ ...evidence, source: { provider: 'alpaca', revision: 2 } })),
+        ).not.toBe(Result.getOrThrow(canonicalHashV1Result(evidence)))
+        expect(Result.getOrThrow(canonicalHashV1Result([evidence, 'end']))).not.toBe(
+          Result.getOrThrow(canonicalHashV1Result(['end', evidence])),
+        )
       }),
     )
   })

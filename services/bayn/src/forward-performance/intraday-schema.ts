@@ -1,60 +1,11 @@
 import { Schema } from 'effect'
-import { IntradayCandidateEvidencePolicy, IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import { IsoDateSchema, NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
-import { marketCalendarSchemaVersion, marketCalendarSource } from '../broker/alpaca/model'
+import { SnapshotManifestFields } from '../market-data/streaming/manifest-schema'
 import { StreamingSnapshotEvidenceSchema } from '../market-data/streaming/evidence-schema'
 
 const ManifestFields = {
-  sessionDate: IsoDateSchema,
-  calendar: Schema.Struct({
-    schemaVersion: Schema.Literal(marketCalendarSchemaVersion),
-    source: Schema.Literal(marketCalendarSource),
-    requestedRange: Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema }),
-    timeZone: Schema.Literal('UTC'),
-    sessions: Schema.Array(Schema.Struct({ date: IsoDateSchema, openAt: UtcInstantSchema, closeAt: UtcInstantSchema })),
-    normalizedResponseHash: Sha256Schema,
-  }),
-  rangeStartAt: UtcInstantSchema,
-  rangeEndAt: UtcInstantSchema,
-  observedAt: UtcInstantSchema,
-  universeId: Schema.String,
-  universeSymbolHash: Sha256Schema,
+  ...SnapshotManifestFields,
   universe: Schema.optionalKey(Schema.Array(Schema.String)),
-  symbols: Schema.Array(Schema.String),
-  candidateSymbols: Schema.optionalKey(Schema.Array(Schema.String)),
-  candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
-  candidateExclusions: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        symbol: Schema.String,
-        reason: Schema.Literals(['not-ready', 'freshness']),
-        message: Schema.String,
-      }),
-    ),
-  ),
-  purpose: Schema.optionalKey(Schema.Enum(IntradaySnapshotPurpose)),
-  feed: Schema.Literal('iex'),
-  delayClass: Schema.Literal('real_time_exchange_only'),
-  sourceTopics: Schema.Struct({ bars: Schema.String, quotes: Schema.String, trades: Schema.String }),
-  maximumQuoteAgeMs: NonNegativeIntegerSchema,
-  minimumWatermarkLagMs: NonNegativeIntegerSchema,
-  barCount: NonNegativeIntegerSchema,
-  quoteCount: NonNegativeIntegerSchema,
-  tradeCount: NonNegativeIntegerSchema,
-  barsContentHash: Sha256Schema,
-  quotesContentHash: Sha256Schema,
-  tradesContentHash: Sha256Schema,
-  lineage: Schema.Array(
-    Schema.Struct({
-      sourceTopic: Schema.String,
-      sourcePartition: NonNegativeIntegerSchema,
-      firstOffset: Schema.String,
-      lastOffset: Schema.String,
-      recordCount: NonNegativeIntegerSchema,
-    }),
-  ),
-  contentHash: Sha256Schema,
-  snapshotId: Sha256Schema,
 }
 
 export const IntradayPerformanceManifestSchema = Schema.Struct({
@@ -91,8 +42,8 @@ export const IntradayPerformanceArchiveRequestSchema = Schema.Struct({
   universeSymbolHash: Sha256Schema,
   universe: Schema.Array(Schema.String),
   symbols: Schema.Array(Schema.String),
-  feed: Schema.Literal('iex'),
-  delayClass: Schema.Literal('real_time_exchange_only'),
+  feed: SnapshotManifestFields.feed,
+  delayClass: SnapshotManifestFields.delayClass,
   sourceTopics: IntradayPerformanceManifestSchema.fields.sourceTopics,
   maximumQuoteAgeMs: NonNegativeIntegerSchema,
   minimumWatermarkLagMs: NonNegativeIntegerSchema,
@@ -100,7 +51,7 @@ export const IntradayPerformanceArchiveRequestSchema = Schema.Struct({
 })
 
 export const IntradayPerformanceVolumeEvidenceSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.forward-performance-intraday-volume-evidence.v1'),
+  schemaVersion: Schema.Literal('bayn.forward-performance-intraday-volume-evidence.v2'),
   cycleId: Sha256Schema,
   decisionSnapshotId: Sha256Schema,
   decisionSnapshotAsOfSession: IsoDateSchema,
@@ -109,11 +60,11 @@ export const IntradayPerformanceVolumeEvidenceSchema = Schema.Struct({
   windowOpenedAt: UtcInstantSchema,
   windowClosedAt: UtcInstantSchema,
   evidenceCutoffAt: UtcInstantSchema,
-  sourceFeed: Schema.Literal('iex'),
+  sourceFeed: SnapshotManifestFields.feed,
   decisionManifest: IntradayPerformanceDecisionManifestSchema,
-  volumeScope: Schema.Literal('IEX_RECORDED_SESSION_VOLUME'),
+  volumeScope: Schema.Literal('RECORDED_COMPLETE_MINUTE_VOLUME'),
   terminalPriceBasis: Schema.Literal('FINAL_MINUTE_BAR_CLOSE'),
-  quantityMicros: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
+  quantityAtoms: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
   closePriceMicros: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
   finalizedAt: UtcInstantSchema,
   archiveRequest: IntradayPerformanceArchiveRequestSchema,

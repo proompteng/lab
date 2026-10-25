@@ -1,8 +1,7 @@
 # Gap-recovery decision replay
 
 `bayn-gap-recovery` evaluates the fixed long-only gap-recovery rule over two
-original-receipt replay sources. It is packaged in the Bayn image but is not the
-active strategy. It does not call a model or broker, submit orders, acquire
+original-receipt replay sources. Build it with `bun run --filter @proompteng/bayn build:research`. It does not call a model or broker, submit orders, acquire
 credentials, configure capture, or grant capital authority.
 
 The prior-close reference is the retained midquote thirty seconds before the
@@ -48,7 +47,7 @@ interval export; hashes supplied alongside unverified bytes are not independent
 proof of a capture.
 
 ```sh
-bayn-gap-recovery \
+node services/bayn/dist/research/gap-recovery-command.js \
   --input /evidence/gap-input.json --input-sha256 "$INPUT_SHA256" \
   --previous-arrivals /evidence/previous.ndjson.gz \
   --previous-receipt /evidence/previous-receipt.json \
@@ -71,17 +70,11 @@ a hashed diagnostic report and a nonzero exit code. Invalid provenance, hashes,
 ordering, or source bytes fail without publishing a successful decision report.
 The source-mode equivalent is `bun services/bayn/src/gap-recovery-command.ts`.
 
-## Position lifecycle
+## Entry-only boundary
 
-`decideGapRecoveryExit` evaluates a supplied hypothetical position against an
-original-receipt cursor. It requests an exit when the fresh bid reaches the
-fifty-basis-point protective stop or five minutes remain before the session
-close. A pending exit remains latched. There is no fifteen-minute hold limit.
-Missing management quotes remain unavailable; a required closing exit never
-invents execution pricing. The close deadline is explicit.
-
-This helper supplies neither fills nor authorization. The command reports an
-entry decision only. Native portfolio integration, one-attempt ownership,
+The command reports an entry decision and does not simulate a position lifecycle.
+Its reports keep `execution: 'NOT_SIMULATED'`. The unused hypothetical
+exit helper has been removed. Native portfolio integration, one-attempt ownership,
 partial fills, broker reconciliation, complete prospective observations, and
-after-cost economic qualification remain separate prerequisites for activating
-this rule as the trading strategy. Packaging the command does not satisfy them.
+after-cost economic qualification remain prerequisites for activating this rule
+as the trading strategy. Packaging the command does not satisfy them.

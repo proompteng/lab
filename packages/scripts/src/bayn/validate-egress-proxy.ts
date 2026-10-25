@@ -1,13 +1,19 @@
-const requiredTradingHosts = new Set([
+const requiredHosts = new Set([
   'paper-api.alpaca.markets',
   'api.alpaca.markets',
   'data.alpaca.markets',
+  'api.openai.com',
   'api.typesafe.ai',
+  'www.sec.gov',
+  'data.sec.gov',
+  'www.bls.gov',
+  'www.federalreserve.gov',
 ])
 
 export interface BaynEgressProxyContract {
   readonly aclName: string
   readonly allowedHosts: readonly string[]
+  readonly openCodeAllowedHosts: readonly string[]
 }
 
 const meaningfulLines = (source: string): readonly string[] =>
@@ -29,39 +35,46 @@ export const validateBaynEgressProxy = (source: string): BaynEgressProxyContract
   exactlyOne(lines, (line) => line === 'acl SSL_ports port 443', 'TLS port ACL')
   exactlyOne(lines, (line) => line === 'acl CONNECT method CONNECT', 'CONNECT method ACL')
 
-  const domainLine = exactlyOne(lines, (line) => /^acl\s+\S+\s+dstdomain\s+/.test(line), 'destination-domain ACL')
+  exactlyOne(lines, (line) => line === 'http_port 3128 name=trading', 'trading listener')
+  exactlyOne(lines, (line) => line === 'http_port 3129 name=opencode', 'OpenCode listener')
+  if (lines.filter((line) => line.startsWith('http_port ')).length !== 2) throw new Error('Unexpected proxy listener')
+  exactlyOne(lines, (line) => line === 'acl opencode_listener myportname opencode', 'OpenCode listener ACL')
+  exactlyOne(lines, (line) => line === 'acl opencode_api dstdomain opencode.ai', 'OpenCode destination ACL')
+  if (lines.filter((line) => /^acl\s+\S+\s+dstdomain\s+/.test(line)).length !== 2)
+    throw new Error('Unexpected destination ACL')
+  const domainLine = exactlyOne(
+    lines,
+    (line) => line.startsWith('acl trading_api dstdomain '),
+    'trading destination ACL',
+  )
   const [, aclName, directive, ...allowedHosts] = domainLine.split(/\s+/)
   if (aclName === undefined || directive !== 'dstdomain' || allowedHosts.length === 0) {
     throw new Error('destination-domain ACL is incomplete')
   }
   if (
-    allowedHosts.length !== requiredTradingHosts.size ||
-    new Set(allowedHosts).size !== requiredTradingHosts.size ||
-    allowedHosts.some((host) => !requiredTradingHosts.has(host))
+    allowedHosts.length !== requiredHosts.size ||
+    new Set(allowedHosts).size !== requiredHosts.size ||
+    allowedHosts.some((host) => !requiredHosts.has(host))
   ) {
     throw new Error(
-      'destination-domain ACL must contain exactly the Alpaca trading, market-data, and TypeSafe API hosts',
+      'destination-domain ACL must contain exactly the Alpaca, OpenAI, TypeSafe, SEC, BLS and Federal Reserve hosts',
     )
   }
 
-  const denyNonConnect = lines.indexOf('http_access deny !CONNECT')
-  const denyNonTls = lines.indexOf('http_access deny CONNECT !SSL_ports')
-  const denyUnlisted = lines.indexOf(`http_access deny !${aclName}`)
-  const allowTrading = lines.indexOf(`http_access allow CONNECT ${aclName}`)
-  const denyAll = lines.indexOf('http_access deny all')
-  if ([denyNonConnect, denyNonTls, denyUnlisted, allowTrading, denyAll].some((index) => index < 0)) {
-    throw new Error('proxy access policy is missing a required fail-closed rule')
-  }
-  if (
-    !(denyNonConnect < denyNonTls && denyNonTls < denyUnlisted && denyUnlisted < allowTrading && allowTrading < denyAll)
-  ) {
-    throw new Error('proxy access policy rules are not in fail-closed order')
-  }
+  const rules = [
+    'http_access deny !CONNECT',
+    'http_access deny CONNECT !SSL_ports',
+    'http_access deny opencode_listener !opencode_api',
+    `http_access deny !opencode_listener !${aclName}`,
+    'http_access deny blocked_private_v4',
+    'http_access deny blocked_private_v6',
+    'http_access allow CONNECT opencode_listener opencode_api',
+    `http_access allow CONNECT !opencode_listener ${aclName}`,
+    'http_access deny all',
+  ]
+  const actualRules = lines.filter((line) => line.startsWith('http_access '))
+  if (JSON.stringify(actualRules) !== JSON.stringify(rules))
+    throw new Error('Proxy listeners must retain their separate exact hosts and fail-closed rule order')
 
-  const allowRules = lines.filter((line) => line.startsWith('http_access allow '))
-  if (allowRules.length !== 1 || allowRules[0] !== `http_access allow CONNECT ${aclName}`) {
-    throw new Error('proxy must have exactly one allow rule for CONNECT to the exact trading API ACL')
-  }
-
-  return { aclName, allowedHosts: [...allowedHosts].sort() }
+  return { aclName, allowedHosts: [...allowedHosts].sort(), openCodeAllowedHosts: ['opencode.ai'] }
 }

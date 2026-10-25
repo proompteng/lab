@@ -13,7 +13,7 @@ import type {
   RecoveryFirstCycleAdvance,
   RecoveryFirstCycleDriver,
   RecoveryFirstCycleDriverOwner,
-} from '../observe-composition'
+} from '../observe-composition/model'
 import { currentUtcInstant } from '../time'
 import { withObservedStage } from '../telemetry'
 import { runRestateAdvanceWithinTimeout } from '../observe-composition/recovery-driver'
@@ -92,6 +92,17 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
         return input.mode === 'Mutation' ? 'Continue' : 'Rebind'
       return 'Hold'
     }
+    const settle = Effect.gen(function* () {
+      const recovery = yield* advanceRestrictedGenerationRecovery(
+        Effect.void,
+        input.settle.pipe(withObservedStage('bayn.execution.generation.settle')),
+      )
+      const authority = yield* readAuthority
+      const step = recognizeRestrictedGenerationRebind(recovery, input.generationHash, authority.generationHash)
+      const changed = step._tag !== 'Waiting'
+      if (changed) yield* Deferred.succeed(rebind, undefined)
+      return { authority, changed }
+    })
     const advance = Effect.gen(function* () {
       let cycleInProgress = false
       return yield* runRestateAdvanceWithinTimeout(
@@ -114,27 +125,37 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
               },
             } satisfies RecoveryFirstCycleAdvance
           }
+          if (input.mode === 'CloseOnly') {
+            const recovery = yield* settle
+            if (recovery.changed) {
+              return {
+                observation: { result: 'SUCCESS', observedAt: yield* currentUtcInstant, outcome: 'RECOVERED' },
+              } satisfies RecoveryFirstCycleAdvance
+            }
+            if (disposition(recovery.authority) === 'Hold') {
+              yield* input.reconcileWhenHeld.pipe(withObservedStage('bayn.execution.generation.reconcile-held'))
+              return {
+                observation: {
+                  result: 'FAILURE',
+                  observedAt: yield* currentUtcInstant,
+                  operation: 'read-authority-slot',
+                  failure: 'context',
+                  message: 'execution generation remains restricted by operator or authority policy',
+                },
+              } satisfies RecoveryFirstCycleAdvance
+            }
+          }
           cycleInProgress = true
           const advanced = yield* driver.advance
           cycleInProgress = false
           const after = disposition(yield* readAuthority)
           if (after === 'Rebind') yield* Deferred.succeed(rebind, undefined)
-          if (after !== 'Continue' || input.mode !== 'CloseOnly') return advanced
-          const recovery = yield* advanceRestrictedGenerationRecovery(
-            Effect.succeed(advanced),
-            input.settle.pipe(withObservedStage('bayn.execution.generation.settle')),
-          )
-          if (recovery._tag === 'RolledOver') {
-            yield* Deferred.succeed(rebind, undefined)
-            return advanced
-          }
-          const current = yield* readAuthority
-          const step = recognizeRestrictedGenerationRebind(recovery, input.generationHash, current.generationHash)
-          if (step._tag !== 'Waiting') yield* Deferred.succeed(rebind, undefined)
+          if (after === 'Continue' && input.mode === 'CloseOnly' && advanced.result !== undefined) yield* settle
           return advanced
         }),
         driver.timeoutMs,
         (error) => (cycleInProgress ? driver.onTimeout(error) : Effect.fail(error)),
+        'bayn.execution.generation-pass',
       )
     }).pipe(Effect.catch((cause) => (cause instanceof OperationalError ? Effect.die(cause) : Effect.fail(cause))))
     return {

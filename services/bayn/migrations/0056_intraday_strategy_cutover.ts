@@ -2,7 +2,7 @@ import { Effect, Result } from 'effect'
 import { SqlClient } from 'effect/sql'
 
 import { makeStrategyProtocolHashResult } from '../src/contracts'
-import { canonicalHashV1OrThrow } from '../src/hash'
+import { canonicalHashV1Result } from '../src/hash'
 import { intradayMomentumBehaviorHash } from '../src/strategy/intraday-momentum/decision'
 import { defaultIntradayMomentumProtocolDocument } from '../src/strategy/intraday-momentum/protocol'
 
@@ -10,7 +10,7 @@ const currentStrategyProtocolHash = Result.getOrThrow(
   makeStrategyProtocolHashResult({
     name: 'intraday-momentum',
     behaviorHash: intradayMomentumBehaviorHash,
-    parameterHash: canonicalHashV1OrThrow(defaultIntradayMomentumProtocolDocument),
+    parameterHash: Result.getOrThrow(canonicalHashV1Result(defaultIntradayMomentumProtocolDocument)),
     parameterSchemaVersion: 'bayn.intraday-momentum.protocol.v2',
   }),
 )

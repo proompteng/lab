@@ -10,6 +10,7 @@ import {
   accessCommandSchema,
   diagnosticActions,
   githubLoginSchema,
+  observationScopeSchema,
   workspaceUidSchema,
   type AccessCommand,
 } from '@/lib/tengri/access-schemas'
@@ -25,6 +26,7 @@ import {
 
 type View = 'workspace' | 'platform' | 'audit'
 const actions = ['membership', 'collaborator', 'quota', 'target', 'grant', 'revoke', 'transfer', 'emergency'] as const
+const lines = (value: string) => value.split('\n').filter(Boolean)
 const formSchema = z
   .object({
     action: z.enum(actions),
@@ -51,6 +53,7 @@ const formSchema = z
     threadIds: z.string(),
     terminalIds: z.string(),
     browserScreenshot: z.boolean(),
+    viewerContent: z.boolean(),
     maxBytes: z.number().int().min(1).max(1_048_576),
     maxItems: z.number().int().min(1).max(200),
     incidentId: z.string(),
@@ -64,6 +67,22 @@ const formSchema = z
       context.addIssue({ code: 'custom', path: ['login'], message: 'Enter a GitHub username' })
     if (value.action === 'quota' && value.active > value.total)
       context.addIssue({ code: 'custom', path: ['active'], message: 'Active quota cannot exceed total quota' })
+    if (
+      value.action === 'grant' ||
+      (value.action === 'collaborator' && value.enabled && value.role === 'viewer' && value.viewerContent)
+    ) {
+      const scope = observationScopeSchema.safeParse({
+        fileRoots: lines(value.fileRoots),
+        threadIds: lines(value.threadIds),
+        terminalIds: lines(value.terminalIds),
+        browserScreenshot: value.browserScreenshot,
+        maxBytes: value.maxBytes,
+        maxItems: value.maxItems,
+      })
+      if (!scope.success)
+        for (const issue of scope.error.issues)
+          context.addIssue({ code: 'custom', path: issue.path.slice(0, 1), message: issue.message })
+    }
     if (value.action === 'grant') {
       if (!workspaceUidSchema.safeParse(value.agentId).success)
         context.addIssue({ code: 'custom', path: ['agentId'], message: 'Enter the diagnostic agent UUID' })
@@ -87,11 +106,6 @@ const formSchema = z
       })
   })
 type Form = z.infer<typeof formSchema>
-const lines = (value: string) =>
-  value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
 
 export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: string; active?: boolean }) {
   const [view, setView] = useState<View>(workspaceUid ? 'workspace' : 'platform')
@@ -126,6 +140,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       threadIds: '',
       terminalIds: '',
       browserScreenshot: false,
+      viewerContent: false,
       maxBytes: 65536,
       maxItems: 100,
       incidentId: '',
@@ -134,6 +149,10 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   })
   const action = form.watch('action')
   const resourceKind = form.watch('resourceKind')
+  const role = form.watch('role')
+  const enabled = form.watch('enabled')
+  const login = form.watch('login')
+  const boundedViewer = role === 'viewer' && enabled && form.watch('viewerContent')
   const load = useCallback(
     async (signal?: AbortSignal, cursor = '') => {
       const query = new URLSearchParams({ view })
@@ -154,6 +173,9 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     [view, workspaceUid],
   )
   const setValue = form.setValue
+  useEffect(() => {
+    setValue('viewerContent', false)
+  }, [action, role, enabled, login, workspaceUid, setValue])
   useEffect(() => {
     setValue('action', view === 'workspace' ? 'collaborator' : 'membership')
     setValue('role', view === 'workspace' ? 'viewer' : 'member')
@@ -207,6 +229,14 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       kind: value.resourceKind,
       id: value.resourceKind === 'workspace' ? workspaceUid || '' : value.resourceId,
     }
+    const scope = {
+      fileRoots: lines(value.fileRoots),
+      threadIds: lines(value.threadIds),
+      terminalIds: lines(value.terminalIds),
+      browserScreenshot: value.browserScreenshot,
+      maxBytes: value.maxBytes,
+      maxItems: value.maxItems,
+    }
     let draft: unknown
     switch (value.action) {
       case 'membership':
@@ -220,6 +250,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
           login: value.login,
           role: value.role,
           enabled: value.enabled,
+          ...(value.role === 'viewer' && value.enabled && value.viewerContent ? { scope } : {}),
         }
         break
       case 'quota':
@@ -251,14 +282,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
           agentId: value.agentId,
           resource,
           permissions: value.permissions,
-          scope: {
-            fileRoots: lines(value.fileRoots),
-            threadIds: lines(value.threadIds),
-            terminalIds: lines(value.terminalIds),
-            browserScreenshot: value.browserScreenshot,
-            maxBytes: value.maxBytes,
-            maxItems: value.maxItems,
-          },
+          scope,
           expiresAt: value.expiresAt,
           proofKeyThumbprint: value.proofKeyThumbprint,
         }
@@ -347,7 +371,9 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
           size="sm"
           variant="outline"
           disabled={busy || Boolean(pending)}
-          onClick={() => void startTengriSignIn(true).catch(() => setError('Passkey verification could not start'))}
+          onClick={() =>
+            void startTengriSignIn('step-up').catch(() => setError('Passkey verification could not start'))
+          }
         >
           Verify passkey
         </Button>
@@ -355,7 +381,8 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       <p className="text-xs leading-5 text-zinc-400">
         Owners manage workspace collaborators and bounded diagnostic grants. Platform administrators manage membership,
         quotas and broker permissions. Developer access includes a root shell. Removing it quarantines the retained
-        workspace until credentials and the guest are recovered.
+        workspace until credentials and the guest are recovered. Viewers see metadata unless the owner explicitly
+        approves bounded content access.
       </p>
       {error ? (
         <p role="alert" className="rounded-md border border-red-900 bg-red-950/40 p-3 text-xs text-red-200">
@@ -423,9 +450,30 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                     <td className="p-2">
                       {entry.actions.map((permission) => Action[permission]).join(', ')}
                       {entry.scope ? (
-                        <p className="whitespace-pre-wrap text-zinc-400">
-                          {[...entry.scope.fileRoots, ...entry.scope.threadIds, ...entry.scope.terminalIds].join('\n')}
-                        </p>
+                        <div className="text-zinc-400">
+                          <dl className="space-y-1">
+                            {[
+                              { label: 'File roots', targets: entry.scope.fileRoots },
+                              { label: 'Codex thread IDs', targets: entry.scope.threadIds },
+                              { label: 'Terminal IDs', targets: entry.scope.terminalIds },
+                            ].map(({ label, targets }) => (
+                              <div key={label}>
+                                <dt>{label}</dt>
+                                <dd className="break-all whitespace-pre-wrap font-mono">
+                                  {targets.length ? targets.map((target) => JSON.stringify(target)).join('\n') : 'None'}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                          <p>
+                            {entry.role === 'viewer' || entry.actions.includes(Action.BROWSER_OBSERVE) ? (
+                              <>Browser status{entry.scope.browserScreenshot ? ' and screenshots' : ''} · </>
+                            ) : null}
+                            up to {entry.scope.maxBytes} bytes / {entry.scope.maxItems} items
+                          </p>
+                        </div>
+                      ) : entry.role === 'viewer' ? (
+                        <p className="text-zinc-400">Metadata only</p>
                       ) : null}
                       {entry.expiresAtUnixMs > BigInt(0) ? new Date(Number(entry.expiresAtUnixMs)).toISOString() : ''}
                     </td>
@@ -496,6 +544,11 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                   <input type="checkbox" {...form.register('enabled')} /> Enable this access
                 </label>
               ) : null}
+              {action === 'collaborator' && form.watch('role') === 'viewer' && form.watch('enabled') ? (
+                <label className="flex items-center gap-2 text-xs">
+                  <input type="checkbox" {...form.register('viewerContent')} /> Approve bounded Viewer content access
+                </label>
+              ) : null}
               {action === 'quota' ? (
                 <div className="grid grid-cols-3 gap-2">
                   {(['total', 'active', 'retainedGiB'] as const).map((name) => (
@@ -559,29 +612,73 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                       </label>
                     ))}
                   </fieldset>
-                  {(['fileRoots', 'threadIds', 'terminalIds'] as const).map((name) => (
-                    <label key={name} className="block space-y-1 text-xs">
-                      {name}
+                </>
+              ) : null}
+              {action === 'grant' || (action === 'collaborator' && boundedViewer) ? (
+                <fieldset className="space-y-3">
+                  <legend className="mb-1 text-xs">Approved observation scope</legend>
+                  <p className="text-xs text-zinc-400">
+                    Only the listed content targets are readable. Browser status is included; screenshots require
+                    separate approval. Observation does not start services or send input. Selected content can contain
+                    private information.
+                  </p>
+                  {(
+                    [
+                      ['fileRoots', 'File roots under /workspace'],
+                      ['threadIds', 'Codex thread IDs'],
+                      ['terminalIds', 'Terminal IDs'],
+                    ] as const
+                  ).map(([name, label]) => (
+                    <div key={name} className="space-y-1 text-xs">
+                      <label htmlFor={`${formId}-${name}`} className="block">
+                        {label}
+                      </label>
                       <textarea
+                        id={`${formId}-${name}`}
                         {...form.register(name)}
                         rows={2}
+                        aria-invalid={Boolean(form.formState.errors[name])}
+                        aria-describedby={form.formState.errors[name] ? `${formId}-${name}-error` : undefined}
                         className={`${selectClass} block w-full`}
                         placeholder="One approved target per line"
                       />
-                    </label>
+                      {form.formState.errors[name] ? (
+                        <p id={`${formId}-${name}-error`} role="alert" className="text-red-300">
+                          {form.formState.errors[name]?.message}
+                        </p>
+                      ) : null}
+                    </div>
                   ))}
                   <label className="flex items-center gap-2 text-xs">
                     <input type="checkbox" {...form.register('browserScreenshot')} /> Allow browser screenshots
                   </label>
                   <div className="flex gap-2">
-                    {(['maxBytes', 'maxItems'] as const).map((name) => (
-                      <label key={name} className="text-xs">
-                        {name}
-                        <Input type="number" {...form.register(name, { valueAsNumber: true })} />
-                      </label>
+                    {(
+                      [
+                        ['maxBytes', 'Maximum bytes'],
+                        ['maxItems', 'Maximum items'],
+                      ] as const
+                    ).map(([name, label]) => (
+                      <div key={name} className="space-y-1 text-xs">
+                        <label htmlFor={`${formId}-${name}`} className="block">
+                          {label}
+                        </label>
+                        <Input
+                          id={`${formId}-${name}`}
+                          type="number"
+                          {...form.register(name, { valueAsNumber: true })}
+                          aria-invalid={Boolean(form.formState.errors[name])}
+                          aria-describedby={form.formState.errors[name] ? `${formId}-${name}-error` : undefined}
+                        />
+                        {form.formState.errors[name] ? (
+                          <p id={`${formId}-${name}-error`} role="alert" className="text-red-300">
+                            {form.formState.errors[name]?.message}
+                          </p>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
-                </>
+                </fieldset>
               ) : null}
               {action === 'revoke' ? field('grantId', 'Grant UUID') : null}
               {['grant', 'emergency'].includes(action)

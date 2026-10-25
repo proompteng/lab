@@ -254,7 +254,7 @@ class ForwarderConfigTest {
     assertEquals(12L, cfg.barsBackfillLookbackHours)
     assertFalse(cfg.enableTradeUpdates)
     assertEquals(AlpacaMarketType.EQUITY, cfg.alpacaMarketType)
-    assertEquals("us", cfg.alpacaCryptoLocation)
+    assertEquals(null, cfg.cryptoFeed)
     assertEquals(listOf("trades", "quotes", "bars", "updatedBars"), cfg.alpacaMarketDataChannels)
     assertEquals(emptySet(), cfg.optionsMarketHolidays)
     assertEquals("torghut.trades.v1", cfg.topics.trades)
@@ -538,14 +538,15 @@ class ForwarderConfigTest {
         mapOf(
           "ALPACA_KEY_ID" to "key",
           "ALPACA_SECRET_KEY" to "secret",
-          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols?assetClass=crypto",
           "ALPACA_MARKET_TYPE" to "crypto",
+          "SYMBOLS" to "BTC/USD",
+          "TOPIC_CRYPTO_EVENTS" to "bayn.market-data.crypto.v1",
         ),
       )
 
     assertEquals(AlpacaMarketType.CRYPTO, cfg.alpacaMarketType)
-    assertEquals("us", cfg.alpacaCryptoLocation)
-    assertEquals(listOf("trades", "quotes", "bars"), cfg.alpacaMarketDataChannels)
+    assertEquals("us", cfg.cryptoFeed?.location)
+    assertEquals(listOf("trades", "quotes", "bars", "updatedBars", "orderbooks"), cfg.alpacaMarketDataChannels)
   }
 
   @Test
@@ -555,14 +556,15 @@ class ForwarderConfigTest {
         mapOf(
           "ALPACA_KEY_ID" to "key",
           "ALPACA_SECRET_KEY" to "secret",
-          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols?assetClass=crypto",
           "ALPACA_MARKET_TYPE" to "crypto",
+          "SYMBOLS" to "BTC/USD",
+          "TOPIC_CRYPTO_EVENTS" to "bayn.market-data.crypto.v1",
           "ALPACA_CRYPTO_LOCATION" to "eu-1",
         ),
       )
 
     assertEquals(AlpacaMarketType.CRYPTO, cfg.alpacaMarketType)
-    assertEquals("eu-1", cfg.alpacaCryptoLocation)
+    assertEquals("eu-1", cfg.cryptoFeed?.location)
   }
 
   @Test
@@ -590,13 +592,15 @@ class ForwarderConfigTest {
 
   @Test
   fun `rejects unknown crypto location`() {
-    assertFailsWith<IllegalStateException> {
+    assertFailsWith<IllegalArgumentException> {
       ForwarderConfig.fromEnv(
         mapOf(
           "ALPACA_KEY_ID" to "key",
           "ALPACA_SECRET_KEY" to "secret",
           "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
           "ALPACA_MARKET_TYPE" to "crypto",
+          "SYMBOLS" to "BTC/USD",
+          "TOPIC_CRYPTO_EVENTS" to "bayn.market-data.crypto.v1",
           "ALPACA_CRYPTO_LOCATION" to "moon-1",
         ),
       )

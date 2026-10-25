@@ -1,21 +1,10 @@
 # 186. Jangar Route-Warrant Dispatch Custody And Dependency Verdicts (2026-05-13)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-13
 Owner: Gideon Park, Torghut Traders Architecture
 Scope: Jangar control-plane dispatch custody, Torghut route-warrant consumption, dependency verdict settlement,
 zero-notional repair admission, rollout safety, validation, rollback, and cross-stage handoff.
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/190-torghut-route-warrant-exchange-and-ingestion-proof-reentry-2026-05-13.md`
-
-Extends:
-
-- `185-jangar-clock-settled-repair-dispatch-and-rollout-custody-2026-05-12.md`
-- `184-jangar-stage-evidence-credit-authority-and-freeze-reclock-2026-05-12.md`
-- `../torghut/design-system/v6/189-torghut-clock-settled-repair-execution-and-routeability-reentry-2026-05-12.md`
-- `../torghut/design-system/v6/188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
 
 ## Decision
 

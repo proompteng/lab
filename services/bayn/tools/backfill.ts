@@ -174,7 +174,12 @@ export const backfillAlpacaHistory = (input: unknown, directory: string) =>
     const nowMs = yield* Clock.currentTimeMillis
     const sessions = yield* Effect.forEach(calendar, (day) =>
       Effect.fromResult(normalizeMarketCalendarResult([day], { start: day.date, end: day.date })).pipe(
-        Effect.map((value) => value.sessions[0]),
+        Effect.map((value) => {
+          const session = value.providerSessions[0]
+          return session === undefined
+            ? undefined
+            : { date: session.date, openAt: session.regularOpenAt, closeAt: session.regularCloseAt }
+        }),
       ),
     )
     if (

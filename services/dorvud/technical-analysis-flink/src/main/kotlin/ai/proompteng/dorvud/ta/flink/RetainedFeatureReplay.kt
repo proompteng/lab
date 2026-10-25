@@ -216,7 +216,7 @@ private fun replayRetainedFeatureLines(
         "Kafka timestamp violates the producer clock contract"
       }
     }
-    if (!bar.final || bar.marketSession != "regular") {
+    if (!bar.final || bar.marketSession != executableIexSession(bar.eventTime)) {
       skipped++
       continue
     }

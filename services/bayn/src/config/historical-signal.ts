@@ -18,11 +18,6 @@ export const HistoricalSignalSnapshotConfigSchema = Schema.Struct({
 
 export type HistoricalSignalSnapshotConfig = typeof HistoricalSignalSnapshotConfigSchema.Type
 
-export interface HistoricalMarketDataConfig {
-  readonly historicalSignal: HistoricalSignalSnapshotConfig
-  readonly operationTimeoutMs: number
-}
-
 const historicalSignalSettings = {
   snapshotId: 'BAYN_SIGNAL_SNAPSHOT_ID',
   publicationAsOf: 'BAYN_SIGNAL_PUBLICATION_ASOF',

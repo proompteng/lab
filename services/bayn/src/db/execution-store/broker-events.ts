@@ -61,7 +61,7 @@ export const makeBrokerEventInterpreter = (
             yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${first.broker}:${first.accountId}`}, 0))`
             const sourceIds = [...new Set(inputs.map((input) => input.sourceEventId))]
             const rows = yield* sql<Record<string, unknown>>`
-              SELECT event.event_id, event.event_kind, event.content_hash,
+              SELECT event.event_id, event.event_kind, event.normalized_content_hash AS content_hash,
                 event.source_event_id, event.source_sequence::text AS source_sequence,
                 CASE event.event_kind
                   WHEN 'ORDER' THEN historical_order.event_id IS NOT NULL
@@ -107,11 +107,11 @@ export const makeBrokerEventInterpreter = (
         return sql`
           INSERT INTO account_snapshots (
             event_id, account_id, schema_version, status, currency,
-            cash_micros, equity_micros, buying_power_micros
+            cash_micros, equity_micros, buying_power_micros, crypto_fee_tier
           ) VALUES (
             ${eventId}, ${input.account.accountId}, ${input.account.schemaVersion}, ${input.account.status},
             ${input.account.currency}, ${input.account.cashMicros}, ${input.account.equityMicros},
-            ${input.account.buyingPowerMicros}
+            ${input.account.buyingPowerMicros}, ${input.account.cryptoFeeTier}
           )
         `.pipe(Effect.asVoid)
       case 'Position':
@@ -120,12 +120,12 @@ export const makeBrokerEventInterpreter = (
         }
         return sql`
           INSERT INTO positions (
-            event_id, account_id, snapshot_id, schema_version, symbol, quantity_micros,
+            event_id, account_id, snapshot_id, schema_version, symbol, quantity_atoms,
             average_entry_price_micros, market_price_micros, market_value_micros, unrealized_pnl_micros,
             cost_basis_micros
           ) VALUES (
             ${eventId}, ${input.position.accountId}, ${positionSnapshotId}, ${input.position.schemaVersion},
-            ${input.position.symbol}, ${input.position.quantityMicros}, ${input.position.averageEntryPriceMicros},
+            ${input.position.symbol}, ${input.position.quantityAtoms}, ${input.position.averageEntryPriceMicros},
             ${input.position.marketPriceMicros}, ${input.position.marketValueMicros}, ${input.position.unrealizedPnlMicros},
             ${input.position.schemaVersion === 'bayn.position.v2' ? input.position.costBasisMicros : null}
           )
@@ -134,25 +134,25 @@ export const makeBrokerEventInterpreter = (
         return sql`
           INSERT INTO orders (
             event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
-            side, order_type, time_in_force, quantity_micros, notional_micros,
-            filled_quantity_micros, limit_price_micros, status
+            side, order_type, time_in_force, quantity_atoms, notional_micros,
+            filled_quantity_atoms, limit_price_micros, stop_price_micros, parent_broker_order_id, status
           ) VALUES (
             ${eventId}, ${input.order.accountId}, ${input.order.schemaVersion}, ${input.order.brokerOrderId},
             ${input.order.clientOrderId}, ${input.order.intentId ?? null}, ${input.order.symbol}, ${input.order.side},
-            ${input.order.orderType}, ${input.order.timeInForce}, ${input.order.quantityMicros ?? null},
+            ${input.order.orderType}, ${input.order.timeInForce}, ${input.order.quantityAtoms ?? null},
             ${input.order.notionalMicros ?? null},
-            ${input.order.filledQuantityMicros}, ${input.order.limitPriceMicros ?? null}, ${input.order.status}
+            ${input.order.filledQuantityAtoms}, ${input.order.limitPriceMicros ?? null}, ${input.order.stopPriceMicros ?? null}, ${input.order.parentBrokerOrderId ?? null}, ${input.order.status}
           )
         `.pipe(Effect.asVoid)
       case 'Fill':
         return sql`
           INSERT INTO fills (
             event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id, intent_id,
-            symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp
+            symbol, side, quantity_atoms, price_atoms, fee_micros, source_timestamp
           ) VALUES (
             ${eventId}, ${input.fill.accountId}, ${input.fill.schemaVersion}, ${input.fill.fillId},
             ${input.fill.brokerOrderId}, ${input.fill.clientOrderId}, ${input.fill.intentId ?? null},
-            ${input.fill.symbol}, ${input.fill.side}, ${input.fill.quantityMicros}, ${input.fill.priceMicros},
+            ${input.fill.symbol}, ${input.fill.side}, ${input.fill.quantityAtoms}, ${input.fill.priceAtoms},
             ${input.fill.feeMicros}, ${input.sourceTimestamp}
           )
         `.pipe(Effect.asVoid)
@@ -168,7 +168,7 @@ export const makeBrokerEventInterpreter = (
       Effect.gen(function* () {
         yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.broker}:${input.accountId}`}, 0))`
         const existing = yield* sql<Record<string, unknown>>`
-          SELECT event_id, event_kind, content_hash, source_sequence::text AS source_sequence
+          SELECT event_id, event_kind, normalized_content_hash AS content_hash, source_sequence::text AS source_sequence
           FROM broker_events
           WHERE broker = ${input.broker}
             AND account_id = ${input.accountId}
@@ -191,10 +191,10 @@ export const makeBrokerEventInterpreter = (
         })
         yield* sql`
           INSERT INTO broker_events (
-            event_id, schema_version, content_hash, event_kind, broker, account_id,
+            event_id, schema_version, content_hash, normalized_content_hash, event_kind, broker, account_id,
             source_event_id, source_sequence, occurred_at, observed_at
           ) VALUES (
-            ${decision.eventId}, 'bayn.paper-broker-event.v1', ${input.contentHash}, ${decision.eventKind},
+            ${decision.eventId}, 'bayn.paper-broker-event.v1', ${input.contentHash}, ${input.contentHash}, ${decision.eventKind},
             ${input.broker}, ${input.accountId}, ${input.sourceEventId}, ${sourceSequence},
             ${input.occurredAt}, ${input.observedAt}
           )

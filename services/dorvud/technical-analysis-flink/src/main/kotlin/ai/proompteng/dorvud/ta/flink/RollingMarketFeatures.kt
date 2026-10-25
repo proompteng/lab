@@ -9,17 +9,45 @@ import kotlinx.serialization.json.JsonPrimitive
 import java.security.MessageDigest
 import java.time.DateTimeException
 import java.time.Instant
+import java.time.LocalTime
 import java.time.ZoneId
 import kotlin.math.floor
 
-internal const val ROLLING_FEATURE_DEFINITION = "dorvud.rolling-price-30m.v1"
+internal const val ROLLING_FEATURE_DEFINITION = "dorvud.observed-price-window.v2"
 internal const val ROLLING_FEATURE_SCHEMA = "dorvud.market-feature.v1"
-internal const val FEATURE_SESSION_POLICY = "alpaca.regular.new-york-date.v1"
+internal const val FEATURE_SESSION_POLICY = "alpaca.iex-clock-segments.new-york.v2"
 internal const val FEATURE_LOOKBACK_MINUTES = 30
 internal const val FEATURE_MAX_CLOCK_SKEW_MS = 5000L
 private const val MINUTE_MS = 60_000L
 private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
 private val featureZone = ZoneId.of("America/New_York")
+
+internal fun equityFeatureSegmentStart(eventTime: Instant): Long {
+  val local = eventTime.atZone(featureZone)
+  val time = local.toLocalTime()
+  val start =
+    when {
+      time < LocalTime.of(9, 30) -> LocalTime.of(8, 0)
+      time < LocalTime.of(16, 0) -> LocalTime.of(9, 30)
+      else -> LocalTime.of(16, 0)
+    }
+  return local
+    .toLocalDate()
+    .atTime(start)
+    .atZone(featureZone)
+    .toInstant()
+    .toEpochMilli()
+}
+
+internal fun executableIexSession(eventTime: Instant): String? {
+  val time = eventTime.atZone(featureZone).toLocalTime()
+  return when {
+    time < LocalTime.of(8, 0) || time >= LocalTime.of(17, 0) -> null
+    time < LocalTime.of(9, 30) -> "pre"
+    time < LocalTime.of(16, 0) -> "regular"
+    else -> "post"
+  }
+}
 
 @Serializable
 data class MarketFeatureInput(
@@ -95,7 +123,7 @@ internal fun rollingFeatureDefinitionHash(): String =
       listOf(
         ROLLING_FEATURE_DEFINITION,
         FEATURE_SESSION_POLICY,
-        "30xPT1M-complete",
+        "PT30M-maximum-context;observed-completed-minutes;gaps-unfilled",
         "binary64-times-1000000-round-half-positive-infinity",
         "bar-winner:ingestion-nanos,partition,offset",
         "raw-content:binary64-hex-v1",
@@ -164,7 +192,7 @@ internal fun validateMarketFeatureBar(
   computedAtMs: Long,
 ) {
   require(bar.provider == "alpaca" && bar.feed == "iex" && bar.delayClass == "real_time_exchange_only") { "unsupported feature feed" }
-  require(bar.marketSession == "regular" && bar.final) { "features require finalized regular-session bars" }
+  require(bar.marketSession == executableIexSession(bar.eventTime) && bar.final) { "features require finalized executable IEX bars" }
   require(bar.eventTime.nano == 0 && bar.eventTime.epochSecond % 60 == 0L) { "feature bar must be minute aligned" }
   require(bar.sourcePartition >= 0 && bar.sourceOffset >= 0) { "invalid feature source coordinates" }
   require(bar.ingestionTime.plusMillis(FEATURE_MAX_CLOCK_SKEW_MS) >= bar.eventTime.plusSeconds(60)) {
@@ -198,7 +226,12 @@ internal fun advanceRollingFeature(
       .toLocalDate()
       .toString()
   if (sessionDate < previous.sessionDate) return RollingFeatureTransition(previous, null)
-  val current = if (sessionDate == previous.sessionDate) previous else RollingFeatureState(sessionDate)
+  val segment = equityFeatureSegmentStart(bar.eventTime)
+  val previousSegment = previous.bars.lastOrNull()?.let { equityFeatureSegmentStart(it.eventTime) }
+  if (sessionDate == previous.sessionDate && previousSegment != null && segment < previousSegment) {
+    return RollingFeatureTransition(previous, null)
+  }
+  val current = if (sessionDate == previous.sessionDate && segment == previousSegment) previous else RollingFeatureState(sessionDate)
   require(current.bars.all { rollingFeatureKey(it) == rollingFeatureKey(bar) }) { "mixed feature identity" }
   val duplicate =
     current.bars.find {
@@ -211,16 +244,17 @@ internal fun advanceRollingFeature(
   }
   val existing = current.bars.find { it.eventTime == bar.eventTime }
   if (existing != null && compareFeatureBarRevision(bar, existing) <= 0) return RollingFeatureTransition(current, null)
-  val bars = (current.bars.filter { it.eventTime != bar.eventTime } + bar).sortedBy { it.eventTime }.takeLast(FEATURE_LOOKBACK_MINUTES)
+  val canonical = (current.bars.filter { it.eventTime != bar.eventTime } + bar).sortedBy { it.eventTime }
+  val end =
+    canonical
+      .last()
+      .eventTime
+      .plusSeconds(60)
+      .toEpochMilli()
+  val open = equityFeatureSegmentStart(canonical.last().eventTime)
+  val start = maxOf(open, end - FEATURE_LOOKBACK_MINUTES * MINUTE_MS)
+  val bars = canonical.filter { it.eventTime.toEpochMilli() >= start }
   val state = RollingFeatureState(sessionDate, bars, current.lastFeatureId)
-  if (bars.size != FEATURE_LOOKBACK_MINUTES) return RollingFeatureTransition(state, null)
-  val start = bars.first().eventTime.toEpochMilli()
-  if (bars.withIndex().any { (index, value) ->
-      value.eventTime.toEpochMilli() != start + index * MINUTE_MS
-    }
-  ) {
-    return RollingFeatureTransition(state, null)
-  }
   val material =
     RollingMarketFeatureMaterial(
       provider = bar.provider,
@@ -231,7 +265,7 @@ internal fun advanceRollingFeature(
       symbol = bar.symbol,
       sessionDate = sessionDate,
       windowStartMs = start,
-      windowEndMs = start + FEATURE_LOOKBACK_MINUTES * MINUTE_MS,
+      windowEndMs = end,
       inputs =
         bars.map { value ->
           MarketFeatureInput(

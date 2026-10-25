@@ -33,8 +33,8 @@ helmCharts:
 images:
   - name: ghcr.io/block/buzz
     newName: registry.ide-newton.ts.net/lab/buzz
-    newTag: kargo-sha-e458842a9ee7d4507f410599668476c80f2e05bb
-    digest: sha256:07c99a3a290c5d4859bebf6e6a4f0a5158a400402084d2737eb4b27fc1a6791b
+    newTag: kargo-sha-42e584fda0afaeb43082bfc989c57741e7d168e6
+    digest: sha256:d23221d54dbb8086234463cce252f2cbe4fd1a4231d2d2d55bc43e143ed3a1e2
 
 patches:
   - target:

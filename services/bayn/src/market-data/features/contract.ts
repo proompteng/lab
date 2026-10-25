@@ -1,4 +1,5 @@
-import { Data, Result, Schema } from 'effect'
+import { Result, Schema } from 'effect'
+import { equityClockSession, equityFeatureSegmentStartMs } from '../../equity-hours'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import type { IntradayBar } from '../intraday/model'
@@ -9,18 +10,19 @@ export enum MarketFeatureContract {
   V1 = 'dorvud.market-feature.v1',
 }
 export enum MarketFeatureDefinition {
-  RollingPrice30m = 'dorvud.rolling-price-30m.v1',
+  ObservedPriceWindow = 'dorvud.observed-price-window.v2',
 }
 export enum MarketFeatureSessionPolicy {
-  RegularNewYork = 'alpaca.regular.new-york-date.v1',
+  IexClockSegments = 'alpaca.iex-clock-segments.new-york.v2',
 }
 
-export const marketFeatureClockSkewAllowanceMs = 5000
+import { MarketFeatureFailure, MarketFeatureInputSchema, marketFeatureClockSkewAllowanceMs } from './feature-core'
+export { MarketFeatureFailure, MarketFeatureInputSchema, marketFeatureClockSkewAllowanceMs } from './feature-core'
 
 export const rollingFeatureDefinitionMaterial = [
-  MarketFeatureDefinition.RollingPrice30m,
-  MarketFeatureSessionPolicy.RegularNewYork,
-  '30xPT1M-complete',
+  MarketFeatureDefinition.ObservedPriceWindow,
+  MarketFeatureSessionPolicy.IexClockSegments,
+  'PT30M-maximum-context;observed-completed-minutes;gaps-unfilled',
   'binary64-times-1000000-round-half-positive-infinity',
   'bar-winner:ingestion-nanos,partition,offset',
   'raw-content:binary64-hex-v1',
@@ -44,14 +46,6 @@ export const RequiredMarketFeatureSchema = Schema.Struct({
   windowEndAt: UtcInstantSchema,
 })
 
-export const MarketFeatureInputSchema = Schema.Struct({
-  eventTimeNanos: IntegerString,
-  ingestionTimeNanos: IntegerString,
-  sourceTopic: Identity,
-  sourcePartition: SafeInteger,
-  sourceOffset: IntegerString,
-  contentHash: Hash,
-})
 export const RollingMarketValuesSchema = Schema.Struct({
   referencePriceMicros: PositiveIntegerString,
   rangeHighPriceMicros: PositiveIntegerString,
@@ -73,7 +67,7 @@ export const RollingMarketFeatureMaterialSchema = Schema.Struct({
   sessionPolicy: Schema.Enum(MarketFeatureSessionPolicy),
   windowStartMs: Timestamp,
   windowEndMs: Timestamp,
-  inputs: Schema.Array(MarketFeatureInputSchema).check(Schema.isMinLength(30), Schema.isMaxLength(30)),
+  inputs: Schema.Array(MarketFeatureInputSchema).check(Schema.isMinLength(1), Schema.isMaxLength(30)),
   values: RollingMarketValuesSchema,
 })
 export const RollingMarketFeatureSchema = Schema.Struct({
@@ -83,14 +77,7 @@ export const RollingMarketFeatureSchema = Schema.Struct({
   producerRevision: Schema.String.check(Schema.isMinLength(1)),
 })
 export type RollingMarketFeature = typeof RollingMarketFeatureSchema.Type
-export type MarketFeatureInput = typeof MarketFeatureInputSchema.Type
 export type RollingMarketValues = typeof RollingMarketValuesSchema.Type
-
-export class MarketFeatureFailure extends Data.TaggedError('MarketFeatureFailure')<{
-  readonly reason: 'schema' | 'identity' | 'window' | 'hash' | 'input'
-  readonly message: string
-  readonly cause?: unknown
-}> {}
 
 const failure = (reason: MarketFeatureFailure['reason'], message: string, cause?: unknown) =>
   new MarketFeatureFailure({ reason, message, ...(cause === undefined ? {} : { cause }) })
@@ -138,26 +125,35 @@ export const decodeRollingMarketFeature = (value: unknown): Result.Result<Rollin
       return yield* Result.fail(failure('hash', 'feature identity does not match its content'))
     if (
       material.windowStartMs % 60_000 !== 0 ||
-      material.windowEndMs - material.windowStartMs !== 30 * 60_000 ||
+      material.windowEndMs % 60_000 !== 0 ||
+      material.windowEndMs <= material.windowStartMs ||
+      material.windowEndMs - material.windowStartMs > 30 * 60_000 ||
+      equityClockSession(new Date(material.windowStartMs).toISOString()) === null ||
+      equityClockSession(new Date(material.windowEndMs - 1).toISOString()) === null ||
+      equityFeatureSegmentStartMs(material.windowStartMs) !== equityFeatureSegmentStartMs(material.windowEndMs - 1) ||
       feature.computedAtMs + marketFeatureClockSkewAllowanceMs < material.windowEndMs ||
       newYorkDate.format(material.windowStartMs) !== material.sessionDate ||
       newYorkDate.format(material.windowEndMs - 1) !== material.sessionDate
     )
-      return yield* Result.fail(failure('window', 'feature does not describe a complete same-session window'))
+      return yield* Result.fail(failure('window', 'feature does not describe a bounded completed same-session window'))
     const coordinates = new Set<string>()
     const topics = new Set<string>()
-    for (const [index, input] of material.inputs.entries()) {
+    let previousEvent = BigInt(material.windowStartMs) * 1_000_000n - 1n
+    for (const input of material.inputs) {
       if (BigInt(input.sourceOffset) > 9_223_372_036_854_775_807n || input.sourcePartition > 2_147_483_647)
         return yield* Result.fail(failure('input', 'feature input coordinates exceed the Kafka integer domain'))
       if (
-        BigInt(input.eventTimeNanos) !== BigInt(material.windowStartMs + index * 60_000) * 1_000_000n ||
+        BigInt(input.eventTimeNanos) <= previousEvent ||
+        BigInt(input.eventTimeNanos) < BigInt(material.windowStartMs) * 1_000_000n ||
+        BigInt(input.eventTimeNanos) >= BigInt(material.windowEndMs) * 1_000_000n ||
+        BigInt(input.eventTimeNanos) % 60_000_000_000n !== 0n ||
         BigInt(input.ingestionTimeNanos) + BigInt(marketFeatureClockSkewAllowanceMs) * 1_000_000n <
           BigInt(input.eventTimeNanos) + 60_000_000_000n ||
         BigInt(input.ingestionTimeNanos) >
           BigInt(feature.computedAtMs + marketFeatureClockSkewAllowanceMs) * 1_000_000n + 999_999n
       ) {
         return yield* Result.fail(
-          failure('input', 'feature input is non-contiguous, premature, or unavailable at computation'),
+          failure('input', 'feature input is unordered, outside the window, premature, or unavailable at computation'),
         )
       }
       const coordinate = `${input.sourceTopic}:${input.sourcePartition}:${input.sourceOffset}`
@@ -165,7 +161,10 @@ export const decodeRollingMarketFeature = (value: unknown): Result.Result<Rollin
         return yield* Result.fail(failure('input', 'feature repeats a source coordinate'))
       coordinates.add(coordinate)
       topics.add(input.sourceTopic)
+      previousEvent = BigInt(input.eventTimeNanos)
     }
+    if (previousEvent + 60_000_000_000n !== BigInt(material.windowEndMs) * 1_000_000n)
+      return yield* Result.fail(failure('input', 'feature lacks the latest completed minute'))
     if (topics.size !== 1) return yield* Result.fail(failure('input', 'feature inputs mix source topics'))
     const values = material.values
     const prices = [
@@ -234,7 +233,7 @@ export const featureMatchesBars = (
         bar.universeId !== material.universeId ||
         bar.universeSymbolHash !== material.universeSymbolHash ||
         bar.symbol !== material.symbol ||
-        bar.marketSession !== 'regular' ||
+        bar.marketSession !== equityClockSession(bar.eventAt) ||
         !bar.final ||
         input.eventTimeNanos !== String(intradayInstantNanos(bar.eventAt)) ||
         input.ingestionTimeNanos !== String(intradayInstantNanos(bar.ingestedAt)) ||

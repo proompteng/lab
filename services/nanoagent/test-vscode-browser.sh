@@ -2,6 +2,9 @@
 set -euo pipefail
 
 repository="$(cd "$(dirname "$0")/../.." && pwd)"
+if [[ "${TENGRI_RUNTIME_STATE_FIXTURE:-}" != 1 ]]; then
+  exec bash "$repository/services/ofz/test-control.sh" editor "$@"
+fi
 if [[ "$(uname -s)" == Linux && -z "${TENGRI_BROWSER_TEST_IMAGE:-}" && "${1:-}" != --editor-only ]]; then
   # Native editor acceptance shares files with the test driver. Browser acceptance
   # gets a separate container because ARC's host disables user namespaces.
@@ -17,7 +20,7 @@ cleanup() {
   local result=$?
   trap - EXIT INT TERM
   curl --max-time 3 -fsS -X POST http://127.0.0.1:8080/_test/shutdown >/dev/null 2>&1 || true
-  curl --max-time 3 -fsS -X POST http://localhost:33082/_test/shutdown >/dev/null 2>&1 || true
+  curl --max-time 3 -fsS -X POST http://localhost:18082/_test/shutdown >/dev/null 2>&1 || true
   for ((attempt = 0; attempt < 50; attempt++)); do
     if [[ -z "${fixture_guest_pid:-}" ]] || ! kill -0 "$fixture_guest_pid" 2>/dev/null; then break; fi
     sleep .1
@@ -43,12 +46,22 @@ cleanup() {
 # Refuse to attach to an unrelated process or send it a shutdown request.
 python3 - <<'PY'
 import socket
-for port in (8080, 13338, 3143, 33082, 33083, 3443):
+from pathlib import Path
+ports = (8080, 13338, 3143, 18082, 18083, 3443)
+ephemeral = Path('/proc/sys/net/ipv4/ip_local_port_range')
+if ephemeral.exists():
+    first, last = map(int, ephemeral.read_text().split())
+    if any(first <= port <= last for port in ports):
+        raise SystemExit('Fixture listeners overlap the configured ephemeral port range')
+for port in ports:
     with socket.socket() as listener:
         # The preceding editor fixture can leave closed connections in TIME_WAIT.
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(('127.0.0.1', port))
-        listener.listen()
+        try:
+            listener.bind(('127.0.0.1', port))
+            listener.listen()
+        except OSError as error:
+            raise SystemExit(f'Fixture listener port {port} is unavailable: {error.strerror}') from error
 PY
 trap cleanup EXIT INT TERM
 mkdir -p "$fixture_root/home/workspace"
@@ -98,7 +111,7 @@ if [[ -n "${TENGRI_BROWSER_TEST_IMAGE:-}" ]]; then
     -e TENGRI_EDITOR_TEST_BIND_ADDR=0.0.0.0:8080 -e TENGRI_BROWSER_TEST_BINARY=/usr/local/bin/launch-browser \
     -e TENGRI_BROWSER_TEST_BOOTSTRAP=/usr/local/bin/bootstrap-browser -e TENGRI_BROWSER_TEST_ASSETS=/usr/share/nanoagent/novnc \
     --entrypoint /bin/bash "$TENGRI_BROWSER_TEST_IMAGE" \
-    -c "$fixture_bootstrap && mkdir -p /home/nanoagent/workspace && exec /tmp/nanoagent.test -test.run '^TestEditorBrowserFixture$' -test.timeout 0 -test.v" >/dev/null
+    -c "$fixture_bootstrap && mkdir -p /home/nanoagent/workspace && rm -rf /home/nanoagent/.tengri/browser/profile && exec /tmp/nanoagent.test -test.run '^TestEditorBrowserFixture$' -test.timeout 0 -test.v" >/dev/null
   docker cp "$fixture_root/nanoagent.test" "$fixture_container:/tmp/nanoagent.test"
   docker cp "$repository/services/nanoagent/launch-browser.sh" "$fixture_container:/usr/local/bin/launch-browser"
   docker start "$fixture_container" >/dev/null
@@ -127,15 +140,14 @@ fixture_pids="$fixture_pids $!"
   printf '%s' 'isolated-playwright-client-secret-not-production' > "$fixture_root/oidc-secret"
   export TENGRI_DESKTOP_ORIGIN="$TENGRI_PLAYWRIGHT_BASE_URL"
   export TENGRI_OIDC_CLIENT_SECRET_FILE="$fixture_root/oidc-secret"
-  export TENGRI_DATABASE_DSN=postgres://tengri_bff@localhost:65534/tengri_control
-  export TENGRI_DATABASE_PASSWORD_FILE="$fixture_root/oidc-secret"
-  export TENGRI_DATABASE_CA_FILE="$fixture_root/tls.crt"
+  export TENGRI_DATABASE_DSN="${TENGRI_BFF_DATABASE_DSN:?Disposable BFF database required}"
   export OFZ_GRPC_ENDPOINT=localhost:65535
   export TENGRI_GRPC_ENDPOINT=localhost:65535
   export SPIFFE_ENDPOINT_SOCKET="unix://$fixture_root/workload-api.sock"
   export SPIFFE_ID=spiffe://proompteng.ai/ns/proompteng/sa/proompteng
   export TENGRI_SPIFFE_ID=spiffe://proompteng.ai/ns/tengri/sa/tengri
-  export TENGRI_INTERNAL_HMAC_SECRET=playwright-tengri-hmac-secret-0000000000
+  printf '%s' '6868686868686868686868686868686868686868686868686868686868686868' > "$fixture_root/TENGRI_INTERNAL_HMAC_SECRET"
+  export TENGRI_BFF_SECRET_DIR="$fixture_root"
   if [[ "${TENGRI_EDITOR_NEXT_MODE:-dev}" == start ]]; then
     mkdir -p "$fixture_root/desktop/apps/landing/.next" "$fixture_root/desktop/services/tengri"
     cp -R .next/standalone/. "$fixture_root/desktop/"
@@ -154,7 +166,7 @@ import http.client, json, socket, sys, time
 # Linux probe source ports can overlap fixture listeners and even self-connect.
 # A distinct loopback address avoids both without changing fixture ports.
 source_address = ('127.0.0.2', 0) if sys.platform == 'linux' else None
-for port in (8080, 33082, 33083, 3143, 3443):
+for port in (8080, 18082, 18083, 3143, 3443):
     deadline = time.monotonic() + 300
     while True:
         try:

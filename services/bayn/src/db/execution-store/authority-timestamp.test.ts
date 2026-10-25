@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
 
 import { Authority, KillState } from '../../execution/contracts'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { riskContextFromRow } from '../../reconciliation/algebra'
 import { authorityStateFromRow } from './authority-shared'
 import { UtcDatabaseInstantSchema } from '../../schemas'
@@ -51,8 +51,10 @@ test.each(['2026-08-28T14:58:00.038Z', '2026-08-28T14:58:00.038402Z'])(
     expect(stored).toEqual(expected)
     expect(reconciled.authority).toEqual(expected)
     expect(reconciled.authorityObservedAt).toBe('2026-08-28T14:58:00.038Z')
-    expect(canonicalHashV1(stored)).toBe(canonicalHashV1(expected))
-    expect(canonicalHashV1(reconciled.authority)).toBe(canonicalHashV1(expected))
+    expect(Result.getOrThrow(canonicalHashV1Result(stored))).toBe(Result.getOrThrow(canonicalHashV1Result(expected)))
+    expect(Result.getOrThrow(canonicalHashV1Result(reconciled.authority))).toBe(
+      Result.getOrThrow(canonicalHashV1Result(expected)),
+    )
     expect(
       Result.isFailure(riskContextFromRow({ ...riskRow, authority_updated_at: '2026-08-28T14:58:00.039001Z' }, 0)),
     ).toBe(true)

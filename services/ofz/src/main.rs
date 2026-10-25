@@ -2,24 +2,27 @@ use std::{env, path::PathBuf};
 
 use anyhow::bail;
 use ofz::{
-    commands, native::Native, proto::authorization_service_server::AuthorizationServiceServer,
-    service::Service, sessions::Issuer, store::Database, transport,
+    bootstrap::{self, Manifest, Operation},
+    commands,
+    native::Native,
+    proto::authorization_service_server::AuthorizationServiceServer,
+    service::Service,
+    sessions::Issuer,
+    store::Database,
+    transport,
 };
 use tokio::net::TcpListener;
-use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .map_err(|_| anyhow::anyhow!("TLS crypto provider already installed"))?;
-    tracing_subscriber::fmt()
-        .json()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    let _telemetry = ofz::telemetry::init("ofz")?;
+    if env::args().nth(1).as_deref() == Some("telemetry-check") {
+        println!("{}", _telemetry.verify()?);
+        return Ok(());
+    }
     let database = Database::from_environment().await?;
     match env::args().nth(1).as_deref() {
         Some("migrate") => {
@@ -30,8 +33,26 @@ async fn main() -> anyhow::Result<()> {
             database.migrate_runtime().await?;
             return Ok(());
         }
+        Some(command @ ("bootstrap" | "activate")) => {
+            if env::args().len() != 3 {
+                bail!("bootstrap and activate require one protected manifest path");
+            }
+            let manifest = Manifest::read(std::path::Path::new(&env::args().nth(2).unwrap()))?;
+            let native = Native::new(
+                &env::var("OFZ_SPICEDB_ENDPOINT")?,
+                PathBuf::from(env::var("OFZ_SPICEDB_KEY_FILE")?),
+            )?;
+            let operation = if command == "bootstrap" {
+                Operation::Bootstrap
+            } else {
+                Operation::Activate
+            };
+            let report = bootstrap::execute(&database, &native, operation, manifest).await?;
+            println!("{}", serde_json::to_string(&report)?);
+            return Ok(());
+        }
         Some("serve") | None => {}
-        _ => bail!("expected serve, migrate or migrate-runtime"),
+        _ => bail!("expected serve, migrate, migrate-runtime, bootstrap or activate"),
     }
     database.verify_schema().await?;
     tracing::debug!("control database schema verified");
@@ -53,13 +74,15 @@ async fn main() -> anyhow::Result<()> {
         contract_version = ofz::CONTRACT_VERSION,
         "Ofz authorization API listening"
     );
-    Server::builder()
-        .load_shed(true)
-        .concurrency_limit_per_connection(32)
-        .timeout(std::time::Duration::from_secs(5))
+    transport::server()
+        .layer(
+            tower_http::trace::TraceLayer::new_for_grpc()
+                .make_span_with(ofz::telemetry::RequestSpan)
+                .on_failure(ofz::telemetry::grpc_failure),
+        )
         .add_service(
             AuthorizationServiceServer::new(Service::new(database, native, issuer))
-                .max_decoding_message_size(65536)
+                .max_decoding_message_size(128 * 1024)
                 .max_encoding_message_size(1_048_576),
         )
         .serve_with_incoming_shutdown(transport::incoming(listener, tls), async {

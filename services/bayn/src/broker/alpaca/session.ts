@@ -7,7 +7,7 @@ import { alpacaHttpLayer, make } from './http'
 import { BrokerRead, type BrokerReadShape, type ReadPreflight } from './model'
 import { BrokerAccountPreflightError, verifyReadAccess } from './preflight'
 import { mapLayerAcquisitionError } from '../../resource-boundary'
-import { Pipeable } from '../../pipeable'
+
 import { makeProjectedBrokerRead } from './snapshot-cache'
 import { BrokerObservations } from './observed-snapshot'
 
@@ -80,7 +80,7 @@ const acquisitionError = (
 const isRetryableBrokerSessionAcquisition = (error: BrokerSessionAcquisitionError): boolean =>
   error.cause instanceof BrokerReadError && error.cause.retryable
 
-const retryRecoverableBrokerSessionAcquisitionDataFirst = <A, R>(
+export const retryRecoverableBrokerSessionAcquisition = <A, R>(
   connection: BrokerConnection,
   effect: Effect.Effect<A, BrokerSessionAcquisitionError, R>,
 ): Effect.Effect<A, BrokerSessionAcquisitionError, R> =>
@@ -107,13 +107,6 @@ const retryRecoverableBrokerSessionAcquisitionDataFirst = <A, R>(
       )
     return yield* attempt(connection.retryAttempts)
   })
-
-export const retryRecoverableBrokerSessionAcquisition = Pipeable.generic<
-  <A, R>(
-    effect: Effect.Effect<A, BrokerSessionAcquisitionError, R>,
-  ) => (connection: BrokerConnection) => Effect.Effect<A, BrokerSessionAcquisitionError, R>,
-  typeof retryRecoverableBrokerSessionAcquisitionDataFirst
->(2, retryRecoverableBrokerSessionAcquisitionDataFirst)
 
 export const acquireBrokerSession = (
   connection: BrokerConnection,
@@ -165,13 +158,11 @@ export const cachedLayer = (
   ).pipe(Layer.provideMerge(session))
 }
 
-const mapHttpAcquisitionErrorDataFirst = (
+export const mapHttpAcquisitionError = (
   connection: BrokerConnection,
   http: Layer.Layer<HttpClient.HttpClient, BrokerReadError>,
 ): Layer.Layer<HttpClient.HttpClient, BrokerSessionAcquisitionError> =>
   mapLayerAcquisitionError(http, (cause) => acquisitionError(connection, cause))
-
-export const mapHttpAcquisitionError = Pipeable.dual(2, mapHttpAcquisitionErrorDataFirst)
 
 export const live = (
   connection: BrokerConnection,

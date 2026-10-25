@@ -6,7 +6,7 @@ import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
 import { PostgresClientLive } from '../db/postgres-client'
 import { Sha256Schema } from '../schemas'
 import { JevCandidatePlanStatus } from './batch'
-import { JevBatchStore, recoverJevBatch } from './batch-evaluation'
+import { JevBatchStore } from './batch-evaluation'
 import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevEvaluationStore } from './evaluation'
 import { tradingSignalInferenceFixture } from './trading-signal.test-support'
@@ -27,7 +27,7 @@ const main = Effect.gen(function* () {
   yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     if (mode === 'recover') {
-      const recovered = yield* recoverJevBatch(batchId)
+      const recovered = yield* Effect.flatMap(JevBatchStore, (store) => store.finish(batchId))
       yield* fs.writeFileString(resultPath, JSON.stringify(recovered), { flag: 'wx' })
       return
     }
@@ -37,7 +37,8 @@ const main = Effect.gen(function* () {
       return yield* new JevEvidenceError({ message: 'Jev batch worker has no planned request' })
     const request = candidate.request
     const store = yield* JevEvaluationStore
-    yield* store.begin(request)
+    if ((yield* store.read(request.requestId)) === null)
+      return yield* new JevEvidenceError({ message: 'Worker requires its committed batch claim' })
     if (mode === 'record')
       yield* store.record(
         request,

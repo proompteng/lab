@@ -6,7 +6,7 @@ import { PostgresClientLive } from './db/postgres-client'
 import { researchLedgerReaderConfig, researchReaderConfig } from './db/research-reader-config'
 import { canonicalJsonV1Result } from './hash'
 import { InferenceCostError, makeInferenceCostReport } from './inference-costs'
-import { readInferenceCostEvidence } from './inference-costs-postgres'
+import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { makeOperatingCostReport } from './operating-costs'
 import { readOperatingCostPacket } from './operating-cost-files'
 import { IsoDateSchema } from './schemas'
@@ -85,7 +85,7 @@ const readSession = (sessionDate: string) =>
     const config = yield* researchReaderConfig
     const read = Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
-      return yield* readInferenceCostEvidence(sql, Redacted.value(config.accountId), sessionDate)
+      return (yield* readInferenceExpenseSnapshot(sql, Redacted.value(config.accountId), sessionDate)).evidence
     })
     return yield* read.pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- read-only command owns the scoped database layer
@@ -112,19 +112,15 @@ export const readInferenceExpenseSession = (sessionDate: string) =>
       const read = Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const accountId = Redacted.value(config.accountId)
-        const evidence = yield* readInferenceCostEvidence(sql, accountId, sessionDate)
-        const rows = yield* makeInferenceExpenseStore(sql, accountId).session(sessionDate)
+        const snapshot = yield* readInferenceExpenseSnapshot(sql, accountId, sessionDate)
+        const { evidence, quotes: rows } = snapshot
+        const store = makeInferenceExpenseStore(sql, accountId)
         const coverage = yield* Effect.fromResult(verifyInferenceExpenseCoverage(evidence, accountId, rows))
         const client = yield* makeTigerBeetleRequestClient({
           operationTimeoutMs: 30_000,
           tigerBeetle: { ...tigerBeetle, ledger: inferenceExpenseLedger },
         })
-        const ledger = yield* readInferenceExpenseLedger(
-          client,
-          evidence.accountBindingHash,
-          sessionDate,
-          rows.map((row) => row.quote),
-        )
+        const ledger = yield* readInferenceExpenseLedger(client, snapshot, store.currentSession(sessionDate))
         return { ...ledger, coverage, ledgerObservedAt: DateTime.formatIso(yield* DateTime.now) }
       })
       return yield* read.pipe(

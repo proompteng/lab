@@ -1,4 +1,3 @@
----
 apiVersion: v1
 kind: Service
 metadata:
@@ -38,7 +37,7 @@ metadata:
     app: keycloak
 spec:
   serviceName: keycloak-discovery
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: keycloak
@@ -49,8 +48,9 @@ spec:
     spec:
       containers:
         - name: keycloak
-          image: quay.io/keycloak/keycloak:26.7.3@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54
-          args: ["start"]
+          image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+          args:
+            - start
           env:
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
               valueFrom:
@@ -63,31 +63,25 @@ spec:
                   name: keycloak-admin
                   key: password
             - name: KC_PROXY_HEADERS
-              value: "xforwarded"
+              value: xforwarded
             - name: KC_HTTP_ENABLED
               value: "true"
             - name: KC_HOSTNAME
-              value: "auth.proompteng.ai"
+              value: https://auth.proompteng.ai
             - name: KC_HOSTNAME_STRICT
-              value: "false"
+              value: "true"
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_CACHE
-              value: "ispn"
+              value: ispn
             - name: POD_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
             - name: KC_CACHE_EMBEDDED_NETWORK_BIND_ADDRESS
-              value: "$(POD_IP)"
-            - name: KC_DB_URL_DATABASE
-              value: "keycloak"
-            - name: KC_DB_URL_HOST
-              value: "keycloak-db-rw"
-            - name: KC_DB_URL_PORT
-              value: "5432"
+              value: $(POD_IP)
             - name: KC_DB
-              value: "postgres"
+              value: postgres
             - name: KC_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -98,6 +92,28 @@ spec:
                 secretKeyRef:
                   name: keycloak-db-app
                   key: username
+            - name: KC_CACHE_STACK
+              value: jdbc-ping
+            - name: KC_CACHE_EMBEDDED_MTLS_ENABLED
+              value: "true"
+            - name: KC_SPI_CACHE_EMBEDDED__DEFAULT__NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: KC_SPI_CACHE_EMBEDDED__DEFAULT__MACHINE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: KC_DB_URL
+              value: jdbc:postgresql://keycloak-db-rw.keycloak.svc.cluster.local:5432/keycloak?sslmode=verify-full&sslrootcert=/var/run/keycloak/database-ca/ca.crt&connectTimeout=2&socketTimeout=5
+            - name: KC_DB_POOL_INITIAL_SIZE
+              value: "2"
+            - name: KC_DB_POOL_MIN_SIZE
+              value: "2"
+            - name: KC_DB_POOL_MAX_SIZE
+              value: "20"
+            - name: KC_DB_POOL_ACQUISITION_TIMEOUT
+              value: 5s
           ports:
             - name: http
               containerPort: 8080
@@ -130,3 +146,68 @@ spec:
             requests:
               cpu: 500m
               memory: 1700Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: database-ca
+              mountPath: /var/run/keycloak/database-ca
+              readOnly: true
+            - name: login-theme
+              mountPath: /opt/keycloak/themes/tengri/login
+              readOnly: true
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: keycloak
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: database-ca
+          secret:
+            secretName: keycloak-db-ca
+            defaultMode: 288
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: login-theme
+          configMap:
+            name: keycloak-tengri-login-theme
+            items:
+              - key: theme.properties
+                path: theme.properties
+              - key: webauthnRegister.js
+                path: resources/js/webauthnRegister.js
+              - key: webauthnAuthenticate.js
+                path: resources/js/webauthnAuthenticate.js
+              - key: webauthn-authenticate.ftl
+                path: webauthn-authenticate.ftl
+              - key: template.ftl
+                path: template.ftl
+              - key: tengri.css
+                path: resources/css/tengri.css
+              - key: messages_en.properties
+                path: messages/messages_en.properties
+              - key: fruit-pear.svg
+                path: resources/img/fruit-pear.svg
+              - key: wallpaper.webp
+                path: resources/img/wallpaper.webp
+              - key: GeistSans.woff2
+                path: resources/fonts/GeistSans.woff2
+              - key: OFL.txt
+                path: resources/fonts/OFL.txt
+              - key: pictogrammers-LICENSE.txt
+                path: resources/img/pictogrammers-LICENSE.txt

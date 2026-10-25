@@ -4,7 +4,7 @@ import { DateTime, Result } from 'effect'
 
 import { prepareAccounting } from '../../accounting/domain'
 import type { BrokerEventInput, PositionEventInput, PositionSnapshotInput } from '../../broker/observations'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { AccountStatus, Broker, OrderSide, type AccountingReceipt, type Fill } from '../../execution/contracts'
 import {
   brokerEventIdResult,
@@ -28,7 +28,7 @@ import type { EventRow, PositionRow, PositionSnapshotRow } from './rows'
 const accountId = 'paper-account-1'
 const occurredAt = '2026-07-22T15:30:00.000Z'
 const observedAt = '2026-07-22T15:30:01.000Z'
-const hash = (value: string): string => canonicalHashV1({ value })
+const hash = (value: string): string => Result.getOrThrow(canonicalHashV1Result({ value }))
 const sqlTimestamp = (value: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value))
 const invalidSqlTimestamp = (): Date => {
   const value = Object.create(Date.prototype) as Date
@@ -57,7 +57,8 @@ const accountEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Account' }>
   occurredAt,
   observedAt,
   account: {
-    schemaVersion: 'bayn.paper-account-snapshot.v1',
+    schemaVersion: 'bayn.paper-account-snapshot.v2',
+    cryptoFeeTier: null,
     accountId,
     status: AccountStatus.Active,
     currency: 'USD',
@@ -82,10 +83,14 @@ const positionEvent = (
   occurredAt: observedAt,
   observedAt,
   position: {
-    schemaVersion: 'bayn.paper-position.v1',
+    schemaVersion: 'bayn.position.v2',
+    costBasisMicros: (
+      (BigInt(marketValueMicros.startsWith('-') ? '-500000' : '2000000') * BigInt('100000000')) /
+      1_000_000_000n
+    ).toString(),
     accountId,
     symbol,
-    quantityMicros: marketValueMicros.startsWith('-') ? '-500000' : '2000000',
+    quantityAtoms: marketValueMicros.startsWith('-') ? '-500000' : '2000000',
     averageEntryPriceMicros: '100000000',
     marketPriceMicros: '100000000',
     marketValueMicros,
@@ -108,20 +113,20 @@ const positionSnapshot = (): PositionSnapshotInput => {
 }
 
 const accountingFill: Fill = {
-  schemaVersion: 'bayn.paper-fill.v1',
+  schemaVersion: 'bayn.fill.v2',
   accountId,
   fillId: 'fill-1',
   brokerOrderId: 'broker-order-1',
   clientOrderId: 'client-order-1',
   symbol: 'NVDA',
   side: OrderSide.Buy,
-  quantityMicros: '1000000',
-  priceMicros: '100000000',
+  quantityAtoms: '1000000000',
+  priceAtoms: '100000000000',
   feeMicros: '0',
   occurredAt,
 }
 
-const preparedResult = prepareAccounting('a'.repeat(64), accountingFill, { quantityMicros: '0', costMicros: '0' }, 7001)
+const preparedResult = prepareAccounting('a'.repeat(64), accountingFill, { quantityAtoms: '0', costMicros: '0' }, 7001)
 if (Result.isFailure(preparedResult)) throw new Error(`accounting fixture failed: ${preparedResult.failure._tag}`)
 const prepared = preparedResult.success
 const receiptPlan = value(planAccountingReceipt(prepared, '1', 7001))

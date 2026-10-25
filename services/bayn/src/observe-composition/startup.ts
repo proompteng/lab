@@ -1,7 +1,7 @@
 import { Effect, Result, Schema } from 'effect'
 import { BrokerEnvironment } from '../broker/identity'
 import type { AutonomousCycleDriverStartup } from '../app'
-import { makeCycleExecutionPolicyFromModel } from '../cycle'
+import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { AuthorityGenerationStore } from '../db/execution-store'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
@@ -74,7 +74,7 @@ export const prepareObserveStartup = (
   const decodedExecutionModel = decodeStrategyExecutionModel(input.strategy)
   if (Result.isFailure(decodedExecutionModel)) return Result.fail(decodedExecutionModel.failure)
   const executionModel = decodedExecutionModel.success
-  if (executionModel.schemaVersion !== 'bayn.execution-model.v5') {
+  if (executionModel.schemaVersion !== 'bayn.execution-model.v6') {
     return Result.fail(
       operationalError({
         component: 'strategy',
@@ -140,16 +140,16 @@ export const loadStrategyExecutionRiskPolicy = (
   riskPolicyHash?: string,
 ) =>
   Effect.gen(function* () {
-    const executionModel = yield* Effect.fromResult(decodeStrategyExecutionModel(strategy))
+    yield* Effect.fromResult(decodeStrategyExecutionModel(strategy))
     const symbols = strategyDefinition(strategy).parameters.universe
-    const retainedPolicy = yield* loadExecutionRiskPolicy(accountId, symbols, executionModel)
+    const retainedPolicy = yield* loadExecutionRiskPolicy(accountId, symbols)
     if (
       riskPolicyHash === undefined ||
       riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(retainedPolicy)))
     )
       return retainedPolicy
     if (brokerEnvironment === BrokerEnvironment.Sandbox) {
-      const paperPolicy = yield* loadExecutionRiskPolicy(accountId, symbols, executionModel, BrokerEnvironment.Sandbox)
+      const paperPolicy = yield* loadExecutionRiskPolicy(accountId, symbols, BrokerEnvironment.Sandbox)
       if (riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(paperPolicy)))) return paperPolicy
     }
     return yield* operationalError({

@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Schema } from 'effect'
+import { Context, Effect, Schema } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
 import { InferenceCostError } from './inference-costs'
@@ -23,6 +23,21 @@ const ReportRowSchema = Schema.Struct({
   payload: Schema.Unknown,
   verifiedAt: Schema.NullOr(UtcInstantSchema),
 })
+
+export const decodeInferenceExpenseSessionRows = (input: unknown, sessionDate: string) =>
+  Effect.gen(function* () {
+    const rows = yield* Schema.decodeUnknownEffect(Schema.Array(ReportRowSchema), strictParseOptions)(input)
+    if (rows.length > 10_000)
+      return yield* new InferenceCostError({ message: 'Inference expense session exceeds the complete-report limit' })
+    return yield* Effect.forEach(rows, (row) =>
+      Effect.gen(function* () {
+        const quote = yield* Effect.fromResult(decodeInferenceExpenseQuote(row.payload))
+        if (quote.quoteHash !== row.quoteHash || quote.sessionDate !== sessionDate)
+          return yield* new InferenceCostError({ message: 'Inference expense session quote identity differs' })
+        return { quote, verifiedAt: row.verifiedAt }
+      }),
+    )
+  })
 
 export const makeInferenceExpenseStore = (
   sql: PgClient.PgClient,
@@ -138,17 +153,15 @@ export const makeInferenceExpenseStore = (
         to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "verifiedAt"
       FROM inference_expense_quotes WHERE account_id = ${accountId} AND session_date = ${sessionDate}::date
       ORDER BY quote_hash COLLATE "C" LIMIT 10001
-    `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ReportRowSchema), strictParseOptions)))
-      if (rows.length > 10_000)
-        return yield* new InferenceCostError({ message: 'Inference expense session exceeds the complete-report limit' })
-      return yield* Effect.forEach(rows, (row) =>
-        Effect.gen(function* () {
-          const quote = yield* Effect.fromResult(decodeInferenceExpenseQuote(row.payload))
-          if (quote.quoteHash !== row.quoteHash || quote.sessionDate !== sessionDate)
-            return yield* new InferenceCostError({ message: 'Inference expense session quote identity differs' })
-          return { quote, verifiedAt: row.verifiedAt }
-        }),
-      )
+    `
+      return yield* decodeInferenceExpenseSessionRows(rows, sessionDate)
     })
-  return { newSources, freeze, pending, acknowledge, session }
+  // Owner discovery must see quotes committed after an enclosing report's repeatable-read snapshot.
+  const currentSession = (sessionDate: string) =>
+    session(sessionDate).pipe(
+      Effect.updateContext((context: Context.Context<never>) =>
+        Context.omit(sql.transactionService, sql.transactionSemaphoreService)(context),
+      ),
+    )
+  return { newSources, freeze, pending, acknowledge, session, currentSession }
 }

@@ -1,15 +1,17 @@
-import { makeReplayCheckpointStore } from './checkpoint-store'
+import { equityMarketProfile } from '../jev/markets'
+import { makeReplayCheckpointStore } from './checkpoint-store.test-support'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Config, Effect, FileSystem, Layer, Redacted, Result, Schema } from 'effect'
+import { Clock, Config, Effect, FileSystem, Layer, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { WriterFenceLive } from '../execution/writer-fence'
-import { IntentStoreLive, BlockedCycleIntentStoreLive } from '../execution/intents'
-import { MutationStoreLive } from '../execution/mutations'
+import { IntentStoreLive } from '../execution/intents/postgres'
+import { BlockedCycleIntentStoreLive } from '../execution/intents/blocked-cycle-postgres'
+import { MutationStoreLive } from '../execution/mutations/program'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { AssetClass, AssetExchange, AssetStatus, MarketCalendarResponseSchema } from '../broker/alpaca/model'
@@ -18,7 +20,7 @@ import { JournalLive } from '../ledger'
 import { Sha256Schema } from '../schemas'
 import { canonicalJsonV1Result } from '../hash'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { config as baseConfig, fixtureRuntime } from '../testing/runtime-fixtures'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
@@ -36,10 +38,6 @@ const main = Effect.scoped(
     const runId = yield* Schema.decodeUnknownEffect(Sha256Schema)(rawRunId)
     const postgresUrl = yield* Config.Redacted('BAYN_TEST_POSTGRES_URL')
     const tigerAddress = yield* Config.String('BAYN_TEST_TIGERBEETLE_ADDRESS')
-    if (!Redacted.value(postgresUrl).endsWith('/bayn_test'))
-      return yield* new ReplayBrokerFailure({
-        message: 'Restart acceptance requires its disposable bayn_test database',
-      })
     const accountId = `replay-${runId}`
     const config: RuntimeConfig = {
       ...baseConfig,
@@ -106,7 +104,7 @@ const main = Effect.scoped(
         assumptions: { latencyMs: 10, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
         fractionalTrading: false,
         calendar: Result.getOrThrow(Schema.decodeUnknownResult(MarketCalendarResponseSchema)(fixture.input.calendar)),
-        assets: fixture.protocol.universe.map((symbol, index) =>
+        assets: equityMarketProfile.universe.map((symbol, index) =>
           Result.getOrThrow(
             normalizeAssetResult(
               {
@@ -178,8 +176,6 @@ const main = Effect.scoped(
       (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
       const state = yield* broker.snapshot
       const readAuthority = runtime.store.authorityGeneration.readAuthorityState
-      if (readAuthority === undefined)
-        return yield* new ReplayBrokerFailure({ message: 'Restart acceptance requires durable authority readback' })
       const authority = yield* readAuthority
       yield* fs.writeFileString(
         resultPath,

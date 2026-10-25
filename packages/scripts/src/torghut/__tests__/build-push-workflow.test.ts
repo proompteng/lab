@@ -350,7 +350,7 @@ describe('torghut build-push workflow', () => {
     const landingStep = pullRequestWorkflow.indexOf('- name: Run landing validation')
     const validationStep = pullRequestWorkflow.indexOf('- name: Run selected validation')
     const landingValidation = pullRequestWorkflow.slice(landingStep, validationStep)
-    const browserInstall = landingValidation.indexOf('bunx playwright install --with-deps chromium')
+    const browserInstall = landingValidation.indexOf('node .github/scripts/install-tengri-chromium.mjs')
     const accessibilitySuite = landingValidation.indexOf('bun run --cwd apps/landing test:e2e')
 
     expect(landingStep).toBeGreaterThan(-1)

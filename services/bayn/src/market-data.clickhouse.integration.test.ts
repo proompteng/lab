@@ -1,3 +1,4 @@
+import { withProviderSessions } from './testing/market-calendar-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 
 import { NodeHttpClient } from '@effect/platform-node'
@@ -5,13 +6,13 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Cause, Effect, Exit, Layer, ManagedRuntime, Result } from 'effect'
 
 import { persistedMarketDataContract } from './testing/persisted-snapshot-fixture'
-import { historicalSignalConfig } from './testing/historical-signal-fixture'
+
 import type { IntradaySnapshotQuery, IntradaySnapshotRequest } from './market-data/intraday/model'
 import { intradayInstantNanos } from './market-data/intraday/time'
 import { decodeIntradayBarRows } from './market-data/intraday/rows'
 import { normalizeBar } from './market-data/intraday/verification'
 import { makeIntradayMarketDataQueries } from './market-data/intraday/queries'
-import { makeMarketDataQueries } from './market-data/queries'
+import { makeDailySnapshotQueries } from './market-data/queries'
 import { baynTestClickhouseGuardToken, baynTestClickhouseUrl } from './test-environment.test-support'
 
 const clickhouseUrl = baynTestClickhouseUrl
@@ -20,8 +21,8 @@ const publicationDate = '2026-03-06'
 const calendarVersion = 'signal-XNYS-2026-v1'
 const snapshotId = '1'.repeat(64)
 const intradayRequest: IntradaySnapshotQuery = {
-  calendar: {
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+  calendar: withProviderSessions({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
     source: 'alpaca-v2-calendar',
     requestedRange: { start: publicationDate, end: publicationDate },
     timeZone: 'UTC',
@@ -33,7 +34,7 @@ const intradayRequest: IntradaySnapshotQuery = {
       },
     ],
     normalizedResponseHash: '7'.repeat(64),
-  },
+  }),
   universeId: 'bayn-clickhouse-integration',
   universeSymbolHash: '8'.repeat(64),
   universe: ['AMD'],
@@ -287,15 +288,11 @@ describeClickhouse('Bayn ClickHouse market-data query contract', () => {
     }
   })
 
-  test('executes the qualified production cycle-publication query against native Date columns', async () => {
+  test('reads the exact historical snapshot manifest through the production query', async () => {
     const rows = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* ClickhouseClient.ClickhouseClient
-        return yield* makeMarketDataQueries(
-          sql,
-          { historicalSignal: historicalSignalConfig },
-          persistedMarketDataContract,
-        ).loadCyclePublicationManifests
+        return yield* makeDailySnapshotQueries(sql).loadSnapshotPublicationManifest(snapshotId)
       }),
     )
 

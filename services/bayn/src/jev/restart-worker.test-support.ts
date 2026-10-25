@@ -44,7 +44,8 @@ const main = Effect.gen(function* () {
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))),
       Effect.flatMap((value) => Effect.fromResult(decodeJevEvaluationRequest(value))),
     )
-    yield* store.begin(request)
+    if ((yield* store.read(request.requestId)) === null)
+      return yield* new JevEvidenceError({ message: 'Worker requires its committed batch claim' })
     if (mode === 'record')
       yield* store.record(
         request,

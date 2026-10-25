@@ -617,6 +617,37 @@ printf '%s\\n' "$@"
     await server.close()
   })
 
+  it('inspects branches through the read-only tool without creating or deleting refs', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const repo = join(config.workspaceRoot, 'lab')
+    const { client, server } = await connectServer(config, makeAuth(['agents-shell.read']))
+    try {
+      for (const args of [
+        ['branch', '--all'],
+        ['branch', '--no-merged', 'origin/main'],
+        ['branch', 'unrequested-branch'],
+      ]) {
+        const result = await client.callTool({ name: 'git', arguments: { cwd: repo, args } })
+        expect(result.isError).not.toBe(true)
+        expect(result.structuredContent).toMatchObject({ ok: true, exitCode: 0 })
+      }
+      const denied = await client.callTool({
+        name: 'git',
+        arguments: { cwd: repo, args: ['branch', '--list', '-D', 'main'] },
+      })
+      expect(denied.isError).toBe(true)
+      expect(
+        execFileSync('git', ['-C', repo, 'for-each-ref', '--format=%(refname)', 'refs/heads'], {
+          encoding: 'utf8',
+        }).trim(),
+      ).toBe('refs/heads/main')
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('requires an owned session for configured Git remote helpers', async () => {
     const config = makeConfig()
     initializeRepoFixture(config)

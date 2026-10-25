@@ -4,7 +4,7 @@ import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effe
 import type { ExecutionAuthority } from '../../execution/authority'
 import type { Intent } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
-import type { BrokerSessionShape } from '../alpaca'
+import type { BrokerSessionShape } from '../alpaca/session'
 import { ResponseHeadersSchema, redactedHeaders, responseParseOptions } from '../alpaca/model'
 import { cancelOrderUrl, submitOrderUrl } from '../alpaca/requests'
 import {
@@ -23,7 +23,8 @@ import {
   type BrokerMutationShape,
 } from './model'
 import { withObservedStage } from '../../telemetry'
-import { Pipeable } from '../../pipeable'
+
+import { SubmissionDenialReason } from '../../execution/submission-denial'
 
 const decodeHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 
@@ -108,7 +109,7 @@ const readCancelBody = (
         ),
       )
 
-const makeMutationDataFirst = (
+export const makeMutation = (
   session: BrokerSessionShape,
   authority: ExecutionAuthority,
   client: HttpClient.HttpClient,
@@ -120,12 +121,13 @@ const makeMutationDataFirst = (
     const submit = Effect.fn('BrokerMutation.submit', {
       attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Submit },
     })(
-      function* (input: Intent, closeOnly = false) {
-        const prepared = yield* Effect.fromResult(prepareSubmit(input, runtime.expectedAccountId, closeOnly))
+      function* (input: Intent) {
+        const prepared = yield* Effect.fromResult(prepareSubmit(input, runtime.expectedAccountId))
         if (!runtime.fractionalTrading && orderRequestRequiresFractionalTrading(prepared.request)) {
           return yield* invalidRequest({
             operation: MutationOperation.Submit,
             message: 'order requires fractional trading but the broker account configuration disables it',
+            denialReason: SubmissionDenialReason.FractionalTradingDisabled,
           })
         }
         const request = yield* HttpClientRequest.bodyJson(
@@ -136,7 +138,12 @@ const makeMutationDataFirst = (
           prepared.request,
         ).pipe(
           Effect.mapError((cause) =>
-            invalidRequest({ operation: MutationOperation.Submit, message: 'order request cannot be encoded', cause }),
+            invalidRequest({
+              operation: MutationOperation.Submit,
+              message: 'order request cannot be encoded',
+              cause,
+              denialReason: SubmissionDenialReason.RequestEncoding,
+            }),
           ),
         )
         return yield* withDeadline(
@@ -202,5 +209,3 @@ const makeMutationDataFirst = (
       orderByClientId: session.read.orderByClientId,
     }
   })
-
-export const makeMutation = Pipeable.dual(3, makeMutationDataFirst)
