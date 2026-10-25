@@ -198,7 +198,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>('ask')
   const autoApprovalAttempts = useRef(new Set<string>())
   const resolvedApprovals = useRef(new Set<string>())
-  const [resolvedAsyncQuestions, setResolvedAsyncQuestions] = useState<ReadonlySet<string>>(new Set())
+  const [resolvedAsyncQuestions, setResolvedAsyncQuestions] = useState<ReadonlyMap<string, ReadonlySet<string>>>(
+    new Map(),
+  )
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
@@ -973,7 +975,10 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
       .map(({ event, text, questionRequest }) => ({ kind: event.kind, text, questionRequest })),
   ]
-  const answeredAsyncQuestions = new Set([...resolvedAsyncQuestions, ...codexAnsweredAsyncQuestions(questionItems)])
+  const answeredAsyncQuestions = new Set([
+    ...(resolvedAsyncQuestions.get(threadId) ?? []),
+    ...codexAnsweredAsyncQuestions(questionItems),
+  ])
   const asyncInputPending = questionItems.some((item) =>
     item.questionRequest?.fields.some((field) => !answeredAsyncQuestions.has(field.key)),
   )
@@ -1138,10 +1143,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           if ('answers' in response && Object.keys(response.answers).length === 0) return
           await send({ text: codexAsyncQuestionReply(pending, response) })
         }}
-        onAnswered={() =>
-          setResolvedAsyncQuestions((current) => new Set([...current, ...fields.map((field) => field.key)]))
-        }
+        onAnswered={() => retireAsyncQuestions(fields.map((field) => field.key))}
       />
+    )
+  }
+
+  function retireAsyncQuestions(keys: string[]) {
+    setResolvedAsyncQuestions((current) =>
+      new Map(current).set(threadId, new Set([...(current.get(threadId) ?? []), ...keys])),
     )
   }
 
@@ -1333,12 +1342,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       }
       completeCodexOperation(operationKey, operation.id)
       if (!answer)
-        setResolvedAsyncQuestions(
-          (current) =>
-            new Set([
-              ...current,
-              ...questionItems.flatMap((item) => item.questionRequest?.fields.map((field) => field.key) ?? []),
-            ]),
+        retireAsyncQuestions(
+          questionItems.flatMap((item) => item.questionRequest?.fields.map((field) => field.key) ?? []),
         )
       setSessionRevision((current) => current + 1)
     } catch (cause) {

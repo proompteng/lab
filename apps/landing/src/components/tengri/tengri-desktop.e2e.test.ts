@@ -9067,6 +9067,57 @@ test('renders live async questions and retries their exact steering operation af
   ).toBe(false)
 })
 
+test('keeps async question dismissal scoped to its conversation', async ({ page }) => {
+  const rawJson = JSON.stringify({
+    thread: {
+      turns: [
+        {
+          id: 'turn-old',
+          status: 'completed',
+          items: [
+            {
+              id: 'shared-history-item',
+              type: 'agentMessage',
+              text: '',
+              questions: [{ title: 'Continue?', options: ['Yes', 'No'] }],
+            },
+          ],
+        },
+      ],
+    },
+  })
+  const mock = await mockTengri(page, {
+    threadStore: {
+      threads: [
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2, archived: false },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 1, archived: false },
+      ],
+    },
+    resumeThreadRawJsonById: { 'thread-alpha': rawJson, 'thread-beta': rawJson },
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const question = chat.getByRole('article', { name: 'Agent question', exact: true })
+  await question.getByRole('button', { name: 'Dismiss for now', exact: true }).click()
+  await expect(question).toHaveCount(0)
+  expect(
+    mock.actions.some((action) => ['send-turn', 'steer-turn', 'answer-questions'].includes(String(action.action))),
+  ).toBe(false)
+  await chat.locator('[data-conversation-id="thread-beta"]').click()
+  await expect(question).toContainText('Continue?')
+  await chat.locator('[data-conversation-id="thread-alpha"]').click()
+  await expect(chat.locator('[data-conversation-id="thread-alpha"]')).toHaveAttribute('aria-current', 'true')
+  await expect(question).toHaveCount(0)
+  await chat.locator('[data-conversation-id="thread-beta"]').click()
+  await expect(question).toContainText('Continue?')
+  const prompt = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await prompt.fill('Use the current setup instead.')
+  await prompt.press('Enter')
+  await expect(question).toHaveCount(0)
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(1)
+})
+
 test('auto-approves actions while keeping questions and elicitation forms manual', async ({ page }) => {
   const mock = await mockTengri(page, {
     resumeThreadRawJson: JSON.stringify({
