@@ -1,6 +1,7 @@
 name: Temporal worker images
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'services/temporal-worker/**'
@@ -30,8 +31,9 @@ env:
 
 jobs:
   build:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     name: Temporal worker build and heartbeat tests (${{ matrix.architecture }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ github.event_name == 'pull_request' && matrix.prRunner || matrix.runner }}
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -39,8 +41,10 @@ jobs:
         include:
           - architecture: amd64
             runner: arc-amd64
+            prRunner: ubuntu-24.04
           - architecture: arm64
             runner: arc-arm64
+            prRunner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
       - name: Resolve source metadata

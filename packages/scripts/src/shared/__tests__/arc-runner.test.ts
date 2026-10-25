@@ -187,13 +187,15 @@ describe('ARC Nix runner toolchain', () => {
       expect(pod.containers[0].securityContext.privileged).toBe(true)
     }
     const setup = YAML.parse(readRepoFile('.github/actions/setup-buildkit/action.yml'))
-    const start = setup.runs.steps[0].run
+    const start = setup.runs.steps.find((step: { id?: string }) => step.id === 'worker').run
     expect(start).toContain('mktemp -d "$RUNNER_TEMP/buildkit.XXXXXX"')
     expect(start).toContain('endpoint="unix://$state/buildkitd.sock"')
     expect(start).toContain('--root "$state/cache"')
     expect(start).toContain('--containerd-worker=false')
     expect(start).not.toContain('tcp://')
-    expect(setup.runs.steps[1].with.driver).toBe('remote')
+    expect(
+      setup.runs.steps.find((step: { uses?: string }) => step.uses === 'docker/setup-buildx-action@v3').with.driver,
+    ).toBe('remote')
     expect(existsSync(new URL('argocd/applications/arc/buildkit.yaml', repoRoot))).toBe(false)
   })
 

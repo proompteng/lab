@@ -70,7 +70,7 @@ jobs:
             echo "source=${SOURCE_REGISTRY}/${SOURCE_REPOSITORY}@${SOURCE_DIGEST}"
             echo "source_digest=${SOURCE_DIGEST}"
             echo "target=registry.ide-newton.ts.net/lab/${TARGET_REPOSITORY}:${TARGET_TAG}"
-            echo "target_transport=registry.registry.svc.cluster.local/lab/${TARGET_REPOSITORY}:${TARGET_TAG}"
+            echo "target_transport=registry.ide-newton.ts.net/lab/${TARGET_REPOSITORY}:${TARGET_TAG}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify source digest and required platforms

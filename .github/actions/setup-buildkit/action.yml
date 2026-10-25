@@ -1,8 +1,26 @@
 name: Set up direct BuildKit
-description: Start an isolated BuildKit OCI worker inside this ephemeral ARC runner.
+description: Start an isolated BuildKit OCI worker inside the current CI job.
 runs:
   using: composite
   steps:
+    - name: Install pinned BuildKit on hosted runners
+      if: runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "$RUNNER_ARCH" in
+          X64) architecture=amd64; checksum=a59539daf547fe0958efe2d07e41c0a6944e1112a66d7e519ec1cf5b673ef15b ;;
+          ARM64) architecture=arm64; checksum=c8c97b84baf89dfe0ea85063ac24ad88eb909979ea476ce3ef9e8e11e60ebef8 ;;
+          *) echo "Unsupported architecture $RUNNER_ARCH" >&2; exit 1 ;;
+        esac
+        tools="$RUNNER_TEMP/buildkit-tools"
+        mkdir -p "$tools"
+        curl --fail --location --silent --show-error --retry 3 \
+          "https://github.com/moby/buildkit/releases/download/v0.34.1/buildkit-v0.34.1.linux-${architecture}.tar.gz" \
+          --output "$tools/buildkit.tar.gz"
+        echo "$checksum  $tools/buildkit.tar.gz" | sha256sum --check --strict
+        tar -xzf "$tools/buildkit.tar.gz" -C "$tools" bin/buildctl bin/buildkitd bin/buildkit-runc
+        echo "$tools/bin" >> "$GITHUB_PATH"
     - name: Start private BuildKit process
       id: worker
       shell: bash
