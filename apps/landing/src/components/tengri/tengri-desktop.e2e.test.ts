@@ -6218,6 +6218,8 @@ test('saves the sleep timeout immediately and reads it back after reload', async
 test('keeps a failed sleep preference visible and retries the same value', async ({ page }) => {
   const fixture = await mockTengri(page)
   let fail = true
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
   await page.route('**/api/tengri', async (route) => {
     if (
       route.request().method() === 'POST' &&
@@ -6225,6 +6227,8 @@ test('keeps a failed sleep preference visible and retries the same value', async
       fail
     ) {
       fail = false
+      started.resolve()
+      await release.promise
       await route.fulfill({ status: 503, json: { error: 'Sleep settings could not be saved' } })
     } else await route.fallback()
   })
@@ -6234,6 +6238,10 @@ test('keeps a failed sleep preference visible and retries the same value', async
   await openSettingsPane(settings, 'Power & Sleep')
   const timeout = settings.getByLabel('Sleep when inactive')
   await timeout.selectOption('5')
+  await started.promise
+  await openSettingsPane(settings, 'About')
+  release.resolve()
+  await openSettingsPane(settings, 'Power & Sleep')
   await expect(settings.getByRole('alert')).toContainText('Sleep settings could not be saved')
   await expect(timeout).toHaveValue('5')
   expect(fixture.getAgent()?.power.idleTimeoutMinutes).toBe(60)
@@ -6241,6 +6249,59 @@ test('keeps a failed sleep preference visible and retries the same value', async
   await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(5)
   await expect(settings.getByRole('alert')).toHaveCount(0)
 })
+
+for (const outcome of ['success', 'uncertain'] as const) {
+  test(`retains access operations and one-time credentials across settings panes: ${outcome}`, async ({ page }) => {
+    await mockTengri(page)
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const operations: string[] = []
+    await page.route('**/api/tengri/access?**', (route) =>
+      route.fulfill({ json: { version: '1', workspaceState: 'active' } }),
+    )
+    await page.route('**/api/tengri/access', async (route) => {
+      const command = route.request().postDataJSON()
+      operations.push(command.operationId)
+      started.resolve()
+      await release.promise
+      if (outcome === 'uncertain' && operations.length === 1) {
+        await route.fulfill({ status: 503, json: { error: 'The result could not be confirmed' } })
+      } else
+        await route.fulfill({
+          json: {
+            receipt: {
+              operationId: command.operationId,
+              version: '2',
+              auditReceiptId: 'fixture-audit',
+              agentCredential: 'fixture-only-not-a-real-credential',
+            },
+          },
+        })
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+    const settings = page.getByRole('region', { name: 'Settings window' })
+    await openSettingsPane(settings, 'Privacy & Security')
+    await settings.getByLabel('Change', { exact: true }).selectOption('grant')
+    await settings.getByLabel('Diagnostic agent UUID').fill('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
+    await settings.getByLabel('Proof key thumbprint').fill('a'.repeat(43))
+    await settings.getByLabel('Reason', { exact: true }).fill('Settings navigation regression fixture')
+    await settings.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await started.promise
+    await openSettingsPane(settings, 'General')
+    release.resolve()
+    await openSettingsPane(settings, 'Privacy & Security')
+    if (outcome === 'uncertain') {
+      await settings.getByRole('button', { name: 'Retry pending change' }).click()
+      await expect.poll(() => operations.length).toBe(2)
+      expect(operations[1]).toBe(operations[0])
+    }
+    await expect(settings.getByLabel('New diagnostic credential')).toHaveValue('fixture-only-not-a-real-credential')
+    await openSettingsPane(settings, 'About')
+    await openSettingsPane(settings, 'Privacy & Security')
+    await expect(settings.getByLabel('New diagnostic credential')).toHaveValue('fixture-only-not-a-real-credential')
+  })
+}
 
 test('prepares suggested prompts and grows multiline drafts without sending them', async ({ page }) => {
   const mock = await mockTengri(page)

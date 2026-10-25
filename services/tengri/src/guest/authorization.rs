@@ -427,7 +427,7 @@ fn control_activity(method: &str, body: &[u8]) -> Result<crate::activity::Contro
     use crate::activity::ControlActivity;
     const PREFIX: &str = "/proompteng.runtime.guest.v1.NanoagentService/";
     match method.strip_prefix(PREFIX) {
-        Some("WatchCodexEvents") => Ok(ControlActivity::Observation),
+        Some("WatchCodexEvents" | "AttachTerminal") => Ok(ControlActivity::Observation),
         Some("CodexCall") => {
             let request = super::rpc::proto::CodexRequest::decode(body)
                 .map_err(|_| Status::invalid_argument("invalid Codex request"))?;
@@ -499,6 +499,14 @@ mod activity_tests {
         assert!(matches!(
             control_activity(
                 "/proompteng.runtime.guest.v1.NanoagentService/WatchCodexEvents",
+                &[]
+            )
+            .unwrap(),
+            ControlActivity::Observation
+        ));
+        assert!(matches!(
+            control_activity(
+                "/proompteng.runtime.guest.v1.NanoagentService/AttachTerminal",
                 &[]
             )
             .unwrap(),

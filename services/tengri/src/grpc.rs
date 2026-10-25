@@ -776,7 +776,7 @@ impl MicroVmControlPlane for ControlPlane {
             .provisional_terminal_leases
             .issue_and_confirm(&request.agent_id, &request.terminal_id, || async {
                 self.activity
-                    .admit_control(&claim, crate::activity::ControlActivity::Interaction)
+                    .admit_control(&claim, crate::activity::ControlActivity::Observation)
                     .await?;
                 self.tickets
                     .issue_terminal(&principal, &request.agent_id, &request.terminal_id)

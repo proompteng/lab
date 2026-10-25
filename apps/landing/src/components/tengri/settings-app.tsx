@@ -61,8 +61,14 @@ export function SettingsApp({
   const refreshAbortRef = useRef<AbortController | null>(null)
   const refreshGenerationRef = useRef(0)
   const [search, setSearch] = useState('')
+  const [visitedSections, setVisitedSections] = useState<SettingsSectionId[]>(['general'])
+  const contentRef = useRef<HTMLDivElement>(null)
   const lifecycleBusy = busyAction !== null
-  const selectSection = (section: SettingsSectionId) => setSelectedSection(section)
+  const selectSection = (section: SettingsSectionId) => {
+    setVisitedSections((visited) => (visited.includes(section) ? visited : [...visited, section]))
+    setSelectedSection(section)
+    if (contentRef.current) contentRef.current.scrollTop = 0
+  }
 
   useEffect(() => {
     setNow(Date.now())
@@ -222,7 +228,7 @@ export function SettingsApp({
           </h1>
         </header>
         <div
-          key={selectedSection}
+          ref={contentRef}
           role="region"
           aria-labelledby={headingId}
           className="min-h-0 flex-1 overflow-y-auto p-5 @max-[560px]/settings:p-4"
@@ -261,8 +267,8 @@ export function SettingsApp({
                 </div>
               </>
             ) : null}
-            {selectedSection === 'power' ? (
-              <>
+            {visitedSections.includes('power') ? (
+              <div hidden={selectedSection !== 'power'} className="space-y-5">
                 <PowerSettingsForm
                   agent={agent}
                   disabled={lifecycleBusy}
@@ -280,7 +286,7 @@ export function SettingsApp({
                     Sleep
                   </button>
                 </div>
-              </>
+              </div>
             ) : null}
             {selectedSection === 'codex' ? (
               <>
@@ -304,8 +310,8 @@ export function SettingsApp({
                 ) : null}
               </>
             ) : null}
-            {selectedSection === 'access' ? (
-              <>
+            {visitedSections.includes('access') ? (
+              <div hidden={selectedSection !== 'access'} className="space-y-5">
                 <section aria-label="Passkeys" className={groupClass + ' p-3'}>
                   <PasskeyRegistration />
                 </section>
@@ -316,8 +322,8 @@ export function SettingsApp({
                     Sign Out
                   </button>
                 </div>
-                <AccessPanel workspaceUid={agent.uid} active={active} />
-              </>
+                <AccessPanel workspaceUid={agent.uid} active={active && selectedSection === 'access'} />
+              </div>
             ) : null}
             {selectedSection === 'about' ? (
               <>
