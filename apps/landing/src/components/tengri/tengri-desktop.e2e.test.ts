@@ -6932,6 +6932,49 @@ test('clears unsent text and images when starting another new conversation', asy
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
 
+test('recovers a run started in an already open conversation before steering it', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '77777777-7777-4777-8777-777777777777',
+    agentId: 'microvm-ada',
+    threadId: 'thread-shared',
+    state: { phase: 'succeeded', turnId: 'turn-previous' },
+  }
+  const mock = await mockTengri(page, {
+    durableRun: run,
+    threadStore: { threads: [{ id: run.threadId, title: 'Shared conversation', updatedAt: 1, archived: false }] },
+    resumeThreadRawJson: JSON.stringify({ thread: { turns: [] } }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-shared'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+  await composer.fill('Keep this draft')
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  run.state = { phase: 'running', turnId: 'turn-shared' }
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'thread-state',
+    method: 'turn/started',
+    threadId: run.threadId,
+    turnId: 'turn-shared',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{}',
+  })
+  await expect(composer).toHaveValue('Keep this draft')
+  await expect(chat.getByRole('button', { name: 'Steer turn', exact: true })).toBeEnabled()
+  await composer.fill('')
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await composer.fill('Continue the current work')
+  await chat.getByRole('button', { name: 'Steer turn', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'steer-turn'))
+    .toMatchObject({ runId: run.runId, threadId: run.threadId, turnId: 'turn-shared' })
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+  await expect(composer).toBeFocused()
+})
+
 test('serializes workspace runs while retaining each conversation draft and accepted prompt', async ({ page }) => {
   const activeThread = JSON.stringify({ thread: { turns: [{ id: 'turn-1', status: 'inProgress', items: [] }] } })
   const mock = await mockTengri(page, { resumeThreadRawJson: activeThread })

@@ -1,7 +1,16 @@
 # Working in lab
 
-Complete the requested change, prove it at the requested boundary, and stop. Prefer the smallest design that satisfies
-all requirements. Spend time and tokens on decisions, implementation, and evidence that affect the outcome.
+Complete the requested change, prove it at the requested boundary, and stop.
+
+## Keep it simple
+
+- Make the smallest complete change that solves the current problem.
+- Reuse what exists. Add dependencies, infrastructure, abstractions, and configuration only when a concrete current
+  requirement needs them.
+- Keep one implementation. Hard-migrate callers and remove the replaced path. Preserve compatibility only when
+  explicitly requested.
+- Challenge unnecessary scope. Future flexibility and hypothetical scale do not justify more complexity.
+- Preserve correctness, security, and data. Prove the requested behavior, remove your temporary resources, and stop.
 
 ## Scope and authority
 
@@ -62,10 +71,9 @@ Trust results only when relevant, without degradation, and matching the requeste
 
 ## Make the responsible change
 
-- Model the domain and invariants before adding abstractions. Fix the owning code path and choose explicit types and
-  control flow that fit the component. Avoid unrelated refactors and speculative infrastructure.
-- Update affected callers, configuration, documentation, and generated contracts together. Preserve compatibility
-  unless a breaking change is authorized. Validate at trust boundaries and retain useful error context.
+- Fix the owning code path with types and control flow that fit the component.
+- Update affected callers, configuration, documentation, and generated contracts together. Validate at trust
+  boundaries and retain useful error context.
 - Handle failure paths. Do not hide failures with fabricated data, silent fallbacks, disabled checks, or weaker
   assertions. Keep secrets and personal data out of logs and committed artifacts.
 - Follow the configured formatter and linter. TypeScript uses [.oxfmtrc.json](.oxfmtrc.json) and
@@ -144,7 +152,7 @@ does not make `go test ./services/...` cover every module.
 | Image delivery                    | [docs/release-automation.md](docs/release-automation.md)                                                    |
 | AgentRuns                         | [creation guide](docs/agents/agentrun-creation-guide.md), [CRD specification](docs/agents/crd-yaml-spec.md) |
 | Temporal                          | [skills/temporal/SKILL.md](skills/temporal/SKILL.md)                                                        |
-| Autonomous project execution      | [skills/autonomous-agents/SKILL.md](skills/autonomous-agents/SKILL.md)                                       |
+| Autonomous project execution      | [skills/autonomous-agents/SKILL.md](skills/autonomous-agents/SKILL.md)                                      |
 
 ## Infrastructure contracts
 
