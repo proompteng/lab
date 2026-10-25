@@ -1,6 +1,8 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto = "../../proto/proompteng/authz/v1/authz.proto";
-    let descriptors = prost_build::Config::new().load_fds(&[proto], &["../../proto"])?;
+    let platform_proto = "../../proto/proompteng/authz/v1/platform.proto";
+    let descriptors =
+        prost_build::Config::new().load_fds(&[proto, platform_proto], &["../../proto"])?;
     let mut rpc_paths = Vec::new();
     for file in &descriptors.file {
         for service in &file.service {
@@ -21,14 +23,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_prost_build::configure()
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
         .field_attribute(
-            ".proompteng.authz.v1.ObservationScope.connector_operations",
+            ".proompteng.authz.v1.AuditReceipt.platform_action",
+            "#[serde(default, skip_serializing_if = \"String::is_empty\")]",
+        )
+        .field_attribute(
+            ".proompteng.authz.v1.AuditReceipt.platform_client",
+            "#[serde(default, skip_serializing_if = \"String::is_empty\")]",
+        )
+        .field_attribute(
+            ".proompteng.authz.v1.AuditReceipt.platform_resources",
             "#[serde(default, skip_serializing_if = \"Vec::is_empty\")]",
         )
         .field_attribute(
-            ".proompteng.authz.v1.ObservationScope.connector_runtime_epoch",
-            "#[serde(default, skip_serializing_if = \"String::is_empty\")]",
+            ".proompteng.authz.v1.AuditReceipt.platform_request_hash",
+            "#[serde(default, skip_serializing_if = \"Vec::is_empty\")]",
         )
         .compile_fds(descriptors)?;
     println!("cargo:rerun-if-changed={proto}");
+    println!("cargo:rerun-if-changed={platform_proto}");
     Ok(())
 }

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "services": [
+    {
+      "id": "ofz",
+      "identities": ["spiffe://proompteng.ai/ns/ofz/sa/ofz-api"],
+      "roles": ["ofz.server"]
+    },
+    {
+      "id": "tengri-web",
+      "identities": ["spiffe://proompteng.ai/ns/proompteng/sa/proompteng"],
+      "roles": ["tengri.web", "platform.administration", "relay.client", "platform.human-session", "platform.client"],
+      "origins": ["https://proompteng.ai"],
+      "proof_audience": "https://proompteng.ai/api/platform/relay/agent",
+      "binding": {
+        "service": "tengri",
+        "resourceKind": "tengri.workspace",
+        "action": "tengri.delegations.manage"
+      }
+    },
+    {
+      "id": "tengri",
+      "identities": ["spiffe://proompteng.ai/ns/tengri/sa/tengri"],
+      "roles": ["tengri.controller"]
+    },
+    {
+      "id": "relay",
+      "identities": ["spiffe://proompteng.ai/ns/relay/sa/relay"],
+      "roles": ["relay.executor"]
+    },
+    {
+      "id": "opencode",
+      "identities": ["spiffe://proompteng.ai/ns/opencode/sa/opencode"],
+      "roles": ["relay.client", "platform.client"]
+    }
+  ]
+}

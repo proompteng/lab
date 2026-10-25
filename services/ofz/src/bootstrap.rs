@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::{
     decision,
     native::{Check, Native, Relationship, Update},
-    policy::{self, BFF_ID, CONNECTOR_BROKER_ID, CONTROLLER_ID, KUBE_BROKER_ID},
+    policy::{self, BFF_ID, CONTROLLER_ID},
     proto::{Action, RequestContext},
     store::{self, Database, State, sql_error},
 };
@@ -226,12 +226,7 @@ fn changes(manifest: &Manifest) -> Result<Vec<Update>, Status> {
             )));
         }
     }
-    for (role, id) in [
-        ("bff", BFF_ID),
-        ("controller", CONTROLLER_ID),
-        ("kube_broker", KUBE_BROKER_ID),
-        ("connector_broker", CONNECTOR_BROKER_ID),
-    ] {
+    for (role, id) in [("bff", BFF_ID), ("controller", CONTROLLER_ID)] {
         changes.push(Update::touch(Relationship::new(
             "platform",
             "lab",
@@ -945,7 +940,7 @@ mod tests {
             Relationship::new(
                 "platform",
                 "lab",
-                "kube_broker",
+                "controller",
                 "workload",
                 &policy::workload_object_id(BFF_ID),
             ),

@@ -12,7 +12,7 @@ import {
 import { humanContext } from '@/lib/tengri/authorization'
 import {
   Action,
-  AuthorizationService,
+  TengriAuthorizationService,
   ExecuteCommandRequestSchema,
   ExecuteCommandResponseSchema,
   ListAccessResponseSchema,
@@ -40,10 +40,6 @@ const actions = {
   codex: Action.CODEX_OBSERVE,
   browser: Action.BROWSER_OBSERVE,
   preview: Action.PREVIEW_OBSERVE,
-  'kube-status': Action.KUBE_STATUS_READ,
-  'kube-logs': Action.KUBE_LOGS_READ,
-  'kube-events': Action.KUBE_EVENTS_READ,
-  connector: Action.CONNECTOR_READ,
 }
 const roles = {
   member: PlatformRole.MEMBER,
@@ -53,12 +49,7 @@ const roles = {
 }
 function resource(value: z.infer<typeof accessResourceSchema>) {
   return {
-    kind:
-      value.kind === 'workspace'
-        ? ResourceKind.WORKSPACE
-        : value.kind === 'namespace'
-          ? ResourceKind.KUBE_NAMESPACE
-          : ResourceKind.CONNECTOR_CONNECTION,
+    kind: ResourceKind.WORKSPACE,
     id: value.id,
   }
 }
@@ -84,7 +75,7 @@ async function handleGET(request: Request) {
     const view = url.searchParams.get('view') || 'platform'
     if (view === 'audit' && !uid) {
       const response = await ofzCall(
-        AuthorizationService.method.readAudit,
+        TengriAuthorizationService.method.readAudit,
         { context, cursor, limit: 100 },
         request.signal,
       )
@@ -93,7 +84,7 @@ async function handleGET(request: Request) {
     if (view !== 'platform' && view !== 'workspace') throw new OfzError(400)
     if ((view === 'workspace') !== Boolean(uid)) throw new OfzError(400)
     const response = await ofzCall(
-      AuthorizationService.method.listAccess,
+      TengriAuthorizationService.method.listAccess,
       {
         context,
         cursor,
@@ -127,7 +118,7 @@ async function handlePOST(request: Request) {
       clientRequestHash: createHash('sha256').update(JSON.stringify(parsed)).digest(),
     }
     const recovered = await ofzCall(
-      AuthorizationService.method.getCommand,
+      TengriAuthorizationService.method.getCommand,
       { context: input.context, operationId: parsed.operationId, clientRequestHash: input.clientRequestHash },
       request.signal,
     ).catch((error) => {
@@ -147,12 +138,11 @@ async function handlePOST(request: Request) {
         collaborator: Action.COLLABORATORS_MANAGE,
         transfer: Action.WORKSPACE_TRANSFER,
         quota: Action.QUOTAS_MANAGE,
-        target: Action.TARGETS_MANAGE,
         emergency: Action.MEMBERS_MANAGE,
       }[parsed.action]
       const workspacePermission = parsed.action === 'collaborator' || parsed.action === 'transfer'
       const authorization = await ofzCall(
-        AuthorizationService.method.authorizeCommand,
+        TengriAuthorizationService.method.authorizeCommand,
         {
           context: input.context,
           action: permission,
@@ -206,18 +196,6 @@ async function handlePOST(request: Request) {
           },
         }
         break
-      case 'target':
-        if (!human || parsed.resource.kind === 'workspace') throw new OfzError(400)
-        input.command = {
-          case: 'setTargetAccess',
-          value: {
-            humanId: human.humanId,
-            resource: resource(parsed.resource),
-            action: actions[parsed.permission],
-            enabled: parsed.enabled,
-          },
-        }
-        break
       case 'grant':
         input.command = {
           case: 'createGrant',
@@ -251,7 +229,7 @@ async function handlePOST(request: Request) {
         break
     }
     input.context = humanContext(identity, workspace(parsed))
-    const response = await ofzCall(AuthorizationService.method.executeCommand, input, request.signal)
+    const response = await ofzCall(TengriAuthorizationService.method.executeCommand, input, request.signal)
     return Response.json(toJson(ExecuteCommandResponseSchema, response), { headers: noStoreHeaders() })
   } catch (error) {
     return failure(error)

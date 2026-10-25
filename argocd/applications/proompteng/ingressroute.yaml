@@ -41,7 +41,7 @@ spec:
         - name: proompteng
           port: 80
     - kind: Rule
-      match: Host(`proompteng.ai`) && PathPrefix(`/api/tengri`)
+      match: Host(`proompteng.ai`) && (PathPrefix(`/api/tengri`) || PathPrefix(`/api/platform`))
       priority: 100
       middlewares:
         - name: proompteng-tengri-rate-limit

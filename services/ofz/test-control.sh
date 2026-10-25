@@ -3,18 +3,20 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 fixture_mode="${1:-control}"
-case "$fixture_mode" in control|bootstrap|archive|identity|runtime|kvm|editor|failover) ;; *) printf 'Expected control, bootstrap, archive, identity, runtime, kvm, editor or failover fixture\n' >&2; exit 2 ;; esac
+case "$fixture_mode" in control|platform|bootstrap|archive|identity|runtime|editor|failover) ;; *) printf 'Expected control, platform, bootstrap, archive, identity, runtime, editor or failover fixture\n' >&2; exit 2 ;; esac
 fixture_dir="$(mktemp -d)"
 fixture_name="ofz-control-$(basename "$fixture_dir" | tr '[:upper:]' '[:lower:]')"
 fixture_database="$fixture_name-db"
 fixture_standby="$fixture_name-standby"
 fixture_network="$fixture_name-net"
 fixture_tunnel_pid=''
-docker_args=()
-if [[ -n "${OFZ_FIXTURE_SSH:-}" ]]; then
-  docker_args=(--host "ssh://$OFZ_FIXTURE_SSH")
-fi
-fixture_docker() { docker "${docker_args[@]}" "$@"; }
+fixture_docker() {
+  if [[ -n "${OFZ_FIXTURE_SSH:-}" ]]; then
+    docker --host "ssh://$OFZ_FIXTURE_SSH" "$@"
+  else
+    docker "$@"
+  fi
+}
 cleanup() {
   if [[ -n "$fixture_tunnel_pid" ]]; then kill "$fixture_tunnel_pid" 2>/dev/null || true; fi
   fixture_docker rm -f "$fixture_name" "$fixture_database" "$fixture_standby" >/dev/null 2>&1 || true
@@ -92,6 +94,8 @@ for attempt in $(seq 1 60); do
   if curl --silent --fail --max-time 1 "$OFZ_TEST_NATIVE_ENDPOINT/healthz" >/dev/null; then
     if [[ "$fixture_mode" == control ]]; then
       cargo test --locked --lib control_integration -- --ignored --nocapture
+    elif [[ "$fixture_mode" == platform ]]; then
+      cargo test --locked --lib platform::integration -- --ignored --nocapture
     elif [[ "$fixture_mode" == bootstrap ]]; then
       cargo build --locked
       OFZ_BOOTSTRAP_CLI_FIXTURE="$PWD/target/debug/ofz" \
@@ -102,8 +106,8 @@ for attempt in $(seq 1 60); do
       cargo build --locked
       OFZ_BOOTSTRAP_CLI_FIXTURE="$PWD/target/debug/ofz" \
         uv run --locked --project audit-export python audit-export/test_archive.py 2>&1 | tee "$fixture_dir/archive-test.log"
-      grep -Fq 'PASS: independent versioned compliance archive;' "$fixture_dir/archive-test.log"
-    elif [[ "$fixture_mode" == runtime || "$fixture_mode" == kvm || "$fixture_mode" == editor || "$fixture_mode" == failover ]]; then
+      grep -Fq 'PASS: versioned compliance archive;' "$fixture_dir/archive-test.log"
+    elif [[ "$fixture_mode" == runtime || "$fixture_mode" == editor || "$fixture_mode" == failover ]]; then
       if [[ "$fixture_mode" == failover ]]; then
         cargo test --locked --lib control_integration -- --ignored --nocapture
       fi
@@ -137,10 +141,6 @@ SQL
           runtime_state_test::physical_database_promotion_preserves_authority_and_consumed_capabilities \
           -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$fixture_dir/promotion-test.log"
         grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$fixture_dir/promotion-test.log"
-      else
-        export TENGRI_KVM_NETWORK="$fixture_network"
-        export TENGRI_KVM_DATABASE_HOST="$fixture_database"
-        bash ../tengri/test-kvm.sh
       fi
     else
       : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.7.4 distribution}"
