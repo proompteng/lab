@@ -116,6 +116,7 @@ const appToDeployScriptPath = new Map<string, string>([
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
+  ['arc', ['.github/workflows/arc-runner-build-push.yml', 'argocd/applications/kargo']],
   ['ofz', ['.github/workflows/ofz.yaml', 'argocd/applications/kargo']],
   ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
   ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
