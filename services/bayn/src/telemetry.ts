@@ -4,6 +4,7 @@ import { OtlpMetrics, OtlpSerialization, OtlpTracer } from 'effect/observability
 import { HttpClient, type HttpClientError } from 'effect/http'
 import { operationCurrentTimeMillis } from './operation-timeout'
 import { embeddedBuildMetadata } from './build'
+import { currentUtcInstant, nativeWallClock } from './time'
 
 export type OtlpTraceEndpoint =
   | { readonly _tag: 'Disabled' }
@@ -312,6 +313,11 @@ export const withObservedStage =
   ) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
     Effect.gen(function* () {
+      const nativeStartedAt = yield* currentUtcInstant
+      yield* Effect.annotateCurrentSpan({
+        'bayn.native_wall.clock': nativeWallClock,
+        'bayn.native_wall.started_at': nativeStartedAt,
+      })
       const startedAt = yield* operationCurrentTimeMillis
       const activeStages = yield* ActiveExecutionStages
       const stageTimings = yield* ExecutionStageTimings
@@ -327,6 +333,7 @@ export const withObservedStage =
           operationCurrentTimeMillis.pipe(
             Effect.flatMap((finishedAt) =>
               Effect.gen(function* () {
+                yield* Effect.annotateCurrentSpan('bayn.native_wall.finished_at', yield* currentUtcInstant)
                 const elapsedMs = Math.max(0, finishedAt - startedAt)
                 const outcome = Exit.isSuccess(exit)
                   ? 'succeeded'

@@ -1,11 +1,14 @@
 # Ofz implementation status
 
+The current backup destination is the [Ceph recovery store](../../services/ofz/recovery.md). The October 25 migration
+retires the NUC store for Ofz and Keycloak; the NUC qualification notes below are historical evidence, not active configuration.
+
 The migration is incomplete. The delivery target is [the enterprise authorization plan](ofz-enterprise-authorization-plan.md),
 including deployed allow/deny/revocation, failure and failover checks, independent restore and the required soak.
 Work proceeds directly, without subagents, through the existing native GitHub stack. Historical decisions and detailed
 fixture evidence remain in [the implementation trail](ofz-implementation-decisions.tsv).
 
-## Current release boundary
+## Historical release boundary
 
 The active source frontier is encrypted independent recovery on `codex/ofz-recovery-encryption`.
 The dedicated identity source merged in [#15038](https://github.com/proompteng/lab/pull/15038) at

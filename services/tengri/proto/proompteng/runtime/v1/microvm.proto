@@ -11,6 +11,7 @@ service MicroVMControlPlane {
   rpc WatchAgent(WatchAgentRequest) returns (stream Agent);
   rpc UpdatePowerSettings(UpdatePowerSettingsRequest) returns (Agent);
 
+  rpc StatFile(StatFileRequest) returns (FileEntry);
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
   rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
   rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
@@ -27,6 +28,8 @@ service MicroVMControlPlane {
 
   rpc GetCodexAccount(GetCodexAccountRequest) returns (CodexAccount);
   rpc ListCodexModels(ListCodexModelsRequest) returns (CodexModels);
+  rpc ListCodexThreads(ListCodexThreadsRequest) returns (CodexThreads);
+  rpc SetCodexThreadArchived(SetCodexThreadArchivedRequest) returns (Empty);
   rpc ConnectorAgent(ConnectorAgentRequest) returns (CodexModels);
   rpc GetCodexLogin(GetCodexLoginRequest) returns (CodexLogin);
   rpc StartCodexLogin(StartCodexLoginRequest) returns (CodexLogin);
@@ -134,6 +137,7 @@ message FileEntry {
   string modified_at = 5;
 }
 
+message StatFileRequest { string agent_id = 1; string path = 2; }
 message ListFilesRequest { string agent_id = 1; string path = 2; }
 message ListFilesResponse { string path = 1; repeated FileEntry entries = 2; }
 message ReadFileRequest { string agent_id = 1; string path = 2; }
@@ -213,6 +217,9 @@ message TerminalTicket {
 message GetCodexAccountRequest { string agent_id = 1; }
 message ListCodexModelsRequest { string agent_id = 1; string cursor = 2; }
 message CodexModels { string raw_json = 1; }
+message ListCodexThreadsRequest { string agent_id = 1; bool archived = 2; string cursor = 3; }
+message CodexThreads { string raw_json = 1; }
+message SetCodexThreadArchivedRequest { string agent_id = 1; string thread_id = 2; bool archived = 3; }
 message GetCodexLoginRequest { string agent_id = 1; }
 message StartCodexLoginRequest { string agent_id = 1; }
 message CreateCodexThreadRequest {

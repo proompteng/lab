@@ -2276,6 +2276,7 @@ describe('execution coordinator', () => {
         account: observe(
           (observedAt): Account => ({
             cryptoStatus: null,
+            cryptoFeeTier: null,
             cashReportingQuantumMicros: '1' as const,
             nonMarginableBuyingPowerMicros: null,
 

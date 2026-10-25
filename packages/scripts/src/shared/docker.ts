@@ -20,7 +20,6 @@ export type DockerBuildOptions = {
   codexAuthPath?: string
   cacheRef?: string
   cacheMode?: DockerCacheMode
-  useBuildx?: boolean
 }
 
 export type DockerBuildResult = DockerBuildOptions & {
@@ -161,17 +160,6 @@ const runDockerCommandWithRetry = async (
   }
 }
 
-export const pushDockerImage = async (
-  image: string,
-  options: { cwd?: string; env?: Record<string, string | undefined> } = {},
-): Promise<void> => {
-  ensureCli('docker')
-  await runDockerCommandWithRetry(['push', image], {
-    cwd: options.cwd ?? repoRoot,
-    env: { ...process.env, ...options.env },
-  })
-}
-
 const normalizeAttestation = (kind: 'provenance' | 'sbom', value: string | undefined): string | undefined => {
   if (!value) return undefined
   const normalized = value.trim().toLowerCase()
@@ -224,38 +212,6 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
   const cacheMode = normalizeCacheMode(options.cacheMode ?? process.env.DOCKER_BUILD_CACHE_MODE)
   const attestations = resolveBuildAttestations()
 
-  let shouldUseBuildx =
-    options.useBuildx === true ||
-    Boolean(options.cacheRef) ||
-    Boolean(options.platforms?.length) ||
-    attestations.length > 0
-  if (shouldUseBuildx && !isDockerBuildxAvailable()) {
-    console.warn('docker buildx is unavailable; falling back to docker build + docker push (no remote cache).')
-    shouldUseBuildx = false
-  }
-
-  let effectiveCacheRef = options.cacheRef
-  let buildxDriver: string | undefined
-  if (shouldUseBuildx && effectiveCacheRef) {
-    buildxDriver = getDockerBuildxDriver()
-    if (buildxDriver === 'docker' && !isTruthyEnv(process.env.DOCKER_BUILDX_ALLOW_DOCKER_DRIVER_CACHE)) {
-      console.warn(
-        'docker buildx is using the docker driver; registry cache export is unsupported. Skipping remote cache.',
-      )
-      effectiveCacheRef = undefined
-    }
-  }
-
-  if (
-    shouldUseBuildx &&
-    !options.useBuildx &&
-    (!options.platforms || options.platforms.length === 0) &&
-    !effectiveCacheRef &&
-    attestations.length === 0
-  ) {
-    shouldUseBuildx = false
-  }
-
   console.log('Building Docker image with configuration:', {
     image,
     context: options.context,
@@ -263,58 +219,35 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     platforms: options.platforms && options.platforms.length > 0 ? options.platforms : undefined,
     buildArgs: Object.keys(options.buildArgs ?? {}).length ? options.buildArgs : undefined,
     noCache: noCache || undefined,
-    cacheRef: effectiveCacheRef,
-    cacheMode: effectiveCacheRef ? cacheMode : undefined,
-    attestations: shouldUseBuildx && attestations.length > 0 ? attestations : undefined,
-    buildxDriver: buildxDriver ?? undefined,
-    useBuildx: shouldUseBuildx || undefined,
+    cacheRef: options.cacheRef,
+    cacheMode: options.cacheRef ? cacheMode : undefined,
+    attestations: attestations.length > 0 ? attestations : undefined,
   })
 
-  if (shouldUseBuildx) {
-    const args = ['buildx', 'build', '--push', '-f', options.dockerfile, '-t', image]
-    if (options.target) args.push('--target', options.target)
-    if (noCache) args.push('--no-cache')
-    if (options.platforms && options.platforms.length > 0) {
-      args.push('--platform', options.platforms.join(','))
-    }
-    if (effectiveCacheRef) {
-      args.push('--cache-from', `type=registry,ref=${effectiveCacheRef}`)
-      args.push('--cache-to', `type=registry,ref=${effectiveCacheRef},mode=${cacheMode}`)
-    }
-    if (options.codexAuthPath) {
-      args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)
-    }
-    if (ghTokenEnv) {
-      args.push('--secret', 'id=github_token,env=GH_TOKEN')
-    }
-    for (const attestation of attestations) {
-      args.push('--attest', attestation)
-    }
-    for (const [key, value] of Object.entries(options.buildArgs ?? {})) {
-      args.push('--build-arg', `${key}=${value}`)
-    }
-    args.push(options.context)
-    await runDockerCommandWithRetry(args, { cwd, env: dockerEnv })
-  } else {
-    const args = ['build', '-f', options.dockerfile, '-t', image]
-    if (options.target) args.push('--target', options.target)
-    if (noCache) args.push('--no-cache')
-    if (options.codexAuthPath) {
-      args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)
-    }
-    if (ghTokenEnv) {
-      args.push('--secret', 'id=github_token,env=GH_TOKEN')
-    }
-    if (attestations.length > 0) {
-      console.warn('Build attestations require docker buildx; skipping SBOM/provenance for docker build fallback.')
-    }
-    for (const [key, value] of Object.entries(options.buildArgs ?? {})) {
-      args.push('--build-arg', `${key}=${value}`)
-    }
-    args.push(options.context)
-    await runDockerCommandWithRetry(args, { cwd, env: dockerEnv })
-    await pushDockerImage(image, { cwd, env: dockerEnv })
+  const args = ['buildx', 'build', '--push', '-f', options.dockerfile, '-t', image]
+  if (options.target) args.push('--target', options.target)
+  if (noCache) args.push('--no-cache')
+  if (options.platforms && options.platforms.length > 0) {
+    args.push('--platform', options.platforms.join(','))
   }
+  if (options.cacheRef) {
+    args.push('--cache-from', `type=registry,ref=${options.cacheRef}`)
+    args.push('--cache-to', `type=registry,ref=${options.cacheRef},mode=${cacheMode}`)
+  }
+  if (options.codexAuthPath) {
+    args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)
+  }
+  if (ghTokenEnv) {
+    args.push('--secret', 'id=github_token,env=GH_TOKEN')
+  }
+  for (const attestation of attestations) {
+    args.push('--attest', attestation)
+  }
+  for (const [key, value] of Object.entries(options.buildArgs ?? {})) {
+    args.push('--build-arg', `${key}=${value}`)
+  }
+  args.push(options.context)
+  await runDockerCommandWithRetry(args, { cwd, env: dockerEnv })
 
   return { ...options, image }
 }
@@ -333,22 +266,6 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
   }))
 
   const attestations = resolveBuildAttestations()
-  const needsBuildx =
-    attestations.length > 0 ||
-    targets.some((target) => target.useBuildx === true || Boolean(target.cacheRef) || Boolean(target.platforms?.length))
-  if (!needsBuildx || !isDockerBuildxAvailable()) {
-    if (needsBuildx) {
-      console.warn('docker buildx is unavailable; falling back to sequential docker build + push.')
-    }
-
-    const results: DockerBakeResult['targets'] = []
-    for (const target of targets) {
-      const result = await buildAndPushDockerImage(target)
-      results.push({ ...result, name: target.name })
-    }
-    return { cwd, targets: results }
-  }
-
   const ghTokenEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
   const dockerEnv = { ...process.env, DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' } as Record<string, string>
   const secretSpecs = [
@@ -366,10 +283,6 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
     ),
   ]
 
-  const buildxDriver = getDockerBuildxDriver()
-  const allowRegistryCache =
-    buildxDriver !== 'docker' || isTruthyEnv(process.env.DOCKER_BUILDX_ALLOW_DOCKER_DRIVER_CACHE)
-
   const bakeDefinition = {
     group: {
       default: {
@@ -381,13 +294,7 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
         const noCache =
           target.noCache ?? (isTruthyEnv(process.env.DOCKER_NO_CACHE) || isTruthyEnv(process.env.NO_CACHE))
         const cacheMode = normalizeCacheMode(target.cacheMode ?? process.env.DOCKER_BUILD_CACHE_MODE)
-        const cacheRef = allowRegistryCache ? target.cacheRef : undefined
-
-        if (target.cacheRef && !cacheRef) {
-          console.warn(
-            `docker buildx is using the docker driver; registry cache export is unsupported. Skipping remote cache for ${target.name}.`,
-          )
-        }
+        const cacheRef = target.cacheRef
 
         const definition: Record<string, unknown> = {
           context: target.context,
@@ -452,32 +359,11 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
   }
 }
 
-const isDockerBuildxAvailable = (): boolean => {
-  const probe = spawnSyncImpl(['docker', 'buildx', 'version'], { cwd: repoRoot })
-  return probe.exitCode === 0
-}
-
-const getDockerBuildxDriver = (): string | undefined => {
-  const inspect = spawnSyncImpl(['docker', 'buildx', 'inspect'], { cwd: repoRoot })
-  if (inspect.exitCode !== 0) {
-    return undefined
-  }
-
-  const output = inspect.stdout.toString()
-  const match = output.match(/^Driver:\s+(\S+)/m)
-  return match?.[1]
-}
-
 export const inspectImageDigest = (image: string): string => {
   ensureCli('docker')
   const remoteDigest = inspectRemoteImageDigest(image)
   if (remoteDigest) {
     return remoteDigest
-  }
-
-  const repoDigest = inspectLocalImageDigest(image)
-  if (repoDigest) {
-    return repoDigest
   }
 
   throw new Error(`Unable to determine digest for image ${image}`)
@@ -587,29 +473,6 @@ export const assertImageSupportsPlatforms = (image: string, requiredPlatforms: s
   return observedPlatforms
 }
 
-const inspectLocalImageDigest = (image: string): string | undefined => {
-  const inspect = spawnSyncImpl(['docker', 'image', 'inspect', '--format', '{{json .RepoDigests}}', image], {
-    cwd: repoRoot,
-  })
-
-  if (inspect.exitCode !== 0) {
-    return undefined
-  }
-
-  try {
-    const digests = JSON.parse(inspect.stdout.toString()) as string[] | undefined
-    if (!digests || digests.length === 0) {
-      return undefined
-    }
-
-    const repository = getRepositoryFromReference(image)
-    const match = digests.find((digest) => digest.startsWith(`${repository}@`))
-    return match ?? digests[0]
-  } catch {
-    return undefined
-  }
-}
-
 const inspectRemoteImageDigest = (image: string): string | undefined => {
   const inspect = spawnSyncImpl(
     ['docker', 'buildx', 'imagetools', 'inspect', '--format', '{{json .Manifest}}', image],
@@ -684,18 +547,9 @@ const setSpawnSync = (fn?: SpawnSync) => {
 }
 
 export const __private = {
-  inspectLocalImageDigest,
   inspectRemoteImageDigest,
   formatPlatform,
   getRepositoryFromReference,
   isRetryableDockerCommandError,
   setSpawnSync,
-}
-
-if (import.meta.main) {
-  const [command, image, ...extra] = Bun.argv.slice(2)
-  if (command !== 'push' || !image || image.startsWith('-') || extra.length > 0) {
-    throw new Error('Usage: docker.ts push <image>')
-  }
-  await pushDockerImage(image)
 }

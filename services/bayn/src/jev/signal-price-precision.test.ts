@@ -7,7 +7,8 @@ import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { checkProperty } from '../testing/property-test-support'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
-import { jevBenchmarkSignalFor, jevSignalFor } from './trading-signals'
+import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
+import { commonMomentumPrices, jevBenchmarkSignalFor, jevSignalFor } from './trading-signals'
 
 const observedPrices = (symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD', price = 100.123456789012) => {
   const { snapshot } = cryptoMarketFixture(symbol)
@@ -43,6 +44,22 @@ const observedPrices = (symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD', price = 100.1
   }
 }
 
+test('crypto relative returns cannot treat an unmatched intraminute quote move as outperformance', () => {
+  const snapshot = observedPrices('BTC/USD', 100)
+  const candidate = Result.getOrThrow(jevSignalFor(snapshot, 'BTC/USD'))
+  const benchmark = Result.getOrThrow(jevBenchmarkSignalFor(snapshot, 'ETH/USD'))
+  const common = Result.getOrThrow(commonMomentumPrices(snapshot, 'BTC/USD', 'ETH/USD', candidate, benchmark))
+  const { metrics } = Result.getOrThrow(
+    deriveIntradayMomentumSignalMetrics(common.candidate, 'BTC/USD', common.benchmark),
+  )
+  expect(metrics.lookbackReturnBps).toBe(0)
+  expect(metrics.benchmarkReturnBps).toBe(0)
+  expect(metrics.excessReturnBps).toBe(0)
+  expect(candidate.prices.bid).toBe(103123456n)
+  expect(candidate.prices.ask).toBe(103123457n)
+  expect(Result.getOrThrow(momentumControlCandidates(snapshot))).toEqual([])
+})
+
 test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
   '%s rounds observed bar and trade signals without imposing executable price precision',
   (symbol) => {
@@ -61,7 +78,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
     expect(benchmark.prices).toEqual({ reference: 100123457n, bid: 100123457n, ask: 100123457n })
     expect(candidate.state.bars1m[0]?.open).toBe(100.123456789012)
     expect(candidate.state.latestTrade.price).toBe(103.123456789012)
-    expect(Result.getOrThrow(momentumControlCandidates(snapshot)).map((entry) => entry.symbol)).toEqual([symbol])
+    expect(Result.getOrThrow(momentumControlCandidates(snapshot))).toEqual([])
   },
 )
 

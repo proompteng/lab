@@ -73,6 +73,7 @@ const fixture = (
                     : equityMicros
                 return {
                   cryptoStatus: null,
+                  cryptoFeeTier: null,
                   cashReportingQuantumMicros: '1' as const,
                   nonMarginableBuyingPowerMicros: null,
 

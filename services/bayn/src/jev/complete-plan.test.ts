@@ -13,6 +13,8 @@ test('provider bar context can exceed broker price precision without changing ra
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
   const economics = Result.getOrThrow(
     jevEntryEconomics({
+      cryptoFeeTier: null,
+
       protocol: observation.protocol,
       symbol: 'SOL/USD',
       bidMicros: 103123456n,

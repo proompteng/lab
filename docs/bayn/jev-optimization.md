@@ -2,8 +2,7 @@
 
 Bayn uses GEPA `optimize_anything` with one `gepa` engine, pinned to
 `8f287de942f41a6d1e0e7e5b2d576247c4bedee9`. The former Harness2 runner, dependency, commands and active editor
-contracts are removed. Historical registrations and receipts remain immutable records. The
-[design assessment](harness2-design-audit-2026-10-20.md#optimizer-recommendation-rechecked-october-22) explains the choice.
+contracts are removed. Historical registrations and receipts remain immutable records.
 
 ## Model and execution ownership
 

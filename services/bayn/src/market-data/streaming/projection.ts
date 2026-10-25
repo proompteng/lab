@@ -179,6 +179,13 @@ const incorporateDecodedRecord = (
       entry.value.sourceTopic === record.topic &&
       entry.value.sourcePartition === record.partition &&
       entry.value.sourceOffset === record.offset
+    const retainedHistory = (histories: Iterable<readonly ObservedMarketValue<IntradayQuote | IntradayTrade>[]>) => {
+      for (const history of histories) {
+        const entry = history.find(sameRawCoordinate)
+        if (entry !== undefined) return entry
+      }
+      return undefined
+    }
     const retained =
       record.topic === universe.topics.features
         ? [...previous.features.values()]
@@ -189,7 +196,9 @@ const incorporateDecodedRecord = (
             )
         : ([...previous.bars.values()].flat().find(sameRawCoordinate) ??
           [...previous.quotes.values()].find(sameRawCoordinate) ??
-          [...previous.trades.values()].find(sameRawCoordinate))
+          [...previous.trades.values()].find(sameRawCoordinate) ??
+          retainedHistory(previous.quoteHistory.values()) ??
+          retainedHistory(previous.tradeHistory.values()))
     return retained !== undefined && retained.recordHash !== recordHash
       ? reject(previous, record, availableAtMs, 'conflicting-immutable-record')
       : previous
