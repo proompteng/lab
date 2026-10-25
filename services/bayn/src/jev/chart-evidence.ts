@@ -159,7 +159,7 @@ const chartImage = (barsHash: string, bars: readonly VisualBar[]) => {
   const rendered = { pngHash: sha256(png), image: `data:image/png;base64,${png.toString('base64')}` }
   if (chartImages.size >= 64) {
     const oldest = chartImages.keys().next()
-    if (!oldest.done) chartImages.delete(oldest.value)
+    if (oldest.done === false) chartImages.delete(oldest.value)
   }
   chartImages.set(barsHash, rendered)
   return rendered
