@@ -45,13 +45,13 @@ alongside elapsed time. Timing thresholds are deliberately not CI assertions.
 Node 24.11.1, Bun 1.4.2 bundler, Linux x64, 2026-10-25. Full-report median elapsed
 milliseconds from one run:
 
-| Cycles | Executions | Baseline | Candidate | Ratio |
-| --- | ---: | ---: | ---: | ---: |
-| 10 completed | 10 | 0.621 | 0.546 | 1.14× |
-| 1,000 completed | 1,000 | 51.232 | 47.275 | 1.08× |
-| 5,000 completed | 5,000 | 309.030 | 261.389 | 1.18× |
-| 10,000 completed | 10,000 | 724.005 | 550.954 | 1.31× |
-| 1 completed + 9,999 no-trade | 1 | 4.477 | 4.477 | 1.00× |
+| Cycles                       | Executions | Baseline | Candidate | Ratio |
+| ---------------------------- | ---------: | -------: | --------: | ----: |
+| 10 completed                 |         10 |    0.621 |     0.546 | 1.14× |
+| 1,000 completed              |      1,000 |   51.232 |    47.275 | 1.08× |
+| 5,000 completed              |      5,000 |  309.030 |   261.389 | 1.18× |
+| 10,000 completed             |     10,000 |  724.005 |   550.954 | 1.31× |
+| 1 completed + 9,999 no-trade |          1 |    4.477 |     4.477 | 1.00× |
 
 An earlier independent run measured 1.22× and 1.30× at 5,000 and 10,000 executions.
 The ten-execution case varied from 0.936× to 1.14×, so there is no claimed small-
