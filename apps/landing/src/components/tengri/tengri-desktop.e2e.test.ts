@@ -6932,6 +6932,49 @@ test('clears unsent text and images when starting another new conversation', asy
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
 
+test('recovers a run started in an already open conversation before steering it', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '77777777-7777-4777-8777-777777777777',
+    agentId: 'microvm-ada',
+    threadId: 'thread-shared',
+    state: { phase: 'succeeded', turnId: 'turn-previous' },
+  }
+  const mock = await mockTengri(page, {
+    durableRun: run,
+    threadStore: { threads: [{ id: run.threadId, title: 'Shared conversation', updatedAt: 1, archived: false }] },
+    resumeThreadRawJson: JSON.stringify({ thread: { turns: [] } }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-shared'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+  await composer.fill('Keep this draft')
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  run.state = { phase: 'running', turnId: 'turn-shared' }
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'thread-state',
+    method: 'turn/started',
+    threadId: run.threadId,
+    turnId: 'turn-shared',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{}',
+  })
+  await expect(composer).toHaveValue('Keep this draft')
+  await expect(chat.getByRole('button', { name: 'Steer turn', exact: true })).toBeEnabled()
+  await composer.fill('')
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await composer.fill('Continue the current work')
+  await chat.getByRole('button', { name: 'Steer turn', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'steer-turn'))
+    .toMatchObject({ runId: run.runId, threadId: run.threadId, turnId: 'turn-shared' })
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+  await expect(composer).toBeFocused()
+})
+
 test('serializes workspace runs while retaining each conversation draft and accepted prompt', async ({ page }) => {
   const activeThread = JSON.stringify({ thread: { turns: [{ id: 'turn-1', status: 'inProgress', items: [] }] } })
   const mock = await mockTengri(page, { resumeThreadRawJson: activeThread })
@@ -8920,6 +8963,224 @@ test('retains accepted steering messages when replay recovery has not persisted 
   await expect(prompt).toBeEnabled()
   await expect(message).toHaveText('Also include the deployment notes.')
   await expect(message).toHaveCount(1)
+})
+
+for (const width of [1440, 390]) {
+  test(`restores async questions and submits desktop-compatible answers without clearing drafts at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const item = {
+      id: 'async-call',
+      type: 'agentMessage',
+      text: width === 1440 ? 'The rollout is waiting for your environment choice.' : '',
+      delivery: 'async',
+      questions: [{ title: 'Which environment?', options: ['Staging', 'Production'] }, { title: 'Any notes?' }],
+    }
+    const items: Record<string, unknown>[] = [item]
+    const options: MockOptions = {
+      preserveDraftStorageOnReload: true,
+      threadStore: { threads: [{ id: 'thread-active', title: 'Async questions', updatedAt: 1, archived: false }] },
+      resumeThreadRawJson: JSON.stringify({ thread: { turns: [{ id: 'turn-previous', status: 'completed', items }] } }),
+    }
+    const mock = await mockTengri(page, options)
+    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-active'))
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const prompt = chat.getByRole('textbox', { name: /^(Message your agent|Steer the current turn)$/ })
+    const question = chat.getByRole('article', { name: 'Agent question', exact: true })
+    await expect(question).toContainText('Which environment?')
+    if (item.text) await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+    await question.screenshot({ path: test.info().outputPath(`async-question-${width}.png`) })
+    await expect(question.getByRole('radio', { name: 'Staging', exact: true })).toBeChecked()
+    await expect(question.getByRole('textbox', { name: 'Other answer: Which environment?', exact: true })).toHaveValue(
+      '',
+    )
+    expect(mock.actions.some((action) => action.action === 'send-turn' || action.action === 'answer-questions')).toBe(
+      false,
+    )
+    await page.reload()
+    await expect(question).toContainText('Any notes?')
+    await prompt.fill('Keep my newer draft.')
+    await question.getByRole('radio', { name: 'Production', exact: true }).check()
+    await question.getByRole('textbox', { name: 'Any notes?', exact: true }).fill('Preserve the files.')
+    await expect(question.getByRole('button', { name: 'Submit answers', exact: true })).toBeEnabled()
+    await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+    await expect(question).toHaveCount(0)
+    if (item.text) await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+    await expect(prompt).toHaveValue('Keep my newer draft.')
+    const sends = mock.actions.filter((action) => action.action === 'send-turn')
+    expect(sends).toHaveLength(1)
+    const text = String(sends[0].text)
+    expect(
+      JSON.parse(
+        text.slice('<send_user_message_question_reply>'.length, -'</send_user_message_question_reply>'.length),
+      ),
+    ).toEqual([
+      {
+        questionItemId: '["request_user_input_async","async-call",0]',
+        question: 'Which environment?',
+        answer: 'Production',
+      },
+      {
+        questionItemId: '["request_user_input_async","async-call",1]',
+        question: 'Any notes?',
+        answer: 'Preserve the files.',
+      },
+    ])
+    expect(
+      mock.actions.some((action) => action.action === 'answer-questions' || action.action === 'resolve-approval'),
+    ).toBe(false)
+    await expect(chat.getByRole('article', { name: 'Your message' })).toContainText('Preserve the files.')
+    await expect(chat.getByRole('article', { name: 'Your message' })).not.toContainText(
+      'send_user_message_question_reply',
+    )
+    items.push({ id: 'answer-1', type: 'userMessage', content: [{ type: 'text', text }] })
+    options.resumeThreadRawJson = JSON.stringify({
+      thread: { turns: [{ id: 'turn-previous', status: 'completed', items }] },
+    })
+    await page.reload()
+    await expect(chat.getByRole('article', { name: 'Your message' })).toContainText('Preserve the files.')
+    await expect(question).toHaveCount(0)
+    if (item.text) await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+    expect(mock.actions.filter((action) => action.action === 'send-turn')).toHaveLength(1)
+  })
+}
+
+test('renders live async questions and retries their exact steering operation after an interrupted answer', async ({
+  page,
+}) => {
+  const mock = await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+    }),
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-active')
+    localStorage.setItem('tengri-approval-mode:microvm-ada', 'auto')
+  })
+  const attempts: Record<string, unknown>[] = []
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action !== 'steer-turn') return route.fallback()
+    attempts.push(action)
+    if (attempts.length === 1) return route.fulfill({ status: 503, json: { error: 'Answer delivery was interrupted' } })
+    return route.fallback()
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const prompt = chat.getByRole('textbox', { name: /^(Message your agent|Steer the current turn)$/ })
+  await expect(prompt).toBeEnabled()
+  const item = {
+    id: 'live-question',
+    type: 'agentMessage',
+    text: 'I can keep investigating while you choose a target.',
+    delivery: 'async',
+    questions: [{ title: 'Which target?', options: ['Default'] }],
+  }
+  for (const [sequence, method] of [
+    [1, 'item/started'],
+    [2, 'item/completed'],
+  ] as const)
+    await emitCodexEvent(page, {
+      sequence,
+      method,
+      kind: 'assistant-text',
+      threadId: 'thread-active',
+      turnId: 'turn-active',
+      itemId: item.id,
+      text: item.text,
+      approvalId: '',
+      rawJson: JSON.stringify({ params: { item } }),
+    })
+  const question = chat.getByRole('article', { name: 'Agent question', exact: true })
+  await expect(question).toHaveCount(1)
+  await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+  await question
+    .getByRole('textbox', { name: 'Other answer: Which target?', exact: true })
+    .pressSequentially('Default with a canary')
+  await expect(question.getByRole('textbox')).toHaveValue('Default with a canary')
+  for (let sequence = 3; sequence < 504; sequence++)
+    await emitCodexEvent(page, {
+      sequence,
+      kind: 'tool-output',
+      method: 'item/completed',
+      threadId: 'thread-active',
+      turnId: 'turn-active',
+      itemId: `activity-${sequence}`,
+      text: 'Still working',
+      approvalId: '',
+      rawJson: '{}',
+    })
+  await expect(question).toHaveCount(1)
+  await expect(question.getByRole('textbox')).toHaveValue('Default with a canary')
+  await prompt.fill('Do not replace this draft.')
+  await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+  await expect(question.getByRole('alert')).toHaveText('Answer delivery was interrupted')
+  await expect(question.getByRole('textbox')).toHaveValue('Default with a canary')
+  await expect(prompt).toHaveValue('Do not replace this draft.')
+  await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+  await expect(question).toHaveCount(0)
+  await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+  expect(attempts).toHaveLength(2)
+  expect(attempts[0].operationId).toBe(attempts[1].operationId)
+  expect(attempts[0].text).toBe(attempts[1].text)
+  expect(attempts[1]).toMatchObject({ action: 'steer-turn', threadId: 'thread-active', turnId: 'turn-active' })
+  expect(
+    mock.actions.some((action) => action.action === 'answer-questions' || action.action === 'resolve-approval'),
+  ).toBe(false)
+})
+
+test('keeps async question dismissal scoped to its conversation', async ({ page }) => {
+  const rawJson = JSON.stringify({
+    thread: {
+      turns: [
+        {
+          id: 'turn-old',
+          status: 'completed',
+          items: [
+            {
+              id: 'shared-history-item',
+              type: 'agentMessage',
+              text: '',
+              questions: [{ title: 'Continue?', options: ['Yes', 'No'] }],
+            },
+          ],
+        },
+      ],
+    },
+  })
+  const mock = await mockTengri(page, {
+    threadStore: {
+      threads: [
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2, archived: false },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 1, archived: false },
+      ],
+    },
+    resumeThreadRawJsonById: { 'thread-alpha': rawJson, 'thread-beta': rawJson },
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const question = chat.getByRole('article', { name: 'Agent question', exact: true })
+  await question.getByRole('button', { name: 'Dismiss for now', exact: true }).click()
+  await expect(question).toHaveCount(0)
+  expect(
+    mock.actions.some((action) => ['send-turn', 'steer-turn', 'answer-questions'].includes(String(action.action))),
+  ).toBe(false)
+  await chat.locator('[data-conversation-id="thread-beta"]').click()
+  await expect(question).toContainText('Continue?')
+  await chat.locator('[data-conversation-id="thread-alpha"]').click()
+  await expect(chat.locator('[data-conversation-id="thread-alpha"]')).toHaveAttribute('aria-current', 'true')
+  await expect(question).toHaveCount(0)
+  await chat.locator('[data-conversation-id="thread-beta"]').click()
+  await expect(question).toContainText('Continue?')
+  const prompt = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await prompt.fill('Use the current setup instead.')
+  await prompt.press('Enter')
+  await expect(question).toHaveCount(0)
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(1)
 })
 
 test('auto-approves actions while keeping questions and elicitation forms manual', async ({ page }) => {

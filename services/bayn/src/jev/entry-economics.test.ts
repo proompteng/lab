@@ -1,4 +1,8 @@
-import { EntrySetup } from './entry-proposals'
+import { EntrySetup, makeEntryProposals } from './entry-proposals'
+import { makeNativeChartEvidence } from './chart-evidence'
+import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
+import { nativeChartInference } from './entry-inference.test-support'
+import { entryProposalExitPlan } from './strategy-exit-plan'
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -12,7 +16,6 @@ import { makeJevTradingSignalRequest } from './trading-signals'
 import { checkProperty } from '../testing/property-test-support'
 import { maximumAllocatedBuyQuantities, maximumFundedBuyQuantities } from './entry-sizing'
 import { jevEntryEconomics } from './entry-economics'
-import { fundJevTradePlan } from './entry-economics'
 import { defaultJevProtocolDocument } from './protocol'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
@@ -91,25 +94,31 @@ test('funding values a native take-profit at its submitted minimum sell price', 
     }),
   )
   if (economics === null) throw new Error('Expected a funded equity quantity')
-  const levels = {
-    schemaVersion: 'bayn.jev-strategy-exit-plan.v4' as const,
-    rule: 'source-anchored-complete-plan' as const,
-    proposalId: '1'.repeat(64),
-    source: {
-      setup: EntrySetup.SupportRecovery as const,
-      supportBarId: 'bar-1',
-      resistanceBarId: 'bar-2',
-      targetBasis: 'OBSERVED_RESISTANCE' as const,
-    },
-    symbol: 'AAPL',
-    sourceStartAt: '2026-10-23T14:00:00.000Z',
-    sourceEndAt: '2026-10-23T14:30:00.000Z',
-    maximumHoldingMinutes: 15,
-    maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
-    stopPriceMicros: '99000000',
-    stopLimitPriceMicros: '98910000',
-    profitLimitPriceMicros: '100210000',
-  }
+  const chart = Result.getOrThrow(
+    makeNativeChartEvidence({
+      symbol: 'AAPL',
+      windowEndAt: '2026-10-23T14:30:00.000Z',
+      bars: [
+        { minuteBeforeWindowEnd: 3, open: 100, high: 100.1, low: 99.01, close: 100, volume: 100 },
+        { minuteBeforeWindowEnd: 2, open: 100, high: 100.22, low: 99.9, close: 100.1, volume: 100 },
+        { minuteBeforeWindowEnd: 1, open: 100, high: 100.1, low: 100, close: 100.05, volume: 100 },
+      ],
+    }),
+  )
+  const visual = nativeChartInference(Result.getOrThrow(makeChartDecisionsRequest(chart)).request, chart.windowEndAt)
+  const { proposals } = Result.getOrThrow(
+    makeEntryProposals({
+      chart,
+      assessments: Result.getOrThrow(chartAssessments(chart, visual.response)),
+      economics,
+      protocol,
+      bidMicros: 100_000_000n,
+    }),
+  )
+  const proposal = proposals.find((value) => value.source.setup === EntrySetup.SupportRecovery)
+  if (proposal === undefined) throw new Error('Expected a source-anchored funded equity proposal')
+  const funded = entryProposalExitPlan(proposal)
+  const { levels } = funded
   const quantity = BigInt(economics.receivedQuantityAtoms)
   const proceeds = (BigInt(levels.profitLimitPriceMicros) * quantity) / quantityScale
   const fees = Result.getOrThrow(
@@ -143,11 +152,7 @@ test('funding values a native take-profit at its submitted minimum sell price', 
     }),
   )
   expect(request.take_profit?.limit_price).toBe('100.21')
-  const funded = Result.getOrThrow(fundJevTradePlan({ protocol, economics, levels }))
-  expect(funded).not.toBeNull()
-  expect(BigInt(funded?.exitPlan.estimatedTargetNetMicros ?? '0')).toBeGreaterThan(
-    BigInt(economics.acquisitionCostMicros),
-  )
+  expect(BigInt(funded.estimatedTargetNetMicros)).toBeGreaterThan(BigInt(economics.acquisitionCostMicros))
 })
 
 test('supported atomic judgments admit a funded proposal while uncertain judgments abstain', () => {
