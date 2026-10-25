@@ -6,6 +6,9 @@ import { errorCodes, findErrorBy, protocolErrorsCodesById, TimeoutError } from '
 import type { TechnicalMarketFeature } from '../features/technical-contract'
 
 import type { KafkaPartitionPosition } from './bootstrap'
+import { kafkaBootstrapComplete } from './bootstrap'
+import type { KafkaProjectionCut } from './kafka'
+import { IntradaySnapshotPurpose } from '../intraday/model'
 import { RequiredMarketFeatureSchema } from '../features/contract'
 import { observedBarsAt, topicPartitionKey, type ObservedFeature, type StreamingProjection } from './projection'
 import type { IntradaySnapshotFailure, IntradaySnapshotQuery } from '../intraday/model'
@@ -14,6 +17,59 @@ import { intradayInstantNanos } from '../intraday/time'
 
 const snapshotInstant = Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema])
 const isRequiredFeature = Schema.is(RequiredMarketFeatureSchema)
+
+export enum SnapshotCutReason {
+  SourceUnavailable = 'SOURCE_UNAVAILABLE',
+  AvailabilityNotObserved = 'AVAILABILITY_NOT_OBSERVED',
+  EpochMismatch = 'EPOCH_MISMATCH',
+  RequiredPartitionsMissing = 'REQUIRED_PARTITIONS_MISSING',
+  BootstrapOffsetsIncomplete = 'BOOTSTRAP_OFFSETS_INCOMPLETE',
+  BootstrapAfterObservation = 'BOOTSTRAP_AFTER_OBSERVATION',
+}
+
+/** Diagnose the rejected cut, never a later sample. Only bounded, query-owned coordinates leave this boundary. */
+export const snapshotCutMeasurement = (cut: KafkaProjectionCut, query: IntradaySnapshotQuery) => {
+  const source = cut.projection.sources.get(query.universeId)
+  const topics = new Set(Object.values(source?.topics ?? {}))
+  const partitions = cut.bootstrap.partitions.filter(
+    (partition) =>
+      topics.has(partition.topic) &&
+      (query.purpose !== IntradaySnapshotPurpose.Liquidation || partition.topic === query.sourceTopics.quotes),
+  )
+  const requiredTopics = new Set(partitions.map((partition) => partition.topic))
+  const positions = cut.positions.filter((position) => requiredTopics.has(position.topic))
+  const byPartition = new Map(
+    positions.map((position) => [topicPartitionKey(position.topic, position.partition), position]),
+  )
+  const pending = partitions.filter((partition) => {
+    const position = byPartition.get(topicPartitionKey(partition.topic, partition.partition))
+    return position === undefined || BigInt(position.offset) < BigInt(partition.endOffset)
+  })
+  const reasons: SnapshotCutReason[] = []
+  if (source === undefined) reasons.push(SnapshotCutReason.SourceUnavailable)
+  if (cut.projection.availabilityMode !== 'observed') reasons.push(SnapshotCutReason.AvailabilityNotObserved)
+  if (cut.bootstrap.epoch !== cut.projection.epoch) reasons.push(SnapshotCutReason.EpochMismatch)
+  if (partitions.length === 0) reasons.push(SnapshotCutReason.RequiredPartitionsMissing)
+  if (partitions.length > 0 && !kafkaBootstrapComplete({ ...cut.bootstrap, partitions }, positions))
+    reasons.push(SnapshotCutReason.BootstrapOffsetsIncomplete)
+  if (cut.bootstrap.observedAtMs > Date.parse(query.observedAt))
+    reasons.push(SnapshotCutReason.BootstrapAfterObservation)
+  return {
+    schemaVersion: 'bayn.snapshot-cut-diagnostic.v1',
+    reasons,
+    requiredPartitionCount: partitions.length,
+    observedPositionCount: byPartition.size,
+    pendingPartitionCount: pending.length,
+    pendingPartitionsTruncated: pending.length > 8,
+    pendingPartitions: pending.slice(0, 8).map((partition) => ({
+      topic: Object.values(query.sourceTopics).includes(partition.topic) ? partition.topic : null,
+      partition: partition.partition,
+      position: byPartition.get(topicPartitionKey(partition.topic, partition.partition))?.offset ?? null,
+      requiredEndOffset: partition.endOffset,
+    })),
+  }
+}
+
 /** Only query-bound identities, timestamps and finite publication durations leave the failure boundary. */
 export const snapshotFailureMeasurement = (
   failure: IntradaySnapshotFailure,

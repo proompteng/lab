@@ -19,7 +19,7 @@ import {
 } from './reference'
 import { reproduceStreamingSnapshot } from './replay'
 import { constructStreamingSnapshot } from './snapshot'
-import { snapshotFailureMeasurement } from './telemetry'
+import { snapshotCutMeasurement, snapshotFailureMeasurement } from './telemetry'
 
 const snapshotHash = (snapshot: Parameters<IntradayMarketDataService['verifyReference']>[0]) =>
   canonicalHashV1Result({
@@ -53,6 +53,7 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
           Effect.tapError((cause) =>
             Effect.logWarning('Streaming market snapshot rejected').pipe(
               Effect.annotateLogs(snapshotFailureMeasurement(cause, query, cut.projection)),
+              Effect.annotateLogs({ inputCut: snapshotCutMeasurement(cut, query) }),
             ),
           ),
           Effect.mapError((cause) => marketDataOperationError('load', 'Streaming snapshot verification failed', cause)),

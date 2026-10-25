@@ -249,6 +249,14 @@ Confirm the current Restate registration's label selector before comparing worke
   then the existing consumer bootstrap barriers and exact raw/feature lineage. A latest-minute bar or healthy producer
   acknowledgement does not prove all 30 required minutes, matching features, or timely availability. Missing middle
   minutes, absent/mismatched/late features, and incomplete offset/bootstrap evidence can withhold the window.
+  For `Streaming market snapshot rejected`, inspect the same observation's `inputCut.reasons` before attributing
+  complete bar coverage to a healthy consumer. `SOURCE_UNAVAILABLE` and `REQUIRED_PARTITIONS_MISSING` identify
+  incorporation/bootstrap setup; `AVAILABILITY_NOT_OBSERVED`, `EPOCH_MISMATCH` and `BOOTSTRAP_AFTER_OBSERVATION`
+  identify an ineligible cut, not missing producer data. `BOOTSTRAP_OFFSETS_INCOMPLETE` includes bounded pending
+  topic/partition positions and required end offsets for the existing consumer owner. Counts remain complete when
+  the eight-coordinate sample is truncated. An empty reason list clears only these gates; inspect the separate
+  feature/window diagnostics next. Correlate the exact replica and observation time with rollout/startup evidence,
+  and do not infer a current outage from a resolved notification or a later healthy sample.
   Warmup, a bound decision, cutoff, and ordinary abstention do not trigger this alert. Restore the failed input owner;
   do not relax freshness, admission, risk, or authority gates or force a trade.
 - `BaynExecutionDecisionLagging`: the session preflight is healthy, but the ACTIVE cycle remains unbound after
