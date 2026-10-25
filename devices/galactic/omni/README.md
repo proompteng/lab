@@ -36,8 +36,8 @@ omnictl cluster template validate \
   --file /tmp/galactic-cluster-template.rendered.yaml
 ```
 
-The renderer also copies the non-secret `image-factory-registry.yaml` sidecar next to the rendered template so Omni
-can resolve the relative patch reference.
+The renderer also copies referenced non-secret patch sidecars next to the rendered template so Omni can resolve
+their relative paths, including `image-factory-registry.yaml` and the native Tengri runner seccomp patches.
 
 Review the sync before applying it:
 
@@ -80,11 +80,66 @@ the cluster template first installs an explicit `RegistryMirrorConfig` whose `na
 reference host, including port. Talos honors that mirror for its own installer pull as well as containerd pulls. A
 direct pull of the same host without the mirror defaults to HTTPS and is not an equivalent test.
 
-Never commit the raw or rendered templates. Delete both temporary files after the operation. Follow the current
+Never commit the raw or rendered templates. Delete both temporary files after the operation.
+Do not print full machine configurations or Omni's `redactedcurrentmachineconfig` field. Extension environment
+values can still contain credentials. Select only the network or status fields needed for the check.
+
+Follow the current
 [Talos 1.14 and Kubernetes 1.37 release procedure](../releases/README.md) for preflight, runtime proof, and recovery.
 `docs/runbooks/talos-latest-upgrade-plan.md` retains historical evidence and the referenced hardware-recovery procedures.
 
+## Tengri runner seccomp
+
+`tengri-runner-amd64.json` and `tengri-runner-arm64.json` are generated Talos machine patches for containerd 2.3.4.
+Regenerate them with `bash services/tengri/seccomp/generate.sh` from the repository root. Talos 1.14 manages
+`machine.seccompProfiles` at `/var/lib/kubelet/seccomp/profiles`; the slot runner selects
+`profiles/tengri-runner.json`. Other containers retain RuntimeDefault. No Kubernetes installer writes host files.
+
+This is a permission change and requires approval before syncing. Render and validate the full current template,
+require the exact profile addition to pass a server-side Talos `--mode no-reboot --dry-run` on each target, and
+review the Omni dry-run for unrelated changes before syncing. Read back each profile resource and file, then run
+native KVM confinement, disk-error, lifecycle and responsiveness acceptance before releasing the new slot image.
+See the [profile contract and upstream references](../../../services/tengri/seccomp/README.md).
+
+## Ceph HDD write scheduling
+
+Turin and Altra apply `ceph-hdd-write-deadline.yaml` to their three Ceph HDDs. Its udev rules match the six verified
+OSD WWIDs, so disk renumbering cannot retarget the setting. They set the `mq-deadline` write expiry to 500 ms,
+matching the read expiry. The kernel checks these soft deadlines between request batches;
+this does not guarantee a 500 ms database commit. See the [Linux scheduler contract](https://docs.kernel.org/block/deadline-iosched.html).
+
+Use the secret-safe Omni workflow above and require both targets to accept the patch with a Talos
+`--mode no-reboot --dry-run` before syncing. Read back all six scheduler values, verify Ceph recovery and synchronous
+PostgreSQL replication, then compare WAL waits and authenticated Tengri operations under the existing workload.
+Talos reloads the rules and retriggers devices when they change. Restore the rules' `write_expire` assignment to
+`5000` through Omni if the comparison fails. Removing a rule does not reset its previously assigned kernel value.
+
+## CI scratch reclamation
+
+The Turin `turin-nvme-transcend` user volume enables filesystem TRIM every 24 hours.
+Talos schedules each volume at a stable time within that interval. This configuration does not
+trigger an immediate trim. After initial enablement, run one filesystem trim against the mounted
+scratch volume and verify completed discards, runner startup, and CI behavior.
+
 ## PodCIDR maintenance checks
+
+The cluster-wide `30-galactic-neighbor-cache` patch sets the IPv4 neighbor garbage-collection thresholds to
+4,096 / 8,192 / 16,384 entries. The 1,024-entry kernel maximum was exhausted on Turin after the pod-density increase,
+causing `arp_cache: neighbor table overflow!`, DNS send errors, and intermittent application connections. The higher
+thresholds retain headroom for the host and pod network namespaces. They do not change routes or MTUs.
+
+Apply this patch through the secret-safe render, validate, dry-run, and Omni sync procedure above. It is a live sysctl
+change: validate the full resulting machine configurations and require a Talos `--mode no-reboot --dry-run` to accept
+only these three settings before syncing. Verify `/proc/sys/net/ipv4/neigh/default/gc_thresh{1,2,3}` on all three hosts,
+then sample `/proc/net/stat/arp_cache` before and after DNS and application checks. Its `entries` value is repeated on
+each CPU row; take one value rather than summing it. Sum per-CPU `table_fulls` counters and require no new events.
+Exercise A and AAAA queries through both CoreDNS endpoints and the DNS Service from existing pods, then verify the
+affected application path. Pod readiness and one successful lookup do not establish recovery. A rollback restores
+the previous thresholds through the same Omni workflow and can reproduce the outage while neighbor demand is high.
+
+The [100G pod routes](../network/pod-100g-routing.md) depend on the exact current PodCIDRs. Before any Node
+re-registration, update those routes and their source rules with the replacement allocation. Run
+`python3 devices/galactic/network/verify-pod-routing.py --preflight` before a network sync.
 
 Turin and Altra have re-registered with distinct `/23` PodCIDRs. The template sets both to `maxPods: 500` and requests
 `/23` allocations for newly registered Nodes. Apply each target's 500-pod cap through the render, validate, dry-run,

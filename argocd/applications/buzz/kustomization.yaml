@@ -8,6 +8,7 @@ resources:
   - secret-store.yaml
   - redis-auth-externalsecret.yaml
   - postgres-objectstore.yaml
+  - postgres-upgrade-final-backup.yaml
   - postgres-cluster.yaml
   - postgres-scheduled-backup.yaml
   - redis-config.yaml

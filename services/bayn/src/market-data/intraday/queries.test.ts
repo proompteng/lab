@@ -1,3 +1,5 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
+import { exchangeSessions } from '../../market-hours'
 import { describe, expect, test } from 'bun:test'
 
 import type { ClickhouseClient } from '@effect/sql-clickhouse'
@@ -6,14 +8,14 @@ import type { IntradaySnapshotRequest } from './model'
 import { intradayArchivePageSize, makeIntradayMarketDataQueries } from './queries'
 
 const request: IntradaySnapshotRequest = {
-  calendar: {
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+  calendar: withProviderSessions({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
     source: 'alpaca-v2-calendar',
     requestedRange: { start: '2026-08-18', end: '2026-08-18' },
     timeZone: 'UTC',
     sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
     normalizedResponseHash: 'b'.repeat(64),
-  },
+  }),
   universeId: 'opening-drive-v1',
   universeSymbolHash: 'a'.repeat(64),
   universe: ['AMD'],
@@ -58,15 +60,15 @@ describe('intraday archive queries', () => {
     expect(capture).toContain('FROM signal.intraday_trades_v1')
     expect(capture).not.toContain('has(')
     expect(capture).toContain(
-      `event_ts >= parseDateTime64BestEffort("${request.calendar.sessions[0]!.openAt}", 3, 'UTC')`,
+      `event_ts >= parseDateTime64BestEffort("${exchangeSessions(request.calendar)[0]!.openAt}", 3, 'UTC')`,
     )
     expect(capture).toContain(
-      `event_ts <= parseDateTime64BestEffort("${request.calendar.sessions[0]!.closeAt}", 3, 'UTC')`,
+      `event_ts <= parseDateTime64BestEffort("${exchangeSessions(request.calendar)[0]!.closeAt}", 3, 'UTC')`,
     )
     expect(
       capture.match(
         new RegExp(
-          `event_ts >= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.openAt}", 9, 'UTC'\\)`,
+          `event_ts >= parseDateTime64BestEffort\\("${exchangeSessions(request.calendar)[0]!.openAt}", 9, 'UTC'\\)`,
           'g',
         ),
       ),
@@ -74,7 +76,7 @@ describe('intraday archive queries', () => {
     expect(
       capture.match(
         new RegExp(
-          `event_ts <= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC'\\)`,
+          `event_ts <= parseDateTime64BestEffort\\("${exchangeSessions(request.calendar)[0]!.closeAt}", 9, 'UTC'\\)`,
           'g',
         ),
       ),
@@ -84,15 +86,23 @@ describe('intraday archive queries', () => {
       capture.match(new RegExp(`ingest_ts <= parseDateTime64BestEffort\\("${request.observedAt}", 9, 'UTC'\\)`, 'g')),
     ).toHaveLength(2)
     expect(bars).toContain('FROM signal.intraday_bars_1m_v2')
-    expect(bars).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
-    expect(bars).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)
-    expect(bars).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
-    expect(bars).toContain('ORDER BY ingest_ts DESC, source_partition DESC, source_offset DESC')
+    expect(bars).toContain(
+      `coalesce(event_ts_exact, event_ts) >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`,
+    )
+    expect(bars).toContain(
+      `coalesce(event_ts_exact, event_ts) < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`,
+    )
+    expect(bars).toContain(
+      `coalesce(ingest_ts_exact, ingest_ts) <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`,
+    )
+    expect(bars).toContain(
+      'ORDER BY coalesce(ingest_ts_exact, ingest_ts) DESC, source_partition DESC, source_offset DESC',
+    )
     expect(bars).not.toContain('ORDER BY source_offset DESC\n')
     for (const query of [quotes, trades]) {
       expect(query).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
       expect(query).toContain(
-        `event_ts <= parseDateTime64BestEffort("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC')`,
+        `event_ts <= parseDateTime64BestEffort("${exchangeSessions(request.calendar)[0]!.closeAt}", 9, 'UTC')`,
       )
       expect(query).not.toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)
       expect(query).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
@@ -119,9 +129,15 @@ describe('intraday archive queries', () => {
     }
     const bars = String(queries.loadIntradayBars(preciseRequest))
 
-    expect(bars).toContain(`event_ts >= parseDateTime64BestEffort("${preciseRequest.rangeStartAt}", 9, 'UTC')`)
-    expect(bars).toContain(`event_ts < parseDateTime64BestEffort("${preciseRequest.rangeEndAt}", 9, 'UTC')`)
-    expect(bars).toContain(`ingest_ts <= parseDateTime64BestEffort("${preciseRequest.observedAt}", 9, 'UTC')`)
+    expect(bars).toContain(
+      `coalesce(event_ts_exact, event_ts) >= parseDateTime64BestEffort("${preciseRequest.rangeStartAt}", 9, 'UTC')`,
+    )
+    expect(bars).toContain(
+      `coalesce(event_ts_exact, event_ts) < parseDateTime64BestEffort("${preciseRequest.rangeEndAt}", 9, 'UTC')`,
+    )
+    expect(bars).toContain(
+      `coalesce(ingest_ts_exact, ingest_ts) <= parseDateTime64BestEffort("${preciseRequest.observedAt}", 9, 'UTC')`,
+    )
   })
 
   test('filters close evidence to requested positions while retaining archive-universe lineage', () => {
@@ -162,11 +178,11 @@ describe('intraday archive queries', () => {
     const trades = String(queries.loadIntradayTrades(request, cursor))
 
     expect(bars).toContain(
-      `WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(parseDateTime64BestEffort("${cursor.eventAt}", 3, 'UTC')`,
+      `WHERE tuple(coalesce(event_ts_exact, event_ts), symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)) > tuple(parseDateTime64BestEffort("${cursor.eventAt}", 9, 'UTC')`,
     )
     for (const query of [quotes, trades]) {
       expect(query).toContain(
-        `WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(`,
+        `WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)) > tuple(`,
       )
       expect(query).toContain(`parseDateTime64BestEffort("${cursor.eventAt}", 9, 'UTC')`)
       expect(query).toContain(`toUInt64("${cursor.sourcePartition}")`)

@@ -57,6 +57,25 @@ describe('Nix rollout report', () => {
     expect(report.missingBuildContracts).toEqual([])
     expect(hermes?.deferredReason).toContain('NousResearch/hermes-agent')
     expect(tigresse?.deferredReason).toContain('proompteng/tigresse')
+    const bayn = report.nixImages.find((candidate) => candidate.name === 'bayn')
+    expect(bayn?.nixImageAttr).toBe('bayn-image')
+    expect(bayn?.deployScriptPath).toBeUndefined()
+    expect(bayn?.workflowPaths).toContain('argocd/applications/kargo')
+  })
+
+  it('accepts an immutable Kargo image build without duplicate manual release wrappers', () => {
+    const report = buildNixRolloutReport({
+      inventory: inventory([
+        entry({
+          name: 'opencode',
+          class: 'nix-image',
+          nixImageAttr: 'opencode-image',
+          repoImages: ['registry.ide-newton.ts.net/lab/opencode'],
+          workflowPaths: ['.github/workflows/opencode-build-push.yml', 'argocd/applications/kargo'],
+        }),
+      ]),
+    })
+    expect(report.missingBuildContracts).toEqual([])
   })
 
   it('reports missing build contract pieces for Nix image apps', () => {

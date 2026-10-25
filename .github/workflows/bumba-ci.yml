@@ -14,6 +14,7 @@ on:
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/bun-workspace-deps-source.nix'
       - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'nix/images/prune-bun-dependency-metadata.sh'
       - 'bun.lock'
       - '**/package.json'
       - 'bunfig.toml'
@@ -25,6 +26,8 @@ on:
       - 'argocd/applications/bumba/**'
   pull_request:
     paths:
+      - '.github/actions/affected-inputs/**'
+      - 'packages/scripts/src/ci/**'
       - 'services/bumba/**'
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
@@ -34,6 +37,7 @@ on:
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/bun-workspace-deps-source.nix'
       - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'nix/images/prune-bun-dependency-metadata.sh'
       - 'bun.lock'
       - '**/package.json'
       - 'bunfig.toml'
@@ -50,11 +54,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/bumba-ci.yml
+          workspaces: |
+            service: ['', 'services/bumba', 'packages/temporal-bun-sdk']
+
   pr-checks:
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: needs.changes.outputs.changed == 'true' && github.event_name == 'pull_request'
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.4.0
+      bun-version: 1.4.2
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk && bun run --filter @proompteng/temporal-bun-sdk build
       lint-command: bunx oxfmt --check services/bumba packages/scripts/src/bumba argocd/applications/bumba
@@ -64,7 +84,8 @@ jobs:
     secrets: inherit
 
   atlas-integration:
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: needs.changes.outputs.changed == 'true' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -88,12 +109,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
       - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk
       - run: bun run --filter @proompteng/temporal-bun-sdk build
       - run: bun test services/bumba/src/atlas/reconciliation.integration.test.ts
 
   dependency-closure:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
     uses: ./.github/workflows/nix-bun-dependency-closure.yml
     with:
       service: bumba

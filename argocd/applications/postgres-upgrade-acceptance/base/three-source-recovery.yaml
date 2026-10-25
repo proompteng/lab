@@ -1,0 +1,937 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-upgrade-control-plane-18-6-v2
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
+  namespace: postgres-upgrade-acceptance
+spec:
+  podSelector:
+    matchLabels:
+      postgres.proompteng.ai/rehearsal: 18-6-v2
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cloudnative-pg
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/instance: cloudnative-pg
+          app.kubernetes.io/name: cloudnative-pg
+    ports:
+    - port: 8000
+      protocol: TCP
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  - to:
+    - ipBlock:
+        cidr: 10.96.0.1/32
+    - ipBlock:
+        cidr: 100.100.244.141/32
+    - ipBlock:
+        cidr: 100.100.244.142/32
+    - ipBlock:
+        cidr: 100.100.244.190/32
+    ports:
+    - port: 443
+      protocol: TCP
+    - port: 6443
+      protocol: TCP
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapcontent-76f22ccb-5496-487a-9071-8321c541b1f2
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-25"
+    argocd.argoproj.io/sync-options: "Prune=false,Delete=false,ServerSideApply=false"
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    volumeHandle: 0001-0009-rook-ceph-0000000000000001-5b78ed26-a9a8-41cb-afdd-8e972981a3ed
+  sourceVolumeMode: Filesystem
+  volumeSnapshotClassName: rook-ceph-block
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: buzz-db-pg18-20260910
+    namespace: buzz
+    resourceVersion: '603313831'
+    uid: 76f22ccb-5496-487a-9071-8321c541b1f2
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: buzz-pg18-source-snapshot-content
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+    argocd.argoproj.io/sync-options: "Prune=false,Delete=false"
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    snapshotHandle: 0001-0009-rook-ceph-0000000000000001-3cbe70cf-9728-48c1-8e7d-4c187869c4f2
+  volumeSnapshotRef:
+    name: buzz-pg18-source-snapshot
+    namespace: postgres-upgrade-acceptance
+    uid: 08f4a8f3-7705-4ac1-a113-1d8abf73513d
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: buzz-pg18-source-snapshot
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+    argocd.argoproj.io/sync-options: "Prune=false,Delete=false"
+    cnpg.io/backupEndTime: "2026-09-10T05:14:04Z"
+    cnpg.io/backupEndWAL: "00000018000000020000003E"
+    cnpg.io/backupStartTime: "2026-09-10T05:13:26Z"
+    cnpg.io/backupStartWAL: "00000018000000020000003E"
+    cnpg.io/clusterManifest: "{\"kind\":\"Cluster\",\"apiVersion\":\"postgresql.cnpg.io/v1\"\
+      ,\"metadata\":{\"name\":\"buzz-db\",\"namespace\":\"buzz\",\"uid\":\"2c3316a7-3261-4b61-b467-b413e6f66bb7\"\
+      ,\"resourceVersion\":\"603313828\",\"generation\":3,\"creationTimestamp\":\"\
+      2026-07-23T05:25:36Z\",\"labels\":{\"app.kubernetes.io/name\":\"buzz-db\",\"\
+      app.kubernetes.io/part-of\":\"buzz\"},\"annotations\":{\"argocd.argoproj.io/sync-options\"\
+      :\"Prune=false,Delete=false\",\"argocd.argoproj.io/sync-wave\":\"-7\",\"argocd.argoproj.io/tracking-id\"\
+      :\"buzz:postgresql.cnpg.io/Cluster:buzz/buzz-db\",\"cnpg.io/fencedInstances\"\
+      :\"[\\\"buzz-db-3\\\"]\"},\"managedFields\":[{\"manager\":\"argocd-controller\"\
+      ,\"operation\":\"Apply\",\"apiVersion\":\"postgresql.cnpg.io/v1\",\"time\":\"\
+      2026-09-10T03:27:20Z\",\"fieldsType\":\"FieldsV1\",\"fieldsV1\":{\"f:metadata\"\
+      :{\"f:annotations\":{\"f:argocd.argoproj.io/sync-options\":{},\"f:argocd.argoproj.io/sync-wave\"\
+      :{},\"f:argocd.argoproj.io/tracking-id\":{}},\"f:labels\":{\"f:app.kubernetes.io/name\"\
+      :{},\"f:app.kubernetes.io/part-of\":{}}},\"f:spec\":{\"f:affinity\":{\"f:podAntiAffinityType\"\
+      :{},\"f:topologyKey\":{}},\"f:backup\":{\"f:volumeSnapshot\":{\"f:className\"\
+      :{},\"f:snapshotOwnerReference\":{}}},\"f:bootstrap\":{\"f:initdb\":{\"f:dataChecksums\"\
+      :{},\"f:database\":{},\"f:encoding\":{},\"f:owner\":{}}},\"f:description\":{},\"\
+      f:enablePDB\":{},\"f:enableSuperuserAccess\":{},\"f:imageName\":{},\"f:imagePullPolicy\"\
+      :{},\"f:inheritedMetadata\":{\"f:annotations\":{\"f:argocd.argoproj.io/sync-options\"\
+      :{}}},\"f:instances\":{},\"f:maxSyncReplicas\":{},\"f:minSyncReplicas\":{},\"\
+      f:plugins\":{},\"f:postgresql\":{\"f:parameters\":{\"f:password_encryption\"\
+      :{},\"f:ssl_min_protocol_version\":{}}},\"f:primaryUpdateMethod\":{},\"f:primaryUpdateStrategy\"\
+      :{},\"f:resources\":{\"f:limits\":{\"f:cpu\":{},\"f:memory\":{}},\"f:requests\"\
+      :{\"f:cpu\":{},\"f:memory\":{}}},\"f:storage\":{\"f:resizeInUseVolumes\":{},\"\
+      f:size\":{},\"f:storageClass\":{}}}}},{\"manager\":\"kubectl-cnpg\",\"operation\"\
+      :\"Update\",\"apiVersion\":\"postgresql.cnpg.io/v1\",\"time\":\"2026-09-08T19:41:21Z\"\
+      ,\"fieldsType\":\"FieldsV1\",\"fieldsV1\":{\"f:status\":{\"f:targetPrimary\"\
+      :{},\"f:targetPrimaryTimestamp\":{}}},\"subresource\":\"status\"},{\"manager\"\
+      :\"manager\",\"operation\":\"Update\",\"apiVersion\":\"postgresql.cnpg.io/v1\"\
+      ,\"time\":\"2026-09-10T05:13:26Z\",\"fieldsType\":\"FieldsV1\",\"fieldsV1\"\
+      :{\"f:metadata\":{\"f:annotations\":{\"f:cnpg.io/fencedInstances\":{}}}}},{\"\
+      manager\":\"manager\",\"operation\":\"Update\",\"apiVersion\":\"postgresql.cnpg.io/v1\"\
+      ,\"time\":\"2026-09-10T05:13:53Z\",\"fieldsType\":\"FieldsV1\",\"fieldsV1\"\
+      :{\"f:status\":{\".\":{},\"f:availableArchitectures\":{},\"f:certificates\"\
+      :{\".\":{},\"f:clientCASecret\":{},\"f:expirations\":{\".\":{},\"f:buzz-db-ca\"\
+      :{},\"f:buzz-db-replication\":{},\"f:buzz-db-server\":{}},\"f:replicationTLSSecret\"\
+      :{},\"f:serverAltDNSNames\":{},\"f:serverCASecret\":{},\"f:serverTLSSecret\"\
+      :{}},\"f:cloudNativePGCommitHash\":{},\"f:cloudNativePGOperatorHash\":{},\"\
+      f:conditions\":{},\"f:configMapResourceVersion\":{\".\":{},\"f:metrics\":{\"\
+      .\":{},\"f:cnpg-default-monitoring\":{}}},\"f:currentPrimary\":{},\"f:currentPrimaryTimestamp\"\
+      :{},\"f:healthyPVC\":{},\"f:image\":{},\"f:instanceNames\":{},\"f:instances\"\
+      :{},\"f:instancesReportedState\":{\".\":{},\"f:buzz-db-1\":{\".\":{},\"f:ip\"\
+      :{},\"f:isPrimary\":{},\"f:timeLineID\":{}},\"f:buzz-db-2\":{\".\":{},\"f:ip\"\
+      :{},\"f:isPrimary\":{},\"f:timeLineID\":{}},\"f:buzz-db-3\":{\".\":{},\"f:ip\"\
+      :{},\"f:isPrimary\":{},\"f:timeLineID\":{}}},\"f:instancesStatus\":{\".\":{},\"\
+      f:healthy\":{},\"f:replicating\":{}},\"f:managedRolesStatus\":{},\"f:operatorCertificateFingerprint\"\
+      :{},\"f:pgDataImageInfo\":{\".\":{},\"f:image\":{},\"f:majorVersion\":{}},\"\
+      f:phase\":{},\"f:pluginStatus\":{},\"f:poolerIntegrations\":{\".\":{},\"f:pgBouncerIntegration\"\
+      :{}},\"f:pvcCount\":{},\"f:readService\":{},\"f:readyInstances\":{},\"f:secretsResourceVersion\"\
+      :{\".\":{},\"f:applicationSecretVersion\":{},\"f:clientCaSecretVersion\":{},\"\
+      f:replicationSecretVersion\":{},\"f:serverCaSecretVersion\":{},\"f:serverSecretVersion\"\
+      :{}},\"f:selector\":{},\"f:switchReplicaClusterStatus\":{},\"f:systemID\":{},\"\
+      f:timelineID\":{},\"f:topology\":{\".\":{},\"f:instances\":{\".\":{},\"f:buzz-db-1\"\
+      :{},\"f:buzz-db-2\":{},\"f:buzz-db-3\":{}},\"f:nodesUsed\":{},\"f:successfullyExtracted\"\
+      :{}},\"f:writeService\":{}}},\"subresource\":\"status\"}]},\"spec\":{\"description\"\
+      :\"Buzz relay state\",\"inheritedMetadata\":{\"annotations\":{\"argocd.argoproj.io/sync-options\"\
+      :\"Prune=false,Delete=false\"}},\"imageName\":\"ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie@sha256:362b039f643f1c09a34edd63d9a78903e5f1f4f43c24236cc8459621eb676d12\"\
+      ,\"imagePullPolicy\":\"IfNotPresent\",\"postgresUID\":26,\"postgresGID\":26,\"\
+      instances\":3,\"minSyncReplicas\":1,\"maxSyncReplicas\":1,\"postgresql\":{\"\
+      parameters\":{\"archive_mode\":\"on\",\"archive_timeout\":\"5min\",\"dynamic_shared_memory_type\"\
+      :\"posix\",\"full_page_writes\":\"on\",\"log_destination\":\"csvlog\",\"log_directory\"\
+      :\"/controller/log\",\"log_filename\":\"postgres\",\"log_rotation_age\":\"0\"\
+      ,\"log_rotation_size\":\"0\",\"log_truncate_on_rotation\":\"false\",\"logging_collector\"\
+      :\"on\",\"max_parallel_workers\":\"32\",\"max_replication_slots\":\"32\",\"\
+      max_worker_processes\":\"32\",\"password_encryption\":\"scram-sha-256\",\"shared_memory_type\"\
+      :\"mmap\",\"shared_preload_libraries\":\"\",\"ssl_max_protocol_version\":\"\
+      TLSv1.3\",\"ssl_min_protocol_version\":\"TLSv1.3\",\"wal_keep_size\":\"512MB\"\
+      ,\"wal_level\":\"logical\",\"wal_log_hints\":\"on\",\"wal_receiver_timeout\"\
+      :\"5s\",\"wal_sender_timeout\":\"5s\"},\"syncReplicaElectionConstraint\":{\"\
+      enabled\":false}},\"replicationSlots\":{\"highAvailability\":{\"enabled\":true,\"\
+      slotPrefix\":\"_cnpg_\"},\"updateInterval\":30,\"synchronizeReplicas\":{\"enabled\"\
+      :true}},\"bootstrap\":{\"initdb\":{\"database\":\"buzz\",\"owner\":\"buzz\"\
+      ,\"dataChecksums\":true,\"encoding\":\"UTF8\",\"localeCollate\":\"C\",\"localeCType\"\
+      :\"C\"}},\"enableSuperuserAccess\":false,\"storage\":{\"storageClass\":\"rook-ceph-block\"\
+      ,\"size\":\"20Gi\",\"resizeInUseVolumes\":true},\"startDelay\":3600,\"stopDelay\"\
+      :1800,\"smartShutdownTimeout\":180,\"switchoverDelay\":3600,\"affinity\":{\"\
+      topologyKey\":\"kubernetes.io/hostname\",\"podAntiAffinityType\":\"required\"\
+      },\"resources\":{\"limits\":{\"cpu\":\"2\",\"memory\":\"2Gi\"},\"requests\"\
+      :{\"cpu\":\"250m\",\"memory\":\"512Mi\"}},\"primaryUpdateStrategy\":\"unsupervised\"\
+      ,\"primaryUpdateMethod\":\"switchover\",\"backup\":{\"volumeSnapshot\":{\"className\"\
+      :\"rook-ceph-block\",\"snapshotOwnerReference\":\"backup\",\"online\":true,\"\
+      onlineConfiguration\":{\"waitForArchive\":true,\"immediateCheckpoint\":false}},\"\
+      target\":\"prefer-standby\"},\"monitoring\":{\"disableDefaultQueries\":false,\"\
+      customQueriesConfigMap\":[{\"name\":\"cnpg-default-monitoring\",\"key\":\"queries\"\
+      }]},\"logLevel\":\"info\",\"enablePDB\":true,\"plugins\":[{\"name\":\"barman-cloud.cloudnative-pg.io\"\
+      ,\"enabled\":true,\"isWALArchiver\":true,\"parameters\":{\"barmanObjectName\"\
+      :\"buzz-db\",\"serverName\":\"buzz-db-live\"}}],\"probes\":{\"liveness\":{\"\
+      isolationCheck\":{\"enabled\":true,\"requestTimeout\":1000,\"connectionTimeout\"\
+      :1000}}}},\"status\":{\"instances\":3,\"readyInstances\":2,\"selector\":\"cnpg.io/cluster=buzz-db,cnpg.io/podRole=instance\"\
+      ,\"instancesStatus\":{\"healthy\":[\"buzz-db-1\",\"buzz-db-2\"],\"replicating\"\
+      :[\"buzz-db-3\"]},\"instancesReportedState\":{\"buzz-db-1\":{\"isPrimary\":false,\"\
+      timeLineID\":24,\"ip\":\"10.244.0.21\"},\"buzz-db-2\":{\"isPrimary\":false,\"\
+      timeLineID\":24,\"ip\":\"10.244.5.178\"},\"buzz-db-3\":{\"isPrimary\":true,\"\
+      timeLineID\":24,\"ip\":\"10.244.3.94\"}},\"managedRolesStatus\":{},\"timelineID\"\
+      :24,\"topology\":{\"instances\":{\"buzz-db-1\":{},\"buzz-db-2\":{},\"buzz-db-3\"\
+      :{}},\"nodesUsed\":3,\"successfullyExtracted\":true},\"currentPrimary\":\"buzz-db-3\"\
+      ,\"targetPrimary\":\"buzz-db-3\",\"pvcCount\":3,\"healthyPVC\":[\"buzz-db-1\"\
+      ,\"buzz-db-2\",\"buzz-db-3\"],\"writeService\":\"buzz-db-rw\",\"readService\"\
+      :\"buzz-db-r\",\"phase\":\"Cluster in healthy state\",\"secretsResourceVersion\"\
+      :{\"replicationSecretVersion\":\"437666858\",\"applicationSecretVersion\":\"\
+      437666859\",\"clientCaSecretVersion\":\"437666856\",\"serverCaSecretVersion\"\
+      :\"437666856\",\"serverSecretVersion\":\"437666857\"},\"configMapResourceVersion\"\
+      :{\"metrics\":{\"cnpg-default-monitoring\":\"437666918\"}},\"certificates\"\
+      :{\"serverCASecret\":\"buzz-db-ca\",\"serverTLSSecret\":\"buzz-db-server\",\"\
+      replicationTLSSecret\":\"buzz-db-replication\",\"clientCASecret\":\"buzz-db-ca\"\
+      ,\"serverAltDNSNames\":[\"buzz-db-rw\",\"buzz-db-rw.buzz\",\"buzz-db-rw.buzz.svc\"\
+      ,\"buzz-db-rw.buzz.svc.cluster.local\",\"buzz-db-r\",\"buzz-db-r.buzz\",\"buzz-db-r.buzz.svc\"\
+      ,\"buzz-db-r.buzz.svc.cluster.local\",\"buzz-db-ro\",\"buzz-db-ro.buzz\",\"\
+      buzz-db-ro.buzz.svc\",\"buzz-db-ro.buzz.svc.cluster.local\"],\"expirations\"\
+      :{\"buzz-db-ca\":\"2026-10-21 05:20:36 +0000 UTC\",\"buzz-db-replication\":\"\
+      2026-10-21 05:20:36 +0000 UTC\",\"buzz-db-server\":\"2026-10-21 05:20:36 +0000\
+      \ UTC\"}},\"cloudNativePGCommitHash\":\"4b5e244a7\",\"currentPrimaryTimestamp\"\
+      :\"2026-09-08T19:41:29.551123Z\",\"targetPrimaryTimestamp\":\"2026-09-08T12:41:21.131845-07:00\"\
+      ,\"poolerIntegrations\":{\"pgBouncerIntegration\":{}},\"cloudNativePGOperatorHash\"\
+      :\"e61cf87bb9c89f1bca69d41367fd9a5c5c02e3eb7491922560984d03f85ecff0\",\"operatorCertificateFingerprint\"\
+      :\"5c2c739486d6b9f0246aab32963a51e867e7c86da4a892d40e056bc1d9eed9ea\",\"availableArchitectures\"\
+      :[{\"goArch\":\"amd64\",\"hash\":\"582a4e35fb052c39d3402794de5f6602a56cdc8cc4b92ce7abbe41a51a0bbc13\"\
+      },{\"goArch\":\"arm64\",\"hash\":\"e61cf87bb9c89f1bca69d41367fd9a5c5c02e3eb7491922560984d03f85ecff0\"\
+      }],\"conditions\":[{\"type\":\"Initialized\",\"status\":\"True\",\"lastTransitionTime\"\
+      :\"2026-07-23T05:25:37Z\",\"reason\":\"BootstrapCompleted\",\"message\":\"Cluster\
+      \ has been bootstrapped\"},{\"type\":\"ConsistentSystemID\",\"status\":\"True\"\
+      ,\"lastTransitionTime\":\"2026-08-24T07:35:00Z\",\"reason\":\"Unique\",\"message\"\
+      :\"A single, unique system ID was found across reporting instances.\"},{\"type\"\
+      :\"Ready\",\"status\":\"True\",\"lastTransitionTime\":\"2026-09-08T19:42:45Z\"\
+      ,\"reason\":\"ClusterIsReady\",\"message\":\"Cluster is Ready\"},{\"type\":\"\
+      ContinuousArchiving\",\"status\":\"True\",\"lastTransitionTime\":\"2026-09-08T19:41:31Z\"\
+      ,\"reason\":\"ContinuousArchivingSuccess\",\"message\":\"Continuous archiving\
+      \ is working\"},{\"type\":\"LastBackupSucceeded\",\"status\":\"False\",\"lastTransitionTime\"\
+      :\"2026-09-10T05:13:26Z\",\"reason\":\"BackupStarted\",\"message\":\"New Backup\
+      \ starting up\"}],\"instanceNames\":[\"buzz-db-1\",\"buzz-db-2\",\"buzz-db-3\"\
+      ],\"image\":\"ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie@sha256:362b039f643f1c09a34edd63d9a78903e5f1f4f43c24236cc8459621eb676d12\"\
+      ,\"pgDataImageInfo\":{\"image\":\"ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie@sha256:362b039f643f1c09a34edd63d9a78903e5f1f4f43c24236cc8459621eb676d12\"\
+      ,\"majorVersion\":17},\"pluginStatus\":[{\"name\":\"barman-cloud.cloudnative-pg.io\"\
+      ,\"version\":\"0.15.0\",\"capabilities\":[\"TYPE_RECONCILER_HOOKS\",\"TYPE_LIFECYCLE_SERVICE\"\
+      ,\"TYPE_INSTANCE_SIDECAR_INJECTION\"]}],\"switchReplicaClusterStatus\":{},\"\
+      systemID\":\"7665590635531415571\"}}"
+    cnpg.io/instanceName: "buzz-db-3"
+    cnpg.io/instanceRole: "primary"
+    cnpg.io/nodeSerial: "3"
+    cnpg.io/onlineBackup: "false"
+    cnpg.io/operatorVersion: "1.30.0"
+    cnpg.io/pgControldata: "pg_control version number:            1700\nCatalog version\
+      \ number:               202406281\nDatabase system identifier:           7665590635531415571\n\
+      Database cluster state:               shut down\npg_control last modified: \
+      \            Thu Sep 10 05:13:33 2026\nLatest checkpoint location:         \
+      \  2/3E000028\nLatest checkpoint's REDO location:    2/3E000028\nLatest checkpoint's\
+      \ REDO WAL file:    00000018000000020000003E\nLatest checkpoint's TimeLineID:\
+      \       24\nLatest checkpoint's PrevTimeLineID:   24\nLatest checkpoint's full_page_writes:\
+      \ on\nLatest checkpoint's NextXID:          0:8099\nLatest checkpoint's NextOID:\
+      \          38153\nLatest checkpoint's NextMultiXactId:  118\nLatest checkpoint's\
+      \ NextMultiOffset:  251\nLatest checkpoint's oldestXID:        730\nLatest checkpoint's\
+      \ oldestXID's DB:   1\nLatest checkpoint's oldestActiveXID:  0\nLatest checkpoint's\
+      \ oldestMultiXid:   1\nLatest checkpoint's oldestMulti's DB: 1\nLatest checkpoint's\
+      \ oldestCommitTsXid:0\nLatest checkpoint's newestCommitTsXid:0\nTime of latest\
+      \ checkpoint:            Thu Sep 10 05:13:30 2026\nFake LSN counter for unlogged\
+      \ rels:   0/3E8\nMinimum recovery ending location:     0/0\nMin recovery ending\
+      \ loc's timeline:   0\nBackup start location:                0/0\nBackup end\
+      \ location:                  0/0\nEnd-of-backup record required:        no\n\
+      wal_level setting:                    logical\nwal_log_hints setting:      \
+      \          on\nmax_connections setting:              100\nmax_worker_processes\
+      \ setting:         32\nmax_wal_senders setting:              10\nmax_prepared_xacts\
+      \ setting:           0\nmax_locks_per_xact setting:           64\ntrack_commit_timestamp\
+      \ setting:       off\nMaximum data alignment:               8\nDatabase block\
+      \ size:                  8192\nBlocks per segment of large relation: 131072\n\
+      WAL block size:                       8192\nBytes per WAL segment:         \
+      \       16777216\nMaximum length of identifiers:        64\nMaximum columns\
+      \ in an index:          32\nMaximum size of a TOAST chunk:        1996\nSize\
+      \ of a large-object chunk:         2048\nDate/time type storage:           \
+      \    64-bit integers\nFloat8 argument passing:              by value\nData page\
+      \ checksum version:           1\nMock authentication nonce:            f8391d39eda11bf82d7032b62ccf37efa63bb72b8abf5af82629da4bb4199dc7\n"
+    cnpg.io/pvcRole: "PG_DATA"
+    cnpg.io/pvcStatus: "ready"
+    cnpg.io/snapshotEndTime: "2026-09-10T05:14:04Z"
+    cnpg.io/snapshotStartTime: "2026-09-10T05:13:56Z"
+  namespace: postgres-upgrade-acceptance
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    volumeSnapshotContentName: buzz-pg18-source-snapshot-content
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: buzz-pg18-source
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+  namespace: postgres-upgrade-acceptance
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie@sha256:362b039f643f1c09a34edd63d9a78903e5f1f4f43c24236cc8459621eb676d12
+  inheritedMetadata:
+    labels:
+      postgres.proompteng.ai/rehearsal: 18-6-v2
+  affinity:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+  storage:
+    size: 20Gi
+    storageClass: rook-ceph-block
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      database: buzz
+      owner: buzz
+      volumeSnapshots:
+        storage:
+          name: buzz-pg18-source-snapshot
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: '32'
+      max_wal_senders: '10'
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapcontent-6f50fcbc-d769-4a04-bc83-b37a3a52541a
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-25"
+    argocd.argoproj.io/sync-options: "Prune=false,Delete=false,ServerSideApply=false"
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    volumeHandle: 0001-0009-rook-ceph-0000000000000001-5065ac5f-89f1-4c6a-9e42-edd44800f8a2
+  sourceVolumeMode: Filesystem
+  volumeSnapshotClassName: rook-ceph-block
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: jangar-db-pg18-20260910
+    namespace: jangar
+    resourceVersion: '603315397'
+    uid: 6f50fcbc-d769-4a04-bc83-b37a3a52541a
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: jangar-pg18-source-snapshot-content
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+    argocd.argoproj.io/sync-options: "Prune=false,Delete=false"
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    snapshotHandle: 0001-0009-rook-ceph-0000000000000001-2a103651-8d19-4923-9bd6-3d54d48dcf89
+  volumeSnapshotRef:
+    name: jangar-pg18-source-snapshot
+    namespace: postgres-upgrade-acceptance
+    uid: 735e63ea-d8a1-4f98-a5e9-b114e1d999c2
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: jangar-pg18-source-snapshot
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+    argocd.argoproj.io/sync-options: "Prune=false,Delete=false"
+    cnpg.io/backupEndTime: "2026-09-10T05:14:39Z"
+    cnpg.io/backupEndWAL: "000000130000041700000095"
+    cnpg.io/backupStartTime: "2026-09-10T05:14:04Z"
+    cnpg.io/backupStartWAL: "000000130000041700000095"
+    cnpg.io/clusterManifest: "{\"kind\":\"Cluster\",\"apiVersion\":\"postgresql.cnpg.io/v1\"\
+      ,\"metadata\":{\"name\":\"jangar-db\",\"namespace\":\"jangar\",\"uid\":\"2059ac54-3ca8-4ed0-bb06-60288ae3a310\"\
+      ,\"resourceVersion\":\"603315395\",\"generation\":10,\"creationTimestamp\":\"\
+      2026-03-10T22:56:57Z\",\"annotations\":{\"argocd.argoproj.io/tracking-id\":\"\
+      jangar:postgresql.cnpg.io/Cluster:jangar/jangar-db\",\"cnpg.io/fencedInstances\"\
+      :\"[\\\"jangar-db-1\\\"]\"},\"managedFields\":[{\"manager\":\"argocd-controller\"\
+      ,\"operation\":\"Apply\",\"apiVersion\":\"postgresql.cnpg.io/v1\",\"time\":\"\
+      2026-09-10T03:37:20Z\",\"fieldsType\":\"FieldsV1\",\"fieldsV1\":{\"f:metadata\"\
+      :{\"f:annotations\":{\"f:argocd.argoproj.io/tracking-id\":{}}},\"f:spec\":{\"\
+      f:backup\":{\"f:barmanObjectStore\":{\"f:data\":{\"f:additionalCommandArgs\"\
+      :{},\"f:compression\":{},\"f:jobs\":{}},\"f:destinationPath\":{},\"f:endpointURL\"\
+      :{},\"f:s3Credentials\":{\"f:accessKeyId\":{\"f:key\":{},\"f:name\":{}},\"f:secretAccessKey\"\
+      :{\"f:key\":{},\"f:name\":{}}},\"f:serverName\":{},\"f:wal\":{\"f:compression\"\
+      :{},\"f:maxParallel\":{}}},\"f:retentionPolicy\":{},\"f:target\":{},\"f:volumeSnapshot\"\
+      :{\"f:className\":{},\"f:snapshotOwnerReference\":{}}},\"f:bootstrap\":{\"f:initdb\"\
+      :{\"f:dataChecksums\":{},\"f:database\":{},\"f:encoding\":{},\"f:owner\":{},\"\
+      f:postInitApplicationSQL\":{}}},\"f:imageName\":{},\"f:inheritedMetadata\":{\"\
+      f:annotations\":{\"f:reflector.v1.k8s.emberstack.com/reflection-allowed\":{},\"\
+      f:reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces\":{},\"f:reflector.v1.k8s.emberstack.com/reflection-auto-enabled\"\
+      :{},\"f:reflector.v1.k8s.emberstack.com/reflection-auto-namespaces\":{}}},\"\
+      f:instances\":{},\"f:monitoring\":{\"f:enablePodMonitor\":{}},\"f:primaryUpdateStrategy\"\
+      :{},\"f:storage\":{\"f:size\":{},\"f:storageClass\":{}}}}},{\"manager\":\"kubectl-cnpg\"\
+      ,\"operation\":\"Update\",\"apiVersion\":\"postgresql.cnpg.io/v1\",\"time\"\
+      :\"2026-09-08T19:39:25Z\",\"fieldsType\":\"FieldsV1\",\"fieldsV1\":{\"f:status\"\
+      :{\"f:targetPrimary\":{},\"f:targetPrimaryTimestamp\":{}}},\"subresource\":\"\
+      status\"},{\"manager\":\"manager\",\"operation\":\"Update\",\"apiVersion\":\"\
+      postgresql.cnpg.io/v1\",\"time\":\"2026-09-10T05:14:04Z\",\"fieldsType\":\"\
+      FieldsV1\",\"fieldsV1\":{\"f:metadata\":{\"f:annotations\":{\"f:cnpg.io/fencedInstances\"\
+      :{}}},\"f:spec\":{\"f:probes\":{\".\":{},\"f:liveness\":{\".\":{},\"f:isolationCheck\"\
+      :{\".\":{},\"f:connectionTimeout\":{},\"f:enabled\":{},\"f:requestTimeout\"\
+      :{}}}}}}},{\"manager\":\"manager\",\"operation\":\"Update\",\"apiVersion\":\"\
+      postgresql.cnpg.io/v1\",\"time\":\"2026-09-10T05:14:33Z\",\"fieldsType\":\"\
+      FieldsV1\",\"fieldsV1\":{\"f:status\":{\".\":{},\"f:availableArchitectures\"\
+      :{},\"f:certificates\":{\".\":{},\"f:clientCASecret\":{},\"f:expirations\":{\"\
+      .\":{},\"f:jangar-db-ca\":{},\"f:jangar-db-replication\":{},\"f:jangar-db-server\"\
+      :{}},\"f:replicationTLSSecret\":{},\"f:serverAltDNSNames\":{},\"f:serverCASecret\"\
+      :{},\"f:serverTLSSecret\":{}},\"f:cloudNativePGCommitHash\":{},\"f:cloudNativePGOperatorHash\"\
+      :{},\"f:conditions\":{},\"f:configMapResourceVersion\":{\".\":{},\"f:metrics\"\
+      :{\".\":{},\"f:cnpg-default-monitoring\":{}}},\"f:currentPrimary\":{},\"f:currentPrimaryTimestamp\"\
+      :{},\"f:firstRecoverabilityPoint\":{},\"f:firstRecoverabilityPointByMethod\"\
+      :{\".\":{},\"f:barmanObjectStore\":{}},\"f:healthyPVC\":{},\"f:image\":{},\"\
+      f:instanceNames\":{},\"f:instances\":{},\"f:instancesReportedState\":{\".\"\
+      :{},\"f:jangar-db-1\":{\".\":{},\"f:ip\":{},\"f:isPrimary\":{},\"f:timeLineID\"\
+      :{}},\"f:jangar-db-3\":{\".\":{},\"f:ip\":{},\"f:isPrimary\":{},\"f:timeLineID\"\
+      :{}}},\"f:instancesStatus\":{\".\":{},\"f:healthy\":{},\"f:replicating\":{}},\"\
+      f:lastFailedBackup\":{},\"f:lastSuccessfulBackup\":{},\"f:lastSuccessfulBackupByMethod\"\
+      :{\".\":{},\"f:barmanObjectStore\":{}},\"f:latestGeneratedNode\":{},\"f:managedRolesStatus\"\
+      :{},\"f:operatorCertificateFingerprint\":{},\"f:pgDataImageInfo\":{\".\":{},\"\
+      f:image\":{},\"f:majorVersion\":{}},\"f:phase\":{},\"f:poolerIntegrations\"\
+      :{\".\":{},\"f:pgBouncerIntegration\":{}},\"f:pvcCount\":{},\"f:readService\"\
+      :{},\"f:readyInstances\":{},\"f:secretsResourceVersion\":{\".\":{},\"f:applicationSecretVersion\"\
+      :{},\"f:clientCaSecretVersion\":{},\"f:replicationSecretVersion\":{},\"f:serverCaSecretVersion\"\
+      :{},\"f:serverSecretVersion\":{}},\"f:selector\":{},\"f:switchReplicaClusterStatus\"\
+      :{},\"f:systemID\":{},\"f:timelineID\":{},\"f:topology\":{\".\":{},\"f:instances\"\
+      :{\".\":{},\"f:jangar-db-1\":{},\"f:jangar-db-3\":{}},\"f:nodesUsed\":{},\"\
+      f:successfullyExtracted\":{}},\"f:writeService\":{}}},\"subresource\":\"status\"\
+      }]},\"spec\":{\"inheritedMetadata\":{\"annotations\":{\"reflector.v1.k8s.emberstack.com/reflection-allowed\"\
+      :\"true\",\"reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces\"\
+      :\"pgadmin\",\"reflector.v1.k8s.emberstack.com/reflection-auto-enabled\":\"\
+      true\",\"reflector.v1.k8s.emberstack.com/reflection-auto-namespaces\":\"pgadmin\"\
+      }},\"imageName\":\"ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e\"\
+      ,\"postgresUID\":26,\"postgresGID\":26,\"instances\":2,\"postgresql\":{\"parameters\"\
+      :{\"archive_mode\":\"on\",\"archive_timeout\":\"5min\",\"dynamic_shared_memory_type\"\
+      :\"posix\",\"full_page_writes\":\"on\",\"log_destination\":\"csvlog\",\"log_directory\"\
+      :\"/controller/log\",\"log_filename\":\"postgres\",\"log_rotation_age\":\"0\"\
+      ,\"log_rotation_size\":\"0\",\"log_truncate_on_rotation\":\"false\",\"logging_collector\"\
+      :\"on\",\"max_parallel_workers\":\"32\",\"max_replication_slots\":\"32\",\"\
+      max_worker_processes\":\"32\",\"shared_memory_type\":\"mmap\",\"shared_preload_libraries\"\
+      :\"\",\"ssl_max_protocol_version\":\"TLSv1.3\",\"ssl_min_protocol_version\"\
+      :\"TLSv1.3\",\"wal_keep_size\":\"512MB\",\"wal_level\":\"logical\",\"wal_log_hints\"\
+      :\"on\",\"wal_receiver_timeout\":\"5s\",\"wal_sender_timeout\":\"5s\"},\"syncReplicaElectionConstraint\"\
+      :{\"enabled\":false}},\"replicationSlots\":{\"highAvailability\":{\"enabled\"\
+      :true,\"slotPrefix\":\"_cnpg_\"},\"updateInterval\":30,\"synchronizeReplicas\"\
+      :{\"enabled\":true}},\"bootstrap\":{\"initdb\":{\"database\":\"jangar\",\"owner\"\
+      :\"jangar\",\"dataChecksums\":true,\"encoding\":\"UTF8\",\"localeCollate\":\"\
+      C\",\"localeCType\":\"C\",\"postInitApplicationSQL\":[\"CREATE EXTENSION IF\
+      \ NOT EXISTS pgcrypto;\",\"CREATE EXTENSION IF NOT EXISTS pg_trgm;\",\"CREATE\
+      \ EXTENSION IF NOT EXISTS vector;\"]}},\"enableSuperuserAccess\":false,\"storage\"\
+      :{\"storageClass\":\"rook-ceph-block\",\"size\":\"300Gi\",\"resizeInUseVolumes\"\
+      :true},\"startDelay\":3600,\"stopDelay\":1800,\"smartShutdownTimeout\":180,\"\
+      switchoverDelay\":3600,\"affinity\":{\"podAntiAffinityType\":\"preferred\"},\"\
+      resources\":{},\"primaryUpdateStrategy\":\"unsupervised\",\"primaryUpdateMethod\"\
+      :\"restart\",\"backup\":{\"volumeSnapshot\":{\"className\":\"rook-ceph-block\"\
+      ,\"snapshotOwnerReference\":\"backup\",\"online\":true,\"onlineConfiguration\"\
+      :{\"waitForArchive\":true,\"immediateCheckpoint\":false}},\"barmanObjectStore\"\
+      :{\"s3Credentials\":{\"accessKeyId\":{\"name\":\"cnpg-jangar-db\",\"key\":\"\
+      AWS_ACCESS_KEY_ID\"},\"secretAccessKey\":{\"name\":\"cnpg-jangar-db\",\"key\"\
+      :\"AWS_SECRET_ACCESS_KEY\"}},\"endpointURL\":\"http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80\"\
+      ,\"destinationPath\":\"s3://cnpg\",\"serverName\":\"jangar-db-live\",\"wal\"\
+      :{\"compression\":\"snappy\",\"maxParallel\":2},\"data\":{\"compression\":\"\
+      snappy\",\"jobs\":1,\"additionalCommandArgs\":[\"--max-bandwidth\",\"8MB\"]}},\"\
+      retentionPolicy\":\"14d\",\"target\":\"prefer-standby\"},\"monitoring\":{\"\
+      disableDefaultQueries\":false,\"customQueriesConfigMap\":[{\"name\":\"cnpg-default-monitoring\"\
+      ,\"key\":\"queries\"}],\"enablePodMonitor\":true},\"logLevel\":\"info\",\"enablePDB\"\
+      :true,\"probes\":{\"liveness\":{\"isolationCheck\":{\"enabled\":true,\"requestTimeout\"\
+      :1000,\"connectionTimeout\":1000}}}},\"status\":{\"instances\":2,\"readyInstances\"\
+      :1,\"selector\":\"cnpg.io/cluster=jangar-db,cnpg.io/podRole=instance\",\"instancesStatus\"\
+      :{\"healthy\":[\"jangar-db-3\"],\"replicating\":[\"jangar-db-1\"]},\"instancesReportedState\"\
+      :{\"jangar-db-1\":{\"isPrimary\":true,\"timeLineID\":19,\"ip\":\"10.244.3.97\"\
+      },\"jangar-db-3\":{\"isPrimary\":false,\"timeLineID\":19,\"ip\":\"10.244.4.252\"\
+      }},\"managedRolesStatus\":{},\"timelineID\":19,\"topology\":{\"instances\":{\"\
+      jangar-db-1\":{},\"jangar-db-3\":{}},\"nodesUsed\":2,\"successfullyExtracted\"\
+      :true},\"latestGeneratedNode\":3,\"currentPrimary\":\"jangar-db-1\",\"targetPrimary\"\
+      :\"jangar-db-1\",\"pvcCount\":2,\"healthyPVC\":[\"jangar-db-1\",\"jangar-db-3\"\
+      ],\"writeService\":\"jangar-db-rw\",\"readService\":\"jangar-db-r\",\"phase\"\
+      :\"Cluster in healthy state\",\"secretsResourceVersion\":{\"replicationSecretVersion\"\
+      :\"523193187\",\"applicationSecretVersion\":\"377233063\",\"clientCaSecretVersion\"\
+      :\"523193184\",\"serverCaSecretVersion\":\"523193184\",\"serverSecretVersion\"\
+      :\"523193186\"},\"configMapResourceVersion\":{\"metrics\":{\"cnpg-default-monitoring\"\
+      :\"377216533\"}},\"certificates\":{\"serverCASecret\":\"jangar-db-ca\",\"serverTLSSecret\"\
+      :\"jangar-db-server\",\"replicationTLSSecret\":\"jangar-db-replication\",\"\
+      clientCASecret\":\"jangar-db-ca\",\"serverAltDNSNames\":[\"jangar-db-rw\",\"\
+      jangar-db-rw.jangar\",\"jangar-db-rw.jangar.svc\",\"jangar-db-rw.jangar.svc.cluster.local\"\
+      ,\"jangar-db-r\",\"jangar-db-r.jangar\",\"jangar-db-r.jangar.svc\",\"jangar-db-r.jangar.svc.cluster.local\"\
+      ,\"jangar-db-ro\",\"jangar-db-ro.jangar\",\"jangar-db-ro.jangar.svc\",\"jangar-db-ro.jangar.svc.cluster.local\"\
+      ],\"expirations\":{\"jangar-db-ca\":\"2026-11-21 23:50:08 +0000 UTC\",\"jangar-db-replication\"\
+      :\"2026-11-21 23:50:08 +0000 UTC\",\"jangar-db-server\":\"2026-11-21 23:50:08\
+      \ +0000 UTC\"}},\"firstRecoverabilityPoint\":\"2026-08-27T04:15:34Z\",\"firstRecoverabilityPointByMethod\"\
+      :{\"barmanObjectStore\":\"2026-08-27T04:15:34Z\"},\"lastSuccessfulBackup\":\"\
+      2026-09-10T04:15:41Z\",\"lastSuccessfulBackupByMethod\":{\"barmanObjectStore\"\
+      :\"2026-09-10T04:15:41Z\"},\"lastFailedBackup\":\"2026-07-14T11:30:24Z\",\"\
+      cloudNativePGCommitHash\":\"4b5e244a7\",\"currentPrimaryTimestamp\":\"2026-09-08T19:39:32.596803Z\"\
+      ,\"targetPrimaryTimestamp\":\"2026-09-08T12:39:25.415613-07:00\",\"poolerIntegrations\"\
+      :{\"pgBouncerIntegration\":{}},\"cloudNativePGOperatorHash\":\"e61cf87bb9c89f1bca69d41367fd9a5c5c02e3eb7491922560984d03f85ecff0\"\
+      ,\"operatorCertificateFingerprint\":\"5c2c739486d6b9f0246aab32963a51e867e7c86da4a892d40e056bc1d9eed9ea\"\
+      ,\"availableArchitectures\":[{\"goArch\":\"amd64\",\"hash\":\"582a4e35fb052c39d3402794de5f6602a56cdc8cc4b92ce7abbe41a51a0bbc13\"\
+      },{\"goArch\":\"arm64\",\"hash\":\"e61cf87bb9c89f1bca69d41367fd9a5c5c02e3eb7491922560984d03f85ecff0\"\
+      }],\"conditions\":[{\"type\":\"Ready\",\"status\":\"True\",\"lastTransitionTime\"\
+      :\"2026-09-08T19:40:46Z\",\"reason\":\"ClusterIsReady\",\"message\":\"Cluster\
+      \ is Ready\"},{\"type\":\"ContinuousArchiving\",\"status\":\"True\",\"lastTransitionTime\"\
+      :\"2026-09-08T19:39:33Z\",\"reason\":\"ContinuousArchivingSuccess\",\"message\"\
+      :\"Continuous archiving is working\"},{\"type\":\"LastBackupSucceeded\",\"status\"\
+      :\"False\",\"lastTransitionTime\":\"2026-09-10T05:14:04Z\",\"reason\":\"BackupStarted\"\
+      ,\"message\":\"New Backup starting up\"},{\"type\":\"ConsistentSystemID\",\"\
+      status\":\"True\",\"lastTransitionTime\":\"2026-09-07T11:32:26Z\",\"reason\"\
+      :\"Unique\",\"message\":\"A single, unique system ID was found across reporting\
+      \ instances.\"},{\"type\":\"Initialized\",\"status\":\"True\",\"lastTransitionTime\"\
+      :\"2026-07-03T07:13:35Z\",\"reason\":\"BootstrapCompleted\",\"message\":\"Cluster\
+      \ has been bootstrapped\"}],\"instanceNames\":[\"jangar-db-1\",\"jangar-db-3\"\
+      ],\"image\":\"ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e\"\
+      ,\"pgDataImageInfo\":{\"image\":\"ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e\"\
+      ,\"majorVersion\":17},\"switchReplicaClusterStatus\":{},\"systemID\":\"7615764848397791261\"\
+      }}"
+    cnpg.io/instanceName: "jangar-db-1"
+    cnpg.io/instanceRole: "primary"
+    cnpg.io/nodeSerial: "1"
+    cnpg.io/onlineBackup: "false"
+    cnpg.io/operatorVersion: "1.30.0"
+    cnpg.io/pgControldata: "pg_control version number:            1700\nCatalog version\
+      \ number:               202406281\nDatabase system identifier:           7615764848397791261\n\
+      Database cluster state:               shut down\npg_control last modified: \
+      \            Thu Sep 10 05:14:13 2026\nLatest checkpoint location:         \
+      \  417/95000028\nLatest checkpoint's REDO location:    417/95000028\nLatest\
+      \ checkpoint's REDO WAL file:    000000130000041700000095\nLatest checkpoint's\
+      \ TimeLineID:       19\nLatest checkpoint's PrevTimeLineID:   19\nLatest checkpoint's\
+      \ full_page_writes: on\nLatest checkpoint's NextXID:          0:302182212\n\
+      Latest checkpoint's NextOID:          22166988\nLatest checkpoint's NextMultiXactId:\
+      \  123244\nLatest checkpoint's NextMultiOffset:  382961\nLatest checkpoint's\
+      \ oldestXID:        108134452\nLatest checkpoint's oldestXID's DB:   16385\n\
+      Latest checkpoint's oldestActiveXID:  0\nLatest checkpoint's oldestMultiXid:\
+      \   9514\nLatest checkpoint's oldestMulti's DB: 16385\nLatest checkpoint's oldestCommitTsXid:0\n\
+      Latest checkpoint's newestCommitTsXid:0\nTime of latest checkpoint:        \
+      \    Thu Sep 10 05:14:10 2026\nFake LSN counter for unlogged rels:   0/3E8\n\
+      Minimum recovery ending location:     0/0\nMin recovery ending loc's timeline:\
+      \   0\nBackup start location:                0/0\nBackup end location:     \
+      \             0/0\nEnd-of-backup record required:        no\nwal_level setting:\
+      \                    logical\nwal_log_hints setting:                on\nmax_connections\
+      \ setting:              100\nmax_worker_processes setting:         32\nmax_wal_senders\
+      \ setting:              10\nmax_prepared_xacts setting:           0\nmax_locks_per_xact\
+      \ setting:           64\ntrack_commit_timestamp setting:       off\nMaximum\
+      \ data alignment:               8\nDatabase block size:                  8192\n\
+      Blocks per segment of large relation: 131072\nWAL block size:              \
+      \         8192\nBytes per WAL segment:                16777216\nMaximum length\
+      \ of identifiers:        64\nMaximum columns in an index:          32\nMaximum\
+      \ size of a TOAST chunk:        1996\nSize of a large-object chunk:        \
+      \ 2048\nDate/time type storage:               64-bit integers\nFloat8 argument\
+      \ passing:              by value\nData page checksum version:           1\n\
+      Mock authentication nonce:            d11435fcb61dec1abbed18a50bc6d2665a4d29ba5f5221629c91b242163c04a8\n"
+    cnpg.io/pvcRole: "PG_DATA"
+    cnpg.io/pvcStatus: "ready"
+    cnpg.io/snapshotEndTime: "2026-09-10T05:14:39Z"
+    cnpg.io/snapshotStartTime: "2026-09-10T05:14:34Z"
+  namespace: postgres-upgrade-acceptance
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    volumeSnapshotContentName: jangar-pg18-source-snapshot-content
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: jangar-pg18-source
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+  namespace: postgres-upgrade-acceptance
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+  inheritedMetadata:
+    labels:
+      postgres.proompteng.ai/rehearsal: 18-6-v2
+  affinity:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+  storage:
+    size: 300Gi
+    storageClass: rook-ceph-block
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      database: jangar
+      owner: jangar
+      volumeSnapshots:
+        storage:
+          name: jangar-pg18-source-snapshot
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: '32'
+      max_wal_senders: '10'
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapcontent-76671f43-fe2f-4eb4-a55a-dca5b32cc0f2
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-25"
+    argocd.argoproj.io/sync-options: "Prune=false,Delete=false,ServerSideApply=false"
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    volumeHandle: 0001-0009-rook-ceph-0000000000000001-a7e6fb61-d43c-47f8-9db1-f310235950a6
+  sourceVolumeMode: Filesystem
+  volumeSnapshotClassName: rook-ceph-block
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: torghut-db-pg18-20260910
+    namespace: torghut
+    resourceVersion: '603316551'
+    uid: 76671f43-fe2f-4eb4-a55a-dca5b32cc0f2
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: torghut-pg18-source-snapshot-content
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+    argocd.argoproj.io/sync-options: "Prune=false,Delete=false"
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    snapshotHandle: 0001-0009-rook-ceph-0000000000000001-970ba839-949b-465a-89e7-c3140760d7d1
+  volumeSnapshotRef:
+    name: torghut-pg18-source-snapshot
+    namespace: postgres-upgrade-acceptance
+    uid: c81798ae-dd6f-440e-9466-d12ffc221163
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: torghut-pg18-source-snapshot
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+    argocd.argoproj.io/sync-options: "Prune=false,Delete=false"
+    cnpg.io/backupEndTime: "2026-09-10T05:15:08Z"
+    cnpg.io/backupEndWAL: "000000110000095D000000E5"
+    cnpg.io/backupStartTime: "2026-09-10T05:14:39Z"
+    cnpg.io/backupStartWAL: "000000110000095D000000E5"
+    cnpg.io/clusterManifest: "{\"kind\":\"Cluster\",\"apiVersion\":\"postgresql.cnpg.io/v1\"\
+      ,\"metadata\":{\"name\":\"torghut-db\",\"namespace\":\"torghut\",\"uid\":\"\
+      eea13d19-3e65-40af-be58-6c29066a74a4\",\"resourceVersion\":\"603316548\",\"\
+      generation\":20,\"creationTimestamp\":\"2026-03-10T22:59:54Z\",\"annotations\"\
+      :{\"argocd.argoproj.io/tracking-id\":\"torghut:postgresql.cnpg.io/Cluster:torghut/torghut-db\"\
+      ,\"cnpg.io/fencedInstances\":\"[\\\"torghut-db-1\\\"]\"},\"managedFields\":[{\"\
+      manager\":\"argocd-controller\",\"operation\":\"Apply\",\"apiVersion\":\"postgresql.cnpg.io/v1\"\
+      ,\"time\":\"2026-09-10T05:11:46Z\",\"fieldsType\":\"FieldsV1\",\"fieldsV1\"\
+      :{\"f:metadata\":{\"f:annotations\":{\"f:argocd.argoproj.io/tracking-id\":{}}},\"\
+      f:spec\":{\"f:affinity\":{\"f:nodeAffinity\":{\"f:requiredDuringSchedulingIgnoredDuringExecution\"\
+      :{}},\"f:podAntiAffinityType\":{},\"f:topologyKey\":{}},\"f:backup\":{\"f:barmanObjectStore\"\
+      :{\"f:destinationPath\":{},\"f:endpointURL\":{},\"f:s3Credentials\":{\"f:accessKeyId\"\
+      :{\"f:key\":{},\"f:name\":{}},\"f:secretAccessKey\":{\"f:key\":{},\"f:name\"\
+      :{}}},\"f:serverName\":{},\"f:wal\":{\"f:maxParallel\":{}}},\"f:retentionPolicy\"\
+      :{},\"f:target\":{},\"f:volumeSnapshot\":{\"f:className\":{},\"f:snapshotOwnerReference\"\
+      :{}}},\"f:bootstrap\":{\"f:initdb\":{\"f:dataChecksums\":{},\"f:database\":{},\"\
+      f:encoding\":{},\"f:owner\":{}}},\"f:imageName\":{},\"f:inheritedMetadata\"\
+      :{\"f:annotations\":{\"f:reflector.v1.k8s.emberstack.com/reflection-allowed\"\
+      :{},\"f:reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces\":{},\"\
+      f:reflector.v1.k8s.emberstack.com/reflection-auto-enabled\":{},\"f:reflector.v1.k8s.emberstack.com/reflection-auto-namespaces\"\
+      :{}}},\"f:instances\":{},\"f:managed\":{\"f:roles\":{}},\"f:monitoring\":{\"\
+      f:enablePodMonitor\":{}},\"f:postgresql\":{\"f:parameters\":{\"f:wal_buffers\"\
+      :{}}},\"f:primaryUpdateMethod\":{},\"f:primaryUpdateStrategy\":{},\"f:resources\"\
+      :{\"f:limits\":{\"f:cpu\":{},\"f:memory\":{}},\"f:requests\":{\"f:cpu\":{},\"\
+      f:memory\":{}}},\"f:storage\":{\"f:size\":{},\"f:storageClass\":{}}}}},{\"manager\"\
+      :\"argocd-controller\",\"operation\":\"Update\",\"apiVersion\":\"postgresql.cnpg.io/v1\"\
+      ,\"time\":\"2026-03-11T08:56:45Z\",\"fieldsType\":\"FieldsV1\",\"fieldsV1\"\
+      :{\"f:spec\":{\"f:backup\":{\"f:barmanObjectStore\":{\"f:destinationPath\":{},\"\
+      f:s3Credentials\":{\"f:accessKeyId\":{\"f:name\":{}},\"f:secretAccessKey\":{\"\
+      f:name\":{}}}}}}}},{\"manager\":\"kubectl-patch\",\"operation\":\"Update\",\"\
+      apiVersion\":\"postgresql.cnpg.io/v1\",\"time\":\"2026-06-19T04:52:36Z\",\"\
+      fieldsType\":\"FieldsV1\",\"fieldsV1\":{\"f:spec\":{\"f:enableSuperuserAccess\"\
+      :{},\"f:storage\":{\"f:size\":{}}}}},{\"manager\":\"kubectl-cnpg\",\"operation\"\
+      :\"Update\",\"apiVersion\":\"postgresql.cnpg.io/v1\",\"time\":\"2026-09-08T19:43:31Z\"\
+      ,\"fieldsType\":\"FieldsV1\",\"fieldsV1\":{\"f:status\":{\"f:targetPrimary\"\
+      :{},\"f:targetPrimaryTimestamp\":{}}},\"subresource\":\"status\"},{\"manager\"\
+      :\"manager\",\"operation\":\"Update\",\"apiVersion\":\"postgresql.cnpg.io/v1\"\
+      ,\"time\":\"2026-09-10T05:14:40Z\",\"fieldsType\":\"FieldsV1\",\"fieldsV1\"\
+      :{\"f:metadata\":{\"f:annotations\":{\"f:cnpg.io/fencedInstances\":{}}},\"f:spec\"\
+      :{\"f:probes\":{\".\":{},\"f:liveness\":{\".\":{},\"f:isolationCheck\":{\".\"\
+      :{},\"f:connectionTimeout\":{},\"f:enabled\":{},\"f:requestTimeout\":{}}}}}}},{\"\
+      manager\":\"manager\",\"operation\":\"Update\",\"apiVersion\":\"postgresql.cnpg.io/v1\"\
+      ,\"time\":\"2026-09-10T05:15:05Z\",\"fieldsType\":\"FieldsV1\",\"fieldsV1\"\
+      :{\"f:status\":{\".\":{},\"f:availableArchitectures\":{},\"f:certificates\"\
+      :{\".\":{},\"f:clientCASecret\":{},\"f:expirations\":{\".\":{},\"f:torghut-db-ca\"\
+      :{},\"f:torghut-db-replication\":{},\"f:torghut-db-server\":{}},\"f:replicationTLSSecret\"\
+      :{},\"f:serverAltDNSNames\":{},\"f:serverCASecret\":{},\"f:serverTLSSecret\"\
+      :{}},\"f:cloudNativePGCommitHash\":{},\"f:cloudNativePGOperatorHash\":{},\"\
+      f:conditions\":{},\"f:configMapResourceVersion\":{\".\":{},\"f:metrics\":{\"\
+      .\":{},\"f:cnpg-default-monitoring\":{}}},\"f:currentPrimary\":{},\"f:currentPrimaryTimestamp\"\
+      :{},\"f:firstRecoverabilityPoint\":{},\"f:firstRecoverabilityPointByMethod\"\
+      :{\".\":{},\"f:barmanObjectStore\":{}},\"f:healthyPVC\":{},\"f:image\":{},\"\
+      f:instanceNames\":{},\"f:instances\":{},\"f:instancesReportedState\":{\".\"\
+      :{},\"f:torghut-db-1\":{\".\":{},\"f:ip\":{},\"f:isPrimary\":{},\"f:timeLineID\"\
+      :{}},\"f:torghut-db-2\":{\".\":{},\"f:ip\":{},\"f:isPrimary\":{},\"f:timeLineID\"\
+      :{}}},\"f:instancesStatus\":{\".\":{},\"f:healthy\":{},\"f:replicating\":{}},\"\
+      f:lastSuccessfulBackup\":{},\"f:lastSuccessfulBackupByMethod\":{\".\":{},\"\
+      f:barmanObjectStore\":{}},\"f:latestGeneratedNode\":{},\"f:managedRolesStatus\"\
+      :{\".\":{},\"f:byStatus\":{\".\":{},\"f:not-managed\":{},\"f:reconciled\":{},\"\
+      f:reserved\":{}},\"f:passwordStatus\":{\".\":{},\"f:torghut_notebook\":{\".\"\
+      :{},\"f:resourceVersion\":{},\"f:transactionID\":{}}}},\"f:operatorCertificateFingerprint\"\
+      :{},\"f:pgDataImageInfo\":{\".\":{},\"f:image\":{},\"f:majorVersion\":{}},\"\
+      f:phase\":{},\"f:poolerIntegrations\":{\".\":{},\"f:pgBouncerIntegration\":{}},\"\
+      f:pvcCount\":{},\"f:readService\":{},\"f:readyInstances\":{},\"f:secretsResourceVersion\"\
+      :{\".\":{},\"f:applicationSecretVersion\":{},\"f:clientCaSecretVersion\":{},\"\
+      f:managedRoleSecretVersion\":{\".\":{},\"f:torghut-notebook-postgres\":{}},\"\
+      f:replicationSecretVersion\":{},\"f:serverCaSecretVersion\":{},\"f:serverSecretVersion\"\
+      :{},\"f:superuserSecretVersion\":{}},\"f:selector\":{},\"f:switchReplicaClusterStatus\"\
+      :{},\"f:systemID\":{},\"f:timelineID\":{},\"f:topology\":{\".\":{},\"f:instances\"\
+      :{\".\":{},\"f:torghut-db-1\":{},\"f:torghut-db-2\":{}},\"f:nodesUsed\":{},\"\
+      f:successfullyExtracted\":{}},\"f:writeService\":{}}},\"subresource\":\"status\"\
+      }]},\"spec\":{\"inheritedMetadata\":{\"annotations\":{\"reflector.v1.k8s.emberstack.com/reflection-allowed\"\
+      :\"true\",\"reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces\"\
+      :\"pgadmin,jangar,argo-workflows\",\"reflector.v1.k8s.emberstack.com/reflection-auto-enabled\"\
+      :\"true\",\"reflector.v1.k8s.emberstack.com/reflection-auto-namespaces\":\"\
+      pgadmin,jangar,argo-workflows\"}},\"imageName\":\"ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e\"\
+      ,\"postgresUID\":26,\"postgresGID\":26,\"instances\":2,\"postgresql\":{\"parameters\"\
+      :{\"archive_mode\":\"on\",\"archive_timeout\":\"5min\",\"dynamic_shared_memory_type\"\
+      :\"posix\",\"full_page_writes\":\"on\",\"log_destination\":\"csvlog\",\"log_directory\"\
+      :\"/controller/log\",\"log_filename\":\"postgres\",\"log_rotation_age\":\"0\"\
+      ,\"log_rotation_size\":\"0\",\"log_truncate_on_rotation\":\"false\",\"logging_collector\"\
+      :\"on\",\"max_parallel_workers\":\"32\",\"max_replication_slots\":\"32\",\"\
+      max_worker_processes\":\"32\",\"shared_memory_type\":\"mmap\",\"shared_preload_libraries\"\
+      :\"\",\"ssl_max_protocol_version\":\"TLSv1.3\",\"ssl_min_protocol_version\"\
+      :\"TLSv1.3\",\"wal_buffers\":\"16MB\",\"wal_keep_size\":\"512MB\",\"wal_level\"\
+      :\"logical\",\"wal_log_hints\":\"on\",\"wal_receiver_timeout\":\"5s\",\"wal_sender_timeout\"\
+      :\"5s\"},\"syncReplicaElectionConstraint\":{\"enabled\":false}},\"replicationSlots\"\
+      :{\"highAvailability\":{\"enabled\":true,\"slotPrefix\":\"_cnpg_\"},\"updateInterval\"\
+      :30,\"synchronizeReplicas\":{\"enabled\":true}},\"bootstrap\":{\"initdb\":{\"\
+      database\":\"torghut\",\"owner\":\"torghut_app\",\"dataChecksums\":true,\"encoding\"\
+      :\"UTF8\",\"localeCollate\":\"C\",\"localeCType\":\"C\"}},\"enableSuperuserAccess\"\
+      :true,\"storage\":{\"storageClass\":\"rook-ceph-block\",\"size\":\"50Gi\",\"\
+      resizeInUseVolumes\":true},\"startDelay\":3600,\"stopDelay\":1800,\"smartShutdownTimeout\"\
+      :180,\"switchoverDelay\":3600,\"affinity\":{\"topologyKey\":\"kubernetes.io/hostname\"\
+      ,\"nodeAffinity\":{\"requiredDuringSchedulingIgnoredDuringExecution\":{\"nodeSelectorTerms\"\
+      :[{\"matchExpressions\":[{\"key\":\"kubernetes.io/arch\",\"operator\":\"In\"\
+      ,\"values\":[\"amd64\"]}]}]}},\"podAntiAffinityType\":\"required\"},\"resources\"\
+      :{\"limits\":{\"cpu\":\"4\",\"memory\":\"8Gi\"},\"requests\":{\"cpu\":\"500m\"\
+      ,\"memory\":\"1Gi\"}},\"primaryUpdateStrategy\":\"unsupervised\",\"primaryUpdateMethod\"\
+      :\"switchover\",\"backup\":{\"volumeSnapshot\":{\"className\":\"rook-ceph-block\"\
+      ,\"snapshotOwnerReference\":\"backup\",\"online\":true,\"onlineConfiguration\"\
+      :{\"waitForArchive\":true,\"immediateCheckpoint\":false}},\"barmanObjectStore\"\
+      :{\"s3Credentials\":{\"accessKeyId\":{\"name\":\"cnpg-torghut-db\",\"key\":\"\
+      AWS_ACCESS_KEY_ID\"},\"secretAccessKey\":{\"name\":\"cnpg-torghut-db\",\"key\"\
+      :\"AWS_SECRET_ACCESS_KEY\"}},\"endpointURL\":\"http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80\"\
+      ,\"destinationPath\":\"s3://cnpg-torghut\",\"serverName\":\"torghut-db-live\"\
+      ,\"wal\":{\"maxParallel\":8}},\"retentionPolicy\":\"14d\",\"target\":\"prefer-standby\"\
+      },\"monitoring\":{\"disableDefaultQueries\":false,\"customQueriesConfigMap\"\
+      :[{\"name\":\"cnpg-default-monitoring\",\"key\":\"queries\"}],\"enablePodMonitor\"\
+      :true},\"logLevel\":\"info\",\"managed\":{\"roles\":[{\"name\":\"torghut_notebook\"\
+      ,\"comment\":\"Read-only Torghut diagnostics notebooks\",\"ensure\":\"present\"\
+      ,\"passwordSecret\":{\"name\":\"torghut-notebook-postgres\"},\"connectionLimit\"\
+      :4,\"inRoles\":[\"pg_read_all_data\"],\"inherit\":true,\"login\":true}]},\"\
+      enablePDB\":true,\"probes\":{\"liveness\":{\"isolationCheck\":{\"enabled\":true,\"\
+      requestTimeout\":1000,\"connectionTimeout\":1000}}}},\"status\":{\"instances\"\
+      :2,\"readyInstances\":1,\"selector\":\"cnpg.io/cluster=torghut-db,cnpg.io/podRole=instance\"\
+      ,\"instancesStatus\":{\"healthy\":[\"torghut-db-2\"],\"replicating\":[\"torghut-db-1\"\
+      ]},\"instancesReportedState\":{\"torghut-db-1\":{\"isPrimary\":true,\"timeLineID\"\
+      :17,\"ip\":\"10.244.1.248\"},\"torghut-db-2\":{\"isPrimary\":false,\"timeLineID\"\
+      :17,\"ip\":\"10.244.3.98\"}},\"managedRolesStatus\":{\"byStatus\":{\"not-managed\"\
+      :[\"torghut_app\"],\"reconciled\":[\"torghut_notebook\"],\"reserved\":[\"cnpg_metrics_exporter\"\
+      ,\"streaming_replica\",\"postgres\"]},\"passwordStatus\":{\"torghut_notebook\"\
+      :{\"transactionID\":19836169,\"resourceVersion\":\"425196887\"}}},\"timelineID\"\
+      :17,\"topology\":{\"instances\":{\"torghut-db-1\":{},\"torghut-db-2\":{}},\"\
+      nodesUsed\":2,\"successfullyExtracted\":true},\"latestGeneratedNode\":3,\"currentPrimary\"\
+      :\"torghut-db-1\",\"targetPrimary\":\"torghut-db-1\",\"pvcCount\":2,\"healthyPVC\"\
+      :[\"torghut-db-1\",\"torghut-db-2\"],\"writeService\":\"torghut-db-rw\",\"readService\"\
+      :\"torghut-db-r\",\"phase\":\"Cluster in healthy state\",\"secretsResourceVersion\"\
+      :{\"superuserSecretVersion\":\"377233082\",\"replicationSecretVersion\":\"524163930\"\
+      ,\"applicationSecretVersion\":\"377233093\",\"managedRoleSecretVersion\":{\"\
+      torghut-notebook-postgres\":\"425196887\"},\"clientCaSecretVersion\":\"524163923\"\
+      ,\"serverCaSecretVersion\":\"524163923\",\"serverSecretVersion\":\"524163927\"\
+      },\"configMapResourceVersion\":{\"metrics\":{\"cnpg-default-monitoring\":\"\
+      377216534\"}},\"certificates\":{\"serverCASecret\":\"torghut-db-ca\",\"serverTLSSecret\"\
+      :\"torghut-db-server\",\"replicationTLSSecret\":\"torghut-db-replication\",\"\
+      clientCASecret\":\"torghut-db-ca\",\"serverAltDNSNames\":[\"torghut-db-rw\"\
+      ,\"torghut-db-rw.torghut\",\"torghut-db-rw.torghut.svc\",\"torghut-db-rw.torghut.svc.cluster.local\"\
+      ,\"torghut-db-r\",\"torghut-db-r.torghut\",\"torghut-db-r.torghut.svc\",\"torghut-db-r.torghut.svc.cluster.local\"\
+      ,\"torghut-db-ro\",\"torghut-db-ro.torghut\",\"torghut-db-ro.torghut.svc\",\"\
+      torghut-db-ro.torghut.svc.cluster.local\"],\"expirations\":{\"torghut-db-ca\"\
+      :\"2026-11-22 01:53:23 +0000 UTC\",\"torghut-db-replication\":\"2026-11-22 01:53:23\
+      \ +0000 UTC\",\"torghut-db-server\":\"2026-11-22 01:53:23 +0000 UTC\"}},\"firstRecoverabilityPoint\"\
+      :\"2026-08-27T02:13:00Z\",\"firstRecoverabilityPointByMethod\":{\"barmanObjectStore\"\
+      :\"2026-08-27T02:13:00Z\"},\"lastSuccessfulBackup\":\"2026-09-10T02:13:08Z\"\
+      ,\"lastSuccessfulBackupByMethod\":{\"barmanObjectStore\":\"2026-09-10T02:13:08Z\"\
+      },\"cloudNativePGCommitHash\":\"4b5e244a7\",\"currentPrimaryTimestamp\":\"2026-09-08T19:43:40.433259Z\"\
+      ,\"targetPrimaryTimestamp\":\"2026-09-08T12:43:31.130375-07:00\",\"poolerIntegrations\"\
+      :{\"pgBouncerIntegration\":{}},\"cloudNativePGOperatorHash\":\"e61cf87bb9c89f1bca69d41367fd9a5c5c02e3eb7491922560984d03f85ecff0\"\
+      ,\"operatorCertificateFingerprint\":\"5c2c739486d6b9f0246aab32963a51e867e7c86da4a892d40e056bc1d9eed9ea\"\
+      ,\"availableArchitectures\":[{\"goArch\":\"amd64\",\"hash\":\"582a4e35fb052c39d3402794de5f6602a56cdc8cc4b92ce7abbe41a51a0bbc13\"\
+      },{\"goArch\":\"arm64\",\"hash\":\"e61cf87bb9c89f1bca69d41367fd9a5c5c02e3eb7491922560984d03f85ecff0\"\
+      }],\"conditions\":[{\"type\":\"Ready\",\"status\":\"True\",\"lastTransitionTime\"\
+      :\"2026-09-08T19:45:13Z\",\"reason\":\"ClusterIsReady\",\"message\":\"Cluster\
+      \ is Ready\"},{\"type\":\"ContinuousArchiving\",\"status\":\"True\",\"lastTransitionTime\"\
+      :\"2026-09-08T19:43:41Z\",\"reason\":\"ContinuousArchivingSuccess\",\"message\"\
+      :\"Continuous archiving is working\"},{\"type\":\"LastBackupSucceeded\",\"status\"\
+      :\"False\",\"lastTransitionTime\":\"2026-09-10T05:14:40Z\",\"reason\":\"BackupStarted\"\
+      ,\"message\":\"New Backup starting up\"},{\"type\":\"ConsistentSystemID\",\"\
+      status\":\"True\",\"lastTransitionTime\":\"2026-09-07T09:52:30Z\",\"reason\"\
+      :\"Unique\",\"message\":\"A single, unique system ID was found across reporting\
+      \ instances.\"},{\"type\":\"Initialized\",\"status\":\"True\",\"lastTransitionTime\"\
+      :\"2026-07-03T07:13:35Z\",\"reason\":\"BootstrapCompleted\",\"message\":\"Cluster\
+      \ has been bootstrapped\"}],\"instanceNames\":[\"torghut-db-1\",\"torghut-db-2\"\
+      ],\"image\":\"ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e\"\
+      ,\"pgDataImageInfo\":{\"image\":\"ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e\"\
+      ,\"majorVersion\":17},\"switchReplicaClusterStatus\":{},\"systemID\":\"7615765590556864543\"\
+      }}"
+    cnpg.io/instanceName: "torghut-db-1"
+    cnpg.io/instanceRole: "primary"
+    cnpg.io/nodeSerial: "1"
+    cnpg.io/onlineBackup: "false"
+    cnpg.io/operatorVersion: "1.30.0"
+    cnpg.io/pgControldata: "pg_control version number:            1700\nCatalog version\
+      \ number:               202406281\nDatabase system identifier:           7615765590556864543\n\
+      Database cluster state:               shut down\npg_control last modified: \
+      \            Thu Sep 10 05:14:41 2026\nLatest checkpoint location:         \
+      \  95D/E5000028\nLatest checkpoint's REDO location:    95D/E5000028\nLatest\
+      \ checkpoint's REDO WAL file:    000000110000095D000000E5\nLatest checkpoint's\
+      \ TimeLineID:       17\nLatest checkpoint's PrevTimeLineID:   17\nLatest checkpoint's\
+      \ full_page_writes: on\nLatest checkpoint's NextXID:          0:29718185\nLatest\
+      \ checkpoint's NextOID:          4977759\nLatest checkpoint's NextMultiXactId:\
+      \  70338\nLatest checkpoint's NextMultiOffset:  159832\nLatest checkpoint's\
+      \ oldestXID:        730\nLatest checkpoint's oldestXID's DB:   1\nLatest checkpoint's\
+      \ oldestActiveXID:  0\nLatest checkpoint's oldestMultiXid:   1\nLatest checkpoint's\
+      \ oldestMulti's DB: 1\nLatest checkpoint's oldestCommitTsXid:0\nLatest checkpoint's\
+      \ newestCommitTsXid:0\nTime of latest checkpoint:            Thu Sep 10 05:14:41\
+      \ 2026\nFake LSN counter for unlogged rels:   0/3E8\nMinimum recovery ending\
+      \ location:     0/0\nMin recovery ending loc's timeline:   0\nBackup start location:\
+      \                0/0\nBackup end location:                  0/0\nEnd-of-backup\
+      \ record required:        no\nwal_level setting:                    logical\n\
+      wal_log_hints setting:                on\nmax_connections setting:         \
+      \     100\nmax_worker_processes setting:         32\nmax_wal_senders setting:\
+      \              10\nmax_prepared_xacts setting:           0\nmax_locks_per_xact\
+      \ setting:           64\ntrack_commit_timestamp setting:       off\nMaximum\
+      \ data alignment:               8\nDatabase block size:                  8192\n\
+      Blocks per segment of large relation: 131072\nWAL block size:              \
+      \         8192\nBytes per WAL segment:                16777216\nMaximum length\
+      \ of identifiers:        64\nMaximum columns in an index:          32\nMaximum\
+      \ size of a TOAST chunk:        1996\nSize of a large-object chunk:        \
+      \ 2048\nDate/time type storage:               64-bit integers\nFloat8 argument\
+      \ passing:              by value\nData page checksum version:           1\n\
+      Mock authentication nonce:            1f5df93a939d65989fba7bb32ffa0782775f30cc8844e63c8f1205eb18344391\n"
+    cnpg.io/pvcRole: "PG_DATA"
+    cnpg.io/pvcStatus: "ready"
+    cnpg.io/snapshotEndTime: "2026-09-10T05:15:08Z"
+    cnpg.io/snapshotStartTime: "2026-09-10T05:15:06Z"
+  namespace: postgres-upgrade-acceptance
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    volumeSnapshotContentName: torghut-pg18-source-snapshot-content
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: torghut-pg18-source
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+  namespace: postgres-upgrade-acceptance
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+  inheritedMetadata:
+    labels:
+      postgres.proompteng.ai/rehearsal: 18-6-v2
+  affinity:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+  storage:
+    size: 50Gi
+    storageClass: rook-ceph-block
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      database: torghut
+      owner: torghut_app
+      volumeSnapshots:
+        storage:
+          name: torghut-pg18-source-snapshot
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: '32'
+      max_wal_senders: '10'

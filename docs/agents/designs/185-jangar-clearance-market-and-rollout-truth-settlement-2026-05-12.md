@@ -1,19 +1,13 @@
 # 185. Jangar Clearance Market And Rollout Truth Settlement (2026-05-12)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-12
 Owner: Victor Chen, Jangar Engineering
 Scope: Jangar control-plane reliability, AgentRun failure reduction, PR-to-GitOps rollout latency, ready-status truth,
 Torghut repair dispatch, database evidence quality, validation gates, rollout, rollback, and cross-stage handoff.
 
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/189-torghut-repair-yield-market-and-profit-hypothesis-guardrails-2026-05-12.md`
-
 Extends:
 
-- `docs/agents/designs/184-jangar-reliability-settlement-ledger-and-rollout-slo-escrow-2026-05-12.md`
-- `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
 - `docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md`
 - `docs/jangar/build-contract.md`
 - `services/jangar/README.md`

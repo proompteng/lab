@@ -13,6 +13,23 @@ import { buildWorkflowLintGraph } from '../../src/bin/workflow-lint/graph'
 import { lintWorkflowModuleAst } from '../../src/bin/workflow-lint/rules'
 
 describe('workflow lint syntax scanner', () => {
+  test('scans regex hashes, quotes and templates without mistaking their contents for imports', () => {
+    const source = [
+      'const hash = /#/g',
+      'const quotes = /[\'"`#\\r\\n]+/mg',
+      'const replaced = value.replace(/#|`|\\\//g, "")',
+      "const text = /import x from 'hidden' with { type: 'macro' }/",
+      'const ratio = total / count / scale',
+      'total /= count',
+      "import { actual } from './actual'",
+      "const runtime = import('./runtime') / count",
+    ].join('\n')
+    const tokens = scanWorkflowSyntaxTokens(source)
+    expect(collectWorkflowMacroImports(tokens)).toEqual([])
+    expect(collectWorkflowModuleSpecifiers(tokens).map(({ specifier }) => specifier)).toEqual(['./actual'])
+    expect(collectWorkflowDynamicImportPositions(tokens)).toEqual([source.indexOf("import('./runtime')")])
+  })
+
   test('distinguishes type-only import references from runtime dynamic imports', () => {
     const source = [
       "type ActivityInput = import('./activities').ActivityInput",

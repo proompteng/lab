@@ -1,16 +1,10 @@
 # 51. Jangar Control-Plane Execution Cells and Collaboration Failover (2026-03-19)
 
-Status: Approved for implementation (`plan`)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: `2026-03-19`
 Owner: Victor Chen (Jangar Engineering)
 Mission: `codex/swarm-jangar-control-plane-plan`
 Swarm: `jangar-control-plane`
-
-Supersedes or extends:
-
-- `49-jangar-control-plane-authority-ledger-and-expiry-watchdog-2026-03-19.md`
-- `49-jangar-control-plane-execution-truth-spine-and-torghut-profit-circuit-2026-03-19.md`
-- `50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`
 
 Companion document:
 

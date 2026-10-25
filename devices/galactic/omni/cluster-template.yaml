@@ -9,6 +9,15 @@ features:
     interval: 24h
 patches:
   - file: image-factory-registry.yaml
+  - idOverride: 30-galactic-neighbor-cache
+    annotations:
+      name: Size the IPv4 neighbor cache for dense pod networks
+    inline: |
+      machine:
+        sysctls:
+          net.ipv4.neigh.default.gc_thresh1: "4096"
+          net.ipv4.neigh.default.gc_thresh2: "8192"
+          net.ipv4.neigh.default.gc_thresh3: "16384"
   - idOverride: 25-galactic-split-dns
     annotations:
       name: Resolve public and tailnet names through NUC DNS
@@ -52,6 +61,15 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - file: tengri-runner-arm64.json
+  - file: ceph-hdd-write-deadline.yaml
+  - idOverride: 35-12345678-9abc-deff-1234-56789abcdeff-workload-placement
+    annotations:
+      name: Advertise 100G workload capacity
+    inline: |
+      machine:
+        nodeLabels:
+          network.proompteng.ai/100g: "true"
   - idOverride: 10-12345678-9abc-deff-1234-56789abcdeff
     annotations:
       description: Config patch imported from existing Talos node
@@ -210,6 +228,45 @@ patches:
           - ryzen.ide-newton.ts.net
           - altra
       version: v1alpha1
+  - idOverride: 30-12345678-9abc-deff-1234-56789abcdeff-storage-network
+    annotations:
+      description: Altra ConnectX-5 Ex storage interface
+      name: Altra 100G storage network
+    inline: |
+      apiVersion: v1alpha1
+      kind: LinkAliasConfig
+      name: storage-port
+      selector:
+        match: mac(link.permanent_addr) == "c0:01:22:34:8c:85"
+      ---
+      apiVersion: v1alpha1
+      kind: BondConfig
+      name: storage0
+      links:
+        - storage-port
+      bondMode: active-backup
+      miimon: 100
+      mtu: 1500
+      addresses:
+        - address: 10.100.0.11/24
+          routePriority: 1024
+      routes:
+        - destination: 10.244.0.0/24
+          gateway: 10.100.0.12
+          source: 10.244.4.0
+        - destination: 10.244.1.0/24
+          gateway: 10.100.0.12
+          source: 10.244.4.0
+        - destination: 100.100.244.190/32
+          gateway: 10.100.0.12
+          table: "100"
+      ---
+      apiVersion: v1alpha1
+      kind: RoutingRuleConfig
+      name: "5000"
+      src: 10.244.4.0/23
+      dst: 100.100.244.190/32
+      table: "100"
 ---
 kind: Machine
 name: 8bf7ec00-171c-11f1-8000-7cc255f16774
@@ -221,6 +278,24 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - file: tengri-runner-amd64.json
+  - file: ceph-hdd-write-deadline.yaml
+  - idOverride: 37-8bf7ec00-171c-11f1-8000-7cc255f16774-ephemeral-boot
+    annotations:
+      name: Disable redundant growth mounts on Turin ephemeral storage
+    inline: |
+      apiVersion: v1alpha1
+      kind: VolumeConfig
+      name: EPHEMERAL
+      provisioning:
+        grow: false
+  - idOverride: 35-8bf7ec00-171c-11f1-8000-7cc255f16774-workload-placement
+    annotations:
+      name: Advertise 100G workload capacity
+    inline: |
+      machine:
+        nodeLabels:
+          network.proompteng.ai/100g: "true"
   - idOverride: 10-8bf7ec00-171c-11f1-8000-7cc255f16774
     annotations:
       description: Config patch imported from existing Talos node
@@ -259,6 +334,9 @@ patches:
       apiVersion: v1alpha1
       kind: UserVolumeConfig
       name: turin-nvme-transcend
+      trim:
+        enabled: true
+        interval: 24h
       provisioning:
         diskSelector:
           match: "'/dev/disk/by-id/nvme-TS256GMTE652T2_I203860329' in disk.symlinks && !system_disk"
@@ -341,6 +419,53 @@ patches:
       auto: 'off'
       hostname: turin
       kind: HostnameConfig
+  - idOverride: 30-8bf7ec00-171c-11f1-8000-7cc255f16774-storage-network
+    annotations:
+      description: Turin ConnectX-5 Ex storage interface
+      name: Turin 100G storage network
+    inline: |
+      apiVersion: v1alpha1
+      kind: LinkAliasConfig
+      name: storage-port
+      selector:
+        match: mac(link.permanent_addr) == "c0:01:22:dc:2c:b7"
+      ---
+      apiVersion: v1alpha1
+      kind: BondConfig
+      name: storage0
+      links:
+        - storage-port
+      bondMode: active-backup
+      miimon: 100
+      mtu: 1500
+      addresses:
+        - address: 10.100.0.12/24
+          routePriority: 1024
+      routes:
+        - destination: 10.244.4.0/24
+          gateway: 10.100.0.11
+          source: 10.244.0.0
+        - destination: 10.244.5.0/24
+          gateway: 10.100.0.11
+          source: 10.244.0.0
+        - destination: 100.100.244.142/32
+          gateway: 10.100.0.11
+          table: "100"
+      ---
+      apiVersion: v1alpha1
+      kind: RoutingRuleConfig
+      name: "5000"
+      src: 10.244.0.0/23
+      dst: 100.100.244.142/32
+      table: "100"
+  - idOverride: 36-8bf7ec00-171c-11f1-8000-7cc255f16774-tigerbeetle-storage
+    annotations:
+      name: Retained Turin TigerBeetle directory
+    inline: |
+      apiVersion: v1alpha1
+      kind: UserVolumeConfig
+      name: tigerbeetle
+      volumeType: directory
 ---
 kind: Machine
 name: ff115a00-c307-11f0-a28f-648eab3e4100
@@ -353,6 +478,17 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - file: tengri-runner-amd64.json
+  - idOverride: 35-ff115a00-c307-11f0-a28f-648eab3e4100-workload-placement
+    annotations:
+      name: Reserve Ryzen for compute and local storage
+    inline: |
+      machine:
+        nodeLabels:
+          network.proompteng.ai/100g: "false"
+          workload.proompteng.ai/compute-local: "true"
+        nodeTaints:
+          workload.proompteng.ai/compute-local: "true:NoSchedule"
   - idOverride: 10-ff115a00-c307-11f0-a28f-648eab3e4100
     annotations:
       description: Config patch imported from existing Talos node

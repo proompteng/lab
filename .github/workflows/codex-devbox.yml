@@ -1,0 +1,112 @@
+name: Codex devbox
+
+on:
+  pull_request:
+    paths:
+      - services/devbox/**
+      - packages/scripts/src/shared/cli.ts
+      - packages/scripts/src/shared/docker.ts
+      - argocd/applications/devbox/**
+      - .github/workflows/codex-devbox.yml
+      - flake.nix
+      - flake.lock
+      - nix/packages.nix
+      - nix/toolchain-doctor.sh
+  push:
+    branches: [main]
+    paths:
+      - services/devbox/**
+      - packages/scripts/src/shared/cli.ts
+      - packages/scripts/src/shared/docker.ts
+      - argocd/applications/devbox/**
+      - .github/workflows/codex-devbox.yml
+      - flake.nix
+      - flake.lock
+      - nix/packages.nix
+      - nix/toolchain-doctor.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-devbox-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    runs-on: arc-amd64
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate bootstrap and GitOps configuration
+        run: |
+          set -euo pipefail
+          bash -n services/devbox/*.sh
+          nix shell --inputs-from . nixpkgs#rsync --command python3 -m unittest discover -s services/devbox/tests -v
+          kubectl kustomize argocd/applications/devbox > /tmp/devbox.yaml
+          kubectl kustomize argocd/applications/kargo > /tmp/kargo.yaml
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [amd64, arm64]
+    runs-on: arc-${{ matrix.architecture }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-buildkit
+      - name: Resolve immutable build metadata
+        id: meta
+        shell: bash
+        env:
+          ARCH: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          image=registry.ide-newton.ts.net/lab/codex-devbox
+          {
+            printf 'image=%s\n' "$image"
+            printf 'tag=build-%s-run-%s-%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$ARCH"
+            printf 'created=%s\n' "$(git show -s --format=%cI HEAD)"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          context: .
+          file: services/devbox/Dockerfile
+          platforms: linux/${{ matrix.architecture }}
+          network: host
+          allow: network.host
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          build-args: SOURCE_REVISION=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/proompteng/lab
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+          cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:cache-${{ matrix.architecture }}
+          cache-to: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && format('type=registry,ref={0}:cache-{1},mode=max', steps.meta.outputs.image, matrix.architecture) || '' }}
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [validate, build]
+    runs-on: arc-amd64
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-buildkit
+      - uses: sigstore/cosign-installer@v3.10.0
+      - name: Publish and verify the immutable index
+        env:
+          SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/codex-devbox.yml@refs/heads/main
+        run: bash services/devbox/publish.sh prepare
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-devbox-release-contract
+          path: .artifacts/codex-devbox/
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Make the complete release discoverable
+        run: bash services/devbox/publish.sh expose

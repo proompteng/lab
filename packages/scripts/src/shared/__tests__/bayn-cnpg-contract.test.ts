@@ -26,7 +26,7 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
         requiredDuringSchedulingIgnoredDuringExecution: {
           nodeSelectorTerms: [
             {
-              matchExpressions: [{ key: 'kubernetes.io/arch', operator: 'In', values: ['amd64'] }],
+              matchExpressions: [{ key: 'network.proompteng.ai/100g', operator: 'In', values: ['true'] }],
             },
           ],
         },
@@ -36,7 +36,7 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     },
     storage: {
       storageClass: 'rook-ceph-block',
-      size: '10Gi',
+      size: '100Gi',
       resizeInUseVolumes: true,
     },
     resources: {
@@ -52,9 +52,70 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
       },
     },
   })
+  expect(cluster.spec.walStorage).toBeUndefined()
   expect(cluster.spec.imageName).toBe(
     'ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1',
   )
+  expect(cluster.spec.postgresql.parameters).toMatchObject({
+    log_lock_waits: 'on',
+    deadlock_timeout: '1s',
+    log_min_duration_statement: '1000ms',
+    log_parameter_max_length: '0',
+    log_parameter_max_length_on_error: '0',
+    track_io_timing: 'on',
+    track_wal_io_timing: 'on',
+  })
+  expect(cluster.spec.monitoring.customQueriesConfigMap).toEqual([
+    { name: 'cnpg-default-monitoring', key: 'queries' },
+    { name: 'bayn-postgres-monitoring', key: 'queries' },
+  ])
+  const monitor = readManifest('argocd/applications/bayn/postgres-monitoring.yaml')
+  expect(monitor.metadata.labels['cnpg.io/reload']).toBe('true')
+  expect(readManifest('argocd/applications/bayn/kustomization.yaml').resources).toContain('postgres-monitoring.yaml')
+  const queries = YAML.parse(monitor.data.queries)
+  expect(Object.keys(queries).sort()).toEqual([
+    'bayn_generation_index',
+    'bayn_io',
+    'bayn_io_timing',
+    'bayn_replication',
+    'bayn_waits',
+  ])
+  expect(queries.bayn_io.runonserver).toBe('>=18.0.0 <19.0.0')
+  expect(queries.bayn_replication.primary).toBe(true)
+  expect(queries.bayn_generation_index.primary).toBe(true)
+  expect(queries.bayn_generation_index.query).toContain('autonomous_cycle_shadow_decisions_generation_idx')
+  expect(queries.bayn_generation_index.metrics.map((entry: Record<string, unknown>) => Object.keys(entry)[0])).toEqual([
+    'valid',
+    'ready',
+    'scans_total',
+    'tuples_read_total',
+    'tuples_fetched_total',
+  ])
+})
+
+test('Bayn preserves three ledger identities across the two 100G hosts', () => {
+  const ledger = readManifest('argocd/applications/bayn/tigerbeetle-cluster.yaml')
+  expect(ledger.spec).toMatchObject({
+    clusterID: '122731676035874920802382025803517750735',
+    replicas: 3,
+    storage: { className: 'local-path', size: '100Gi' },
+    nodeSelector: { 'network.proompteng.ai/100g': 'true' },
+    pdb: { enabled: true, minAvailable: 2 },
+    deletionPolicy: 'Retain',
+    topologySpreadConstraints: [
+      {
+        maxSkew: 1,
+        minDomains: 2,
+        topologyKey: 'kubernetes.io/hostname',
+        whenUnsatisfiable: 'DoNotSchedule',
+        nodeTaintsPolicy: 'Honor',
+        labelSelector: { matchLabels: { 'app.kubernetes.io/instance': 'ledger' } },
+      },
+    ],
+  })
+  expect(ledger.spec.tolerations).toBeUndefined()
+  expect(ledger.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution).toBeUndefined()
+  expect(ledger.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution).toHaveLength(1)
 })
 
 test('Bayn compares CNPG resources after admission defaulting', () => {
@@ -81,10 +142,11 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
   const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
 
   expect(deployment.spec.replicas).toBe(2)
-  expect(deployment.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(deployment.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
   expect(deployment.spec.template.spec.topologySpreadConstraints).toEqual([
     {
       maxSkew: 1,
+      minDomains: 2,
       topologyKey: 'kubernetes.io/hostname',
       whenUnsatisfiable: 'DoNotSchedule',
       nodeTaintsPolicy: 'Honor',
@@ -111,13 +173,15 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
       rollingUpdate: { maxSurge: 1, maxUnavailable: 0 },
     },
   })
-  expect(egressProxy.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(egressProxy.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
   expect(egressProxy.spec.template.spec.topologySpreadConstraints).toEqual([
     {
       maxSkew: 1,
+      minDomains: 2,
       topologyKey: 'kubernetes.io/hostname',
       whenUnsatisfiable: 'DoNotSchedule',
       nodeTaintsPolicy: 'Honor',
+      matchLabelKeys: ['pod-template-hash'],
       labelSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-egress-proxy' } },
     },
   ])
@@ -133,10 +197,11 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
   })
 
   expect(controller.spec.replicas).toBe(2)
-  expect(controller.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(controller.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
   expect(controller.spec.template.spec.topologySpreadConstraints).toEqual([
     {
       maxSkew: 1,
+      minDomains: 2,
       topologyKey: 'kubernetes.io/hostname',
       whenUnsatisfiable: 'DoNotSchedule',
       nodeTaintsPolicy: 'Honor',
@@ -155,7 +220,7 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
     },
   })
   expect(kustomization.resources).toContain('execution-controller-pdb.yaml')
-  expect(activation.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(activation.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
 })
 
 test('the CNPG platform installs the pinned Barman Cloud plugin', () => {
@@ -310,9 +375,34 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
     from: [
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
+      { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-research' } } },
     ],
     ports: [{ port: 3128, protocol: 'TCP' }],
   })
+  expect(egressProxyPolicy.spec.ingress).toContainEqual({
+    from: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'opencode' } },
+        podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opencode-research' } },
+      },
+    ],
+    ports: [{ port: 3129, protocol: 'TCP' }],
+  })
+  const researchPolicy = YAML.parseAllDocuments(readRepoFile('argocd/applications/bayn/research-networkpolicy.yaml'))
+    .map((document) => document.toJSON())
+    .find((policy) => policy.metadata.name === 'bayn-research')
+  expect(researchPolicy.spec.egress).toContainEqual({
+    to: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'rook-ceph' } },
+        podSelector: { matchLabels: { app: 'rook-ceph-rgw', rook_cluster: 'rook-ceph' } },
+      },
+    ],
+    ports: [{ port: 8080, protocol: 'TCP' }],
+  })
+  expect(readRepoFile('argocd/applications/rook-ceph/cluster-values.yaml')).toContain(
+    'rgw_frontends: "beast port=8080 tcp_nodelay=1"',
+  )
   expect(alloy).toContain('label = "cnpg.io/cluster"')
   expect(alloy).toContain('job_name        = "cnpg-postgres"')
 })
@@ -321,11 +411,14 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   const deployment = readManifest('argocd/applications/bayn/deployment.yaml')
   const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
   const activationSecret = readManifest('argocd/applications/bayn/alpaca-sealedsecret.yaml')
+  const request = activationSecret.spec.encryptedData['capital-activation-request']
+  const encodedIdentity = activationSecret.metadata.annotations['proompteng.ai/bayn.mandate-identity']
+  const mandateIdentity = request === undefined ? undefined : JSON.parse(encodedIdentity)
   const activationDocuments = YAML.parseAllDocuments(
     readRepoFile('argocd/applications/bayn/execution-activation.yaml'),
   ).map((document) => document.toJSON())
   const activation = activationDocuments.find((manifest) => manifest.kind === 'Job')
-  const activationPolicy = activationDocuments.find((manifest) => manifest.kind === 'NetworkPolicy')
+  const activationPolicy = readManifest('argocd/applications/bayn/execution-activation-networkpolicy.yaml')
   const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
   const environment = (manifest: Record<string, any>): Map<string, Record<string, any>> =>
     new Map(manifest.spec.template.spec.containers[0].env.map((entry: Record<string, any>) => [entry.name, entry]))
@@ -354,14 +447,6 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     'BAYN_CYCLE_POLL_INTERVAL_MS',
     'BAYN_RECONCILIATION_INTERVAL_MS',
     'BAYN_OPERATION_TIMEOUT_MS',
-    'BAYN_SIGNAL_SNAPSHOT_ID',
-    'BAYN_SIGNAL_PUBLICATION_ASOF',
-    'BAYN_SIGNAL_CALENDAR_VERSION',
-    'BAYN_SIGNAL_DATA_START',
-    'BAYN_SIGNAL_DATA_END',
-    'BAYN_SIGNAL_LOOKBACK_START',
-    'BAYN_SIGNAL_EVALUATION_START',
-    'BAYN_SIGNAL_EVALUATION_END',
     'BAYN_TIGERBEETLE_CLUSTER_ID',
     'BAYN_TIGERBEETLE_ADDRESSES',
     'BAYN_TIGERBEETLE_LEDGER',
@@ -402,22 +487,46 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   for (const name of sharedPlanEnvironment) {
     expect(controllerEnvironment.get(name)).toEqual(activationEnvironment.get(name))
   }
+
+  const historicalReportEnvironment = [
+    'BAYN_SIGNAL_SNAPSHOT_ID',
+    'BAYN_SIGNAL_PUBLICATION_ASOF',
+    'BAYN_SIGNAL_CALENDAR_VERSION',
+    'BAYN_SIGNAL_DATA_START',
+    'BAYN_SIGNAL_DATA_END',
+    'BAYN_SIGNAL_LOOKBACK_START',
+    'BAYN_SIGNAL_EVALUATION_START',
+    'BAYN_SIGNAL_EVALUATION_END',
+  ]
+  for (const liveEnvironment of [deploymentEnvironment, controllerEnvironment, activationEnvironment]) {
+    for (const name of historicalReportEnvironment) {
+      expect(liveEnvironment.has(name)).toBe(false)
+    }
+    for (const name of ['BAYN_CLICKHOUSE_URL', 'BAYN_CLICKHOUSE_USERNAME', 'BAYN_CLICKHOUSE_PASSWORD']) {
+      expect(liveEnvironment.has(name)).toBe(true)
+    }
+  }
   expect(controllerEnvironment.get('BAYN_CODE_REVISION')?.value).toBe(sourceRevision)
   expect(controllerEnvironment.get('BAYN_IMAGE_DIGEST')?.value).toBe(imageDigest)
-  expect(JSON.parse(controllerEnvironment.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')?.value)).toEqual({
-    schemaVersion: 'bayn.research-capital-build-lineage.v1',
-    requestHash: '423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625',
-    authoredActivation: {
-      sourceRevision,
-      imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
-      imageDigest,
-    },
-    activation: {
-      sourceRevision,
-      imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
-      imageDigest,
-    },
-  })
+  if (mandateIdentity === undefined) {
+    expect(encodedIdentity).toBeUndefined()
+    for (const candidate of [deploymentEnvironment, controllerEnvironment, activationEnvironment]) {
+      for (const name of [
+        'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
+        'BAYN_CAPITAL_ACTIVATION_REQUEST',
+        'BAYN_CAPITAL_ACTIVATION_KIND',
+      ])
+        expect(candidate.has(name)).toBe(false)
+    }
+  } else {
+    expect(JSON.parse(controllerEnvironment.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')?.value)).toEqual({
+      schemaVersion: 'bayn.research-capital-build-lineage.v1',
+      requestHash: mandateIdentity.requestHash,
+      authoredActivation: mandateIdentity.authoredActivation,
+      activation: mandateIdentity.authoredActivation,
+    })
+  }
+  expect(controllerEnvironment.get('BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS')?.value).toBe('300000')
   expect(controllerEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(controllerEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
   expect(deploymentEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
@@ -436,43 +545,39 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(activationEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
+    '0c2f682a50bbd17fc1d780fbdb48f1dd588932f8f771474ecdce272091aaadcc',
   )
-  expect(activationSecret.metadata.annotations).toMatchObject({
-    'bayn.proompteng.ai/capital-activation-schema': 'bayn.research-execution-mandate.v1',
-    'bayn.proompteng.ai/capital-activation-source-revision': sourceRevision,
-    'bayn.proompteng.ai/capital-activation-image-digest': imageDigest,
-    'bayn.proompteng.ai/capital-activation-content-hash':
-      '423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625',
-  })
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
-  expect(activationSecret.spec.encryptedData['capital-activation-request']).toBeString()
-  const previousBinding = {
-    planHash: 'd75d49707af22ccdb5a2cdee0362e453a68380a4618b5a4b735e9d8d121c37f0',
-    sourceRevision: '8f4602324111bbb3dd5d8695aabf199f4a5328fa',
+  if (mandateIdentity !== undefined) expect(request).toBeString()
+  for (const environment of [deploymentEnvironment, controllerEnvironment, activationEnvironment]) {
+    expect(environment.has('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toBe(false)
+    expect(environment.has('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toBe(false)
   }
-  expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')?.value).toBe(previousBinding.planHash)
-  expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')?.value).toBe(
-    previousBinding.sourceRevision,
-  )
-  expect(activationEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toEqual(
-    controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH'),
-  )
-  expect(activationEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toEqual(
-    controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION'),
-  )
-  expect(deploymentEnvironment.has('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toBe(false)
-  expect(deploymentEnvironment.has('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
-  expect(controller.spec.restate.drainDelaySeconds).toBe(0)
-  expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    'd39df585e43593019dbc3f33efa264122c4efe22a4c1bee727a1efaa59e17bc9',
-  )
+  expect(controller.spec.restate).not.toHaveProperty('drainDelaySeconds')
+  const activationGeneration = activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value
+  expect(activationGeneration).toMatch(/^[0-9a-f]{64}$/)
+  if (mandateIdentity !== undefined) expect(activationGeneration).toBe(mandateIdentity.requestHash)
+  expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toEqual({
+    name: 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID',
+    valueFrom: { fieldRef: { apiVersion: 'v1', fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" } },
+  })
+  expect(activation.spec.template.spec.restartPolicy).toBe('OnFailure')
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
+  expect(activationPolicy.spec.egress[0]).toEqual({
+    to: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'glitchtip' } },
+        podSelector: { matchLabels: { 'app.kubernetes.io/name': 'glitchtip', 'app.kubernetes.io/component': 'web' } },
+      },
+    ],
+    ports: [{ port: 8000, protocol: 'TCP' }],
+  })
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
+    { port: 8000, protocol: 'TCP' },
     { port: 53, protocol: 'UDP' },
     { port: 53, protocol: 'TCP' },
     { port: 8080, protocol: 'TCP' },
@@ -480,11 +585,13 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   ])
 
   for (const candidate of [controllerEnvironment, activationEnvironment, deploymentEnvironment]) {
-    expect(candidate.get('BAYN_CAPITAL_ACTIVATION_KIND')?.value).toBe('ResearchCapitalActivationRequest')
-    expect(candidate.get('BAYN_CAPITAL_ACTIVATION_REQUEST')?.valueFrom?.secretKeyRef).toEqual({
-      name: 'bayn-alpaca-auth',
-      key: 'capital-activation-request',
-    })
+    if (mandateIdentity !== undefined) {
+      expect(candidate.get('BAYN_CAPITAL_ACTIVATION_KIND')?.value).toBe('ResearchCapitalActivationRequest')
+      expect(candidate.get('BAYN_CAPITAL_ACTIVATION_REQUEST')?.valueFrom?.secretKeyRef).toEqual({
+        name: 'bayn-alpaca-auth',
+        key: 'capital-activation-request',
+      })
+    }
     expect(candidate.has('BAYN_MAXIMUM_AUTHORITY')).toBe(false)
   }
   expect(kustomization.resources).toContain('execution-activation.yaml')

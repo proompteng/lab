@@ -204,14 +204,6 @@ This design is selected because it directly addresses both objectives from curre
   - rollback path confirmed and tested
   - hard rollout decisions remain reversible within agreed window
 
-## Merged document references (this architecture set)
-
-- `docs/torghut/design-system/v6/39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
-- `docs/torghut/design-system/v6/40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
-- `docs/torghut/design-system/v6/40-control-plane-resilience-and-safe-rollout-contract-2026-03-15.md`
-- `docs/torghut/design-system/v6/41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
-- `docs/torghut/design-system/v6/41-profitability-hypothesis-and-guardrail-contract-2026-03-15.md`
-
 ## Why this contract is the required merge artifact
 
 The run demonstrates that cluster, source, and data surfaces currently have enough evidence to lock the architecture direction.

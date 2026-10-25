@@ -9,6 +9,8 @@ export const intradayInstantNanos = (value: string): bigint => {
 }
 
 export const compareIntradayInstants = (left: string, right: string): number => {
+  // Validated UTC timestamps of equal precision already have chronological string order.
+  if (left.length === right.length) return left < right ? -1 : left > right ? 1 : 0
   const leftNanos = intradayInstantNanos(left)
   const rightNanos = intradayInstantNanos(right)
   return leftNanos < rightNanos ? -1 : leftNanos > rightNanos ? 1 : 0

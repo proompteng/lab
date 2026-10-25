@@ -30,6 +30,7 @@ spec:
       terminationGracePeriodSeconds: 11400
       nodeSelector:
         kubernetes.io/arch: amd64
+        kubernetes.io/hostname: turin
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

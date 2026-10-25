@@ -1,10 +1,10 @@
-import { Cause, Effect } from 'effect'
-import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { Cause, Effect, identity } from 'effect'
+import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 import type { ExecutionAuthority } from '../../execution/authority'
 import type { Intent } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
-import type { BrokerSessionShape } from '../alpaca'
+import type { BrokerSessionShape } from '../alpaca/session'
 import { ResponseHeadersSchema, redactedHeaders, responseParseOptions } from '../alpaca/model'
 import { cancelOrderUrl, submitOrderUrl } from '../alpaca/requests'
 import {
@@ -22,7 +22,9 @@ import {
   unknownOutcome,
   type BrokerMutationShape,
 } from './model'
-import { Pipeable } from '../../pipeable'
+import { withObservedStage } from '../../telemetry'
+
+import { SubmissionDenialReason } from '../../execution/submission-denial'
 
 const decodeHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 
@@ -51,6 +53,7 @@ const withDeadline = <A, E>(
             cause,
           }),
     ),
+    withObservedStage('bayn.alpaca.mutation', { dependency: 'alpaca', operation }),
   )
 
 const responseHeaders = (
@@ -106,23 +109,25 @@ const readCancelBody = (
         ),
       )
 
-const makeMutationDataFirst = (
+export const makeMutation = (
   session: BrokerSessionShape,
   authority: ExecutionAuthority,
   client: HttpClient.HttpClient,
 ): Effect.Effect<BrokerMutationShape, BrokerMutationError> =>
   Effect.gen(function* () {
     const runtime = yield* Effect.fromResult(resolveMutationCapability(session, authority))
+    const withMutation = session.read.projection?.withMutation ?? identity
 
     const submit = Effect.fn('BrokerMutation.submit', {
       attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Submit },
     })(
-      function* (input: Intent, closeOnly = false) {
-        const prepared = yield* Effect.fromResult(prepareSubmit(input, runtime.expectedAccountId, closeOnly))
+      function* (input: Intent) {
+        const prepared = yield* Effect.fromResult(prepareSubmit(input, runtime.expectedAccountId))
         if (!runtime.fractionalTrading && orderRequestRequiresFractionalTrading(prepared.request)) {
           return yield* invalidRequest({
             operation: MutationOperation.Submit,
             message: 'order requires fractional trading but the broker account configuration disables it',
+            denialReason: SubmissionDenialReason.FractionalTradingDisabled,
           })
         }
         const request = yield* HttpClientRequest.bodyJson(
@@ -133,7 +138,12 @@ const makeMutationDataFirst = (
           prepared.request,
         ).pipe(
           Effect.mapError((cause) =>
-            invalidRequest({ operation: MutationOperation.Submit, message: 'order request cannot be encoded', cause }),
+            invalidRequest({
+              operation: MutationOperation.Submit,
+              message: 'order request cannot be encoded',
+              cause,
+              denialReason: SubmissionDenialReason.RequestEncoding,
+            }),
           ),
         )
         return yield* withDeadline(
@@ -154,7 +164,7 @@ const makeMutationDataFirst = (
                 observedAt,
               }),
             )
-          }),
+          }).pipe(withMutation),
         )
       },
       (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),
@@ -186,7 +196,7 @@ const makeMutationDataFirst = (
                 observedAt,
               }),
             )
-          }),
+          }).pipe(withMutation),
         )
       },
       (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),
@@ -199,5 +209,3 @@ const makeMutationDataFirst = (
       orderByClientId: session.read.orderByClientId,
     }
   })
-
-export const makeMutation = Pipeable.dual(3, makeMutationDataFirst)

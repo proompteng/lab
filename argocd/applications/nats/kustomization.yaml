@@ -17,6 +17,21 @@ helmCharts:
     namespace: nats
     valuesFile: ./values.yaml
 
+patches:
+  - target:
+      kind: StatefulSet
+      name: nats
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: nats
+      spec:
+        template:
+          spec:
+            nodeSelector:
+              network.proompteng.ai/100g: "true"
+
 images:
   - name: nats
     newName: mirror.gcr.io/library/nats

@@ -3,6 +3,7 @@ import { Effect, Fiber, Result } from 'effect'
 
 import {
   awaitRestateInvocation,
+  callRestateInvocation,
   decodeRestateAcceptedInvocation,
   restateInvocationCompletionMaximumAttempts,
   RestateSendStatus,
@@ -13,6 +14,19 @@ import {
 const invocationId = 'inv_1aiqX0vFEFNH1Umgre58JiCLgHfTtztYK5'
 
 describe('Restate invocation client', () => {
+  test('calls return bounded JSON and reject unavailable or malformed responses', async () => {
+    const call = (response: () => Response) =>
+      callRestateInvocation('http://restate.example.test:8080/Control/revision', null, { timeoutMs: 5000 }, async () =>
+        response(),
+      )
+    expect(await Effect.runPromise(call(() => Response.json('a'.repeat(40))))).toBe('a'.repeat(40))
+    for (const response of [
+      () => new Response(null, { status: 404 }),
+      () => new Response('not JSON'),
+      () => Response.json('a'.repeat(17 * 1024)),
+    ])
+      expect(await Effect.runPromise(Effect.flip(call(response)))).toMatchObject({ operation: 'call' })
+  })
   test('accepts only closed send receipts', () => {
     expect(Result.isSuccess(decodeRestateAcceptedInvocation({ invocationId, status: 'Accepted' }))).toBe(true)
     expect(
@@ -35,8 +49,8 @@ describe('Restate invocation client', () => {
     const requests: Array<{ readonly body: unknown; readonly headers: Headers; readonly url: string }> = []
     const receipt = await Effect.runPromise(
       sendRestateInvocation(
-        'http://restate.example.test:8080/restate/send/BaynExecutionBootstrap/start',
-        { schemaVersion: 'bayn.execution-controller-bootstrap.v1' },
+        'http://restate.example.test:8080/restate/send/BaynExecutionController/account/activateDeployment',
+        { schemaVersion: 'bayn.execution-deployment-activation.v2' },
         { headers: { authorization: 'Bearer secret', 'idempotency-key': 'request-1' }, timeoutMs: 30_000 },
         async (input, init) => {
           if (typeof init?.body !== 'string') throw new Error('request body was not encoded as JSON')
@@ -132,11 +146,13 @@ describe('Restate invocation client', () => {
     expect(exhausted.message).toBe('Restate invocation remains incomplete after the bounded completion check')
   })
 
-  test('aborts send and completion I/O when interrupted', async () => {
+  test('aborts call, send and completion I/O when interrupted', async () => {
     const effects = [
       (request: RestateHttpRequest) =>
+        callRestateInvocation('http://restate.example.test:8080/Control/revision', null, { timeoutMs: 5000 }, request),
+      (request: RestateHttpRequest) =>
         sendRestateInvocation(
-          'http://restate.example.test:8080/restate/send/BaynExecutionBootstrap/start',
+          'http://restate.example.test:8080/restate/send/BaynExecutionController/account/activateDeployment',
           {},
           { timeoutMs: 30_000 },
           request,

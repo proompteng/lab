@@ -1,10 +1,12 @@
 import { PgClient } from '@effect/sql-pg'
+import { withObservedStage } from '../../telemetry'
 import { Effect, Layer, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../../schemas'
 import { reconciliationIncompleteRestrictionReason } from '../authority'
 import {
+  strategyProtocolCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
   executionMandateCompletedRestrictionReason,
   executionMandateFailureRestrictionPrefix,
@@ -12,6 +14,7 @@ import {
   legacyExecutionMandateFailureRestrictionPattern,
   legacyExecutionMandateFailureRestrictionPrefix,
   legacyV1CompletedRestrictionReason,
+  reconciliationDiscrepancyRestrictionPattern,
 } from '../mandate'
 import {
   BlockedCycleIntentStore,
@@ -89,7 +92,7 @@ const terminalizeUntouchedApproved = (sql: PgClient.PgClient, candidate: Blocked
               WHERE cycle.cycle_id = ${input.cycleId}
                 AND cycle.state = 'BLOCKED'
                 AND cycle.terminal_at <= ${input.observedAt}
-                AND decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
+                AND decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v2'
                 AND decision.document ->> 'mode' = 'PAPER'
                 AND decision.document #>> '{bindings,authorityGenerationHash}' = ${input.authorityGenerationHash}
               FOR UPDATE OF cycle
@@ -181,6 +184,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             generation.qualification_run_id,
             generation.research_plan_hash,
             generation.strategy_protocol_hash,
+            state.reason AS restriction_reason,
             state.updated_at AS restricted_at,
             (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
@@ -199,7 +203,9 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern}
+              OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR state.reason = ${reconciliationIncompleteRestrictionReason}
+              OR state.reason = ${strategyProtocolCutoverRestrictionReason}
               OR (
                 state.reason IN (
                   ${executionMandateCompletedRestrictionReason},
@@ -207,10 +213,13 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
                   ${legacyV1CompletedRestrictionReason},
                   ${legacyExecutionActivationExpiredRestrictionReason}
                 )
-                AND EXISTS (
-                  SELECT 1
-                  FROM autonomous_forward_performance_receipts AS receipt
-                  WHERE receipt.authority_generation_hash = state.generation_hash
+                AND (
+                  EXISTS (
+                    SELECT 1
+                    FROM autonomous_forward_performance_receipts AS receipt
+                    WHERE receipt.authority_generation_hash = state.generation_hash
+                  )
+                  OR research_paper_expired_zero_execution(state.generation_hash)
                 )
               )
             )
@@ -237,7 +246,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             )
             AND (
               (
-                decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
+                decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v2'
                 AND decision.document ->> 'mode' = 'PAPER'
                 AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
               )
@@ -258,15 +267,22 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             ON cycle.account_id = generation.account_id
            AND cycle.qualification_run_id = generation.research_plan_hash
            AND cycle.strategy_protocol_hash = generation.strategy_protocol_hash
-          WHERE generation.requires_blocked_cycle
+          WHERE (
+              generation.requires_blocked_cycle
+              OR generation.legacy_failure_restriction
+              OR generation.restriction_reason ~ ${reconciliationDiscrepancyRestrictionPattern}
+            )
             AND generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
-            AND cycle.schema_version = 'bayn.autonomous-cycle.v3'
-            AND cycle.identity_schema_version = 'bayn.autonomous-cycle-identity.v3'
+            AND cycle.schema_version IN ('bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
+            AND cycle.identity_schema_version IN (
+              'bayn.autonomous-cycle-identity.v3',
+              'bayn.autonomous-cycle-identity.v4'
+            )
             AND cycle.state IN ('PENDING', 'ACTIVE')
             AND cycle.snapshot_id IS NULL
             AND cycle.decision_hash IS NULL
-            AND cycle.updated_at <= generation.restricted_at
-            AND ${input.observedAt}::timestamptz < cycle.submission_open_at
+            AND cycle.updated_at <= ${input.observedAt}::timestamptz
+            AND ${input.observedAt}::timestamptz < cycle.submission_cutoff_at
             AND NOT EXISTS (
               SELECT 1
               FROM autonomous_cycle_shadow_decisions AS decision
@@ -278,12 +294,108 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               WHERE intent.cycle_id = cycle.cycle_id
             )
           FOR UPDATE OF cycle
+        ), zero_target_cycles AS MATERIALIZED (
+          SELECT cycle.cycle_id, decision.decision_hash
+          FROM current_generation AS generation
+          JOIN autonomous_cycles AS cycle
+            ON cycle.account_id = generation.account_id
+           AND cycle.qualification_run_id = generation.research_plan_hash
+           AND cycle.strategy_protocol_hash = generation.strategy_protocol_hash
+          JOIN autonomous_cycle_shadow_decisions AS decision
+            ON decision.cycle_id = cycle.cycle_id
+           AND decision.decision_hash = cycle.decision_hash
+          WHERE generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+            AND cycle.schema_version = 'bayn.autonomous-cycle.v4'
+            AND cycle.state = 'NO_TRADE'
+            AND cycle.terminal_at <= ${input.observedAt}::timestamptz
+            AND decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v2'
+            AND decision.document ->> 'mode' = 'PAPER'
+            AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+            AND decision.document #>> '{bindings,cycleId}' = cycle.cycle_id
+            AND decision.document #>> '{bindings,accountId}' = cycle.account_id
+            AND decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id
+            AND decision.document #>> '{bindings,strategyName}' = cycle.strategy_name
+            AND decision.document #>> '{bindings,strategyProtocolHash}' = cycle.strategy_protocol_hash
+            AND decision.document #>> '{bindings,snapshotId}' = cycle.snapshot_id
+            AND (decision.document ->> 'submissionCutoffAt')::timestamptz = cycle.submission_cutoff_at
+            AND decision.created_at >= cycle.created_at
+            AND decision.created_at >= cycle.submission_open_at
+            AND decision.created_at <= cycle.updated_at
+            AND decision.document -> 'dispatchable' = 'true'::jsonb
+            AND decision.document -> 'riskBlock' IS NULL
+            AND decision.document #>> '{targetPlan,status}' = 'NO_TRADE'
+            AND decision.document -> 'orderedIntentIds' = '[]'::jsonb
+            AND decision.document #> '{targetPlan,intentTargets}' = '[]'::jsonb
+            AND NOT EXISTS (SELECT 1 FROM intents intent WHERE intent.cycle_id = cycle.cycle_id)
+        ), settled_cycles AS MATERIALIZED (
+          SELECT cycle.cycle_id
+          FROM current_generation AS generation
+          JOIN autonomous_cycles AS cycle
+            ON cycle.account_id = generation.account_id
+          JOIN autonomous_cycle_shadow_decisions AS decision
+            ON decision.cycle_id = cycle.cycle_id
+           AND decision.decision_hash = cycle.decision_hash
+          WHERE generation.requires_blocked_cycle
+            AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+            AND cycle.terminal_at >= generation.restricted_at
+            AND cycle.terminal_at <= ${input.observedAt}::timestamptz
+            AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+            AND (
+              (cycle.state = 'COMPLETED' AND paper_cycle_completion_evidence_matches(
+                cycle.cycle_id, cycle.decision_hash, ${input.observedAt}::timestamptz
+              ))
+              OR (
+                EXISTS (
+                  SELECT 1 FROM zero_target_cycles AS zero_target
+                  WHERE zero_target.cycle_id = cycle.cycle_id
+                    AND zero_target.decision_hash = cycle.decision_hash
+                )
+              )
+            )
+          FOR UPDATE OF cycle
         ), recoverable_generation AS MATERIALIZED (
           SELECT generation.*
           FROM current_generation AS generation
-          WHERE NOT generation.requires_blocked_cycle
-             OR EXISTS (SELECT 1 FROM blocked_cycles)
-             OR EXISTS (SELECT 1 FROM preserved_cycles)
+          WHERE (
+              NOT generation.requires_blocked_cycle
+              OR EXISTS (SELECT 1 FROM blocked_cycles)
+              OR EXISTS (SELECT 1 FROM preserved_cycles)
+              OR EXISTS (SELECT 1 FROM settled_cycles)
+              OR (
+                generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM autonomous_cycle_shadow_decisions AS decision
+                  WHERE decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+                    AND NOT EXISTS (
+                      SELECT 1 FROM zero_target_cycles AS zero_target
+                      WHERE zero_target.cycle_id = decision.cycle_id
+                        AND zero_target.decision_hash = decision.decision_hash
+                    )
+                  -- Retain correlation so the planner cannot hash and decode every historical JSON document.
+                  OFFSET 0
+                )
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM intents AS intent
+                  WHERE intent.authority_generation_hash = generation.generation_hash
+                )
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM autonomous_cycles AS cycle
+                  WHERE cycle.account_id = generation.account_id
+                    AND cycle.qualification_run_id = generation.research_plan_hash
+                    AND cycle.state IN ('PENDING', 'ACTIVE')
+                )
+              )
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM autonomous_cycles AS cycle
+              WHERE cycle.account_id = generation.account_id
+                AND cycle.state IN ('PENDING', 'ACTIVE')
+                AND cycle.decision_hash IS NOT NULL
+            )
         ), terminalized AS (
           UPDATE intents AS intent
           SET
@@ -355,7 +467,11 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
           (
             SELECT CASE
               WHEN activation_schema_version = 'bayn.paper-authority-generation.v3'
-                AND (requires_blocked_cycle OR legacy_failure_restriction)
+                AND (
+                  requires_blocked_cycle
+                  OR legacy_failure_restriction
+                  OR EXISTS (SELECT 1 FROM preserved_cycles)
+                )
               THEN research_plan_hash
               ELSE NULL
             END
@@ -368,7 +484,10 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
           intent_counts.terminal_intent_count,
           intent_counts.nonterminal_intent_count
         FROM terminalized_counts, intent_counts
-      `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(CurrentSettlementRows, strictParseOptions))),
+      `.pipe(
+        withObservedStage('bayn.postgres.generation-settlement', { dependency: 'postgresql' }),
+        Effect.flatMap(Schema.decodeUnknownEffect(CurrentSettlementRows, strictParseOptions)),
+      ),
     ),
     Effect.flatMap(
       ([receipt]): Effect.Effect<CurrentTerminalGenerationSettlementReceipt, BlockedCycleIntentStoreError> => {

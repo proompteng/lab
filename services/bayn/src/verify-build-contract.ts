@@ -13,9 +13,10 @@ import {
   verifyStrategyProtocolHash,
 } from './build'
 import { makeStrategyProtocolHashResult } from './contracts'
+import { BrokerEnvironment } from './broker/identity'
 import { operationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
-import { loadQuoteBoundExecutionRiskPolicy } from './observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from './observe-composition/decision-builder'
 import { strictParseOptions } from './schemas'
 import { activeStrategyBehaviorHash, activeStrategyName, loadActiveStrategyProtocol } from './strategy'
 
@@ -74,7 +75,11 @@ const program = Effect.gen(function* () {
       }),
     ),
   )
-  const riskPolicy = yield* loadQuoteBoundExecutionRiskPolicy('build-contract', protocol.universe).pipe(
+  const riskPolicy = yield* loadExecutionRiskPolicy(
+    'build-contract',
+    protocol.universe,
+    BrokerEnvironment.Sandbox,
+  ).pipe(
     Effect.mapError((cause) =>
       operationalError({
         component: 'strategy',

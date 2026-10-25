@@ -2,7 +2,7 @@ import type { LedgerPlan } from '../ledger-plan'
 import type { AccountingTransaction } from './schema'
 
 export interface PositionCost {
-  readonly quantityMicros: string
+  readonly quantityAtoms: string
   readonly costMicros: string
 }
 

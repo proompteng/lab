@@ -5,7 +5,7 @@ import {
   MutationOperation,
   type MutationEvidence,
   type PartialMutationEvidence,
-} from '../../broker/alpaca-mutations'
+} from '../../broker/alpaca-mutations/model'
 import type { CanonicalHashFailure } from '../../hash'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import { legacyMutationEventSchemaVersion } from '../legacy-wire'
@@ -15,6 +15,7 @@ import {
   UtcInstantSchema as UtcInstant,
 } from '../../schemas'
 import type { WriterFenceError } from '../writer-fence'
+import { SubmissionDenialReasonSchema, type SubmissionDenialReason } from '../submission-denial'
 
 export enum MutationEventType {
   SubmitStarted = 'SUBMIT_STARTED',
@@ -49,6 +50,7 @@ export const MutationEventSchema = Schema.Struct({
   requestId: Schema.optionalKey(NonEmptyString),
   responseStatus: Schema.optionalKey(HttpStatus),
   responseContentHash: Schema.optionalKey(Sha256),
+  denialReason: Schema.optionalKey(SubmissionDenialReasonSchema),
   occurredAt: UtcInstant,
 })
 export type MutationEvent = typeof MutationEventSchema.Type
@@ -67,6 +69,7 @@ export const OutcomeInputSchema = Schema.Struct({
   occurredAt: UtcInstant,
   brokerOrderId: Schema.optionalKey(BrokerOrderId),
   evidence: Schema.optionalKey(MutationEvidenceSchema),
+  denialReason: Schema.optionalKey(SubmissionDenialReasonSchema),
 })
 
 export type MutationCanonicalizationFact =
@@ -136,6 +139,7 @@ export interface MutationStoreShape {
     intentId: string,
     requestHash: string,
     occurredAt: string,
+    denialReason?: SubmissionDenialReason,
   ) => Effect.Effect<MutationEvent, MutationStoreError | WriterFenceError>
   readonly submitUnknown: (
     intentId: string,

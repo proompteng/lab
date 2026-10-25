@@ -1,0 +1,123 @@
+{
+  "schemaVersion": "bayn.system-review-evidence.v1",
+  "phase": "pre-rollout baseline and local qualification",
+  "sourceRevision": "87b6a14db2650c7eb5caed66c6e67dc4a7896f1b",
+  "imageDigest": "sha256:8fb29b4cb998d80b3133918d83bd8281986bfc892f674b7c7f6f5e88b93e9581",
+  "runtime": {
+    "checkedAt": "2026-10-18T07:20:25.409Z",
+    "ready": true,
+    "condition": "ABSTAINING",
+    "unfinishedCycles": 0,
+    "reconciliation": "EXACT",
+    "discrepancies": 0,
+    "openOrders": 0,
+    "openPositions": 0,
+    "unaccountedFills": 0,
+    "unreceiptedFills": 0,
+    "fillCount": 539,
+    "accountingTransactions": 539,
+    "ledgerReceipts": 539,
+    "realizedCloses": 348,
+    "grossRealizedPnlMicros": "-431211644",
+    "feesMicros": "1212634501",
+    "netRealizedPnlAfterFeesMicros": "-1643846145",
+    "forwardPerformance": null
+  },
+  "batchBaseline": {
+    "checkedAt": "2026-10-18T07:47:54.024736+00:00",
+    "scope": "latest authority generation since 07:00 UTC",
+    "summary": {
+      "batches": 26,
+      "all_excluded_batches": 18,
+      "pending_batches": 0,
+      "atomic_excluded_batches": 0,
+      "first_observed_at": "2026-10-18T07:14:20.806Z",
+      "last_observed_at": "2026-10-18T07:47:26.603Z",
+      "excluded_batch_p50_ms": 1369,
+      "excluded_batch_p95_ms": 2349.799999999999
+    },
+    "candidates": [
+      {
+        "status": "EXCLUDED",
+        "exclusion": null,
+        "reason": "momentum",
+        "candidates": 61
+      },
+      {
+        "status": "REQUESTED",
+        "exclusion": null,
+        "reason": null,
+        "candidates": 8
+      },
+      {
+        "status": "EXCLUDED",
+        "exclusion": null,
+        "reason": "not-ready",
+        "candidates": 9
+      }
+    ]
+  },
+  "query": {
+    "mode": "READ ONLY",
+    "statementTimeoutMs": 5000,
+    "lockTimeoutMs": 1000,
+    "sql": "BEGIN READ ONLY;\nSET LOCAL statement_timeout = '5s';\nSET LOCAL lock_timeout = '1s';\nWITH recent AS MATERIALIZED (\n  SELECT p.batch_id, p.payload AS plan, r.payload AS result,\n    NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload->'candidates') c WHERE c ? 'request') AS all_excluded,\n    p.xmin::text AS plan_transaction, r.xmin::text AS result_transaction\n  FROM jev_batch_plans p LEFT JOIN jev_batch_results r USING (batch_id)\n  WHERE p.authority_generation_hash = (SELECT generation_hash FROM authority_generations ORDER BY activated_at DESC LIMIT 1)\n    AND p.payload->>'observedAt' >= '2026-10-18T07:00:00.000Z'\n), summary AS (\n  SELECT count(*) AS batches, count(*) FILTER (WHERE all_excluded) AS all_excluded_batches,\n    count(*) FILTER (WHERE result IS NULL) AS pending_batches,\n    count(*) FILTER (WHERE all_excluded AND plan_transaction = result_transaction) AS atomic_excluded_batches,\n    min(plan->>'observedAt') AS first_observed_at, max(plan->>'observedAt') AS last_observed_at,\n    percentile_cont(0.5) WITHIN GROUP (ORDER BY 1000*extract(epoch FROM ((result->>'completedAt')::timestamptz-(plan->>'observedAt')::timestamptz))) FILTER (WHERE all_excluded AND result IS NOT NULL) AS excluded_batch_p50_ms,\n    percentile_cont(0.95) WITHIN GROUP (ORDER BY 1000*extract(epoch FROM ((result->>'completedAt')::timestamptz-(plan->>'observedAt')::timestamptz))) FILTER (WHERE all_excluded AND result IS NOT NULL) AS excluded_batch_p95_ms\n  FROM recent\n), reasons AS (\n SELECT candidate->>'status' AS status, candidate->'exclusion' AS exclusion, candidate->'reason' AS reason, count(*) AS candidates\n FROM recent CROSS JOIN LATERAL jsonb_array_elements(plan->'candidates') candidate GROUP BY 1,2,3\n)\nSELECT json_build_object('checkedAt',now(),'scope','latest authority generation since 07:00 UTC','summary',(SELECT row_to_json(summary) FROM summary),'candidates',(SELECT json_agg(reasons) FROM reasons));\nCOMMIT;"
+  },
+  "interpretation": [
+    "Eighteen of 26 batches (69.23%) in this bounded current-generation sample had no inference requests.",
+    "No all-excluded plan/result pair shared a PostgreSQL xmin in this baseline; each was persisted in separate transactions.",
+    "The timing statistic is recorded observation-to-result-completedAt, not durable commit acknowledgement or order latency.",
+    "The sample is descriptive and does not establish a causal speedup, trading edge, or profitability.",
+    "All-excluded admission can complete evidence for exclusion reasons that still cannot authorize a no-entry decision; decision eligibility is unchanged."
+  ],
+  "localValidation": {
+    "baselineRegression": {
+      "database": "disposable PostgreSQL 18",
+      "tests": 5,
+      "expectedFailures": 3,
+      "passes": 2
+    },
+    "batchIntegration": {
+      "database": "disposable PostgreSQL 18",
+      "passes": 34,
+      "failures": 0,
+      "assertions": 206,
+      "note": "Full suite before adding a separate lost-acknowledgement case and same-transaction assertion."
+    },
+    "finalFocusedRegression": {
+      "database": "disposable PostgreSQL 18",
+      "passes": 6,
+      "failures": 0,
+      "assertions": 44,
+      "note": "Includes transaction identity, injected result-insert failure, concurrent new admissions, lost new-admission acknowledgement, legacy pending recovery, regressed clock and expiry."
+    },
+    "serviceTests": {
+      "passes": 3344,
+      "skips": 535,
+      "failures": 0,
+      "assertions": 152589,
+      "files": 294,
+      "note": "Environment-dependent integration tests are skipped by the unit command; the changed PostgreSQL boundary was also exercised against the disposable database."
+    },
+    "typecheck": "passed",
+    "format": "passed",
+    "lint": "passed",
+    "typedLint": "passed",
+    "build": "passed",
+    "preexistingLintWarnings": {
+      "ordinary": 6,
+      "typed": 11,
+      "changedFiles": 0
+    }
+  },
+  "autonomousSkill": {
+    "repository": "https://github.com/sickn33/antigravity-awesome-skills",
+    "revision": "c564f9f4aee8a143c48218805b65f0f6956c6264",
+    "path": "skills/autonomous-agents",
+    "upstreamSkillGitBlob": "6d154321b477ef19e320ca1018c9564c80519aaf",
+    "installedSkillGitBlob": "064ba58354a3e6923fd4463a013277784b08f153",
+    "guideGitBlob": "bba8df987b388a410b5364141941a0b8d5c38bbe",
+    "validation": "quick_validate.py passed",
+    "localChange": "Only upstream risk/source/date_added metadata nested under supported metadata key; guide and workflow text retained."
+  }
+}

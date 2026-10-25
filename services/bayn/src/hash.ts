@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { pipe, Result } from 'effect'
 
-export const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
+export const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
 
 const compareUtf16 = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
@@ -125,15 +125,14 @@ const dataProperty = (
   key: PropertyKey,
   path: string,
   actualType: CanonicalJsonIntrospectionFailure['actualType'],
-): Result.Result<unknown, CanonicalJsonFailure> =>
-  pipe(
-    inspect(path, actualType, 'property-descriptor', () => Object.getOwnPropertyDescriptor(value, key)),
-    Result.flatMap((descriptor) =>
-      descriptor?.enumerable === true && 'value' in descriptor
-        ? Result.succeed(descriptor.value)
-        : validationFailure(path, 'non-data-property', `${actualType}-property`),
-    ),
-  )
+): Result.Result<unknown, CanonicalJsonFailure> => {
+  const inspected = inspect(path, actualType, 'property-descriptor', () => Object.getOwnPropertyDescriptor(value, key))
+  if (Result.isFailure(inspected)) return inspected
+  const descriptor = inspected.success
+  return descriptor?.enumerable === true && 'value' in descriptor
+    ? Result.succeed(descriptor.value)
+    : validationFailure(path, 'non-data-property', `${actualType}-property`)
+}
 
 const serializeArrayResult = (
   value: readonly unknown[],
@@ -142,39 +141,35 @@ const serializeArrayResult = (
 ): Result.Result<string, CanonicalJsonFailure> => {
   if (ancestors.includes(value)) return validationFailure(path, 'cycle', 'array')
 
-  return pipe(
-    Result.all({
-      length: arrayLength(value, path),
-      enumerableKeys: enumerableArrayKeys(value, path),
-      ownKeys: arrayOwnKeys(value, path),
-    }),
-    Result.flatMap(({ enumerableKeys, length, ownKeys }) => {
-      const invalidShape =
-        !Number.isSafeInteger(length) ||
-        length < 0 ||
-        enumerableKeys.length !== length ||
-        enumerableKeys.some((key, index) => key !== String(index)) ||
-        ownKeys.some(
-          (key) =>
-            key !== 'length' && (typeof key !== 'string' || !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= length),
-        )
-
-      if (invalidShape) return validationFailure(path, 'non-dense-array', 'array')
-
-      const nextAncestors = [...ancestors, value]
-      return pipe(
-        Result.all(
-          enumerableKeys.map((key, index) =>
-            pipe(
-              dataProperty(value, key, `${path}[${key}]`, 'array'),
-              Result.flatMap((nested) => serializeCanonicalValueResult(nested, nextAncestors, `${path}[${index}]`)),
-            ),
-          ),
-        ),
-        Result.map((values) => `[${values.join(',')}]`),
-      )
-    }),
+  const length = arrayLength(value, path)
+  if (Result.isFailure(length)) return Result.fail(length.failure)
+  const enumerableKeys = enumerableArrayKeys(value, path)
+  if (Result.isFailure(enumerableKeys)) return Result.fail(enumerableKeys.failure)
+  const ownKeys = arrayOwnKeys(value, path)
+  if (Result.isFailure(ownKeys)) return Result.fail(ownKeys.failure)
+  if (
+    !Number.isSafeInteger(length.success) ||
+    length.success < 0 ||
+    enumerableKeys.success.length !== length.success ||
+    enumerableKeys.success.some((key, index) => key !== String(index)) ||
+    ownKeys.success.some(
+      (key) =>
+        key !== 'length' && (typeof key !== 'string' || !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= length.success),
+    )
   )
+    return validationFailure(path, 'non-dense-array', 'array')
+
+  const nextAncestors = [...ancestors, value]
+  const entries: string[] = []
+  for (const key of enumerableKeys.success) {
+    const nestedPath = `${path}[${key}]`
+    const property = dataProperty(value, key, nestedPath, 'array')
+    if (Result.isFailure(property)) return Result.fail(property.failure)
+    const nested = serializeCanonicalValueResult(property.success, nextAncestors, nestedPath)
+    if (Result.isFailure(nested)) return nested
+    entries.push(nested.success)
+  }
+  return Result.succeed(`[${entries.join(',')}]`)
 }
 
 const objectPrototype = (value: object, path: string): Result.Result<object | null, CanonicalJsonFailure> =>
@@ -190,39 +185,27 @@ const serializeObjectResult = (
 ): Result.Result<string, CanonicalJsonFailure> => {
   if (ancestors.includes(value)) return validationFailure(path, 'cycle', 'object')
 
-  return pipe(
-    objectPrototype(value, path),
-    Result.flatMap((prototype) =>
-      prototype === Object.prototype || prototype === null
-        ? objectOwnKeys(value, path)
-        : validationFailure(path, 'non-plain-object', 'object'),
-    ),
-    Result.flatMap((keys) => {
-      if (keys.some((key) => typeof key !== 'string')) {
-        return validationFailure(path, 'symbol-key', 'object')
-      }
+  const prototype = objectPrototype(value, path)
+  if (Result.isFailure(prototype)) return Result.fail(prototype.failure)
+  if (prototype.success !== Object.prototype && prototype.success !== null)
+    return validationFailure(path, 'non-plain-object', 'object')
+  const ownKeys = objectOwnKeys(value, path)
+  if (Result.isFailure(ownKeys)) return Result.fail(ownKeys.failure)
+  const keys = ownKeys.success
+  if (!keys.every((key) => typeof key === 'string')) return validationFailure(path, 'symbol-key', 'object')
 
-      const nextAncestors = [...ancestors, value]
-      return pipe(
-        Result.all(
-          (keys as readonly string[])
-            .slice()
-            .sort(compareUtf16)
-            .map((key) => {
-              if (hasInvalidUnicodeSurrogate(key)) {
-                return validationFailure(path, 'invalid-unicode-key', 'string')
-              }
-              return pipe(
-                dataProperty(value, key, `${path}.${key}`, 'object'),
-                Result.flatMap((nested) => serializeCanonicalValueResult(nested, nextAncestors, `${path}.${key}`)),
-                Result.map((nested) => `${JSON.stringify(key)}:${nested}`),
-              )
-            }),
-        ),
-        Result.map((entries) => `{${entries.join(',')}}`),
-      )
-    }),
-  )
+  const nextAncestors = [...ancestors, value]
+  const entries: string[] = []
+  for (const key of keys.toSorted(compareUtf16)) {
+    if (hasInvalidUnicodeSurrogate(key)) return validationFailure(path, 'invalid-unicode-key', 'string')
+    const nestedPath = `${path}.${key}`
+    const property = dataProperty(value, key, nestedPath, 'object')
+    if (Result.isFailure(property)) return Result.fail(property.failure)
+    const nested = serializeCanonicalValueResult(property.success, nextAncestors, nestedPath)
+    if (Result.isFailure(nested)) return nested
+    entries.push(`${JSON.stringify(key)}:${nested.success}`)
+  }
+  return Result.succeed(`{${entries.join(',')}}`)
 }
 
 const classifyArray = (value: object, path: string): Result.Result<boolean, CanonicalJsonFailure> =>
@@ -247,14 +230,11 @@ const serializeCanonicalValueResult = (
   }
   if (typeof value !== 'object') return validationFailure(path, 'non-json-type', typeof value)
 
-  return pipe(
-    classifyArray(value, path),
-    Result.flatMap((isArray) =>
-      isArray
-        ? serializeArrayResult(value as readonly unknown[], ancestors, path)
-        : serializeObjectResult(value, ancestors, path),
-    ),
-  )
+  const classified = classifyArray(value, path)
+  if (Result.isFailure(classified)) return Result.fail(classified.failure)
+  return classified.success
+    ? serializeArrayResult(value as readonly unknown[], ancestors, path)
+    : serializeObjectResult(value, ancestors, path)
 }
 
 export const canonicalJsonV1Result = (value: unknown): Result.Result<string, CanonicalJsonFailure> =>
@@ -275,38 +255,6 @@ const hashCanonicalJsonResult = (canonicalJson: string): Result.Result<string, C
 
 export const canonicalHashV1Result = (value: unknown): Result.Result<string, CanonicalHashFailure> =>
   pipe(canonicalJsonV1Result(value), Result.flatMap(hashCanonicalJsonResult))
-
-const compatibilityError = (failure: CanonicalJsonFailure): unknown => {
-  switch (failure.reason) {
-    case 'cycle':
-      return new TypeError(`${failure.path} contains a cycle`)
-    case 'invalid-unicode-key':
-      return new TypeError(`${failure.path} contains an invalid Unicode key`)
-    case 'invalid-unicode-surrogate':
-      return new TypeError(`${failure.path} contains an invalid Unicode surrogate`)
-    case 'non-data-property':
-      return new TypeError(`${failure.path} must be an enumerable data property`)
-    case 'non-dense-array':
-      return new TypeError(`${failure.path} must be a dense array without custom properties`)
-    case 'non-finite-number':
-      return new TypeError(`${failure.path} contains a non-finite number`)
-    case 'non-json-type':
-      return new TypeError(`${failure.path} contains a non-JSON ${failure.actualType} value`)
-    case 'non-plain-object':
-      return new TypeError(`${failure.path} must contain only plain JSON objects`)
-    case 'symbol-key':
-      return new TypeError(`${failure.path} contains a symbol key`)
-    case 'introspection-failed':
-    case 'sha256-failed':
-      return failure.cause
-  }
-}
-
-export const canonicalHashV1OrThrow = (value: unknown): string =>
-  pipe(canonicalHashV1Result(value), Result.getOrThrowWith(compatibilityError))
-
-/** @deprecated Use canonicalHashV1Result. This alias remains while callers migrate to total canonicalization. */
-export const canonicalHashV1 = canonicalHashV1OrThrow
 
 export const stableU128 = (...parts: readonly string[]): bigint => {
   const bytes = createHash('sha256').update(parts.join('\u001f')).digest().subarray(0, 16)

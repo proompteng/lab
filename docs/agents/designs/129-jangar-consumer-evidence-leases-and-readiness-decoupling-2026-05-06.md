@@ -1,20 +1,15 @@
 # 129. Jangar Consumer Evidence Leases And Readiness Decoupling (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-06
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane evidence products, controller witness freshness, schedule dispatch admission, Torghut
 consumer readiness, capital admission, database/schema health projection, and cross-swarm rollout gates.
 
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/133-torghut-capital-readiness-cache-and-profit-carry-governor-2026-05-06.md`
-
 Extends:
 
 - `128-jangar-terminal-run-settlement-and-forecast-reentry-admission-2026-05-06.md`
 - `128-jangar-runtime-convergence-ledger-and-capital-gate-receipts-2026-05-06.md`
-- `127-jangar-session-rehearsal-conductor-and-capital-settlement-gates-2026-05-06.md`
 - `120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
 
 ## Decision
@@ -300,7 +295,6 @@ Deployer stage:
 Required local checks for this document PR:
 
 - `bunx oxfmt --check docs/agents/designs/129-jangar-consumer-evidence-leases-and-readiness-decoupling-2026-05-06.md`
-- `bunx oxfmt --check docs/torghut/design-system/v6/133-torghut-capital-readiness-cache-and-profit-carry-governor-2026-05-06.md`
 - `bunx oxfmt --check docs/torghut/design-system/v6/index.md`
 
 Required implementation tests:

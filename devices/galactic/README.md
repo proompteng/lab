@@ -25,6 +25,8 @@ They are not current cluster instructions; follow `docs/repository-cleanup-todo.
 
 Runbooks:
 
+- [Ryzen compute/local-storage placement](scheduling/README.md) (Ceph service exception, client migration, and AMD64 CI scratch)
+- [Hardware and network upgrade plan](docs/hardware-network-upgrade-plan.md) (received 100G parts, installation order, and Ceph migration gate)
 - `devices/galactic/releases/README.md` (Talos 1.14 and Kubernetes 1.37 rollout)
 - `devices/galactic/docs/add-control-plane-node.md`
 - `devices/galactic/docs/bootstrap-argocd.md`

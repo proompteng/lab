@@ -1,7 +1,10 @@
 import type { FinalizedSnapshotProvenance } from '../contracts'
 import type { IsoDate } from '../schemas'
+import type { IntradaySnapshotManifest, IntradaySnapshotRequest } from '../market-data/intraday/model'
+import type { StreamingSnapshotManifest } from '../market-data/streaming/snapshot'
+import type { AccountingTransaction } from '../accounting/schema'
 
-export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v3' as const
+export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v4' as const
 
 export type ForwardPerformanceEvidenceStatus = 'SUFFICIENT' | 'INSUFFICIENT_EVIDENCE'
 export type ForwardPerformanceProfitability = 'PROFITABLE' | 'NOT_PROFITABLE' | 'UNDETERMINED'
@@ -17,6 +20,8 @@ export type ForwardPerformanceReasonCode =
   | 'LEDGER_MISMATCH'
   | 'MISSING_LEDGER_ACCOUNT'
   | 'NON_EXACT_RECONCILIATION'
+  | 'OPERATING_COST_EVIDENCE_GAP'
+  | 'BROKER_FEE_SETTLEMENT_PENDING'
   | 'OPEN_POSITION'
   | 'STARTING_CAPITAL_GAP'
   | 'UNCLOSED_WINDOW'
@@ -101,8 +106,8 @@ export interface ForwardPerformanceTransactionEvidence {
   readonly cycleId: string
   readonly symbol?: string
   readonly side: 'BUY' | 'SELL'
-  readonly quantityMicros?: string
-  readonly priceMicros?: string
+  readonly quantityAtoms?: string
+  readonly priceAtoms?: string
   readonly notionalMicros?: string
   readonly feeMicros: string
   readonly realizedPnlMicros: string
@@ -118,8 +123,8 @@ export interface ForwardPerformanceExecutionFillEvidence {
   readonly accountId: string
   readonly symbol: string
   readonly side: 'BUY' | 'SELL'
-  readonly quantityMicros: string
-  readonly priceMicros: string
+  readonly quantityAtoms: string
+  readonly priceAtoms: string
   readonly feeMicros: string
   readonly sourceTimestamp: string
   readonly occurredAt: string
@@ -135,7 +140,7 @@ export interface ForwardPerformanceExecutionEvidence {
   readonly accountId: string
   readonly symbol: string
   readonly side: 'BUY' | 'SELL'
-  readonly plannedQuantityMicros?: string
+  readonly plannedQuantityAtoms?: string
   readonly referencePriceMicros?: string
   readonly intent?: {
     readonly intentId: string
@@ -145,7 +150,7 @@ export interface ForwardPerformanceExecutionEvidence {
     readonly decisionHash: string
     readonly symbol: string
     readonly side: 'BUY' | 'SELL'
-    readonly quantityMicros: string
+    readonly quantityAtoms: string
     readonly notionalLimitMicros?: string
     readonly terminalOutcome: 'FILLED' | 'CANCELED' | 'EXPIRED' | 'REJECTED' | 'BLOCKED'
     readonly createdAt: string
@@ -159,9 +164,9 @@ export interface ForwardPerformanceExecutionEvidence {
     readonly accountId: string
     readonly symbol: string
     readonly side: 'BUY' | 'SELL'
-    readonly quantityMicros?: string
+    readonly quantityAtoms?: string
     readonly notionalMicros?: string
-    readonly filledQuantityMicros: string
+    readonly filledQuantityAtoms: string
     readonly status: 'NEW' | 'PARTIALLY_FILLED' | 'FILLED' | 'CANCELED' | 'EXPIRED' | 'REJECTED' | 'PENDING'
     readonly occurredAt: string
     readonly observedAt: string
@@ -179,7 +184,7 @@ export interface ForwardPerformanceExecutionEvidence {
   }
 }
 
-export interface ForwardPerformanceMarketVolumeEvidence {
+export interface ForwardPerformanceDailyMarketVolumeEvidence {
   readonly schemaVersion: 'bayn.forward-performance-market-volume-evidence.v1'
   readonly cycleId: string
   readonly decisionSnapshotId: string
@@ -189,7 +194,7 @@ export interface ForwardPerformanceMarketVolumeEvidence {
   readonly windowOpenedAt: string
   readonly windowClosedAt: string
   readonly evidenceCutoffAt: string
-  readonly quantityMicros: string
+  readonly quantityAtoms: string
   readonly closePriceMicros: string
   readonly snapshotId: string
   readonly manifestContentHash: string
@@ -206,7 +211,7 @@ export interface ForwardPerformanceMarketVolumeEvidence {
   readonly contentHash: string
 }
 
-export interface ForwardPerformanceMarketVolumeRequest {
+export interface ForwardPerformanceDailyMarketVolumeRequest {
   readonly cycleId: string
   readonly decisionSnapshotId: string
   readonly decisionSnapshotAsOfSession: IsoDate
@@ -225,30 +230,72 @@ export interface ForwardPerformanceMarketVolumeRequest {
   readonly adjustment: 'all'
 }
 
+export interface ForwardPerformanceIntradayMarketVolumeRequest {
+  readonly cycleId: string
+  readonly decisionSnapshotId: string
+  readonly decisionSnapshotAsOfSession: IsoDate
+  readonly symbol: string
+  readonly executionSessionDate: IsoDate
+  readonly windowOpenedAt: string
+  readonly windowClosedAt: string
+  readonly evidenceCutoffAt: string
+  readonly sourceFeed: IntradaySnapshotManifest['feed']
+  readonly decisionManifest: IntradaySnapshotManifest | StreamingSnapshotManifest
+}
+
+export interface ForwardPerformanceIntradayMarketVolumeEvidence extends ForwardPerformanceIntradayMarketVolumeRequest {
+  readonly schemaVersion: 'bayn.forward-performance-intraday-volume-evidence.v2'
+  readonly volumeScope: 'RECORDED_COMPLETE_MINUTE_VOLUME'
+  readonly terminalPriceBasis: 'FINAL_MINUTE_BAR_CLOSE'
+  readonly quantityAtoms: string
+  readonly closePriceMicros: string
+  readonly finalizedAt: string
+  readonly archiveRequest: IntradaySnapshotRequest
+  readonly barsContentHash: string
+  readonly barCount: number
+  readonly missingMinutes: readonly string[]
+  readonly contentHash: string
+}
+
+export type ForwardPerformanceMarketVolumeRequest =
+  | ForwardPerformanceDailyMarketVolumeRequest
+  | ForwardPerformanceIntradayMarketVolumeRequest
+
+export type ForwardPerformanceMarketVolumeEvidence =
+  | ForwardPerformanceDailyMarketVolumeEvidence
+  | ForwardPerformanceIntradayMarketVolumeEvidence
+
 export interface ForwardPerformanceLedgerTotals {
   readonly realizedGainMicros: string
   readonly realizedLossMicros: string
   readonly brokerExecutionFeesMicros: string
-  readonly otherChargedCostsMicros: string
+  /** Null when inference and other operating expenses are outside the verified ledger evidence. */
+  readonly otherChargedCostsMicros: string | null
   readonly cashYieldMicros: string
+  readonly cashSettlementRoundingMicros: string
 }
 
 export interface ForwardPerformanceCashYieldEvidence {
-  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1'
+  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3'
   readonly reconciliationId: string
   readonly reconciliationContentHash: string
   readonly reconciledAt: string
   readonly baselineAccountEventId: string
   readonly baselineObservedAt: string
   readonly baselineCashMicros: string
+  readonly baselineCashReportingOffsetMicros: string
   readonly openingAccountEventId: string
   readonly openingObservedAt: string
   readonly openingCashMicros: string
+  readonly openingCashReportingOffsetMicros: string
+  readonly openingCashReportingQuantumMicros: import('../broker/alpaca/cash-reporting').CashReportingQuantum
   readonly preWindowAccountedCashDeltaMicros: string
   readonly preWindowCashResidualMicros: string
   readonly closingAccountEventId: string
   readonly closingObservedAt: string
   readonly closingCashMicros: string
+  readonly closingCashReportingOffsetMicros: string
+  readonly closingCashReportingQuantumMicros: import('../broker/alpaca/cash-reporting').CashReportingQuantum
   readonly accountedCashDeltaMicros: string
   readonly cashYieldMicros: string
 }
@@ -296,7 +343,28 @@ export interface ForwardPerformanceEvidenceInput {
   }
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
+  readonly accountTransactions?: readonly AccountingTransaction[]
+  /** Verified cumulative account fee evidence, independent of the selected financial scope. */
+  readonly accountFeeAccruals?: readonly (typeof import('../db/fee-accruals').StoredAccrual.Type)[]
+  readonly accountBrokerFees?: readonly import('../accounting/broker-fees').StoredBrokerFee[]
+  /** Cumulative account inventory, independently projected by PostgreSQL and read from the ledger. */
+  readonly accountPositionCounts?: {
+    readonly postgres: number
+    readonly ledger: number
+    readonly reconciledAt: string
+    readonly exact: boolean
+  }
+  readonly brokerFeeAccruals?: readonly {
+    readonly accrualId: string
+    readonly accountId: string
+    readonly expenseMicros: string
+    readonly settled: boolean
+  }[]
+  readonly brokerFees?: readonly (import('../broker/alpaca/model').FeeActivity & {
+    readonly inventoryCostMicros?: string
+  })[]
   readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
+  readonly unverifiedDecisionHashes?: readonly string[]
   readonly marketVolumeEvidence?: readonly ForwardPerformanceMarketVolumeEvidence[]
   readonly ledgerTotals?: ForwardPerformanceLedgerTotals
   readonly cashYieldEvidenceRequired: boolean
@@ -334,6 +402,7 @@ export interface ForwardPerformanceReceiptMaterial {
     readonly brokerExecutionFeesMicros: string | null
     readonly otherChargedCostsMicros: string | null
     readonly cashYieldMicros: string | null
+    readonly cashSettlementRoundingMicros: string | null
     readonly grossRealizedPnlMicros: string | null
     readonly netRealizedPnlAfterCostsMicros: string | null
     readonly netRealizedReturn: {
@@ -361,15 +430,16 @@ export interface ForwardPerformanceReceiptMaterial {
     readonly openPositionCount: number
   }
   readonly executionQuality: {
+    readonly unverifiedDecisionHashes?: readonly string[]
     readonly status: ForwardPerformanceMeasurementStatus
     readonly reasonCodes: readonly ForwardPerformanceExecutionQualityReasonCode[]
     readonly evidenceHash: string | null
     readonly implementationShortfall: {
       readonly plannedOrderCount: number
       readonly fillCount: number
-      readonly plannedQuantityMicros: string
-      readonly filledQuantityMicros: string
-      readonly unfilledQuantityMicros: string
+      readonly plannedQuantityAtoms: string
+      readonly filledQuantityAtoms: string
+      readonly unfilledQuantityAtoms: string
       readonly plannedReferenceNotionalMicros: string
       readonly executedNotionalMicros: string
       readonly executionPriceShortfallMicros: string
@@ -388,6 +458,7 @@ export interface ForwardPerformanceReceiptMaterial {
     } | null
   }
   readonly observedCapacity: {
+    readonly intradaySources?: readonly ForwardPerformanceIntradayMarketVolumeEvidence[]
     readonly status: ForwardPerformanceMeasurementStatus
     readonly reasonCodes: readonly ForwardPerformanceObservedCapacityReasonCode[]
     readonly evidenceHash: string | null
@@ -396,19 +467,25 @@ export interface ForwardPerformanceReceiptMaterial {
       readonly symbol: string
       readonly windowOpenedAt: string
       readonly windowClosedAt: string
-      readonly filledQuantityMicros: string
-      readonly marketVolumeQuantityMicros: string
+      readonly filledQuantityAtoms: string
+      readonly marketVolumeQuantityAtoms: string
+      /** Present for native intraday evidence; legacy daily receipts predate this source binding. */
+      readonly intradaySource?: {
+        readonly feed: IntradaySnapshotManifest['feed']
+        readonly volumeScope: 'RECORDED_COMPLETE_MINUTE_VOLUME'
+        readonly evidenceHash: string
+      }
       readonly participationRate: {
-        readonly numeratorQuantityMicros: string
-        readonly denominatorQuantityMicros: string
+        readonly numeratorQuantityAtoms: string
+        readonly denominatorQuantityAtoms: string
         readonly decimal: string
       }
     }[]
     readonly boundedObservedReferenceNotionalMicros: string | null
     readonly boundedObservedExecutedNotionalMicros: string | null
     readonly maximumParticipationRate: {
-      readonly numeratorQuantityMicros: string
-      readonly denominatorQuantityMicros: string
+      readonly numeratorQuantityAtoms: string
+      readonly denominatorQuantityAtoms: string
       readonly decimal: string
     } | null
   }

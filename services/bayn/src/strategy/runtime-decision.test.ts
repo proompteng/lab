@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
 import { strictParseOptions } from '../schemas'
-import { PersistedStrategyDecisionSchema, RuntimeStrategyDecisionSchema } from './runtime-decision'
+import { RuntimeStrategyDecisionSchema } from './runtime-decision'
 
 const hash = (character: string): string => character.repeat(64)
 const observedAt = '2026-07-22T13:35:01.000Z'
@@ -198,12 +198,10 @@ const validIndependentDecision = {
 } as const
 
 describe('strategy decision persistence boundary', () => {
-  test('decodes immutable legacy evidence without making it executable', () => {
-    const decodePersisted = Schema.decodeUnknownResult(PersistedStrategyDecisionSchema, strictParseOptions)
+  test('rejects retired strategy contracts at the runtime boundary', () => {
     const decodeRuntime = Schema.decodeUnknownResult(RuntimeStrategyDecisionSchema, strictParseOptions)
 
     for (const decision of legacyDecisions) {
-      expect(Result.isSuccess(decodePersisted(decision))).toBeTrue()
       expect(Result.isFailure(decodeRuntime(decision))).toBeTrue()
     }
   })

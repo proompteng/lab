@@ -1,25 +1,13 @@
+import type { SimulatedSnapshotReference } from '../../market-data/streaming/simulation-service'
+import type { StreamingVerifiedSnapshotReference } from '../../market-data/streaming/reference'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
+import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 
-import {
-  ensureSnapshotReference,
-  renderSnapshotReferenceIssue,
-  snapshotReferenceIssueTags,
-} from '../../db/snapshot-reference'
-import { decodeInputManifestArtifact } from '../../evidence-contracts'
-import type { ArchiveVerifiedIntradaySnapshotReference } from '../../market-data/intraday/model'
-import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
-import type { InputManifest } from '../../types'
 import { CycleState } from '../model'
+import { decideDecisionBinding, type DecisionBindingDecision } from './decisions'
 import {
-  decideDecisionBinding,
-  decideSnapshotBinding,
-  type DecisionBindingDecision,
-  type SnapshotDecision,
-} from './decisions'
-import {
-  cycleStoreError,
   failCycleStore,
   liftCycleDecision,
   runCycleStore,
@@ -30,132 +18,28 @@ import {
 } from './model'
 import type { CycleMutationPrimitives } from './mutations'
 import type { CycleQueries } from './queries'
-import { decodeDecisionInput, decodeSnapshotInput } from './rows'
+import { decodeDecisionInput } from './rows'
 
 export interface CycleBindingPrograms {
-  readonly bindSnapshot: CycleStoreShape['bindSnapshot']
   readonly bindDecision: CycleStoreShape['bindDecision']
 }
 
-const upgradeDecisionDocumentConstraints = (sql: PgClient.PgClient): Effect.Effect<void, CycleStoreInternalError> =>
-  sql`
-    DO $migration$
-    BEGIN
-      IF EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = 'autonomous_cycle_shadow_decisions'::regclass
-          AND conname IN (
-            'autonomous_cycle_shadow_decisions_schema_version_check',
-            'autonomous_cycle_shadow_decisions_check'
-          )
-      ) THEN
-        LOCK TABLE autonomous_cycle_shadow_decisions IN ACCESS EXCLUSIVE MODE;
-
-        ALTER TABLE autonomous_cycle_shadow_decisions
-        DROP CONSTRAINT IF EXISTS autonomous_cycle_shadow_decisions_schema_version_check;
-
-        ALTER TABLE autonomous_cycle_shadow_decisions
-        DROP CONSTRAINT IF EXISTS autonomous_cycle_shadow_decisions_check;
-
-        IF NOT EXISTS (
-          SELECT 1
-          FROM pg_constraint
-          WHERE conrelid = 'autonomous_cycle_shadow_decisions'::regclass
-            AND conname = 'autonomous_cycle_decisions_schema_version_check'
-        ) THEN
-          ALTER TABLE autonomous_cycle_shadow_decisions
-          ADD CONSTRAINT autonomous_cycle_decisions_schema_version_check
-          CHECK (schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1'));
-        END IF;
-
-        IF NOT EXISTS (
-          SELECT 1
-          FROM pg_constraint
-          WHERE conrelid = 'autonomous_cycle_shadow_decisions'::regclass
-            AND conname = 'autonomous_cycle_decisions_document_check'
-        ) THEN
-          ALTER TABLE autonomous_cycle_shadow_decisions
-          ADD CONSTRAINT autonomous_cycle_decisions_document_check
-          CHECK (
-            document ->> 'schemaVersion' = schema_version
-            AND (
-              (
-                schema_version = 'bayn.observe-shadow-decision.v1'
-                AND document ->> 'mode' = 'OBSERVE'
-                AND document ->> 'dispatchable' = 'false'
-              )
-              OR
-              (
-                schema_version = 'bayn.paper-cycle-decision.v1'
-                AND document ->> 'mode' = 'PAPER'
-                AND (
-                  document ->> 'dispatchable' = 'true'
-                  OR (
-                    document ->> 'dispatchable' = 'false'
-                    AND jsonb_typeof(document -> 'riskBlock') = 'object'
-                  )
-                )
-              )
-            )
-            AND document #>> '{bindings,cycleId}' = cycle_id
-            AND (document ->> 'createdAt')::timestamptz = created_at
-          );
-        END IF;
-      END IF;
-    END
-    $migration$
-  `.pipe(Effect.asVoid)
-
-const makeCycleBindingProgramsDataFirst = (
+export const makeCycleBindingPrograms = (
   sql: PgClient.PgClient,
   queries: CycleQueries,
   mutations: CycleMutationPrimitives,
 ): CycleBindingPrograms => {
-  const persistSnapshotReference = (inputManifest: InputManifest): Effect.Effect<void, CycleStoreInternalError> =>
-    ensureSnapshotReference(sql, inputManifest).pipe(
-      Effect.catchTag(snapshotReferenceIssueTags, (cause) =>
-        Effect.fail(
-          cycleStoreError({
-            operation: 'bind-snapshot',
-            failure: 'conflict',
-            message: `stored snapshot reference diverged from the finalized Signal publication: ${renderSnapshotReferenceIssue(cause)}`,
-            cause,
-          }),
-        ),
-      ),
-    )
-
-  const persistSnapshot = (
-    manifest: InputManifest,
-    observedAt: string,
-    decision: Extract<SnapshotDecision, { readonly _tag: 'Persist' }>,
-  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
-    persistSnapshotReference(manifest).pipe(
-      Effect.andThen(sql<Record<string, unknown>>`
-        UPDATE autonomous_cycles
-        SET
-          snapshot_id = ${decision.snapshotId},
-          state_version = ${decision.cycle.stateVersion + 1},
-          updated_at = ${observedAt}
-        WHERE cycle_id = ${decision.cycle.identity.cycleId}
-          AND state = ${CycleState.Pending}
-          AND state_version = ${decision.cycle.stateVersion}
-          AND snapshot_id IS NULL
-        RETURNING cycle_id
-      `),
-      Effect.flatMap((rows) => mutations.requireApplied('bind-snapshot', rows)),
-      Effect.flatMap(() => mutations.readLocked('bind-snapshot', decision.cycle.identity.cycleId)),
-      Effect.map((cycle) => ({ cycle, changed: true })),
-    )
-
   const persistIntradaySnapshotReference = (
-    reference: ArchiveVerifiedIntradaySnapshotReference,
+    reference: StreamingVerifiedSnapshotReference | SimulatedSnapshotReference,
   ): Effect.Effect<void, CycleStoreInternalError> =>
     Effect.gen(function* () {
       const manifest = reference.manifest
+      const table =
+        reference.schemaVersion === 'bayn.simulated-snapshot-reference.v2'
+          ? 'simulated_snapshot_references'
+          : 'streaming_snapshot_references'
       yield* sql`
-        INSERT INTO intraday_snapshot_references (
+        INSERT INTO ${sql(table)} (
           snapshot_id, schema_version, content_hash, observed_at, manifest
         ) VALUES (
           ${manifest.snapshotId}, ${reference.schemaVersion}, ${manifest.contentHash},
@@ -166,7 +50,7 @@ const makeCycleBindingProgramsDataFirst = (
       const [match] = yield* sql<{ matches: boolean }>`
         SELECT EXISTS (
           SELECT 1
-          FROM intraday_snapshot_references AS reference
+          FROM ${sql(table)} AS reference
           WHERE reference.snapshot_id = ${manifest.snapshotId}
             AND reference.schema_version = ${reference.schemaVersion}
             AND reference.content_hash = ${manifest.contentHash}
@@ -178,7 +62,7 @@ const makeCycleBindingProgramsDataFirst = (
         return yield* failCycleStore(
           'bind-decision',
           'conflict',
-          'stored intraday snapshot reference diverged from the archive-verified manifest',
+          'stored intraday snapshot reference diverged from the verified market manifest',
         )
       }
     })
@@ -186,58 +70,42 @@ const makeCycleBindingProgramsDataFirst = (
   const persistDecisionEvidence = (
     evidence: CycleDecisionBindingEvidence | undefined,
   ): Effect.Effect<void, CycleStoreInternalError> =>
-    Effect.forEach(evidence?.intradaySnapshotReferences ?? [], persistIntradaySnapshotReference, {
-      concurrency: 1,
-      discard: true,
-    })
-
-  const requireDecisionEvidence = (document: CycleDecisionDocument): Effect.Effect<void, CycleStoreInternalError> =>
-    queries
-      .decisionEvidenceMatches(document)
-      .pipe(
-        Effect.flatMap((matches) =>
-          matches
-            ? Effect.void
-            : failCycleStore(
-                'bind-decision',
-                'invariant',
-                'decision does not match its durable market-data and exact reconciliation evidence',
-              ),
-        ),
-      )
-
-  const interpretSnapshotDecision = (
-    manifest: InputManifest,
-    observedAt: string,
-    decision: SnapshotDecision,
-  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
-    Match.value(decision).pipe(
-      Match.tagsExhaustive({
-        Replay: ({ cycle }) => persistSnapshotReference(manifest).pipe(Effect.as({ cycle, changed: false })),
-        Persist: (persist) => persistSnapshot(manifest, observedAt, persist),
-        Block: ({ cycle, reason }) => mutations.blockCycle('bind-snapshot', cycle, reason, observedAt),
-      }),
+    Effect.forEach(
+      [...(evidence?.streamingSnapshotReferences ?? []), ...(evidence?.simulatedSnapshotReferences ?? [])],
+      persistIntradaySnapshotReference,
+      {
+        concurrency: 1,
+        discard: true,
+      },
     )
 
-  const bindSnapshot: CycleStoreShape['bindSnapshot'] = (cycleId, inputManifest, observedAt) =>
-    runCycleStore(
-      'bind-snapshot',
-      decodeSnapshotInput({ cycleId, observedAt }).pipe(
-        Effect.bindTo('input'),
-        Effect.bind('manifest', () => decodeInputManifestArtifact(inputManifest)),
-        Effect.flatMap(({ input, manifest }) =>
-          sql.withTransaction(
-            mutations.readLocked('bind-snapshot', input.cycleId).pipe(
-              Effect.flatMap((cycle) =>
-                liftCycleDecision(
-                  'bind-snapshot',
-                  decideSnapshotBinding(cycle, manifest.finalizedSnapshot, input.observedAt),
+  const requireDecisionEvidence = (document: CycleDecisionDocument): Effect.Effect<void, CycleStoreInternalError> =>
+    queries.decisionEvidenceMismatch(document).pipe(
+      Effect.flatMap((mismatch) =>
+        mismatch === null
+          ? Effect.void
+          : Effect.logWarning('Bayn decision evidence rejected').pipe(
+              Effect.annotateLogs({
+                schemaVersion: 'bayn.decision-evidence-rejection.v1',
+                mismatch,
+                cycleId: document.bindings.cycleId,
+                snapshotId: document.bindings.snapshotId,
+                reconciliationId: document.bindings.reconciliationId,
+                plannedIntentCount: document.targetPlan.intentTargets.length,
+                riskEvaluationCount: document.deltaRisk.length,
+                riskContextBound:
+                  document.mode === legacyExecutionAuthorityToken && document.bindings.riskContext !== undefined,
+                firstRiskStatePresent:
+                  document.mode === legacyExecutionAuthorityToken && document.deltaRisk[0]?.facts?.state !== undefined,
+              }),
+              Effect.andThen(
+                failCycleStore(
+                  'bind-decision',
+                  'invariant',
+                  `decision does not match its durable market-data and exact reconciliation evidence [${mismatch}]`,
                 ),
               ),
-              Effect.flatMap((decision) => interpretSnapshotDecision(manifest, input.observedAt, decision)),
             ),
-          ),
-        ),
       ),
     )
 
@@ -272,7 +140,7 @@ const makeCycleBindingProgramsDataFirst = (
           AND (
             snapshot_id = ${decision.document.bindings.snapshotId}
             OR (
-              schema_version = 'bayn.autonomous-cycle.v3'
+              schema_version IN ('bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
               AND snapshot_id IS NULL
             )
           )
@@ -313,8 +181,8 @@ const makeCycleBindingProgramsDataFirst = (
   ) =>
     runCycleStore(
       'bind-decision',
-      upgradeDecisionDocumentConstraints(sql).pipe(
-        Effect.andThen(decodeDecisionInput({ cycleId, document, observedAt })),
+      decodeDecisionInput({ cycleId, document, observedAt }).pipe(
+        Effect.tap((input) => queries.retainValidatedDecision(input.document)),
         Effect.flatMap((input) =>
           sql.withTransaction(
             mutations.readLocked('bind-decision', input.cycleId).pipe(
@@ -339,7 +207,5 @@ const makeCycleBindingProgramsDataFirst = (
       ),
     )
 
-  return { bindSnapshot, bindDecision }
+  return { bindDecision }
 }
-
-export const makeCycleBindingPrograms = Pipeable.dual(3, makeCycleBindingProgramsDataFirst)

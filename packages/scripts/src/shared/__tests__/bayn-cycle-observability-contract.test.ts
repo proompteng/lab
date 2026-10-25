@@ -23,7 +23,7 @@ const baynRules = (): readonly MimirRule[] => {
   }
   const group = rules.groups.find(({ name }) => name === 'bayn-cycle-operations.rules')
   if (group === undefined) throw new Error('Bayn cycle operations rule group is missing')
-  return group.rules
+  return group.rules.filter((rule) => typeof rule.alert === 'string')
 }
 
 describe('Bayn cycle operations alert contract', () => {
@@ -33,17 +33,24 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynMetricsUnavailable',
       'BaynStatusReplicaTargetMissed',
       'BaynEgressProxyReplicaTargetMissed',
+      'BaynExecutionWorkerObservationUnavailable',
       'BaynExecutionWorkerUnavailable',
       'BaynExecutionWorkerReplicaTargetMissed',
       'BaynExecutionControllerOverdue',
       'BaynExecutionWindowUnready',
+      'BaynInputWindowUnavailable',
       'BaynExecutionDecisionLagging',
       'BaynCycleObservationUnavailable',
       'BaynRuntimeDegraded',
       'BaynCycleStalled',
       'BaynCycleFailed',
     ])
-    expect(rules.every((rule) => rule.for === '1m' || rule.for === '2m')).toBe(true)
+    expect(rules.find((rule) => rule.alert === 'BaynInputWindowUnavailable')?.for).toBe('0s')
+    expect(
+      rules
+        .filter((rule) => rule.alert !== 'BaynInputWindowUnavailable')
+        .every((rule) => rule.for === '1m' || rule.for === '2m'),
+    ).toBe(true)
 
     const expressions = Object.fromEntries(rules.map((rule) => [rule.alert, rule.expr]))
     expect(expressions.BaynMetricsUnavailable).toContain('up{')
@@ -52,27 +59,44 @@ describe('Bayn cycle operations alert contract', () => {
     )
     expect(expressions.BaynStatusReplicaTargetMissed).toContain('kube_deployment_spec_replicas{')
     expect(expressions.BaynEgressProxyReplicaTargetMissed).toContain('deployment="bayn-egress-proxy"')
-    expect(expressions.BaynExecutionWorkerUnavailable).toContain('kube_replicaset_status_ready_replicas{')
-    expect(expressions.BaynExecutionWorkerUnavailable).toContain('replicaset=~"bayn-execution-controller-.*"')
-    expect(expressions.BaynExecutionWorkerUnavailable).toContain('kube_restate_deployment_spec_replicas{')
+    expect(expressions.BaynExecutionWorkerObservationUnavailable).toContain(
+      'absent(bayn:execution_worker_observed_ready_replicas{',
+    )
+    expect(expressions.BaynExecutionWorkerObservationUnavailable).toContain(
+      'restate_deployment="bayn-execution-controller"',
+    )
+    expect(expressions.BaynExecutionWorkerUnavailable).toContain('bayn:execution_worker_observed_ready_replicas{')
+    expect(expressions.BaynExecutionWorkerUnavailable).not.toContain('kube_replicaset_status_ready_replicas')
+    expect(expressions.BaynExecutionWorkerUnavailable).toContain('bayn:execution_worker_observed_desired_replicas{')
     expect(expressions.BaynExecutionWorkerUnavailable).toContain('restate_deployment="bayn-execution-controller"')
-    expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('kube_restate_deployment_spec_replicas{')
+    expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain(
+      'bayn:execution_worker_observed_desired_replicas{',
+    )
     expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('> 1')
     expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_execution_controller_active{')
     expect(expressions.BaynExecutionControllerOverdue).toContain(
       'bayn_execution_controller_next_due_timestamp_seconds{',
     )
     expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_cycle_stall_threshold_seconds{')
-    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_execution_session_preflight_ready{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_execution_session_ready{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_decision_bound{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_open_timestamp_seconds{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
     expect(expressions.BaynExecutionWindowUnready).toContain('- 600')
+    expect(expressions.BaynExecutionWindowUnready).toMatch(
+      /unless on\(job, namespace, service, instance\)[\s\S]+condition="decision_lagging"/,
+    )
+    expect(expressions.BaynExecutionWindowUnready).toContain('condition="input_unavailable"')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_runtime_ready{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_first_observation_timestamp_seconds{')
+    expect(expressions.BaynInputWindowUnavailable).toContain('condition="input_unavailable"')
+    expect(expressions.BaynInputWindowUnavailable).toContain('bayn_cycle_first_observation_timestamp_seconds{')
+    expect(expressions.BaynInputWindowUnavailable.match(/and on\(job, namespace, service, instance\)/g)).toHaveLength(7)
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_execution_session_preflight_ready{')
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_bound{')
-    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_submission_open_timestamp_seconds{')
+    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_deadline_timestamp_seconds{')
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
-    expect(expressions.BaynExecutionDecisionLagging).toContain('+ 120')
+    expect(expressions.BaynExecutionDecisionLagging).not.toContain('+ 120')
     expect(expressions.BaynCycleObservationUnavailable).toContain('bayn_cycle_observation_available')
     expect(expressions.BaynCycleObservationUnavailable).not.toContain('absent(')
     expect(expressions.BaynRuntimeDegraded).toContain('bayn_runtime_ready')
@@ -95,6 +119,21 @@ describe('Bayn cycle operations alert contract', () => {
     const grafanaConfiguration = YAML.parse(
       readRepoFile('argocd/applications/observability/grafana-values.yaml'),
     ) as Record<string, any>
+    const resources = YAML.parse(readRepoFile('argocd/applications/observability/kustomization.yaml'))
+      .resources as string[]
+    for (const resource of resources.filter(
+      (path) => path.startsWith('bayn-') && path.endsWith('dashboard-configmap.yaml'),
+    )) {
+      const { name } = YAML.parse(readRepoFile(`argocd/applications/observability/${resource}`)).metadata
+      expect(grafanaConfiguration.dashboardsConfigMaps[name]).toBe(name)
+      expect(grafanaConfiguration.dashboardProviders['dashboardproviders.yaml'].providers).toContainEqual(
+        expect.objectContaining({
+          name,
+          type: 'file',
+          options: { path: `/var/lib/grafana/dashboards/${name}` },
+        }),
+      )
+    }
     const deployment = YAML.parse(
       readRepoFile('argocd/applications/observability/cluster-metrics-alloy-deployment.yaml'),
     ) as Record<string, any>
@@ -112,14 +151,18 @@ describe('Bayn cycle operations alert contract', () => {
     expect(kubeStateMetricsSource).toContain('kind: RestateDeployment')
     expect(kubeStateMetricsSource).toContain('name: deployment_spec_replicas')
     expect(alloy).toContain('discovery.kubernetes "bayn_log_pods"')
-    expect(alloy).toContain('label = "app.kubernetes.io/part-of=bayn"')
+    const baynLogDiscovery = /discovery\.kubernetes "bayn_log_pods" \{(.*?)\n\}/s.exec(alloy)?.[1]
+    expect(baynLogDiscovery).toContain('names = ["bayn"]')
+    expect(baynLogDiscovery).not.toContain('app.kubernetes.io/part-of')
     const baynContainerKeepRule =
       /source_labels = \["__meta_kubernetes_pod_container_name"\]\s+regex\s+=\s+"([^"]+)"/s.exec(alloy)?.[1]
     if (baynContainerKeepRule === undefined) throw new Error('Bayn container log keep rule is missing')
     const retainedBaynContainer = new RegExp(`^(?:${baynContainerKeepRule})$`)
     expect(
-      ['bayn', 'execution-controller', 'activate'].filter((container) => retainedBaynContainer.test(container)),
-    ).toEqual(['bayn', 'execution-controller', 'activate'])
+      ['bayn', 'execution-controller', 'activate', 'postgres', 'vllm', 'provision-model'].filter((container) =>
+        retainedBaynContainer.test(container),
+      ),
+    ).toEqual(['bayn', 'execution-controller', 'activate', 'postgres', 'vllm', 'provision-model'])
     expect(
       ['lifecycle', 'register', 'egress-proxy'].filter((container) => retainedBaynContainer.test(container)),
     ).toEqual([])
@@ -210,34 +253,46 @@ describe('Bayn cycle operations alert contract', () => {
     const dashboardConfigMap = YAML.parse(
       readRepoFile('argocd/applications/observability/bayn-cycle-operations-dashboard-configmap.yaml'),
     ) as Record<string, any>
+    type DashboardPanel = {
+      readonly datasource:
+        | { readonly type: 'prometheus'; readonly uid: 'prom' }
+        | {
+            readonly type: 'loki'
+            readonly uid: 'loki'
+          }
+      readonly description?: string
+      readonly gridPos: {
+        readonly h: number
+        readonly w: number
+        readonly x: number
+        readonly y: number
+      }
+      readonly title: string
+      readonly type: string
+      readonly targets?: readonly {
+        readonly expr?: string
+        readonly instant?: boolean
+        readonly legendFormat?: string
+        readonly maxLines?: number
+        readonly queryType?: 'range' | 'instant'
+        readonly range?: boolean
+        readonly refId?: string
+      }[]
+      readonly fieldConfig?: Record<string, any>
+      readonly options?: Record<string, any>
+      readonly panels?: readonly DashboardPanel[]
+      readonly collapsed?: boolean
+    }
     const dashboard = JSON.parse(dashboardConfigMap.data['bayn-cycle-operations-dashboard.json']) as {
       readonly description: string
       readonly title: string
       readonly uid: string
       readonly version: number
       readonly time: { readonly from: string; readonly to: string }
-      readonly panels: readonly {
-        readonly description?: string
-        readonly gridPos: {
-          readonly h: number
-          readonly w: number
-          readonly x: number
-          readonly y: number
-        }
-        readonly title: string
-        readonly type: string
-        readonly targets?: readonly {
-          readonly expr?: string
-          readonly instant?: boolean
-          readonly legendFormat?: string
-          readonly range?: boolean
-          readonly refId?: string
-        }[]
-        readonly fieldConfig?: Record<string, any>
-        readonly options?: Record<string, any>
-      }[]
+      readonly panels: readonly DashboardPanel[]
     }
-    const dashboardExpressions = dashboard.panels.flatMap(({ targets = [] }) =>
+    const allPanels = dashboard.panels.flatMap((panel) => (panel.type === 'row' ? (panel.panels ?? []) : [panel]))
+    const dashboardExpressions = allPanels.flatMap(({ targets = [] }) =>
       targets.flatMap(({ expr }) => (expr === undefined ? [] : [expr])),
     )
     const kustomization = readRepoFile('argocd/applications/observability/kustomization.yaml')
@@ -245,59 +300,55 @@ describe('Bayn cycle operations alert contract', () => {
 
     expect(dashboard.uid).toBe('bayn-cycle-operations')
     expect(dashboard.title).toBe('Bayn Trading Operations')
-    expect(dashboard.version).toBe(7)
+    expect(dashboard.version).toBe(9)
     expect(dashboard.time).toEqual({ from: 'now-24h', to: 'now' })
     expect(dashboard.description).toContain('zero orders are explained by the first stage that did not advance')
-    expect(dashboard.panels.map(({ title }) => title)).toEqual([
-      'Runtime',
-      'Execution controller',
-      'Broker binding',
-      'Ledger safety',
-      'Execution authority',
-      'Cycle condition',
-      'Current blocker',
-      'Cycle phase',
-      'Session preflight',
-      'Snapshot',
-      'Decision',
-      'Target plan',
-      'Targets',
-      'Intents',
-      'Orders',
-      'Fills',
-      'Opportunity → fill',
-      'Bound market data',
-      'Session window',
-      'Open positions',
-      'Gross exposure',
-      'Net exposure',
-      'Buying power',
-      'Unrealized P&L',
-      'Unresolved mutations',
-      'Gross realized P&L',
-      'Recorded costs',
-      'Net realized P&L',
-      'Profitability',
-      'Accounting coverage',
-      'Terminal receipt',
-      'Terminal costs',
-      'Terminal net P&L',
-      'Terminal return',
-      'Opportunity → fill history',
-      'Blocker history',
-      'Execution latency',
-      'Safety freshness',
-      'Running build',
-    ])
-    expect(new Set(dashboard.panels.map(({ title }) => title)).size).toBe(dashboard.panels.length)
-    const targetsPanel = dashboard.panels.find(({ title }) => title === 'Targets')
-    expect(targetsPanel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
-    expect(targetsPanel?.fieldConfig?.defaults?.mappings?.[0]?.options?.['-1']?.text).toBe('NO DECISION')
-    expect(targetsPanel?.description).toContain('NO DECISION')
-    expect(targetsPanel?.description).toContain('NO CYCLE')
-    expect(targetsPanel?.targets?.[0]?.expr).toContain('bayn_cycle_unfinished_count')
-    expect(targetsPanel?.targets?.[0]?.expr).toContain('>= bool 0')
-    const targetPlanPanel = dashboard.panels.find(({ title }) => title === 'Target plan')
+    const overview = dashboard.panels.filter(({ type }) => type !== 'row')
+    expect(overview.length).toBeLessThanOrEqual(9)
+    expect(overview.map(({ title }) => title)).toEqual(
+      expect.arrayContaining([
+        'Runtime',
+        'Authority',
+        'Cycle condition',
+        'Current blocker',
+        'Ledger safety',
+        'Accounting',
+        'Latest cycle funnel',
+        'Blocker history',
+      ]),
+    )
+    expect(dashboard.panels.filter(({ type }) => type === 'row').every(({ collapsed }) => collapsed === true)).toBe(
+      true,
+    )
+    expect(new Set(allPanels.map(({ title }) => title)).size).toBe(allPanels.length)
+    const exportFailures = allPanels.find(({ title }) => title === 'OTLP export failures')
+    const exportLogs = allPanels.find(({ title }) => title === 'OTLP export failure logs')
+    expect(exportFailures?.type).toBe('timeseries')
+    expect(exportLogs?.type).toBe('logs')
+    for (const panel of [exportFailures, exportLogs]) {
+      expect(panel?.datasource).toEqual({ type: 'loki', uid: 'loki' })
+      expect(panel?.targets).toHaveLength(1)
+      expect(panel?.targets?.[0]?.queryType).toBe('range')
+      const expression = panel?.targets?.[0]?.expr
+      expect(expression).toContain('{namespace="bayn",container=~"bayn|execution-controller|activate"}')
+      expect(expression).toMatch(/\|= "bayn\.telemetry\.export" \| json /)
+      expect(expression).toContain('export_stage="annotations.stage"')
+      expect(expression).toContain('export_service="annotations.serviceName"')
+      expect(expression).toContain('export_signal="annotations.signal"')
+      expect(expression).toContain('export_reason="annotations.failureReason"')
+      expect(expression).toContain('export_http_status="annotations.httpStatus"')
+      expect(expression).toContain('| export_stage="bayn.telemetry.export" | __error__=""')
+      expect(expression).not.toMatch(/vector\(|or\s+(?:on\([^)]*\)\s+)?0/)
+      expect(panel?.description).toContain('unavailable logs')
+    }
+    expect(exportFailures?.targets?.[0]?.expr).toBe(
+      `sum by (export_service, export_signal, export_reason, export_http_status) (count_over_time(${exportLogs?.targets?.[0]?.expr} [5m]))`,
+    )
+    expect(exportFailures?.description).toContain('failed export attempts')
+    expect(exportFailures?.description).toContain('lost spans')
+    expect(exportLogs?.targets?.[0]?.maxLines).toBe(1000)
+    expect(exportLogs?.options?.dedupStrategy).toBe('none')
+    const targetPlanPanel = allPanels.find(({ title }) => title === 'Target plan')
     expect(targetPlanPanel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
     expect(targetPlanPanel?.description).toContain('NO DECISION')
     expect(targetPlanPanel?.description).toContain('NO CYCLE')
@@ -306,8 +357,8 @@ describe('Bayn cycle operations alert contract', () => {
     expect(targetPlanPanel?.targets?.[1]?.expr).toContain('bayn_cycle_unfinished_count')
     expect(targetPlanPanel?.targets?.[1]?.expr).toContain('unless on(instance)')
     expect(targetPlanPanel?.targets?.[1]?.expr).toContain('bayn_cycle_target_plan_info')
-    for (const title of ['Gross realized P&L', 'Recorded costs', 'Net realized P&L']) {
-      const panel = dashboard.panels.find((candidate) => candidate.title === title)
+    for (const title of ['Recorded costs', 'Net realized P&L']) {
+      const panel = allPanels.find((candidate) => candidate.title === title)
       expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
       expect(panel?.description).toContain('NO FILLS')
       expect(panel?.description).toContain('NO ACCOUNTED FILLS')
@@ -328,35 +379,23 @@ describe('Bayn cycle operations alert contract', () => {
       )
       expect(fallbackMappings).toEqual({ B: 'NO FILLS', C: 'NO ACCOUNTED FILLS' })
     }
-    for (const title of ['Intents', 'Orders', 'Fills']) {
-      const panel = dashboard.panels.find((candidate) => candidate.title === title)
-      expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
-      expect(panel?.description).toContain('NO CYCLE')
-    }
-    for (const title of ['Terminal receipt', 'Terminal costs', 'Terminal net P&L', 'Terminal return']) {
-      expect(dashboard.panels.find((panel) => panel.title === title)?.fieldConfig?.defaults?.noValue).toBe(
-        'NO COMPLETED RECEIPT',
-      )
-    }
-    for (const title of ['Terminal costs', 'Terminal net P&L', 'Terminal return']) {
-      expect(dashboard.panels.find((panel) => panel.title === title)?.fieldConfig?.defaults?.mappings).toEqual([
-        {
-          options: {
-            match: 'nan',
-            result: { index: 0, text: 'INSUFFICIENT EVIDENCE' },
-          },
-          type: 'special',
-        },
-      ])
-    }
-    const overlappingPanels = dashboard.panels.flatMap((left, leftIndex) =>
-      dashboard.panels.slice(leftIndex + 1).flatMap((right) => {
-        const overlapsHorizontally =
-          left.gridPos.x < right.gridPos.x + right.gridPos.w && right.gridPos.x < left.gridPos.x + left.gridPos.w
-        const overlapsVertically =
-          left.gridPos.y < right.gridPos.y + right.gridPos.h && right.gridPos.y < left.gridPos.y + left.gridPos.h
-        return overlapsHorizontally && overlapsVertically ? [`${left.title} / ${right.title}`] : []
-      }),
+    expect(allPanels.find(({ title }) => title === 'Terminal receipt')?.fieldConfig?.defaults?.noValue).toBe(
+      'NO COMPLETED RECEIPT',
+    )
+    const panelGroups = [
+      dashboard.panels,
+      ...dashboard.panels.flatMap((panel) => (panel.type === 'row' ? [panel.panels ?? []] : [])),
+    ]
+    const overlappingPanels = panelGroups.flatMap((group) =>
+      group.flatMap((left, leftIndex) =>
+        group.slice(leftIndex + 1).flatMap((right) => {
+          const overlapsHorizontally =
+            left.gridPos.x < right.gridPos.x + right.gridPos.w && right.gridPos.x < left.gridPos.x + left.gridPos.w
+          const overlapsVertically =
+            left.gridPos.y < right.gridPos.y + right.gridPos.h && right.gridPos.y < left.gridPos.y + left.gridPos.h
+          return overlapsHorizontally && overlapsVertically ? [`${left.title} / ${right.title}`] : []
+        }),
+      ),
     )
     expect(overlappingPanels).toEqual([])
     expect(dashboardExpressions).toEqual(
@@ -368,24 +407,16 @@ describe('Bayn cycle operations alert contract', () => {
         'max by (reason) (bayn_cycle_reason{job="bayn",namespace="bayn",service="bayn"} == 1)',
         'max by (phase) (bayn_cycle_phase{job="bayn",namespace="bayn",service="bayn"} == 1)',
         'min(bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"})',
-        'max(bayn_cycle_snapshot_bound{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
-        'max(bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max by (status, reason) (bayn_cycle_target_plan_info{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
-        'max by (stage) (bayn_execution_funnel_count{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
-        'max by (kind) (bayn_cycle_decision_market_data_records{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_broker_position_count{job="bayn",namespace="bayn",service="bayn"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job="bayn",namespace="bayn",service="bayn"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_broker_gross_exposure_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job="bayn",namespace="bayn",service="bayn"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_broker_net_exposure_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job="bayn",namespace="bayn",service="bayn"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_broker_unrealized_pnl_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job="bayn",namespace="bayn",service="bayn"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_broker_account_dollars{job="bayn",namespace="bayn",service="bayn",kind="buying_power"} and on(instance) (((time() - bayn_broker_account_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) >= 0) and on(instance) ((time() - bayn_broker_account_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job="bayn",namespace="bayn",service="bayn"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
-        'max(bayn_accounting_gross_realized_pnl_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) (bayn_cycle_unfinished_count{job="bayn",namespace="bayn",service="bayn"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_accounting_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) (bayn_cycle_unfinished_count{job="bayn",namespace="bayn",service="bayn"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_accounting_net_realized_pnl_after_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) (bayn_cycle_unfinished_count{job="bayn",namespace="bayn",service="bayn"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max by (profitability) ((bayn_forward_performance_profitability{job="bayn",namespace="bayn",service="bayn"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max by (status) ((bayn_forward_performance_evidence{job="bayn",namespace="bayn",service="bayn"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
-        'max(bayn_forward_performance_total_costs_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})) or (vector(NaN) and on() max((bayn_forward_performance_evidence{job="bayn",namespace="bayn",service="bayn",status="insufficient_evidence"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})))',
-        'max(bayn_forward_performance_net_realized_pnl_after_costs_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})) or (vector(NaN) and on() max((bayn_forward_performance_evidence{job="bayn",namespace="bayn",service="bayn",status="insufficient_evidence"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})))',
-        'max(bayn_forward_performance_net_realized_return_ratio{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})) or (vector(NaN) and on() max((bayn_forward_performance_evidence{job="bayn",namespace="bayn",service="bayn",status="insufficient_evidence"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})))',
         'max by (state) ((bayn_accounting_state{job="bayn",namespace="bayn",service="bayn"} == 1) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_unresolved_mutations{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})) * 1000 > 0',
@@ -398,7 +429,7 @@ describe('Bayn cycle operations alert contract', () => {
         'max by (source_revision, verification) (bayn_build_info{job="bayn",namespace="bayn",service="bayn"})',
       ]),
     )
-    expect(dashboard.panels.find(({ title }) => title === 'Opportunity → fill')?.type).toBe('bargauge')
+    expect(allPanels.find(({ title }) => title === 'Latest cycle funnel')?.type).toBe('bargauge')
     expect(
       dashboardExpressions
         .filter((expression) => expression.includes('bayn_execution_funnel_count'))
@@ -411,18 +442,16 @@ describe('Bayn cycle operations alert contract', () => {
         .find((expression) => expression.includes('bayn_cycle_target_plan_info'))
         ?.includes('and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds'),
     ).toBe(true)
-    const sessionWindow = dashboard.panels.find(({ title }) => title === 'Session window')
+    const sessionWindow = allPanels.find(({ title }) => title === 'Session window')
     expect(
       sessionWindow?.targets?.every(({ expr }) =>
         expr?.includes('and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds'),
       ),
     ).toBe(true)
     for (const metric of [
-      'bayn_cycle_snapshot_bound',
-      'bayn_cycle_decision_bound',
-      'bayn_cycle_decision_market_data_records',
-      'bayn_cycle_order_acknowledgement_latency_seconds',
-      'bayn_cycle_fill_latency_seconds',
+      'bayn_cycle_order_observation_latency_seconds',
+      'bayn_cycle_intent_to_broker_fill_latency_seconds',
+      'bayn_cycle_fill_ingestion_latency_seconds',
     ]) {
       expect(
         dashboardExpressions
@@ -431,25 +460,22 @@ describe('Bayn cycle operations alert contract', () => {
       ).toBe(true)
     }
     for (const title of ['Open positions', 'Gross exposure', 'Net exposure', 'Buying power', 'Unrealized P&L']) {
-      expect(dashboard.panels.find((panel) => panel.title === title)?.fieldConfig?.defaults?.noValue).toBe(
+      expect(allPanels.find((panel) => panel.title === title)?.fieldConfig?.defaults?.noValue).toBe(
         'STALE / NO SNAPSHOT',
       )
     }
     expect(dashboardExpressions.join('\n')).not.toContain('bayn_intents{')
-    const statPanels = dashboard.panels.filter(({ type }) => type === 'stat')
-    expect(statPanels).toHaveLength(33)
+    const statPanels = allPanels.filter(({ type }) => type === 'stat')
     expect(
       statPanels.every(({ targets = [] }) =>
         targets.every(({ instant, range }) => instant === true && range === false),
       ),
     ).toBe(true)
     expect(
-      dashboard.panels
-        .filter(({ type }) => type === 'state-timeline')
-        .every(({ options }) => options?.showValue === 'never'),
+      allPanels.filter(({ type }) => type === 'state-timeline').every(({ options }) => options?.showValue === 'never'),
     ).toBe(true)
     expect(
-      dashboard.panels
+      allPanels
         .filter(({ title }) =>
           [
             'Runtime',
@@ -464,8 +490,8 @@ describe('Bayn cycle operations alert contract', () => {
         )
         .every(({ fieldConfig }) => (fieldConfig?.defaults?.mappings?.length ?? 0) > 0),
     ).toBe(true)
-    expect(dashboard.panels.every(({ description }) => description !== undefined && description.length > 0)).toBe(true)
-    expect(dashboard.panels.map(({ title }) => title)).not.toEqual(
+    expect(allPanels.every(({ description }) => description !== undefined && description.length > 0)).toBe(true)
+    expect(allPanels.map(({ title }) => title)).not.toEqual(
       expect.arrayContaining(['Metrics scrape', 'Cycle projection', 'Authority and mutation facts', 'Autonomous loop']),
     )
     expect(kustomization).toContain('bayn-cycle-operations-dashboard-configmap.yaml')

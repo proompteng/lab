@@ -1,14 +1,15 @@
-import { Chunk, Effect, HashSet, Result, pipe } from 'effect'
+import { Chunk, Effect, HashSet, Result, Schedule, pipe } from 'effect'
 
 import {
   OrderCollection,
   SortDirection,
-  type BrokerReadError,
   type BrokerReadShape,
   type FillActivity,
+  type FeeActivity,
   type Order as BrokerOrder,
   type ReadResult,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
+import { type BrokerReadError } from '../broker/alpaca/failures'
 import { canonicalHashV1Result } from '../hash'
 import {
   fillsPageSize,
@@ -22,10 +23,9 @@ import {
   type HistoryHashFailure,
   type Observed,
   type OrderRead,
-  type ReconciliationError,
+  ReconciliationError,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
-import { Pipeable } from '../pipeable'
 
 interface OrderPaginationState {
   readonly rows: readonly Observed<BrokerOrder>[]
@@ -52,6 +52,7 @@ interface OrderPageAccumulator {
   readonly rows: Chunk.Chunk<Observed<BrokerOrder>>
   readonly ids: HashSet.HashSet<string>
   readonly previousSubmittedAt: string | undefined
+  readonly oldestGroupStart: number
 }
 
 interface FillPageAccumulator {
@@ -69,7 +70,7 @@ const initialOrderPaginationState = (): OrderPaginationState => ({
 
 const initialFillPaginationState = (): FillPaginationState => ({ rows: [], ids: HashSet.empty(), cursor: undefined })
 
-const decideOrderPageDataFirst = (
+export const decideOrderPage = (
   state: OrderPaginationState,
   limit: number,
   page: ReadResult<readonly BrokerOrder[]>,
@@ -82,7 +83,7 @@ const decideOrderPageDataFirst = (
     return Result.fail(paginationFailure('OrderPageTooLarge', 'Alpaca returned more orders than requested'))
   }
   if (page.value.length === 0) {
-    return Result.succeed({ _tag: 'Complete', read: { rows: state.rows, observedAt } })
+    return Result.succeed({ _tag: 'Complete', read: { rows: state.rows, observedAt: state.observedAt ?? observedAt } })
   }
   const pageResult = page.value.reduce<Result.Result<OrderPageAccumulator, ReconciliationError>>(
     (result, order) => {
@@ -113,14 +114,14 @@ const decideOrderPageDataFirst = (
       if (
         normalizedPrevious !== undefined &&
         Result.isSuccess(normalizedPrevious) &&
-        normalizedSubmittedAt.success < normalizedPrevious.success
+        normalizedSubmittedAt.success > normalizedPrevious.success
       ) {
-        return Result.fail(paginationFailure('OrderHistoryNotAscending', 'Alpaca order history is not ascending'))
+        return Result.fail(paginationFailure('OrderHistoryNotDescending', 'Alpaca order history is not descending'))
       }
       if (
         normalizedCursor !== undefined &&
         Result.isSuccess(normalizedCursor) &&
-        normalizedSubmittedAt.success <= normalizedCursor.success
+        normalizedSubmittedAt.success >= normalizedCursor.success
       ) {
         return Result.fail(
           paginationFailure('OrderTimestampCursorDidNotAdvance', 'Alpaca order timestamp cursor did not advance'),
@@ -139,32 +140,55 @@ const decideOrderPageDataFirst = (
         rows,
         ids: HashSet.add(result.success.ids, order.brokerOrderId),
         previousSubmittedAt: submittedAt,
+        oldestGroupStart:
+          normalizedPrevious !== undefined &&
+          Result.isSuccess(normalizedPrevious) &&
+          normalizedSubmittedAt.success === normalizedPrevious.success
+            ? result.success.oldestGroupStart
+            : Chunk.size(result.success.rows),
       })
     },
-    Result.succeed({ rows: Chunk.empty(), ids: state.ids, previousSubmittedAt: state.previousSubmittedAt }),
+    Result.succeed({
+      rows: Chunk.empty(),
+      ids: state.ids,
+      previousSubmittedAt: state.previousSubmittedAt,
+      oldestGroupStart: 0,
+    }),
   )
   if (Result.isFailure(pageResult)) return Result.fail(pageResult.failure)
-  const rows = [...state.rows, ...Chunk.toReadonlyArray(pageResult.success.rows)]
-  if (page.value.length < limit) return Result.succeed({ _tag: 'Complete', read: { rows, observedAt } })
-  const next = page.value[page.value.length - 1]?.submittedAt
+  const pageRows = Chunk.toReadonlyArray(pageResult.success.rows)
+  const pageOrderCount = page.value.reduce((count, order) => count + 1 + (order.legs?.length ?? 0), 0)
+  if (pageOrderCount < limit)
+    return Result.succeed({ _tag: 'Complete', read: { rows: [...state.rows, ...pageRows], observedAt } })
+  // Alpaca orders pages descend by submission time; exclusive `until` excludes every sibling at its timestamp.
+  // Defer the entire oldest group so the next page can enumerate hidden siblings before retaining that group.
+  // Unique timestamps reread one boundary row per full page. A full one-timestamp page cannot prove completeness.
+  const retained = pageRows.slice(0, pageResult.success.oldestGroupStart)
+  const next = retained.at(-1)?.value.submittedAt
   if (next === undefined || next === state.cursor) {
-    return Result.fail(paginationFailure('OrderCursorDidNotAdvance', 'Alpaca order cursor did not advance'))
+    return Result.fail(
+      paginationFailure(
+        'OrderCursorDidNotAdvance',
+        'Alpaca order page has no complete submission-time group for a safe cursor',
+      ),
+    )
   }
+  let ids = pageResult.success.ids
+  for (const deferred of pageRows.slice(pageResult.success.oldestGroupStart))
+    ids = HashSet.remove(ids, deferred.value.brokerOrderId)
   return Result.succeed({
     _tag: 'Continue',
     state: {
-      rows,
-      ids: pageResult.success.ids,
+      rows: [...state.rows, ...retained],
+      ids,
       cursor: next,
-      previousSubmittedAt: pageResult.success.previousSubmittedAt,
+      previousSubmittedAt: next,
       observedAt,
     },
   })
 }
 
-export const decideOrderPage = Pipeable.dual(3, decideOrderPageDataFirst)
-
-const decideFillPageDataFirst = (
+export const decideFillPage = (
   state: FillPaginationState,
   pageSize: number,
   page: ReadResult<{ readonly items: readonly FillActivity[]; readonly nextPageToken?: string }>,
@@ -200,8 +224,6 @@ const decideFillPageDataFirst = (
   })
 }
 
-export const decideFillPage = Pipeable.dual(3, decideFillPageDataFirst)
-
 const readOrderPages = (
   read: BrokerReadShape,
   until: string,
@@ -211,10 +233,9 @@ const readOrderPages = (
   return Effect.suspend(() =>
     read.orders({
       status: OrderCollection.All,
-      direction: SortDirection.Ascending,
+      direction: SortDirection.Descending,
       limit,
-      until,
-      ...(state.cursor === undefined ? {} : { after: state.cursor }),
+      until: state.cursor ?? until,
     }),
   ).pipe(
     Effect.flatMap((page) => Effect.fromResult(decideOrderPage(state, limit, page))),
@@ -245,6 +266,37 @@ const readFillPages = (
   )
 }
 
+const readFeePages = (
+  read: BrokerReadShape,
+): Effect.Effect<readonly Observed<FeeActivity>[], BrokerReadError | ReconciliationError> =>
+  Effect.gen(function* () {
+    const rows: Observed<FeeActivity>[] = []
+    const ids = new Set<string>()
+    let cursor: string | undefined
+    while (true) {
+      const page = yield* read.feeActivities({
+        direction: SortDirection.Ascending,
+        pageSize: fillsPageSize,
+        ...(cursor === undefined ? {} : { pageToken: cursor }),
+      })
+      if (page.value.items.length > fillsPageSize || rows.length + page.value.items.length > maximumRows)
+        return yield* paginationFailure('InvalidFeeHistory', 'fee history exceeded its bounded row budget')
+      for (const fee of page.value.items) {
+        if (fee.date > page.evidence.observedAt.slice(0, 10))
+          return yield* paginationFailure('InvalidFeeHistory', 'fee history contains a date after its UTC capture cut')
+        if (ids.has(fee.activityId))
+          return yield* paginationFailure('InvalidFeeHistory', 'fee history repeated an activity identity')
+        ids.add(fee.activityId)
+        rows.push({ value: fee, evidence: page.evidence })
+      }
+      const next = page.value.nextPageToken
+      if (next === undefined) return rows
+      if (next === cursor || next !== page.value.items.at(-1)?.activityId)
+        return yield* paginationFailure('InvalidFeeHistory', 'fee history cursor did not advance')
+      cursor = next
+    }
+  })
+
 const readHistory = (
   read: BrokerReadShape,
   until: string,
@@ -253,19 +305,26 @@ const readHistory = (
     {
       orders: readOrderPages(read, until, initialOrderPaginationState()),
       fills: readFillPages(read, until, initialFillPaginationState()),
+      fees: readFeePages(read),
     },
-    { concurrency: 2 },
+    { concurrency: 3 },
   )
 
 const historyHashResult = (history: BrokerHistory): Result.Result<string, HistoryHashFailure> =>
   pipe(
     Result.try({
       try: () => ({
-        schemaVersion: 'bayn.paper-broker-history.v1',
+        schemaVersion: 'bayn.paper-broker-history.v2',
+        fees: history.fees
+          .map(({ value }) => value)
+          .sort((left, right) => left.activityId.localeCompare(right.activityId)),
         orders: history.orders.rows
           .map(({ value }) => {
-            const { observedAt: _observedAt, ...material } = value
-            return material
+            const { observedAt: _observedAt, legs, ...material } = value
+            return {
+              ...material,
+              ...(legs === undefined ? {} : { legs: legs.map(({ observedAt: _legObservedAt, ...leg }) => leg) }),
+            }
           })
           .sort((left, right) => left.brokerOrderId.localeCompare(right.brokerOrderId)),
         fills: history.fills
@@ -282,7 +341,7 @@ const historyHashResult = (history: BrokerHistory): Result.Result<string, Histor
     ),
   )
 
-const decideStableHistoryDataFirst = (
+export const decideStableHistory = (
   before: BrokerHistory,
   after: BrokerHistory,
 ): Result.Result<BrokerHistory, ReconciliationError> =>
@@ -295,17 +354,30 @@ const decideStableHistoryDataFirst = (
       historyHashResult(after),
       Result.mapError((error) => historyHashFailure('after', error)),
     )
-    return beforeHash === afterHash
-      ? after
-      : yield* Result.fail(snapshotFailure('HistoryChanged', 'broker history changed during reconciliation'))
+    if (beforeHash !== afterHash) {
+      return yield* Result.fail(snapshotFailure('HistoryChanged', 'broker history changed during reconciliation'))
+    }
+    const filledByOrder = new Map<string, bigint>()
+    for (const { value: fill } of after.fills) {
+      filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityAtoms))
+    }
+    if (
+      after.orders.rows.some(
+        ({ value: order }) => BigInt(order.filledQuantityAtoms) !== (filledByOrder.get(order.brokerOrderId) ?? 0n),
+      )
+    ) {
+      return yield* Result.fail(
+        snapshotFailure('FillActivitiesPending', 'broker order quantities and fill activities have not converged'),
+      )
+    }
+    return after
   })
 
-export const decideStableHistory = Pipeable.dual(2, decideStableHistoryDataFirst)
-
-const readStableBrokerSnapshotDataFirst = (
+export const readStableBrokerSnapshot = (
   read: BrokerReadShape,
-  now: Effect.Effect<string>,
+  now: Effect.Effect<string, ReconciliationError>,
 ): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
+  read.projection?.snapshot ??
   Effect.gen(function* () {
     const beforeUntil = yield* now
     const before = yield* readHistory(read, beforeUntil)
@@ -314,6 +386,13 @@ const readStableBrokerSnapshotDataFirst = (
     const after = yield* readHistory(read, afterUntil)
     const history = yield* Effect.fromResult(decideStableHistory(before, after))
     return { account, positions, history }
-  })
-
-export const readStableBrokerSnapshot = Pipeable.dual(2, readStableBrokerSnapshotDataFirst)
+  }).pipe(
+    Effect.retry({
+      times: 2,
+      schedule: Schedule.spaced(500),
+      while: (cause) =>
+        cause instanceof ReconciliationError &&
+        cause.failure?._tag === 'Snapshot' &&
+        (cause.failure.reason === 'HistoryChanged' || cause.failure.reason === 'FillActivitiesPending'),
+    }),
+  )

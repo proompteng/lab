@@ -9,7 +9,7 @@ spec:
     app.kubernetes.io/name: tengri
     app.kubernetes.io/component: control-plane
   ports:
-    - name: grpc
+    - name: tcp-grpc
       port: 50051
       targetPort: grpc
       protocol: TCP

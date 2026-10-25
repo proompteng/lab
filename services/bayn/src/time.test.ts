@@ -5,7 +5,6 @@ import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from './effect-test-support'
 import {
-  addUtcDays,
   currentUtcDate,
   currentUtcInstant,
   utcDateFromEpochMillis,
@@ -19,7 +18,6 @@ describe('Bayn UTC clock boundary', () => {
 
     expect(utcInstantFromEpochMillis(epochMillis)).toBe('2026-07-26T06:23:57.295Z')
     expect(utcDateFromEpochMillis(epochMillis)).toBe('2026-07-26')
-    expect(addUtcDays('2026-12-31', 1)).toBe('2027-01-01')
   })
 
   test('returns closed failures for invalid epoch milliseconds', () => {
@@ -39,7 +37,7 @@ describe('Bayn UTC clock boundary', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-07-26T06:23:57.295Z'))
         return yield* Effect.all([currentUtcInstant, currentUtcDate])
-      }).pipe(provideTestLayer(TestClock.layer())),
+      }).pipe((self) => provideTestLayer(self, TestClock.layer())),
     )
 
     expect(instant).toBe('2026-07-26T06:23:57.295Z')

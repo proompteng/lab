@@ -1,8 +1,8 @@
 import { Clock, Effect, Fiber, pipe, Ref, Scope } from 'effect'
 
-import type { LoadedRuntimeConfig } from './config'
+import type { LoadedRuntimeConfig } from './config/model'
 import { operationalError, type OperationalError } from './errors'
-import type { BrokerProbe } from './health'
+import type { BrokerProbe } from './health/model'
 import {
   initialState,
   type AutonomousCyclePassObservation,
@@ -43,8 +43,6 @@ export type ApplicationIdentity<C extends LoadedRuntimeConfig = LoadedRuntimeCon
 
 export type ApplicationPlan = ApplicationIdentity & { readonly _tag: 'AutonomousService' }
 
-export type ApplicationPlanFor<M extends 'AutonomousService'> = M extends 'AutonomousService' ? ApplicationPlan : never
-
 export const makeApplicationPlan = (identity: ApplicationIdentity): ApplicationPlan => ({
   ...identity,
   _tag: 'AutonomousService',
@@ -69,7 +67,7 @@ export type AutonomousRuntime<StartupR, LoopR> =
 
 export type AutonomousRuntimeResolver<StartupR, LoopR> = (
   state: Ref.Ref<RuntimeState>,
-) => Effect.Effect<AutonomousRuntime<StartupR, LoopR>, never, StartupR | LoopR | Scope.Scope>
+) => Effect.Effect<AutonomousRuntime<StartupR, LoopR>, OperationalError, StartupR | LoopR | Scope.Scope>
 
 const cyclePassError = (observation: Extract<AutonomousCyclePassObservation, { readonly result: 'FAILURE' }>): string =>
   `cycleRunner: ${observation.operation}/${observation.failure}: ${observation.message}`
@@ -116,7 +114,7 @@ const initialRuntimeState = <StartupR, LoopR>(runtime: AutonomousRuntime<Startup
 const resolveRuntime = <StartupR, LoopR>(
   runtime: AutonomousRuntime<StartupR, LoopR>,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<AutonomousRuntime<StartupR, LoopR>, never, StartupR | LoopR | Scope.Scope> =>
+): Effect.Effect<AutonomousRuntime<StartupR, LoopR>, OperationalError, StartupR | LoopR | Scope.Scope> =>
   runtime._tag === 'AutonomousRead' && runtime.resolveAfterStartup !== undefined
     ? runtime.resolveAfterStartup(state)
     : Effect.succeed(runtime)

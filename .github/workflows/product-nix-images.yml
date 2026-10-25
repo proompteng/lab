@@ -6,9 +6,12 @@ permissions:
 
 on:
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
     branches:
       - main
     paths:
+      - '.github/actions/affected-inputs/**'
+      - 'packages/scripts/src/ci/**'
       - 'apps/app/**'
       - 'apps/docs/**'
       - 'apps/landing/**'
@@ -16,12 +19,15 @@ on:
       - 'packages/backend/**'
       - 'packages/design/**'
       - 'services/tengri/proto/**'
+      - 'services/tengri/migrations/**'
+      - 'services/tengri/fixtures/**'
       - 'nix/images/app.nix'
       - 'nix/check-bun-dependency-closure.sh'
       - '.github/workflows/nix-bun-dependency-closure.yml'
       - '.github/workflows/product-nix-images.yml'
       - 'nix/images/docs.nix'
       - 'nix/images/proompteng.nix'
+      - 'nix/tengri-schema-hash.py'
       - 'nix/images/synthesis.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/packages.nix'
@@ -43,36 +49,66 @@ on:
     branches:
       - main
     paths:
+      - '.github/actions/setup-nix-toolchain/**'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/ofz.yaml'
+      - '.github/workflows/product-nix-images.yml'
+      - '.github/workflows/tengri-images.yml'
       - 'apps/app/**'
       - 'apps/docs/**'
       - 'apps/landing/**'
+      - 'apps/landing/package.json'
+      - 'apps/landing/src/app/api/auth/**'
+      - 'apps/landing/src/app/api/tengri/**'
+      - 'apps/landing/src/components/tengri/**'
+      - 'apps/landing/src/lib/tengri/**'
       - 'apps/synthesis/**'
-      - 'packages/backend/**'
-      - 'packages/design/**'
-      - 'services/tengri/proto/**'
-      - 'nix/images/app.nix'
-      - 'nix/check-bun-dependency-closure.sh'
-      - '.github/workflows/nix-bun-dependency-closure.yml'
-      - '.github/workflows/product-nix-images.yml'
-      - 'nix/images/docs.nix'
-      - 'nix/images/proompteng.nix'
-      - 'nix/images/synthesis.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
+      - 'argocd/applications/app/**'
+      - 'argocd/applications/docs/**'
+      - 'argocd/applications/kargo/**'
+      - 'argocd/applications/keycloak/tengri/**'
+      - 'argocd/applications/ofz/**'
+      - 'argocd/applications/proompteng/**'
+      - 'argocd/applications/proompteng/ingressroute.yaml'
+      - 'argocd/applications/synthesis/**'
+      - 'argocd/applications/tengri/**'
+      - 'argocd/applications/tengri/crd.yaml'
+      - 'bun.lock'
+      - 'devices/galactic/omni/tengri-runner-*.json'
+      - 'flake.lock'
+      - 'flake.nix'
       - 'nix/cache-push.sh'
+      - 'nix/check-bun-dependency-closure.sh'
       - 'nix/ci-nix-oci-summary.sh'
       - 'nix/ci-run-timed.sh'
+      - 'nix/images/app.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/docs.nix'
+      - 'nix/images/ofz.nix'
+      - 'nix/images/proompteng.nix'
+      - 'nix/images/synthesis.nix'
+      - 'nix/oci-*.sh'
       - 'nix/oci-inspect-archive.sh'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'bun.lock'
-      - 'argocd/applications/proompteng/**'
-      - 'argocd/applications/app/**'
-      - 'argocd/applications/synthesis/**'
-      - 'argocd/applications/docs/**'
+      - 'nix/packages.nix'
+      - 'nix/tengri-schema-hash.py'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'packages/scripts/src/tengri/**'
+      - 'proto/proompteng/authz/**'
+      - 'services/nanoagent/**'
+      - 'services/ofz/**'
+      - 'services/ofz/Cargo.*'
+      - 'services/ofz/build.rs'
+      - 'services/ofz/migrations/**'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/schema.zed'
+      - 'services/ofz/src/**'
+      - 'services/ofz/test-control.sh'
+      - 'services/tengri/**'
   workflow_dispatch:
     inputs:
       build_proompteng:
@@ -96,49 +132,91 @@ on:
         type: boolean
         default: true
 concurrency:
-  group: product-nix-images-${{ github.event.pull_request.number || github.run_id }}
+  group: product-nix-images-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
-    runs-on: arc-amd64
+    if: >-
+      (github.event.action != 'edited' || github.event.changes.base) &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.base.ref == github.event.repository.default_branch && !github.event.pull_request.draft))
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
     outputs:
-      proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || steps.filter.outputs.proompteng }}
-      app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || steps.filter.outputs.app }}
-      synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || steps.filter.outputs.synthesis }}
-      docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || steps.filter.outputs.docs }}
+      proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || fromJSON(steps.filter.outputs.affected).proompteng }}
+      app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || fromJSON(steps.filter.outputs.affected).app }}
+      synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || fromJSON(steps.filter.outputs.affected).synthesis }}
+      docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || fromJSON(steps.filter.outputs.affected).docs }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Check for product image input changes
         if: github.event_name != 'workflow_dispatch'
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: ./.github/actions/affected-inputs
         with:
+          workspaces: |
+            proompteng: ['', 'apps/landing', 'packages/backend', 'packages/design']
+            app: ['', 'apps/app', 'packages/design']
+            synthesis: ['', 'apps/synthesis', 'packages/design']
+            docs: ['', 'apps/docs', 'packages/design']
           filters: |
             proompteng:
+              - '.github/actions/setup-nix-toolchain/**'
+              - '.github/workflows/nix-oci-build-common.yml'
+              - '.github/workflows/ofz.yaml'
+              - '.github/workflows/product-nix-images.yml'
+              - '.github/workflows/tengri-images.yml'
               - 'apps/landing/**'
-              - 'packages/backend/**'
-              - 'packages/design/**'
-              - 'services/tengri/proto/**'
-              - 'nix/images/proompteng.nix'
-              - 'nix/images/bun-workspace-service.nix'
-              - 'nix/packages.nix'
+              - 'apps/landing/package.json'
+              - 'apps/landing/src/app/api/auth/**'
+              - 'apps/landing/src/app/api/tengri/**'
+              - 'apps/landing/src/components/tengri/**'
+              - 'apps/landing/src/lib/tengri/**'
+              - 'argocd/applications/kargo/**'
+              - 'argocd/applications/keycloak/tengri/**'
+              - 'argocd/applications/ofz/**'
+              - 'argocd/applications/proompteng/**'
+              - 'argocd/applications/proompteng/ingressroute.yaml'
+              - 'argocd/applications/tengri/**'
+              - 'argocd/applications/tengri/crd.yaml'
+              - 'bun.lock'
+              - 'devices/galactic/omni/tengri-runner-*.json'
+              - 'flake.lock'
+              - 'flake.nix'
               - 'nix/cache-push.sh'
               - 'nix/ci-nix-oci-summary.sh'
               - 'nix/ci-run-timed.sh'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/ofz.nix'
+              - 'nix/images/proompteng.nix'
+              - 'nix/oci-*.sh'
               - 'nix/oci-inspect-archive.sh'
-              - '.github/workflows/nix-oci-build-common.yml'
-              - 'packages/scripts/src/shared/oci.ts'
               - 'nix/oci-push.sh'
-              - 'flake.nix'
-              - 'flake.lock'
-              - 'bun.lock'
-              - 'argocd/applications/proompteng/**'
+              - 'nix/packages.nix'
+              - 'nix/tengri-schema-hash.py'
+              - 'packages/backend/**'
+              - 'packages/design/**'
+              - 'packages/scripts/src/shared/cli.ts'
+              - 'packages/scripts/src/shared/oci.ts'
+              - 'packages/scripts/src/tengri/**'
+              - 'proto/proompteng/authz/**'
+              - 'services/nanoagent/**'
+              - 'services/ofz/**'
+              - 'services/ofz/Cargo.*'
+              - 'services/ofz/build.rs'
+              - 'services/ofz/migrations/**'
+              - 'services/ofz/operations.json'
+              - 'services/ofz/schema.zed'
+              - 'services/ofz/src/**'
+              - 'services/ofz/test-control.sh'
+              - 'services/tengri/**'
             app:
               - 'apps/app/**'
               - 'packages/design/**'
@@ -206,14 +284,13 @@ jobs:
 
   build-proompteng:
     needs: changes
-    if: needs.changes.outputs.proompteng == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.proompteng == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: proompteng
       package_attr: proompteng-image
       tag: sha-${{ github.sha }}
-      publish_kargo_tag: true
-      pr_number: ${{ github.event.pull_request.number && format('{0}-proompteng', github.event.pull_request.number) || '' }}
+      publish_kargo_tag: ${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY == 'true' }}
       latest: true
     secrets: inherit
 
@@ -230,39 +307,36 @@ jobs:
     needs:
       - changes
       - verify-app-dependency-closure
-    if: needs.changes.outputs.app == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.app == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: app
       package_attr: app-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
-      pr_number: ${{ github.event.pull_request.number && format('{0}-app', github.event.pull_request.number) || '' }}
       latest: true
     secrets: inherit
 
   build-synthesis:
     needs: changes
-    if: needs.changes.outputs.synthesis == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.synthesis == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: synthesis
       package_attr: synthesis-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
-      pr_number: ${{ github.event.pull_request.number && format('{0}-synthesis', github.event.pull_request.number) || '' }}
       latest: true
     secrets: inherit
 
   build-docs:
     needs: changes
-    if: needs.changes.outputs.docs == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.docs == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: docs
       package_attr: docs-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
-      pr_number: ${{ github.event.pull_request.number && format('{0}-docs', github.event.pull_request.number) || '' }}
       latest: true
     secrets: inherit

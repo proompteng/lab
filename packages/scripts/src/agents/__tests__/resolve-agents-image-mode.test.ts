@@ -39,6 +39,19 @@ describe('classifyAgentsImageMode', () => {
     })
   })
 
+  it('runs the published smoke tier when its workflow changes', () => {
+    expect(classifyAgentsImageMode(['.github/workflows/agents-ci.yml'])).toEqual({
+      tier: 'published-smoke',
+      mode: 'reuse-published-image',
+      needsLocalAgentsImage: false,
+      runUnit: true,
+      runStatic: true,
+      runIntegration: true,
+      imageTargets: [],
+      matchedPaths: [],
+    })
+  })
+
   it('builds only the runner image for runner implementation changes', () => {
     const result = classifyAgentsImageMode(['services/agents/scripts/codex/agent-runner.ts'])
 

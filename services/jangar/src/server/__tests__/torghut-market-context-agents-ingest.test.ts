@@ -92,6 +92,7 @@ describe('ingestMarketContextProviderResult', () => {
   afterEach(() => {
     vi.doUnmock('~/server/torghut-market-context-run-identity')
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
   })
 
   it('rejects retired fundamentals provider payloads', async () => {
@@ -558,7 +559,11 @@ describe('ingestMarketContextProviderResult', () => {
     ).rejects.toThrow('items[0].riskFlags[1] must be a non-empty string')
   })
 
-  it('skips batch persistence when market session is closed', async () => {
+  it.each([
+    ['closed', false, false],
+    ['unknown', null, false],
+    ['retired', true, true],
+  ] as const)('skips batch persistence when the market session is %s', async (_name, marketOpen, retired) => {
     const tracker = buildInsertTracker()
     const clearMarketContextCache = vi.fn()
     const recordBatchRun = vi.fn()
@@ -580,7 +585,10 @@ describe('ingestMarketContextProviderResult', () => {
       recordTorghutMarketContextBatchRunDurationMs: recordBatchRunDurationMs,
       recordTorghutMarketContextBatchRunSymbols: recordBatchRunSymbols,
     }))
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ market_session_open: false }) }))
+    vi.stubEnv('JANGAR_TORGHUT_LEGACY_RETIRED', String(retired))
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ market_session_open: marketOpen }) })
+    vi.stubGlobal('fetch', fetch)
+    const skipped = marketOpen === false ? 'market_closed' : 'market_session_unavailable'
 
     const { ingestMarketContextProviderResult } = await import('../torghut-market-context-agents')
     const result = await ingestMarketContextProviderResult({
@@ -602,13 +610,14 @@ describe('ingestMarketContextProviderResult', () => {
       ok: true,
       domain: 'news',
       requestId: 'batch-closed-1',
-      skipped: 'market_closed',
+      skipped,
     })
     expect(tracker.tableCalls).toEqual(['torghut_market_context_runs', 'torghut_market_context_run_events'])
     expect(clearMarketContextCache).not.toHaveBeenCalled()
+    if (retired) expect(fetch).not.toHaveBeenCalled()
     expect(recordBatchRun).toHaveBeenCalledWith({
       domain: 'news',
-      outcome: 'skipped_market_closed',
+      outcome: `skipped_${skipped}`,
     })
     expect(recordBatchRunDurationMs).toHaveBeenCalledOnce()
     expect(recordBatchRunSymbols).toHaveBeenCalledTimes(3)

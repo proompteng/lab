@@ -1,0 +1,220 @@
+--- a/crates/metadata-server/src/raft/network/mod.rs
++++ b/crates/metadata-server/src/raft/network/mod.rs
+@@ -17,7 +17,7 @@
+ pub use grpc_svc::FILE_DESCRIPTOR_SET;
+ pub use grpc_svc::metadata_server_network_svc_server::MetadataServerNetworkSvcServer;
+ pub use handler::MetadataServerNetworkHandler;
+-pub use networking::{NetworkMessage, Networking};
++pub use networking::{NetworkMessage, Networking, TrySendError};
+
+ const PEER_METADATA_KEY: &str = "x-restate-metadata-server-peer";
+ const CLUSTER_FINGERPRINT_METADATA_KEY: &str = "x-restate-ms-cf";
+--- a/crates/metadata-server/src/raft/network/networking.rs
++++ b/crates/metadata-server/src/raft/network/networking.rs
+@@ -157,6 +157,19 @@
+         Ok(())
+     }
+
++    /// Send only over a connection that is already registered. Unlike try_send, this never
++    /// creates or restarts a connection attempt. A captured Connection avoids a readiness race.
++    pub fn try_send_ready(&mut self, message: M) -> Result<(), TrySendError<M>> {
++        let Some(connection) = self.connection_manager.get_connection(message.to()) else {
++            return Err(TrySendError::Connecting(message));
++        };
++        message.serialize(&mut self.serde_buffer);
++        let network_message = grpc_svc::NetworkMessage {
++            payload: self.serde_buffer.split().freeze(),
++        };
++        connection.try_send(network_message).map_err(|_| TrySendError::Send(message))
++    }
++
+     fn try_connecting_to(
+         connection_manager: ConnectionManager<M>,
+         target: PlainNodeId,
+--- a/crates/metadata-server/src/raft/server/member.rs
++++ b/crates/metadata-server/src/raft/server/member.rs
+@@ -14,7 +14,7 @@
+ use prost::Message as ProstMessage;
+ use protobuf::Message as ProtobufMessage;
+ use raft::{
+-    Config, Error as RaftError, INVALID_ID, RawNode, ReadOnlyOption, SnapshotStatus, Storage,
++    Config, Error as RaftError, INVALID_ID, RawNode, ReadOnlyOption, SnapshotStatus, StateRole, Storage,
+ };
+ use raft_proto::ConfChangeI;
+ use raft_proto::eraftpb::{
+@@ -52,7 +52,7 @@
+     METADATA_SERVER_REPLICATED_TERM,
+ };
+ use crate::raft::kv_memory_storage::KvMemoryStorage;
+-use crate::raft::network::{ConnectionManager, Networking};
++use crate::raft::network::{ConnectionManager, Networking, TrySendError};
+ use crate::raft::server::standby::Standby;
+ use crate::raft::server::uninitialized::Uninitialized;
+ use crate::raft::server::{
+@@ -68,6 +68,15 @@
+     SnapshotSummary, StatusSender, WriteRequest,
+ };
+
++// Only retain requests that were already emitted by Raft but encountered a cold connection.
++// This is not a reliable transport queue: full channels and ordinary messages remain lossy.
++struct PendingElectionMessage {
++    message: Message,
++    campaign: u64,
++    configuration_version: Version,
++    expires_at: time::Instant,
++}
++
+ pub struct Member {
+     _logger: slog::Logger,
+
+@@ -75,6 +84,8 @@
+
+     raw_node: RawNode<RocksDbStorage>,
+     networking: Networking<Message>,
++    election_campaign: u64,
++    pending_election_messages: HashMap<u64, PendingElectionMessage>,
+     raft_rx: mpsc::Receiver<Message>,
+
+     tick_interval: Interval,
+@@ -199,6 +210,8 @@
+             raw_node,
+             connection_manager,
+             networking,
++            election_campaign: 0,
++            pending_election_messages: HashMap::default(),
+             raft_rx,
+             kv_storage,
+             request_rx,
+@@ -784,6 +797,14 @@
+     }
+
+     async fn on_ready(&mut self, metadata_nodes_config: &NodesConfiguration) -> Result<(), Error> {
++        // Preserve Ready's durable-hard-state-before-send order. Flush even when there is no new
++        // Ready: the existing 100ms Raft tick wakes this loop after connection establishment.
++        self.process_ready(metadata_nodes_config).await?;
++        self.retry_pending_election_messages();
++        Ok(())
++    }
++
++    async fn process_ready(&mut self, metadata_nodes_config: &NodesConfiguration) -> Result<(), Error> {
+         if !self.raw_node.has_ready() {
+             return Ok(());
+         }
+@@ -894,6 +915,18 @@
+     }
+
+     fn send_messages(&mut self, messages: Vec<Message>) {
++        if messages.iter().any(|message| {
++            matches!(
++                message.get_msg_type(),
++                MessageType::MsgRequestPreVote | MessageType::MsgRequestVote
++            )
++        }) {
++            // PreCandidate can campaign again without changing term or role. Every fresh batch
++            // identifies a new campaign, including batches whose sends all succeed immediately.
++            self.election_campaign = self.election_campaign.checked_add(1).expect("campaign overflow");
++            self.pending_election_messages.clear();
++        }
++
+         for message in messages {
+             let snapshot_target = if message.has_snapshot() {
+                 Some(message.to)
+@@ -904,17 +937,80 @@
+             if let Err(err) = self.networking.try_send(message) {
+                 trace!("failed sending message: {err}");
+
+-                if let Some(message) = err.into_message() {
+-                    if message.has_snapshot() {
+-                        self.raw_node
+-                            .report_snapshot(message.to, SnapshotStatus::Failure);
+-                    } else {
+-                        self.raw_node.report_unreachable(message.to);
++                match err {
++                    TrySendError::Connecting(message) if self.is_current_election_request(&message) => {
++                        let connect_budget: std::time::Duration =
++                            Configuration::pinned().networking.connect_timeout.into();
++                        let budget = connect_budget.min(std::time::Duration::from_secs(10));
++                        self.pending_election_messages.insert(message.to, PendingElectionMessage {
++                            message,
++                            campaign: self.election_campaign,
++                            configuration_version: self.configuration.version,
++                            expires_at: time::Instant::now() + budget,
++                        });
++                    }
++                    err => {
++                        if let Some(message) = err.into_message() {
++                            if message.has_snapshot() {
++                                self.raw_node
++                                    .report_snapshot(message.to, SnapshotStatus::Failure);
++                            } else {
++                                self.raw_node.report_unreachable(message.to);
++                            }
++                        }
+                     }
+                 }
+             } else if let Some(snapshot_target) = snapshot_target {
+                 self.raw_node
+                     .report_snapshot(snapshot_target, SnapshotStatus::Finish);
++            }
++        }
++    }
++
++    fn is_current_election_request(&self, message: &Message) -> bool {
++        let raft = &self.raw_node.raft;
++        let current = match message.get_msg_type() {
++            MessageType::MsgRequestPreVote => {
++                raft.state == StateRole::PreCandidate && message.term == raft.term.saturating_add(1)
++            }
++            MessageType::MsgRequestVote => {
++                raft.state == StateRole::Candidate && message.term == raft.term
++            }
++            _ => false,
++        };
++        current
++            && message.from == to_raft_id(self.my_member_id.node_id)
++            && raft.prs().conf().voters().contains(message.from)
++            && self.configuration.members.contains_key(&self.my_member_id.node_id)
++            && raft.prs().conf().voters().contains(message.to)
++            && self.configuration.members.contains_key(&to_plain_node_id(message.to))
++    }
++
++    fn retry_pending_election_messages(&mut self) {
++        let now = time::Instant::now();
++        for (target, pending) in mem::take(&mut self.pending_election_messages) {
++            if pending.campaign != self.election_campaign
++                || pending.configuration_version != self.configuration.version
++                || !self.is_current_election_request(&pending.message)
++            {
++                // Stale work must not perturb a newer leader's replication progress.
++                continue;
++            }
++            if now >= pending.expires_at {
++                self.raw_node.report_unreachable(target);
++                continue;
++            }
++            // This operation never starts another connection attempt, including when the
++            // connection disappears between lookup and send. Never retry a full/closed channel.
++            match self.networking.try_send_ready(pending.message) {
++                Ok(()) => {}
++                Err(TrySendError::Connecting(message)) => {
++                    self.pending_election_messages.insert(target, PendingElectionMessage {
++                        message,
++                        ..pending
++                    });
++                }
++                Err(_) => self.raw_node.report_unreachable(target),
+             }
+         }
+     }
+@@ -1281,8 +1377,9 @@
+             let plain_node_id = to_plain_node_id(node_id);
+             if let Ok(node_config) = nodes_config.find_node_by_id(plain_node_id) {
+                 // todo remove addresses from nodes that are no longer needed
+-                self.networking
+-                    .register_address(plain_node_id, node_config.address.clone());
++                if self.networking.register_address(plain_node_id, node_config.address.clone()) {
++                    self.pending_election_messages.remove(&node_id);
++                }
+             }
+         }
+     }

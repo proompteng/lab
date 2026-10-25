@@ -1,7 +1,8 @@
-import { PgClient } from '@effect/sql-pg'
+import { PgClient, PgTypes } from '@effect/sql-pg'
 import { Effect, Layer, Option, Result, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
-import type { Fragment } from 'effect/unstable/sql/Statement'
+import { isSqlError } from 'effect/sql/SqlError'
+import type { Fragment } from 'effect/sql/Statement'
+import { JevPurpose } from '../../jev/portfolio'
 
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent, type RiskDecision } from '../contracts'
 import { Sha256Schema as Sha256, strictParseOptions } from '../../schemas'
@@ -49,8 +50,10 @@ const selectRows = (sql: PgClient.PgClient, predicate: Fragment) => sql`
     intent.side,
     intent.order_type,
     intent.time_in_force,
-    intent.quantity_micros::text,
+    intent.quantity_atoms::text,
     intent.notional_limit_micros::text,
+    intent.limit_price_micros::text,
+    intent.protection,
     intent.replan_generation_hash,
     intent.state,
     intent.terminal_outcome,
@@ -301,8 +304,10 @@ const insertIntent = (sql: PgClient.PgClient, intent: Intent) =>
       side,
       order_type,
       time_in_force,
-      quantity_micros,
+      quantity_atoms,
       notional_limit_micros,
+      limit_price_micros,
+      protection,
       replan_generation_hash,
       state,
       created_at,
@@ -321,8 +326,10 @@ const insertIntent = (sql: PgClient.PgClient, intent: Intent) =>
       ${intent.side},
       ${intent.orderType},
       ${intent.timeInForce},
-      ${intent.quantityMicros},
+      ${intent.quantityAtoms},
       ${intent.notionalLimitMicros},
+      ${intent.limitPriceMicros},
+      ${intent.protection === undefined ? null : JSON.stringify(intent.protection)}::jsonb,
       ${intent.replanGenerationHash ?? null},
       ${intent.state},
       ${intent.createdAt},
@@ -333,7 +340,9 @@ const insertIntent = (sql: PgClient.PgClient, intent: Intent) =>
   `.pipe(Effect.mapError((cause) => classifyIntentCause('commit', cause)))
 
 const insertRiskDecision = (sql: PgClient.PgClient, decision: RiskDecision) =>
-  sql`
+  Effect.fromResult(PgTypes.array(decision.reasonCodes, PgTypes.OID.text)).pipe(
+    Effect.flatMap(
+      (reasonCodes) => sql`
     INSERT INTO risk_decisions (
       decision_id,
       schema_version,
@@ -351,13 +360,16 @@ const insertRiskDecision = (sql: PgClient.PgClient, decision: RiskDecision) =>
       ${decision.intentId},
       ${decision.policyHash},
       ${decision.outcome},
-      ${decision.reasonCodes},
+      ${reasonCodes},
       ${decision.decidedAt},
       ${decision.expiresAt}
     )
     ON CONFLICT DO NOTHING
     RETURNING decision_id
-  `.pipe(Effect.mapError((cause) => classifyIntentCause('commit', cause)))
+  `,
+    ),
+    Effect.mapError((cause) => classifyIntentCause('commit', cause)),
+  )
 
 const transitionIntent = (sql: PgClient.PgClient, intent: Intent, decision: RiskDecision) => {
   const approved = decision.outcome === RiskOutcome.Approved
@@ -492,6 +504,44 @@ const makeStore = Effect.gen(function* () {
         ),
       ),
     read: (intentId) => runRead(readById(sql, 'read', intentId)),
+    protectionForCycle: (cycleId) =>
+      runRead(
+        selectRows(sql, sql`intent.cycle_id = ${cycleId} AND intent.protection IS NOT NULL`).pipe(
+          Effect.flatMap((rows) => decodeStoredEffect('read', rows)),
+        ),
+      ),
+    beginProtectionCancel: (intentId, brokerOrderId, observedAt, exitTarget) =>
+      runCommit(
+        fence.transaction(
+          Effect.gen(function* () {
+            const portfolio = exitTarget?.evidence.portfolio
+            const rows = yield* sql`
+        INSERT INTO native_protection_cancel_commands (intent_id, account_id, broker_order_id, requested_at, exit_target)
+        SELECT i.intent_id, i.account_id, latest.broker_order_id, ${observedAt}::timestamptz,
+          ${exitTarget === undefined ? null : JSON.stringify(exitTarget)}::jsonb
+        FROM intents i JOIN LATERAL (
+          SELECT o.broker_order_id, o.side, o.status, o.parent_broker_order_id, e.observed_at
+          FROM orders o JOIN broker_events e USING (event_id)
+          WHERE o.intent_id = i.intent_id AND o.broker_order_id = ${brokerOrderId}
+          ORDER BY e.source_sequence DESC LIMIT 1
+        ) latest ON true
+        WHERE i.intent_id = ${intentId} AND i.protection IS NOT NULL AND latest.side = 'SELL'
+          AND (${exitTarget === undefined} OR (i.cycle_id = ${exitTarget?.cycleId ?? null}
+            AND EXISTS (SELECT 1 FROM autonomous_cycle_shadow_decisions d WHERE d.cycle_id = i.cycle_id
+              AND d.decision_hash = ${exitTarget?.entryDecisionHash ?? null}
+              AND d.document #> '{strategyDecision,exitPolicy}' = ${portfolio?.purpose === JevPurpose.Manage ? JSON.stringify(portfolio.exitPolicy) : null}::jsonb)
+            AND i.account_id = ${exitTarget?.evidence.portfolio.brokerState.account.accountId ?? null}
+            AND i.symbol = ${exitTarget?.symbols[0] ?? null}
+            AND ${exitTarget?.observedAt ?? observedAt}::timestamptz <= ${observedAt}::timestamptz))
+          AND latest.status IN ('NEW','PENDING','PARTIALLY_FILLED')
+          AND NOT EXISTS (SELECT 1 FROM native_protection_cancel_commands c WHERE c.broker_order_id = latest.broker_order_id
+            AND (c.requested_at > ${observedAt}::timestamptz - interval '5 seconds' OR c.requested_at > latest.observed_at))
+        RETURNING broker_order_id
+      `
+            return rows.length === 1
+          }),
+        ),
+      ),
   } satisfies IntentStoreService
 })
 

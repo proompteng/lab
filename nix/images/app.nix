@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "app";
   packageName = "app";
   depsHash = {
-    x86_64-linux = "sha256-OW826tnY+a3UN8D9D7l541qLGk9ex2ILqllOHbHHPAo=";
-    aarch64-linux = "sha256-r6cdprmdaGOaDuMSZqAr0i8atJxsG2bZ/0AERX0ngkw=";
+    x86_64-linux = "sha256-IBwRO03bK/C7ghfa2f5Evyxjomi6/p98Y391IxF4cAQ=";
+    aarch64-linux = "sha256-9zYT1ONUZbuypc3nPVttH4wMLMK/oba6Q2WGLyM9Dz4=";
   };
   dependencyClosure = "bunCache";
   installFilters = [

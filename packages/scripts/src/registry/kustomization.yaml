@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+  - name: registry-cleanup-scripts
+    files:
+      - cleanup.py
+      - collect.py
+      - prepare.py
+      - protected_references.py
+      - protected_resources.json
+      - purge.py
+      - scheduled.py

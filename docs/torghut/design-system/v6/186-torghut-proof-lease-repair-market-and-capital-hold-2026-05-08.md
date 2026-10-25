@@ -1,6 +1,6 @@
 # 186. Torghut Proof-Lease Repair Market And Capital Hold (2026-05-08)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

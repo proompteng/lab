@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSyn
 import { join, resolve } from 'node:path'
 
 import type { AuthContext } from './auth'
+import { AgentsShellRuntimeError } from './errors'
 import { isInsidePath } from './workspace-policy'
 
 export type RepoSession = {
@@ -106,7 +107,10 @@ export class RepoSessionStore {
 
   private requireRecord(record: RepoSessionRecord, auth: AuthContext, options: { allowClosing?: boolean } = {}) {
     if (record.session.ownerSubject !== auth.subject) {
-      throw new Error(`repo session is owned by another subject: ${record.session.id}`)
+      throw new AgentsShellRuntimeError({
+        code: 'REPO_SESSION_FORBIDDEN',
+        message: `repo session is owned by another subject: ${record.session.id}. Use your own sessionId, or /workspace/lab for shared read-only inspection. Do not retry this worktree.`,
+      })
     }
     if (record.closing && !options.allowClosing) throw new Error(`repo session is closing: ${record.session.id}`)
     return record
@@ -132,9 +136,7 @@ export class RepoSessionStore {
   beginClose(sessionId: string, auth: AuthContext) {
     const record = this.sessions.get(sessionId)
     if (!record) throw new Error(`unknown repo session: ${sessionId}`)
-    if (record.session.ownerSubject !== auth.subject) {
-      throw new Error(`repo session is owned by another subject: ${sessionId}`)
-    }
+    this.requireRecord(record, auth, { allowClosing: true })
     if (record.closing) throw new Error(`repo session is already closing: ${sessionId}`)
     record.closing = true
     return record.session

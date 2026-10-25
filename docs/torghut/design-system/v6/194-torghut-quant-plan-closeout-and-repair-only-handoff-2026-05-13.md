@@ -1,6 +1,6 @@
 # 194. Torghut Quant Plan Closeout And Repair-Only Handoff (2026-05-13)
 
-Status: Accepted for plan-lane closeout and engineer/deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

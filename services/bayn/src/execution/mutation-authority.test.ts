@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test'
+import fc from 'fast-check'
+import { checkAsyncProperty } from '../testing/property-test-support'
+import { SubmissionDenialReason } from './submission-denial'
+import { brokerAssetFixture, cachedBrokerStateFixture, submissionProjectionFixture } from './broker-state-cache.fixture'
 
-import { Cause, Effect, Result } from 'effect'
+import { Cause, Clock, Effect, Exit, Fiber, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import {
   AccountStatus,
@@ -18,9 +23,9 @@ import {
   type Position,
   type ReadEvidence,
   type ReadResult,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import type { BrokerMutationShape } from '../broker/alpaca-mutations'
+import type { BrokerMutationShape } from '../broker/alpaca-mutations/model'
 import type { CancelReceipt, SubmitReceipt } from '../broker/alpaca-mutations/model'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from './contracts'
 import {
@@ -36,8 +41,9 @@ import {
 import {
   isPersistedGrantExecutionAuthority,
   makeAuthorityGuardedBrokerMutation,
-  refreshExecutionBrokerSubmitSnapshot,
+  confirmExecutionBrokerState,
   validateExecutionBrokerSubmitSnapshot,
+  validateExecutionCapitalLimits,
   validatePersistedCapitalGrantForSubmit,
   type FinalSubmitAuthorization,
 } from './mutation-authority'
@@ -70,6 +76,11 @@ const readResult = <A>(value: A, observedAt: string = evidence.observedAt): Read
 })
 
 const account = (overrides: Partial<Account> = {}): Account => ({
+  cryptoStatus: null,
+  cryptoFeeTier: null,
+  cashReportingQuantumMicros: '1' as const,
+  nonMarginableBuyingPowerMicros: null,
+
   id: accountId,
   status: AccountStatus.Active,
   currency: 'USD',
@@ -91,8 +102,9 @@ const position = (overrides: Partial<Position> = {}): Position => ({
   exchange: AssetExchange.Nasdaq,
   assetClass: AssetClass.UsEquity,
   side: PositionSide.Long,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   averageEntryPriceMicros: '100000000',
+  costBasisMicros: '100000000',
   marketPriceMicros: '100000000',
   marketValueMicros: '100000000',
   unrealizedPnlMicros: '0',
@@ -104,7 +116,7 @@ type OmittedOrderField =
   | 'filledAveragePriceMicros'
   | 'limitPriceMicros'
   | 'notionalMicros'
-  | 'quantityMicros'
+  | 'quantityAtoms'
   | 'stopPriceMicros'
 
 const order = (overrides: Partial<Order> = {}, omitted: readonly OmittedOrderField[] = []): Order => {
@@ -117,9 +129,9 @@ const order = (overrides: Partial<Order> = {}, omitted: readonly OmittedOrderFie
     assetId: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
     symbol: 'AMD',
     assetClass: AssetClass.UsEquity,
-    quantityMicros: '1000000',
+    quantityAtoms: '1000000000',
     notionalMicros: '100000000',
-    filledQuantityMicros: '0',
+    filledQuantityAtoms: '0',
     orderClass: OrderClass.Simple,
     orderType: BrokerOrderType.Market,
     side: BrokerOrderSide.Buy,
@@ -134,7 +146,7 @@ const order = (overrides: Partial<Order> = {}, omitted: readonly OmittedOrderFie
 }
 
 const intent = (overrides: Partial<Intent> = {}): Intent => ({
-  schemaVersion: 'bayn.paper-intent.v3',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId: '5'.repeat(64),
   authorityGenerationHash,
   riskDecisionId: '6'.repeat(64),
@@ -146,10 +158,11 @@ const intent = (overrides: Partial<Intent> = {}): Intent => ({
   clientOrderId: 'mutation-authority-intent',
   symbol: 'AMD',
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   notionalLimitMicros: '100000000',
+  limitPriceMicros: '100000000',
   state: IntentState.Approved,
   createdAt: activeAt,
   ...overrides,
@@ -229,6 +242,9 @@ interface ScenarioInput {
   readonly accountObservedAt?: string
   readonly positionsObservedAt?: string
   readonly ordersObservedAt?: string
+  readonly positionsConfirmedAt?: string
+  readonly ordersConfirmedAt?: string
+  readonly assetOverrides?: Partial<ReturnType<typeof brokerAssetFixture>>
   readonly brokerAccount?: Account
   readonly brokerAccountAtRead?: (orderReads: number) => Account
   readonly positions?: readonly Position[]
@@ -244,6 +260,7 @@ interface ScenarioInput {
   readonly peakEquityMicros?: string
   readonly maxDrawdownMicros?: string
   readonly closeOnly?: boolean
+  readonly maximumCryptoEntryTakerFeeBps?: 18 | 25 | null
 }
 
 const runLiveSubmit = async (input: ScenarioInput = {}) => {
@@ -265,13 +282,14 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       )
     }),
     accountConfiguration: unusedRead,
-    assetBySymbol: () => unusedRead,
+    assetBySymbol: (symbol) =>
+      Effect.succeed(readResult({ ...brokerAssetFixture(symbol, activeAt), ...input.assetOverrides })),
     positions: Effect.sync(() => {
       trace.push('positions')
       const snapshots = input.positionSnapshots
       const positions = snapshots?.[Math.min(positionReads, snapshots.length - 1)] ?? input.positions ?? []
       positionReads += 1
-      return readResult(positions, input.positionsObservedAt)
+      return readResult(positions, input.positionsConfirmedAt ?? input.positionsObservedAt)
     }),
     orders: (query) =>
       Effect.sync(() => {
@@ -280,10 +298,11 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         const snapshots = input.orderSnapshots
         const orders = snapshots?.[Math.min(orderReads, snapshots.length - 1)] ?? input.openOrders ?? []
         orderReads += 1
-        return readResult(orders, input.ordersObservedAt)
+        return readResult(orders, input.ordersConfirmedAt ?? input.ordersObservedAt)
       }),
     orderById: () => unusedRead,
     orderByClientId: () => unusedRead,
+    feeActivities: () => unusedRead,
     fillActivities: () => unusedRead,
     marketCalendar: () => unusedRead,
   }
@@ -319,9 +338,24 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
     input.finalSubmitAuthorization ??
     ((proposedIntent, transmit) =>
       Effect.gen(function* () {
-        const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(grant.limits, proposedIntent, {
-          brokerRead,
-        })
+        const cachedPositions = input.positionSnapshots?.[0] ?? input.positions ?? []
+        const cachedOrders = input.orderSnapshots?.[0] ?? input.openOrders ?? []
+        // Earlier native reconciliation supplies the cache; the live read supplies its next observation.
+        positionReads = input.positionSnapshots === undefined ? 0 : 1
+        orderReads = input.orderSnapshots === undefined ? 0 : 1
+        const cached = cachedBrokerStateFixture(input.brokerAccount ?? account(), cachedPositions, cachedOrders)
+        const snapshot = yield* confirmExecutionBrokerState(
+          {
+            ...cached,
+            state: {
+              ...cached.state,
+              positionsObservedAt: input.positionsObservedAt ?? cached.state.positionsObservedAt,
+              ordersObservedAt: input.ordersObservedAt ?? cached.state.ordersObservedAt,
+            },
+          },
+          proposedIntent,
+          submissionProjectionFixture(brokerRead),
+        )
         const persisted = yield* persistedCapitalGrants.read()
         if (persisted === undefined) return yield* Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const })
         const observedAt = yield* currentUtcInstant
@@ -335,6 +369,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
           observedAt,
           {
             closeOnly: input.closeOnly ?? false,
+            maximumCryptoEntryTakerFeeBps:
+              input.maximumCryptoEntryTakerFeeBps === undefined ? 25 : input.maximumCryptoEntryTakerFeeBps,
             maxBrokerStateAgeMs: 300_000,
             maxNetExposureMicros: input.maxNetExposureMicros ?? '1000000000',
             currentDailyTradedNotionalMicros: input.currentDailyTradedNotionalMicros ?? '0',
@@ -361,7 +397,230 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
   return failure?.cause?.['tag']
 }
 
+test.each([
+  [4, 18, 1],
+  [3, 18, 0],
+  [null, 18, 0],
+  [5, 18, 1],
+  [4, null, 0],
+  [null, 25, 1],
+] as const)('final crypto entry tier %s with fee ceiling %s transmits %s times', async (tier, ceiling, expected) => {
+  const result = await runLiveSubmit({
+    maximumCryptoEntryTakerFeeBps: ceiling,
+    brokerAccount: account({
+      cryptoStatus: 'ACTIVE',
+      cryptoFeeTier: tier,
+      nonMarginableBuyingPowerMicros: '1000000000',
+    }),
+    proposedIntent: intent({
+      symbol: 'BTC/USD',
+      quantityAtoms: '1000000',
+      limitPriceMicros: '80000000000',
+      notionalLimitMicros: '80000000',
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    }),
+  })
+  expect(result.submits).toBe(expected)
+  expect(Exit.isSuccess(result.exit)).toBe(expected === 1)
+})
+
+test('a cached crypto fee discount cannot cross the daily tier reset into transmission', async () => {
+  const result = await runLiveSubmit({
+    maximumCryptoEntryTakerFeeBps: 18,
+    brokerAccount: account({
+      cryptoStatus: 'ACTIVE',
+      cryptoFeeTier: 4,
+      nonMarginableBuyingPowerMicros: '1000000000',
+      observedAt: '2026-07-28T07:59:59.000Z',
+    }),
+    proposedIntent: intent({
+      symbol: 'BTC/USD',
+      quantityAtoms: '1000000',
+      limitPriceMicros: '80000000000',
+      notionalLimitMicros: '80000000',
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    }),
+  })
+  expect(result.submits).toBe(0)
+  expect(Exit.isFailure(result.exit)).toBe(true)
+  if (Exit.isFailure(result.exit))
+    expect(Cause.pretty(result.exit.cause)).toContain('exceeds the sealed entry estimate')
+})
+
+test('final submission admits a covered crypto protective stop through all capital and instrument checks', async () => {
+  const scenario: ScenarioInput = {
+    proposedIntent: intent({
+      symbol: 'BTC/USD',
+      side: OrderSide.Sell,
+      orderType: OrderType.StopLimit,
+      timeInForce: TimeInForce.GoodUntilCanceled,
+      quantityAtoms: '1500000',
+      limitPriceMicros: '81016592310',
+      notionalLimitMicros: '121524888',
+      protection: { _tag: 'StopLimit', stopPriceMicros: '81097690000', entryDecisionHash: '8'.repeat(64) },
+    }),
+    closeOnly: true,
+    brokerAccount: account({ cryptoStatus: 'ACTIVE', nonMarginableBuyingPowerMicros: '1000000000' }),
+    positions: [
+      position({
+        symbol: 'BTC/USD',
+        assetClass: AssetClass.Crypto,
+        exchange: AssetExchange.Crypto,
+        quantityAtoms: '1500000',
+        averageEntryPriceMicros: '81143760000',
+        costBasisMicros: '121715640',
+        marketPriceMicros: '81100000000',
+        marketValueMicros: '121650000',
+      }),
+    ],
+  }
+  const result = await runLiveSubmit(scenario)
+  expect(result.submits).toBe(1)
+  expect(Exit.isSuccess(result.exit)).toBe(true)
+  for (const changed of [{ positions: [] }, { assetOverrides: { tradable: false } }, { persisted: undefined }]) {
+    const denied = await runLiveSubmit({ ...scenario, ...changed })
+    expect(denied.submits, Object.keys(changed).join(',')).toBe(0)
+    expect(Exit.isFailure(denied.exit)).toBe(true)
+  }
+})
+
 describe('final broker mutation authority', () => {
+  test('property: native fractional BUY and SELL orders obey the exact final money ceiling', async () => {
+    await checkAsyncProperty(
+      'native-final-order-ceiling',
+      fc.asyncProperty(
+        fc.constantFrom('AMD', 'BTC/USD', 'ETH/USD', 'SOL/USD'),
+        fc.constantFrom(OrderSide.Buy, OrderSide.Sell),
+        fc.bigInt({ min: 1n, max: 999999999n }),
+        fc.bigInt({ min: 10000n, max: 20000n }),
+        async (symbol, side, fraction, priceTicks) => {
+          const quantity = 1000000000n + fraction
+          const price = priceTicks * 10000n
+          const numerator = quantity * price
+          const ceiling = (numerator + 999999999n) / 1000000000n
+          const proposedIntent = intent({
+            symbol,
+            side,
+            quantityAtoms: quantity.toString(),
+            limitPriceMicros: price.toString(),
+            timeInForce: symbol.includes('/') ? TimeInForce.ImmediateOrCancel : TimeInForce.Day,
+            notionalLimitMicros: ((numerator + (side === OrderSide.Buy ? 999999999n : 0n)) / 1000000000n).toString(),
+          })
+          const common = {
+            environment: BrokerEnvironment.Sandbox,
+            brokerAccount: account({ cryptoStatus: 'ACTIVE', nonMarginableBuyingPowerMicros: '1000000000' }),
+            proposedIntent,
+            positions:
+              side === OrderSide.Buy
+                ? []
+                : [
+                    position({
+                      symbol,
+                      quantityAtoms: quantity.toString(),
+                      marketPriceMicros: price.toString(),
+                      averageEntryPriceMicros: price.toString(),
+                      marketValueMicros: ceiling.toString(),
+                      costBasisMicros: ceiling.toString(),
+                      unrealizedPnlMicros: '0',
+                    }),
+                  ],
+          }
+          const atCap = await runLiveSubmit({
+            ...common,
+            grant: persistedGrantRecord(
+              { ...defaultLimits, maxOrderNotionalMicros: ceiling.toString() },
+              BrokerEnvironment.Sandbox,
+            ),
+          })
+          expect(atCap.exit._tag).toBe('Success')
+          expect(atCap.submits).toBe(1)
+          const overCap = await runLiveSubmit({
+            ...common,
+            grant: persistedGrantRecord(
+              { ...defaultLimits, maxOrderNotionalMicros: (ceiling - 1n).toString() },
+              BrokerEnvironment.Sandbox,
+            ),
+          })
+          expect(failureTag(overCap.exit)).toBe('OrderNotionalLimitExceeded')
+          expect(overCap.submits).toBe(0)
+        },
+      ),
+    )
+  })
+
+  for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'])
+    test(`${symbol} uses the common PAPER submission guard with native precision and cash authority`, async () => {
+      const cryptoAccount = account({ cryptoStatus: 'ACTIVE', nonMarginableBuyingPowerMicros: '1000000000' })
+      const proposedIntent = intent({
+        symbol,
+        quantityAtoms: '31234567',
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+        notionalLimitMicros: '3123457',
+      })
+      const common = { environment: BrokerEnvironment.Sandbox, brokerAccount: cryptoAccount, proposedIntent }
+      const submitted = await runLiveSubmit(common)
+      if (Exit.isFailure(submitted.exit)) throw new Error(Cause.pretty(submitted.exit.cause))
+      expect(Exit.isSuccess(submitted.exit)).toBe(true)
+      expect(submitted.submits).toBe(1)
+      for (const changed of [
+        { brokerAccount: { ...cryptoAccount, cryptoStatus: 'INACTIVE' } },
+        { brokerAccount: { ...cryptoAccount, nonMarginableBuyingPowerMicros: '1' } },
+        { assetOverrides: { minimumQuantityAtoms: '40000000' } },
+        { assetOverrides: { quantityIncrementAtoms: '10' } },
+      ]) {
+        const rejected = await runLiveSubmit({ ...common, ...changed })
+        expect(Exit.isFailure(rejected.exit)).toBe(true)
+        expect(rejected.submits).toBe(0)
+      }
+    })
+
+  test('uses one coherent submission projection and never its direct reader', async () => {
+    const unusedRead = Effect.die('Unexpected broker GET during submission')
+    const fresh: BrokerReadShape = {
+      account: unusedRead,
+      positions: unusedRead,
+      orders: () => unusedRead,
+      accountConfiguration: unusedRead,
+      assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, activeAt))),
+      orderById: () => unusedRead,
+      orderByClientId: () => unusedRead,
+      fillActivities: () => unusedRead,
+      feeActivities: () => unusedRead,
+      marketCalendar: () => unusedRead,
+    }
+    let reads = 0
+    const cached: BrokerReadShape = {
+      ...fresh,
+      projection: {
+        fresh,
+        snapshot: unusedRead,
+        invalidate: Effect.void,
+        withMutation: (effect) => effect,
+        submissionSnapshot: (id) =>
+          Effect.sync(() => {
+            expect(id).toBe(intent().intentId)
+            reads += 1
+            return { account: readResult(account()), positions: readResult([position()]), openOrders: readResult([]) }
+          }),
+      },
+    }
+    const snapshot = await Effect.runPromise(
+      confirmExecutionBrokerState(cachedBrokerStateFixture(account(), [position()]), intent(), cached),
+    )
+    expect(snapshot.positions).toEqual([position()])
+    expect(snapshot.account).toEqual(account())
+    expect(reads).toBe(1)
+  })
+
+  test('denies submission when its observation projection is absent', async () => {
+    const raw = submissionProjectionFixture({} as BrokerReadShape).projection!.fresh
+    const failure = await Effect.runPromise(
+      confirmExecutionBrokerState(cachedBrokerStateFixture(account()), intent(), raw).pipe(Effect.flip),
+    )
+    expect(failure.denialReason).toBe(SubmissionDenialReason.ProjectionRequired)
+  })
+
   test.each([BrokerEnvironment.Sandbox, BrokerEnvironment.Live])(
     'revalidates the same persisted grant contract for %s submission',
     async (environment) => {
@@ -373,22 +632,59 @@ describe('final broker mutation authority', () => {
     },
   )
 
-  test('refreshes exposure and the immutable grant immediately before one live submit', async () => {
+  test('overlaps the three broker confirmations instead of adding their network delays', async () => {
+    const starts: number[] = []
+    const delayedRead = <A>(value: A) =>
+      Effect.gen(function* () {
+        starts.push(yield* Clock.currentTimeMillis)
+        yield* Effect.sleep('100 millis')
+        return readResult(value)
+      })
+    const unused = Effect.die('unrelated read during confirmation')
+    const read: BrokerReadShape = {
+      account: delayedRead(account()),
+      positions: delayedRead([]),
+      orders: () => delayedRead([]),
+      accountConfiguration: unused,
+      assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, activeAt))),
+      orderById: () => unused,
+      orderByClientId: () => unused,
+      feeActivities: () => unused,
+      fillActivities: () => unused,
+      marketCalendar: () => unused,
+    }
+    const elapsed = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(activeAt))
+        const operation = yield* confirmExecutionBrokerState(
+          cachedBrokerStateFixture(account()),
+          intent(),
+          submissionProjectionFixture(read),
+        ).pipe(Effect.andThen(Clock.currentTimeMillis), Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust('100 millis')
+        return (yield* Fiber.join(operation)) - Date.parse(activeAt)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(elapsed).toBe(100)
+    expect(starts).toEqual([Date.parse(activeAt), Date.parse(activeAt), Date.parse(activeAt)])
+  })
+
+  test('confirms the reconciled exposure once and revalidates the immutable grant before submit', async () => {
     const observed = await runLiveSubmit()
 
     expect(observed.exit._tag).toBe('Success')
     expect(observed.submits).toBe(1)
     expect(observed.grantReads).toBe(1)
-    expect(observed.positionReads).toBe(3)
-    expect(observed.orderReads).toBe(3)
-    expect(observed.orderLimit).toBe(defaultLimits.maxOpenOrders)
+    expect(observed.positionReads).toBe(1)
+    expect(observed.orderReads).toBe(1)
+    expect(observed.orderLimit).toBe(1)
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))
     expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('grant'))
     expect(observed.trace.indexOf('authorize')).toBeGreaterThan(observed.trace.indexOf('clock'))
     expect(observed.trace.at(-1)).toBe('submit')
   })
 
-  test('rejects a fill that moves between the position and open-order reads', async () => {
+  test('rejects a fill that changes positions after the cached reconciliation', async () => {
     const filledPosition = position()
     const observed = await runLiveSubmit({
       positionSnapshots: [[], [filledPosition]],
@@ -399,7 +695,7 @@ describe('final broker mutation authority', () => {
     expect(observed.positionReads).toBe(2)
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
-    expect(observed.trace).toEqual(['positions', 'orders', 'positions'])
+    expect(observed.trace).toEqual(['positions', 'orders', 'account'])
   })
 
   test('rejects an open order that appears while the final broker snapshot is collected', async () => {
@@ -415,26 +711,26 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
-  test('uses account safety state observed after exposure stabilization', async () => {
+  test('uses current account safety state during concurrent confirmation', async () => {
     const observed = await runLiveSubmit({
       brokerAccountAtRead: (orderReads) =>
-        orderReads >= 2 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
+        orderReads >= 1 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
     })
 
     expect(failureTag(observed.exit)).toBe('BrokerAccountUnavailable')
-    expect(observed.orderReads).toBe(3)
+    expect(observed.orderReads).toBe(1)
     expect(observed.grantReads).toBe(1)
     expect(observed.submits).toBe(0)
   })
 
-  test('rejects account safety drift observed during the final exposure confirmation', async () => {
+  test('rejects account safety drift during the final confirmation', async () => {
     const observed = await runLiveSubmit({
       brokerAccountAtRead: (orderReads) =>
-        orderReads >= 3 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
+        orderReads >= 1 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
     })
 
     expect(failureTag(observed.exit)).toBe('BrokerAccountUnavailable')
-    expect(observed.orderReads).toBe(3)
+    expect(observed.orderReads).toBe(1)
     expect(observed.grantReads).toBe(1)
     expect(observed.submits).toBe(0)
   })
@@ -510,7 +806,7 @@ describe('final broker mutation authority', () => {
 
   test('keeps a net-exposure-reducing sell eligible while the account remains above the policy cap', async () => {
     const observed = await runLiveSubmit({
-      positions: [position({ quantityMicros: '3000000', marketValueMicros: '300000000' })],
+      positions: [position({ quantityAtoms: '3000000000', marketValueMicros: '300000000' })],
       maxNetExposureMicros: '150000000',
       proposedIntent: intent({ side: OrderSide.Sell }),
     })
@@ -546,7 +842,7 @@ describe('final broker mutation authority', () => {
       positions: [
         position({
           side: PositionSide.Short,
-          quantityMicros: '-1000000',
+          quantityAtoms: '-1000000000',
           marketValueMicros: '-100000000',
         }),
       ],
@@ -564,13 +860,13 @@ describe('final broker mutation authority', () => {
       positions: [
         position({
           side: PositionSide.Short,
-          quantityMicros: '-1000000',
+          quantityAtoms: '-1000000000',
           marketValueMicros: '-100000000',
         }),
         position({
           assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
           symbol: 'NVDA',
-          quantityMicros: '1000000',
+          quantityAtoms: '1000000000',
           marketValueMicros: '100000000',
         }),
       ],
@@ -593,13 +889,13 @@ describe('final broker mutation authority', () => {
       positions: [
         position({
           side: PositionSide.Short,
-          quantityMicros: '-1000000',
+          quantityAtoms: '-1000000000',
           marketValueMicros: '-100000000',
         }),
         position({
           assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
           symbol: 'NVDA',
-          quantityMicros: '1000000',
+          quantityAtoms: '1000000000',
           marketValueMicros: '100000000',
         }),
       ],
@@ -621,19 +917,19 @@ describe('final broker mutation authority', () => {
       positions: [
         position({
           side: PositionSide.Short,
-          quantityMicros: '-1500000',
+          quantityAtoms: '-1500000000',
           marketValueMicros: '-150000000',
         }),
         position({
           assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
           symbol: 'NVDA',
-          quantityMicros: '1500000',
+          quantityAtoms: '1500000000',
           marketValueMicros: '150000000',
         }),
       ],
       proposedIntent: intent({
         side: OrderSide.Buy,
-        quantityMicros: '1500000',
+        quantityAtoms: '1500000000',
         notionalLimitMicros: '150000000',
       }),
       maxNetExposureMicros: '100000000',
@@ -655,28 +951,28 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
-  test('rejects exposure drift observed after the final account safety read', async () => {
+  test('rejects exposure drift from the cached reconciliation', async () => {
     const observed = await runLiveSubmit({
-      positionSnapshots: [[], [], [position()]],
+      positionSnapshots: [[], [position()]],
     })
 
     expect(failureTag(observed.exit)).toBe('BrokerPositionSnapshotChanged')
-    expect(observed.positionReads).toBe(3)
+    expect(observed.positionReads).toBe(2)
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
   })
 
-  test('rejects open-order drift observed after the final account safety read', async () => {
+  test('rejects open-order drift from the cached reconciliation', async () => {
     const competingOrder = order({
       brokerOrderId: 'fd3123e2-97bd-4cb8-821b-934ecad616ba',
       clientOrderId: 'post-account-external-order',
     })
     const observed = await runLiveSubmit({
-      orderSnapshots: [[], [], [competingOrder]],
+      orderSnapshots: [[], [competingOrder]],
     })
 
     expect(failureTag(observed.exit)).toBe('BrokerOpenOrderSnapshotChanged')
-    expect(observed.orderReads).toBe(3)
+    expect(observed.orderReads).toBe(2)
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
   })
@@ -692,7 +988,7 @@ describe('final broker mutation authority', () => {
     })
 
     expect(observed.exit._tag).toBe('Success')
-    expect(observed.orderReads).toBe(3)
+    expect(observed.orderReads).toBe(2)
     expect(observed.submits).toBe(1)
   })
 
@@ -713,6 +1009,20 @@ describe('final broker mutation authority', () => {
     const observed = await runLiveSubmit({ brokerAccount: account({ observedAt: '2026-07-28T08:00:00.001Z' }) })
 
     expect(failureTag(observed.exit)).toBe('BrokerStateObservationInFuture')
+    expect(observed.submits).toBe(0)
+  })
+
+  test.each([
+    ['positions', { positionsConfirmedAt: '2026-07-28T08:00:00.001Z' }, 'BrokerStateObservationInFuture'],
+    ['orders', { ordersConfirmedAt: '2026-07-28T08:00:00.001Z' }, 'BrokerStateObservationInFuture'],
+    ['positions', { positionsConfirmedAt: 'invalid' }, 'BrokerStateObservationInvalid'],
+    ['orders', { ordersConfirmedAt: 'invalid' }, 'BrokerStateObservationInvalid'],
+    ['positions', { positionsConfirmedAt: '2026-07-28T07:54:59.999Z' }, 'BrokerStateStale'],
+    ['orders', { ordersConfirmedAt: '2026-07-28T07:54:59.999Z' }, 'BrokerStateStale'],
+  ] as const)('rejects empty %s confirmations with invalid clocks (%s)', async (_name, snapshot, tag) => {
+    const observed = await runLiveSubmit(snapshot)
+
+    expect(failureTag(observed.exit)).toBe(tag)
     expect(observed.submits).toBe(0)
   })
 
@@ -760,7 +1070,7 @@ describe('final broker mutation authority', () => {
     })
     const observed = await runLiveSubmit({
       grant,
-      persistedAtRead: (positionReads) => (positionReads < 2 ? active : revoked),
+      persistedAtRead: (positionReads) => (positionReads < 1 ? active : revoked),
     })
 
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))
@@ -813,7 +1123,7 @@ describe('final broker mutation authority', () => {
 
   test('fails closed when an open order has no defensible notional', async () => {
     const observed = await runLiveSubmit({
-      openOrders: [order({}, ['notionalMicros', 'quantityMicros'])],
+      openOrders: [order({}, ['notionalMicros', 'quantityAtoms'])],
     })
 
     expect(failureTag(observed.exit)).toBe('OpenOrderNotionalUnavailable')
@@ -826,7 +1136,7 @@ describe('final broker mutation authority', () => {
         order(
           {
             orderType: BrokerOrderType.Stop,
-            quantityMicros: '1000000',
+            quantityAtoms: '1000000000',
             stopPriceMicros: '100000000',
           },
           ['notionalMicros', 'limitPriceMicros', 'filledAveragePriceMicros'],
@@ -843,7 +1153,7 @@ describe('final broker mutation authority', () => {
       {
         brokerOrderId: 'c14cb7fb-0890-47dd-bbca-7778cfc61ec6',
         symbol: 'NVDA',
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
       },
       ['notionalMicros', 'limitPriceMicros', 'stopPriceMicros', 'filledAveragePriceMicros'],
     )
@@ -856,7 +1166,7 @@ describe('final broker mutation authority', () => {
   test('admits an ordinary sell exit using its durable notional cap', async () => {
     const observed = await runLiveSubmit({
       positions: [position()],
-      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '99000000' }),
+      proposedIntent: intent({ side: OrderSide.Sell, limitPriceMicros: '99000000', notionalLimitMicros: '99000000' }),
     })
 
     expect(observed.exit._tag).toBe('Success')
@@ -867,10 +1177,10 @@ describe('final broker mutation authority', () => {
     const grant = persistedGrantRecord({ ...defaultLimits, maxGrossNotionalMicros: '100000000' })
     const observed = await runLiveSubmit({
       grant,
-      positions: [position({ quantityMicros: '900000', marketValueMicros: '90000000' })],
+      positions: [position({ quantityAtoms: '900000000', marketValueMicros: '90000000' })],
       proposedIntent: intent({
         side: OrderSide.Sell,
-        quantityMicros: '200000',
+        quantityAtoms: '200000000',
         notionalLimitMicros: '20000000',
       }),
     })
@@ -881,10 +1191,10 @@ describe('final broker mutation authority', () => {
 
   test('rejects a sell that would increase exposure through a short position', async () => {
     const observed = await runLiveSubmit({
-      positions: [position({ quantityMicros: '100000', marketValueMicros: '10000000' })],
+      positions: [position({ quantityAtoms: '100000000', marketValueMicros: '10000000' })],
       proposedIntent: intent({
         side: OrderSide.Sell,
-        quantityMicros: '200000',
+        quantityAtoms: '200000000',
         notionalLimitMicros: '20000000',
       }),
     })
@@ -898,7 +1208,7 @@ describe('final broker mutation authority', () => {
     const queuedBuy = order({
       brokerOrderId: '5ea242d9-9fa2-423b-908d-d2cccfcd5a5c',
       side: BrokerOrderSide.Buy,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalMicros: '100000000',
     })
     const observed = await runLiveSubmit({
@@ -907,7 +1217,7 @@ describe('final broker mutation authority', () => {
       openOrders: [queuedBuy],
       proposedIntent: intent({
         side: OrderSide.Sell,
-        quantityMicros: '1500000',
+        quantityAtoms: '1500000000',
         notionalLimitMicros: '150000000',
       }),
     })
@@ -922,7 +1232,7 @@ describe('final broker mutation authority', () => {
       brokerOrderId: 'ee49ed03-d957-45f7-b725-a32d9c215cd5',
       symbol: 'NVDA',
       side: BrokerOrderSide.Sell,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalMicros: '100000000',
     })
     const observed = await runLiveSubmit({
@@ -941,7 +1251,7 @@ describe('final broker mutation authority', () => {
         brokerOrderId: 'c87ed037-a814-4e28-aef4-57f23831a54b',
         symbol: 'NVDA',
         side: BrokerOrderSide.Sell,
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         limitPriceMicros: '1000000',
       },
       ['notionalMicros'],
@@ -958,8 +1268,8 @@ describe('final broker mutation authority', () => {
       {
         brokerOrderId: '2a9722db-503f-47ad-82ef-6ba5a444be52',
         side: BrokerOrderSide.Buy,
-        quantityMicros: '1000000',
-        filledQuantityMicros: '500000',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '500000000',
         limitPriceMicros: '100000000',
         status: OrderStatus.PartiallyFilled,
       },
@@ -967,9 +1277,9 @@ describe('final broker mutation authority', () => {
     )
     const observed = await runLiveSubmit({
       grant,
-      positions: [position({ quantityMicros: '500000', marketValueMicros: '50000000' })],
+      positions: [position({ quantityAtoms: '500000000', marketValueMicros: '50000000' })],
       openOrders: [partialBuy],
-      proposedIntent: intent({ quantityMicros: '100000', notionalLimitMicros: '10000000' }),
+      proposedIntent: intent({ quantityAtoms: '100000000', notionalLimitMicros: '10000000' }),
     })
 
     expect(observed.exit._tag).toBe('Success')
@@ -983,8 +1293,8 @@ describe('final broker mutation authority', () => {
         brokerOrderId: 'baf250d8-f7ac-48e8-b54b-1ed2fc870bf0',
         side: BrokerOrderSide.Buy,
         orderType: BrokerOrderType.Market,
-        quantityMicros: '1000000',
-        filledQuantityMicros: '500000',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '500000000',
         filledAveragePriceMicros: '100000000',
         status: OrderStatus.PartiallyFilled,
       },
@@ -992,9 +1302,13 @@ describe('final broker mutation authority', () => {
     )
     const observed = await runLiveSubmit({
       grant,
-      positions: [position({ quantityMicros: '500000', marketValueMicros: '50000000' })],
+      positions: [position({ quantityAtoms: '500000000', marketValueMicros: '50000000' })],
       openOrders: [partialMarketBuy],
-      proposedIntent: intent({ quantityMicros: '50000', notionalLimitMicros: '10000000' }),
+      proposedIntent: intent({
+        quantityAtoms: '50000000',
+        limitPriceMicros: '200000000',
+        notionalLimitMicros: '10000000',
+      }),
     })
 
     expect(failureTag(observed.exit)).toBe('OpenOrderMarketPriceUnbounded')
@@ -1006,8 +1320,8 @@ describe('final broker mutation authority', () => {
       {
         brokerOrderId: '318a5a2b-b976-4df3-9fbd-1030ab46e937',
         side: BrokerOrderSide.Sell,
-        quantityMicros: '1000000',
-        filledQuantityMicros: '500000',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '500000000',
         limitPriceMicros: '100000000',
         status: OrderStatus.PartiallyFilled,
       },
@@ -1018,7 +1332,7 @@ describe('final broker mutation authority', () => {
       openOrders: [partialSell],
       proposedIntent: intent({
         side: OrderSide.Sell,
-        quantityMicros: '400000',
+        quantityAtoms: '400000000',
         notionalLimitMicros: '40000000',
       }),
     })
@@ -1032,7 +1346,7 @@ describe('final broker mutation authority', () => {
     const observed = await runLiveSubmit({
       grant,
       positions: [position()],
-      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '99000000' }),
+      proposedIntent: intent({ side: OrderSide.Sell, limitPriceMicros: '99000000', notionalLimitMicros: '99000000' }),
     })
 
     expect(failureTag(observed.exit)).toBe('OrderNotionalLimitExceeded')
@@ -1044,11 +1358,22 @@ describe('final broker mutation authority', () => {
     const observed = await runLiveSubmit({
       grant,
       positions: [position()],
-      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '90000000' }),
+      proposedIntent: intent({ side: OrderSide.Sell, limitPriceMicros: '90000000', notionalLimitMicros: '90000000' }),
     })
 
     expect(observed.exit._tag).toBe('Success')
     expect(observed.submits).toBe(1)
+  })
+
+  test('rounds a fractional sell outward at the immutable order ceiling', async () => {
+    const observed = await runLiveSubmit({
+      grant: persistedGrantRecord({ ...defaultLimits, maxOrderNotionalMicros: '100000000' }),
+      positions: [position({ quantityAtoms: '1000000001', marketValueMicros: '100000001' })],
+      proposedIntent: intent({ side: OrderSide.Sell, quantityAtoms: '1000000001', notionalLimitMicros: '100000000' }),
+    })
+    expect(observed.exit._tag).toBe('Failure')
+    expect(failureTag(observed.exit)).toBe('OrderNotionalLimitExceeded')
+    expect(observed.submits).toBe(0)
   })
 
   test.each([
@@ -1118,4 +1443,43 @@ describe('final broker mutation authority', () => {
     expect(cancels).toBe(1)
     expect(grantReads).toBe(0)
   })
+})
+
+test.each(['Bracket', 'Oco'] as const)('final capital limits reserve every order in a native %s request', (kind) => {
+  const authority = mutationAuthority(BrokerEnvironment.Live, grantedCapitalAuthority(persistedGrantRecord()))
+  const existing = Array.from({ length: kind === 'Bracket' ? 3 : 4 }, (_, index) =>
+    order({ brokerOrderId: `pending-${index}`, clientOrderId: `pending-client-${index}` }),
+  )
+  const levels = { stopPriceMicros: '99000000', stopLimitPriceMicros: '98900000', profitLimitPriceMicros: '102000000' }
+  const protection =
+    kind === 'Bracket'
+      ? { _tag: 'Bracket' as const, ...levels }
+      : { _tag: 'Oco' as const, ...levels, entryDecisionHash: 'a'.repeat(64) }
+  const requested = intent({
+    side: kind === 'Bracket' ? OrderSide.Buy : OrderSide.Sell,
+    limitPriceMicros: kind === 'Bracket' ? '100000000' : '102000000',
+    notionalLimitMicros: kind === 'Bracket' ? '100000000' : '102000000',
+    protection,
+  })
+  const result = validateExecutionCapitalLimits(
+    authority,
+    defaultLimits,
+    requested,
+    { account: account(), positions: kind === 'Oco' ? [position()] : [], openOrders: existing },
+    BigInt(requested.notionalLimitMicros),
+    BigInt(requested.notionalLimitMicros),
+    new Map(),
+    {
+      closeOnly: kind === 'Oco',
+      maxBrokerStateAgeMs: 300000,
+      maxNetExposureMicros: '1000000000',
+      currentDailyTradedNotionalMicros: '0',
+      maxDailyTradedNotionalMicros: '1000000000',
+      peakEquityMicros: '1000000000',
+      maxDrawdownMicros: '1000000000',
+    },
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isSuccess(result)) throw new Error('Native group exceeded the order limit')
+  expect(result.failure).toEqual({ _tag: 'OpenOrderLimitExceeded', limit: 5, observed: 6 })
 })

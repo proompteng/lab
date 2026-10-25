@@ -5,7 +5,7 @@ import { Cause, Effect, Exit, Result } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { provideTestLayer } from './effect-test-support'
 import { OrderSide, type Fill } from './execution/contracts'
 import {
@@ -57,16 +57,16 @@ const materializeAccounts = (plan: LedgerPlan): Account[] => {
     balance(transfer.debit_account_id).debits += transfer.amount
     balance(transfer.credit_account_id).credits += transfer.amount
   }
-  return plan.accounts.map((account) => ({
+  return plan.accounts.map((account, index) => ({
     ...account,
     debits_posted: balance(account.id).debits,
     credits_posted: balance(account.id).credits,
-    timestamp: 1n,
+    timestamp: BigInt(index + 1),
   }))
 }
 
 const materializeTransfers = (plan: LedgerPlan): Transfer[] =>
-  plan.transfers.map((transfer) => ({ ...transfer, timestamp: 1n }))
+  plan.transfers.map((transfer, index) => ({ ...transfer, timestamp: BigInt(index + 1) }))
 
 const createResult = (outcome: LedgerCreateResult['outcome'], status: number, timestamp = 1n): LedgerCreateResult => ({
   timestamp,
@@ -80,15 +80,15 @@ const journalConfig = {
 } satisfies Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>
 
 const paperFill = (fillId: string, accountId = 'paper-account'): Fill => ({
-  schemaVersion: 'bayn.paper-fill.v1',
+  schemaVersion: 'bayn.fill.v2',
   accountId,
   fillId,
   brokerOrderId: `broker-${fillId}`,
   clientOrderId: `client-${fillId}`,
   symbol: 'NVDA',
   side: OrderSide.Buy,
-  quantityMicros: '1000000',
-  priceMicros: '100000000',
+  quantityAtoms: '1000000000',
+  priceAtoms: '100000000000',
   feeMicros: '100',
   occurredAt: '2026-07-22T15:30:00.000Z',
 })
@@ -98,7 +98,7 @@ const paperPlan = (fillId: string, accountId = 'paper-account') =>
     prepareAccounting(
       fillId.padEnd(64, fillId[0] ?? 'a').slice(0, 64),
       paperFill(fillId, accountId),
-      { quantityMicros: '0', costMicros: '0' },
+      { quantityAtoms: '0', costMicros: '0' },
       journalConfig.tigerBeetle.ledger,
     ),
   ).ledger
@@ -115,6 +115,12 @@ const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): Tige
   lookupTransfers: async () => [],
   queryAccounts: async () => [],
   queryTransfers: async () => [],
+  getAccountTransfers: async () => {
+    throw new Error('unexpected account transfer history read')
+  },
+  getAccountBalances: async () => {
+    throw new Error('unexpected account balance history read')
+  },
   destroy: () => undefined,
   ...overrides,
 })
@@ -122,11 +128,12 @@ const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): Tige
 const makeLedgerClient = () => {
   const accounts = new Map<bigint, Account>()
   const transfers = new Map<bigint, Transfer>()
+  let timestamp = 0n
   const client: TigerBeetleClient = {
     createAccounts: async (batch) =>
       batch.map((account) => {
         if (accounts.has(account.id)) return createResult('exists', CreateAccountStatus.exists)
-        accounts.set(account.id, { ...account, timestamp: 1n })
+        accounts.set(account.id, { ...account, timestamp: ++timestamp })
         return createResult('created', CreateAccountStatus.created)
       }),
     createTransfers: async (batch) =>
@@ -137,7 +144,7 @@ const makeLedgerClient = () => {
         if (debit === undefined || credit === undefined) throw new Error('transfer references an unknown account')
         accounts.set(debit.id, { ...debit, debits_posted: debit.debits_posted + transfer.amount })
         accounts.set(credit.id, { ...credit, credits_posted: credit.credits_posted + transfer.amount })
-        transfers.set(transfer.id, { ...transfer, timestamp: 1n })
+        transfers.set(transfer.id, { ...transfer, timestamp: ++timestamp })
         return createResult('created', CreateTransferStatus.created)
       }),
     lookupAccounts: async (ids) =>
@@ -154,6 +161,7 @@ const makeLedgerClient = () => {
       [...accounts.values()]
         .filter(
           (account) =>
+            account.timestamp >= filter.timestamp_min &&
             account.ledger === filter.ledger &&
             (filter.user_data_128 === 0n || account.user_data_128 === filter.user_data_128),
         )
@@ -162,11 +170,18 @@ const makeLedgerClient = () => {
       [...transfers.values()]
         .filter(
           (transfer) =>
+            transfer.timestamp >= filter.timestamp_min &&
             transfer.ledger === filter.ledger &&
             (filter.user_data_128 === 0n || transfer.user_data_128 === filter.user_data_128) &&
             (filter.user_data_64 === 0n || transfer.user_data_64 === filter.user_data_64),
         )
         .slice(0, filter.limit),
+    getAccountTransfers: async () => {
+      throw new Error('unexpected account transfer history read')
+    },
+    getAccountBalances: async () => {
+      throw new Error('unexpected account balance history read')
+    },
     destroy: () => undefined,
   }
   return { accounts, transfers, client }
@@ -175,8 +190,9 @@ const makeLedgerClient = () => {
 const withJournal = <A, E>(client: TigerBeetleClient, use: (journal: JournalService) => Effect.Effect<A, E>) =>
   Effect.gen(function* () {
     return yield* use(yield* Journal)
-  }).pipe(
+  }).pipe((self) =>
     provideTestLayer(
+      self,
       JournalLive(journalConfig, {
         createClient: () => client,
         resolveReplicaAddresses: () => Effect.succeed(['3000']),
@@ -731,8 +747,10 @@ describe('TigerBeetle simulation journal', () => {
       },
     })
     const client = makeTigerBeetleClient({
-      queryAccounts: async () => [defectiveAccount, ...accounts.slice(1)],
-      queryTransfers: async () => materializeTransfers(plan),
+      queryAccounts: async (filter) =>
+        [defectiveAccount, ...accounts.slice(1)].filter((account) => account.timestamp >= filter.timestamp_min),
+      queryTransfers: async (filter) =>
+        materializeTransfers(plan).filter((transfer) => transfer.timestamp >= filter.timestamp_min),
     })
 
     const exit = await Effect.runPromiseExit(
@@ -843,15 +861,15 @@ describe('TigerBeetle simulation journal', () => {
 
   test('posts one paper fill idempotently and rejects a conflicting transfer', async () => {
     const fill: Fill = {
-      schemaVersion: 'bayn.paper-fill.v1',
+      schemaVersion: 'bayn.fill.v2',
       accountId: 'paper-account',
       fillId: 'activity-1',
       brokerOrderId: 'broker-order-1',
       clientOrderId: 'client-order-1',
       symbol: 'NVDA',
       side: OrderSide.Buy,
-      quantityMicros: '1000000',
-      priceMicros: '100000000',
+      quantityAtoms: '1000000000',
+      priceAtoms: '100000000000',
       feeMicros: '100',
       occurredAt: '2026-07-22T15:30:00.000Z',
     }
@@ -859,7 +877,7 @@ describe('TigerBeetle simulation journal', () => {
       prepareAccounting(
         'a'.repeat(64),
         fill,
-        { quantityMicros: '0', costMicros: '0' },
+        { quantityAtoms: '0', costMicros: '0' },
         journalConfig.tigerBeetle.ledger,
       ),
     ).ledger
@@ -897,7 +915,11 @@ describe('TigerBeetle simulation journal', () => {
     const error = await Effect.runPromise(Effect.flip(withJournal(conflict.client, (journal) => journal.post(plan))))
     expect(error.message).toContain('does not match its plan')
 
-    target.transfers.set(plan.transfers[0].id + 1n, { ...plan.transfers[0], id: plan.transfers[0].id + 1n })
+    target.transfers.set(plan.transfers[0].id + 1n, {
+      ...plan.transfers[0],
+      id: plan.transfers[0].id + 1n,
+      timestamp: 100n,
+    })
     const postWithExtra = await Effect.runPromise(
       Effect.flip(withJournal(target.client, (journal) => journal.post(plan))),
     )
@@ -920,15 +942,15 @@ describe('TigerBeetle simulation journal', () => {
 
   test('rebuilds a paper transaction into the exact read-only ledger plan', () => {
     const fill: Fill = {
-      schemaVersion: 'bayn.paper-fill.v1',
+      schemaVersion: 'bayn.fill.v2',
       accountId: 'paper-account',
       fillId: 'activity-2',
       brokerOrderId: 'broker-order-2',
       clientOrderId: 'client-order-2',
       symbol: 'AMD',
       side: OrderSide.Buy,
-      quantityMicros: '2000000',
-      priceMicros: '50000000',
+      quantityAtoms: '2000000000',
+      priceAtoms: '50000000000',
       feeMicros: '0',
       occurredAt: '2026-07-22T15:31:00.000Z',
     }
@@ -936,7 +958,7 @@ describe('TigerBeetle simulation journal', () => {
       prepareAccounting(
         'b'.repeat(64),
         fill,
-        { quantityMicros: '0', costMicros: '0' },
+        { quantityAtoms: '0', costMicros: '0' },
         journalConfig.tigerBeetle.ledger,
       ),
     )
@@ -989,6 +1011,12 @@ describe('TigerBeetle simulation journal', () => {
         writes += 1
         return []
       },
+      getAccountTransfers: async () => {
+        throw new Error('unexpected account transfer history read')
+      },
+      getAccountBalances: async () => {
+        throw new Error('unexpected account balance history read')
+      },
       destroy: () => undefined,
     })
     const config: RuntimeConfig = {
@@ -1006,8 +1034,9 @@ describe('TigerBeetle simulation journal', () => {
     const useJournal = <A, E>(body: (journal: JournalService) => Effect.Effect<A, E>) =>
       Effect.gen(function* () {
         return yield* body(yield* Journal)
-      }).pipe(
+      }).pipe((self) =>
         provideTestLayer(
+          self,
           JournalLive(config, {
             createClient: () => client,
             resolveReplicaAddresses: () => Effect.succeed(['3000']),
@@ -1024,16 +1053,7 @@ describe('TigerBeetle simulation journal', () => {
     expect(writes).toBe(0)
   })
 
-  test('rejects exact query-limit ceilings before issuing TigerBeetle reads', async () => {
-    const plan = paperPlan('0')
-    const atLimit = {
-      ...plan,
-      accounts: Array.from({ length: LEDGER_BATCH_MAX }, (_, index) => ({
-        ...plan.accounts[0],
-        id: BigInt(index + 1),
-      })),
-      transfers: [],
-    }
+  test('retains the persisted simulation run limit before issuing TigerBeetle reads', async () => {
     let reads = 0
     const client = makeTigerBeetleClient({
       queryAccounts: async () => {
@@ -1045,30 +1065,20 @@ describe('TigerBeetle simulation journal', () => {
         return []
       },
     })
-
-    const [runError, accountError] = await Effect.runPromise(
+    const runError = await Effect.runPromise(
       withJournal(client, (journal) =>
-        Effect.all([
-          Effect.flip(
-            journal.checkRun({
-              runId: 'a'.repeat(64),
-              accountCount: LEDGER_BATCH_MAX,
-              transferCount: 0,
-              exact: true,
-            }),
-          ),
-          Effect.flip(journal.verifyAccount('paper-account', [atLimit])),
-        ]),
+        Effect.flip(
+          journal.checkRun({
+            runId: 'a'.repeat(64),
+            accountCount: LEDGER_BATCH_MAX,
+            transferCount: 0,
+            exact: true,
+          }),
+        ),
       ),
     )
-
     expect(runError).toMatchObject({
       operation: 'check-run',
-      retryable: false,
-      cause: { _tag: 'LedgerValidationError', reason: 'batch-limit' },
-    })
-    expect(accountError).toMatchObject({
-      operation: 'verify-account',
       retryable: false,
       cause: { _tag: 'LedgerValidationError', reason: 'batch-limit' },
     })

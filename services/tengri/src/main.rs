@@ -1,13 +1,22 @@
 mod activity;
 mod auth;
+mod authz;
+mod control;
 mod controller;
 mod crd;
 mod gateway;
 mod grpc;
 mod guest;
+mod identity;
+mod leadership;
 mod metrics;
+mod ofz;
 mod pod;
-mod runtime_secret;
+mod runs;
+#[cfg(test)]
+mod runtime_state_test;
+mod slot;
+mod telemetry;
 mod tickets;
 
 use std::{env, future::Future, net::SocketAddr, path::PathBuf, time::Duration};
@@ -20,8 +29,7 @@ use grpc::{
     ControlPlane, ControlPlaneConfig,
     proto::micro_vm_control_plane_server::MicroVmControlPlaneServer,
 };
-use kube::Client;
-use runtime_secret::RuntimeSecretSnapshot;
+use kube::{Client, ResourceExt};
 use tokio::{
     net::TcpListener,
     signal,
@@ -30,7 +38,6 @@ use tokio::{
 };
 use tonic::transport::Server;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
 
 const DEFAULT_NAMESPACE: &str = "tengri";
 const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:50051";
@@ -38,7 +45,6 @@ const DEFAULT_GATEWAY_ADDRESS: &str = "0.0.0.0:8080";
 const DEFAULT_PREVIEW_ADDRESS: &str = "0.0.0.0:8081";
 const DEFAULT_ARCHITECTURE: &str = "amd64";
 const MAX_GRPC_MESSAGE_BYTES: usize = 16 << 20;
-const RUNTIME_SECRET_POLL_INTERVAL: Duration = Duration::from_secs(15);
 const STARTUP_KUBERNETES_RETRY_ATTEMPTS: usize = 8;
 const STARTUP_KUBERNETES_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 const STARTUP_KUBERNETES_MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -47,13 +53,33 @@ const STARTUP_KUBERNETES_MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
 async fn main() -> anyhow::Result<()> {
     install_rustls_crypto_provider()?;
 
-    tracing_subscriber::fmt()
-        .json()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    let role = match env::args().nth(1).as_deref() {
+        Some("slot-runner") => "tengri-slot-runner",
+        Some("slot-supervisor") => "tengri-slot-supervisor",
+        Some("run-worker") => "tengri-run-worker",
+        _ => "tengri",
+    };
+    let _telemetry = telemetry::init(role)?;
 
+    match env::args().nth(1).as_deref() {
+        Some("telemetry-check") => {
+            println!("{}", _telemetry.verify()?);
+            return Ok(());
+        }
+        Some("slot-runner") => return slot::runner::run().await,
+        Some("slot-supervisor") => return slot::supervisor::run().await,
+        Some("run-worker") => {}
+        Some(argument) => anyhow::bail!("unknown Tengri command {argument}"),
+        None => {}
+    }
+
+    let database = control::Database::from_environment("tengri_controller").await?;
+    let database = std::sync::Arc::new(if env::args().nth(1).as_deref() == Some("run-worker") {
+        database.into_run_worker()
+    } else {
+        database
+    });
+    database.verify_schema().await?;
     let namespace = env_value("TENGRI_NAMESPACE").unwrap_or_else(|| DEFAULT_NAMESPACE.to_owned());
     let listen_address = env_value("TENGRI_LISTEN_ADDRESS")
         .unwrap_or_else(|| DEFAULT_LISTEN_ADDRESS.to_owned())
@@ -72,38 +98,75 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let default_image = required_env("TENGRI_DEFAULT_IMAGE")?;
     let controller_guest_image = default_image.clone();
-    let internal_hmac_secret = required_env("TENGRI_INTERNAL_HMAC_SECRET")?;
-    let ticket_signing_secret = required_env("TENGRI_TICKET_SIGNING_SECRET")?;
-    let runtime_secret_directory = env_value("TENGRI_RUNTIME_SECRET_DIRECTORY").map(PathBuf::from);
-    let runtime_secret_pod_name = runtime_secret_directory
-        .as_ref()
-        .map(|_| required_env("TENGRI_POD_NAME"))
-        .transpose()?;
-    let runtime_secret_snapshot =
-        RuntimeSecretSnapshot::new(&internal_hmac_secret, &ticket_signing_secret);
     let public_url = required_env("TENGRI_PUBLIC_URL")?;
     let preview_url_template = required_env("TENGRI_PREVIEW_URL_TEMPLATE")?;
     let desktop_origin = required_env("TENGRI_DESKTOP_ORIGIN")?;
-    let preview_origin = PreviewOrigin::parse(preview_url_template, desktop_origin)?;
+    let preview_origin = PreviewOrigin::parse(preview_url_template, desktop_origin.clone())?;
     let client = Client::try_default()
         .await
         .context("create Kubernetes client")?;
-    let runtime_secret_client = client.clone();
-    let runtime_secret_namespace = namespace.clone();
+    let own_pod_name = required_env("TENGRI_POD_NAME")?;
+    let own_pods =
+        kube::Api::<k8s_openapi::api::core::v1::Pod>::namespaced(client.clone(), &namespace);
+    let own_pod = retry_kubernetes_startup_operation(
+        || own_pods.get(&own_pod_name),
+        STARTUP_KUBERNETES_RETRY_ATTEMPTS,
+        STARTUP_KUBERNETES_INITIAL_RETRY_DELAY,
+        STARTUP_KUBERNETES_MAX_RETRY_DELAY,
+    )
+    .await
+    .context("read controller image for slot supervisor")?;
+    let runtime_image = own_pod
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.containers.iter().find(|c| c.name == "tengri"))
+        .and_then(|container| container.image.clone())
+        .context("controller Pod has no Tengri image")?;
+    let workload_identity = identity::WorkloadIdentity::from_environment(&namespace).await?;
+    let authorization = authz::WorkspaceAuthorization::new(ofz::Client::new(
+        &required_env("OFZ_GRPC_ENDPOINT")?,
+        &workload_identity,
+    )?);
+    authorization
+        .ready()
+        .await
+        .context("Ofz authority is unavailable")?;
+    let auth = auth::Authenticator::new(
+        &PathBuf::from(required_env("TENGRI_INTERNAL_HMAC_KEY_FILE")?),
+        desktop_origin,
+    )?;
+    let grpc_tls = workload_identity.server_tls()?;
+    let guest_authority = guest::authorization::GuestAuthority::new(
+        &PathBuf::from(required_env("TENGRI_GUEST_SIGNING_KEY_FILE")?),
+        tengri::guest_authorization::recovery_generation_from_file(&PathBuf::from(required_env(
+            "TENGRI_GUEST_RECOVERY_GENERATION_FILE",
+        )?))?,
+        database.clone(),
+        authorization.clone(),
+    )?;
     let activity = ActivityTracker::new(client.clone(), namespace.clone());
     let service = ControlPlane::new(
         client.clone(),
         ControlPlaneConfig {
+            identity: workload_identity.clone(),
+            authorization: authorization.clone(),
+            guest_authority: guest_authority.clone(),
             namespace: namespace.clone(),
             default_image,
             architecture,
-            internal_hmac_secret,
-            ticket_signing_secret,
+            database: database.clone(),
+            auth,
             public_url,
             preview_origin: preview_origin.clone(),
         },
         activity.clone(),
     )?;
+    if env::args().nth(1).as_deref() == Some("run-worker") {
+        return runs::serve(service).await;
+    }
+    let grpc_listener = TcpListener::bind(listen_address)
+        .await
+        .context("bind SPIFFE gRPC control plane")?;
     retry_kubernetes_startup_operation(
         || service.recover_provisional_terminal_leases(),
         STARTUP_KUBERNETES_RETRY_ATTEMPTS,
@@ -117,8 +180,10 @@ async fn main() -> anyhow::Result<()> {
         client.clone(),
         namespace.clone(),
         tickets.clone(),
-        activity,
+        activity.clone(),
         preview_origin,
+        service.guest_pool(),
+        guest_authority.clone(),
     )?;
     let gateway_listener = TcpListener::bind(gateway_address)
         .await
@@ -130,26 +195,50 @@ async fn main() -> anyhow::Result<()> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let controller_client = client.clone();
     let controller_namespace = namespace.clone();
+    let election = leadership::Election::new(
+        own_pod
+            .uid()
+            .context("controller Pod UID required")?
+            .parse()?,
+        database.clone(),
+    )?;
+    let agent_work =
+        activity::AgentWorkMonitor::new(service.guest_pool(), guest_authority, activity);
     let mut controller_task = tokio::spawn(async move {
-        controller::run(controller::ControllerContext {
-            client: controller_client,
-            namespace: controller_namespace,
-            tickets,
-            guest_image: controller_guest_image.into(),
-        })
-        .await;
+        election
+            .run(controller::ControllerContext {
+                client: controller_client,
+                namespace: controller_namespace,
+                tickets,
+                guest_image: controller_guest_image.into(),
+                runtime_image: runtime_image.into(),
+                architecture,
+                identity: workload_identity,
+                authorization,
+                leadership: None,
+                agent_work,
+            })
+            .await;
         Ok::<(), anyhow::Error>(())
     });
 
     let grpc_shutdown = shutdown_rx.clone();
     let mut grpc_task = tokio::spawn(async move {
         Server::builder()
+            .layer(
+                tower_http::trace::TraceLayer::new_for_grpc()
+                    .make_span_with(telemetry::RequestSpan)
+                    .on_failure(telemetry::grpc_failure),
+            )
             .add_service(
                 MicroVmControlPlaneServer::new(service)
                     .max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)
                     .max_encoding_message_size(MAX_GRPC_MESSAGE_BYTES),
             )
-            .serve_with_shutdown(listen_address, wait_for_shutdown(grpc_shutdown))
+            .serve_with_incoming_shutdown(
+                identity::tls_incoming(grpc_listener, grpc_tls),
+                wait_for_shutdown(grpc_shutdown),
+            )
             .await
             .context("serve gRPC control plane")
     });
@@ -171,27 +260,6 @@ async fn main() -> anyhow::Result<()> {
             .context("serve preview gateway")
     });
 
-    let mut runtime_secret_task = tokio::spawn(async move {
-        match (runtime_secret_directory, runtime_secret_pod_name) {
-            (Some(directory), Some(pod_name)) => {
-                runtime_secret::watch(
-                    directory,
-                    runtime_secret_snapshot,
-                    RUNTIME_SECRET_POLL_INTERVAL,
-                )
-                .await;
-                runtime_secret::replace_pod(
-                    runtime_secret_client,
-                    &runtime_secret_namespace,
-                    &pod_name,
-                )
-                .await?;
-                anyhow::bail!("runtime secret changed; Pod replacement requested")
-            }
-            _ => std::future::pending::<anyhow::Result<()>>().await,
-        }
-    });
-
     info!(%listen_address, %gateway_address, %preview_address, %namespace, ?architecture, "Tengri control plane ready");
     let result = tokio::select! {
         () = shutdown_signal() => Ok(()),
@@ -199,12 +267,10 @@ async fn main() -> anyhow::Result<()> {
         result = &mut grpc_task => task_result("gRPC server", result),
         result = &mut gateway_task => task_result("HTTP gateway", result),
         result = &mut preview_task => task_result("preview gateway", result),
-        result = &mut runtime_secret_task => task_result("runtime secret watcher", result),
     };
 
     let _ = shutdown_tx.send(true);
     controller_task.abort();
-    runtime_secret_task.abort();
     let _ = timeout(Duration::from_secs(5), async {
         if !grpc_task.is_finished() {
             let _ = grpc_task.await;
@@ -220,22 +286,22 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-async fn retry_kubernetes_startup_operation<F, Fut>(
+async fn retry_kubernetes_startup_operation<F, Fut, T>(
     mut operation: F,
     max_attempts: usize,
     initial_delay: Duration,
     max_delay: Duration,
-) -> Result<(), kube::Error>
+) -> Result<T, kube::Error>
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = Result<(), kube::Error>>,
+    Fut: Future<Output = Result<T, kube::Error>>,
 {
     debug_assert!(max_attempts > 0);
 
     let mut retry_delay = initial_delay;
     for attempt in 1..=max_attempts {
         match operation().await {
-            Ok(()) => return Ok(()),
+            Ok(value) => return Ok(value),
             Err(error) if attempt < max_attempts && retryable_startup_kubernetes_error(&error) => {
                 warn!(
                     attempt,
@@ -394,7 +460,7 @@ mod tests {
             move || {
                 operation_attempts.fetch_add(1, Ordering::SeqCst);
                 async {
-                    Err(kube::Error::Api(
+                    Err::<(), _>(kube::Error::Api(
                         kube::core::Status::failure("forbidden", "Forbidden")
                             .with_code(403)
                             .boxed(),
@@ -420,7 +486,7 @@ mod tests {
         let error = retry_kubernetes_startup_operation(
             move || {
                 operation_attempts.fetch_add(1, Ordering::SeqCst);
-                async { Err(connection_refused_error()) }
+                async { Err::<(), _>(connection_refused_error()) }
             },
             3,
             Duration::ZERO,

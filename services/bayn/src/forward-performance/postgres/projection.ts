@@ -1,4 +1,7 @@
 import type { ForwardPerformanceExecutionEvidence, ForwardPerformanceMarketVolumeRequest } from '../model'
+import { Result, Schema } from 'effect'
+import { CycleDecisionDocumentSchema } from '../../shadow-decision-contract'
+import { strictParseOptions } from '../../schemas'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import {
   CycleDecisionRow,
@@ -6,7 +9,19 @@ import {
   IntentExecutionRow,
   MarketVolumeBindingRow,
   OrderExecutionRow,
+  type VerifiedCycleDecisionRow,
 } from './model'
+
+export const verifyPerformanceDecisions = (rows: readonly (typeof CycleDecisionRow.Type)[]) => {
+  const verifiedRows: VerifiedCycleDecisionRow[] = []
+  const unverifiedDecisionHashes: string[] = []
+  for (const row of rows) {
+    const decoded = Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
+    if (Result.isFailure(decoded)) unverifiedDecisionHashes.push(row.decision_hash)
+    else verifiedRows.push({ ...row, document: decoded.success })
+  }
+  return { verifiedRows, unverifiedDecisionHashes: [...new Set(unverifiedDecisionHashes)].sort() }
+}
 
 export const uniqueRows = <Row>(rows: readonly Row[], key: (row: Row) => string): ReadonlyMap<string, Row | null> => {
   const byKey = new Map<string, Row | null>()
@@ -23,7 +38,7 @@ export const intentExecutionKey = (input: {
   readonly accountId: string
   readonly symbol: string
   readonly side: 'BUY' | 'SELL'
-  readonly quantityMicros: string
+  readonly quantityAtoms: string
   readonly replanGenerationHash?: string
   readonly createdAt: string
 }): string =>
@@ -33,13 +48,13 @@ export const intentExecutionKey = (input: {
     input.accountId,
     input.symbol,
     input.side,
-    input.quantityMicros,
+    input.quantityAtoms,
     input.replanGenerationHash ?? null,
     input.createdAt,
   ])
 
 export const executionEvidenceFromRows = (
-  decisionRows: readonly (typeof CycleDecisionRow.Type)[],
+  decisionRows: readonly VerifiedCycleDecisionRow[],
   intentRows: readonly (typeof IntentExecutionRow.Type)[],
   orderRows: readonly (typeof OrderExecutionRow.Type)[],
   fillRows: readonly (typeof FillExecutionRow.Type)[],
@@ -51,7 +66,7 @@ export const executionEvidenceFromRows = (
       accountId: row.account_id,
       symbol: row.symbol,
       side: row.side,
-      quantityMicros: row.quantity_micros,
+      quantityAtoms: row.quantity_atoms,
       ...(row.replan_generation_hash === null ? {} : { replanGenerationHash: row.replan_generation_hash }),
       createdAt: row.created_at.toISOString(),
     }),
@@ -80,7 +95,7 @@ export const executionEvidenceFromRows = (
           accountId: document.bindings.accountId,
           symbol: target.symbol,
           side: target.side,
-          quantityMicros: target.quantityMicros,
+          quantityAtoms: target.quantityAtoms,
           ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
           createdAt: document.createdAt,
         }),
@@ -96,8 +111,8 @@ export const executionEvidenceFromRows = (
         accountId: fill.account_id,
         symbol: fill.symbol,
         side: fill.side,
-        quantityMicros: fill.quantity_micros,
-        priceMicros: fill.price_micros,
+        quantityAtoms: fill.quantity_atoms,
+        priceAtoms: fill.price_atoms,
         feeMicros: fill.fee_micros,
         sourceTimestamp: fill.source_timestamp,
         occurredAt: fill.occurred_at.toISOString(),
@@ -117,7 +132,7 @@ export const executionEvidenceFromRows = (
         accountId: document.bindings.accountId,
         symbol: target.symbol,
         side: target.side,
-        plannedQuantityMicros: target.quantityMicros,
+        plannedQuantityAtoms: target.quantityAtoms,
         ...(reference === undefined ? {} : { referencePriceMicros: reference.referencePriceMicros }),
         ...(intentRow === undefined || intentRow === null || intentRow.terminal_outcome === null
           ? {}
@@ -130,7 +145,7 @@ export const executionEvidenceFromRows = (
                 decisionHash: intentRow.decision_hash,
                 symbol: intentRow.symbol,
                 side: intentRow.side,
-                quantityMicros: intentRow.quantity_micros,
+                quantityAtoms: intentRow.quantity_atoms,
                 notionalLimitMicros: intentRow.notional_limit_micros,
                 terminalOutcome: intentRow.terminal_outcome,
                 createdAt: intentRow.created_at.toISOString(),
@@ -148,9 +163,9 @@ export const executionEvidenceFromRows = (
                 accountId: orderRow.account_id,
                 symbol: orderRow.symbol,
                 side: orderRow.side,
-                ...(orderRow.quantity_micros === null ? {} : { quantityMicros: orderRow.quantity_micros }),
+                ...(orderRow.quantity_atoms === null ? {} : { quantityAtoms: orderRow.quantity_atoms }),
                 ...(orderRow.notional_micros === null ? {} : { notionalMicros: orderRow.notional_micros }),
-                filledQuantityMicros: orderRow.filled_quantity_micros,
+                filledQuantityAtoms: orderRow.filled_quantity_atoms,
                 status: orderRow.status,
                 occurredAt: orderRow.occurred_at.toISOString(),
                 observedAt: orderRow.observed_at.toISOString(),
@@ -164,7 +179,7 @@ export const executionEvidenceFromRows = (
 }
 
 export const marketVolumeRequestsFromRows = (
-  executionEvidence: readonly ForwardPerformanceExecutionEvidence[],
+  executionEvidence: readonly Pick<ForwardPerformanceExecutionEvidence, 'cycleId' | 'symbol'>[],
   bindingRows: readonly (typeof MarketVolumeBindingRow.Type)[],
   evidenceCutoffAt: string | undefined,
 ): readonly ForwardPerformanceMarketVolumeRequest[] => {
@@ -181,24 +196,37 @@ export const marketVolumeRequestsFromRows = (
     ) {
       continue
     }
-    const request: ForwardPerformanceMarketVolumeRequest = {
+    const base = {
       cycleId: execution.cycleId,
       decisionSnapshotId: binding.snapshot_id,
-      decisionSnapshotAsOfSession: binding.manifest.asOfSession,
       symbol: execution.symbol,
       executionSessionDate: binding.execution_session_date,
       windowOpenedAt: binding.execution_open_at.toISOString(),
       windowClosedAt: binding.execution_close_at.toISOString(),
       evidenceCutoffAt,
-      universeId: binding.manifest.universeId,
-      universeSymbolHash: binding.manifest.universeSymbolHash,
-      symbols: binding.manifest.symbols,
-      requestedStart: binding.manifest.requestedStart,
-      calendarVersion: binding.manifest.calendarVersion,
-      source: binding.manifest.source,
-      sourceFeed: binding.manifest.sourceFeed,
-      adjustment: binding.manifest.adjustment,
     }
+    const manifest = binding.manifest
+    const request: ForwardPerformanceMarketVolumeRequest =
+      manifest.schemaVersion === 'bayn.intraday-market-snapshot.v1' ||
+      manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
+        ? {
+            ...base,
+            sourceFeed: manifest.feed,
+            decisionSnapshotAsOfSession: manifest.sessionDate,
+            decisionManifest: manifest,
+          }
+        : {
+            ...base,
+            decisionSnapshotAsOfSession: manifest.asOfSession,
+            universeId: manifest.universeId,
+            universeSymbolHash: manifest.universeSymbolHash,
+            symbols: manifest.symbols,
+            requestedStart: manifest.requestedStart,
+            calendarVersion: manifest.calendarVersion,
+            source: manifest.source,
+            sourceFeed: manifest.sourceFeed,
+            adjustment: manifest.adjustment,
+          }
     requests.set(JSON.stringify([request.cycleId, request.symbol]), request)
   }
   return [...requests.values()].sort((left, right) => {

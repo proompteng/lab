@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, test } from 'bun:test'
 
@@ -38,6 +40,30 @@ describe('Omni cluster template secret rendering', () => {
     expect(rendered).not.toContain('__GALACTIC_')
     expect(rendered.match(/TS_AUTHKEY=tskey-test/g)).toHaveLength(3)
     expect(rendered.match(/jointoken=join-test/g)).toHaveLength(3)
+  })
+
+  test('copies all referenced machine patches beside the protected rendered template', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'tengri-omni-render-'))
+    const output = join(directory, 'cluster-template.yaml')
+    try {
+      const result = Bun.spawnSync(
+        [process.execPath, join(import.meta.dir, 'render-template.ts'), '--output', output],
+        {
+          env: {
+            ...process.env,
+            GALACTIC_TAILSCALE_AUTH_KEY: 'tskey-test',
+            GALACTIC_OMNI_JOIN_TOKEN: 'join-test',
+          },
+        },
+      )
+      expect(result.exitCode).toBe(0)
+      expect(statSync(output).mode & 0o777).toBe(0o600)
+      for (const name of ['image-factory-registry.yaml', 'tengri-runner-amd64.json', 'tengri-runner-arm64.json']) {
+        expect(readFileSync(join(directory, name), 'utf8')).toBe(readFileSync(join(import.meta.dir, name), 'utf8'))
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   test('pulls Firecracker images into blockfile on every machine', () => {

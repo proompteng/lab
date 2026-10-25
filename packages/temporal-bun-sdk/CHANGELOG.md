@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.11.5](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.11.4...temporal-bun-sdk-v0.11.5) (2026-10-04)
+
+
+### Bug Fixes
+
+* **temporal-bun-sdk:** replay workflows by task activation ([#14600](https://github.com/proompteng/lab/issues/14600)) ([291fa39](https://github.com/proompteng/lab/commit/291fa390c946b15d6e445f8d34bd30f042fa59d1))
+* **temporal-bun-sdk:** wait for final workflow and update outcomes ([#14599](https://github.com/proompteng/lab/issues/14599)) ([1ceadc4](https://github.com/proompteng/lab/commit/1ceadc406ed883eeef0dd9904af1d4985758ef5d))
+
+## [0.11.4](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.11.3...temporal-bun-sdk-v0.11.4) (2026-09-18)
+
+
+### Features
+
+* **temporal-bun-sdk:** publish versions with one command ([#14591](https://github.com/proompteng/lab/issues/14591)) ([4a79b91](https://github.com/proompteng/lab/commit/4a79b9194386b785128201a47d42e5ce933131ae))
+
+
+### Bug Fixes
+
+* **temporal-bun-sdk:** repair retries and automate library releases ([#14589](https://github.com/proompteng/lab/issues/14589)) ([bcf7bcb](https://github.com/proompteng/lab/commit/bcf7bcb044222f4fabdb139a5392b31ffadd1780))
+
 ## [0.11.3](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.11.2...temporal-bun-sdk-v0.11.3) (2026-08-30)
 
 

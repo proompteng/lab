@@ -1,5 +1,7 @@
 'use client'
 
+import { watchTengriEvents } from './event-stream'
+
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -234,21 +236,23 @@ export function FinderApp({
 
   useEffect(() => {
     let refreshTimer = 0
-    const source = new EventSource(
-      `/api/tengri/files/events?agentId=${encodeURIComponent(agentId)}&path=${encodeURIComponent(path)}`,
+    const stop = watchTengriEvents(
+      () => `/api/tengri/files/events?agentId=${encodeURIComponent(agentId)}&path=${encodeURIComponent(path)}`,
+      {
+        onOpen: () => {
+          setWatchState('connected')
+          void latestLoad.current(true)
+        },
+        onError: () => setWatchState('reconnecting'),
+        onMessage: () => {
+          window.clearTimeout(refreshTimer)
+          refreshTimer = window.setTimeout(() => void latestLoad.current(true), 120)
+        },
+      },
     )
-    source.onopen = () => {
-      setWatchState('connected')
-      void latestLoad.current(true)
-    }
-    source.onerror = () => setWatchState('reconnecting')
-    source.onmessage = () => {
-      window.clearTimeout(refreshTimer)
-      refreshTimer = window.setTimeout(() => void latestLoad.current(true), 120)
-    }
     return () => {
       window.clearTimeout(refreshTimer)
-      source.close()
+      stop()
     }
   }, [agentId, path])
 

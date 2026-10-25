@@ -18,7 +18,6 @@ readonly script_dir
 source_dir="$(cd -- "$1" && pwd -P)"
 readonly source_dir
 readonly requested_output_dir="$2"
-readonly patch_file="$script_dir/patches/0001-persistent-block-automount.patch"
 
 for command in cargo docker git make tar yq zstd; do
   if ! command -v "$command" >/dev/null; then
@@ -36,14 +35,17 @@ if [[ -n "$(git -C "$source_dir" status --porcelain)" ]]; then
   exit 1
 fi
 
-git -C "$source_dir" apply --unidiff-zero --check "$patch_file"
-git -C "$source_dir" apply --unidiff-zero "$patch_file"
+for patch_file in "$script_dir"/patches/*.patch; do
+  git -C "$source_dir" apply --unidiff-zero --check "$patch_file"
+  git -C "$source_dir" apply --unidiff-zero "$patch_file"
+done
 make -C "$source_dir/src/agent" src/version.rs
 
 (
   cd -- "$source_dir"
   cargo test --locked -p kata-agent storage::block_handler::tests
   cargo test --locked -p virt_container container_manager::container::tests
+  cargo test --locked -p hypervisor device::device_manager::tests
 )
 
 install -d "$requested_output_dir"

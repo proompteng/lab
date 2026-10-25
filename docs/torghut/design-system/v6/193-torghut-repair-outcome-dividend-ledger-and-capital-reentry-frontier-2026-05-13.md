@@ -1,6 +1,6 @@
 # 193. Torghut Repair Outcome Dividend Ledger And Capital Reentry Frontier (2026-05-13)
 
-Status: Accepted for Jangar engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

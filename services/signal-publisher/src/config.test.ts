@@ -71,4 +71,12 @@ describe('Signal publisher config', () => {
     expect(invalidUrl.message).toContain('cannot be parsed as a URL')
     expect(mismatchedUniverse.message).toContain('does not match canonical SIGNAL_SYMBOLS')
   })
+
+  test('rejects a request budget too small to retain positive nested deadlines', async () => {
+    const failure = await Effect.runPromise(Effect.flip(provide({ ...environment, SIGNAL_OPERATION_TIMEOUT_MS: '1' })))
+    expect(failure.message).toContain('SIGNAL_OPERATION_TIMEOUT_MS')
+    expect(
+      (await Effect.runPromise(provide({ ...environment, SIGNAL_OPERATION_TIMEOUT_MS: '1000' }))).operationTimeoutMs,
+    ).toBe(1000)
+  })
 })

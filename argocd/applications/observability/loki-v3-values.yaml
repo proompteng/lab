@@ -297,6 +297,11 @@ singleBinary:
 
 lokiCanary:
   enabled: true
+  tolerations:
+    - key: workload.proompteng.ai/compute-local
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
   push: true
   resources:
     requests:

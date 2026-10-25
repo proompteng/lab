@@ -234,8 +234,8 @@ Controls (from `services/torghut/app/config.py`):
 
 These are part of the production design because they define how the system is safely operated under failure.
 
-Gated actuation runner: use the GitOps-first, confirmation-gated procedures in
-`docs/torghut/design-system/v1/operations-actuation-runner.md` for any state-changing automation.
+For state-changing automation, follow the current GitOps procedures in
+[the Torghut deployment runbook](../../../../argocd/applications/torghut/README.md) and the repository's `AGENTS.md`.
 
 ### Procedure: Torghut health report (read-only)
 
@@ -329,19 +329,12 @@ Recommended automation split:
 - Read-only diagnostics: `vcsPolicy.mode=none` (no repo access required) or `read-only` if you need to read repo state.
 - Actuation: GitOps PRs with `vcsPolicy.mode=read-write`, then Argo reconcile.
 
-Minimal templates and contracts: see `v1/agentruns-handoff.md`.
+For current templates and contracts, use the [AgentRun creation guide](../../../agents/agentrun-creation-guide.md).
 
 ## References (deep dives)
 
 This merged doc is the entrypoint; deeper detail remains in the component and policy docs:
 
-- `v1/overview.md`
-- `v1/architecture-and-context.md`
-- `v1/component-ws-forwarder.md`
-- `v1/component-flink-ta-job.md`
-- `v1/component-trading-loop.md`
-- `v1/ai-layer-overview.md`
 - `v1/operations-ta-replay-and-recovery.md`
 - `v1/operations-ws-connection-limit-and-auth.md`
-- `v1/operations-clickhouse-replica-and-keeper.md`
 - `v1/operations-knative-revision-failures.md`

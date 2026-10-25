@@ -90,15 +90,66 @@ RWX performance workflow:
 
 1. `docs/runbooks/rook-ceph-rwx-performance.md`
 
-## Post-Migration Performance Posture
+For host and client-volume counters and timestamped RBD mappings, use
+[`ceph-performance-telemetry.md`](ceph-performance-telemetry.md).
 
-After the Turin BlueStore DB/WAL migration is complete and all PGs are clean,
-the steady-state OSD posture is client-first, not recovery-first.
+## Scrub Catch-Up Posture
+
+The shared HDD cluster uses Ceph's built-in `high_client_ops` profile to protect application latency while
+continuing scrub catch-up. Scrubs can start at any hour: `osd_scrub_begin_hour=0` and `osd_scrub_end_hour=0`.
+The one-reservation scrub limit bounds HDD contention; the seven-day deep-scrub interval and overdue health alerts remain enabled.
+
+Scrubbing and deep scrubbing belong to mClock's background best-effort class, alongside backfill, snaptrim and PG
+deletion. Ceph Tentacle defines the built-in profile as follows:
+
+| mClock class                            | Reservation | Weight | Limit     |
+| --------------------------------------- | ----------- | ------ | --------- |
+| Client                                  | 60%         | 2      | Unlimited |
+| Background recovery                     | 40%         | 1      | Unlimited |
+| Background best-effort, including scrub | 5%          | 4      | 70%       |
+
+These are the built-in scheduler parameters, not independent physical bandwidth partitions. Background work can
+consume idle capacity up to its profile limit; 5% is not a fixed scrub bandwidth cap. Verify the effective parameters
+on every OSD rather than inferring them from the profile name. Client latency and advancing per-PG scrub timestamps
+are both acceptance requirements. A stalled backlog fails acceptance even when application latency improves.
+
+Rook applies the profile through `cephClusterSpec.cephConfig`. Keep the completed
+`ops.proompteng.ai/osd-config-revision: scrub-catchup-v1` annotation unchanged. This profile change is runtime-updatable
+and does not require restarting OSDs.
+
+### Migrate from the custom profile
+
+Merge and reconcile the reviewed GitOps change first. Confirm the live CephCluster requests `high_client_ops`.
+Removing custom keys from Git alone does not prove that Ceph's monitor config store has dropped them. For an
+explicitly authorized profile migration, remove only the nine prior scheduler overrides from their verified `osd`
+scope through the existing Galactic toolbox:
+
+```bash
+for service in client background_recovery background_best_effort; do
+  for setting in res wgt lim; do
+    kubectl --context galactic-lan -n rook-ceph exec deployment/rook-ceph-tools -- \
+      ceph config rm osd "osd_mclock_scheduler_${service}_${setting}"
+  done
+done
+```
+
+Read the monitor config store and every running OSD's effective configuration afterward. A remaining per-OSD override
+is drift to investigate, not permission to remove unrelated configuration. Preserve the calibrated HDD IOPS values,
+all-day eligibility, concurrency, intervals and alerts. Do not disable WAL sync or application durability.
+
+Compare equal-duration before/after windows of Restate WAL sync and append latency, OSD operation latency, host disk
+queues and application errors. Record PG IDs with their last scrub/deep-scrub timestamps, active scrub states, overdue
+counts and oldest overdue age. Require advancing scrub counters or completed scrub timestamps before accepting the change; retain overdue age
+for the longer backlog trend.
+For regression, revert the reviewed profile change and restore the exact prior nine custom values from its parent
+commit; verify all six OSDs again without changing the rollout annotation.
 
 Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 
 1. `bluestore_cache_autotune: "true"`
-1. `osd_mclock_profile: "high_client_ops"`
+1. `osd_mclock_profile: "high_client_ops"` without custom scheduler overrides
+1. `osd_scrub_begin_hour: "0"` and `osd_scrub_end_hour: "0"`
+1. `osd_max_scrubs: "1"`
 1. `osd_mclock_max_sequential_bandwidth_hdd: "285212672"` (272MiB/s)
 1. `osd_memory_target: "8589934592"` (8Gi)
 1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`
@@ -115,27 +166,22 @@ done. In particular, remove these if they were set for a maintenance window:
 1. `osd_recovery_max_single_start`
 1. `osd_recovery_op_priority`
 1. `osd_recovery_sleep_hdd`
-1. boosted scrub settings such as `osd_max_scrubs`,
-   `osd_scrub_priority`, `osd_requested_scrub_priority`,
+1. boosted scrub settings such as `osd_scrub_priority`, `osd_requested_scrub_priority`,
    `osd_scrub_chunk_min`, `osd_scrub_chunk_max`,
    `osd_deep_scrub_stride`, and `osd_scrub_load_threshold`
 1. boosted recovery scan/chunk settings such as `osd_backfill_scan_min`,
    `osd_backfill_scan_max`, and `osd_recovery_max_chunk`
-1. custom `osd_mclock_scheduler_*` reservation or weight overrides
 
-The reason is documented by Ceph: built-in mClock profiles are intended to
-control QoS between client I/O and background work. `high_client_ops` allocates
-more reservation and limit to client operations, while recovery/backfill limit
-overrides are an advanced path gated by
-`osd_mclock_override_recovery_settings` and should not be the default
-steady-state client-performance profile.
+The committed `osd_max_scrubs=1` target bounds concurrent scans on disks serving synchronous database WAL. The built-in profile owns all nine
+`osd_mclock_scheduler_*` settings; do not retain custom overrides in the monitor config store.
+Recovery/backfill concurrency overrides are separate from this profile. Do not restore the old scrub time window.
 The HDD bandwidth value is pinned to the Seagate Exos X24 24TB sustained
 transfer spec, 285 MB/s / 272 MiB/s, so the mClock cost model does not fall
 back to Ceph's conservative HDD default.
 
 References:
 
-1. Ceph mClock profiles and `high_client_ops`: https://docs.ceph.com/en/latest/rados/configuration/mclock-config-ref/
+1. Ceph mClock classes, custom profiles, and profile transitions: https://docs.ceph.com/en/tentacle/rados/configuration/mclock-config-ref/
 1. Ceph BlueStore cache autotune and `osd_memory_target`: https://docs.ceph.com/en/latest/rados/configuration/bluestore-config-ref/
 1. Seagate Exos X24 24TB sustained transfer rate: https://www.seagate.com/content/dam/seagate/en/content-fragments/products/datasheets/exos-x24/exos-x24-DS2080-2307US-en_US.pdf
 1. Rook CephCluster `cephConfig`, OSD resources, and metadata-device configuration: https://rook.io/docs/rook/latest-release/CRDs/Cluster/ceph-cluster-crd/
@@ -143,24 +189,28 @@ References:
 Verify live state:
 
 ```bash
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config dump \
-  | egrep 'osd_mclock_profile|osd_mclock_max_sequential_bandwidth_hdd|osd_mclock_override_recovery_settings|osd_max_backfills|osd_recovery_max_active|osd_recovery_max_single_start|osd_recovery_op_priority|osd_recovery_sleep_hdd|osd_memory_target|osd_scrub_auto_repair'
-kubectl -n rook-ceph get deploy -l app=rook-ceph-osd -o json \
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph -s
+for osd_id in 0 1 2 3 4 5; do
+  printf 'osd.%s\n' "${osd_id}"
+  kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- \
+    ceph config show "osd.${osd_id}" \
+    | rg 'osd_mclock_profile|osd_mclock_scheduler_|osd_scrub_(begin|end)_hour|osd_max_scrubs'
+done
+kubectl --context galactic-tailscale -n rook-ceph get deploy -l app=rook-ceph-osd -o json \
   | jq -r '.items[] | .metadata.name as $n | .spec.template.spec.containers[] | select(.name=="osd") | [$n,.resources.requests.memory,.resources.limits.memory] | @tsv' \
   | sort
 ```
 
-Expected steady-state readback:
+Expected readback:
 
 1. `6 osds: 6 up, 6 in`.
 1. No degraded, remapped, recovering, backfilling, undersized, or misplaced PGs.
-1. `osd_mclock_profile` is `high_client_ops`.
+1. Every OSD uses `high_client_ops`, its built-in shares above, and all-day scrub eligibility.
 1. `osd_mclock_max_sequential_bandwidth_hdd` is `285212672`.
 1. `osd_memory_target` is `8589934592`.
 1. `osd_scrub_auto_repair` is `true`.
 1. `osd_scrub_auto_repair_num_errors` is `5`.
-1. No recovery override keys remain in `ceph config dump`.
+1. Any remaining recovery override drift is tracked separately from scrub progress.
 1. Every OSD deployment reports memory request `8Gi` and limit `12Gi`.
 
 ## Deep-Scrub Progress Monitoring
@@ -199,11 +249,16 @@ Sample the command twice a minute apart. Progress is visible when
 `active+clean+scrubbing+deep` and the top-level overdue count has not changed
 yet. The overdue count usually drops only after full PG deep-scrubs complete.
 
-Avoid raising `osd_max_scrubs` just to clear the warning faster unless this is
-an explicit maintenance window tradeoff. Ceph documents `osd_max_scrubs` as the
-maximum simultaneous scrub operations per OSD, and also documents that scrubbing
-can reduce cluster performance. Keep the steady-state client-first profile at
-`osd_mclock_profile=high_client_ops`.
+Completion requires `PG_NOT_DEEP_SCRUBBED` to disappear and the previously overdue
+PGs to have newer `last_deep_scrub_stamp` values in `ceph pg dump pgs --format json`.
+An active scrub counter or Argo sync alone does not prove the backlog has cleared.
+Keep the committed `osd_max_scrubs=1` target during catch-up. A PG marked
+`scrubbing` may still be waiting for a replica reservation; check `scrub_schedule`
+and each OSD's `dump_scrub_reservations` before counting it as an active scan.
+Use the executable [runtime acceptance checks](galactic-storage-and-workload-recovery.md#scrub-progress-during-recovery)
+to verify both reservation limits on all six OSDs. Existing scrubs finish after a limit reduction. Compare application
+latency and scrub progress after their reservations drain; a lower configured limit alone does not prove recovery.
+If scrub debt grows without an application benefit, restore the limit to `3` through reviewed GitOps.
 
 Reference:
 

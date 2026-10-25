@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
@@ -158,6 +160,77 @@ const entry = (name: string) => {
 }
 
 describe('enabled app inventory', () => {
+  it('excludes unreferenced prepared directories and includes declared Kustomize inputs', () => {
+    const root = mkdtempSync(join(tmpdir(), 'enabled-app-inputs-'))
+    const app = join(root, 'argocd/applications/example')
+    try {
+      mkdirSync(join(root, 'argocd/applicationsets'), { recursive: true })
+      for (const name of ['active', 'prepared', 'patches', 'values']) mkdirSync(join(app, name), { recursive: true })
+      writeFileSync(
+        join(root, 'argocd/applicationsets/test.yaml'),
+        YAML.stringify({
+          spec: { generators: [{ list: { elements: [{ name: 'example', path: 'argocd/applications/example' }] } }] },
+        }),
+      )
+      const manifest = (name: string) => YAML.stringify({ image: `registry.ide-newton.ts.net/lab/${name}` })
+      writeFileSync(join(app, 'active/deployment.yaml'), manifest('active'))
+      writeFileSync(join(app, 'prepared/deployment.yaml'), manifest('prepared'))
+      writeFileSync(join(app, 'patches/image.yaml'), manifest('patch'))
+      writeFileSync(join(app, 'values/chart.yaml'), manifest('chart'))
+      const input = {
+        resources: ['active'],
+        patches: [{ path: 'patches/image.yaml' }],
+        helmCharts: [{ valuesFile: 'values/chart.yaml' }],
+      }
+      writeFileSync(join(app, 'kustomization.yaml'), YAML.stringify(input))
+      expect(loadEnabledAppInventory(root).entries[0]?.repoImages).toEqual([
+        'registry.ide-newton.ts.net/lab/active',
+        'registry.ide-newton.ts.net/lab/chart',
+        'registry.ide-newton.ts.net/lab/patch',
+      ])
+      writeFileSync(join(app, 'kustomization.yaml'), YAML.stringify({ ...input, resources: ['active', 'prepared'] }))
+      expect(loadEnabledAppInventory(root).entries[0]?.repoImages).toContain('registry.ide-newton.ts.net/lab/prepared')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['devbox', 'codex-devbox', 'unpublished', '.github/workflows/codex-devbox.yml'],
+    ['ofz', 'ofz', 'unpromoted', '.github/workflows/ofz.yaml'],
+  ])(
+    'recognizes the inert %s promotion template without accepting arbitrary mutable images',
+    (name, image, tag, workflow) => {
+      const repository = `registry.ide-newton.ts.net/lab/${image}`
+      const template = {
+        name,
+        path: `argocd/applications/${name}`,
+        repoURL: 'https://github.com/proompteng/lab.git',
+        sourceFile: 'argocd/applicationsets/platform.yaml',
+        sourceKind: 'applicationset-element',
+        class: 'deferred',
+        enabled: true,
+        hasHelmChart: false,
+        repoImages: [`${repository}:${tag}`],
+        workflowPaths: [workflow, 'argocd/applications/kargo'],
+      } satisfies EnabledAppInventoryEntry
+      expect(classifyEnabledApp(template).class).toBe('workflow-image')
+      expect(classifyEnabledApp({ ...template, workflowPaths: [] }).class).toBe('deferred')
+      for (const reference of [
+        `${repository}:latest`,
+        `${repository}:unreviewed`,
+        `${repository}@sha256:${'0'.repeat(64)}`,
+      ]) {
+        expect(
+          classifyEnabledApp({
+            ...template,
+            repoImages: [reference],
+          }).class,
+        ).toBe('deferred')
+      }
+    },
+  )
+
   it('classifies Tengri as a Kargo-owned workflow image only with complete ownership evidence', () => {
     const tengri = {
       name: 'tengri',
@@ -310,7 +383,7 @@ describe('enabled app inventory', () => {
     expect(metallbEntry).toContain('argocd.argoproj.io/sync-options: Prune=false')
   })
 
-  it('preserves Tengri state and keeps Kata runtime proof bounded', () => {
+  it('preserves Tengri state and keeps runtime validation isolated', () => {
     const tengriEntry = platformApplicationSet.match(
       /              - name: tengri\n[\s\S]*?(?=\n              - name:)/,
     )?.[0]
@@ -333,11 +406,13 @@ describe('enabled app inventory', () => {
     expect(talosUpgradeRunbook).not.toContain('The canaries are DaemonSets')
     expect(talosUpgradeRunbook).toContain('It deletes that Pod and its')
     expect(talosUpgradeRunbook).toContain('unique bootstrap Secret on success or failure')
-    expect(tengriOperations).toContain('`Tengri images` validates both services and CRDs')
-    expect(tengriOperations).toContain('emits the `kargo-sha-<40>` aliases')
-    expect(tengriOperations).toContain('argocd app sync kata --prune')
-    expect(tengriOperations).toContain('kubectl --context galactic-lan -n kata get daemonset -o name')
-    expect(tengriOperations).toContain('verify-runtimes.sh "$PROOF_DIR" talos-192-168-1-194 fc')
+    expect(tengriOperations).toContain('The paired publisher must withhold discoverable aliases')
+    expect(tengriOperations).toContain('and KVM acceptance pass')
+    expect(tengriOperations).toContain(
+      'Never drain, cordon, reboot, relabel, change scheduling on, or reconfigure shared nodes',
+    )
+    expect(tengriOperations).toContain('private container and volumes')
+    expect(tengriOperations).toContain('Measure at least 50 fresh prepared creations and 50 cold-cache resumes')
     expect(tengriOperations).not.toContain('`Manual OCI Mirror`')
     expect(tengriImagesWorkflow).toContain('TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri')
     expect(tengriImagesWorkflow).toContain('runner: arc-amd64')
@@ -429,7 +504,7 @@ describe('enabled app inventory', () => {
       'digest: sha256:92a091b047658b14f1e3214727c6e3001063226a33cb2fc824a1733a60401e05',
     )
     expect(cloudflaredDeployment).toContain(
-      'cloudflare/cloudflared:2026.8.3@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339',
+      'cloudflare/cloudflared:2026.9.0@sha256:ff69a2225ad7c6f85ed84fbd5f3087df46202426b2388ec60214098e0adf05e9',
     )
     expect(karapaceManifest).toContain(
       'ghcr.io/aiven-open/karapace:6.2.3@sha256:a67ecdcc7c0d0a9e965d7a0eebea91a46bf6797aad4f3b878a3f6924650f3012',
@@ -464,6 +539,12 @@ describe('enabled app inventory', () => {
     })
     expect(temporalKustomization.images).toEqual([
       {
+        name: 'temporal-worker-runtime',
+        newName: 'mirror.gcr.io/temporalio/server',
+        newTag: '1.31.2',
+        digest: 'sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da',
+      },
+      {
         name: 'docker.elastic.co/elasticsearch/elasticsearch',
         newTag: '8.19.21',
         digest: 'sha256:cbf5cd6cfe5532a9c02d510c66d238bf329cd51fe3d57170a2a880aca7d47419',
@@ -483,8 +564,8 @@ describe('enabled app inventory', () => {
       {
         name: 'mirror.gcr.io/temporalio/ui',
         newName: 'mirror.gcr.io/temporalio/ui',
-        newTag: '2.53.3',
-        digest: 'sha256:eef301146e60fad34b47adaecfae4149016e34b2d44ba94fca5fd8e5441f182a',
+        newTag: '2.54.0',
+        digest: 'sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932',
       },
     ])
   })
@@ -517,13 +598,13 @@ describe('enabled app inventory', () => {
     const vllm = flamingoDeployment.spec?.template?.spec?.containers?.find((container) => container.name === 'vllm')
 
     expect(vllm?.image).toBe(
-      'vllm/vllm-openai:v0.28.0-x86_64-cu129@sha256:50509e700235cea487715cedeb501d20a1cd15fa6a54ce93688284bd0d96995d',
+      'vllm/vllm-openai:v0.29.0-cu129@sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2',
     )
   })
 
   it('pins Keycloak to the immutable multi-architecture security release', () => {
     expect(keycloakManifest).toContain(
-      'quay.io/keycloak/keycloak:26.7.3@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54',
+      'quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c',
     )
   })
 
@@ -557,7 +638,7 @@ describe('enabled app inventory', () => {
   it('pins both custom NVIDIA device plugins to the immutable security release', () => {
     for (const manifest of nvidiaDevicePluginManifests) {
       expect(manifest).toContain(
-        'nvcr.io/nvidia/k8s-device-plugin:v0.19.3@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77',
+        'nvcr.io/nvidia/k8s-device-plugin:v0.20.0@sha256:a61ba9fd8efb82f3a79f877f7580e02c1e8e7593f62473644bc9c79e315c3312',
       )
       expect(manifest).not.toContain('nvcr.io/nvidia/k8s-device-plugin:v0.19.0')
     }
@@ -650,14 +731,14 @@ describe('enabled app inventory', () => {
     expect(entry('attic').workflowPaths).toContain('.github/workflows/attic-build-push.yaml')
   })
 
-  it('tracks ARC runner images through both GitHub Actions and manual Nix image paths', () => {
+  it('tracks ARC runner images through the single GitHub Actions and Kargo path', () => {
     expect(entry('arc')).toMatchObject({
       class: 'nix-image',
       nixImageAttr: 'arc-runner-image',
-      buildScriptPath: 'packages/scripts/src/arc-runner/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/arc-runner/deploy-service.ts',
     })
     expect(entry('arc').workflowPaths).toContain('.github/workflows/arc-runner-build-push.yml')
+    expect(entry('arc').buildScriptPath).toBeUndefined()
+    expect(entry('arc').deployScriptPath).toBeUndefined()
   })
 
   it('tracks Froussard through both GitHub Actions and manual Nix image paths', () => {
@@ -730,7 +811,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: false,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
+        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283',
       ],
     })
     expect(entry('hermes').deferredReason).toContain('NousResearch/hermes-agent')
@@ -741,7 +822,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: true,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/tigresse@sha256:b04308528a46291e2c65562d04c2ac7644c4e7f25f2c247dae282b70f8856e2c',
+        'registry.ide-newton.ts.net/lab/tigresse@sha256:e5174fe7f584ac12d4c50ef372b346cbffe4b0f377b552e795f046fca1e85172',
       ],
     })
     expect(entry('tigresse').deferredReason).toContain('proompteng/tigresse')

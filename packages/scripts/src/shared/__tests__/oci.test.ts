@@ -101,8 +101,6 @@ const jangarDeployScript = readRepoFile('packages/scripts/src/jangar/deploy-serv
 const jangarUpdateScript = readRepoFile('packages/scripts/src/jangar/update-manifests.ts')
 const agentsBuildScript = readRepoFile('packages/scripts/src/agents/build-image.ts')
 const agentsDeployScript = readRepoFile('packages/scripts/src/agents/deploy-service.ts')
-const arcRunnerBuildScript = readRepoFile('packages/scripts/src/arc-runner/build-image.ts')
-const arcRunnerDeployScript = readRepoFile('packages/scripts/src/arc-runner/deploy-service.ts')
 const torghutBuildScript = readRepoFile('packages/scripts/src/torghut/build-image.ts')
 const torghutImageBuildersScript = readRepoFile('packages/scripts/src/torghut/image-builders.ts')
 const torghutWsBuildScript = readRepoFile('packages/scripts/src/torghut/build-ws-image.ts')
@@ -889,7 +887,7 @@ describe('native OCI build workflows', () => {
       expect(workflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
       expect(workflow).toContain("- 'packages/scripts/src/shared/oci.ts'")
       expect(workflow).toContain("- 'nix/oci-push.sh'")
-      if (workflow !== hermesToolchainBuildWorkflow) {
+      if (workflow !== hermesToolchainBuildWorkflow && workflow !== productNixWorkflow) {
         expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
       }
     }
@@ -1242,10 +1240,11 @@ describe('native OCI build workflows', () => {
     expect(jangarImageModule).toContain('dependencyClosure = "bunCache";')
     expect(jangarImageModule).toContain('"@proompteng/jangar"')
     expect(jangarImageModule).toContain('"@proompteng/cx-tools"')
-    expect(jangarImageModule).toContain(
-      'for package in agent-contracts codex cx-tools design discord otel temporal-bun-sdk',
-    )
+    expect(jangarImageModule).toContain('for package in agent-contracts codex cx-tools design discord otel')
     expect(jangarImageModule).toContain('cp -R "$TMPDIR/work/services/jangar/node_modules"')
+    expect(jangarImageModule).toContain('services/bumba/scripts/verify-temporal-runtime.ts')
+    expect(jangarImageModule).not.toContain('ln -s /app/node_modules "$out/app/services/bumba/node_modules"')
+    expect(jangarImageModule).not.toContain('"packages/temporal-bun-sdk"')
     expect(jangarImageModule).toContain('node-gyp rebuild')
     expect(jangarImageModule).toContain('test -f build/Release/pty.node')
     expect(jangarImageModule).toContain('rm -rf build')
@@ -1267,7 +1266,7 @@ describe('native OCI build workflows', () => {
     expect(jangarBuildWorkflow).toContain('kargo_tag_include_run_id: true')
     expect(jangarBuildWorkflow).not.toContain('release_artifact_name:')
     expect(jangarBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(jangarBuildWorkflow).toContain('image_build_timeout: 12m')
+    expect(jangarBuildWorkflow).toContain('image_build_timeout: 20m')
     expect(jangarBuildWorkflow).toContain("- '.github/workflows/jangar-post-deploy-verify.yml'")
     expect(jangarBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(jangarBuildWorkflow).not.toContain('docker/setup-buildx-action')
@@ -1335,10 +1334,10 @@ describe('native OCI build workflows', () => {
     expect(torghutImageModule).toContain('"LD_LIBRARY_PATH=${runtimeLibraryPath}"')
     expect(torghutImageModule).toContain('"PYTHONPATH=/app"')
     expect(torghutTaImageModule).toContain('pkgs.dockerTools.pullImage')
-    expect(torghutTaImageModule).toContain('sha256:d357b0e1eb89eb4377735a008dfcbd35f7f06af6cba24dfbb6062379fb70a9a9')
-    expect(torghutTaImageModule).toContain('sha256:c0b3512ea891d604c585d3cb217b75a2bf920d9faaa9f0770496476189d5f57f')
-    expect(torghutTaImageModule).toContain('flink-s3-fs-hadoop-2.0.1.jar')
-    expect(torghutTaImageModule).not.toContain('flink-2.0.1-bin-scala_2.12.tgz')
+    expect(torghutTaImageModule).toContain('sha256:dbbc4a0745fbcbf87a3d0d772f50127920e3220779ce2b9ae0179e6ee7a44cca')
+    expect(torghutTaImageModule).toContain('sha256:ff1d667c4c13912fe89c3a5365e72c6faabe44d1a9cc9f41025989833b1c4d2c')
+    expect(torghutTaImageModule).toContain('flink-s3-fs-hadoop-2.2.1.jar')
+    expect(torghutTaImageModule).not.toContain('flink-2.2.1-bin-scala_2.12.tgz')
     expect(torghutTaImageModule).not.toContain('archive.apache.org/dist/flink')
     expect(torghutWsImageModule).toContain('ForwarderAppKt')
     expect(torghutHyperliquidFeedImageModule).toContain('HyperliquidFeedAppKt')
@@ -1497,7 +1496,6 @@ describe('native OCI build workflows', () => {
 
   it('keeps manual migrated app deploy scripts on the shared Nix image helper', () => {
     for (const script of [
-      arcRunnerBuildScript,
       oiratBuildScript,
       bumbaBuildScript,
       atticBuildScript,
@@ -1532,13 +1530,6 @@ describe('native OCI build workflows', () => {
     expect(atticDeployScript).toContain('Non-dry attic:deploy requires --image-digest')
     expect(atticDeployScript).toContain('assertDeployImagePlatforms(imageDigest)')
     expect(atticDeployScript).toContain('gc-cronjob.yaml')
-    expect(arcRunnerDeployScript).not.toContain("from '../shared/docker'")
-    expect(arcRunnerDeployScript).not.toContain('inspectImageDigest')
-    expect(arcRunnerDeployScript).toContain("from './build-image'")
-    expect(arcRunnerDeployScript).toContain('dryRun')
-    expect(arcRunnerDeployScript).toContain('no-apply')
-    expect(arcRunnerDeployScript).toContain('registry.ide-newton.ts.net/lab/arc-runner@sha256:<64 hex>')
-    expect(arcRunnerDeployScript).toContain('image: docker:dind')
     expect(froussardDeployScript).not.toContain("from '../shared/docker'")
     expect(froussardDeployScript).not.toContain('buildAndPushDockerImage')
     expect(froussardDeployScript).not.toContain('inspectImageDigest')
@@ -1582,12 +1573,13 @@ describe('native OCI build workflows', () => {
     expect(torghutTaBuildScript).toContain("buildTorghutImage('ta'")
     expect(torghutHyperliquidFeedBuildScript).toContain("from './image-builders'")
     expect(torghutHyperliquidFeedBuildScript).toContain("buildTorghutImage('hyperliquid-feed'")
+    expect(torghutDeployScript).toContain('deploy:torghut has been retired')
     expect(torghutDeployScript).not.toContain("from '../shared/docker'")
     expect(torghutDeployScript).not.toContain('buildAndPushDockerImage')
     expect(torghutDeployScript).not.toContain("from '../shared/nix-oci-deploy'")
-    expect(torghutDeployScript).toContain("from './build-image'")
-    expect(torghutDeployScript).toContain("from './build-ws-image'")
-    expect(torghutDeployScript).toContain("from './build-ta-image'")
+    expect(torghutDeployScript).not.toContain("from './build-image'")
+    expect(torghutDeployScript).not.toContain("from './build-ws-image'")
+    expect(torghutDeployScript).not.toContain("from './build-ta-image'")
     expect(torghutTaDeployScript).not.toContain("from '../shared/docker'")
     expect(torghutTaDeployScript).not.toContain('buildAndPushDockerImage')
     expect(torghutTaDeployScript).not.toContain("from '../shared/nix-oci-deploy'")

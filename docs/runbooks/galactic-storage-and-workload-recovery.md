@@ -122,22 +122,18 @@ transition.
 
 ### Authorized BMC power cycle
 
-The expected workstation path is an already signed-in 1Password CLI session. Do not put the password in an argument,
-file, repository, chat, or shell trace. Do not repeat `op signin` after the session is already authenticated. If `op`
-returns an authentication error, stop and report that concrete error.
+The workstation already has the operator-provisioned credential file
+`~/.config/lab-secrets/turin-bmc.json`. Use the
+[Turin credential helper](../../devices/turin/docs/bmc-fan-bringup.md#credential-handling),
+which reads that existing source and passes the password through `IPMI_PASSWORD`.
+Keep the file at mode `0600` and its directory at mode `0700`. This procedure
+does not create another credential copy or change the account, target, or
+permissions. Keep the password out of arguments, repositories, chat, and shell
+traces. Stop on authentication failure.
 
 ```bash
-set +x
-TURIN_BMC_ITEM='<exact Turin BMC item name or ID>'
-TURIN_BMC_USER="$(op item get "$TURIN_BMC_ITEM" --fields label=username)"
-
-IPMI_PASSWORD="$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
-  ipmitool -I lanplus -H "$TURIN_BMC_HOST" -U "$TURIN_BMC_USER" -E chassis power status
-
-IPMI_PASSWORD="$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
-  ipmitool -I lanplus -H "$TURIN_BMC_HOST" -U "$TURIN_BMC_USER" -E chassis power cycle
-
-unset TURIN_BMC_ITEM TURIN_BMC_USER
+turin_ipmi chassis power status
+turin_ipmi chassis power cycle
 ```
 
 The power command requires explicit authorization. The read-only credential retrieval does not authorize another power
@@ -191,6 +187,53 @@ Required availability gate before restoring clients:
 `HEALTH_WARN` can coexist with available data. Report the exact warning, PG state, misplaced/degraded percentage, client
 latency, and recovery direction. Do not turn `Synced/Degraded` into `Healthy` by clearing a warning or increasing its
 lifetime.
+
+### Scrub progress during recovery
+
+[`cluster-values.yaml`](../../argocd/applications/rook-ceph/cluster-values.yaml) allows new scrubs during recovery with
+`osd_scrub_during_recovery: "true"`. The built-in `high_client_ops` profile retains capacity for
+background best effort. Scrub shares the last class with backfill, snap trimming, and PG deletion. `osd_max_scrubs`
+allows one local scrub reservation and one remote reservation per OSD. Scrubs can start throughout the day and week.
+The former three-reservation catch-up setting adds concurrent scans on the same HDDs that serve synchronous database
+WAL. Keep concurrency bounded while retaining periodic integrity checks, recovery-time scrubs, and debt alerts.
+
+A PG marked `scrubbing` can still wait for a replica reservation. Inspect `scrub_schedule` in `ceph pg dump pgs -f json`
+and `ceph tell osd.<id> dump_scrub_reservations -f json` to distinguish scans from reservation waits. After a concurrency
+change, require `osd_max_scrubs: 1` and `remote_scrub_reservations.max_allowed: 1` from every running OSD. This setting
+updates at runtime and does not require OSD restarts.
+
+Roll out a reviewed, merged values change through the existing Rook Argo application. This option updates at runtime;
+do not restart OSDs or change the OSD rollout annotation for it. Check effective settings and reservation limits on every OSD:
+
+```bash
+set -euo pipefail
+for osd in 0 1 2 3 4 5; do
+  printf 'osd.%s\n' "$osd"
+  kubectl --context galactic-lan -n rook-ceph exec deployment/rook-ceph-tools -c rook-ceph-tools -- \
+    ceph tell "osd.$osd" config get osd_scrub_during_recovery -f json \
+    | jq -e '.osd_scrub_during_recovery == "true"'
+  kubectl --context galactic-lan -n rook-ceph exec deployment/rook-ceph-tools -c rook-ceph-tools -- \
+    ceph tell "osd.$osd" config get osd_max_scrubs -f json \
+    | jq -e '.osd_max_scrubs == "1"'
+  kubectl --context galactic-lan -n rook-ceph exec deployment/rook-ceph-tools -c rook-ceph-tools -- \
+    ceph tell "osd.$osd" dump_scrub_reservations -f json \
+    | jq -e '.osd_max_scrubs == 1 and .remote_scrub_reservations.max_allowed == 1'
+done
+```
+
+Require all three checks to return `true` for each of the six running OSDs before accepting activation. A stale or missing
+value fails the command. The monitor config store alone is insufficient.
+
+Compare scrub completion timestamps with `ceph pg dump pgs -f json`, OSD commit latency with `ceph osd perf`, and
+affected application latency before and after an authorized rollout. More scrub concurrency adds HDD contention;
+an active scrub alone does not prove that debt is shrinking. Lowering the limit lets existing scrubs finish; wait for their
+reservations to drain before comparing steady-state windows. Compare WAL fsync deltas, synchronous replication waits,
+and application deadline failures alongside scrub completion counts. Fewer concurrent scrubs alone do not prove that
+database latency or trading has recovered. If the lower limit causes unacceptable scrub debt without an application
+benefit, restore `osd_max_scrubs` to `"3"` through a reviewed GitOps change. If scrubs during recovery cause a regression,
+revert `osd_scrub_during_recovery` to `"false"` through GitOps. Existing scrubs finish, while recovery blocks new periodic
+scrubs. Keep scrub intervals and warnings enabled. See
+[Ceph's scrub configuration](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#osd-max-scrubs).
 
 ## Phase 4: Repair An Exact RBD Filesystem
 

@@ -17,12 +17,15 @@ targets:
   landing:
     kind: validation
     paths:
+      - services/ofz/**
+      - proto/proompteng/authz/**
       - apps/landing/**
       - packages/backend/**
       - packages/design/**
       - services/nanoagent/**
       - services/tengri/**
       - .github/workflows/tengri.yaml
+      - .github/scripts/install-tengri-chromium.mjs
 
   app:
     kind: validation
@@ -63,12 +66,29 @@ targets:
     kind: validation
     paths:
       - .github/ci/impact-map.yml
+      - .github/ci/root-script-map.yml
       - .github/workflows/pull-request.yml
       - .github/workflows/hermes-agent-mirror.yml
       - .github/workflows/forgejo-image-publish.yml
       - argocd/applications/forgejo/upstream-image.json
       - argocd/applications/hermes/**
+      - argocd/applications/kargo/stages.yaml
       - argocd/applications/kube-router/**
+      - argocd/applications/buzz/networkpolicy.yaml
+      - argocd/applications/clickhouse-upgrade-acceptance/preparation.yaml
+      - argocd/applications/observability/grafana-upgrade-backup.yaml
+      - argocd/applications/postgres-upgrade-acceptance/base/preparation.yaml
+      - argocd/applications/postgres-upgrade-acceptance/base/recovery.yaml
+      - argocd/applications/postgres-upgrade-acceptance/base/three-source-recovery.yaml
+      - argocd/applications/proompteng/network-policy.yaml
+      - argocd/applications/restate/networkpolicy.yaml
+      - argocd/applications/restate-example/networkpolicy.yaml
+      - argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-4112-v3-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-509-backup.yaml
+      - argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml
       - argocd/applications/temporal/upgrade/**
       - argocd/applications/tengri/network-policies.yaml
       - argocd/applications/observability/cluster-metrics-alloy-config.river
@@ -79,6 +99,27 @@ targets:
       - docs/runbooks/hermes-production-rollout.md
       - docs/runbooks/kube-router-network-policy-rollout.md
       - scripts/**
+      - packages/scripts/src/ci/impact-router.ts
+      - packages/scripts/src/ci/__tests__/impact-router.test.ts
+      - argocd/applications/flamingo/**
+      - argocd/applications/agents/anypi*agentprovider.yaml
+      - argocd/applications/agents/values.yaml
+      - argocd/applications/bumba/deployment.yaml
+      - argocd/applications/jangar/deployment.yaml
+      - argocd/applications/jangar/openwebui-values.yaml
+      - argocd/applications/kubevirt/kustomization.yaml
+      - argocd/applications/saigak/**
+      - services/anypi/src/config*.ts
+      - services/bumba/src/activities/index.ts
+      - docs/agents/anypi.md
+      - docs/jangar/*flamingo*.md
+      - argocd/applications/openclaw/**
+      - .github/workflows/hermes-*.yml
+      - argocd/applications/clickhouse-upgrade-acceptance/**
+      - argocd/applications/postgres-upgrade-acceptance/**
+      - argocd/applications/*/postgres-upgrade-backup.yaml
+      - argocd/applications/*/postgres-cluster.yaml
+      - argocd/applications/coder/coder-cluster.yaml
 
   sag:
     kind: validation
@@ -120,6 +161,9 @@ targets:
   kubeconform:
     kind: validation
     paths:
+      - .github/workflows/pull-request.yml
+      - services/ofz/test-ha-manifests.sh
+      - services/ofz/tests/ha_manifests.py
       - scripts/cluster-upgrades/temporal_*.py
       - argocd/**/*.yaml
       - argocd/**/*.yml
@@ -361,6 +405,7 @@ targets:
     workflow: dorvud-ci
     paths:
       - services/dorvud/**
+      - services/bayn/src/market-data/features/fixtures/**
 
   otel:
     kind: delegated

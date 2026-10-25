@@ -1,5 +1,5 @@
 import { Clock, Context, Data, Duration, Effect, Layer, pipe } from 'effect'
-import { HttpClient } from 'effect/unstable/http'
+import { HttpClient } from 'effect/http'
 
 import type { BrokerConnection } from '../connection'
 import { BrokerReadError } from './failures'
@@ -7,7 +7,9 @@ import { alpacaHttpLayer, make } from './http'
 import { BrokerRead, type BrokerReadShape, type ReadPreflight } from './model'
 import { BrokerAccountPreflightError, verifyReadAccess } from './preflight'
 import { mapLayerAcquisitionError } from '../../resource-boundary'
-import { Pipeable } from '../../pipeable'
+
+import { makeProjectedBrokerRead } from './snapshot-cache'
+import { BrokerObservations } from './observed-snapshot'
 
 export enum BrokerSessionAcquisitionStage {
   Connection = 'CONNECTION',
@@ -55,6 +57,7 @@ const acquisitionStage = (cause: BrokerReadError | BrokerAccountPreflightError):
     case 'order-by-id':
     case 'order-by-client-id':
     case 'fill-activities':
+    case 'fee-activities':
     case 'asset-by-symbol':
     case 'market-calendar':
       return BrokerSessionAcquisitionStage.ReadSurface
@@ -77,7 +80,7 @@ const acquisitionError = (
 const isRetryableBrokerSessionAcquisition = (error: BrokerSessionAcquisitionError): boolean =>
   error.cause instanceof BrokerReadError && error.cause.retryable
 
-const retryRecoverableBrokerSessionAcquisitionDataFirst = <A, R>(
+export const retryRecoverableBrokerSessionAcquisition = <A, R>(
   connection: BrokerConnection,
   effect: Effect.Effect<A, BrokerSessionAcquisitionError, R>,
 ): Effect.Effect<A, BrokerSessionAcquisitionError, R> =>
@@ -104,13 +107,6 @@ const retryRecoverableBrokerSessionAcquisitionDataFirst = <A, R>(
       )
     return yield* attempt(connection.retryAttempts)
   })
-
-export const retryRecoverableBrokerSessionAcquisition = Pipeable.generic<
-  <A, R>(
-    effect: Effect.Effect<A, BrokerSessionAcquisitionError, R>,
-  ) => (connection: BrokerConnection) => Effect.Effect<A, BrokerSessionAcquisitionError, R>,
-  typeof retryRecoverableBrokerSessionAcquisitionDataFirst
->(2, retryRecoverableBrokerSessionAcquisitionDataFirst)
 
 export const acquireBrokerSession = (
   connection: BrokerConnection,
@@ -141,15 +137,34 @@ export const layer = (
   ).pipe(Layer.provideMerge(session))
 }
 
-const mapHttpAcquisitionErrorDataFirst = (
+export const cachedLayer = (
+  connection: BrokerConnection,
+): Layer.Layer<
+  BrokerSession | BrokerRead,
+  BrokerSessionAcquisitionError,
+  HttpClient.HttpClient | BrokerObservations
+> => {
+  const session = Layer.effect(
+    BrokerSession,
+    Effect.gen(function* () {
+      const verified = yield* acquireBrokerSession(connection)
+      const read = yield* makeProjectedBrokerRead(verified.read)
+      return Object.freeze({ ...verified, read })
+    }),
+  )
+  return Layer.effect(
+    BrokerRead,
+    Effect.map(BrokerSession, (value) => value.read),
+  ).pipe(Layer.provideMerge(session))
+}
+
+export const mapHttpAcquisitionError = (
   connection: BrokerConnection,
   http: Layer.Layer<HttpClient.HttpClient, BrokerReadError>,
 ): Layer.Layer<HttpClient.HttpClient, BrokerSessionAcquisitionError> =>
   mapLayerAcquisitionError(http, (cause) => acquisitionError(connection, cause))
 
-export const mapHttpAcquisitionError = Pipeable.dual(2, mapHttpAcquisitionErrorDataFirst)
-
 export const live = (
   connection: BrokerConnection,
-): Layer.Layer<BrokerSession | BrokerRead, BrokerSessionAcquisitionError> =>
-  layer(connection).pipe(Layer.provide(mapHttpAcquisitionError(connection, alpacaHttpLayer(connection))))
+): Layer.Layer<BrokerSession | BrokerRead, BrokerSessionAcquisitionError, BrokerObservations> =>
+  cachedLayer(connection).pipe(Layer.provide(mapHttpAcquisitionError(connection, alpacaHttpLayer(connection))))

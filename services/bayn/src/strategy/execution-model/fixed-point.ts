@@ -3,13 +3,14 @@ import { Result, pipe } from 'effect'
 import type { ExecutionModel } from '../../execution-model-contract'
 import { roundUnsignedHalfUp } from '../../unsigned-round-half-up'
 import { MICROS, WEIGHT_SCALE, type ExecutionModelFailure } from './model'
-import { Pipeable } from '../../pipeable'
+
+import { quantityScale } from '../../quantity'
 
 export type ExecutionResult<A> = Result.Result<A, ExecutionModelFailure>
 
 export const fail = <A>(failure: ExecutionModelFailure): ExecutionResult<A> => Result.fail(failure)
 
-const ensureUnsignedDataFirst = (value: string, field: string, minimum = 0n): ExecutionResult<bigint> => {
+export const ensureUnsigned = (value: string, field: string, minimum = 0n): ExecutionResult<bigint> => {
   if (!/^[0-9]+$/.test(value)) {
     return fail({ _tag: 'InvalidUnsignedInteger', field, value, minimum })
   }
@@ -17,12 +18,7 @@ const ensureUnsignedDataFirst = (value: string, field: string, minimum = 0n): Ex
   return parsed < minimum ? fail({ _tag: 'InvalidUnsignedInteger', field, value, minimum }) : Result.succeed(parsed)
 }
 
-export const ensureUnsigned = Pipeable.by<
-  (field: string, minimum?: bigint) => (value: string) => ExecutionResult<bigint>,
-  typeof ensureUnsignedDataFirst
->((arguments_) => typeof arguments_[1] === 'string', ensureUnsignedDataFirst)
-
-const scaledNumberDataFirst = (value: number, field: string, scale = Number(MICROS)): ExecutionResult<bigint> => {
+export const scaledNumber = (value: number, field: string, scale = Number(MICROS)): ExecutionResult<bigint> => {
   if (!Number.isFinite(value)) {
     return fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'not-finite' })
   }
@@ -37,24 +33,7 @@ const scaledNumberDataFirst = (value: number, field: string, scale = Number(MICR
     : Result.succeed(BigInt(rounded))
 }
 
-export const scaledNumber = Pipeable.by<
-  (field: string, scale?: number) => (value: number) => ReturnType<typeof scaledNumberDataFirst>,
-  typeof scaledNumberDataFirst
->((arguments_) => typeof arguments_[0] === 'number', scaledNumberDataFirst)
-
-const integerNumberDataFirst = (
-  value: number,
-  field: string,
-  minimum: number,
-  maximum: number,
-): ExecutionResult<bigint> =>
-  Number.isSafeInteger(value) && value >= minimum && value <= maximum
-    ? Result.succeed(BigInt(value))
-    : fail({ _tag: 'InvalidIntegerNumber', field, value, minimum, maximum })
-
-export const integerNumber = Pipeable.dual(4, integerNumberDataFirst)
-
-const ceilDivDataFirst = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> => {
+export const ceilDiv = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> => {
   if (numerator < 0n || denominator <= 0n) {
     return fail({
       _tag: 'InvalidCeilingDivision',
@@ -67,14 +46,10 @@ const ceilDivDataFirst = (numerator: bigint, denominator: bigint): ExecutionResu
   return Result.succeed(numerator === 0n ? 0n : (numerator - 1n) / denominator + 1n)
 }
 
-export const ceilDiv = Pipeable.dual(2, ceilDivDataFirst)
-
-const roundDivDataFirst = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> =>
+export const roundDiv = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> =>
   roundUnsignedHalfUp(numerator, denominator)
 
-export const roundDiv = Pipeable.dual(2, roundDivDataFirst)
-
-const quantizeDownDataFirst = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
+export const quantizeDown = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
   value < 0n || increment <= 0n
     ? fail({
         _tag: 'InvalidQuantization',
@@ -86,25 +61,18 @@ const quantizeDownDataFirst = (value: bigint, increment: bigint): ExecutionResul
       })
     : Result.succeed((value / increment) * increment)
 
-export const quantizeDown = Pipeable.dual(2, quantizeDownDataFirst)
-
-const quantizeUpDataFirst = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
-  pipe(
-    ceilDiv(value, increment),
-    Result.map((quotient) => quotient * increment),
+export const priceNumberToMicros = (
+  value: number,
+  field = 'price',
+  rounding: 'UP' | 'DOWN' | 'NEAREST' = 'NEAREST',
+): ExecutionResult<bigint> =>
+  scaledNumber(value, field, 1_000_000_000).pipe(
+    Result.map((atoms) =>
+      rounding === 'UP' ? (atoms + 999n) / 1000n : rounding === 'DOWN' ? atoms / 1000n : (atoms + 500n) / 1000n,
+    ),
   )
 
-export const quantizeUp = Pipeable.dual(2, quantizeUpDataFirst)
-
-const quantizeNearestDataFirst = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
-  pipe(
-    roundDiv(value, increment),
-    Result.map((quotient) => quotient * increment),
-  )
-
-export const quantizeNearest = Pipeable.dual(2, quantizeNearestDataFirst)
-
-const numberToMicrosDataFirst = (value: number, field = 'value'): ExecutionResult<bigint> => {
+export const numberToMicros = (value: number, field = 'value'): ExecutionResult<bigint> => {
   const scale = Number(MICROS)
   if (!Number.isFinite(value)) {
     return fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'not-finite' })
@@ -118,14 +86,13 @@ const numberToMicrosDataFirst = (value: number, field = 'value'): ExecutionResul
     : fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'precision-exceeded' })
 }
 
-export const numberToMicros = Pipeable.by<
-  (field?: string) => (value: number) => ReturnType<typeof numberToMicrosDataFirst>,
-  typeof numberToMicrosDataFirst
->((arguments_) => typeof arguments_[0] === 'number', numberToMicrosDataFirst)
+const quantizeNearest = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
+  pipe(
+    roundDiv(value, increment),
+    Result.map((quotient) => quotient * increment),
+  )
 
-export const microsToNumber = (value: bigint): number => Number(value) / Number(MICROS)
-
-const referencePriceMicrosDataFirst = (price: number, model: ExecutionModel): ExecutionResult<bigint> => {
+export const referencePriceMicros = (price: number, model: ExecutionModel): ExecutionResult<bigint> => {
   if (!Number.isFinite(price) || price <= 0) {
     return fail({ _tag: 'InvalidReferencePrice', price, reason: 'not-positive' })
   }
@@ -143,14 +110,10 @@ const referencePriceMicrosDataFirst = (price: number, model: ExecutionModel): Ex
   )
 }
 
-export const referencePriceMicros = Pipeable.dual(2, referencePriceMicrosDataFirst)
+export const notionalMicros = (quantityAtoms: bigint, priceMicros: bigint): ExecutionResult<bigint> =>
+  roundDiv(quantityAtoms * priceMicros, quantityScale)
 
-const notionalMicrosDataFirst = (quantityMicros: bigint, priceMicros: bigint): ExecutionResult<bigint> =>
-  roundDiv(quantityMicros * priceMicros, MICROS)
-
-export const notionalMicros = Pipeable.dual(2, notionalMicrosDataFirst)
-
-const desiredQuantityMicrosDataFirst = (
+export const desiredQuantityAtoms = (
   equityMicros: bigint,
   weight: number,
   priceMicros: bigint,
@@ -178,14 +141,12 @@ const desiredQuantityMicrosDataFirst = (
         })
       }
       return pipe(
-        ensureUnsigned(model.precision.quantityIncrementMicros, 'quantity increment', 1n),
+        ensureUnsigned(model.precision.quantityIncrementAtoms, 'quantity increment', 1n),
         Result.flatMap((increment) => {
-          const raw = (equityMicros * weightUnits * MICROS) / (WEIGHT_SCALE * priceMicros)
+          const raw = (equityMicros * weightUnits * quantityScale) / (WEIGHT_SCALE * priceMicros)
           return quantizeDown(raw, increment)
         }),
       )
     }),
   )
 }
-
-export const desiredQuantityMicros = Pipeable.dual(4, desiredQuantityMicrosDataFirst)

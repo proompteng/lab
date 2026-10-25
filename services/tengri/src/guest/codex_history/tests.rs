@@ -1,53 +1,42 @@
+use futures::TryStreamExt;
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
 };
 
-use axum::{Json, Router, http::StatusCode, routing::post};
+use crate::guest::rpc::{
+    proto,
+    test_server::{TestServer, TestService},
+};
+use reqwest::StatusCode;
 
 use super::*;
 
 struct Fixture {
     client: GuestClient,
     requests: Arc<Mutex<Vec<Value>>>,
-    server: tokio::task::JoinHandle<()>,
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        self.server.abort();
-    }
+    _server: TestServer,
 }
 
 async fn fixture(replies: Vec<(StatusCode, Value)>) -> Fixture {
     let replies = Arc::new(Mutex::new(VecDeque::from(replies)));
     let requests = Arc::new(Mutex::new(Vec::new()));
     let recorded = requests.clone();
-    let router = Router::new().route(
-        "/v1/codex/call",
-        post(move |Json(request): Json<Value>| {
-            recorded.lock().unwrap().push(request);
-            let reply = replies
-                .lock()
-                .unwrap()
-                .pop_front()
-                .expect("unexpected Codex call");
-            async move { (reply.0, Json(reply.1)) }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
+    let server = TestServer::start(TestService {
+        codex_call: Some(Arc::new(move |request| {
+            let request = request.into_inner();
+            recorded.lock().unwrap().push(json!({"method": request.method, "params": serde_json::from_slice::<Value>(&request.params_json).unwrap()}));
+            let (status, reply) = replies.lock().unwrap().pop_front().expect("unexpected Codex call");
+            if status != StatusCode::OK {
+                return Err(if status == StatusCode::NOT_FOUND { tonic::Status::not_found(reply.to_string()) } else { tonic::Status::unavailable(reply.to_string()) });
+            }
+            Ok(proto::CodexResult { result_json: serde_json::to_vec(&reply["result"]).unwrap(), event_sequence: reply["eventSequence"].as_u64().unwrap() })
+        })), ..Default::default()
+    }).await;
     Fixture {
-        client: GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            token: "fixture-token".into(),
-        },
+        client: server.guest.clone(),
         requests,
-        server,
+        _server: server,
     }
 }
 
@@ -108,37 +97,41 @@ async fn loads_all_pages_and_preserves_each_items_snapshot_cursor() {
         ),
     ])
     .await;
-    let snapshot = fixture
+    let mut history = fixture
         .client
-        .resume_codex_thread("thread-one")
+        .resume_codex_thread(
+            "thread-one",
+            &CodexOptions::parse("gpt-6.1-sol".into(), "high".into()).unwrap(),
+        )
         .await
         .unwrap();
-    assert_eq!(snapshot.event_sequence, 10);
+    let pages = history.by_ref().try_collect::<Vec<_>>().await.unwrap();
+    assert_eq!(pages.len(), 5);
+    assert_eq!(pages[0].part, CodexHistoryPart::Thread);
+    assert_eq!(pages[0].snapshot.event_sequence, 10);
+    assert_eq!(pages[0].snapshot.result["model"], "fixture-model");
+    assert_eq!(pages[1].part, CodexHistoryPart::Items);
+    assert_eq!(pages[1].snapshot.event_sequence, 20);
     assert_eq!(
-        snapshot.item_event_sequences,
-        HashMap::from([("item-one".into(), 20), ("item-two".into(), 30)])
-    );
-    assert_eq!(
-        snapshot.result["thread"]["turns"][0]["items"][0]["text"],
+        pages[1].snapshot.result["data"][0]["item"]["text"],
         "First page"
     );
+    assert_eq!(pages[2].snapshot.event_sequence, 30);
     assert_eq!(
-        snapshot.result["thread"]["turns"][1]["items"][0]["text"],
+        pages[2].snapshot.result["data"][0]["item"]["text"],
         "Second page"
     );
-    assert_eq!(snapshot.result["thread"]["turns"][2]["items"], json!([]));
-    assert_eq!(
-        snapshot.result["thread"]["turns"][2]["status"],
-        "inProgress"
-    );
-    assert_eq!(snapshot.result["model"], "fixture-model");
+    assert_eq!(pages[4].part, CodexHistoryPart::Turns);
+    assert_eq!(pages[4].snapshot.result["data"][1]["items"], json!([]));
+    assert_eq!(pages[4].snapshot.result["data"][1]["status"], "inProgress");
     let requests = fixture.requests.lock().unwrap();
     assert_eq!(requests.len(), 5);
     assert_eq!(
         requests[0],
         json!({"method":"thread/resume", "params": {
             "threadId":"thread-one", "cwd":"/workspace", "runtimeWorkspaceRoots":["/workspace"],
-            "approvalPolicy":"on-request", "sandbox":"danger-full-access", "excludeTurns":true
+            "approvalPolicy":"on-request", "sandbox":"danger-full-access", "excludeTurns":true,
+            "model":"gpt-6.1-sol", "config":{"model_reasoning_effort":"high"}
         }})
     );
     assert_eq!(
@@ -168,19 +161,23 @@ async fn legacy_threads_keep_the_atomic_full_snapshot_contract() {
         reply(20, legacy.clone()),
     ])
     .await;
-    let snapshot = fixture
+    let mut history = fixture
         .client
-        .resume_codex_thread("thread-one")
+        .resume_codex_thread("thread-one", &CodexOptions::default())
         .await
         .unwrap();
-    assert_eq!(snapshot.result, legacy);
-    assert_eq!(snapshot.event_sequence, 20);
-    assert!(snapshot.item_event_sequences.is_empty());
+    let page = history.next().await.unwrap().unwrap();
+    assert_eq!(page.part, CodexHistoryPart::Thread);
+    assert_eq!(page.snapshot.result, legacy);
+    assert_eq!(page.snapshot.event_sequence, 20);
+    assert!(history.next().await.is_none());
     let requests = fixture.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["params"]["excludeTurns"], true);
+    assert_eq!(requests[0]["params"]["model"], Value::Null);
     assert_eq!(requests[1]["method"], "thread/resume");
     assert_eq!(requests[1]["params"]["excludeTurns"], false);
+    assert_eq!(requests[1]["params"]["model"], Value::Null);
 }
 
 #[tokio::test]
@@ -231,7 +228,10 @@ async fn rejects_broken_page_contracts_without_returning_partial_history() {
         assert!(
             fixture
                 .client
-                .resume_codex_thread("thread-one")
+                .resume_codex_thread("thread-one", &CodexOptions::default())
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
                 .await
                 .is_err()
         );
@@ -249,7 +249,13 @@ async fn propagates_upstream_failure_and_does_not_fall_back_to_deprecated_hydrat
     ])
     .await;
     assert!(matches!(
-        fixture.client.resume_codex_thread("thread-one").await,
+        fixture
+            .client
+            .resume_codex_thread("thread-one", &CodexOptions::default())
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await,
         Err(GuestError::Api {
             status: StatusCode::SERVICE_UNAVAILABLE,
             ..
@@ -259,18 +265,36 @@ async fn propagates_upstream_failure_and_does_not_fall_back_to_deprecated_hydrat
 }
 
 #[tokio::test]
-async fn bounds_total_history_even_when_individual_pages_are_within_limits() {
+async fn restores_history_larger_than_one_message_when_each_page_is_bounded() {
     let text = "x".repeat(MAX_GUEST_JSON_BYTES / 2 + 1);
     let fixture = fixture(vec![
         reply(10, resumed("paginated")),
         reply(20, page(json!([item("one", "one", &text)]), json!("next"))),
         reply(21, page(json!([item("one", "two", &text)]), Value::Null)),
+        reply(22, page(json!([turn("one", "completed")]), Value::Null)),
     ])
     .await;
-    assert!(matches!(
-        fixture.client.resume_codex_thread("thread-one").await,
-        Err(GuestError::ResponseTooLarge(MAX_GUEST_JSON_BYTES))
+    let pages = fixture
+        .client
+        .resume_codex_thread("thread-one", &CodexOptions::default())
+        .await
+        .unwrap()
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap();
+    assert_eq!(pages.len(), 4);
+    assert!(pages.iter().all(
+        |page| serde_json::to_vec(&page.snapshot.result).unwrap().len() <= MAX_GUEST_JSON_BYTES
     ));
+    assert!(
+        pages
+            .iter()
+            .map(|page| serde_json::to_vec(&page.snapshot.result).unwrap().len())
+            .sum::<usize>()
+            > MAX_GUEST_JSON_BYTES
+    );
+    assert_eq!(pages[1].snapshot.result["data"][0]["item"]["id"], "one");
+    assert_eq!(pages[2].snapshot.result["data"][0]["item"]["id"], "two");
 }
 
 #[tokio::test]
@@ -281,9 +305,83 @@ async fn rejects_mismatched_thread_identity_and_unknown_history_mode() {
         }
         let fixture = fixture(vec![reply(10, response)]).await;
         assert!(matches!(
-            fixture.client.resume_codex_thread("thread-one").await,
+            fixture
+                .client
+                .resume_codex_thread("thread-one", &CodexOptions::default())
+                .await,
             Err(GuestError::InvalidCodexHistory(_))
         ));
         assert_eq!(fixture.requests.lock().unwrap().len(), 1);
     }
+}
+
+#[tokio::test]
+async fn does_not_fetch_history_ahead_of_the_reader_and_stops_on_drop() {
+    let fixture = fixture(vec![
+        reply(10, resumed("paginated")),
+        reply(20, page(json!([item("one", "one", "page")]), Value::Null)),
+        reply(21, page(json!([turn("one", "completed")]), Value::Null)),
+    ])
+    .await;
+    let mut history = fixture
+        .client
+        .resume_codex_thread("thread-one", &CodexOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+    assert_eq!(
+        history.next().await.unwrap().unwrap().part,
+        CodexHistoryPart::Thread
+    );
+    assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+    assert_eq!(
+        history.next().await.unwrap().unwrap().part,
+        CodexHistoryPart::Items
+    );
+    assert_eq!(fixture.requests.lock().unwrap().len(), 2);
+    drop(history);
+    tokio::task::yield_now().await;
+    assert_eq!(fixture.requests.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn bounds_aggregate_history_bytes_for_individually_valid_utf8_pages() {
+    let response = CodexCallResult {
+        result: json!({"text": "🌍".repeat(1024 * 1024)}),
+        event_sequence: 1,
+    };
+    assert!(serde_json::to_vec(&response.result).unwrap().len() < MAX_GUEST_JSON_BYTES);
+    let mut budget = HistoryBudget::default();
+    for _ in 0..15 {
+        budget.include(&response).unwrap();
+    }
+    assert!(matches!(
+        budget.include(&response),
+        Err(GuestError::ResponseTooLarge(limit)) if limit == 64 * 1024 * 1024
+    ));
+}
+
+#[test]
+fn bounds_each_history_page_and_the_number_of_pages() {
+    let mut budget = HistoryBudget::default();
+    let response = CodexCallResult {
+        result: json!({"text": "x".repeat(MAX_GUEST_JSON_BYTES)}),
+        event_sequence: 1,
+    };
+    assert!(matches!(
+        budget.include(&response),
+        Err(GuestError::ResponseTooLarge(MAX_GUEST_JSON_BYTES))
+    ));
+    let mut budget = HistoryBudget::default();
+    let response = CodexCallResult {
+        result: json!({}),
+        event_sequence: 1,
+    };
+    for _ in 0..MAX_HISTORY_PAGES {
+        budget.include(&response).unwrap();
+    }
+    assert!(matches!(
+        budget.include(&response),
+        Err(GuestError::InvalidCodexHistory("too many history pages"))
+    ));
 }

@@ -1,19 +1,13 @@
 # 116. Jangar Controller Witness Quorum And Capital Activation Receipts (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-06
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane controller authority, action SLO provenance, Torghut capital activation, rollout widening,
 and proof-repair admission.
 
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/120-torghut-capital-activation-receipts-and-shadow-profit-proof-queue-2026-05-06.md`
-
 Extends:
 
-- `114-jangar-evidence-transport-ledger-and-watch-restart-circuit-breakers-2026-05-06.md`
-- `113-jangar-contradiction-settlement-and-profit-repair-auction-2026-05-06.md`
 - `111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md`
 
 ## Decision

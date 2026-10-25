@@ -37,10 +37,28 @@ export type IsoDate = typeof IsoDateSchema.Type
 export const UtcInstantSchema = Schema.String.check(
   Schema.makeFilter(isUtcInstant, { expected: 'a canonical UTC instant (YYYY-MM-DDTHH:mm:ss.sssZ)' }),
 )
+/** PostgreSQL identity timestamps retain microseconds; exact millisecond values keep their historical encoding. */
+export const UtcDatabaseInstantSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) =>
+      isUtcInstant(value) ||
+      (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value) && isUtcInstant(`${value.slice(0, 23)}Z`)),
+    { expected: 'a valid UTC database instant with three or six fractional digits' },
+  ),
+)
 export const UtcOrderTimestampSchema = Schema.String.check(
   Schema.makeFilter(isUtcOrderTimestamp, {
     expected: 'a canonical UTC ordering timestamp (YYYY-MM-DDTHH:mm:ss.nnnnnnnnnZ)',
   }),
+)
+export const UtcSourceTimestampSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) => {
+      const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/.exec(value)
+      return match !== null && isUtcOrderTimestamp(`${match[1]}.${(match[2] ?? '').padEnd(9, '0')}Z`)
+    },
+    { expected: 'a valid UTC source timestamp with up to nine fractional digits' },
+  ),
 )
 export const Sha256Schema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
 export const ImageDigestSchema = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))
@@ -48,7 +66,7 @@ export const ImageRepositorySchema = Schema.String.check(Schema.isPattern(/^[a-z
 export const SourceRevisionSchema = Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/))
 export const GitSourceRevisionSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/))
 export const UniverseIdSchema = Schema.Literal('cross-asset-taa-v1')
-export const SymbolSchema = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
+export { InstrumentSymbolSchema as SymbolSchema } from './instruments'
 // The upstream Signal row contract historically accepts one fewer trailing character than Bayn's domain contract.
 export const SignalRowSymbolSchema = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,14}$/))
 export const PositiveIntegerSchema = Schema.Int.check(Schema.isGreaterThan(0))

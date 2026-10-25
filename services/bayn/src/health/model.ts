@@ -1,13 +1,13 @@
 import type { Effect } from 'effect'
 
-import type { BrokerReadShape } from '../broker/alpaca'
-import type { RuntimeConfig } from '../config'
+import type { BrokerReadShape } from '../broker/alpaca/model'
+import type { RuntimeConfig } from '../config/model'
 import type { CycleOperationsProjection } from '../cycle/observability'
-import type { CycleObservabilityShape } from '../cycle/store'
+import type { CycleObservabilityShape } from '../cycle/store/observability'
 import type { DatabaseError } from '../db/database-error'
 import type { ExecutionControllerStatus, ExecutionControllerStatusStoreShape } from '../execution/controller-status'
 import type { JournalService } from '../ledger'
-import type { IntradayMarketDataService } from '../market-data'
+import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import type { BrokerConfiguration, RuntimeHealth, RuntimeState } from '../runtime-state'
 import type { UtcEpochMillisFailure } from '../time'
 
@@ -26,7 +26,7 @@ export interface BrokerHealthObservation {
 
 export interface HealthProbeResults {
   readonly postgresql: ProbeResult<void>
-  readonly signal: ProbeResult<void>
+  readonly signal?: ProbeResult<void>
   readonly tigerBeetle: ProbeResult<void>
   readonly cycle: ProbeResult<CycleOperationsProjection>
   readonly broker: ProbeResult<BrokerHealthObservation> | null
@@ -39,7 +39,7 @@ export interface ExecutionControllerProbe {
 }
 
 export interface HealthDependencies {
-  readonly marketData: IntradayMarketDataService
+  readonly marketData?: Pick<IntradayMarketDataService, 'check'>
   readonly journal: JournalService
   readonly postgresql: Effect.Effect<void, DatabaseError>
   readonly cycleObservability: CycleObservabilityShape

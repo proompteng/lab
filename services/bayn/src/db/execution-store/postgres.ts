@@ -1,9 +1,11 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
+import { postgresWallClock, type DatabaseClock } from '../clock'
 
 import { WriterFence, WriterFenceError, type WriterFenceService } from '../../execution/writer-fence'
 import { Journal } from '../../ledger'
-import { makeReconciliation, restrictAuthority } from '../reconciliation'
+import { makeReconciliation, restrictAuthority, ReconciliationStoreError } from '../reconciliation'
+import { withObservedStage } from '../../telemetry'
 import { makeAccountingInterpreter } from './accounting'
 import { makeAuthorityPostgres } from './authority-shared'
 import { makeBrokerEventInterpreter } from './broker-events'
@@ -31,16 +33,17 @@ const fenceAuthorityMutation = <A>(
     ),
   )
 
-export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
+export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig, clock?: DatabaseClock) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
+    const time = clock ?? postgresWallClock(sql)
     const journal = yield* Journal
     const writerFence = yield* WriterFence
-    const events = makeBrokerEventInterpreter(sql)
-    const accounting = makeAccountingInterpreter(sql, journal, config, events)
-    const valuation = makeValuationInterpreter(sql)
-    const reconciliation = makeReconciliation(sql, journal, config)
-    const authorityPostgres = makeAuthorityPostgres(sql)
+    const events = makeBrokerEventInterpreter(sql, writerFence)
+    const accounting = makeAccountingInterpreter(sql, journal, config, events, writerFence)
+    const valuation = makeValuationInterpreter(sql, writerFence)
+    const reconciliation = makeReconciliation(sql, journal, config, writerFence, time)
+    const authorityPostgres = makeAuthorityPostgres(sql, time)
     const observeAuthority = makeObserveAuthorityInterpreter(sql, authorityPostgres, config.execution.brokerIdentity)
     const capitalGrant = makeCapitalGrantInterpreter(sql, authorityPostgres, config, writerFence)
 
@@ -49,8 +52,26 @@ export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
       accounting,
       valuation,
       reconciliation: {
+        retainCashReporting: (snapshot) =>
+          runExecutionOperation('reconciliation', reconciliation.retainCashReporting(snapshot)),
         bindings: (accountId) => runExecutionOperation('bindings', reconciliation.bindings(accountId)),
-        reconcile: (snapshot) => runExecutionOperation('reconciliation', reconciliation.reconcile(snapshot)),
+        reconcile: (accountId, snapshot) =>
+          reconciliation.reconcile(accountId, snapshot).pipe(
+            Effect.mapError((cause) =>
+              cause instanceof ReconciliationStoreError
+                ? executionStoreError({
+                    operation: 'reconciliation',
+                    failure: cause.failure,
+                    message: 'execution reconciliation operation failed',
+                    cause,
+                  })
+                : cause,
+            ),
+            withObservedStage('bayn.execution-store.operation', {
+              dependency: 'postgresql',
+              operation: 'reconciliation',
+            }),
+          ),
       },
       authorityGeneration: {
         ensureAuthorityGeneration: (input) =>

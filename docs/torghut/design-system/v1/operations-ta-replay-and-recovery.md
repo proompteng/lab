@@ -3,7 +3,7 @@
 ## Status
 
 - Version: `v1`
-- Last updated: **2026-02-08**
+- Last updated: **2026-10-11**
 - Source of truth (config): `argocd/applications/torghut/**`
 
 ## Purpose
@@ -36,6 +36,27 @@ Provide oncall operational procedures for recovering TA outputs when:
 - Delivery guarantee: `TA_KAFKA_DELIVERY_GUARANTEE` is set in `argocd/applications/torghut/ta/flinkdeployment.yaml` (currently `AT_LEAST_ONCE`).
 
 ## Quick architecture reminder
+
+The retained TA and archive jobs expose separate JobManager metrics targets. Mimir evaluates these alerts even
+outside market hours because streaming jobs must checkpoint while idle:
+
+| Alert                                     | Trigger                                                                      | First firing                      |
+| ----------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------- |
+| `TorghutSignalPipelineMetricsDown`        | Scrape is down or the expected target is absent                              | 5 minutes                         |
+| `TorghutSignalPipelineNotRunning`         | Metrics are reachable, but running-job count is zero or absent               | 2 minutes                         |
+| `TorghutSignalPipelineCheckpointsStalled` | A reachable, running job has a checkpoint over 3 minutes old, zero or absent | Condition sustained for 5 minutes |
+
+The rules retain pipeline identity and route critical notifications through the existing email receiver. Metrics-down
+incidents do not also page for missing job/checkpoint metrics. A failed job does not also page for missing checkpoints.
+Check the Flink REST `/jobs/overview` and `/jobs/<job-id>/checkpoints` endpoints; Kubernetes readiness proves only that
+the JobManager can respond. Verify Kafka output and Bayn consumption separately. At market close, no new provider
+events may arrive, but checkpoint completion must continue.
+
+Terminal-job recovery uses the existing Flink operator's `kubernetes.operator.job.restart.failed` setting. An
+application-driver startup failure may precede a new checkpoint; when a reviewed restart cannot recover, explicitly
+select the latest readable retained upgrade savepoint and increment `savepointRedeployNonce` through GitOps. Read its
+`_metadata` with the existing checkpoint identity and verify restored operator state plus new checkpoints. Never
+delete the FlinkDeployment, reset Kafka offsets or enable `allowNonRestoredState` to clear an incident.
 
 ```mermaid
 flowchart LR
@@ -110,7 +131,8 @@ This is a known production failure mode.
 
 ## Procedure B: ClickHouse replicas read-only (keeper metadata loss)
 
-See also `docs/torghut/ops-2026-01-01-ta-recovery.md` and `v1/operations-clickhouse-replica-and-keeper.md`.
+See also `docs/torghut/ops-2026-01-01-ta-recovery.md` and the current
+[Torghut GitOps and recovery runbook](../../../../argocd/applications/torghut/README.md).
 
 ### Steps (high level)
 

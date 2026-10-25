@@ -17,8 +17,8 @@ check_tool_version() {
 }
 
 check_tool_version node v24.11.1 "$toolchain_bin/node" --version
-check_tool_version bun 1.4.0 "$toolchain_bin/bun" --version
-check_tool_version bunx 1.4.0 "$toolchain_bin/bunx" --version
+check_tool_version bun 1.4.2 "$toolchain_bin/bun" --version
+check_tool_version bunx 1.4.2 "$toolchain_bin/bunx" --version
 check_tool_version go 'go version go1.25.5 linux/amd64' "$toolchain_bin/go" version
 check_tool_version helm v3.19.1 "$toolchain_bin/helm" version --template '{{.Version}}'
 check_tool_version jq jq-1.8.1 "$toolchain_bin/jq" --version
@@ -29,6 +29,7 @@ check_tool_version shellcheck 0.11.0 printf '%s' "$shellcheck_version"
 yq_version=$("$toolchain_bin/yq" --version | sed 's/^.* version //')
 check_tool_version yq v4.49.2 printf '%s' "$yq_version"
 unset shellcheck_version yq_version
+check_tool_version exa-py 2.10.2 /opt/hermes/.venv/bin/python -c 'import exa_py; import importlib.metadata as m; print(m.version("exa-py"))'
 
 mkdir -p \
   /opt/data/cron \

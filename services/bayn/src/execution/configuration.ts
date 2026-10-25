@@ -3,7 +3,7 @@ import { pipe, Result, Schema } from 'effect'
 import type { BrokerIdentity } from '../broker/identity'
 import { BrokerEnvironment } from '../broker/identity'
 import { canonicalHashV1Result } from '../hash'
-import { Pipeable } from '../pipeable'
+
 import {
   GitSourceRevisionSchema,
   ImageDigestSchema,
@@ -259,7 +259,7 @@ const researchCapitalGenerationIdentityIsBoundToRequest = (
   return Result.succeed(undefined)
 }
 
-const researchCapitalGenerationIsBoundToRequestDataFirst = (
+export const researchCapitalGenerationIsBoundToRequest = (
   request: ResearchCapitalActivationRequest,
   sourceGenerationHash: string,
   generation: ResearchCapitalGrantGeneration,
@@ -276,11 +276,6 @@ const researchCapitalGenerationIsBoundToRequestDataFirst = (
   }
   return Result.succeed(undefined)
 }
-
-export const researchCapitalGenerationIsBoundToRequest = Pipeable.dual(
-  3,
-  researchCapitalGenerationIsBoundToRequestDataFirst,
-)
 
 export const researchCapitalBuildLineageIsCurrent = (
   lineage: ResearchCapitalBuildLineage,
@@ -393,34 +388,20 @@ export const makeResearchCapitalActivationRequest = (
   )
 }
 
-const decodeCapitalActivationRequestResultDataFirst = Schema.decodeUnknownResult(
+export const decodeCapitalActivationRequestResult = Schema.decodeUnknownResult(
   CapitalActivationRequestSchema,
   strictParseOptions,
 )
 
-export const decodeCapitalActivationRequestResult = Pipeable.dual(1, (input: unknown) =>
-  decodeCapitalActivationRequestResultDataFirst(input),
-)
-
-const decodeCapitalActivationConfigurationResultDataFirst = Schema.decodeUnknownResult(
+export const decodeCapitalActivationConfigurationResult = Schema.decodeUnknownResult(
   CapitalActivationConfigurationSchema,
   strictParseOptions,
 )
 
-export const decodeCapitalActivationConfigurationResult = Pipeable.dual(1, (input: unknown) =>
-  decodeCapitalActivationConfigurationResultDataFirst(input),
-)
-
-const decodeResearchCapitalBuildLineageResultDataFirst = Schema.decodeUnknownResult(
+export const decodeResearchCapitalBuildLineageResult = Schema.decodeUnknownResult(
   ResearchCapitalBuildLineageSchema,
   strictParseOptions,
 )
-
-export const decodeResearchCapitalBuildLineageResult = Pipeable.dual(1, (input: unknown) =>
-  decodeResearchCapitalBuildLineageResultDataFirst(input),
-)
-
-export type CapitalAuthorityRequest = NoCapitalRequest | GrantedCapitalRequest
 
 export type ExecutionPolicy =
   | {

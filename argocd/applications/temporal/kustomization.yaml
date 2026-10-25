@@ -3,6 +3,9 @@ kind: Kustomization
 namespace: temporal
 
 resources:
+  - cassandra-pvcs.yaml
+  - upgrade/cassandra-509-rollout.yaml
+  - upgrade/cassandra-509-backup.yaml
   - upgrade/cassandra-4112-rollout.yaml
   - upgrade/cassandra-4112-v3-backup.yaml
   - upgrade/cassandra-4112-v2-backup.yaml
@@ -20,6 +23,20 @@ resources:
   - ingressroute-temporal-k8s-private.yaml
 
 patches:
+  - target:
+      kind: Deployment
+      name: temporal-worker
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: temporal-worker
+      spec:
+        template:
+          spec:
+            containers:
+              - name: temporal-worker
+                image: temporal-worker-runtime
   - target:
       kind: StatefulSet
       name: elasticsearch-master
@@ -46,7 +63,15 @@ patches:
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/image
-        value: mirror.gcr.io/cassandra:4.1.12@sha256:3edbfb2be84f00f3467e206d7d785ddd4dbcf7042e6a126180e1d9faa5514474
+        value: mirror.gcr.io/cassandra:5.0.9@sha256:d35e159439b302146f964919904f84fd3c2cebf347272b8cb8c4368c1cf200e5
+      - op: add
+        path: /spec/template/spec/containers/0/startupProbe
+        value:
+          exec:
+            command: ["/bin/sh", "-c", "nodetool status"]
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 90
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
@@ -108,6 +133,8 @@ helmCharts:
         enabled: true
         storageClass: rook-ceph-block
         accessMode: ReadWriteOnce
+        # Immutable live template. Existing ordinal claims are managed at 30Gi in cassandra-pvcs.yaml.
+        # See README.md before changing this value or scaling beyond the three declared claims.
         size: 20Gi
       config:
         cluster_size: 3
@@ -221,6 +248,10 @@ helmCharts:
         elasticsearchTool: false
 
 images:
+  - name: temporal-worker-runtime
+    newName: mirror.gcr.io/temporalio/server
+    newTag: 1.31.2
+    digest: sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da
   - name: docker.elastic.co/elasticsearch/elasticsearch
     newTag: 8.19.21
     digest: sha256:cbf5cd6cfe5532a9c02d510c66d238bf329cd51fe3d57170a2a880aca7d47419
@@ -234,8 +265,8 @@ images:
     digest: sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107
   - name: mirror.gcr.io/temporalio/ui
     newName: mirror.gcr.io/temporalio/ui
-    newTag: 2.53.3
-    digest: sha256:eef301146e60fad34b47adaecfae4149016e34b2d44ba94fca5fd8e5441f182a
+    newTag: 2.54.0
+    digest: sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932
 
 configMapGenerator:
   - name: temporal-cassandra-upgrade-scripts
@@ -283,6 +314,18 @@ configMapGenerator:
       annotations:
         argocd.argoproj.io/sync-wave: "-30"
   - name: temporal-cassandra-upgrade-scripts-4112-v3
+    files:
+      - upgrade/cassandra-gate.sh
+      - upgrade/cassandra-rehearsal.sh
+      - upgrade/restore-native-snapshot.py
+      - upgrade/canonicalize-cql.py
+      - upgrade/verify-rehearsal-network.py
+      - upgrade/verify-cassandra-sstables.sh
+      - upgrade/verify-cassandra-ring.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-cassandra-upgrade-scripts-509-v1
     files:
       - upgrade/cassandra-gate.sh
       - upgrade/cassandra-rehearsal.sh

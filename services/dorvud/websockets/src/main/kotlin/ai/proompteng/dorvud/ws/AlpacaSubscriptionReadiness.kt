@@ -12,6 +12,7 @@ internal fun AlpacaSubscription.subscribedSymbolsByChannel(channels: Collection<
         "quotes" -> quotes
         "bars" -> bars1m
         "updatedBars" -> updatedBars
+        "orderbooks" -> orderbooks
         else -> emptyList()
       }
     subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()

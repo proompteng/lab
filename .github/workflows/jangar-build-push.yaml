@@ -35,6 +35,6 @@ jobs:
       publish_kargo_tag: true
       kargo_tag_include_run_id: true
       pr_number: ${{ github.event.pull_request.number || '' }}
-      image_build_timeout: 12m
+      image_build_timeout: 20m
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     secrets: inherit

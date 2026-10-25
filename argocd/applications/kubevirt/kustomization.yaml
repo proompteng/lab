@@ -32,4 +32,4 @@ patches:
             - resourceType: DaemonSet
               resourceName: virt-handler
               type: strategic
-              patch: '{"spec":{"template":{"spec":{"tolerations":[{"key":"CriticalAddonsOnly","operator":"Exists"},{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]}}}}'
+              patch: '{"spec":{"template":{"spec":{"tolerations":[{"key":"CriticalAddonsOnly","operator":"Exists"},{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"},{"key":"workload.proompteng.ai/compute-local","operator":"Equal","value":"true","effect":"NoSchedule"}]}}}}'

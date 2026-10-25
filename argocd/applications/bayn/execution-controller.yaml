@@ -17,11 +17,6 @@ spec:
         name: restate
         namespace: restate
         port: 9070
-    # Restate serializes the account-keyed controller while every durable
-    # trading-state mutation acquires the same transaction-scoped PostgreSQL
-    # writer fence. Old revisions can therefore drain alongside ready replicas
-    # without overlapping durable writers.
-    drainDelaySeconds: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: bayn-execution-controller
@@ -31,12 +26,15 @@ spec:
         app.kubernetes.io/name: bayn-execution-controller
         app.kubernetes.io/part-of: bayn
     spec:
+      nodeSelector:
+        network.proompteng.ai/100g: "true"
       serviceAccountName: bayn
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 60
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: DoNotSchedule
           nodeTaintsPolicy: Honor
@@ -66,9 +64,17 @@ spec:
             - name: restate
               containerPort: 9080
               protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: bayn-valkey-connection
           env:
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
+            - name: BAYN_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-glitchtip-dsns
+                  key: bayn-execution
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
@@ -77,14 +83,12 @@ spec:
             # currently owned by the active controller. The deployment stays
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
-            - name: BAYN_EXECUTION_PREVIOUS_PLAN_HASH
-              value: "d75d49707af22ccdb5a2cdee0362e453a68380a4618b5a4b735e9d8d121c37f0"
-            - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
-              value: 8f4602324111bbb3dd5d8695aabf199f4a5328fa
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285"
+              value: "191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797"
+              value: "72b942692c5156c48a9fea3a0b834b96d8bebe79a334e759af87e8a27c3b7e60"
+            - name: BAYN_BROKER_ACCESS
+              value: read-only
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -93,13 +97,11 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625\",\"authoredActivation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"},\"activation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"}}"
-            - name: BAYN_BROKER_ACCESS
-              value: read-only
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"c29257939cd2ace501f0e0c158204eb5840ad1b0f8f1e0689390f40e41762c92","authoredActivation":{"sourceRevision":"7964cf8faff4f784bc49473396e7e97e158e7b84","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:ce2a19bac45b03f1b8a95ea01d4291805014619d144e4595db44cb64d4aac3fb"},"activation":{"sourceRevision":"7964cf8faff4f784bc49473396e7e97e158e7b84","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:ce2a19bac45b03f1b8a95ea01d4291805014619d144e4595db44cb64d4aac3fb"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "22793abfac57568433147fb6d7a47ce7a34fb500ee47e035353ae8935a3e3fa7"
+              value: "0496265d4a4014357cfe8d7e5b42891c294c18e07bf9517279019a6304b4ac27"
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT
@@ -141,22 +143,6 @@ spec:
                 secretKeyRef:
                   name: bayn-clickhouse-auth
                   key: password
-            - name: BAYN_SIGNAL_SNAPSHOT_ID
-              value: "f50f63fecf62991203e8ddae519406a432b1d1a06c3376b18a2957b962c67a60"
-            - name: BAYN_SIGNAL_PUBLICATION_ASOF
-              value: "2026-08-04"
-            - name: BAYN_SIGNAL_CALENDAR_VERSION
-              value: "alpaca-us-equity-calendar-v1"
-            - name: BAYN_SIGNAL_DATA_START
-              value: "2016-01-04"
-            - name: BAYN_SIGNAL_DATA_END
-              value: "2026-08-04"
-            - name: BAYN_SIGNAL_LOOKBACK_START
-              value: "2016-01-04"
-            - name: BAYN_SIGNAL_EVALUATION_START
-              value: "2017-01-03"
-            - name: BAYN_SIGNAL_EVALUATION_END
-              value: "2026-08-04"
             - name: BAYN_POSTGRES_URL
               valueFrom:
                 secretKeyRef:
@@ -172,7 +158,7 @@ spec:
               value: "ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000"
             - name: BAYN_TIGERBEETLE_LEDGER
               value: "7001"
-            - name: BAYN_EXECUTION_BOOTSTRAP_TOKEN
+            - name: BAYN_EXECUTION_ACTIVATION_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: bayn-execution-bootstrap
@@ -180,16 +166,44 @@ spec:
             - name: RESTATE_REQUEST_IDENTITY_KEYS
               value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+              value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
             - name: PORT
               value: "9080"
             - name: NODE_ENV
               value: production
+            - name: BAYN_KAFKA_BROKERS
+              value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+            - name: BAYN_KAFKA_USERNAME
+              value: bayn-market-data
+            - name: BAYN_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-market-data
+                  key: password
+            - name: BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC
+              value: torghut.technical-features.v1
+            - name: BAYN_KAFKA_TIMESTAMP_POLICY
+              value: dorvud.producer-clock.v1
+            - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS
+              value: "300000"
+            - name: BAYN_JEV_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-jev-auth
+                  key: api-key
+                  optional: true
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-valkey-auth
+                  key: password
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
           startupProbe:
             tcpSocket:
               port: restate
             periodSeconds: 2
-            failureThreshold: 30
+            failureThreshold: 600
           readinessProbe:
             tcpSocket:
               port: restate
@@ -220,19 +234,26 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            - name: valkey-client-tls
+              mountPath: /var/run/secrets/bayn/valkey
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
       volumes:
+        - name: valkey-client-tls
+          secret:
+            secretName: bayn-valkey-client-tls
+            defaultMode: 0440
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
         - name: postgres-ca
           secret:
             secretName: bayn-db-ca
-            defaultMode: 0444
+            defaultMode: 444
             items:
               - key: ca.crt
                 path: ca.crt

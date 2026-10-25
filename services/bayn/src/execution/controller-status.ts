@@ -9,6 +9,7 @@ const ControllerCounterSchema = NonNegativeIntegerSchema.check(Schema.isLessThan
 export enum ExecutionControllerOutcome {
   Completed = 'Completed',
   Blocked = 'Blocked',
+  Waiting = 'Waiting',
 }
 
 const ExecutionControllerStatusBase = {

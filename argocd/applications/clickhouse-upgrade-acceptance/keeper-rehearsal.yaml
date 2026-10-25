@@ -1,0 +1,336 @@
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapcontent-32ad356d-e058-4929-a112-4d125ede4d86
+  labels:
+    keeper.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false,ServerSideApply=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    volumeHandle: 0001-0009-rook-ceph-0000000000000001-c1d4d88a-a82f-495a-9a28-1e91391c5258
+  sourceVolumeMode: Filesystem
+  volumeSnapshotClassName: rook-ceph-block
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: keeper-upgrade-20260910-v1
+    namespace: torghut
+    resourceVersion: '603393405'
+    uid: 32ad356d-e058-4929-a112-4d125ede4d86
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: keeper-native-20260910-v1-content
+  labels:
+    keeper.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    snapshotHandle: 0001-0009-rook-ceph-0000000000000001-6cffe66d-1d2b-4b93-846f-046e33dcd453
+  volumeSnapshotRef:
+    name: keeper-native-20260910-v1-snapshot
+    namespace: clickhouse-upgrade-acceptance
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: keeper-native-20260910-v1-snapshot
+  labels:
+    keeper.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    volumeSnapshotContentName: keeper-native-20260910-v1-content
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keeper-native-20260910-v1-source
+  labels:
+    keeper.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 1Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: keeper-native-20260910-v1-snapshot
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keeper-native-20260910-v1-data
+  labels:
+    keeper.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keeper-native-20260910-v1-proof
+  labels:
+    keeper.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keeper-native-20260910-v2
+  labels:
+    keeper.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200
+  template:
+    metadata:
+      labels:
+        keeper.proompteng.ai/rehearsal: 20260910-v1
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      hostAliases:
+      - ip: 127.0.0.1
+        hostnames:
+        - chk-torghut-keeper-default-0-0
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: v25-12
+        image: mirror.gcr.io/clickhouse/clickhouse-keeper:25.12.5.44@sha256:525b8b0f93ccb371131c46f22a066ea43d33d74aba314203e8044609945d8524
+        command:
+        - /bin/bash
+        - /scripts/keeper-native-rehearsal.sh
+        env:
+        - name: NATIVE_SNAPSHOT_FILE
+          value: snapshot_92537674.bin.zstd
+        - name: NATIVE_SNAPSHOT_SHA256
+          value: 97a2ca37c571b1584af15f0928b571ca0c33e872e47f2284f9b9322eaec0fd30
+        - name: CANARY_VALUE
+          value: 6b080603def0468590d28024be24ed60
+        - name: HOME
+          value: /fixture
+        - name: REHEARSAL_VERSION
+          value: v25_12
+        - name: EXPECTED_VERSION
+          value: 25.12.5.44
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: '1'
+            memory: 1Gi
+        securityContext: &id001
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts: &id002
+        - name: source
+          mountPath: /source
+          readOnly: true
+        - name: data
+          mountPath: /fixture
+        - &id003
+          name: proof
+          mountPath: /proof
+        - &id004
+          name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      - name: v26-8
+        image: mirror.gcr.io/clickhouse/clickhouse-keeper:26.8.2.7@sha256:0fbe266b275a23b53508a7a3dac2e6fe149d63cddf242897a5c5c3d7b5350568
+        command:
+        - /bin/bash
+        - /scripts/keeper-native-rehearsal.sh
+        env:
+        - name: NATIVE_SNAPSHOT_FILE
+          value: snapshot_92537674.bin.zstd
+        - name: NATIVE_SNAPSHOT_SHA256
+          value: 97a2ca37c571b1584af15f0928b571ca0c33e872e47f2284f9b9322eaec0fd30
+        - name: CANARY_VALUE
+          value: 6b080603def0468590d28024be24ed60
+        - name: HOME
+          value: /fixture
+        - name: REHEARSAL_VERSION
+          value: v26_8
+        - name: EXPECTED_VERSION
+          value: 26.8.2.7
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: '1'
+            memory: 1Gi
+        securityContext: *id001
+        volumeMounts: *id002
+      containers:
+      - name: verify
+        image: mirror.gcr.io/python:3.14-bookworm@sha256:ecac9e212daacda8a702eae372fceebc0ee36f5805abe087880367e8d061fa5b
+        command:
+        - python3
+        - /scripts/verify-keeper-native-rehearsal.py
+        env:
+        - name: NATIVE_SNAPSHOT_FILE
+          value: snapshot_92537674.bin.zstd
+        - name: NATIVE_SNAPSHOT_SHA256
+          value: 97a2ca37c571b1584af15f0928b571ca0c33e872e47f2284f9b9322eaec0fd30
+        - name: CANARY_VALUE
+          value: 6b080603def0468590d28024be24ed60
+        - name: HOME
+          value: /fixture
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: '1'
+            memory: 256Mi
+        securityContext: *id001
+        volumeMounts:
+        - *id003
+        - *id004
+      volumes:
+      - name: source
+        persistentVolumeClaim:
+          claimName: keeper-native-20260910-v1-source
+          readOnly: true
+      - name: data
+        persistentVolumeClaim:
+          claimName: keeper-native-20260910-v1-data
+          readOnly: false
+      - name: proof
+        persistentVolumeClaim:
+          claimName: keeper-native-20260910-v1-proof
+          readOnly: false
+      - name: scripts
+        configMap:
+          name: keeper-native-20260910-v2
+      - name: tmp
+        emptyDir:
+          sizeLimit: 32Mi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clickhouse-native-v2-proof-readout
+  labels:
+    keeper.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        clickhouse.proompteng.ai/rehearsal: 20260910-v2-readout
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: readout
+        image: mirror.gcr.io/python:3.14-bookworm@sha256:ecac9e212daacda8a702eae372fceebc0ee36f5805abe087880367e8d061fa5b
+        command:
+        - python3
+        - -c
+        - "import json; from pathlib import Path\nfor replica in [0,1]:\n for name\
+          \ in ['server.log','keeper.log']:\n  path=Path('/evidence'+str(replica)+'/v2/v25_3')/name\n\
+          \  print(json.dumps({'replica':replica,'file':name,'tail':path.read_text()[-50000:]}),flush=True)"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: proof0
+          mountPath: /evidence0
+          readOnly: true
+        - name: proof1
+          mountPath: /evidence1
+          readOnly: true
+      volumes:
+      - name: proof0
+        persistentVolumeClaim:
+          claimName: clickhouse-native-20260910-0-proof
+          readOnly: true
+      - name: proof1
+        persistentVolumeClaim:
+          claimName: clickhouse-native-20260910-1-proof
+          readOnly: true

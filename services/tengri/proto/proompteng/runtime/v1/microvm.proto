@@ -3,14 +3,15 @@ syntax = "proto3";
 package proompteng.runtime.v1;
 
 service MicroVMControlPlane {
+  // Only the pinned BFF mTLS identity can call this. It conveys no user authority.
+  rpc GetRequestAudience(Empty) returns (RequestAudience);
   rpc CreateAgent(CreateAgentRequest) returns (Agent);
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc GetAgent(GetAgentRequest) returns (Agent);
   rpc WatchAgent(WatchAgentRequest) returns (stream Agent);
-  rpc SleepAgent(SleepAgentRequest) returns (Agent);
-  rpc ResumeAgent(ResumeAgentRequest) returns (Agent);
-  rpc DeleteAgent(DeleteAgentRequest) returns (Empty);
+  rpc UpdatePowerSettings(UpdatePowerSettingsRequest) returns (Agent);
 
+  rpc StatFile(StatFileRequest) returns (FileEntry);
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
   rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
   rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
@@ -26,24 +27,46 @@ service MicroVMControlPlane {
   rpc IssueTerminalTicket(IssueTerminalTicketRequest) returns (TerminalTicket);
 
   rpc GetCodexAccount(GetCodexAccountRequest) returns (CodexAccount);
+  rpc ListCodexModels(ListCodexModelsRequest) returns (CodexModels);
+  rpc ListCodexThreads(ListCodexThreadsRequest) returns (CodexThreads);
+  rpc SetCodexThreadArchived(SetCodexThreadArchivedRequest) returns (Empty);
+  rpc ConnectorAgent(ConnectorAgentRequest) returns (CodexModels);
   rpc GetCodexLogin(GetCodexLoginRequest) returns (CodexLogin);
   rpc StartCodexLogin(StartCodexLoginRequest) returns (CodexLogin);
   rpc CreateCodexThread(CreateCodexThreadRequest) returns (CodexThread);
-  rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (CodexThread);
-  rpc SendCodexTurn(SendCodexTurnRequest) returns (CodexTurn);
-  rpc SteerCodexTurn(SteerCodexTurnRequest) returns (CodexTurn);
+  rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (stream CodexHistoryPage);
+  rpc SendCodexInput(SendCodexInputRequest) returns (CodexRun);
+  rpc GetCodexRun(GetCodexRunRequest) returns (CodexRun);
+  rpc GetActiveCodexRun(GetAgentRequest) returns (CodexRun);
+  rpc SteerCodexInput(SteerCodexInputRequest) returns (CodexTurn);
   rpc InterruptCodexTurn(InterruptCodexTurnRequest) returns (Empty);
   rpc ResolveCodexApproval(ResolveCodexApprovalRequest) returns (Empty);
   rpc WatchCodexEvents(WatchCodexEventsRequest) returns (stream CodexEvent);
 
   rpc IssuePreviewSession(IssuePreviewSessionRequest) returns (PreviewSession);
-  rpc IssueEditorSession(IssueEditorSessionRequest) returns (PreviewSession);
+  rpc IssueEditorSession(IssueDesktopSessionRequest) returns (PreviewSession);
+  rpc IssueBrowserSession(IssueDesktopSessionRequest) returns (PreviewSession);
   rpc RevokeEditorSessions(Empty) returns (Empty);
   rpc RevokePreviewSession(RevokePreviewSessionRequest) returns (Empty);
 }
 
 message Empty {}
-message IssueEditorSessionRequest { string agent_id = 1; string window_id = 2; }
+message RequestAudience {
+  string audience = 1;
+  uint32 guest_api_protocol_version = 2;
+}
+enum CodexHistoryPart {
+  CODEX_HISTORY_PART_UNSPECIFIED = 0;
+  CODEX_HISTORY_PART_THREAD = 1;
+  CODEX_HISTORY_PART_ITEMS = 2;
+  CODEX_HISTORY_PART_TURNS = 3;
+}
+message CodexHistoryPage {
+  CodexHistoryPart part = 1;
+  string raw_json = 2;
+  uint64 event_sequence = 3;
+}
+message IssueDesktopSessionRequest { string agent_id = 1; string window_id = 2; bool renewal = 3; }
 
 enum Architecture {
   ARCHITECTURE_UNSPECIFIED = 0;
@@ -70,6 +93,8 @@ message AgentCondition {
 }
 
 message Agent {
+  reserved 14, 16;
+  reserved "expires_at", "pending_image";
   string id = 1;
   string display_name = 2;
   AgentPhase phase = 3;
@@ -83,22 +108,26 @@ message Agent {
   string ready_at = 11;
   string last_activity_at = 12;
   string idle_deadline = 13;
-  // Empty for retained workspaces; legacy CR expiry values are not lifecycle deadlines.
-  string expires_at = 14;
   repeated AgentCondition conditions = 15;
-  // Set while a newer configured Nanoagent digest is waiting for a safe
-  // sleep/resume boundary. The running guest remains on its current image.
-  string pending_image = 16;
+  optional uint32 idle_timeout_minutes = 17;
+  // Immutable MicroVM metadata UID, used by every Ofz workspace policy.
+  string uid = 18;
+  string runtime_epoch = 19;
+  // Ofz policy version whose runtime intent the controller has actually reconciled.
+  uint64 policy_version = 20;
 }
 
-message CreateAgentRequest { string display_name = 1; }
+message UpdatePowerSettingsRequest {
+  string id = 1;
+  optional uint32 idle_timeout_minutes = 2;
+}
+
+message CreateAgentRequest { string display_name = 1; string reservation_id = 2; }
 message ListAgentsRequest {}
+message ConnectorAgentRequest { string agent_id = 1; string action = 2; string raw_json = 3; }
 message ListAgentsResponse { repeated Agent agents = 1; }
 message GetAgentRequest { string id = 1; }
 message WatchAgentRequest { string id = 1; }
-message SleepAgentRequest { string id = 1; }
-message ResumeAgentRequest { string id = 1; }
-message DeleteAgentRequest { string id = 1; }
 
 message FileEntry {
   string name = 1;
@@ -108,6 +137,7 @@ message FileEntry {
   string modified_at = 5;
 }
 
+message StatFileRequest { string agent_id = 1; string path = 2; }
 message ListFilesRequest { string agent_id = 1; string path = 2; }
 message ListFilesResponse { string path = 1; repeated FileEntry entries = 2; }
 message ReadFileRequest { string agent_id = 1; string path = 2; }
@@ -185,13 +215,36 @@ message TerminalTicket {
 }
 
 message GetCodexAccountRequest { string agent_id = 1; }
+message ListCodexModelsRequest { string agent_id = 1; string cursor = 2; }
+message CodexModels { string raw_json = 1; }
+message ListCodexThreadsRequest { string agent_id = 1; bool archived = 2; string cursor = 3; }
+message CodexThreads { string raw_json = 1; }
+message SetCodexThreadArchivedRequest { string agent_id = 1; string thread_id = 2; bool archived = 3; }
 message GetCodexLoginRequest { string agent_id = 1; }
 message StartCodexLoginRequest { string agent_id = 1; }
-message CreateCodexThreadRequest { string agent_id = 1; }
-message ResumeCodexThreadRequest { string agent_id = 1; string thread_id = 2; }
-message SendCodexTurnRequest { string agent_id = 1; string thread_id = 2; string text = 3; }
-message SteerCodexTurnRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; string text = 4; }
-message InterruptCodexTurnRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; }
+message CreateCodexThreadRequest {
+  string agent_id = 1;
+  string model = 2;
+  string reasoning_effort = 3;
+}
+message ResumeCodexThreadRequest {
+  string agent_id = 1;
+  string thread_id = 2;
+  string model = 3;
+  string reasoning_effort = 4;
+}
+message SendCodexInputRequest {
+  string agent_id = 1;
+  string thread_id = 2;
+  string text = 3;
+  string model = 4;
+  string reasoning_effort = 5;
+  repeated CodexImage images = 6;
+  string operation_id = 7;
+}
+message CodexImage { string media_type = 1; bytes content = 2; }
+message SteerCodexInputRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; string text = 4; repeated CodexImage images = 5; string operation_id = 6; string run_id = 7; }
+message InterruptCodexTurnRequest { string agent_id = 1; reserved 2, 3; reserved "thread_id", "turn_id"; string run_id = 4; string operation_id = 5; }
 message WatchCodexEventsRequest { string agent_id = 1; uint64 after_sequence = 2; }
 
 enum CodexApprovalDecision {
@@ -207,6 +260,9 @@ message ResolveCodexApprovalRequest {
   string agent_id = 1;
   string approval_id = 2;
   CodexApprovalDecision decision = 3;
+  bytes response_json = 4;
+  string run_id = 5;
+  string operation_id = 6;
 }
 
 message CodexAccount {
@@ -231,6 +287,8 @@ message CodexThread {
   map<string, uint64> item_event_sequences = 4;
 }
 message CodexTurn { string id = 1; string thread_id = 2; string raw_json = 3; }
+message GetCodexRunRequest { string agent_id = 1; string run_id = 2; }
+message CodexRun { string run_id = 1; string agent_id = 2; string thread_id = 3; string state_json = 4; }
 
 enum CodexEventKind {
   CODEX_EVENT_KIND_UNSPECIFIED = 0;

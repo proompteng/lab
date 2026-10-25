@@ -1,6 +1,6 @@
 # 132. Torghut Dependency Quorum Rehydration And Profit Inventory Handoff (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

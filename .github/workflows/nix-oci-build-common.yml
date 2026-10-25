@@ -63,7 +63,7 @@ on:
         value: ${{ jobs.publish-index.outputs.platform_digest_arm64 }}
 
 concurrency:
-  group: ${{ inputs.pr_number != '' && format('ci-pr-{0}', inputs.pr_number) || format('{0}-{1}-{2}', github.workflow, inputs.image_name, inputs.tag) }}
+  group: ${{ inputs.pr_number != '' && format('ci-pr-{0}-{1}', inputs.pr_number, inputs.image_name) || format('{0}-{1}-{2}', github.workflow, inputs.image_name, inputs.tag) }}
   cancel-in-progress: true
 
 jobs:
@@ -437,6 +437,11 @@ jobs:
             --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
             --annotation "org.opencontainers.image.revision=${SOURCE_SHA}"
           )
+          case "${IMAGE##*/}" in
+            ofz|proompteng)
+              args+=(--annotation "ai.proompteng.tengri-schema=$(python3 nix/tengri-schema-hash.py)")
+              ;;
+          esac
           if [ "${KARGO_TAG_INCLUDE_RUN_ID}" = 'true' ]; then
             if ! [[ "${GITHUB_RUN_ID}" =~ ^[1-9][0-9]*$ ]]; then
               echo "GITHUB_RUN_ID must be a positive integer: ${GITHUB_RUN_ID:-unset}" >&2

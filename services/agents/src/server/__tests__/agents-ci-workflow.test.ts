@@ -17,17 +17,39 @@ describe('agents-ci workflow', () => {
     expect(pullRequestWorkflow).toContain('changed_files_json: ${{ needs.plan.outputs.changed_files }}')
   })
 
-  it('keeps cheap validation off ARC and gates integration on it', () => {
+  it('runs validation on hosted runners and gates integration on cheap checks', () => {
     const workflow = readWorkflow('agents-ci.yml')
 
     expect(workflow).toContain('unit:\n    name: Agents typecheck and unit tests\n    needs: plan')
     expect(workflow).toContain('static:\n    name: Validate Agents chart and CRDs\n    needs: plan')
     expect(workflow).toContain('runs-on: ubuntu-latest')
     expect(workflow).toContain('integration:\n    name: Agents Kind smoke (${{ needs.plan.outputs.tier }})')
-    expect(workflow).toContain('runs-on: arc-amd64')
+    expect(workflow).toContain('runs-on: ubuntu-24.04')
+    expect(workflow).not.toContain('runs-on: arc-amd64')
     expect(workflow).toContain("needs.plan.outputs.run_integration == 'true'")
     expect(workflow).toContain("needs.unit.result == 'success' || needs.unit.result == 'skipped'")
     expect(workflow).toContain("needs.static.result == 'success' || needs.static.result == 'skipped'")
+  })
+
+  it('connects the hosted smoke runner before accessing internal images and the Nix cache', () => {
+    const workflow = readWorkflow('agents-ci.yml')
+    const integration = workflow.slice(workflow.indexOf('\n  integration:'))
+
+    expect(integration).toContain('uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd')
+    expect(integration).toContain('oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}')
+    expect(integration).toContain('oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}')
+    expect(integration).toContain('tags: tag:ci')
+    expect(integration.indexOf('Connect to the tailnet')).toBeLessThan(
+      integration.indexOf('Verify internal image and cache access'),
+    )
+    expect(integration.indexOf('Verify internal image and cache access')).toBeLessThan(
+      integration.indexOf('Set up Nix for selected local Agents images'),
+    )
+    expect(integration).toContain('https://registry.ide-newton.ts.net/v2/')
+    expect(integration).toContain('https://attic.ide-newton.ts.net/lab/nix-cache-info')
+    expect(integration).toContain('substituters = https://attic.ide-newton.ts.net/lab https://cache.nixos.org/')
+    expect(integration).not.toContain('require-preinstalled:')
+    expect(integration).not.toContain('.svc.cluster.local')
   })
 
   it('builds selected Nix images in one realization and one Kind preload command', () => {

@@ -4,8 +4,7 @@ metadata:
   name: jangar-db
 spec:
   instances: 2
-  # Preparation wave: retain the Debian bullseye family before the gated major cutover.
-  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533
   primaryUpdateStrategy: unsupervised
   storage:
     storageClass: rook-ceph-block
@@ -14,7 +13,7 @@ spec:
     initdb:
       database: jangar
       owner: jangar
-      encoding: "UTF8"
+      encoding: 'UTF8'
       dataChecksums: true
       postInitApplicationSQL:
         - CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -27,7 +26,7 @@ spec:
     target: prefer-standby
     barmanObjectStore:
       destinationPath: s3://cnpg
-      serverName: jangar-db-live
+      serverName: jangar-db-pg18
       endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
       s3Credentials:
         accessKeyId:
@@ -45,13 +44,13 @@ spec:
       wal:
         compression: snappy
         maxParallel: 2
-    retentionPolicy: "14d"
+    retentionPolicy: '14d'
   inheritedMetadata:
     annotations:
-      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
-      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "pgadmin"
-      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
-      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin"
+      reflector.v1.k8s.emberstack.com/reflection-allowed: 'true'
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: 'pgadmin'
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: 'true'
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: 'pgadmin'
   monitoring:
     enablePodMonitor: true
 # CNPG defaults generate application credentials in `jangar-db-app` (uri, user, password, host, port, dbname)

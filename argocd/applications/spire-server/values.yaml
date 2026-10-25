@@ -1,0 +1,251 @@
+global:
+  spire:
+    clusterName: galactic
+    trustDomain: proompteng.ai
+    caSubject:
+      country: US
+      organization: proompteng
+      commonName: Proompteng SPIRE CA
+    recommendations:
+      enabled: true
+      prometheus: false
+    namespaces:
+      create: false
+      server:
+        name: spire-server
+        create: false
+      system:
+        name: spire-system
+        create: false
+  installAndUpgradeHooks:
+    enabled: false
+  deleteHooks:
+    enabled: false
+spire-server:
+  replicaCount: 3
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: server
+                app.kubernetes.io/instance: spire
+            topologyKey: kubernetes.io/hostname
+  terminationGracePeriodSeconds: 60
+  dataStore:
+    sql:
+      databaseType: postgres
+      databaseName: spire
+      host: spire-db-rw.spire-server.svc.cluster.local
+      port: 5432
+      username: spire
+      externalSecret:
+        enabled: true
+        name: spire-db-app
+        key: password
+      rootCAPath: /run/spire/postgres/ca.crt
+      options:
+        - sslmode: verify-full
+        - connect_timeout: 10
+      maxOpenConns: 20
+      maxIdleConns: 2
+      connMaxLifetime: 5m
+  extraVolumes:
+    - name: postgres-ca
+      secret:
+        secretName: spire-db-ca
+        items:
+          - key: ca.crt
+            path: ca.crt
+  extraVolumeMounts:
+    - name: postgres-ca
+      mountPath: /run/spire/postgres
+      readOnly: true
+  persistence:
+    type: pvc
+    storageClass: rook-ceph-block
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  nodeAttestor:
+    k8sPSAT:
+      serviceAccountAllowList:
+        - spire-system:spire-agent
+  unsupportedBuiltInPlugins:
+    nodeAttestor:
+      k8s_psat:
+        plugin_data:
+          clusters:
+            - galactic:
+                audience: [spire-server]
+                service_account_allow_list: [spire-system:spire-agent]
+                allowed_node_label_keys: []
+                allowed_pod_label_keys: []
+    bundlePublisher:
+      k8s_configmap:
+        plugin_data:
+          clusters:
+            - chart-internal:
+                format: spiffe
+                namespace: spire-system
+                configmap_name: spire-bundle
+                configmap_key: bundle.spiffe
+  controllerManager:
+    enabled: true
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+    identities:
+      clusterSPIFFEIDs:
+        default:
+          enabled: false
+        oidc-discovery-provider:
+          enabled: false
+        test-keys:
+          enabled: false
+        proompteng:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/proompteng
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: proompteng
+          podSelector:
+            matchLabels:
+              app: proompteng
+          workloadSelectorTemplates:
+            - k8s:sa:proompteng
+            - k8s:container-name:proompteng
+          ttl: 2m
+          fallback: false
+        ofz-api:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/ofz/sa/ofz-api
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ofz-api
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:ofz-api
+            - k8s:container-name:ofz-api
+          ttl: 2m
+          fallback: false
+        tengri:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/sa/tengri
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tengri
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [control-plane, run-worker]
+          workloadSelectorTemplates:
+            - k8s:sa:tengri
+            - k8s:container-name:tengri
+          ttl: 2m
+          fallback: false
+        tengri-slot:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/slot/pod/{{ .PodMeta.UID }}
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tengri
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri-slot
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:tengri-slot
+            - k8s:container-name:supervisor
+          ttl: 2m
+          fallback: false
+        proompteng-proxy:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/proompteng
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: proompteng
+          podSelector:
+            matchLabels:
+              app: proompteng
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:proompteng
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
+        tengri-proxy:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/sa/tengri
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tengri
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri
+              spiffe.io/spire-managed-identity: "true"
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [control-plane, run-worker]
+          workloadSelectorTemplates:
+            - k8s:sa:tengri
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
+        istio-external-gateway:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/istio-ingress/sa/gateway
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-ingress
+          podSelector:
+            matchLabels:
+              app: gateway
+              istio: gateway
+          workloadSelectorTemplates:
+            - k8s:sa:gateway
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
+        istio-knative-gateway:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/istio-system/sa/knative-local-gateway
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: knative-local-gateway
+              istio: ingressgateway
+          workloadSelectorTemplates:
+            - k8s:sa:knative-local-gateway
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
+  externalControllerManagers:
+    enabled: false
+spire-agent:
+  enabled: false
+spiffe-csi-driver:
+  enabled: false
+spiffe-oidc-discovery-provider:
+  enabled: false

@@ -154,6 +154,27 @@ customResourceState:
                   path:
                     - spec
                     - replicas
+            - name: deployment_status_ready_replicas
+              help: Ready pods of the updated RestateDeployment revision, excluding retained revisions.
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, readyReplicas]
+                  nilIsZero: false
+            - name: deployment_metadata_generation
+              help: Desired RestateDeployment object generation.
+              each:
+                type: Gauge
+                gauge:
+                  path: [metadata, generation]
+                  nilIsZero: false
+            - name: deployment_status_observed_generation
+              help: RestateDeployment generation observed by its controller.
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, observedGeneration]
+                  nilIsZero: false
 
 resources:
   requests:

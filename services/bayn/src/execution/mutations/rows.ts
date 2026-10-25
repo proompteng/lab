@@ -1,6 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { MutationOperation } from '../../broker/alpaca-mutations'
+import { MutationOperation } from '../../broker/alpaca-mutations/model'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import { legacyMutationEventSchemaVersion } from '../legacy-wire'
 import {
@@ -22,7 +22,8 @@ import {
   type MutationStoreError,
   type OutcomeStoreOperation,
 } from './model'
-import { Pipeable } from '../../pipeable'
+
+import { SubmissionDenialReasonSchema } from '../submission-denial'
 
 const StoredEventRows = Schema.Array(
   Schema.Struct({
@@ -39,6 +40,7 @@ const StoredEventRows = Schema.Array(
     request_id: Schema.NullOr(NonEmptyString),
     response_status: Schema.NullOr(HttpStatus),
     response_content_hash: Schema.NullOr(Sha256),
+    denial_reason: Schema.optionalKey(Schema.NullOr(SubmissionDenialReasonSchema)),
     occurred_at: UtcInstant,
   }),
 )
@@ -105,6 +107,7 @@ const toEvent = (row: (typeof StoredEventRows.Type)[number]): MutationEvent => (
   ...(row.request_id === null ? {} : { requestId: row.request_id }),
   ...(row.response_status === null ? {} : { responseStatus: row.response_status }),
   ...(row.response_content_hash === null ? {} : { responseContentHash: row.response_content_hash }),
+  ...(row.denial_reason == null ? {} : { denialReason: row.denial_reason }),
   occurredAt: row.occurred_at,
 })
 
@@ -121,7 +124,7 @@ export const decodeIntentId = (intentId: string): Result.Result<string, Mutation
     storeError({ operation: 'read', failure: 'decode', message: 'invalid intent ID', cause }),
   )
 
-const decodeAuthoritySnapshotDataFirst = (
+export const decodeAuthoritySnapshot = (
   operation: MutationOperation,
   rows: unknown,
 ): Result.Result<MutationAuthoritySnapshot | undefined, MutationStoreError> =>
@@ -149,9 +152,7 @@ const decodeAuthoritySnapshotDataFirst = (
     },
   )
 
-export const decodeAuthoritySnapshot = Pipeable.dual(2, decodeAuthoritySnapshotDataFirst)
-
-const decodeIntentSnapshotDataFirst = (
+export const decodeIntentSnapshot = (
   operation: MutationOperation,
   rows: unknown,
 ): Result.Result<MutationIntentSnapshot | undefined, MutationStoreError> =>
@@ -184,8 +185,6 @@ const decodeIntentSnapshotDataFirst = (
     },
   )
 
-export const decodeIntentSnapshot = Pipeable.dual(2, decodeIntentSnapshotDataFirst)
-
 export const decodeUnresolved = (rows: unknown): Result.Result<boolean | undefined, MutationStoreError> =>
   Result.map(
     Result.mapError(decodeUnresolvedRows(rows), (cause) =>
@@ -199,7 +198,7 @@ export const decodeUnresolved = (rows: unknown): Result.Result<boolean | undefin
     (decoded) => decoded[0]?.unresolved,
   )
 
-const decodeEventIdsDataFirst = (
+export const decodeEventIds = (
   operation: MutationStoreError['operation'],
   rows: unknown,
 ): Result.Result<readonly string[], MutationStoreError> =>
@@ -210,9 +209,7 @@ const decodeEventIdsDataFirst = (
     (decoded) => decoded.map((row) => row.event_id),
   )
 
-export const decodeEventIds = Pipeable.dual(2, decodeEventIdsDataFirst)
-
-const decodeIntentIdsDataFirst = (
+export const decodeIntentIds = (
   operation: OutcomeStoreOperation | 'begin-submit',
   message: string,
   rows: unknown,
@@ -222,9 +219,7 @@ const decodeIntentIdsDataFirst = (
     (decoded) => decoded.map((row) => row.intent_id),
   )
 
-export const decodeIntentIds = Pipeable.dual(3, decodeIntentIdsDataFirst)
-
-const decodeOutcomeIntentSnapshotDataFirst = (
+export const decodeOutcomeIntentSnapshot = (
   operation: OutcomeStoreOperation,
   rows: unknown,
 ): Result.Result<MutationReplayIntentSnapshot | undefined, MutationStoreError> =>
@@ -243,9 +238,7 @@ const decodeOutcomeIntentSnapshotDataFirst = (
     },
   )
 
-export const decodeOutcomeIntentSnapshot = Pipeable.dual(2, decodeOutcomeIntentSnapshotDataFirst)
-
-const decodeAcknowledgedDataFirst = (
+export const decodeAcknowledged = (
   operation: OutcomeStoreOperation,
   rows: unknown,
 ): Result.Result<boolean | undefined, MutationStoreError> =>
@@ -260,5 +253,3 @@ const decodeAcknowledgedDataFirst = (
     ),
     (decoded) => decoded[0]?.acknowledged,
   )
-
-export const decodeAcknowledged = Pipeable.dual(2, decodeAcknowledgedDataFirst)

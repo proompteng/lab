@@ -3,26 +3,23 @@
 This directory contains retained Torghut design contracts. It is useful for rationale, contract archaeology, and
 implementation background, but it is not the primary live operations source of truth.
 
-For current operational decisions, start with `docs/torghut/README.md`, live GitOps, service code, and runtime status
-endpoints.
+For current operational decisions, start with [Torghut documentation](../README.md), live GitOps, service code, and
+runtime status endpoints.
 
 ## Current Entry Points
 
-- Production topology baseline: `v1/torghut-autonomous-trading-system.md`
-- Historical simulation baseline: `v1/historical-dataset-simulation.md`
-- Trading-day simulation automation: `v1/trading-day-simulation-automation.md`
-- Design archive index: `v6/index.md`
-- Historical authority-map snapshot:
-  `current-source-of-truth-and-priority-guide-2026-03-09.md`
+- Historical production topology: [v1 design](v1/torghut-autonomous-trading-system.md).
+- Simulation operations: [current playbook](../rollouts/historical-simulation-playbook.md).
+- Proof and capital-authority contracts: [v6 entry point](v6/index.md).
 
 ## Corpus Layout
 
-- `v1/`: historical cohesive production topology pass aligned to early production reality.
-- `v2/`: historical research and profitability blueprint; may drift from production.
-- `v3/`: historical flexible quant strategy engine and full-loop autonomy handoff.
-- `v4/`: historical quant and LLM profitability expansion pack.
-- `v5/`: historical strategy build pack and per-paper technique synthesis.
-- `v6/`: historical intraday autonomy, proof, capital authority, and Jangar/Torghut contract archive. The March 2026 options-lane series in `v6/33` through `v6/37` is rationale/archaeology, not current cluster health or trading authority.
+- `v1/`: topology and operational contracts still referenced by maintained docs and alert rules.
+- `v3/full-loop/`: the LLM advisory rollout contract referenced by alert rules, plus historical YAML templates.
+- `v6/`: proof, capital-authority, and Jangar integration contracts referenced by the implementation, tests, or current
+  runbooks; the completion matrix remains machine-consumed.
+
+Superseded version packs, handoff catalogs, and the dated authority map are available in Git history.
 
 ## Authority And Retention
 
@@ -46,7 +43,6 @@ Before treating any dated design file as current truth, verify it against:
 
 ## Archive Boundary
 
-The retired 2026-07-04 implementation audit and status matrix were generated snapshots, not maintained production
-authority. The retained files below are individually useful contracts or historical rationale; this archive is not
-enumerated by a generated catalog. For current behavior, use `docs/torghut/README.md`, live GitOps, service code, and
-runtime readback.
+The retained files are implementation references, not a build order or a record of current rollout status. For current
+behavior, use `docs/torghut/README.md`, live GitOps, service code, and runtime readback. Recover removed snapshots from
+Git history instead of restoring an obsolete catalog.

@@ -43,10 +43,10 @@ service:
 
 gitea:
   podAnnotations:
-    delivery.proompteng.ai/source-revision: d316ac9f8e72d377f379584a7d5fa03586c4dc8d
-    delivery.proompteng.ai/image-digest: sha256:29ef5e3eb1708b62185a8c49d739a5782a0639619ec103b1ba5cd4ead58e9a42
+    delivery.proompteng.ai/source-revision: 42e584fda0afaeb43082bfc989c57741e7d168e6
+    delivery.proompteng.ai/image-digest: sha256:dc2565c9fbba9011794aeeeb14542c738d576fcfbc7316afdd976a1722c41483
     delivery.proompteng.ai/upstream-digest: sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685
-    delivery.proompteng.ai/created: 2026-09-09T20:14:36-07:00
+    delivery.proompteng.ai/created: 2026-10-25T03:53:52-07:00
   admin:
     existingSecret: forgejo-admin
     username: kalmyk

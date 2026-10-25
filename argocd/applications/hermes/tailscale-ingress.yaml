@@ -23,4 +23,18 @@ spec:
               service:
                 name: hermes
                 port:
+                  name: dashboard
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: hermes
+                port:
+                  name: api
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: hermes
+                port:
                   name: api

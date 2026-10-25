@@ -1,9 +1,15 @@
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
+import { JevClient } from '../jev/client'
+import { JevPositionStore } from '../jev/portfolio'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer } from 'effect'
 
-import { BrokerRead, BrokerSession } from '../broker/alpaca'
+import { BrokerRead } from '../broker/alpaca/model'
+import { BrokerSession } from '../broker/alpaca/session'
 import { AlpacaHttpClient } from '../broker/alpaca/http'
-import { CycleStore } from '../cycle/store'
+import { CycleStore } from '../cycle/store/model'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import {
   AuthorityGenerationStore,
@@ -15,12 +21,19 @@ import {
   ValuationStore,
 } from '../db/execution-store'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
-import { BlockedCycleIntentStore, IntentStore } from '../execution/intents'
-import { MutationStore } from '../execution/mutations'
+import { BlockedCycleIntentStore } from '../execution/intents/blocked-cycle'
+import { IntentStore } from '../execution/intents/domain'
+import { MutationStore } from '../execution/mutations/model'
 import { WriterFence } from '../execution/writer-fence'
-import { IntradayMarketData, type IntradayMarketDataService } from '../market-data'
+import { IntradayMarketData, type IntradayMarketDataService } from '../market-data/intraday/model'
+import { withTerminalJevEvidence } from './terminal-jev-evidence'
 
 export const autonomousRuntimeServices = Effect.all({
+  jevBatchStore: JevBatchStore,
+  jevEvaluationStore: JevEvaluationStore,
+  jevClient: JevClient,
+  jevPositionStore: JevPositionStore,
+  candidateObservationStore: CandidateObservationStore,
   pgClient: PgClient.PgClient,
   session: BrokerSession,
   alpacaHttpClient: AlpacaHttpClient,
@@ -45,11 +58,20 @@ export type AutonomousRuntimeServices = Effect.Success<typeof autonomousRuntimeS
 export const makeAutonomousCycleResources = (
   runtimeServices: AutonomousRuntimeServices,
   marketData: IntradayMarketDataService,
+  operationTimeoutMs: number,
 ) =>
   Layer.mergeAll(
+    Layer.succeed(JevBatchStore, runtimeServices.jevBatchStore),
+    Layer.succeed(JevEvaluationStore, runtimeServices.jevEvaluationStore),
+    Layer.succeed(JevClient, runtimeServices.jevClient),
+    Layer.succeed(JevPositionStore, runtimeServices.jevPositionStore),
+    Layer.succeed(CandidateObservationStore, runtimeServices.candidateObservationStore),
     Layer.succeed(BrokerRead, runtimeServices.session.read),
     Layer.succeed(IntradayMarketData, marketData),
-    Layer.succeed(CycleStore, runtimeServices.cycleStore),
+    Layer.succeed(
+      CycleStore,
+      withTerminalJevEvidence(runtimeServices.cycleStore, runtimeServices.jevBatchStore, operationTimeoutMs),
+    ),
     Layer.succeed(BrokerEventStore, runtimeServices.brokerEventStore),
     Layer.succeed(FillAccountingStore, runtimeServices.fillAccountingStore),
     Layer.succeed(ValuationStore, runtimeServices.valuationStore),

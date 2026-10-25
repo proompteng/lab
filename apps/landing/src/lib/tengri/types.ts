@@ -1,6 +1,16 @@
+import type { TengriCodexOptions } from './codex-models'
+import type { TengriPowerSettings } from './schemas'
+
 export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping' | 'terminating' | 'unknown'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
-export type TengriErrorCode = 'conversation_not_found' | 'file_conflict' | 'capacity_full'
+export type TengriErrorCode =
+  | 'conversation_not_found'
+  | 'control_not_dispatched'
+  | 'conversation_history_invalid'
+  | 'file_conflict'
+  | 'capacity_full'
+  | 'lifecycle_superseded'
+  | 'model_catalog_invalid'
 
 export type TengriCondition = {
   type: string
@@ -12,20 +22,22 @@ export type TengriCondition = {
 
 export type TengriAgent = {
   id: string
+  uid: string
+  runtimeEpoch: string
+  policyVersion: string
   displayName: string
   phase: AgentPhase
   architecture: AgentArchitecture
   cpuMillis: number
   memoryMib: number
   workspaceGib: number
+  power: TengriPowerSettings
   nodeName: string
   message: string
   createdAt: string
   readyAt: string
   lastActivityAt: string
   idleDeadline: string
-  expiresAt: string
-  pendingImage?: string
   conditions: TengriCondition[]
 }
 
@@ -51,6 +63,11 @@ export type TengriFileEntry = {
   directory: boolean
   size: number
   modifiedAt: string
+}
+
+export type TengriFileList = {
+  path: string
+  entries: TengriFileEntry[]
 }
 
 export type TengriFileSearchResult = {
@@ -144,9 +161,11 @@ export type TengriPreviewSession = {
 
 export type TengriAction =
   | { action: 'create-agent'; displayName: string }
-  | { action: 'delete-agent'; agentId: string }
-  | { action: 'sleep-agent'; agentId: string }
-  | { action: 'resume-agent'; agentId: string }
+  | { action: 'delete-agent'; agentId: string; workspaceUid: string }
+  | { action: 'sleep-agent'; agentId: string; workspaceUid: string }
+  | { action: 'resume-agent'; agentId: string; workspaceUid: string }
+  | { action: 'update-power-settings'; agentId: string; power: TengriPowerSettings }
+  | { action: 'stat-file'; agentId: string; path: string }
   | { action: 'list-files'; agentId: string; path: string }
   | { action: 'read-file'; agentId: string; path: string }
   | { action: 'write-file'; agentId: string; path: string; content: string; expectedRevision: string }
@@ -161,13 +180,44 @@ export type TengriAction =
   | { action: 'codex-account'; agentId: string }
   | { action: 'codex-login-status'; agentId: string }
   | { action: 'codex-login'; agentId: string }
-  | { action: 'create-thread'; agentId: string }
-  | { action: 'resume-thread'; agentId: string; threadId: string }
-  | { action: 'send-turn'; agentId: string; threadId: string; text: string }
-  | { action: 'steer-turn'; agentId: string; threadId: string; turnId: string; text: string }
-  | { action: 'interrupt-turn'; agentId: string; threadId: string; turnId: string }
+  | { action: 'codex-models'; agentId: string; cursor?: string }
+  | { action: 'active-codex-run'; agentId: string }
+  | { action: 'codex-run'; agentId: string; runId: string }
+  | { action: 'list-threads'; agentId: string; archived: boolean; cursor?: string }
+  | { action: 'set-thread-archived'; agentId: string; threadId: string; archived: boolean }
+  | ({ action: 'create-thread'; agentId: string } & TengriCodexOptions)
+  | ({ action: 'resume-thread'; agentId: string; threadId: string } & TengriCodexOptions)
+  | ({
+      action: 'send-turn'
+      agentId: string
+      operationId: string
+      threadId: string
+      text: string
+      images: import('./codex-images').TengriCodexImage[]
+    } & TengriCodexOptions)
+  | {
+      action: 'steer-turn'
+      runId: string
+      agentId: string
+      operationId: string
+      threadId: string
+      turnId: string
+      text: string
+      images: import('./codex-images').TengriCodexImage[]
+    }
+  | {
+      action: 'answer-questions'
+      runId: string
+      operationId: string
+      agentId: string
+      approvalId: string
+      response: import('./codex-input').TengriCodexInputResponse
+    }
+  | { action: 'interrupt-turn'; runId: string; operationId: string; agentId: string }
   | {
       action: 'resolve-approval'
+      runId: string
+      operationId: string
       agentId: string
       approvalId: string
       decision:
@@ -178,6 +228,7 @@ export type TengriAction =
         | 'deny'
     }
   | { action: 'preview-session'; agentId: string; port: number; path: string; fragment: string }
-  | { action: 'editor-session'; agentId: string; windowId: string }
+  | { action: 'editor-session'; agentId: string; windowId: string; renewal: boolean }
+  | { action: 'browser-session'; agentId: string; windowId: string; renewal: boolean }
   | { action: 'revoke-editor-sessions' }
-  | { action: 'revoke-preview-session'; agentId: string; sessionId: string; revocationToken?: string }
+  | { action: 'revoke-preview-session'; agentId: string; sessionId: string; revocationToken: string }

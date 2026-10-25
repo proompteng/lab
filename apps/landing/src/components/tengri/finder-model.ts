@@ -1,6 +1,6 @@
 import type { TengriFileEntry } from '@/lib/tengri/types'
 
-export const FINDER_WORKSPACE_PATH = '/'
+export const FINDER_WORKSPACE_PATH = '/workspace'
 export const FINDER_SEARCH_REFRESH_MS = 2_000
 
 const protectedFinderPaths = new Set([FINDER_WORKSPACE_PATH])
@@ -10,10 +10,13 @@ export type FinderSort = { column: 'name' | 'modified' | 'size' | 'kind'; direct
 const finderNameCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' })
 
 export function finderBreadcrumbs(path: string): { name: string; path: string }[] {
-  const segments = path.split('/').filter(Boolean)
+  const segments = path.slice(FINDER_WORKSPACE_PATH.length).split('/').filter(Boolean)
   return [
     { name: 'Workspace', path: FINDER_WORKSPACE_PATH },
-    ...segments.map((name, index) => ({ name, path: `/${segments.slice(0, index + 1).join('/')}` })),
+    ...segments.map((name, index) => ({
+      name,
+      path: `${FINDER_WORKSPACE_PATH}/${segments.slice(0, index + 1).join('/')}`,
+    })),
   ]
 }
 
@@ -77,10 +80,14 @@ function hasInvalidPathCharacter(value: string): boolean {
 
 export function normalizeFinderPath(value: string): string | null {
   const candidate = value
-  if (!candidate.startsWith('/') || hasInvalidPathCharacter(candidate)) return null
+  if (
+    (candidate !== FINDER_WORKSPACE_PATH && !candidate.startsWith(`${FINDER_WORKSPACE_PATH}/`)) ||
+    hasInvalidPathCharacter(candidate)
+  )
+    return null
 
   const segments: string[] = []
-  for (const segment of candidate.split('/')) {
+  for (const segment of candidate.slice(FINDER_WORKSPACE_PATH.length).split('/')) {
     if (!segment || segment === '.') continue
     if (segment === '..') {
       if (!segments.length) return null
@@ -90,7 +97,7 @@ export function normalizeFinderPath(value: string): string | null {
     segments.push(segment)
   }
 
-  return segments.length ? `/${segments.join('/')}` : FINDER_WORKSPACE_PATH
+  return segments.length ? `${FINDER_WORKSPACE_PATH}/${segments.join('/')}` : FINDER_WORKSPACE_PATH
 }
 
 export function finderSearchRefreshInterval(active: boolean, query: string): number | null {
@@ -124,7 +131,7 @@ export function finderChildPath(parentPath: string, name: string): string | null
   )
     return null
 
-  return parent === FINDER_WORKSPACE_PATH ? `/${child}` : `${parent}/${child}`
+  return `${parent}/${child}`
 }
 
 export function finderRenamePath(sourcePath: string, name: string): string | null {

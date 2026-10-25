@@ -203,6 +203,10 @@
 
           linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux ({
             "atticd-image" = import ./nix/images/attic.nix { inherit pkgs lib; };
+            "ofz-image" = import ./nix/images/ofz.nix {
+              inherit pkgs lib repoRevision;
+              repoRoot = ./.;
+            };
             "arc-runner-image" = import ./nix/images/arc-runner.nix {
               inherit pkgs lib ciToolchain;
             };
@@ -243,7 +247,7 @@
               bun = exact.bun;
             };
             "proompteng-image" = import ./nix/images/proompteng.nix {
-              inherit pkgs lib nodejs;
+              inherit pkgs lib nodejs repoRevision;
               repoRoot = ./.;
               bun = exact.bun;
             };
@@ -259,6 +263,11 @@
             };
             "symphony-image" = import ./nix/images/symphony.nix {
               inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
+            "opencode-image" = import ./nix/images/opencode.nix {
+              inherit pkgs lib nodejs repoRevision ciToolchain;
               repoRoot = ./.;
               bun = exact.bun;
             };

@@ -17,7 +17,7 @@ import {
   type Order as AlpacaOrder,
   type Position as AlpacaPosition,
   type ReadEvidence,
-} from './alpaca'
+} from './alpaca/model'
 import { AccountStatus, OrderSide, OrderStatus, OrderType } from '../execution/contracts'
 import {
   accountObservation,
@@ -44,6 +44,11 @@ const evidence: ReadEvidence = {
 }
 
 const account: AlpacaAccount = {
+  cryptoStatus: null,
+  cryptoFeeTier: null,
+  cashReportingQuantumMicros: '1' as const,
+  nonMarginableBuyingPowerMicros: null,
+
   id: '61e69015-8549-4bfd-b9c3-01e75843f47d',
   status: AlpacaAccountStatus.Active,
   currency: 'USD',
@@ -67,8 +72,8 @@ const order: AlpacaOrder = {
   assetId: '9f1f6f68-9d4b-4db5-9b24-3fe1c15b5b4c',
   symbol: 'NVDA',
   assetClass: AssetClass.UsEquity,
-  quantityMicros: '2000000',
-  filledQuantityMicros: '1000000',
+  quantityAtoms: '2000000000',
+  filledQuantityAtoms: '1000000000',
   filledAveragePriceMicros: '100000000',
   orderClass: OrderClass.Simple,
   orderType: AlpacaOrderType.Market,
@@ -82,10 +87,10 @@ const order: AlpacaOrder = {
 const activity: FillActivity = {
   accountId: account.id,
   activityId: '20260722153000000::5f596936-6f23-4cef-bdf1-3806aae57dbf',
-  cumulativeQuantityMicros: '1000000',
-  leavesQuantityMicros: '1000000',
-  priceMicros: '100000000',
-  quantityMicros: '1000000',
+  cumulativeQuantityAtoms: '1000000000',
+  leavesQuantityAtoms: '1000000000',
+  priceAtoms: '100000000000',
+  quantityAtoms: '1000000000',
   side: AlpacaOrderSide.Buy,
   symbol: 'NVDA',
   transactionTime: '2026-07-22T15:30:00.000987Z',
@@ -126,8 +131,9 @@ describe('paper broker observations', () => {
         exchange: AssetExchange.Nasdaq,
         assetClass: AssetClass.UsEquity,
         side: PositionSide.Long,
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         averageEntryPriceMicros: '100000000',
+        costBasisMicros: '100000000',
         marketPriceMicros: '110000000',
         marketValueMicros: '110000000',
         unrealizedPnlMicros: '10000000',
@@ -140,8 +146,9 @@ describe('paper broker observations', () => {
         exchange: AssetExchange.Nasdaq,
         assetClass: AssetClass.UsEquity,
         side: PositionSide.Short,
-        quantityMicros: '-2000000',
+        quantityAtoms: '-2000000000',
         averageEntryPriceMicros: '150000000',
+        costBasisMicros: '-300000000',
         marketPriceMicros: '140000000',
         marketValueMicros: '-280000000',
         unrealizedPnlMicros: '20000000',
@@ -187,8 +194,9 @@ describe('paper broker observations', () => {
           exchange: AssetExchange.Nasdaq,
           assetClass: AssetClass.UsEquity,
           side: PositionSide.Long,
-          quantityMicros: '1000000',
+          quantityAtoms: '1000000000',
           averageEntryPriceMicros: '100000000',
+          costBasisMicros: '100000000',
           marketPriceMicros: '100000000',
           marketValueMicros: '100000000',
           unrealizedPnlMicros: '0',
@@ -201,8 +209,9 @@ describe('paper broker observations', () => {
           exchange: AssetExchange.Nasdaq,
           assetClass: AssetClass.UsEquity,
           side: PositionSide.Long,
-          quantityMicros: '1000000',
+          quantityAtoms: '1000000000',
           averageEntryPriceMicros: '100000000',
+          costBasisMicros: '100000000',
           marketPriceMicros: '100000000',
           marketValueMicros: '100000000',
           unrealizedPnlMicros: '0',
@@ -225,15 +234,15 @@ describe('paper broker observations', () => {
     expect(event._tag).toBe('Order')
     if (event._tag !== 'Order') throw new Error('expected order observation')
     expect(event.order).toMatchObject({
-      schemaVersion: 'bayn.paper-order.v2',
+      schemaVersion: 'bayn.order.v3',
       side: OrderSide.Buy,
       status: OrderStatus.PartiallyFilled,
-      filledQuantityMicros: '1000000',
+      filledQuantityAtoms: '1000000000',
       intentId: 'b'.repeat(64),
     })
     expect(event.occurredAt).toBe('2026-07-22T15:30:00.500Z')
     expect(event.sourceEventId).toBe(`order:${order.brokerOrderId}:${order.updatedAt}`)
-    expect(event.contentHash).toBe('5ba77fe241959988a7b35d2b2f39e474651237b4f91a5c36678e20eb1ffe5ac9')
+    expect(event.contentHash).toBe('77f85d889a621d4815ae2f0dddfed463c6ae7fd3c5e0f0c0d2066c72bdbb9f14')
     expect(failure(orderObservation({ ...order, extendedHours: true }, evidence))).toEqual({
       _tag: 'ExtendedHoursUnsupported',
       brokerOrderId: order.brokerOrderId,
@@ -247,14 +256,14 @@ describe('paper broker observations', () => {
 
   test('preserves a notional market BUY as a first-class v2 order observation', () => {
     const {
-      quantityMicros: _omittedQuantityMicros,
+      quantityAtoms: _omittedQuantityAtoms,
       filledAveragePriceMicros: _omittedFilledAveragePriceMicros,
       ...notionalOrderBase
     } = order
     const notionalOrder: AlpacaOrder = {
       ...notionalOrderBase,
       notionalMicros: '200000000',
-      filledQuantityMicros: '0',
+      filledQuantityAtoms: '0',
       status: AlpacaOrderStatus.Accepted,
     }
     const event = success(orderObservation(notionalOrder, evidence, 'c'.repeat(64)))
@@ -262,13 +271,13 @@ describe('paper broker observations', () => {
     expect(event._tag).toBe('Order')
     if (event._tag !== 'Order') throw new Error('expected order observation')
     expect(event.order).toMatchObject({
-      schemaVersion: 'bayn.paper-order.v2',
+      schemaVersion: 'bayn.order.v3',
       orderType: OrderType.Market,
       notionalMicros: '200000000',
-      filledQuantityMicros: '0',
+      filledQuantityAtoms: '0',
       status: OrderStatus.Pending,
     })
-    expect(event.order.quantityMicros).toBeUndefined()
+    expect(event.order.quantityAtoms).toBeUndefined()
   })
 
   test('binds a fill to its order and defaults paper fees to zero', () => {
@@ -314,10 +323,10 @@ describe('paper broker observations', () => {
     expect(unsupported).toEqual({ _tag: 'UnsupportedOrderType', value: AlpacaOrderType.Stop })
     expect(renderBrokerObservationError(unsupported)).toBe('unsupported broker order type stop')
 
-    expect(failure(orderObservation({ ...order, filledQuantityMicros: '+1' }, evidence))).toEqual({
+    expect(failure(orderObservation({ ...order, filledQuantityAtoms: '+1' }, evidence))).toEqual({
       _tag: 'FilledQuantityInvalid',
-      filledQuantityMicros: '+1',
-      quantityMicros: '2000000',
+      filledQuantityAtoms: '+1',
+      quantityAtoms: '2000000000',
     })
 
     expect(failure(accountObservation({ value: { ...account, id: '\ud800' }, evidence }))).toMatchObject({
@@ -332,3 +341,28 @@ describe('paper broker observations', () => {
     })
   })
 })
+
+test.each([AlpacaTimeInForce.Day, AlpacaTimeInForce.GoodUntilCanceled])(
+  'reconciles legal extended stock LIMIT orders without discarding broker evidence: %s',
+  (timeInForce) => {
+    expect(
+      orderObservation(
+        { ...order, orderType: AlpacaOrderType.Limit, timeInForce, extendedHours: true, limitPriceMicros: '100000000' },
+        evidence,
+      )._tag,
+    ).toBe('Success')
+    expect(
+      orderObservation(
+        {
+          ...order,
+          symbol: 'BTC/USD',
+          assetClass: AssetClass.Crypto,
+          orderType: AlpacaOrderType.Limit,
+          timeInForce,
+          extendedHours: true,
+        },
+        evidence,
+      )._tag,
+    ).toBe('Failure')
+  },
+)

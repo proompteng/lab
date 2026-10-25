@@ -1,13 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Data, Deferred, Effect, Exit, Fiber, Layer, Redacted, Result } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 
+import { BrokerObservations } from './broker/alpaca/observed-snapshot'
 import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
-import { BrokerProvider, BrokerSession, decodeBrokerConnection, type BrokerConnection } from './broker/alpaca'
+import { BrokerProvider, decodeBrokerConnection, type BrokerConnection } from './broker/connection'
+import { BrokerSession } from './broker/alpaca/session'
 import { AlpacaHttpClient } from './broker/alpaca/http'
 import { BrokerEnvironment } from './broker/identity'
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { Journal, JournalLive, type TigerBeetleClient } from './ledger'
 import { config as fixtureConfig } from './testing/runtime-fixtures'
 import {
@@ -32,6 +34,12 @@ const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): Tige
   lookupTransfers: async () => [],
   queryAccounts: async () => [],
   queryTransfers: async () => [],
+  getAccountTransfers: async () => {
+    throw new Error('unexpected account transfer history read')
+  },
+  getAccountBalances: async () => {
+    throw new Error('unexpected account balance history read')
+  },
   destroy: () => undefined,
   ...overrides,
 })
@@ -166,6 +174,7 @@ describe('Bayn resource lifecycle', () => {
             : url.pathname === '/v2/orders' ||
                 url.pathname === '/v2/positions' ||
                 url.pathname === '/v2/account/activities/FILL' ||
+                url.pathname === '/v2/account/activities' ||
                 url.pathname === '/v2/calendar'
               ? []
               : { code: 40410000, message: 'order not found' }
@@ -190,12 +199,19 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         Effect.all({ session: BrokerSession, httpClient: AlpacaHttpClient }).pipe(
           Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
+          Effect.provideService(BrokerObservations, {
+            read: Effect.die('not read by acquisition'),
+            readState: Effect.die('not read by acquisition'),
+            readForSubmit: () => Effect.die('not submitted by acquisition'),
+            invalidate: Effect.void,
+          }),
         ),
       ),
     )
 
     expect(services.httpClient).toBe(client)
     expect(services.session.read).toBeDefined()
+    expect(services.session.read.projection).toBeDefined()
     expect(acquisitions).toBe(1)
     expect(finalizations).toBe(1)
   })
@@ -244,6 +260,12 @@ describe('Bayn resource lifecycle', () => {
         Effect.gen(function* () {
           const fiber = yield* BrokerSession.pipe(
             Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
+            Effect.provideService(BrokerObservations, {
+              read: Effect.die('not read by acquisition'),
+              readState: Effect.die('not read by acquisition'),
+              readForSubmit: () => Effect.die('not submitted by acquisition'),
+              invalidate: Effect.void,
+            }),
             Effect.forkScoped({ startImmediately: true }),
           )
           yield* Deferred.await(started)
@@ -347,6 +369,12 @@ describe('Bayn resource lifecycle', () => {
     const client = makeTigerBeetleClient({
       queryAccounts: () => query([]),
       queryTransfers: () => query([]),
+      getAccountTransfers: async () => {
+        throw new Error('unexpected account transfer history read')
+      },
+      getAccountBalances: async () => {
+        throw new Error('unexpected account balance history read')
+      },
       destroy: () => undefined,
     })
 
@@ -374,56 +402,72 @@ describe('Bayn resource lifecycle', () => {
     expect(maximumConcurrency).toBe(2)
   })
 
-  test('invalidates an interrupted TigerBeetle client and defers replacement to the next request', async () => {
-    const closeCounts = [0, 0]
-    const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
-    const interruptedClient = makeTigerBeetleClient({
-      lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
-      destroy: () => {
-        closeCounts[0] += 1
-        Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))
-      },
-    })
-    const recoveredClient = makeTigerBeetleClient({
-      lookupAccounts: async () => [],
-      destroy: () => void (closeCounts[1] += 1),
-    })
-    let clientAcquisitions = 0
-    const createClient = (): TigerBeetleClient => {
-      clientAcquisitions += 1
-      if (clientAcquisitions === 1) return interruptedClient
-      if (clientAcquisitions === 2) throw new Error('replacement unavailable')
-      if (clientAcquisitions === 3) return recoveredClient
-      throw new Error('unexpected TigerBeetle client acquisition')
-    }
-    let acquisitionsAfterInterrupt = 0
-    let acquisitionsAfterReplacementFailure = 0
+  test.each(['caller', 'transport'] as const)(
+    'invalidates a TigerBeetle client after a %s deadline and defers replacement to the next request',
+    async (deadline) => {
+      const closeCounts = [0, 0]
+      const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
+      const interruptedClient = makeTigerBeetleClient({
+        lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
+        getAccountTransfers: async () => {
+          throw new Error('unexpected account transfer history read')
+        },
+        getAccountBalances: async () => {
+          throw new Error('unexpected account balance history read')
+        },
+        destroy: () => {
+          closeCounts[0] += 1
+          Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))
+        },
+      })
+      const recoveredClient = makeTigerBeetleClient({
+        lookupAccounts: async () => [],
+        destroy: () => void (closeCounts[1] += 1),
+      })
+      let clientAcquisitions = 0
+      const createClient = (): TigerBeetleClient => {
+        clientAcquisitions += 1
+        if (clientAcquisitions === 1) return interruptedClient
+        if (clientAcquisitions === 2) throw new Error('replacement unavailable')
+        if (clientAcquisitions === 3) return recoveredClient
+        throw new Error('unexpected TigerBeetle client acquisition')
+      }
+      let acquisitionsAfterInterrupt = 0
+      let acquisitionsAfterReplacementFailure = 0
 
-    const replacementError = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const journal = yield* Journal
-          yield* journal.check.pipe(Effect.timeout(5), Effect.ignore)
-          acquisitionsAfterInterrupt = clientAcquisitions
-          const error = yield* Effect.flip(journal.check)
-          acquisitionsAfterReplacementFailure = clientAcquisitions
-          yield* journal.check
-          return error
-        }).pipe(
-          Effect.provide(
-            JournalLive(config, {
-              createClient,
-              resolveReplicaAddresses: () => Effect.succeed(['3000']),
-            }),
+      const replacementError = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const journal = yield* Journal
+            const timeout = yield* Effect.flip(
+              deadline === 'caller' ? journal.check.pipe(Effect.timeout(5)) : journal.check,
+            )
+            if (deadline === 'transport')
+              expect(timeout.message).toContain('TigerBeetle connectivity-check timed out after 5ms')
+            acquisitionsAfterInterrupt = clientAcquisitions
+            const error = yield* Effect.flip(journal.check)
+            acquisitionsAfterReplacementFailure = clientAcquisitions
+            yield* journal.check
+            return error
+          }).pipe(
+            Effect.provide(
+              JournalLive(
+                { ...config, operationTimeoutMs: deadline === 'transport' ? 5 : config.operationTimeoutMs },
+                {
+                  createClient,
+                  resolveReplicaAddresses: () => Effect.succeed(['3000']),
+                },
+              ),
+            ),
           ),
         ),
-      ),
-    )
+      )
 
-    expect(acquisitionsAfterInterrupt).toBe(1)
-    expect(acquisitionsAfterReplacementFailure).toBe(2)
-    expect(clientAcquisitions).toBe(3)
-    expect(closeCounts).toEqual([1, 1])
-    expect(replacementError.message).toContain('replacement unavailable')
-  })
+      expect(acquisitionsAfterInterrupt).toBe(1)
+      expect(acquisitionsAfterReplacementFailure).toBe(2)
+      expect(clientAcquisitions).toBe(3)
+      expect(closeCounts).toEqual([1, 1])
+      expect(replacementError.message).toContain('replacement unavailable')
+    },
+  )
 })

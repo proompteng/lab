@@ -60,6 +60,15 @@ datasources:
         access: proxy
         url: http://observability-mimir-gateway.observability.svc.cluster.local/prometheus
         isDefault: true
+      - name: Mimir Alertmanager
+        uid: mimir-alertmanager
+        type: alertmanager
+        access: proxy
+        url: http://observability-mimir-gateway.observability.svc.cluster.local
+        isDefault: false
+        jsonData:
+          implementation: mimir
+          handleGrafanaManagedAlerts: false
       - name: Tempo
         uid: tempo
         type: tempo
@@ -96,6 +105,7 @@ dashboardsConfigMaps:
   torghut-execution-recovery-dashboard: torghut-execution-recovery-dashboard
   arc-runner-capacity-dashboard: arc-runner-capacity-dashboard
   bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard
+  bayn-cache-performance-dashboard: bayn-cache-performance-dashboard
 
 dashboardProviders:
   dashboardproviders.yaml:
@@ -147,5 +157,15 @@ dashboardProviders:
         type: file
         disableDeletion: false
         editable: true
+        updateIntervalSeconds: 30
         options:
           path: /var/lib/grafana/dashboards/bayn-cycle-operations-dashboard
+      - name: bayn-cache-performance-dashboard
+        orgId: 1
+        folder: Trading
+        type: file
+        disableDeletion: false
+        editable: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/bayn-cache-performance-dashboard

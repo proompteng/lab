@@ -1,6 +1,6 @@
 # 188. Torghut Profit-Repair Clearance Packets And Market-Context SLOs (2026-05-12)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

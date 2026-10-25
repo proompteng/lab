@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-multus-ds
+  namespace: kube-system
+spec:
+  template:
+    spec:
+      priorityClassName: system-node-critical
+      initContainers:
+        - name: install-macvlan
+          image: ghcr.io/siderolabs/install-cni:v1.9.0@sha256:53bdeb6c8d238dd593ee75f265baf4625925a034d8d18f10ffeae88d7fcf2c3e
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              cp /opt/cni/bin/macvlan /host/opt/cni/bin/.macvlan.new
+              chmod 0755 /host/opt/cni/bin/.macvlan.new
+              mv -f /host/opt/cni/bin/.macvlan.new /host/opt/cni/bin/macvlan
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: cnibin
+              mountPath: /host/opt/cni/bin
+      containers:
+        - name: kube-multus
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: null
+              memory: 1Gi

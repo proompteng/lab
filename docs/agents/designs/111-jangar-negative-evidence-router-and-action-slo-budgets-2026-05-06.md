@@ -1,20 +1,10 @@
 # 111. Jangar Negative Evidence Router And Action SLO Budgets (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-06
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane resilience, safer rollout behavior, evidence freshness, negative-evidence routing, Torghut
 profit handoff, and action-class SLO budgets.
-
-Companion Torghut contract:
-
-- `docs/torghut/design-system/v6/115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md`
-
-Extends:
-
-- `110-jangar-gitops-convergence-escrow-and-promotion-evidence-ledger-2026-05-06.md`
-- `109-jangar-promotion-escrow-replay-cells-and-consumer-parity-gates-2026-05-06.md`
-- `104-jangar-quant-evidence-clearinghouse-and-capital-action-firewall-2026-05-06.md`
 
 ## Decision
 

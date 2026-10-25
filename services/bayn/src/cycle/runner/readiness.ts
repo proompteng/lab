@@ -1,0 +1,121 @@
+import { Schema } from 'effect'
+
+import { UtcInstantSchema } from '../../schemas'
+import { Reason as RiskReason } from '../../risk'
+import { RequiredMarketFeatureSchema } from '../../market-data/features/contract'
+import type { IntradaySnapshotFailure } from '../../market-data/intraday/model'
+
+export enum DecisionReadinessReason {
+  AccountProtection = 'ACCOUNT_PROTECTION',
+  DecisionPending = 'DECISION_PENDING',
+  InferenceUnavailable = 'INFERENCE_UNAVAILABLE',
+  LookbackWarmup = 'LOOKBACK_WARMUP',
+  SnapshotUnavailable = 'SNAPSHOT_UNAVAILABLE',
+  SnapshotCoverage = 'SNAPSHOT_COVERAGE',
+  SnapshotStale = 'SNAPSHOT_STALE',
+  ArchiveWatermark = 'ARCHIVE_WATERMARK',
+  NoEligibleCandidate = 'NO_ELIGIBLE_CANDIDATE',
+  SignalWindowObserved = 'SIGNAL_WINDOW_OBSERVED',
+}
+
+export const DecisionReadinessSchema = Schema.Struct({
+  reason: Schema.Enum(DecisionReadinessReason),
+  message: Schema.NonEmptyString,
+  accountProtectionReasons: Schema.optionalKey(
+    Schema.Array(Schema.Literals([RiskReason.DailyLossExceeded, RiskReason.DrawdownExceeded])).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(2),
+      Schema.isUnique(),
+    ),
+  ),
+  availableAt: Schema.optionalKey(UtcInstantSchema),
+  symbol: Schema.optionalKey(Schema.NonEmptyString),
+  eventAt: Schema.optionalKey(UtcInstantSchema),
+  requiredFeature: Schema.optionalKey(RequiredMarketFeatureSchema),
+  snapshotQuery: Schema.optionalKey(
+    Schema.Struct({
+      rangeStartAt: UtcInstantSchema,
+      rangeEndAt: UtcInstantSchema,
+      symbols: Schema.Array(Schema.NonEmptyString),
+    }),
+  ),
+}).check(
+  Schema.makeFilter(
+    (readiness) =>
+      readiness.accountProtectionReasons === undefined ||
+      readiness.reason === DecisionReadinessReason.AccountProtection,
+    { expected: 'account limit reasons belong only to account protection readiness' },
+  ),
+)
+
+export type DecisionReadiness = typeof DecisionReadinessSchema.Type
+
+export const snapshotReadiness = (failure: IntradaySnapshotFailure): DecisionReadiness => {
+  const symbol = failure.facts?.['symbol']
+  const eventAt = failure.facts?.['eventAt']
+  const requiredFeature = failure.facts?.['requiredFeature']
+  return {
+    reason:
+      failure.reason === 'watermark'
+        ? DecisionReadinessReason.ArchiveWatermark
+        : failure.reason === 'freshness'
+          ? DecisionReadinessReason.SnapshotStale
+          : DecisionReadinessReason.SnapshotUnavailable,
+    message: failure.message,
+    ...(typeof symbol === 'string' && symbol.length > 0 ? { symbol } : {}),
+    ...(Schema.is(UtcInstantSchema)(eventAt) ? { eventAt } : {}),
+    ...(Schema.is(RequiredMarketFeatureSchema)(requiredFeature) ? { requiredFeature } : {}),
+  }
+}
+
+export const CycleCompletionWaitReasonSchema = Schema.Literals([
+  'accounting-inexact',
+  'intent-nonterminal',
+  'intent-unsuccessful',
+  'reconciliation-not-later',
+  'reconciliation-not-exact',
+  'unknown-mutation',
+  'unknown-order',
+  'open-position',
+])
+
+export type CycleCompletionWaitReason = typeof CycleCompletionWaitReasonSchema.Type
+
+export const CycleWaitReasonSchema = Schema.Union([
+  CycleCompletionWaitReasonSchema,
+  Schema.Literals([
+    'BROKER_OBSERVATION_PENDING',
+    'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
+    'JEV_POSITION_AWAITING_RECONCILIATION',
+    'JEV_POSITION_HELD',
+    'PROTECTION_RECOVERY_BACKOFF',
+    'PROTECTION_RECOVERY_ONLY',
+    'PROTECTION_AWAITING_RECONCILIATION',
+    'PROTECTION_CANCEL_PENDING',
+    'PROTECTION_AUTHORITY_UNAVAILABLE',
+    'PROTECTION_EXIT_COMMITTED',
+    'POST_MUTATION_RECONCILIATION',
+    'AWAITING_SUBMISSION_OPEN',
+    'AWAITING_CLOSE_WINDOW',
+    'CLOSE_STORE_UNAVAILABLE',
+    'CLOSE_MARKET_DATA_UNAVAILABLE',
+    'CLOSE_QUOTE_PENDING',
+    'CLOSE_RECONCILIATION_PENDING',
+    'CLOSE_ONLY_UNTIL_CLOSE',
+    'MUTATION_NOT_ADVANCED',
+    'MUTATION_RECOVERY_BACKOFF',
+    'MUTATION_EVIDENCE_PENDING',
+    'COMPLETION_EVIDENCE_PENDING',
+    'SUBMISSION_NOT_ALLOWED',
+  ]),
+])
+
+export type CycleWaitReason = typeof CycleWaitReasonSchema.Type
+
+export type CycleWaitingDetails = {
+  readonly maximumHoldDueAt?: string
+  readonly maximumHoldEvaluatedAt?: string
+} & (
+  | { readonly waitReason: CycleWaitReason; readonly readiness?: never }
+  | { readonly readiness: DecisionReadiness; readonly waitReason?: never }
+)

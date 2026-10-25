@@ -20,7 +20,7 @@ class ForwarderEndpointsTest {
       alpacaKeyId = "key",
       alpacaSecretKey = "secret",
       alpacaMarketType = marketType,
-      alpacaCryptoLocation = "us",
+      cryptoFeed = if (marketType == AlpacaMarketType.CRYPTO) CryptoFeedConfig("us", listOf("BTC/USD"), "crypto-events") else null,
       alpacaFeed = if (marketType == AlpacaMarketType.OPTIONS) "opra" else "iex",
       alpacaStreamUrl = "wss://stream.data.alpaca.markets/",
       alpacaBaseUrl = "https://data.alpaca.markets/",
@@ -78,16 +78,19 @@ class ForwarderEndpointsTest {
   fun `crypto endpoints use crypto paths and skip feed parameter`() {
     val cfg = baseConfig(AlpacaMarketType.CRYPTO)
     assertEquals("wss://stream.data.alpaca.markets/v1beta3/crypto/us", alpacaMarketDataStreamUrl(cfg))
-    assertEquals("https://data.alpaca.markets/v1beta3/crypto/us/bars", alpacaBarsBackfillUrl(cfg))
+    assertFailsWith<IllegalStateException> { alpacaBarsBackfillUrl(cfg) }
     assertFalse(alpacaBarsBackfillNeedsFeed(cfg))
-    assertEquals(listOf("trades", "quotes", "bars"), alpacaMarketDataChannels(cfg))
+    assertEquals(listOf("trades", "quotes", "bars", "updatedBars", "orderbooks"), alpacaMarketDataChannels(cfg))
   }
 
   @Test
   fun `crypto endpoints respect configured location`() {
-    val cfg = baseConfig(AlpacaMarketType.CRYPTO).copy(alpacaCryptoLocation = "eu-1")
+    val cfg =
+      baseConfig(
+        AlpacaMarketType.CRYPTO,
+      ).copy(cryptoFeed = CryptoFeedConfig("eu-1", listOf("BTC/USD"), "crypto-events"))
     assertEquals("wss://stream.data.alpaca.markets/v1beta3/crypto/eu-1", alpacaMarketDataStreamUrl(cfg))
-    assertEquals("https://data.alpaca.markets/v1beta3/crypto/eu-1/bars", alpacaBarsBackfillUrl(cfg))
+    assertFailsWith<IllegalStateException> { alpacaBarsBackfillUrl(cfg) }
   }
 
   @Test
@@ -140,7 +143,13 @@ class ForwarderEndpointsTest {
         alpacaFeed = "overnight",
         barsBackfillLookbackHours = 120,
       )
-    val query = alpacaBarsBackfillQuery(cfg, listOf("AAPL", "MSFT"), Instant.parse("2026-03-11T09:30:00Z"), "page-1")
+    val query =
+      alpacaBarsBackfillQuery(
+        cfg,
+        listOf("AAPL", "MSFT"),
+        alpacaBarsBackfillWindow(Instant.parse("2026-03-11T09:30:00Z"), cfg.barsBackfillLookbackHours),
+        "page-1",
+      )
 
     assertEquals("AAPL,MSFT", query.symbols)
     assertEquals("1Min", query.timeframe)
@@ -172,7 +181,7 @@ class ForwarderEndpointsTest {
   @Test
   fun `crypto backfill query omits feed parameter`() {
     val cfg = baseConfig(AlpacaMarketType.CRYPTO)
-    val query = alpacaBarsBackfillQuery(cfg, listOf("BTC/USD"), Instant.parse("2026-03-11T09:30:00Z"))
+    val query = alpacaBarsBackfillQuery(cfg, listOf("BTC/USD"), alpacaBarsBackfillWindow(Instant.parse("2026-03-11T09:30:00Z")))
 
     assertEquals(null, query.feed)
     assertEquals(null, query.pageToken)

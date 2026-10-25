@@ -1,6 +1,6 @@
 # 159. Torghut Capital Cohort Frontier And Routeability Repair Board (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

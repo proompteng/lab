@@ -1,7 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
 
-import { Pipeable } from '../../pipeable'
 import { CycleState, type CycleCompletionState, type CycleTerminalReason } from '../model'
 import {
   decideAcquire,
@@ -9,14 +8,12 @@ import {
   decideCompletion,
   makeInitialCycle,
   validateCompletionDocument,
-  type AcquireDecision,
   type ActivationDecision,
   type CompletionDecision,
 } from './decisions'
 import {
   liftCycleDecision,
   runCycleStore,
-  type CycleAcquireReceipt,
   type CycleMutationReceipt,
   type CycleStoreInternalError,
   type CycleStoreShape,
@@ -32,25 +29,11 @@ export interface CycleLifecyclePrograms {
   readonly block: CycleStoreShape['block']
 }
 
-const makeCycleLifecycleProgramsDataFirst = (
+export const makeCycleLifecyclePrograms = (
   sql: PgClient.PgClient,
   queries: CycleQueries,
   mutations: CycleMutationPrimitives,
 ): CycleLifecyclePrograms => {
-  const interpretAcquireDecision = (
-    observedAt: string,
-    decision: AcquireDecision,
-  ): Effect.Effect<CycleAcquireReceipt, CycleStoreInternalError> =>
-    Match.value(decision).pipe(
-      Match.tagsExhaustive({
-        Return: ({ cycle, created }) => Effect.succeed({ cycle, created }),
-        Block: ({ cycle, created, reason }) =>
-          mutations
-            .blockCycle('acquire', cycle, reason, observedAt)
-            .pipe(Effect.map((receipt) => ({ cycle: receipt.cycle, created }))),
-      }),
-    )
-
   const acquire: CycleStoreShape['acquire'] = (draft, observedAt) =>
     runCycleStore(
       'acquire',
@@ -62,16 +45,15 @@ const makeCycleLifecycleProgramsDataFirst = (
           observedAt: decodedTime,
           candidate: makeInitialCycle(decodedDraft, decodedTime),
         })),
-        Effect.flatMap(({ draft: decodedDraft, observedAt: decodedTime, candidate }) =>
+        Effect.flatMap(({ draft: decodedDraft, candidate }) =>
           sql.withTransaction(
             mutations.insertCycle(candidate).pipe(
               Effect.bindTo('inserted'),
               Effect.bind('storedCycleId', () => mutations.lockAuthoritySlot(candidate)),
               Effect.bind('stored', ({ storedCycleId }) => mutations.readLocked('acquire', storedCycleId)),
               Effect.flatMap(({ inserted, stored }) =>
-                liftCycleDecision('acquire', decideAcquire(stored, decodedDraft, decodedTime, inserted.length === 1)),
+                liftCycleDecision('acquire', decideAcquire(stored, decodedDraft, inserted.length === 1)),
               ),
-              Effect.flatMap((decision) => interpretAcquireDecision(decodedTime, decision)),
             ),
           ),
         ),
@@ -92,7 +74,7 @@ const makeCycleLifecycleProgramsDataFirst = (
         AND state = ${CycleState.Pending}
         AND state_version = ${decision.cycle.stateVersion}
         AND (
-          schema_version = 'bayn.autonomous-cycle.v3'
+          schema_version IN ('bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
           OR snapshot_id IS NOT NULL
         )
       RETURNING cycle_id
@@ -219,5 +201,3 @@ const makeCycleLifecycleProgramsDataFirst = (
 
   return { acquire, activate, finish, block }
 }
-
-export const makeCycleLifecyclePrograms = Pipeable.dual(3, makeCycleLifecycleProgramsDataFirst)

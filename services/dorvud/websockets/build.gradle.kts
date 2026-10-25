@@ -27,6 +27,7 @@ dependencies {
 
   testImplementation("io.mockk:mockk:1.13.12")
   testImplementation("io.ktor:ktor-client-mock:$ktorVersion")
+  testImplementation("io.ktor:ktor-server-websockets:$ktorVersion")
   testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 }
 

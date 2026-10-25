@@ -32,6 +32,8 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
+      metadata.max.idle.interval.ms: 5000
+      broker.session.timeout.ms: 60000
       controller.quorum.election.timeout.ms: 60000
       controller.quorum.fetch.timeout.ms: 180000
     livenessProbe:
@@ -62,6 +64,13 @@ spec:
   template:
     pod:
       affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: network.proompteng.ai/100g
+                    operator: In
+                    values: ["true"]
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
@@ -105,6 +114,13 @@ spec:
   template:
     pod:
       affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: network.proompteng.ai/100g
+                    operator: In
+                    values: ["true"]
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100

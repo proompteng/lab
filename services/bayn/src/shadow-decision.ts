@@ -1,54 +1,46 @@
+import { entryBracketProtection } from './execution/position-protection'
+import { intentPlanSchemaVersion } from './execution/contracts'
+import { canonicalHashV1Result } from './hash'
+import { instrumentMarket } from './instruments'
+import { cashSpotLimitTimeInForce } from './execution/order-terms'
+
+import { makeBoundExecutionCalendar } from './cycle/construction'
+import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
+import {
+  executionCycleDecisionSchemaVersion,
+  observeShadowDecisionSchemaVersion,
+  isSnapshotExecutionMarketDataBinding,
+} from './shadow-decision-contract'
 import { Data, Effect, Result, Schema } from 'effect'
 
+import { AutonomousCycleSchema, CycleState, type AutonomousCycle } from './cycle/model'
 import {
-  AutonomousCycleSchema,
-  CycleState,
-  cycleAuthoritySessionDate,
-  isIntradayAutonomousCycle,
-  isLegacyAutonomousCycle,
-  makeExecutionCalendarObservation,
-  type AutonomousCycle,
-} from './cycle'
-import {
-  intentIdForPlan,
-  clientOrderIdForIntentId,
-  executionIntentIdForDecodedPlan,
   IntentPlanSchema,
+  makeReferenceIntentResult,
+  makeExecutionIntentFromDecodedPlan,
   type IntentPlan,
 } from './execution/intents/domain'
 import type { ExecutionSessionBinding } from './execution-session'
-import { canonicalHashV1Result } from './hash'
-import type { PersistedIntradaySnapshotRows } from './market-data'
+import { withObservedStage } from './telemetry'
+import type { PersistedIntradaySnapshotRows } from './market-data/intraday/verification'
 import { IntradaySnapshotPurpose } from './market-data/intraday/model'
 import {
   Authority,
-  IntentSchema,
-  IntentState,
   OrderSide,
   OrderType,
-  ReferenceIntentSchema,
   RiskOutcome,
-  TimeInForce,
   type Intent,
   type Position,
   type ReferenceIntent,
 } from './execution/contracts'
-import {
-  legacyCycleDecisionSchemaVersion,
-  legacyExecutionAuthorityToken,
-  legacyExecutionIntentSchemaVersion,
-  legacyIntentPlanSchemaVersion,
-  legacyPositionSchemaVersion,
-  legacyReferenceIntentSchemaVersion,
-} from './execution/legacy-wire'
-import { reconciledStateHash } from './reconciliation'
+import { legacyExecutionAuthorityToken } from './execution/legacy-wire'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import { evaluate, isAuthorityNotGrantedReason, PolicySchema, StateSchema, type Policy, type State } from './risk'
 import {
   ExecutionMarketDataBindingSchema,
   makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
   reconciledPositionLiquidationBindingSchemaVersion,
-  type CycleDecisionDocument,
   type DeltaRiskEvaluation,
   type ExecutionMarketDataBinding,
   type ObserveShadowDecisionDocument,
@@ -56,10 +48,10 @@ import {
 } from './shadow-decision-contract'
 import {
   RuntimeStrategyDecisionSchema,
+  isFlatExecutionTarget,
   runtimeDecisionMatchesStrategy,
   type RuntimeStrategyDecision,
 } from './strategy/runtime-decision'
-import { intradayMomentumPlanningTargetWeights } from './strategy/intraday-momentum/model'
 import {
   TargetPlannerInputSchema,
   TargetPlanResultSchema,
@@ -68,7 +60,7 @@ import {
   type PlannedTargetQuantity,
   type TargetPlannerInput,
   type TargetPlanResult,
-} from './target-planner'
+} from './target-planner/index'
 import {
   PositiveMicrosSchema,
   Sha256Schema,
@@ -86,6 +78,7 @@ export interface ShadowSnapshotBinding {
 export interface ShadowDeltaRiskInput {
   readonly symbol: string
   readonly notionalLimitMicros: string
+  readonly limitPriceMicros: string
   readonly state: State
 }
 
@@ -94,6 +87,7 @@ export interface ObserveShadowDecisionInput {
   readonly snapshot: ShadowSnapshotBinding
   readonly compiledDecision: RuntimeStrategyDecision
   readonly decisionMarketDataRows?: PersistedIntradaySnapshotRows
+  readonly executionMarketDataRows?: PersistedIntradaySnapshotRows
   readonly decisionMarketData?: ExecutionMarketDataBinding
   readonly executionMarketData?: ExecutionMarketDataBinding
   readonly plannerInput: TargetPlannerInput
@@ -105,6 +99,9 @@ export interface ObserveShadowDecisionInput {
 
 export interface ExecutionDecisionInput extends ObserveShadowDecisionInput {
   readonly authorityGenerationHash: string
+  readonly riskContext: NonNullable<ExecutionDecisionDocument['bindings']['riskContext']>
+  readonly entryLimitSlippageBps?: number
+  readonly closeLimitSlippageBps?: number
   /** The immutable signal/session binding retained for restart-safe close construction. */
   readonly executionSession: ExecutionSessionBinding
   /** A close-only plan uses the activation lease as its submission boundary. */
@@ -131,6 +128,7 @@ const ShadowSnapshotBindingSchema = Schema.Struct({
 const ShadowDeltaRiskInputSchema = Schema.Struct({
   symbol: StrictNonEmptyStringSchema,
   notionalLimitMicros: PositiveMicrosSchema,
+  limitPriceMicros: PositiveMicrosSchema,
   state: StateSchema,
 })
 
@@ -139,6 +137,13 @@ const ObserveShadowDecisionInputSchema = Schema.Struct({
   snapshot: ShadowSnapshotBindingSchema,
   compiledDecision: Schema.Unknown,
   decisionMarketDataRows: Schema.optionalKey(
+    Schema.Struct({
+      bars: Schema.Array(Schema.Unknown),
+      quotes: Schema.Array(Schema.Unknown),
+      trades: Schema.Array(Schema.Unknown),
+    }),
+  ),
+  executionMarketDataRows: Schema.optionalKey(
     Schema.Struct({
       bars: Schema.Array(Schema.Unknown),
       quotes: Schema.Array(Schema.Unknown),
@@ -169,7 +174,7 @@ const decodeExecutionMarketDataBindingResult = Schema.decodeUnknownResult(
 const decodeIntentPlanResult = Schema.decodeUnknownResult(IntentPlanSchema, strictParseOptions)
 const decodeCumulativeStateResult = Schema.decodeUnknownResult(StateSchema, strictParseOptions)
 
-const QUANTITY_SCALE = 1_000_000n
+const QUANTITY_SCALE = 1_000_000_000n
 // Every micros value consumed by the pure reducer is schema-decoded before reaching these arithmetic helpers.
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const divideAwayFromZero = (numerator: bigint): bigint => {
@@ -190,17 +195,18 @@ const projectTargetPosition = (
   observedAt: string,
 ): readonly Position[] => {
   const retained = positions.filter((position) => position.symbol !== target.symbol)
-  const quantity = BigInt(target.targetQuantityMicros)
+  const quantity = BigInt(target.targetQuantityAtoms)
   if (quantity === 0n) return retained
 
   const previous = positions.find((position) => position.symbol === target.symbol)
   const referencePrice = BigInt(target.referencePriceMicros)
   const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
   const projected: Position = {
-    schemaVersion: legacyPositionSchemaVersion,
+    schemaVersion: 'bayn.position.v2',
+    costBasisMicros: divideAwayFromZero(quantity * averageEntryPrice).toString(),
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
-    quantityMicros: target.targetQuantityMicros,
+    quantityAtoms: target.targetQuantityAtoms,
     averageEntryPriceMicros: averageEntryPrice.toString(),
     marketPriceMicros: target.referencePriceMicros,
     marketValueMicros: divideAwayFromZero(quantity * referencePrice).toString(),
@@ -211,7 +217,7 @@ const projectTargetPosition = (
 }
 
 const revaluePositionAtReferencePrice = (position: Position, referencePriceMicros: string): Position => {
-  const quantity = BigInt(position.quantityMicros)
+  const quantity = BigInt(position.quantityAtoms)
   const referencePrice = BigInt(referencePriceMicros)
   const averageEntryPrice = BigInt(position.averageEntryPriceMicros)
   return {
@@ -277,12 +283,7 @@ const validateBindings = (
   if (cycle.state !== CycleState.Active) {
     return Result.fail(error('binding', 'shadow planning requires an active autonomous cycle'))
   }
-  if (
-    (isLegacyAutonomousCycle(cycle) && cycle.bindings.snapshotId !== snapshot.snapshotId) ||
-    (isIntradayAutonomousCycle(cycle) &&
-      cycle.bindings.snapshotId !== undefined &&
-      cycle.bindings.snapshotId !== snapshot.snapshotId)
-  ) {
+  if (cycle.bindings.snapshotId !== undefined && cycle.bindings.snapshotId !== snapshot.snapshotId) {
     return Result.fail(error('binding', 'shadow snapshot must match the immutable cycle snapshot binding'))
   }
   const submissionCutoffAt = input.submissionCutoffAt ?? cycle.window.submissionCutoffAt
@@ -290,7 +291,7 @@ const validateBindings = (
     plannerInput.cycleId !== cycle.identity.cycleId ||
     plannerInput.strategyName !== cycle.identity.strategyName ||
     plannerInput.accountId !== cycle.identity.accountId ||
-    plannerInput.signalDate !== cycleAuthoritySessionDate(cycle.identity) ||
+    plannerInput.signalDate !== cycle.identity.executionSessionDate ||
     plannerInput.submissionCutoffAt !== submissionCutoffAt
   ) {
     return Result.fail(error('binding', 'target planner identity must match the active autonomous cycle'))
@@ -310,7 +311,7 @@ const validateBindings = (
     return Result.fail(error('binding', 'compiled strategy decision must match the immutable cycle session'))
   }
   if (
-    decision.schemaVersion === 'bayn.execution-flat-target.v1' &&
+    isFlatExecutionTarget(decision) &&
     (input.submissionCutoffAt === undefined ||
       input.submissionCutoffAt <= cycle.window.submissionCutoffAt ||
       input.riskInputs.some(
@@ -319,58 +320,30 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
   }
-  const intradayEntry = decision.schemaVersion === 'bayn.intraday-momentum.target.v3'
-  const intradayClose =
-    decision.schemaVersion === 'bayn.execution-flat-target.v1' && decision.strategyName === 'intraday-momentum'
+  const intradayEntry = decision.schemaVersion === 'bayn.jev-entry-target.v6'
+  const intradayClose = isFlatExecutionTarget(decision)
   const intradayDecision = intradayEntry || intradayClose
   const decisionMarketData = input.decisionMarketData ?? input.executionMarketData
   const executionMarketData = input.executionMarketData
-  const decisionCalendarSession = decisionMarketData?.calendar.sessions.find(
-    ({ date }) => date === cycle.identity.executionSessionDate,
-  )
   const decisionCalendar =
-    decisionMarketData === undefined || decisionCalendarSession === undefined
-      ? undefined
-      : makeExecutionCalendarObservation({
-          schemaVersion: decisionMarketData.calendar.schemaVersion,
-          source: decisionMarketData.calendar.source,
-          ...decisionCalendarSession,
-        })
-  const executionCalendarSession = executionMarketData?.calendar.sessions.find(
-    ({ date }) => date === cycle.identity.executionSessionDate,
-  )
+    decisionMarketData === undefined ? undefined : makeBoundExecutionCalendar(decisionMarketData.calendar, cycle.window)
   const executionCalendar =
-    executionMarketData === undefined || executionCalendarSession === undefined
+    executionMarketData === undefined
       ? undefined
-      : makeExecutionCalendarObservation({
-          schemaVersion: executionMarketData.calendar.schemaVersion,
-          source: executionMarketData.calendar.source,
-          ...executionCalendarSession,
-        })
-  if (intradayEntry && decision.calendarHash !== cycle.window.executionCalendarHash) {
-    return Result.fail(error('binding', 'intraday decision calendar must match the immutable cycle execution calendar'))
+      : makeBoundExecutionCalendar(executionMarketData.calendar, cycle.window)
+  if (intradayEntry) {
+    const expected =
+      decision.schemaVersion === 'bayn.jev-entry-target.v6' && decisionMarketData !== undefined
+        ? canonicalHashV1Result(decisionMarketData.calendar)
+        : Result.succeed(cycle.window.executionCalendarHash)
+    if (Result.isFailure(expected) || decision.calendarHash !== expected.success)
+      return Result.fail(error('binding', 'entry decision market hours differ from its bound source'))
   }
   if (intradayEntry && decisionMarketData?.purpose !== undefined) {
     return Result.fail(error('binding', 'intraday entry decision requires bar-and-trade market-data evidence'))
   }
-  if (intradayEntry && executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
-    return Result.fail(error('binding', 'intraday-momentum entry requires execution market-data binding v2'))
-  }
-  if (intradayEntry && decisionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2') {
-    const excludedSymbols = decision.excludedCandidates.map(({ symbol }) => symbol)
-    const decisionSymbols = [
-      ...decision.signals.map(({ symbol }) => symbol),
-      ...excludedSymbols,
-      decision.benchmark.symbol,
-    ].toSorted()
-    const bindsDecisionSignals =
-      decisionMarketData.symbols.length === decisionSymbols.length &&
-      decisionMarketData.symbols.every((symbol, index) => symbol === decisionSymbols[index])
-    if (!bindsDecisionSignals) {
-      return Result.fail(
-        error('binding', 'intraday entry requires complete market-data evidence for the decision universe'),
-      )
-    }
+  if (intradayEntry && !isSnapshotExecutionMarketDataBinding(executionMarketData)) {
+    return Result.fail(error('binding', 'Jev entry requires a verified execution market-data snapshot binding'))
   }
   if (intradayClose && executionMarketData?.purpose !== IntradaySnapshotPurpose.Liquidation) {
     return Result.fail(error('binding', 'intraday close requires explicit liquidation market-data evidence'))
@@ -386,10 +359,8 @@ const validateBindings = (
   if (executionMarketData?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion) {
     const positions = plannerInput.brokerState.positions
       .filter(
-        ({ symbol, quantityMicros }) =>
-          decision.schemaVersion === 'bayn.execution-flat-target.v1' &&
-          decision.symbols.includes(symbol) &&
-          BigInt(quantityMicros) !== 0n,
+        ({ symbol, quantityAtoms }) =>
+          isFlatExecutionTarget(decision) && decision.symbols.includes(symbol) && BigInt(quantityAtoms) !== 0n,
       )
       .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
     const bindingMatchesReconciliation =
@@ -402,7 +373,7 @@ const validateBindings = (
         return (
           expected !== undefined &&
           position.symbol === expected.symbol &&
-          position.quantityMicros === expected.quantityMicros &&
+          position.quantityAtoms === expected.quantityAtoms &&
           position.marketPriceMicros === expected.marketPriceMicros &&
           position.observedAt === expected.observedAt
         )
@@ -410,8 +381,10 @@ const validateBindings = (
     const narrowCloseTerms =
       plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
       plannerInput.executionTerms.executionPurpose === 'forced-close' &&
-      plannerInput.executionTerms.orderType === OrderType.Market &&
-      plannerInput.executionTerms.timeInForce === TimeInForce.Day &&
+      plannerInput.executionTerms.orderType === OrderType.Limit &&
+      executionMarketData.symbols.every(
+        (symbol) => plannerInput.executionTerms.timeInForce === cashSpotLimitTimeInForce(instrumentMarket(symbol)),
+      ) &&
       plannerInput.executionTerms.priceReference === 'reconciled-broker-position-mark'
     if (!intradayClose || !bindingMatchesReconciliation || !narrowCloseTerms) {
       return Result.fail(
@@ -434,7 +407,6 @@ const validateBindings = (
         executionCalendar.success.executionCalendarHash !== cycle.window.executionCalendarHash)) ||
     (intradayEntry && decisionMarketData?.snapshotId !== decision.snapshotId) ||
     (intradayEntry &&
-      isIntradayAutonomousCycle(cycle) &&
       (snapshot.snapshotId !== decisionMarketData?.snapshotId ||
         snapshot.contentHash !== decisionMarketData.contentHash ||
         snapshot.finalizedAt !== decisionMarketData.observedAt))
@@ -442,18 +414,8 @@ const validateBindings = (
     return Result.fail(error('binding', 'execution market data must match the intraday strategy decision and cycle'))
   }
   const expectedPlanningWeights =
-    input.compiledDecision.schemaVersion === 'bayn.intraday-momentum.target.v3'
-      ? intradayMomentumPlanningTargetWeights(
-          input.compiledDecision,
-          plannerInput.brokerState.positions
-            .filter(
-              (position) =>
-                BigInt(position.quantityMicros) !== 0n &&
-                executionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' &&
-                executionMarketData.universe.includes(position.symbol),
-            )
-            .map((position) => position.symbol),
-        )
+    input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+      ? jevPlanningTargetWeights(input.compiledDecision)
       : input.compiledDecision.targetWeights
   const compiledWeightsHash = hashValue(
     expectedPlanningWeights,
@@ -502,6 +464,20 @@ const validateRiskState = (
   if (state.marketDataSymbol !== riskInput.symbol) {
     return Result.fail(error('binding', 'shadow risk market symbol must match its target delta'))
   }
+  if (
+    state.entryQuote !== undefined &&
+    (input.executionMarketData === undefined ||
+      !('maximumQuoteAgeMs' in input.executionMarketData) ||
+      state.entryQuote.maximumAgeMs !==
+        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+          ? jevEntryQuoteMaximumAgeMs(
+              input.compiledDecision,
+              state.entryQuote.eventAt,
+              input.executionMarketData.maximumQuoteAgeMs,
+            )
+          : input.executionMarketData.maximumQuoteAgeMs))
+  )
+    return Result.fail(error('binding', 'entry quote freshness must match its execution market-data binding'))
   const decisionMarketDataHash = input.executionMarketData?.contentHash ?? snapshot.contentHash
   if (
     state.marketDataHash !== decisionMarketDataHash ||
@@ -509,21 +485,8 @@ const validateRiskState = (
   ) {
     return Result.fail(error('binding', 'shadow risk data must match the bound decision market data'))
   }
-  if (
-    state.executionSession.schemaVersion === 'bayn.execution-session-binding.v1' ||
-    state.executionSession.schemaVersion === 'bayn.execution-session-binding.v2'
-  ) {
-    if (
-      !isLegacyAutonomousCycle(cycle) ||
-      state.executionSession.signal.sessionDate !== cycle.identity.signalSessionDate ||
-      state.executionSession.signal.finalizedAt !== snapshot.finalizedAt ||
-      state.executionSession.signal.contentHash !== snapshot.contentHash
-    ) {
-      return Result.fail(error('binding', 'shadow risk signal binding must match the finalized cycle snapshot'))
-    }
-  } else if (!isIntradayAutonomousCycle(cycle) || input.executionMarketData === undefined) {
-    return Result.fail(error('binding', 'shadow risk intraday binding must match the verified execution snapshot'))
-  }
+  if (input.executionMarketData === undefined)
+    return Result.fail(error('binding', 'execution binding requires the verified current market snapshot'))
   if (
     state.executionSession.executionSession.date !== cycle.identity.executionSessionDate ||
     state.executionSession.executionSession.openAt !== cycle.window.executionOpenAt ||
@@ -570,52 +533,11 @@ const makeRiskIntent = (
     error('contract', 'shadow target delta could not form a valid risk intent', cause),
   )
   if (Result.isFailure(decodedPlan)) return Result.fail(decodedPlan.failure)
-  const identityResult: Result.Result<string, ShadowDecisionError> =
-    authorityGenerationHash === undefined
-      ? Result.mapError(intentIdForPlan(decodedPlan.success), (cause) =>
-          error('contract', 'shadow target delta identity is not canonicalizable', cause),
-        )
-      : Result.mapError(executionIntentIdForDecodedPlan(decodedPlan.success, authorityGenerationHash), (cause) =>
-          error('contract', 'execution target delta identity is not canonicalizable', cause),
-        )
-  const identity = Result.mapError(
-    Result.map(identityResult, (intentId) => ({
-      intentId,
-      clientOrderId: clientOrderIdForIntentId(intentId),
-    })),
-    (cause) => cause,
-  )
-  if (Result.isFailure(identity)) return Result.fail(identity.failure)
-  const decoded = decodedPlan.success
-  return Result.mapError(
-    Schema.decodeUnknownResult(
-      authorityGenerationHash === undefined ? ReferenceIntentSchema : IntentSchema,
-      strictParseOptions,
-    )({
-      schemaVersion:
-        authorityGenerationHash === undefined ? legacyReferenceIntentSchemaVersion : legacyExecutionIntentSchemaVersion,
-      ...(authorityGenerationHash === undefined ? {} : { authorityGenerationHash }),
-      intentId: identity.success.intentId,
-      strategyName: decoded.strategyName,
-      cycleId: decoded.cycleId,
-      decisionHash: decoded.decisionHash,
-      policyHash: decoded.policyHash,
-      accountId: decoded.accountId,
-      clientOrderId: identity.success.clientOrderId,
-      symbol: decoded.symbol,
-      side: decoded.side,
-      orderType: decoded.orderType,
-      timeInForce: decoded.timeInForce,
-      quantityMicros: decoded.quantityMicros,
-      notionalLimitMicros: decoded.notionalLimitMicros,
-      ...(authorityGenerationHash === undefined || decoded.replanGenerationHash === undefined
-        ? {}
-        : { replanGenerationHash: decoded.replanGenerationHash }),
-      state: IntentState.Planned,
-      createdAt: decoded.createdAt,
-    }),
-    (cause) => error('contract', 'shadow target delta could not form a valid risk intent', cause),
-  )
+  const invalidIntent = (cause: unknown) =>
+    error('contract', 'shadow target delta could not form a valid risk intent', cause)
+  return authorityGenerationHash === undefined
+    ? Result.mapError(makeReferenceIntentResult(decodedPlan.success), invalidIntent)
+    : Result.mapError(makeExecutionIntentFromDecodedPlan(decodedPlan.success, authorityGenerationHash), invalidIntent)
 }
 
 interface ShadowReduction {
@@ -645,11 +567,21 @@ const reduceShadowDelta = (
   if (provided === undefined) {
     return Result.fail(error('binding', 'planned target delta is missing its risk input'))
   }
+  const protection = entryBracketProtection(
+    targetIntent.symbol,
+    targetIntent.quantityAtoms,
+    targetIntent.createdAt,
+    context.input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+      ? context.input.compiledDecision.exitPolicy.plans[targetIntent.symbol]
+      : undefined,
+  )
   const intent = makeRiskIntent(
     {
-      schemaVersion: legacyIntentPlanSchemaVersion,
+      schemaVersion: intentPlanSchemaVersion,
       ...targetIntent,
       notionalLimitMicros: provided.notionalLimitMicros,
+      limitPriceMicros: provided.limitPriceMicros,
+      ...(protection === undefined ? {} : { protection }),
       ...(context.replanGenerationHash === undefined ? {} : { replanGenerationHash: context.replanGenerationHash }),
     },
     context.authorityGenerationHash,
@@ -691,6 +623,8 @@ const reduceShadowDelta = (
     ...accumulator.deltaRisk,
     {
       notionalLimitMicros: provided.notionalLimitMicros,
+      limitPriceMicros: provided.limitPriceMicros,
+      ...(protection === undefined ? {} : { protection }),
       ...(context.authority === Authority.Execution
         ? {
             facts: {
@@ -916,7 +850,7 @@ const assembleShadowDecisionDocument = (
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
   const document = Result.mapError(
     makeObserveShadowDecisionDocument({
-      schemaVersion: 'bayn.observe-shadow-decision.v1',
+      schemaVersion: observeShadowDecisionSchemaVersion,
       mode: 'OBSERVE',
       dispatchable: false,
       bindings: {
@@ -969,15 +903,20 @@ const reduceObserveShadowDecision = (
 export const buildObserveShadowDecision = (
   input: unknown,
 ): Effect.Effect<ObserveShadowDecisionDocument, ShadowDecisionError> =>
-  Effect.fromResult(reduceObserveShadowDecision(input))
+  Effect.suspend(() => Effect.fromResult(reduceObserveShadowDecision(input))).pipe(
+    withObservedStage('bayn.execution.decision-build', { operation: Authority.Observe }),
+  )
 
 const assembleExecutionDecisionDocument = (
   context: ShadowDecisionContext,
   reduction: ShadowReduction,
   authorityGenerationHash: string,
   executionSession: ExecutionSessionBinding,
+  riskContext: ExecutionDecisionInput['riskContext'],
   submissionCutoffAt: string,
   replanGenerationHash?: string,
+  entryLimitSlippageBps?: number,
+  closeLimitSlippageBps?: number,
 ): Result.Result<ExecutionDecisionDocument, ShadowDecisionError> => {
   const { input, policyHash, strategyDecisionHash } = context
   const planningBrokerStateHash = Result.mapError(
@@ -985,10 +924,9 @@ const assembleExecutionDecisionDocument = (
     (cause) => error('contract', 'planning broker state hash could not be derived', cause),
   )
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
-  const initialRiskState = input.riskInputs[0]?.state
   return Result.mapError(
     makeExecutionDecisionDocument({
-      schemaVersion: legacyCycleDecisionSchemaVersion,
+      schemaVersion: executionCycleDecisionSchemaVersion,
       mode: legacyExecutionAuthorityToken,
       dispatchable: reduction.riskBlock === undefined,
       bindings: {
@@ -1006,26 +944,20 @@ const assembleExecutionDecisionDocument = (
         reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
         reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
         authorityGenerationHash,
-        ...(initialRiskState === undefined
-          ? {}
-          : {
-              riskContext: {
-                authority: initialRiskState.authority,
-                authorityObservedAt: initialRiskState.authorityObservedAt,
-                unknownMutationCount: initialRiskState.unknownMutationCount,
-                dailyTradedNotionalMicros: initialRiskState.dailyTradedNotionalMicros,
-                dayStartEquityMicros: initialRiskState.dayStartEquityMicros,
-                peakEquityMicros: initialRiskState.peakEquityMicros,
-              },
-            }),
+        riskContext,
         ...(input.decisionMarketData === undefined ? {} : { decisionMarketData: input.decisionMarketData }),
         ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
       },
       executionSession,
       strategyDecision: input.compiledDecision,
       ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
+      ...(input.executionMarketDataRows === undefined
+        ? {}
+        : { executionMarketDataRows: input.executionMarketDataRows }),
       plannerInput: input.plannerInput,
       riskPolicy: input.policy,
+      ...(entryLimitSlippageBps === undefined ? {} : { entryLimitSlippageBps }),
+      ...(closeLimitSlippageBps === undefined ? {} : { closeLimitSlippageBps }),
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
@@ -1042,44 +974,52 @@ const assembleExecutionDecisionDocument = (
 export const buildExecutionDecision = (
   input: ExecutionDecisionInput,
 ): Effect.Effect<ExecutionDecisionDocument, ShadowDecisionError> =>
-  Effect.fromResult(
-    Result.flatMap(
-      decodeShadowDecisionContext({
-        cycle: input.cycle,
-        snapshot: input.snapshot,
-        compiledDecision: input.compiledDecision,
-        ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
-        ...(input.decisionMarketData === undefined ? {} : { decisionMarketData: input.decisionMarketData }),
-        ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
-        plannerInput: input.plannerInput,
-        targetPlan: input.targetPlan,
-        policy: input.policy,
-        riskInputs: input.riskInputs,
-        ...(input.submissionCutoffAt === undefined ? {} : { submissionCutoffAt: input.submissionCutoffAt }),
-      }),
-      (context) =>
-        Result.flatMap(validateShadowPlanningBindings(context), () =>
-          Result.flatMap(prepareShadowRisk(context), (prepared) =>
-            Result.flatMap(
-              reduceShadowRisk(
-                prepared,
-                Authority.Execution,
-                input.authorityGenerationHash,
-                input.replanGenerationHash,
-              ),
-              (reduction) =>
-                assembleExecutionDecisionDocument(
-                  context,
-                  reduction,
+  Effect.suspend(() =>
+    Effect.fromResult(
+      Result.flatMap(
+        decodeShadowDecisionContext({
+          cycle: input.cycle,
+          snapshot: input.snapshot,
+          compiledDecision: input.compiledDecision,
+          ...(input.decisionMarketDataRows === undefined
+            ? {}
+            : { decisionMarketDataRows: input.decisionMarketDataRows }),
+          ...(input.executionMarketDataRows === undefined
+            ? {}
+            : { executionMarketDataRows: input.executionMarketDataRows }),
+          ...(input.decisionMarketData === undefined ? {} : { decisionMarketData: input.decisionMarketData }),
+          ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
+          plannerInput: input.plannerInput,
+          targetPlan: input.targetPlan,
+          policy: input.policy,
+          riskInputs: input.riskInputs,
+          ...(input.submissionCutoffAt === undefined ? {} : { submissionCutoffAt: input.submissionCutoffAt }),
+        }),
+        (context) =>
+          Result.flatMap(validateShadowPlanningBindings(context), () =>
+            Result.flatMap(prepareShadowRisk(context), (prepared) =>
+              Result.flatMap(
+                reduceShadowRisk(
+                  prepared,
+                  Authority.Execution,
                   input.authorityGenerationHash,
-                  input.executionSession,
-                  input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
                   input.replanGenerationHash,
                 ),
+                (reduction) =>
+                  assembleExecutionDecisionDocument(
+                    context,
+                    reduction,
+                    input.authorityGenerationHash,
+                    input.executionSession,
+                    input.riskContext,
+                    input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
+                    input.replanGenerationHash,
+                    input.entryLimitSlippageBps,
+                    input.closeLimitSlippageBps,
+                  ),
+              ),
             ),
           ),
-        ),
+      ),
     ),
-  )
-
-export type DurableCycleDecisionDocument = CycleDecisionDocument
+  ).pipe(withObservedStage('bayn.execution.decision-build', { operation: Authority.Execution }))

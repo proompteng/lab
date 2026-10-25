@@ -49,7 +49,7 @@ describe('Alpaca read request builders', () => {
     expect(assetBySymbolUrl(connection, 'BRK/B').toString()).toBe(`${alpacaSandboxBaseUrl}/v2/assets/BRK%2FB`)
     expect(orderByIdUrl(connection, 'order/id').toString()).toBe(`${alpacaSandboxBaseUrl}/v2/orders/order%2Fid`)
     expect(orderByClientIdUrl(connection, 'client/order').toString()).toBe(
-      `${alpacaSandboxBaseUrl}/v2/orders:by_client_order_id?client_order_id=client%2Forder`,
+      `${alpacaSandboxBaseUrl}/v2/orders:by_client_order_id?client_order_id=client%2Forder&nested=true`,
     )
     expect(submitOrderUrl(connection).toString()).toBe(`${alpacaSandboxBaseUrl}/v2/orders`)
     expect(cancelOrderUrl(connection, 'order/id').toString()).toBe(`${alpacaSandboxBaseUrl}/v2/orders/order%2Fid`)
@@ -82,7 +82,7 @@ describe('Alpaca read request builders', () => {
         symbols: ['AAPL', 'BRK/B'],
       }).toString(),
     ).toBe(
-      `${alpacaSandboxBaseUrl}/v2/orders?status=all&limit=25&after=2026-07-01T00%3A00%3A00Z&until=2026-07-02T00%3A00%3A00Z&direction=asc&side=buy&symbols=AAPL%2CBRK%2FB`,
+      `${alpacaSandboxBaseUrl}/v2/orders?nested=true&status=all&limit=25&after=2026-07-01T00%3A00%3A00Z&until=2026-07-02T00%3A00%3A00Z&direction=asc&side=buy&symbols=AAPL%2CBRK%2FB`,
     )
     expect(marketCalendarUrl(connection, { start: '2026-07-01', end: '2026-07-03' }).toString()).toBe(
       `${alpacaSandboxBaseUrl}/v2/calendar?start=2026-07-01&end=2026-07-03&date_type=TRADING`,

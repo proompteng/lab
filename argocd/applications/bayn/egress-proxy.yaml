@@ -21,13 +21,18 @@ spec:
         app.kubernetes.io/name: bayn-egress-proxy
         app.kubernetes.io/part-of: bayn
     spec:
+      nodeSelector:
+        network.proompteng.ai/100g: "true"
       automountServiceAccountToken: false
       enableServiceLinks: false
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: DoNotSchedule
           nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: bayn-egress-proxy
@@ -52,6 +57,9 @@ spec:
           ports:
             - name: proxy
               containerPort: 3128
+              protocol: TCP
+            - name: opencode
+              containerPort: 3129
               protocol: TCP
           resources:
             requests:
@@ -136,6 +144,10 @@ spec:
     - name: proxy
       port: 3128
       targetPort: proxy
+      protocol: TCP
+    - name: opencode
+      port: 3129
+      targetPort: opencode
       protocol: TCP
 ---
 apiVersion: policy/v1

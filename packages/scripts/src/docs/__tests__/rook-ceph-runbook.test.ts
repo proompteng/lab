@@ -39,7 +39,19 @@ it('overrides and restores daemon-scoped mClock capacity during recovery surge',
   expect(runbook).toContain('ceph config set "osd.${osd_id}" osd_mclock_max_capacity_iops_hdd "${capacity}"')
 })
 
-it('rolls OSDs when scrub configuration changes', () => {
+it('targets Galactic consistently throughout the recovery rollback', () => {
+  const runbook = readFileSync(join(repoRoot, 'docs/runbooks/rook-ceph-client-ops-performance.md'), 'utf8')
+  const rollback = runbook.split('Rollback the surge immediately')[1]?.split('```bash\n')[1]?.split('\n```')[0]
+  const commands = rollback?.split('\n').filter((line) => line.trimStart().startsWith('kubectl ')) ?? []
+
+  expect(commands.length).toBeGreaterThan(0)
+  for (const command of commands) {
+    expect(command).toContain('--context galactic-tailscale -n rook-ceph')
+    expect(command).toContain('-c rook-ceph-tools --')
+  }
+})
+
+it('retains the completed scrub profile rollout annotation during runtime reservation changes', () => {
   const values = readFileSync(join(repoRoot, 'argocd/applications/rook-ceph/cluster-values.yaml'), 'utf8')
   const kustomization = readFileSync(join(repoRoot, 'argocd/applications/rook-ceph/kustomization.yaml'), 'utf8')
   const rolloutPatch = readFileSync(
@@ -54,10 +66,23 @@ it('rolls OSDs when scrub configuration changes', () => {
   expect(kustomization).toContain('kind: CephCluster')
   expect(kustomization).toContain('name: rook-ceph')
   expect(rolloutPatch).toContain('spec:\n  annotations:\n    osd:')
-  expect(rolloutPatch).toContain('ops.proompteng.ai/osd-config-revision: scrub-auto-repair-v1')
+  expect(rolloutPatch).toContain('ops.proompteng.ai/osd-config-revision: scrub-catchup-v1')
   expect(YAML.parse(rolloutPatch)).not.toHaveProperty([
     'metadata',
     'annotations',
     'ops.proompteng.ai/osd-config-revision',
   ])
+})
+
+it('protects clients while allowing all-day scrub progress without overcommitting mClock', () => {
+  const values = YAML.parse(readFileSync(join(repoRoot, 'argocd/applications/rook-ceph/cluster-values.yaml'), 'utf8'))
+  const osd: Record<string, string> = values.cephClusterSpec.cephConfig.osd
+
+  expect(osd.osd_mclock_profile).toBe('high_client_ops')
+  expect(osd.osd_scrub_begin_hour).toBe('0')
+  expect(osd.osd_scrub_end_hour).toBe('0')
+  expect(osd.osd_max_scrubs).toBe('1')
+  expect(osd).not.toHaveProperty('osd_scrub_sleep')
+  // The built-in profile owns all scheduler shares; retained custom overrides prevent the migration.
+  expect(Object.keys(osd).filter((key) => key.startsWith('osd_mclock_scheduler_'))).toEqual([])
 })

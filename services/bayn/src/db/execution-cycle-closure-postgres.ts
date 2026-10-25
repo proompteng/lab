@@ -1,7 +1,11 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Option, Schema } from 'effect'
 
+import { executionCloseRecoveryExpiry } from '../market-hours'
 import { WriterFence } from '../execution/writer-fence'
+import { canonicalHashV1Result } from '../hash'
+import { currentUtcInstant } from '../time'
+import { verifyJevPortfolioSources } from './jev-position-postgres'
 import {
   ExecutionCycleClosureStore,
   ExecutionCycleClosureStoreError,
@@ -116,6 +120,68 @@ const readReplanByHash = (
 const makeStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   const fence = yield* WriterFence
+  const verifyExit = (closure: ExecutionCycleClosure, original?: ExecutionCycleClosure) =>
+    Effect.gen(function* () {
+      const target = closure.document.strategyDecision
+      if (target?.schemaVersion !== 'bayn.jev-exit-target.v5') {
+        if (original?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5')
+          return yield* storeError('bind-replan', 'invariant', 'A Jev close replan cannot discard its exit evidence')
+        return
+      }
+      const binding = closure.document.bindings
+      yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
+        yield* sql`
+      SELECT EXISTS (
+        SELECT 1 FROM reconciliations WHERE reconciliation_id = ${binding.reconciliationId}
+          AND account_id = ${binding.accountId} AND expected_hash = ${binding.planningBrokerStateHash}
+          AND observed_hash = ${binding.planningBrokerStateHash} AND content_hash = ${binding.reconciliationHash}
+          AND status = 'EXACT' AND discrepancies = '[]'::jsonb AND reconciled_at <= ${closure.createdAt}::timestamptz
+      ) AS matches
+    `,
+      )
+      if (original !== undefined) {
+        const first = yield* Effect.fromResult(canonicalHashV1Result(original.document.strategyDecision))
+        const next = yield* Effect.fromResult(canonicalHashV1Result(target))
+        const prior = closure.document.replanGenerationHash
+        const latest = yield* readLatestReplanByCycleId(sql, closure.cycleId)
+        const predecessor = Option.getOrElse(latest, () => original)
+        const [recovery] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ allowed: Schema.Boolean })]),
+        )(
+          yield* sql`SELECT EXISTS(SELECT 1 FROM autonomous_cycles WHERE cycle_id=${closure.cycleId} AND execution_close_at<=${closure.createdAt}::timestamptz) AS allowed`,
+        )
+        const recoveryDeadline =
+          closure.document.executionSession === undefined
+            ? null
+            : executionCloseRecoveryExpiry(closure.document.executionSession.calendar, closure.createdAt)
+        const boundedRecoveryLease =
+          recovery.allowed &&
+          closure.expiresAt > closure.createdAt &&
+          recoveryDeadline !== null &&
+          closure.expiresAt <= recoveryDeadline
+        if (
+          first !== next ||
+          closure.entryDecisionHash !== original.entryDecisionHash ||
+          (closure.expiresAt !== original.expiresAt && !boundedRecoveryLease) ||
+          prior !== predecessor.contentHash ||
+          closure.createdAt <= predecessor.createdAt
+        )
+          return yield* storeError(
+            'bind-replan',
+            'invariant',
+            'Jev residual close must preserve its committed trigger and exact predecessor',
+          )
+        return
+      }
+      const now = yield* currentUtcInstant
+      if (
+        closure.document.replanGenerationHash !== undefined ||
+        now < closure.createdAt ||
+        now >= target.commitDeadlineAt
+      )
+        return yield* storeError('bind', 'invariant', 'The initial Jev exit evidence expired before durable commitment')
+      yield* verifyJevPortfolioSources(sql, closure.cycleId, target.evidence.portfolio)
+    })
   const store: ExecutionCycleClosureStoreShape = {
     read: (cycleId) => readByCycleId(sql, cycleId),
     readLatestReplan: (cycleId) => readLatestReplanByCycleId(sql, cycleId),
@@ -123,14 +189,16 @@ const makeStore = Effect.gen(function* () {
       sql<{ readonly contains: boolean }>`
         SELECT EXISTS (
           SELECT 1
-          FROM autonomous_cycle_paper_closures AS closure,
+          FROM intents AS target
+          JOIN autonomous_cycle_paper_closures AS closure ON closure.cycle_id = target.cycle_id,
           LATERAL jsonb_array_elements_text(closure.document #> '{document,orderedIntentIds}') AS intent(value)
-          WHERE intent.value = ${intentId}
+          WHERE target.intent_id = ${intentId} AND intent.value = target.intent_id
         ) OR EXISTS (
           SELECT 1
-          FROM autonomous_cycle_paper_close_replans AS replan,
+          FROM intents AS target
+          JOIN autonomous_cycle_paper_close_replans AS replan ON replan.cycle_id = target.cycle_id,
           LATERAL jsonb_array_elements_text(replan.document #> '{document,orderedIntentIds}') AS intent(value)
-          WHERE intent.value = ${intentId}
+          WHERE target.intent_id = ${intentId} AND intent.value = target.intent_id
         ) AS contains
       `.pipe(
         Effect.flatMap((rows) => {
@@ -149,6 +217,19 @@ const makeStore = Effect.gen(function* () {
       fence
         .transaction(
           Effect.gen(function* () {
+            const replay = yield* readReplanByHash(sql, closure.cycleId, closure.contentHash)
+            if (Option.isSome(replay)) return replay.value
+            const original = yield* readByCycleId(sql, closure.cycleId)
+            if (
+              closure.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' &&
+              Option.isNone(original)
+            )
+              return yield* storeError(
+                'bind-replan',
+                'invariant',
+                'Jev residual close requires an initial committed exit',
+              )
+            yield* verifyExit(closure, Option.getOrUndefined(original))
             yield* sql`
             INSERT INTO autonomous_cycle_paper_close_replans (
               content_hash,
@@ -194,6 +275,17 @@ const makeStore = Effect.gen(function* () {
       fence
         .transaction(
           Effect.gen(function* () {
+            const existing = yield* readByCycleId(sql, closure.cycleId)
+            if (Option.isSome(existing)) {
+              if (existing.value.contentHash !== closure.contentHash)
+                return yield* storeError(
+                  'bind',
+                  'conflict',
+                  'Execution closure already has different immutable content',
+                )
+              return existing.value
+            }
+            yield* verifyExit(closure)
             yield* sql`
             INSERT INTO autonomous_cycle_paper_closures (
               cycle_id,

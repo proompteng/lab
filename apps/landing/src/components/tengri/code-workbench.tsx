@@ -1,10 +1,10 @@
 'use client'
 
+import { reportBrowserFailure } from '@/lib/observability/client'
+
 import { LoaderCircle, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import type { TengriPreviewSession } from '@/lib/tengri/types'
-import { safePreviewLaunchUrl, safePreviewSessionOrigin } from './chrome-model'
-import { runTengriAction } from './client'
+import { useDesktopPreview } from './use-desktop-preview'
 import { listRecoverableCodeDrafts, type CodeDraft } from './code-editor-draft-storage'
 import { enqueueCodeOpenRequest, type CodeOpenRequest } from './code-editor-model'
 
@@ -35,11 +35,12 @@ export function CodeWorkbench({
   request: CodeOpenRequest | null
   windowId: string
 }) {
-  const [session, setSession] = useState<TengriPreviewSession | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
+  useEffect(() => {
+    if (error) reportBrowserFailure('code.connection')
+  }, [error])
   const [fileError, setFileError] = useState('')
-  const [attempt, setAttempt] = useState(0)
   const [queue, setQueue] = useState<CodeOpenRequest[]>([])
   const [drafts, setDrafts] = useState<CodeDraft[]>([])
   const iframe = useRef<HTMLIFrameElement>(null)
@@ -56,48 +57,23 @@ export function CodeWorkbench({
     if (request) setQueue((current) => enqueueCodeOpenRequest(current, request))
   }, [request])
 
+  const preview = useDesktopPreview({
+    action: 'editor-session',
+    agentId,
+    frame: iframe,
+    previewGatewayOrigin,
+    windowId: `${desktopId}-${windowId}`,
+  })
+  const { session } = preview
+  const connectionError = preview.error || error
   useEffect(() => {
-    let disposed = false
-    let issued: TengriPreviewSession | null = null
     setReady(false)
-    setSession(null)
     setError('')
-    const revoke = (value: TengriPreviewSession) =>
-      runTengriAction(
-        {
-          action: 'revoke-preview-session',
-          agentId,
-          sessionId: value.id,
-          revocationToken: new URL(value.launchUrl).hash.slice(1),
-        },
-        { keepalive: true },
-      ).catch(() => undefined)
-    void runTengriAction<TengriPreviewSession>({
-      action: 'editor-session',
-      agentId,
-      windowId: `${desktopId}-${windowId}`,
-    })
-      .then((value) => {
-        issued = value
-        if (disposed) {
-          void revoke(value)
-          return
-        }
-        const launchUrl = safePreviewLaunchUrl(value.launchUrl, previewGatewayOrigin)
-        const previewOrigin = safePreviewSessionOrigin(value.previewOrigin, value.id)
-        if (!launchUrl || !previewOrigin) throw new Error('Tengri returned an invalid VS Code session')
-        dirty.current = true
-        callbacks.current.onDirtyChange(true)
-        setSession({ ...value, launchUrl, previewOrigin })
-      })
-      .catch((cause: unknown) => {
-        if (!disposed) setError(cause instanceof Error ? cause.message : 'VS Code could not be started')
-      })
-    return () => {
-      disposed = true
-      if (issued) void revoke(issued)
+    if (session) {
+      dirty.current = true
+      callbacks.current.onDirtyChange(true)
     }
-  }, [agentId, attempt, desktopId, previewGatewayOrigin, windowId])
+  }, [session])
 
   useEffect(() => {
     if (!session) return
@@ -252,17 +228,21 @@ export function CodeWorkbench({
           referrerPolicy="no-referrer"
         />
       ) : null}
-      {!ready ? (
+      {preview.renewalFrame}
+      {!ready || preview.error ? (
         <div
           className={`${session ? 'absolute top-2 right-3 rounded-md border border-white/10 bg-zinc-900/95 px-3 py-2 shadow-lg' : 'flex flex-1 items-center justify-center'} text-xs text-white/65`}
-          role={error ? 'alert' : 'status'}
+          role={connectionError ? 'alert' : 'status'}
         >
-          {error ? (
+          {connectionError ? (
             <div className="max-w-md px-4 text-center">
-              <p>{error}</p>
+              <p>{connectionError}</p>
               <button
                 className="mt-3 rounded bg-white/10 px-3 py-1.5 text-white hover:bg-white/15"
-                onClick={() => setAttempt((current) => current + 1)}
+                onClick={() => {
+                  setError('')
+                  preview.retry()
+                }}
                 type="button"
               >
                 Retry VS Code

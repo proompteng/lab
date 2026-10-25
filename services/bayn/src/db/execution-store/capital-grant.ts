@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
+import { databaseUtcInstant } from '../clock'
 
 import { BrokerEnvironment } from '../../broker/identity'
 import {
@@ -23,7 +24,7 @@ import {
   type ExactReconciliationFacts,
 } from '../../execution/capital-grant-algebra'
 import type { WriterFenceService } from '../../execution/writer-fence'
-import { Pipeable } from '../../pipeable'
+
 import {
   authorityStateFromRow,
   researchCapitalGrantGenerationFromRow,
@@ -51,7 +52,7 @@ interface ResearchCapitalGrantRuntimeBinding {
   readonly sourceGenerationHash: string
 }
 
-const makeCapitalGrantInterpreterDataFirst = (
+export const makeCapitalGrantInterpreter = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   config: ExecutionStoreRuntimeConfig,
@@ -160,11 +161,11 @@ const makeCapitalGrantInterpreterDataFirst = (
 
   const requireFreshCapitalGrantGeneration = (derived: Pick<DerivedResearchCapitalGrantGeneration, 'reconciliation'>) =>
     authority.nextAuthorityInstant.pipe(
-      Effect.flatMap((observedAt) =>
+      Effect.tap((observedAt) =>
         liftAuthorityDecision(
           validateCapitalGrantGenerationFreshness(
             derived.reconciliation,
-            observedAt,
+            new Date(observedAt),
             config.reconciliationStaleThresholdMs,
           ),
         ),
@@ -175,7 +176,7 @@ const makeCapitalGrantInterpreterDataFirst = (
     generationHash: string,
     authorityVersion: number,
     kill: AuthorityState['kill'],
-    activatedAt: Date,
+    activatedAt: string,
   ) =>
     sql<Record<string, unknown>>`
       UPDATE authority_state
@@ -188,7 +189,7 @@ const makeCapitalGrantInterpreterDataFirst = (
       WHERE singleton
       RETURNING
         schema_version, generation_hash, maximum, effective, kill_state, reason,
-        version::text AS version, updated_at
+        version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
     `.pipe(
       Effect.flatMap(decodeAuthorityStateRows),
       Effect.flatMap((rows) => {
@@ -243,7 +244,7 @@ const makeCapitalGrantInterpreterDataFirst = (
   const writeResearchCapitalGrantGenerationActivation = (
     decision: Extract<CapitalGrantActivationDecision, { readonly _tag: 'ActivateCapitalGrantGeneration' }>,
     derived: DerivedResearchCapitalGrantGeneration,
-    activatedAt: Date,
+    activatedAt: string,
   ) =>
     Effect.gen(function* () {
       const input = derived.generation
@@ -329,5 +330,3 @@ const makeCapitalGrantInterpreterDataFirst = (
 
   return { activateResearchCapitalGrant }
 }
-
-export const makeCapitalGrantInterpreter = Pipeable.dual(4, makeCapitalGrantInterpreterDataFirst)

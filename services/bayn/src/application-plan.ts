@@ -6,11 +6,12 @@ import {
   activeStrategyName,
   loadActiveStrategyProtocol,
   makeActiveStrategyRuntime,
-  type IntradayMomentumProtocol,
   type StrategyRuntime,
 } from './strategy'
+import type { JevProtocol } from './jev/protocol'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
-import { loadConfig, type LoadedRuntimeConfig } from './config'
+import { loadConfig } from './config/load'
+import { type LoadedRuntimeConfig } from './config/model'
 import {
   makeRuntimeProvenanceResult,
   makeStrategyProtocolHashResult,
@@ -36,7 +37,7 @@ type RuntimeIdentityFailure =
 
 type RuntimeSeed = {
   readonly config: LoadedRuntimeConfig
-  readonly strategyProtocol: IntradayMomentumProtocol
+  readonly strategyProtocol: JevProtocol
 }
 
 type ParameterizedRuntime = RuntimeSeed & { readonly parameterHash: string }

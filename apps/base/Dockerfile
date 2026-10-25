@@ -1,6 +1,6 @@
 FROM node:lts
 
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 
 LABEL maintainer="Greg Konush <greg.konush@gmail.com>"
 

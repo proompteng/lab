@@ -27,7 +27,6 @@ export const forbiddenTerms = [
 
 export const targetFiles = [
   'argocd/applications/flamingo/deployment.yaml',
-  'argocd/applications/flamingo/candidate-profiles.yaml',
   'argocd/applications/flamingo/README.md',
   'argocd/applications/flamingo/docs/large-model-multigpu.md',
   'argocd/applications/agents/anypi-agentprovider.yaml',

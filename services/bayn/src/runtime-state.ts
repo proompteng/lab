@@ -4,10 +4,7 @@ import {
   type CycleOperationsStatus,
   unknownCycleOperationsStatus,
 } from './cycle/observability'
-import {
-  RetainedAutonomousCyclePassObservationSchema,
-  type RetainedAutonomousCyclePassObservation,
-} from './cycle/runner/pass-observation'
+import { type RetainedAutonomousCyclePassObservation } from './cycle/runner/pass-observation'
 
 export interface DependencyHealth {
   readonly status: 'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE'
@@ -20,7 +17,7 @@ export interface RuntimeHealth {
   readonly checkedAt: string | null
   readonly dependencies: {
     readonly postgresql: DependencyHealth
-    readonly signal: DependencyHealth
+    readonly signal?: DependencyHealth
     readonly tigerBeetle: DependencyHealth
     readonly cycle: DependencyHealth
     readonly cycleRunner: DependencyHealth
@@ -41,8 +38,6 @@ export interface BrokerStatus extends BrokerConfiguration {
   readonly checkedAt: string | null
   readonly error: string | null
 }
-
-export const AutonomousCyclePassObservationSchema = RetainedAutonomousCyclePassObservationSchema
 
 export type AutonomousCyclePassObservation = RetainedAutonomousCyclePassObservation
 

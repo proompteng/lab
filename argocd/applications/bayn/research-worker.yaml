@@ -1,0 +1,150 @@
+apiVersion: restate.dev/v1beta1
+kind: RestateDeployment
+metadata:
+  name: bayn-research
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    app.kubernetes.io/name: bayn-research
+    app.kubernetes.io/part-of: bayn
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  restate:
+    register:
+      service:
+        name: restate
+        namespace: restate
+        port: 9070
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-research
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn-research
+        app.kubernetes.io/part-of: bayn
+    spec:
+      nodeSelector:
+        network.proompteng.ai/100g: 'true'
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: research
+          image: bayn-main
+          command: [node, dist/restate-research-server.js]
+          ports:
+            - name: restate
+              containerPort: 9080
+          env:
+            - name: RESTATE_INGRESS_ORIGIN
+              value: http://restate.restate.svc.cluster.local:8080
+            - name: BAYN_PUBLIC_INFORMATION_ENABLED
+              value: 'true'
+            - name: BAYN_PUBLIC_INFORMATION_PROXY
+              value: http://bayn-egress-proxy.bayn.svc.cluster.local:3128
+            - name: BAYN_PUBLIC_INFORMATION_STORAGE_ENDPOINT
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+            - name: BAYN_PUBLIC_INFORMATION_SYMBOLS
+              value: '["AAPL","AMD","AMZN","AVGO","COHR","CRDO","IWM","LITE","MRVL","MU","NVDA","QQQ","SMH","SNDK","SPY","WDC"]'
+            - name: BAYN_PUBLIC_INFORMATION_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-research-captures
+                  key: BUCKET_NAME
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-research-captures
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-research-captures
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: BAYN_JEV_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-jev-auth
+                  key: api-key
+            # Optional so no 1Password item or Kubernetes Secret is required to boot.
+            # The dual-signal CLI is not invoked by this Restate worker automatically.
+            - name: BAYN_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-openai-auth
+                  key: api-key
+                  optional: true
+            - name: BAYN_RESEARCH_APPROVAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-research-authority
+                  key: run-approval-key
+            - name: RESTATE_REQUEST_IDENTITY_KEYS
+              value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
+            - name: BAYN_RESEARCH_INFERENCE_POLICIES
+              value: '[{"model":"qwen36-flamingo","checkpoint":"739af1e7aac320af1682ed1e0cce369af4c5265d","servingImage":"sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2","tokenizerRevision":"739af1e7aac320af1682ed1e0cce369af4c5265d","chatTemplateRevision":"739af1e7aac320af1682ed1e0cce369af4c5265d","temperature":0.6,"top_p":0.95,"top_k":20,"min_p":0,"seed":1,"presence_penalty":0,"frequency_penalty":0,"repetition_penalty":1,"enable_thinking":true,"max_tokens":4096,"stop":[]},{"harness":"opencode","harnessVersion":"2.1.3","model":"glm-5.3-flash-free","configurationHash":"506c32b2aa303b15b15e3279a4f5f165c30d846d5d86f89a0bc80ae417a4257f","maximumModelCalls":1,"maximumInputBytes":32768,"temperature":0.6,"max_tokens":4096}]'
+            - name: BAYN_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-research-db
+                  key: fqdn-uri
+            - name: BAYN_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-glitchtip-dsns
+                  key: bayn-research
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
+            - name: NODE_ENV
+              value: production
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: '1'
+              memory: 512Mi
+          startupProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: postgres-ca
+              mountPath: /var/run/secrets/bayn/postgres
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: postgres-ca
+          secret:
+            secretName: bayn-db-ca
+            defaultMode: 0444
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

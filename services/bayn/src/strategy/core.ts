@@ -1,7 +1,5 @@
 import type { Result } from 'effect'
 
-import type { Protocol } from '../types'
-
 /** A concrete strategy closes this to its finite tagged decision-failure union. */
 export interface StrategyDecisionFailure {
   readonly _tag: string
@@ -21,8 +19,8 @@ export interface VerifiedStrategyContext<TMarket> {
 export interface StrategyDefinition<
   TMarket,
   TFailure extends StrategyDecisionFailure,
-  TTarget extends TargetPortfolio = TargetPortfolio,
-  TParameters = Protocol,
+  TTarget extends TargetPortfolio,
+  TParameters,
 > {
   readonly name: string
   /** Maximum lifetime of positions produced by this strategy. */

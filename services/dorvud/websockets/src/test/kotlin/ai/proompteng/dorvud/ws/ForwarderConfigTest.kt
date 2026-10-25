@@ -10,6 +10,37 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class ForwarderConfigTest {
+  @Test
+  fun `latest observations require explicit missing symbols and a bounded single IEX producer`() {
+    val base =
+      mapOf(
+        "ALPACA_KEY_ID" to "key",
+        "ALPACA_SECRET_KEY" to "secret",
+        "SYMBOLS" to "AMD,SPY",
+        "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to "SPY",
+        "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to "SPY",
+      )
+    assertEquals(null, ForwarderConfig.fromEnv(base).latestMarketData)
+    val enabled = base + ("ALPACA_LATEST_SYMBOLS" to "AMD")
+    assertEquals(LatestMarketDataConfig(listOf("AMD"), 2000, 10_000), ForwarderConfig.fromEnv(enabled).latestMarketData)
+    for (invalid in listOf(
+      mapOf("ALPACA_LATEST_SYMBOLS" to ""),
+      mapOf("ALPACA_LATEST_SYMBOLS" to "AMD,AMD"),
+      mapOf("ALPACA_LATEST_SYMBOLS" to "MSFT"),
+      mapOf("ALPACA_LATEST_SYMBOLS" to "SPY"),
+      mapOf("ALPACA_FEED" to "sip"),
+      mapOf("SHARD_COUNT" to "2"),
+      mapOf("JANGAR_SYMBOLS_URL" to "https://example.test"),
+      mapOf("ALPACA_LATEST_POLL_INTERVAL_MS" to "100"),
+      mapOf("ALPACA_LATEST_POLL_INTERVAL_MS" to "bad"),
+      mapOf("ALPACA_LATEST_MAX_AGE_MS" to "10001"),
+      mapOf("ALPACA_LATEST_MAX_AGE_MS" to "0"),
+    )) {
+      assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(enabled + invalid) }
+    }
+    assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base + ("ALPACA_LATEST_MAX_AGE_MS" to "1000")) }
+  }
+
   private val authoritativeUniverse =
     mapOf(
       "SYMBOLS" to "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY",
@@ -223,7 +254,7 @@ class ForwarderConfigTest {
     assertEquals(12L, cfg.barsBackfillLookbackHours)
     assertFalse(cfg.enableTradeUpdates)
     assertEquals(AlpacaMarketType.EQUITY, cfg.alpacaMarketType)
-    assertEquals("us", cfg.alpacaCryptoLocation)
+    assertEquals(null, cfg.cryptoFeed)
     assertEquals(listOf("trades", "quotes", "bars", "updatedBars"), cfg.alpacaMarketDataChannels)
     assertEquals(emptySet(), cfg.optionsMarketHolidays)
     assertEquals("torghut.trades.v1", cfg.topics.trades)
@@ -507,14 +538,15 @@ class ForwarderConfigTest {
         mapOf(
           "ALPACA_KEY_ID" to "key",
           "ALPACA_SECRET_KEY" to "secret",
-          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols?assetClass=crypto",
           "ALPACA_MARKET_TYPE" to "crypto",
+          "SYMBOLS" to "BTC/USD",
+          "TOPIC_CRYPTO_EVENTS" to "bayn.market-data.crypto.v1",
         ),
       )
 
     assertEquals(AlpacaMarketType.CRYPTO, cfg.alpacaMarketType)
-    assertEquals("us", cfg.alpacaCryptoLocation)
-    assertEquals(listOf("trades", "quotes", "bars"), cfg.alpacaMarketDataChannels)
+    assertEquals("us", cfg.cryptoFeed?.location)
+    assertEquals(listOf("trades", "quotes", "bars", "updatedBars", "orderbooks"), cfg.alpacaMarketDataChannels)
   }
 
   @Test
@@ -524,14 +556,15 @@ class ForwarderConfigTest {
         mapOf(
           "ALPACA_KEY_ID" to "key",
           "ALPACA_SECRET_KEY" to "secret",
-          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols?assetClass=crypto",
           "ALPACA_MARKET_TYPE" to "crypto",
+          "SYMBOLS" to "BTC/USD",
+          "TOPIC_CRYPTO_EVENTS" to "bayn.market-data.crypto.v1",
           "ALPACA_CRYPTO_LOCATION" to "eu-1",
         ),
       )
 
     assertEquals(AlpacaMarketType.CRYPTO, cfg.alpacaMarketType)
-    assertEquals("eu-1", cfg.alpacaCryptoLocation)
+    assertEquals("eu-1", cfg.cryptoFeed?.location)
   }
 
   @Test
@@ -559,13 +592,15 @@ class ForwarderConfigTest {
 
   @Test
   fun `rejects unknown crypto location`() {
-    assertFailsWith<IllegalStateException> {
+    assertFailsWith<IllegalArgumentException> {
       ForwarderConfig.fromEnv(
         mapOf(
           "ALPACA_KEY_ID" to "key",
           "ALPACA_SECRET_KEY" to "secret",
           "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
           "ALPACA_MARKET_TYPE" to "crypto",
+          "SYMBOLS" to "BTC/USD",
+          "TOPIC_CRYPTO_EVENTS" to "bayn.market-data.crypto.v1",
           "ALPACA_CRYPTO_LOCATION" to "moon-1",
         ),
       )

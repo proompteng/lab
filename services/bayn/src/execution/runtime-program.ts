@@ -1,12 +1,16 @@
-import { Clock, Effect, Result } from 'effect'
+import { Effect, Result } from 'effect'
+import type { CryptoTakerFeeBps } from '../broker/crypto-fees'
+import { instrumentMarket, MarketKind } from '../instruments'
+import { OrderSide } from './contracts'
+import type { JevExitTarget } from '../jev/exit'
 
-import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
-import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations'
+import { BrokerRead, type Account, type BrokerReadShape } from '../broker/alpaca/model'
+import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations/model'
 import { unknownOutcome } from '../broker/alpaca-mutations/model'
 import type { PersistedCapitalGrantStoreShape } from '../db/persisted-capital-grant'
 import { canonicalHashV1Result } from '../hash'
 import type { Policy } from '../risk'
-import { MutationOperation } from '../broker/alpaca-mutations'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { cancel, dryRunSubmit, recover, submit } from './coordinator'
 import { selectStoredIntent, validateStartedSubmitRiskDecision } from './coordinator-decisions'
 import type { Intent } from './contracts'
@@ -17,21 +21,30 @@ import {
   type GrantedCapitalAuthority,
   type MutationExecutionAuthority,
 } from './authority'
-import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
-import { MutationStore, type MutationStoreShape } from './mutations'
+import { IntentStore, type IntentStoreService, type StoredIntent } from './intents/domain'
+import { MutationStore, type MutationStoreShape } from './mutations/model'
 import {
   makeAuthorityGuardedBrokerMutation,
   constrainExecutionCapitalLimits,
   executionCapitalLimitsFromPolicy,
-  refreshExecutionBrokerSubmitSnapshot,
+  confirmExecutionBrokerState,
   validateExecutionBrokerSubmitSnapshot,
+  validateCryptoEntryFeeCeiling,
   validatePersistedCapitalGrantForSubmit,
   type FinalSubmitAuthorizationFailure,
 } from './mutation-authority'
-import { WriterFence, WriterFenceError, type WriterFenceService } from './writer-fence'
-import { Pipeable } from '../pipeable'
+import { WriterFenceError, type WriterFenceService } from './writer-fence'
+
+import type { BrokerStateCache, BrokerStateVersion } from './broker-state-cache'
+import { withObservedStage } from '../telemetry'
 
 export interface ExecutionProgramDependencies {
+  readonly brokerStateCache: BrokerStateCache
+  readonly verifyBrokerStateVersion: (
+    version: BrokerStateVersion,
+    intentId: string,
+    requireCryptoEntryFeeBound: boolean,
+  ) => Effect.Effect<CryptoTakerFeeBps | null, FinalSubmitAuthorizationFailure>
   readonly brokerRead: BrokerReadShape
   readonly brokerMutation: BrokerMutationShape
   readonly intentStore: IntentStoreService
@@ -45,17 +58,12 @@ export interface ExecutionProgramDependencies {
     { readonly dailyTradedNotionalMicros: string; readonly peakEquityMicros: string },
     FinalSubmitAuthorizationFailure
   >
-  readonly currentUtcInstant: Effect.Effect<string>
+  readonly currentUtcInstant: Effect.Effect<string, FinalSubmitAuthorizationFailure>
   /** The reviewed entry lease, checked at the final writer fence. */
   readonly entrySubmitExpiresAt?: string
   /** Close-only intents may finish recovery until this separate close lease expires. */
   readonly closeSubmitExpiresAt?: string
   readonly isCloseOnlyIntent?: (intentId: string) => Effect.Effect<boolean, FinalSubmitAuthorizationFailure>
-}
-
-export interface ExecutionProgramConstructionFailure {
-  readonly _tag: 'ExecutionProgramRequiresMutationAuthority'
-  readonly brokerAccess: BrokerAccess
 }
 
 interface FinalExecutionCapitalAuthorization {
@@ -123,11 +131,25 @@ const finalBrokerAuthorization = (
   intent: Intent,
   closeOnly: boolean,
   dependencies: ExecutionProgramDependencies,
-): Effect.Effect<void, FinalSubmitAuthorizationFailure> => {
+): Effect.Effect<
+  { readonly account: Account; readonly entryCryptoFeeBound: CryptoTakerFeeBps | null },
+  FinalSubmitAuthorizationFailure
+> => {
   return Effect.gen(function* () {
-    const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(capital.limits, intent, dependencies)
+    const cached = yield* dependencies.brokerStateCache.take(
+      yield* dependencies.currentUtcInstant,
+      dependencies.riskPolicy.maxBrokerStateAgeMs,
+    )
+    const entryCryptoFeeBound = yield* dependencies.verifyBrokerStateVersion(
+      cached.version,
+      intent.intentId,
+      !closeOnly && intent.side === OrderSide.Buy && instrumentMarket(intent.symbol) === MarketKind.Crypto,
+    )
+    const snapshot = yield* confirmExecutionBrokerState(cached, intent, dependencies.brokerRead).pipe(
+      withObservedStage('bayn.execution.broker-state-confirmation', { dependency: 'broker' }),
+    )
+    const riskContext = yield* dependencies.readFinalExecutionRiskContext(yield* dependencies.currentUtcInstant)
     const observedAt = yield* dependencies.currentUtcInstant
-    const riskContext = yield* dependencies.readFinalExecutionRiskContext(observedAt)
     const refreshedAuthority =
       capital.persistedAuthority === undefined
         ? Result.succeed(authority)
@@ -141,6 +163,7 @@ const finalBrokerAuthorization = (
       observedAt,
       {
         closeOnly,
+        maximumCryptoEntryTakerFeeBps: entryCryptoFeeBound,
         maxBrokerStateAgeMs: dependencies.riskPolicy.maxBrokerStateAgeMs,
         maxNetExposureMicros: dependencies.riskPolicy.maxNetExposureMicros,
         currentDailyTradedNotionalMicros: riskContext.dailyTradedNotionalMicros,
@@ -151,6 +174,7 @@ const finalBrokerAuthorization = (
       },
     )
     if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
+    return { account: snapshot.account, entryCryptoFeeBound }
   })
 }
 
@@ -159,34 +183,20 @@ const readFinalSubmitRisk = (intentId: string, dependencies: ExecutionProgramDep
     .read(intentId)
     .pipe(Effect.flatMap((stored) => Effect.fromResult(selectStoredIntent(MutationOperation.Submit, intentId, stored))))
 
-const validateFinalSubmitRisk = (stored: StoredIntent) =>
-  Clock.currentTimeMillis.pipe(
-    Effect.flatMap((currentTimeMillis) =>
-      Effect.fromResult(validateStartedSubmitRiskDecision(stored, currentTimeMillis)),
-    ),
-    Effect.asVoid,
-  )
-
-const validateExecutionWindow = (
-  intentId: string,
+const validateFinalSubmitTime = (
+  stored: StoredIntent,
   dependencies: ExecutionProgramDependencies,
-  closeIntent?: boolean,
-): Effect.Effect<void, FinalSubmitAuthorizationFailure> =>
+  closeOnly: boolean,
+): Effect.Effect<string, FinalSubmitAuthorizationFailure> =>
   Effect.gen(function* () {
-    if (dependencies.entrySubmitExpiresAt === undefined && dependencies.closeSubmitExpiresAt === undefined) {
-      return
-    }
-    const isCloseIntent =
-      closeIntent ??
-      (dependencies.isCloseOnlyIntent !== undefined ? yield* dependencies.isCloseOnlyIntent(intentId) : false)
-    const expiresAt = isCloseIntent ? dependencies.closeSubmitExpiresAt : dependencies.entrySubmitExpiresAt
-    if (expiresAt === undefined) return
     const observedAt = yield* dependencies.currentUtcInstant
-    if (observedAt < expiresAt) return
+    yield* Effect.fromResult(validateStartedSubmitRiskDecision(stored, Date.parse(observedAt)))
+    const expiresAt = closeOnly ? dependencies.closeSubmitExpiresAt : dependencies.entrySubmitExpiresAt
+    if (expiresAt === undefined || observedAt < expiresAt) return observedAt
     return yield* Effect.fail({ _tag: 'ExecutionWindowExpired' as const, expiresAt, observedAt })
   })
 
-const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
+export const authorizeFinalBrokerSubmit = <A, E, R>(
   authority: MutationExecutionAuthority,
   intent: Intent,
   transmit: Effect.Effect<A, E, R>,
@@ -202,13 +212,14 @@ const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
         // The writer-fence transaction owns Bayn's PostgreSQL writer for this interval, so the started intent bytes are
         // stable until commit. Reuse them and re-evaluate only the time-bound risk decision after broker I/O.
         const startedIntent = yield* readFinalSubmitRisk(intent.intentId, dependencies)
-        yield* validateFinalSubmitRisk(startedIntent)
+        yield* validateFinalSubmitTime(startedIntent, dependencies, closeOnly)
         const capital = yield* finalExecutionGrantAuthorization(authority, intent, dependencies)
-        yield* validateFinalSubmitRisk(startedIntent)
-        yield* validateExecutionWindow(intent.intentId, dependencies, closeOnly)
-        yield* finalBrokerAuthorization(authority, capital, intent, closeOnly, dependencies)
-        yield* validateFinalSubmitRisk(startedIntent)
-        yield* validateExecutionWindow(intent.intentId, dependencies, closeOnly)
+        yield* validateFinalSubmitTime(startedIntent, dependencies, closeOnly)
+        const broker = yield* finalBrokerAuthorization(authority, capital, intent, closeOnly, dependencies)
+        const transmitAt = yield* validateFinalSubmitTime(startedIntent, dependencies, closeOnly)
+        yield* Effect.fromResult(
+          validateCryptoEntryFeeCeiling(intent, broker.account, broker.entryCryptoFeeBound, closeOnly, transmitAt),
+        )
         transmissionStarted = true
         return yield* transmit
       }),
@@ -226,15 +237,6 @@ const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
     )
 }
 
-export const authorizeFinalBrokerSubmit = Pipeable.generic<
-  <A, E, R>(
-    intent: Intent,
-    transmit: Effect.Effect<A, E, R>,
-    dependencies: ExecutionProgramDependencies,
-  ) => (authority: MutationExecutionAuthority) => Effect.Effect<A, E | FinalSubmitAuthorizationFailure, R>,
-  typeof authorizeFinalBrokerSubmitDataFirst
->(4, authorizeFinalBrokerSubmitDataFirst)
-
 const provideCoordinatorDependencies = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   dependencies: ExecutionProgramDependencies,
@@ -244,7 +246,6 @@ const provideCoordinatorDependencies = <A, E, R>(
     Effect.provideService(BrokerMutation, dependencies.brokerMutation),
     Effect.provideService(IntentStore, dependencies.intentStore),
     Effect.provideService(MutationStore, dependencies.mutationStore),
-    Effect.provideService(WriterFence, dependencies.writerFence),
   )
 
 const earlierDefinedInstant = (left: string | undefined, right: string | undefined): string | undefined => {
@@ -267,7 +268,7 @@ const scopeSubmitDeadline = (
   }
 }
 
-const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependencies: ExecutionProgramDependencies) => {
+export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies: ExecutionProgramDependencies) => {
   if (authority.brokerAccess !== BrokerAccess.Mutation) {
     return Result.fail({
       _tag: 'ExecutionProgramRequiresMutationAuthority' as const,
@@ -293,6 +294,8 @@ const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependenci
     _tag: 'ExecutionProgram' as const,
     schemaVersion: 'bayn.execution-program.v1' as const,
     authority,
+    recordReconciliation: dependencies.brokerStateCache.record,
+    invalidateBrokerState: dependencies.brokerStateCache.invalidate,
     dryRunSubmit: (intentId: string) =>
       provideCoordinatorDependencies(dryRunSubmit(intentId), defaultCoordinatorDependencies),
     submit: (intentId: string, consistencyDelayMs: number, submitExpiresAt: string) => {
@@ -303,13 +306,33 @@ const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependenci
         ),
       )
     },
+    cancelProtectionOrder: (intentId: string, brokerOrderId: string, exitTarget: JevExitTarget | undefined) =>
+      dependencies.brokerStateCache.invalidate.pipe(
+        Effect.andThen(
+          Effect.gen(function* () {
+            const observedAt = yield* dependencies.currentUtcInstant
+            const allowed = yield* dependencies.intentStore.beginProtectionCancel(
+              intentId,
+              brokerOrderId,
+              observedAt,
+              exitTarget,
+            )
+            if (allowed) yield* defaultCoordinatorDependencies.brokerMutation.cancel(brokerOrderId)
+            return allowed
+          }),
+        ),
+      ),
     cancel: (intentId: string, consistencyDelayMs: number) =>
-      provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), defaultCoordinatorDependencies),
+      dependencies.brokerStateCache.invalidate.pipe(
+        Effect.andThen(
+          provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), defaultCoordinatorDependencies),
+        ),
+      ),
     recover: (intentId: string, operation: MutationOperation) =>
-      provideCoordinatorDependencies(recover(intentId, operation), defaultCoordinatorDependencies),
+      dependencies.brokerStateCache.invalidate.pipe(
+        Effect.andThen(provideCoordinatorDependencies(recover(intentId, operation), defaultCoordinatorDependencies)),
+      ),
   })
 }
-
-export const makeExecutionProgram = Pipeable.dual(2, makeExecutionProgramDataFirst)
 
 export type ExecutionProgram = Result.Result.Success<ReturnType<typeof makeExecutionProgram>>

@@ -4,6 +4,7 @@
       <pattern>%d{ISO8601} %-5level [%thread] %logger{36} - %msg%n</pattern>
     </encoder>
   </appender>
+  <appender name="GLITCHTIP" class="ai.proompteng.dorvud.platform.observability.GlitchTipLogbackAppender" />
 
   <logger name="org.apache.kafka" level="${KAFKA_CLIENT_LOG_LEVEL:-WARN}" />
   <logger name="org.apache.kafka.clients.NetworkClient" level="WARN" />
@@ -12,5 +13,6 @@
 
   <root level="${LOG_LEVEL:-INFO}">
     <appender-ref ref="STDOUT" />
+    <appender-ref ref="GLITCHTIP" />
   </root>
 </configuration>

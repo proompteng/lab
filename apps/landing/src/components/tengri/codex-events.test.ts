@@ -4,9 +4,9 @@ import {
   appendCodexEvent,
   appendCodexEventAfterRestore,
   codexAccountRefreshIsCurrent,
-  codexActiveTurnIdFromThread,
+  codexThreadTurnState,
+  codexEventClientTurnIds,
   codexApprovalDecisions,
-  codexCanStartNewConversation,
   codexEventDisplayText,
   codexEventContinuesRestoredItem,
   codexEventMatchesThread,
@@ -20,6 +20,8 @@ import {
   codexTranscriptFromThread,
   parseCodexEvent,
   reconcileCodexEventsWithRestoredHistory,
+  reconcileSubmittedPrompts,
+  retainSubmittedPromptImages,
 } from './codex-events'
 
 const event: TengriCodexEvent = {
@@ -34,7 +36,220 @@ const event: TengriCodexEvent = {
   rawJson: '{}',
 }
 
+describe('Accepted prompt retention', () => {
+  const prompt = {
+    id: 'sent-1',
+    threadId: 'thread-1',
+    text: 'Inspect the workspace.',
+    previousItemIds: new Set(['previous-user', 'previous-answer']),
+  }
+  const previous = { id: 'previous-user', kind: 'user-message' as const, text: prompt.text }
+
+  test('keeps an accepted prompt before the new response when its echo is absent', () => {
+    const answer = { id: 'new-answer', kind: 'assistant-text' as const, text: 'Reading files.' }
+    const result = reconcileSubmittedPrompts([previous, answer], [prompt])
+    expect(result.acknowledged.size).toBe(0)
+    expect(result.pending).toEqual([{ prompt, beforeItemId: answer.id }])
+  })
+
+  test('acknowledges a new canonical item without matching an identical earlier prompt', () => {
+    const next = { ...previous, id: 'new-user' }
+    const result = reconcileSubmittedPrompts([previous, next], [prompt])
+    expect([...result.acknowledged]).toEqual(['sent-1'])
+    expect(result.pending).toEqual([])
+  })
+
+  test('one server echo cannot consume two identical accepted prompts', () => {
+    const second = { ...prompt, id: 'sent-2' }
+    const result = reconcileSubmittedPrompts([{ ...previous, id: 'new-user' }], [prompt, second])
+    expect([...result.acknowledged]).toEqual(['sent-1'])
+    expect(result.pending.map(({ prompt }) => prompt.id)).toEqual(['sent-2'])
+  })
+
+  test('releases image bytes only for the one-to-one matched canonical input', () => {
+    const imagePrompt = {
+      ...prompt,
+      text: '[Image]',
+      images: [{ mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' }],
+    }
+    const second = { ...imagePrompt, id: 'sent-2' }
+    const canonical = {
+      id: 'canonical-image',
+      kind: 'user-message' as const,
+      text: '[Local image: /workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111.png]',
+    }
+    const { matches } = reconcileSubmittedPrompts([canonical], [imagePrompt, second])
+    const retained = retainSubmittedPromptImages(imagePrompt, matches.get(imagePrompt.id))
+    expect(retained.images).toBeUndefined()
+    expect(retained.text).toBe(canonical.text)
+    expect(retainSubmittedPromptImages(second, matches.get(second.id))).toBe(second)
+  })
+
+  test('matches restored image inputs to the accepted image-only prompt', () => {
+    const imagePrompt = { ...prompt, text: '[Image]' }
+    const result = reconcileSubmittedPrompts(
+      [{ ...previous, id: 'new-image', text: '[Local image: /workspace/.tengri-attachments/image.png]' }],
+      [imagePrompt],
+    )
+    expect([...result.acknowledged]).toEqual(['sent-1'])
+    expect(result.pending).toEqual([])
+  })
+
+  test.each([
+    { text: '', imageCount: 1 },
+    { text: 'Inspect these screenshots.', imageCount: 1 },
+    { text: 'Inspect these screenshots.', imageCount: 2 },
+  ])('reconciles structured live image inputs ($text, $imageCount images)', ({ text, imageCount }) => {
+    const paths = Array.from(
+      { length: imageCount },
+      (_, index) => `/workspace/.tengri-attachments/11111111-1111-4111-8111-${String(index).padStart(12, '0')}.png`,
+    )
+    const input = {
+      id: 'new-image',
+      type: 'userMessage',
+      content: [...(text ? [{ type: 'text', text }] : []), ...paths.map((path) => ({ type: 'localImage', path }))],
+    }
+    const live = {
+      ...event,
+      kind: 'user-message' as const,
+      method: 'item/completed',
+      itemId: input.id,
+      text,
+      rawJson: JSON.stringify({ params: { item: input } }),
+    }
+    const canonicalText = [text, ...paths.map((path) => `[Local image: ${path}]`)].filter(Boolean).join('\n')
+    expect(codexEventDisplayText(live)).toBe(canonicalText)
+    const imagePrompt = {
+      ...prompt,
+      text: [text, ...paths.map(() => '[Image]')].filter(Boolean).join('\n'),
+      images: paths.map(() => ({ mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' })),
+    }
+    const canonical = { id: input.id, kind: live.kind, text: codexEventDisplayText(live) }
+    const { matches, pending, acknowledged } = reconcileSubmittedPrompts([canonical], [imagePrompt])
+    expect(pending).toEqual([])
+    expect([...acknowledged]).toEqual([imagePrompt.id])
+    expect(retainSubmittedPromptImages(imagePrompt, matches.get(imagePrompt.id))).toMatchObject({
+      text: canonicalText,
+      images: undefined,
+    })
+  })
+})
+
 describe('Codex event replay', () => {
+  test('keeps one pending request when an approval is replayed with a newer sequence', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: 'request-1',
+      text: 'Run the check?',
+    }
+    const first = appendCodexEvent([], approval)
+    const replayed = appendCodexEvent(first, { ...approval, sequence: 8, text: 'Run the updated check?' })
+    expect(replayed).toHaveLength(1)
+    expect(replayed[0].text).toBe('Run the updated check?')
+    expect(appendCodexEvent(replayed, approval)).toBe(replayed)
+    expect(appendCodexEvent(replayed, { ...approval, sequence: 9, approvalId: 'request-2' })).toHaveLength(2)
+  })
+
+  const runtimeError: TengriCodexEvent = {
+    ...event,
+    kind: 'error',
+    method: 'error',
+    threadId: '',
+    turnId: '',
+    itemId: '',
+    text: 'Codex app-server is restarting',
+  }
+
+  test('keeps only the latest unscoped runtime error', () => {
+    const latest = { ...runtimeError, sequence: 8 }
+    expect(appendCodexEvent([runtimeError], latest)).toEqual([latest])
+    expect(appendCodexEvent([latest], runtimeError)).toEqual([latest])
+  })
+
+  test('clears recovered runtime errors while preserving failed turns and warnings', () => {
+    const turnError = { ...runtimeError, threadId: 'thread-1', turnId: 'turn-1' }
+    const warning = { ...runtimeError, kind: 'warning' as const }
+    const started = { ...event, sequence: 8, kind: 'thread-state' as const, method: 'turn/started' }
+    const next = appendCodexEvent([runtimeError, turnError, warning], started)
+    expect(next).toEqual([turnError, warning, started])
+  })
+
+  test('clears a restart notice on initialized runtime recovery without starting a turn', () => {
+    const ready: TengriCodexEvent = {
+      ...runtimeError,
+      sequence: 8,
+      kind: 'thread-state',
+      method: 'tengri/runtimeReady',
+      text: '',
+    }
+    const turnError = { ...runtimeError, threadId: 'thread-1', turnId: 'turn-1' }
+    const warning = { ...runtimeError, kind: 'warning' as const }
+    expect(appendCodexEvent([runtimeError, turnError, warning], ready)).toEqual([turnError, warning, ready])
+    const laterError = { ...runtimeError, sequence: 9 }
+    expect(appendCodexEvent([laterError], ready)).toEqual([laterError, ready])
+  })
+
+  test('does not replay a runtime error older than a successful thread snapshot', () => {
+    expect(appendCodexEventAfterRestore([], runtimeError, new Map(), 8)).toEqual([])
+    const laterError = { ...runtimeError, sequence: 9 }
+    expect(appendCodexEventAfterRestore([], laterError, new Map(), 8)).toEqual([laterError])
+  })
+
+  test('keeps pending approvals when later notices exceed the event buffer', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: '101',
+    }
+    let current = appendCodexEvent([], approval)
+    for (let sequence = 8; sequence < 520; sequence += 1) {
+      current = appendCodexEvent(current, {
+        ...event,
+        sequence,
+        kind: 'warning',
+        method: 'tengri/eventOmitted',
+        approvalId: '',
+      })
+    }
+    expect(current.filter((event) => event.kind === 'approval')).toEqual([approval])
+    expect(current.filter((event) => event.kind === 'warning').length).toBeLessThanOrEqual(500)
+    const resolved = appendCodexEvent(current, {
+      ...event,
+      sequence: 520,
+      kind: 'thread-state',
+      method: 'serverRequest/resolved',
+      rawJson: '{"params":{"requestId":101}}',
+    })
+    expect(resolved.filter((event) => event.kind === 'approval')).toEqual([])
+  })
+
+  test('removes approvals when their turn completes without a resolution notification', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: '101',
+    }
+    const anotherTurn = { ...approval, turnId: 'turn-2', approvalId: '102' }
+    const anotherThread = { ...approval, threadId: 'thread-2', approvalId: '103' }
+    const completed = {
+      ...event,
+      sequence: 8,
+      kind: 'thread-state' as const,
+      method: 'turn/completed',
+      itemId: '',
+      text: '',
+    }
+    const next = appendCodexEvent([approval, anotherTurn, anotherThread], completed)
+    expect(next.filter((event) => event.kind === 'approval')).toEqual([anotherTurn, anotherThread])
+    expect(
+      appendCodexEvent(appendCodexEvent([], approval), completed).filter((event) => event.kind === 'approval'),
+    ).toEqual([])
+  })
+
   test('deduplicates an event replayed after an SSE reconnect', () => {
     const current = [event]
     expect(appendCodexEvent(current, { ...event })).toBe(current)
@@ -139,7 +354,7 @@ describe('Codex event replay', () => {
     expect(updated).toHaveLength(2)
     expect(updated[1]).toEqual(other)
     expect(codexEventDisplayText(updated[0]!)).toBe(
-      '5h window: 12% used · 7d window: 20% used · Credits: 8 · Limit state: rate limit reached',
+      '5h window 88% left · Weekly 80% left · Credits: 8 · Limit state: rate limit reached',
     )
   })
 
@@ -280,6 +495,17 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
   })
 
+  test('keeps usage and developer deprecation notices out of the conversation during streaming and replay', () => {
+    const tokenUsage = { ...event, kind: 'usage' as const, method: 'thread/tokenUsage/updated', itemId: '' }
+    const rateLimits = { ...tokenUsage, method: 'account/rateLimits/updated' }
+    const deprecation = { ...event, kind: 'warning' as const, method: 'deprecationNotice', itemId: '' }
+    for (const snapshotSequence of [0, event.sequence + 1]) {
+      expect(codexEventShouldRender(tokenUsage, event.threadId, new Set(), snapshotSequence)).toBe(false)
+      expect(codexEventShouldRender(rateLimits, event.threadId, new Set(), snapshotSequence)).toBe(false)
+      expect(codexEventShouldRender(deprecation, event.threadId, new Set(), snapshotSequence)).toBe(false)
+    }
+  })
+
   test('keeps only post-resume item updates plus snapshot-independent events visible', () => {
     const restoredItemIds = new Set([event.itemId])
     const itemlessSnapshotEvent = { ...event, kind: 'usage' as const, itemId: '' }
@@ -289,7 +515,7 @@ describe('Codex event replay', () => {
 
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence)).toBe(false)
-    expect(codexEventShouldRender(itemlessSnapshotEvent, event.threadId, restoredItemIds, event.sequence)).toBe(true)
+    expect(codexEventShouldRender(itemlessSnapshotEvent, event.threadId, restoredItemIds, event.sequence)).toBe(false)
     expect(codexEventShouldRender(renamedSnapshotItem, event.threadId, restoredItemIds, event.sequence)).toBe(false)
     expect(codexEventShouldRender(snapshotWarning, event.threadId, restoredItemIds, event.sequence)).toBe(true)
     expect(codexEventShouldRender(snapshotError, event.threadId, restoredItemIds, event.sequence)).toBe(true)
@@ -333,19 +559,6 @@ describe('Codex event replay', () => {
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-1')).toBe(true)
     expect(codexResumeCommitIsCurrent(2, 3, 'thread-1', 'thread-1')).toBe(false)
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-2')).toBe(false)
-  })
-
-  test('allows abandoning a thread after replay recovery fails', () => {
-    const failedRecovery = {
-      activeTurnId: 'stale-turn',
-      recovering: false,
-      submitting: false,
-      threadReady: false,
-    }
-
-    expect(codexCanStartNewConversation(failedRecovery)).toBe(true)
-    expect(codexCanStartNewConversation({ ...failedRecovery, recovering: true })).toBe(false)
-    expect(codexCanStartNewConversation({ ...failedRecovery, threadReady: true })).toBe(false)
   })
 
   test('reconciles reordered snapshot responses and event deliveries against the server cursor', () => {
@@ -733,6 +946,60 @@ describe('Codex event decoding', () => {
     ])
   })
 
+  test('shows MCP tool confirmations with arguments and only the advertised session scope', () => {
+    const params = {
+      mode: 'form',
+      message: 'Allow the fixture MCP server to run tool "exec"?',
+      requestedSchema: { type: 'object', properties: {} },
+      _meta: {
+        codex_approval_kind: 'mcp_tool_call',
+        persist: ['session', 'always'],
+        tool_description: 'Execute a command in the selected workspace.',
+        tool_params: { command: 'printf fixture', cwd: '/tmp/fixture' },
+      },
+    }
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'mcpServer/elicitation/request',
+      rawJson: JSON.stringify({ params }),
+    }
+    expect(codexApprovalDecisions(approval)).toEqual(['approve-once', 'approve-session', 'deny'])
+    expect(codexEventDisplayText(approval)).toContain(params.message)
+    expect(codexEventDisplayText(approval)).toContain('printf fixture')
+    expect(codexEventDisplayText(approval)).toContain('/tmp/fixture')
+    expect(codexEventDisplayText(approval)).toContain('Session approval applies to this tool')
+    expect(codexEventMatchesThread(approval, 'thread-2')).toBe(false)
+    for (const persist of [undefined, 'always', []]) {
+      expect(
+        codexApprovalDecisions({
+          ...approval,
+          rawJson: JSON.stringify({ params: { ...params, _meta: { ...params._meta, persist } } }),
+        }),
+      ).toEqual(['approve-once', 'deny'])
+    }
+  })
+
+  test('keeps MCP controls and an omission notice after large arguments are bounded', () => {
+    for (const persist of [undefined, 'session']) {
+      const approval = {
+        ...event,
+        kind: 'approval' as const,
+        method: 'mcpServer/elicitation/request',
+        text: 'Allow the fixture tool?',
+        rawJson: JSON.stringify({
+          params: { _meta: { codex_approval_kind: 'mcp_tool_call', persist } },
+          rawOmitted: true,
+        }),
+      }
+      expect(codexApprovalDecisions(approval)).toEqual(
+        persist === 'session' ? ['approve-once', 'approve-session', 'deny'] : ['approve-once', 'deny'],
+      )
+      expect(codexEventDisplayText(approval)).toContain('Allow the fixture tool?')
+      expect(codexEventDisplayText(approval)).toContain('Arguments were omitted')
+    }
+  })
+
   test('renders token usage and rate-limit snapshots', () => {
     expect(
       codexEventDisplayText({
@@ -760,7 +1027,25 @@ describe('Codex event decoding', () => {
           },
         }),
       }),
-    ).toBe('5h window: 12% used · 7d window: 45% used · Credits: 17.50')
+    ).toBe('5h window 88% left · Weekly 55% left · Credits: 18')
+  })
+
+  test.each([
+    [9.1, '62306.900236', 'Weekly 90% left · Credits: 62,307'],
+    [0, 0, 'Weekly 100% left · Credits: 0'],
+    [100, '17', 'Weekly 0% left · Credits: 17'],
+    [110, 'invalid', 'Weekly 0% left'],
+    [12.5, '', 'Weekly 87% left'],
+  ])('formats remaining weekly usage %s and credits %s', (usedPercent, balance, expected) => {
+    expect(
+      codexEventDisplayText({
+        ...event,
+        kind: 'usage',
+        rawJson: JSON.stringify({
+          params: { rateLimits: { secondary: { usedPercent, windowDurationMins: 10_080 }, credits: { balance } } },
+        }),
+      }),
+    ).toBe(expected)
   })
 
   test('extracts a failed device-login completion error', () => {
@@ -864,6 +1149,29 @@ describe('Codex event decoding', () => {
 })
 
 describe('Codex thread restoration', () => {
+  test('links native client identities to turns in streamed items and recovered history', () => {
+    const item = { type: 'userMessage', id: 'user-1', clientId: 'run-identity', content: [] }
+    expect(
+      codexEventClientTurnIds({ ...event, kind: 'user-message', rawJson: JSON.stringify({ params: { item } }) }),
+    ).toEqual([['run-identity', 'turn-1']])
+    expect(
+      codexEventClientTurnIds({
+        ...event,
+        rawJson: JSON.stringify({ params: { item: { ...item, type: 'commandExecution' } } }),
+      }),
+    ).toEqual([])
+    expect(codexEventClientTurnIds({ ...event, rawJson: '{' })).toEqual([])
+    expect(
+      codexThreadTurnState(
+        JSON.stringify({ thread: { turns: [{ id: 'turn-1', status: 'completed', items: [item] }] } }),
+      ),
+    ).toEqual({
+      activeTurnId: '',
+      completedTurnIds: ['turn-1'],
+      clientTurnIds: new Map([['run-identity', 'turn-1']]),
+    })
+  })
+
   test('recovers the active turn from the authoritative resumed thread', () => {
     const thread = JSON.stringify({
       thread: {
@@ -874,8 +1182,12 @@ describe('Codex thread restoration', () => {
       },
     })
 
-    expect(codexActiveTurnIdFromThread(thread)).toBe('turn-active')
-    expect(codexActiveTurnIdFromThread('{')).toBe('')
+    expect(codexThreadTurnState(thread)).toEqual({
+      activeTurnId: 'turn-active',
+      completedTurnIds: ['turn-complete'],
+      clientTurnIds: new Map(),
+    })
+    expect(codexThreadTurnState('{')).toEqual({ activeTurnId: '', completedTurnIds: [], clientTurnIds: new Map() })
   })
 
   test('restores persisted typed items in thread order', () => {
@@ -957,10 +1269,15 @@ describe('Codex thread restoration', () => {
       { id: 'assistant-1', kind: 'assistant-text', text: 'Done' },
       { id: 'plan-1', kind: 'plan', text: '- [x] Build it' },
       { id: 'reasoning-1', kind: 'reasoning-summary', text: 'Checked the result' },
-      { id: 'command-1', kind: 'tool-output', text: '12 pass' },
-      { id: 'command-2', kind: 'tool-output', text: 'Command completed (exit 0)' },
+      { id: 'command-1', kind: 'tool-output', text: '12 pass', activityTitle: 'bun test' },
+      { id: 'command-2', kind: 'tool-output', text: 'Command completed (exit 0)', activityTitle: 'true' },
       { id: 'file-1', kind: 'file-diff', text: '+export {}' },
-      { id: 'mcp-1', kind: 'tool-output', text: '{\n  "id": "ENG-123",\n  "state": "Done"\n}' },
+      {
+        id: 'mcp-1',
+        kind: 'tool-output',
+        activityTitle: 'linear/get_issue',
+        text: 'linear/get_issue\n{\n  "id": "ENG-123",\n  "state": "Done"\n}',
+      },
       { id: 'search-1', kind: 'tool-call', text: 'Web search: Kata Firecracker' },
       {
         id: 'collab-1',
@@ -986,4 +1303,170 @@ describe('Codex thread restoration', () => {
       ),
     ).toEqual([{ id: 'same', kind: 'assistant-text', text: 'First' }])
   })
+})
+
+describe('Codex buffering equivalence', () => {
+  test('preserves split surrogate deltas while rebasing a partially covered replay', () => {
+    const restored = { id: event.itemId, kind: 'assistant-text' as const, text: 'restored\ud800', eventSequence: 20 }
+    const history = new Map([[restored.id, restored]])
+    let current = appendCodexEventAfterRestore([], { ...event, sequence: 20, text: 'covered' }, history, 20)
+    let expected = restored.text
+    let pageText = ''
+    for (let sequence = 21; sequence <= 140; sequence += 1) {
+      const text = sequence % 2 ? '\udc00漢' : '😀a'.repeat(40)
+      current = appendCodexEventAfterRestore(
+        current,
+        { ...event, sequence, method: 'item/agentMessage/delta', text },
+        history,
+        20,
+      )
+      expected += text
+      expect(current[0]!.text).toBe(expected)
+      if (sequence === 80) pageText = expected
+    }
+    const rebased = reconcileCodexEventsWithRestoredHistory(
+      current,
+      new Map([[restored.id, { ...restored, text: pageText, eventSequence: 80 }]]),
+      20,
+      new Map([[restored.id, 80]]),
+    )
+    expect(rebased[0]!.text).toBe(expected)
+    const sequences = []
+    for (let segment = rebased[0]!.textSegments; segment; segment = segment.previous) sequences.push(segment.sequence)
+    expect(sequences).toEqual(Array.from({ length: 60 }, (_, index) => 140 - index))
+  })
+
+  test('matches serialized item identity after normalizing untrusted wire values', () => {
+    const values: unknown[] = [
+      '',
+      'x',
+      'x:y',
+      'x"y',
+      'x\\y',
+      'x\u0000y',
+      '😀',
+      '\ud800',
+      null,
+      0,
+      1,
+      false,
+      undefined,
+      {},
+      [],
+    ]
+    for (const field of ['threadId', 'turnId', 'itemId']) {
+      for (const left of values) {
+        for (const right of values) {
+          const first = parseCodexEvent(
+            JSON.stringify({ ...event, sequence: 1, method: 'item/started', [field]: left }),
+          )!
+          const next = parseCodexEvent(
+            JSON.stringify({ ...event, sequence: 2, method: 'item/completed', [field]: right }),
+          )!
+          const identity = (value: TengriCodexEvent) =>
+            value.itemId ? JSON.stringify([value.threadId, value.turnId, value.itemId, value.kind]) : ''
+          const matches = Boolean(identity(next)) && identity(first) === identity(next)
+          expect(appendCodexEvent([first], next)).toEqual(matches ? [next] : [first, next])
+        }
+      }
+    }
+  })
+
+  test('matches UTF-8 truncation around the length fast path and byte cap', () => {
+    const cap = 512 << 10
+    const marker = '\n… output truncated …'
+    const encoder = new TextEncoder()
+    const reference = (value: string) => {
+      const bytes = encoder.encode(value)
+      if (bytes.length <= cap) return value
+      let end = cap - encoder.encode(marker).length
+      while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end -= 1
+      return new TextDecoder().decode(bytes.subarray(0, end)) + marker
+    }
+    const lengths = [0, 1, Math.floor(cap / 3) - 1, Math.floor(cap / 3), Math.floor(cap / 3) + 1, cap - 1, cap, cap + 1]
+    for (const unit of ['a', 'é', '漢', '😀', '\ud800', '\udc00', 'a\ud800b', '\ud800\udc00']) {
+      for (const length of lengths) {
+        const text = unit.repeat(Math.ceil(length / unit.length)).slice(0, length)
+        const first = { ...event, sequence: 1, method: 'item/agentMessage/delta', text }
+        let current = appendCodexEvent([], first)
+        let expected = reference(text)
+        expect(current[0]!.text).toBe(expected)
+        expect(parseCodexEvent(JSON.stringify(first))!.text).toBe(expected)
+        for (const [index, delta] of ['a', '漢', '\ud800', '\udc00', '😀'].entries()) {
+          current = appendCodexEvent(current, { ...first, sequence: index + 2, text: delta })
+          if (!expected.endsWith(marker)) expected = reference(expected + delta)
+          expect(current[0]!.text).toBe(expected)
+          expect(encoder.encode(current[0]!.text).length).toBeLessThanOrEqual(cap)
+        }
+      }
+    }
+  })
+})
+
+test('app tools expose their arguments and structured result instead of generic transport text', () => {
+  const item = {
+    type: 'mcpToolCall',
+    server: 'codex_apps',
+    tool: 'github.create_branch',
+    arguments: { repository_full_name: 'proompteng/lab', branch_name: 'codex/ui' },
+  }
+  const call = {
+    ...event,
+    kind: 'tool-call' as const,
+    text: 'codex_apps/github.create_branch',
+    rawJson: JSON.stringify({ params: { item } }),
+  }
+  expect(codexEventDisplayText(call)).toBe(
+    'codex_apps/github.create_branch\n{\n  "repository_full_name": "proompteng/lab",\n  "branch_name": "codex/ui"\n}',
+  )
+  const completed = {
+    ...item,
+    result: { content: [{ type: 'text', text: 'Action completed.' }], structuredContent: { branch: 'codex/ui' } },
+  }
+  const output = {
+    ...call,
+    kind: 'tool-output' as const,
+    text: 'Action completed.',
+    rawJson: JSON.stringify({ params: { item: completed } }),
+  }
+  expect(codexEventDisplayText(output)).toContain('"branch": "codex/ui"')
+  const history = codexTranscriptFromThread(
+    JSON.stringify({ thread: { turns: [{ items: [{ ...completed, id: 'app-output' }] }] } }),
+  )
+  expect(history[0].text).toBe(codexEventDisplayText(output))
+})
+
+test('keeps status-only connector outcomes visible', () => {
+  for (const type of ['mcpToolCall', 'dynamicToolCall']) {
+    for (const [status, expected] of [
+      ['completed', 'Command completed'],
+      ['failed', 'Command failed'],
+      ['declined', 'Command declined'],
+    ]) {
+      const output = {
+        ...event,
+        kind: 'tool-output' as const,
+        text: '',
+        rawJson: JSON.stringify({ params: { item: { type, status } } }),
+      }
+      expect(codexEventDisplayText(output)).toBe(expected)
+      expect(codexEventShouldRender(output, output.threadId, new Set(), 0)).toBe(true)
+    }
+  }
+})
+
+test('decodes complete JSON string connector results before adding tool labels', () => {
+  for (const type of ['mcpToolCall', 'dynamicToolCall']) {
+    const item = {
+      id: 'encoded-result',
+      type,
+      server: 'codex_apps',
+      tool: 'github.fetch',
+      result: JSON.stringify('First line\nSecond line'),
+    }
+    const output = { ...event, kind: 'tool-output' as const, text: '', rawJson: JSON.stringify({ params: { item } }) }
+    const expected = 'codex_apps/github.fetch\nFirst line\nSecond line'
+    expect(codexEventDisplayText(output)).toBe(expected)
+    expect(codexTranscriptFromThread(JSON.stringify({ thread: { turns: [{ items: [item] }] } }))[0].text).toBe(expected)
+  }
 })

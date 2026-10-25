@@ -3,6 +3,9 @@
     "module": "esnext",
     "target": "es2022",
     "moduleResolution": "bundler",
+    "lib": ["esnext", "dom"],
+    "types": ["bun-types"],
+    "skipLibCheck": true,
     "strict": true,
     "noEmit": true
   },

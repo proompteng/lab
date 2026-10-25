@@ -7,6 +7,9 @@ import type { TengriAgent, TengriCodexAccount, TengriUser } from '@/lib/tengri/t
 
 import { runTengriAction } from './client'
 import { DesktopAppIcon } from './desktop-app-icon'
+import { PowerSettingsForm } from './power-settings-form'
+import { PasskeyRegistration } from './passkey-registration'
+import { AccessPanel } from './access-panel'
 import { formatAgentDate, formatAgentResources, formatAgentUptime, shouldRefreshCodexAccount } from './settings-model'
 
 type BusyAction = 'delete' | 'sign-out' | 'sleep' | null
@@ -21,6 +24,7 @@ const settingsNavigation = [
   { id: 'agent', label: 'Agent', icon: Bot, color: 'bg-[#8f79c8]/20 text-[#c4b8ff]' },
   { id: 'runtime', label: 'Runtime', icon: Cpu, color: 'bg-[#59a48c]/20 text-[#9fe2c7]' },
   { id: 'lifecycle', label: 'Lifecycle', icon: ShieldCheck, color: 'bg-[#c69a5b]/20 text-[#e7c88e]' },
+  { id: 'access', label: 'Access', icon: ShieldCheck, color: 'bg-zinc-700 text-zinc-200' },
 ] as const
 
 type SettingsSectionId = (typeof settingsNavigation)[number]['id']
@@ -33,6 +37,7 @@ export function SettingsApp({
   instanceId,
   lifecycleDisabled,
   onDelete,
+  onChanged,
   onSignOut,
   onSleep,
   user,
@@ -44,6 +49,7 @@ export function SettingsApp({
   instanceId: string
   lifecycleDisabled: boolean
   onDelete: () => void
+  onChanged: () => Promise<void>
   onSignOut: () => void
   onSleep: () => void
   user: TengriUser
@@ -52,6 +58,7 @@ export function SettingsApp({
   const [accountRefreshing, setAccountRefreshing] = useState(false)
   const [now, setNow] = useState<number | null>(null)
   const [selectedSection, setSelectedSection] = useState<SettingsSectionId>('general')
+  const [powerSaving, setPowerSaving] = useState(false)
   const refreshAbortRef = useRef<AbortController | null>(null)
   const refreshGenerationRef = useRef(0)
   const sectionRefs = useRef<Record<SettingsSectionId, HTMLElement | null>>({
@@ -59,6 +66,7 @@ export function SettingsApp({
     general: null,
     lifecycle: null,
     runtime: null,
+    access: null,
   })
   const lifecycleBusy = busyAction !== null
 
@@ -150,7 +158,7 @@ export function SettingsApp({
           ? currentAccountState.account.email || currentAccountState.account.plan || 'Connected'
           : 'Not connected'
   const busy = lifecycleBusy
-  const lifecycleBlocked = lifecycleBusy || accountRefreshing || lifecycleDisabled
+  const lifecycleBlocked = lifecycleBusy || accountRefreshing || lifecycleDisabled || powerSaving
   const hydrated = now !== null
   const agentHeadingId = `${instanceId}-settings-agent-heading`
   const generalHeadingId = `${instanceId}-settings-general-heading`
@@ -248,15 +256,6 @@ export function SettingsApp({
                     <span>{agent.message}</span>
                   </p>
                 ) : null}
-                {agent.pendingImage ? (
-                  <p
-                    role="status"
-                    className="mt-3 rounded-lg bg-blue-400/8 px-3 py-2 text-[11px] leading-5 text-blue-100/80"
-                  >
-                    A runtime update is available. Save your work, then sleep and resume the agent to update. The update
-                    will wait while this guest is running.
-                  </p>
-                ) : null}
               </section>
             </section>
 
@@ -271,14 +270,11 @@ export function SettingsApp({
               <SettingRow label="Created" value={formatAgentDate(agent.createdAt, hydrated)} />
               <SettingRow label="Uptime" value={formatAgentUptime(agent, now)} />
               <SettingRow label="Last activity" value={formatAgentDate(agent.lastActivityAt, hydrated)} />
-              <SettingRow label="Idle sleep" value={formatAgentDate(agent.idleDeadline, hydrated)} />
               <SettingRow
-                label="Workspace retention"
-                value={
-                  agent.expiresAt ? `Until ${formatAgentDate(agent.expiresAt, hydrated)}` : 'Until you delete the agent'
-                }
-                last
+                label="Idle sleep"
+                value={agent.power.idleTimeoutMinutes === 0 ? 'Never' : formatAgentDate(agent.idleDeadline, hydrated)}
               />
+              <SettingRow label="Workspace retention" value="Until you delete the agent" last />
             </SettingsSection>
 
             <SettingsSection
@@ -288,7 +284,7 @@ export function SettingsApp({
               }}
               title="Runtime"
             >
-              <SettingRow label="Isolation" value="Kata Firecracker (kata-fc)" />
+              <SettingRow label="Isolation" value="Firecracker" />
               <SettingRow label="Architecture" value={agent.architecture === 'unknown' ? '—' : agent.architecture} />
               <SettingRow label="Resources" value={formatAgentResources(agent)} />
               <SettingRow label="Workspace" value={`${agent.workspaceGib} GiB persistent`} />
@@ -319,6 +315,15 @@ export function SettingsApp({
                 <ShieldCheck aria-hidden="true" className="h-4 w-4 text-emerald-400/80" />
                 Unprivileged guest · no cluster credential · private workspace
               </h2>
+              <div className="mb-4">
+                <PowerSettingsForm
+                  agent={agent}
+                  disabled={lifecycleBusy || lifecycleDisabled}
+                  instanceId={instanceId}
+                  onChanged={onChanged}
+                  onSavingChange={setPowerSaving}
+                />
+              </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -362,6 +367,19 @@ export function SettingsApp({
                   {error}
                 </p>
               ) : null}
+            </section>
+            <section
+              ref={(element) => {
+                sectionRefs.current.access = element
+              }}
+              aria-labelledby={`${instanceId}-settings-access`}
+              className="scroll-mt-5 space-y-3"
+            >
+              <h2 id={`${instanceId}-settings-access`} className="text-sm font-medium text-zinc-200">
+                Access
+              </h2>
+              <PasskeyRegistration />
+              <AccessPanel workspaceUid={agent.uid} active={active && selectedSection === 'access'} />
             </section>
           </div>
         </div>

@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: spicedb-operator
+
+resources:
+  - https://github.com/authzed/spicedb-operator/releases/download/v1.27.0/bundle.yaml
+
+images:
+  - name: ghcr.io/authzed/spicedb-operator
+    newTag: v1.27.0
+    digest: sha256:c4c64792cd8ab0222983ab5ffc1964687d4366f2e567ae204eb5223ae8c43a78
+
+patches:
+  - target:
+      kind: Namespace
+      name: spicedb-operator
+      version: v1
+    patch: |
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: spicedb-operator
+      $patch: delete
+  - target:
+      kind: CustomResourceDefinition
+      name: spicedbclusters.authzed.com
+    patch: |
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata:
+        name: spicedbclusters.authzed.com
+        annotations:
+          argocd.argoproj.io/sync-options: Prune=false,Delete=false

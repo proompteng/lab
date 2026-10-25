@@ -2,12 +2,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 configMapGenerator:
-  - name: observability-mimir-kafka-restore-check
-    files:
-      - mimir-kafka-restore-check.sh
-    options:
-      annotations:
-        argocd.argoproj.io/sync-wave: "-6"
   - name: observability-grafana-sqlite-backup
     files:
       - grafana-sqlite-backup.py
@@ -26,7 +20,7 @@ resources:
   - loki-v3-config-check.yaml
   - tempo-compatibility-services.yaml
   - grafana-upgrade-backup.yaml
-  - mimir-kafka-upgrade-backup.yaml
+  - mimir-kafka-retained-backups.yaml
   - rook-ceph-rgw-loki-reflected-secret.yaml
   - tailscale-ingresses.yaml
   - ingressroute-grafana-k8s-private.yaml
@@ -40,6 +34,7 @@ resources:
   - torghut-execution-recovery-dashboard-configmap.yaml
   - arc-runner-capacity-dashboard-configmap.yaml
   - bayn-cycle-operations-dashboard-configmap.yaml
+  - bayn-cache-performance-dashboard-configmap.yaml
   - cluster-metrics-alloy-rbac.yaml
   - cluster-metrics-alloy-deployment.yaml
   - mimir-config-check.yaml
@@ -84,12 +79,38 @@ helmCharts:
 images:
   - name: docker.io/nginxinc/nginx-unprivileged
     newName: mirror.gcr.io/nginxinc/nginx-unprivileged
-    newTag: 1.29-alpine
+    newTag: 1.31-alpine
   - name: docker.io/memcached
     newName: mirror.gcr.io/library/memcached
     newTag: 1.6.39-alpine
 
 patches:
+  - target:
+      kind: Deployment
+      name: observability-(loki-v3|mimir|tempo-v3)-.*
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: network-data-plane
+      spec:
+        template:
+          spec:
+            nodeSelector:
+              network.proompteng.ai/100g: "true"
+  - target:
+      kind: StatefulSet
+      name: observability-(loki-v3|mimir|tempo-v3)-.*
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: network-data-plane
+      spec:
+        template:
+          spec:
+            nodeSelector:
+              network.proompteng.ai/100g: "true"
   - target:
       kind: DaemonSet
       name: observability-loki-v3-canary
@@ -155,16 +176,6 @@ patches:
           argocd.argoproj.io/sync-options: Replace=true
           argocd.argoproj.io/sync-wave: "1"
   - target:
-      kind: StatefulSet
-      name: observability-mimir-kafka
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: observability-mimir-kafka
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
-  - target:
       kind: Job
       name: observability-mimir-smoke-test
     patch: |-
@@ -183,10 +194,10 @@ patches:
           argocd.argoproj.io/sync-wave: "3"
       - op: add
         path: /spec/template/metadata/annotations/observability.proompteng.ai~1alertmanager-fallback-config-revision
-        value: "2026-06-20-1"
+        value: "2026-10-13-warning-email-1"
       - op: replace
         path: /spec/template/spec/volumes/4
         value:
           name: alertmanager-fallback-config
           secret:
-            secretName: observability-alertmanager-email
+            secretName: observability-alertmanager-email-brevo

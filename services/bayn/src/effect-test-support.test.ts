@@ -13,7 +13,7 @@ describe('provideTestLayer', () => {
     const failure = await Effect.runPromise(
       Effect.sync(() => {
         effectRuns += 1
-      }).pipe(provideTestLayer(layer), Effect.flip),
+      }).pipe((self) => provideTestLayer(self, layer), Effect.flip),
     )
 
     expect(failure).toBe(acquisitionFailure)
@@ -31,7 +31,9 @@ describe('provideTestLayer', () => {
       ),
     )
 
-    const failure = await Effect.runPromise(Effect.fail(effectFailure).pipe(provideTestLayer(layer), Effect.flip))
+    const failure = await Effect.runPromise(
+      Effect.fail(effectFailure).pipe((self) => provideTestLayer(self, layer), Effect.flip),
+    )
 
     expect(failure).toBe(effectFailure)
     expect(finalizations).toBe(1)
@@ -48,7 +50,10 @@ describe('provideTestLayer', () => {
               Ref.update(finalizations, (count) => count + 1),
             ),
           )
-          const fiber = yield* Effect.never.pipe(provideTestLayer(layer), Effect.forkChild({ startImmediately: true }))
+          const fiber = yield* Effect.never.pipe(
+            (self) => provideTestLayer(self, layer),
+            Effect.forkChild({ startImmediately: true }),
+          )
 
           yield* Deferred.await(acquired)
           yield* Fiber.interrupt(fiber)

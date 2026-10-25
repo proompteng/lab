@@ -13,14 +13,16 @@ class PostgresClusterResilienceManifestTests(TestCase):
         )
         self.cluster_spec = cast(Mapping[str, object], self.cluster["spec"])
 
-    def test_cluster_has_one_cross_host_amd64_standby(self) -> None:
+    def test_cluster_prefers_host_spread_without_requiring_another_amd64_storage_host(
+        self,
+    ) -> None:
         self.assertEqual(self.cluster_spec["instances"], 2)
         self.assertEqual(self.cluster_spec["primaryUpdateStrategy"], "unsupervised")
         self.assertEqual(self.cluster_spec["primaryUpdateMethod"], "switchover")
 
         affinity = cast(Mapping[str, object], self.cluster_spec["affinity"])
         self.assertNotIn("nodeSelector", affinity)
-        self.assertEqual(affinity["podAntiAffinityType"], "required")
+        self.assertEqual(affinity["podAntiAffinityType"], "preferred")
         self.assertEqual(affinity["topologyKey"], "kubernetes.io/hostname")
         self.assertEqual(
             affinity["nodeAffinity"],
@@ -50,7 +52,7 @@ class PostgresClusterResilienceManifestTests(TestCase):
             },
         )
 
-    def test_continuous_backup_prefers_the_standby(self) -> None:
+    def test_inactive_backup_config_preserves_the_pg18_archive(self) -> None:
         backup = cast(Mapping[str, object], self.cluster_spec["backup"])
         object_store = cast(Mapping[str, object], backup["barmanObjectStore"])
         wal = cast(Mapping[str, object], object_store["wal"])
@@ -58,7 +60,7 @@ class PostgresClusterResilienceManifestTests(TestCase):
         self.assertEqual(backup["target"], "prefer-standby")
         self.assertEqual(backup["retentionPolicy"], "14d")
         self.assertEqual(object_store["destinationPath"], "s3://cnpg-torghut")
-        self.assertEqual(object_store["serverName"], "torghut-db-live")
+        self.assertEqual(object_store["serverName"], "torghut-db-pg18")
         self.assertEqual(wal["maxParallel"], 8)
 
         schedule = load_yaml_mapping(

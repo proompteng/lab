@@ -1,0 +1,137 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: buzz-pg17-compare
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: postgres-upgrade-acceptance
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie@sha256:362b039f643f1c09a34edd63d9a78903e5f1f4f43c24236cc8459621eb676d12
+  inheritedMetadata:
+    labels:
+      postgres.proompteng.ai/rehearsal: 18-6-v2
+  affinity:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+  storage:
+    size: 20Gi
+    storageClass: rook-ceph-block
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      database: buzz
+      owner: buzz
+      volumeSnapshots:
+        storage:
+          name: buzz-pg18-source-snapshot
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: '32'
+      max_wal_senders: '10'
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: jangar-pg17-compare
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: postgres-upgrade-acceptance
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+  inheritedMetadata:
+    labels:
+      postgres.proompteng.ai/rehearsal: 18-6-v2
+  affinity:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+  storage:
+    size: 300Gi
+    storageClass: rook-ceph-block
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      database: jangar
+      owner: jangar
+      volumeSnapshots:
+        storage:
+          name: jangar-pg18-source-snapshot
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: '32'
+      max_wal_senders: '10'
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: torghut-pg17-compare
+  labels:
+    postgres.proompteng.ai/rehearsal: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: postgres-upgrade-acceptance
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+  inheritedMetadata:
+    labels:
+      postgres.proompteng.ai/rehearsal: 18-6-v2
+  affinity:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+      kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+  storage:
+    size: 50Gi
+    storageClass: rook-ceph-block
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      database: torghut
+      owner: torghut_app
+      volumeSnapshots:
+        storage:
+          name: torghut-pg18-source-snapshot
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: '32'
+      max_wal_senders: '10'

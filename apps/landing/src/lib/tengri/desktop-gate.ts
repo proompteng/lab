@@ -35,8 +35,8 @@ export function shouldRenderTengriDesktop(authConfigured: boolean, controlPlaneC
 export function desktopRefreshDelay(state: DesktopGateState, now: number): number | null {
   if (state.kind === 'transitioning') return 2_000
   if (state.kind === 'failed') return 30_000
-  if (state.kind === 'ready') return refreshBeforeDeadline(now, state.agent.idleDeadline, state.agent.expiresAt)
-  if (state.kind === 'sleeping') return refreshBeforeDeadline(now, state.agent.expiresAt)
+  if (state.kind === 'ready') return refreshBeforeDeadline(now, state.agent.idleDeadline)
+  if (state.kind === 'sleeping') return 30_000
   return null
 }
 

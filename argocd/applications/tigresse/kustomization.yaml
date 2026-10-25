@@ -7,7 +7,7 @@ helmGlobals:
 
 helmCharts:
   - name: tigresse
-    version: 0.1.7
+    version: 0.1.8
     releaseName: tigresse
     namespace: tigresse-system
     includeCRDs: true

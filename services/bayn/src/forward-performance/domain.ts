@@ -21,7 +21,7 @@ const RETURN_SCALE = 10n ** BigInt(RETURN_DECIMAL_PLACES)
 
 export interface ForwardPerformanceDomainFailure {
   readonly _tag: 'ForwardPerformanceDomainFailure'
-  readonly operation: 'hash-execution-evidence' | 'hash-receipt'
+  readonly operation: 'hash-execution-evidence' | 'hash-position-episodes' | 'hash-receipt' | 'hash-report'
   readonly cause: unknown
 }
 
@@ -30,10 +30,11 @@ interface ParsedTotals {
   readonly realizedGains: bigint
   readonly realizedLosses: bigint
   readonly brokerExecutionFees: bigint
-  readonly otherChargedCosts: bigint
+  readonly otherChargedCosts: bigint | null
   readonly cashYield: bigint
+  readonly cashSettlementRounding: bigint
   readonly grossRealizedPnl: bigint
-  readonly netRealizedPnlAfterCosts: bigint
+  readonly netRealizedPnlAfterCosts: bigint | null
 }
 
 const inSignedMicrosRange = (value: bigint): boolean => value >= SIGNED_MICROS_MIN && value <= SIGNED_MICROS_MAX
@@ -98,20 +99,18 @@ const parseTotals = (
   reasons: Set<ForwardPerformanceReasonCode>,
 ): ParsedTotals | undefined => {
   const ledger = input.ledgerTotals
-  if (input.startingCapitalMicros === undefined) {
-    reasons.add('STARTING_CAPITAL_GAP')
-    return undefined
-  }
-  if (ledger === undefined) {
-    reasons.add('MISSING_LEDGER_ACCOUNT')
-    return undefined
-  }
+  if (input.startingCapitalMicros === undefined) reasons.add('STARTING_CAPITAL_GAP')
+  if (ledger === undefined) reasons.add('MISSING_LEDGER_ACCOUNT')
+  if (ledger?.otherChargedCostsMicros === null) reasons.add('OPERATING_COST_EVIDENCE_GAP')
+  if (input.startingCapitalMicros === undefined || ledger === undefined) return undefined
   const startingCapital = parseSignedMicros(input.startingCapitalMicros)
   const realizedGains = parseSignedMicros(ledger.realizedGainMicros)
   const realizedLosses = parseSignedMicros(ledger.realizedLossMicros)
   const brokerExecutionFees = parseSignedMicros(ledger.brokerExecutionFeesMicros)
-  const otherChargedCosts = parseSignedMicros(ledger.otherChargedCostsMicros)
+  const otherChargedCosts =
+    ledger.otherChargedCostsMicros === null ? null : parseSignedMicros(ledger.otherChargedCostsMicros)
   const cashYield = parseSignedMicros(ledger.cashYieldMicros)
+  const cashSettlementRounding = parseSignedMicros(ledger.cashSettlementRoundingMicros)
   if (
     startingCapital === undefined ||
     startingCapital <= 0n ||
@@ -122,18 +121,27 @@ const parseTotals = (
     brokerExecutionFees === undefined ||
     brokerExecutionFees < 0n ||
     otherChargedCosts === undefined ||
-    otherChargedCosts < 0n ||
+    (otherChargedCosts !== null && otherChargedCosts < 0n) ||
     cashYield === undefined ||
-    cashYield < 0n
+    cashYield < 0n ||
+    cashSettlementRounding === undefined
   ) {
     reasons.add('INVALID_MICROS')
     return undefined
   }
   const grossRealizedPnl = checkedAdd(realizedGains, -realizedLosses)
   const afterFees = grossRealizedPnl === undefined ? undefined : checkedAdd(grossRealizedPnl, -brokerExecutionFees)
-  const afterOtherCosts = afterFees === undefined ? undefined : checkedAdd(afterFees, -otherChargedCosts)
-  const netRealizedPnlAfterCosts = afterOtherCosts === undefined ? undefined : checkedAdd(afterOtherCosts, cashYield)
-  if (grossRealizedPnl === undefined || netRealizedPnlAfterCosts === undefined) {
+  const afterOtherCosts =
+    otherChargedCosts === null ? null : afterFees === undefined ? undefined : checkedAdd(afterFees, -otherChargedCosts)
+  const afterCashYield =
+    afterOtherCosts === null ? null : afterOtherCosts === undefined ? undefined : checkedAdd(afterOtherCosts, cashYield)
+  const netRealizedPnlAfterCosts =
+    afterCashYield === null
+      ? null
+      : afterCashYield === undefined
+        ? undefined
+        : checkedAdd(afterCashYield, cashSettlementRounding)
+  if (grossRealizedPnl === undefined || afterFees === undefined || netRealizedPnlAfterCosts === undefined) {
     reasons.add('INVALID_MICROS')
     return undefined
   }
@@ -144,6 +152,7 @@ const parseTotals = (
     brokerExecutionFees,
     otherChargedCosts,
     cashYield,
+    cashSettlementRounding,
     grossRealizedPnl,
     netRealizedPnlAfterCosts,
   }
@@ -174,6 +183,38 @@ const transactionTotalsMatch = (
     fees = nextFees
     gains = nextGains
     losses = nextLosses
+  }
+  for (const fee of input.brokerFees ?? []) {
+    const net = parseSignedMicros(fee.netAmountMicros)
+    const inventoryCost =
+      fee.coinDebit === undefined
+        ? 0n
+        : fee.inventoryCostMicros === undefined
+          ? undefined
+          : parseSignedMicros(fee.inventoryCostMicros)
+    if (net === undefined || inventoryCost === undefined || inventoryCost < 0n) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    const nextFees = checkedAdd(fees, -net + inventoryCost)
+    if (nextFees === undefined) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    fees = nextFees
+  }
+  for (const accrual of input.brokerFeeAccruals ?? []) {
+    const expense = parseSignedMicros(accrual.expenseMicros)
+    if (expense === undefined || expense < 0n || accrual.accountId !== input.account.accountId) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    const nextFees = checkedAdd(fees, expense)
+    if (nextFees === undefined) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    fees = nextFees
   }
   if (gains !== totals.realizedGains || losses !== totals.realizedLosses || fees !== totals.brokerExecutionFees) {
     reasons.add('LEDGER_MISMATCH')
@@ -262,6 +303,8 @@ const makeMaterial = (
     reasons.add('CASH_YIELD_EVIDENCE_GAP')
   }
   if (input.transactions.length === 0) reasons.add('ZERO_COMPLETED_EXECUTIONS')
+  if (input.brokerFeeAccruals?.some((accrual) => !accrual.settled) === true)
+    reasons.add('BROKER_FEE_SETTLEMENT_PENDING')
 
   const cycleIds = new Set(cycles.map((cycle) => cycle.cycleId))
   if (input.transactions.some((transaction) => !cycleIds.has(transaction.cycleId))) reasons.add('CYCLE_IDENTITY_DRIFT')
@@ -334,12 +377,13 @@ const makeMaterial = (
       realizedGainsMicros: totals?.realizedGains.toString() ?? null,
       realizedLossesMicros: totals?.realizedLosses.toString() ?? null,
       brokerExecutionFeesMicros: totals?.brokerExecutionFees.toString() ?? null,
-      otherChargedCostsMicros: totals?.otherChargedCosts.toString() ?? null,
+      otherChargedCostsMicros: totals?.otherChargedCosts?.toString() ?? null,
       cashYieldMicros: totals?.cashYield.toString() ?? null,
+      cashSettlementRoundingMicros: totals?.cashSettlementRounding.toString() ?? null,
       grossRealizedPnlMicros: totals?.grossRealizedPnl.toString() ?? null,
-      netRealizedPnlAfterCostsMicros: totals?.netRealizedPnlAfterCosts.toString() ?? null,
+      netRealizedPnlAfterCostsMicros: totals?.netRealizedPnlAfterCosts?.toString() ?? null,
       netRealizedReturn:
-        totals === undefined
+        totals === undefined || totals.netRealizedPnlAfterCosts === null
           ? null
           : {
               numeratorMicros: totals.netRealizedPnlAfterCosts.toString(),
@@ -368,7 +412,7 @@ const makeMaterial = (
     executionQuality: measurements.executionQuality,
     observedCapacity: measurements.observedCapacity,
     profitability:
-      !sufficient || totals === undefined
+      !sufficient || totals === undefined || totals.netRealizedPnlAfterCosts === null
         ? 'UNDETERMINED'
         : totals.netRealizedPnlAfterCosts > 0n
           ? 'PROFITABLE'

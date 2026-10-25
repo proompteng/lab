@@ -1,6 +1,6 @@
 # 125. Jangar Run Settlement Watermarks And Consumer Evidence Escrow (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-06
 Owner: Victor Chen, Jangar Engineering Architecture
 Scope: Jangar control-plane run settlement, controller witness reconciliation, material action receipts, Torghut
@@ -13,7 +13,6 @@ Companion Torghut contract:
 Extends:
 
 - `124-jangar-disruption-budget-arbiter-and-data-freshness-settlement-2026-05-06.md`
-- `123-jangar-market-context-contradiction-ledger-and-lane-capital-holds-2026-05-06.md`
 - `116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md`
 - `111-jangar-negative-evidence-router-and-action-slo-budgets-2026-05-06.md`
 

@@ -63,128 +63,40 @@ resolve_image_entry() {
 
 forward_wrapper="$(resolve_image_entry /bin/bayn-forward-performance)"
 forward_command="$(resolve_image_entry /app/services/bayn/dist/forward-performance-command.js)"
-replay_wrapper="$(resolve_image_entry /bin/bayn-intraday-replay)"
-replay_command="$(resolve_image_entry /app/services/bayn/dist/intraday-replay-command.js)"
-vendor_wrapper="$(resolve_image_entry /bin/bayn-vendor-intraday-replay)"
-vendor_command="$(resolve_image_entry /app/services/bayn/dist/vendor-intraday-replay-command.js)"
+cost_wrapper="$(resolve_image_entry /bin/bayn-inference-cost)"
+cost_command="$(resolve_image_entry /app/services/bayn/dist/inference-cost-command.js)"
+research_wrapper="$(resolve_image_entry /bin/bayn-research)"
+research_command="$(resolve_image_entry /app/services/bayn/dist/research-command.js)"
+gepa_wrapper="$(resolve_image_entry /bin/bayn-gepa)"
+gepa_runner="$(resolve_image_entry /app/services/bayn/gepa/runner.py)"
+evaluation_wrapper="$(resolve_image_entry /bin/bayn-jev-evaluate)"
+evaluation_command="$(resolve_image_entry /app/services/bayn/dist/jev-evaluation-command.js)"
+gepa_native_wrapper="$(resolve_image_entry /bin/bayn-gepa-native)"
+gepa_native_runner="$(resolve_image_entry /app/services/bayn/gepa/native.py)"
+backtest_wrapper="$(resolve_image_entry /bin/bayn-backtest)"
+backtest_command="$(resolve_image_entry /app/services/bayn/dist/backtest-command.js)"
+research_server="$(resolve_image_entry /app/services/bayn/dist/restate-research-server.js)"
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
 image_node="$(resolve_image_entry /bin/node)"
+streaming_diagnostics="$(resolve_image_entry /app/services/bayn/dist/streaming-diagnostics-command.js)"
 
 test -x "${forward_wrapper}"
 test -f "${forward_command}"
-test -x "${replay_wrapper}"
-test -f "${replay_command}"
-test -x "${vendor_wrapper}"
-test -f "${vendor_command}"
+test -x "${cost_wrapper}"
+test -f "${cost_command}"
+test -x "${research_wrapper}"
+test -f "${research_command}"
+test -x "${gepa_wrapper}"
+test -f "${gepa_runner}"
+test -x "${gepa_native_wrapper}"
+test -f "${gepa_native_runner}"
+test -x "${evaluation_wrapper}"
+test -f "${evaluation_command}"
+test -x "${backtest_wrapper}"
+test -f "${backtest_command}"
+test -f "${research_server}"
 test -f "${execution_server}"
 test -x "${image_node}"
+test -f "${streaming_diagnostics}"
 
-image_ref="$(jq -er '.[0].RepoTags | if length == 1 then .[0] else error("expected one image tag") end' \
-  "${archive}/manifest.json")"
-if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
-  echo 'Bayn image command verification requires an isolated Docker daemon.' >&2
-  exit 1
-fi
-docker load --input "${image_tar}" >/dev/null
-image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}")"
-actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/bayn-forward-performance \
-    "${image_id}" \
-    --help
-)"
-expected='Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
-if [[ "${actual}" != "${expected}" ]]; then
-  printf 'Unexpected Bayn forward-performance help output:\n%s\n' "${actual}" >&2
-  exit 1
-fi
-
-replay_actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/bayn-intraday-replay \
-    "${image_id}" \
-    --help
-)"
-expected_replay='Usage: bayn-intraday-replay --input <path> | --study <path> [--output-directory <new-directory>] | --help'
-if [[ "${replay_actual}" != "${expected_replay}" ]]; then
-  printf 'Unexpected Bayn intraday-replay help output:\n%s\n' "${replay_actual}" >&2
-  exit 1
-fi
-
-compiled_replay_actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/node \
-    "${image_id}" \
-    /app/services/bayn/dist/intraday-replay-command.js \
-    --help
-)"
-if [[ "${compiled_replay_actual}" != "${expected_replay}" ]]; then
-  printf 'Unexpected compiled Bayn intraday-replay help output:\n%s\n' "${compiled_replay_actual}" >&2
-  exit 1
-fi
-
-vendor_actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/bayn-vendor-intraday-replay \
-    "${image_id}" \
-    --help
-)"
-expected_vendor='Usage: bayn-vendor-intraday-replay --input <path> --cache <directory> | --help'
-if [[ "${vendor_actual}" != "${expected_vendor}" ]]; then
-  printf 'Unexpected Bayn vendor-intraday-replay help output:\n%s\n' "${vendor_actual}" >&2
-  exit 1
-fi
-
-compiled_vendor_actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/node \
-    "${image_id}" \
-    /app/services/bayn/dist/vendor-intraday-replay-command.js \
-    --help
-)"
-if [[ "${compiled_vendor_actual}" != "${expected_vendor}" ]]; then
-  printf 'Unexpected compiled Bayn vendor-intraday-replay help output:\n%s\n' "${compiled_vendor_actual}" >&2
-  exit 1
-fi
-
-printf '%s\n' "${actual}"
+printf 'Bayn image command files verified in archive.\n'

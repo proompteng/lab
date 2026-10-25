@@ -2,18 +2,16 @@ import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
 
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from './model'
 import {
-  CycleState,
-  CycleTerminalReason,
-  isIntradayCycleDraft,
   makeCycleDraft,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeExecutionCalendarObservation,
   makeIntradayCycleWindow,
-  type IntradayAutonomousCycle,
-} from './index'
-import { selectCycleRecovery, type CycleRecoveryState } from './recovery'
+} from './construction'
+import { selectCycleRecovery } from './runner/recovery-selection'
+import { type CycleRecoveryState } from './runner/recovery-model'
 import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 
 const hash = (character: string): string => character.repeat(64)
@@ -26,10 +24,10 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
   return result.success
 }
 
-const pendingCycle = (): IntradayAutonomousCycle => {
+const pendingCycle = (): AutonomousCycle => {
   const calendar = value(
     makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       date: '2026-02-02',
       openAt: '2026-02-02T14:30:00.000Z',
@@ -39,8 +37,9 @@ const pendingCycle = (): IntradayAutonomousCycle => {
   const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
   const identity = value(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
-      strategyName: 'intraday-momentum',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 1,
+      strategyName: 'jev',
       qualificationRunId: cycleBindingId,
       strategyProtocolHash,
       accountId,
@@ -52,7 +51,6 @@ const pendingCycle = (): IntradayAutonomousCycle => {
     }),
   )
   const draft = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, executionPolicy))))
-  if (!isIntradayCycleDraft(draft)) throw new Error('expected an intraday cycle')
   return {
     ...draft,
     state: CycleState.Pending,
@@ -63,7 +61,7 @@ const pendingCycle = (): IntradayAutonomousCycle => {
   }
 }
 
-const activeCycle = (bindings: IntradayAutonomousCycle['bindings'] = {}): IntradayAutonomousCycle => ({
+const activeCycle = (bindings: AutonomousCycle['bindings'] = {}): AutonomousCycle => ({
   ...pendingCycle(),
   state: CycleState.Active,
   bindings,
@@ -72,7 +70,7 @@ const activeCycle = (bindings: IntradayAutonomousCycle['bindings'] = {}): Intrad
 })
 
 const recoveryState = (
-  cycle: IntradayAutonomousCycle | undefined,
+  cycle: AutonomousCycle | undefined,
   overrides: Partial<CycleRecoveryState> = {},
 ): CycleRecoveryState => ({
   cycleBindingId,
@@ -84,12 +82,23 @@ const recoveryState = (
 })
 
 describe('intraday cycle recovery', () => {
+  test('rejects retired cycles before selecting recovery', () => {
+    const cycle = activeCycle()
+    expect(
+      Result.isFailure(
+        selectCycleRecovery(
+          recoveryState({ ...cycle, schemaVersion: 'bayn.autonomous-cycle.v3' } as unknown as AutonomousCycle),
+        ),
+      ),
+    ).toBe(true)
+  })
+
   test('discovers work when no unfinished cycle exists', () => {
     expect(value(selectCycleRecovery(recoveryState(undefined)))).toEqual({ action: 'DISCOVER' })
   })
 
   test('activates a pending cycle and delegates signal readiness during the open session', () => {
-    const pending = pendingCycle()
+    const pending = { ...pendingCycle(), createdAt: '2026-02-02T14:44:30.000Z', updatedAt: '2026-02-02T14:44:30.000Z' }
     expect(
       value(
         selectCycleRecovery(
@@ -104,7 +113,7 @@ describe('intraday cycle recovery', () => {
       observedAt: '2026-02-02T14:45:00.000Z',
     })
 
-    const active = activeCycle()
+    const active = { ...activeCycle(), createdAt: '2026-02-02T14:59:30.000Z', updatedAt: '2026-02-02T14:59:30.000Z' }
     expect(
       value(
         selectCycleRecovery(
@@ -115,7 +124,10 @@ describe('intraday cycle recovery', () => {
       ),
     ).toEqual({ action: 'BUILD_DECISION', cycle: active })
 
-    expect(value(selectCycleRecovery(recoveryState(active)))).toEqual({ action: 'BUILD_DECISION', cycle: active })
+    expect(value(selectCycleRecovery(recoveryState(active, { observedAt: '2026-02-02T15:00:15.000Z' })))).toEqual({
+      action: 'BUILD_DECISION',
+      cycle: active,
+    })
   })
 
   test('reads a durable decision for a decision-bound cycle', () => {
@@ -124,7 +136,7 @@ describe('intraday cycle recovery', () => {
     expect(value(selectCycleRecovery(recoveryState(cycle)))).toEqual({ action: 'READ_DECISION', cycle })
   })
 
-  test('blocks cycles that reach cutoff or diverge from the active strategy protocol', () => {
+  test('blocks expired unused entries and cycles that diverge from the active strategy protocol', () => {
     const cycle = activeCycle()
     expect(
       value(
@@ -138,7 +150,7 @@ describe('intraday cycle recovery', () => {
       action: 'BLOCK',
       cycleId: cycle.identity.cycleId,
       observedAt: cycle.window.submissionCutoffAt,
-      reason: CycleTerminalReason.MissedSubmission,
+      reason: CycleTerminalReason.UnusedEntryExpired,
     })
 
     expect(

@@ -69,6 +69,11 @@ Do not restart it as a new invocation or resume unrelated/pre-existing paused wo
 timestamp after the resume, with the original epoch and plan hash. This preserves durable execution progress without
 changing the controller's stored active state, authority, or kill switch.
 
+If the controller is scheduled in a later recovery window, use the installed authenticated deployment activation
+command with the verified current binding and a new activation attempt ID. Reactivation sends an immediate,
+revision-bound probe through the existing exclusive controller and waits for a fresh pass and its successor.
+Retain the delayed delivery; its sequence check makes it stale after recovery. Do not edit durable state or timers.
+
 After any required invocation resume, verify continuing controller progress, the same durable execution
 authority/kill state and binding, EXACT reconciliation, zero unresolved mutations, and no new broker orders.
 Remove only the owned Argo holds and verify fresh reconciliation after these recovery gates pass.

@@ -1,17 +1,17 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
 
-import { loadConfig } from './config'
+import { loadForwardPerformanceConfig } from './forward-performance/config'
 import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
-import { runForwardPerformance, ForwardPerformanceProgramError } from './forward-performance'
+import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
 import { Sha256Schema } from './schemas'
+import { evaluateAndPersistForwardPerformanceReceipt } from './db/forward-performance-receipt'
+import { WriterFenceLive } from './execution/writer-fence'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 
-export { runForwardPerformance } from './forward-performance'
-
 export const FORWARD_PERFORMANCE_COMMAND_USAGE =
-  'Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
+  'Usage: bayn-forward-performance --authority-generation <sha256> [--persist-receipt] | --help'
 
 export class ForwardPerformanceCommandArgumentError extends Data.TaggedError('ForwardPerformanceCommandArgumentError')<{
   readonly message: string
@@ -19,17 +19,28 @@ export class ForwardPerformanceCommandArgumentError extends Data.TaggedError('Fo
 
 type ForwardPerformanceCommand =
   | { readonly _tag: 'Help' }
-  | { readonly _tag: 'Run'; readonly options: { readonly authorityGenerationHash?: string } }
+  | {
+      readonly _tag: 'Run'
+      readonly options: { readonly authorityGenerationHash: string; readonly persistReceipt?: boolean }
+    }
 
 export const parseForwardPerformanceCommandArgs = (
   args: readonly string[],
 ): Result.Result<ForwardPerformanceCommand, ForwardPerformanceCommandArgumentError> => {
-  if (args.length === 0) return Result.succeed({ _tag: 'Run', options: {} })
   if (args.length === 1 && args[0] === '--help') return Result.succeed({ _tag: 'Help' })
   if (args.length === 2 && args[0] === '--authority-generation') {
     const generation = Schema.decodeUnknownResult(Sha256Schema)(args[1])
     if (Result.isSuccess(generation)) {
       return Result.succeed({ _tag: 'Run', options: { authorityGenerationHash: generation.success } })
+    }
+  }
+  if (args.length === 3 && args[0] === '--authority-generation' && args[2] === '--persist-receipt') {
+    const generation = Schema.decodeUnknownResult(Sha256Schema)(args[1])
+    if (Result.isSuccess(generation)) {
+      return Result.succeed({
+        _tag: 'Run',
+        options: { authorityGenerationHash: generation.success, persistReceipt: true },
+      })
     }
   }
   return Result.fail(new ForwardPerformanceCommandArgumentError({ message: FORWARD_PERFORMANCE_COMMAND_USAGE }))
@@ -40,15 +51,22 @@ const printUsage = Effect.gen(function* () {
   yield* Stream.run(Stream.make(`${FORWARD_PERFORMANCE_COMMAND_USAGE}\n`), stdio.stdout())
 })
 
-const runProof = (options: { readonly authorityGenerationHash?: string }) =>
+const runProof = (options: { readonly authorityGenerationHash: string; readonly persistReceipt?: boolean }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const config = yield* loadConfig()
-      const receipt = yield* runForwardPerformance(config, undefined, options).pipe(
+      const config = yield* loadForwardPerformanceConfig()
+      const report = yield* Effect.gen(function* () {
+        if (options.persistReceipt === true) {
+          return yield* evaluateAndPersistForwardPerformanceReceipt(options.authorityGenerationHash, (writerFence) =>
+            runForwardPerformanceReport(config, undefined, { ...options, writerFence }),
+          ).pipe(Effect.timeout(config.operationTimeoutMs))
+        }
+        return yield* runForwardPerformanceReport(config, undefined, options)
+      }).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- command subprogram owns its scoped PostgreSQL layer
-        Effect.provide(PostgresClientLive(config)),
+        Effect.provide(WriterFenceLive.pipe(Layer.provideMerge(PostgresClientLive(config)))),
       )
-      const output = yield* Effect.fromResult(canonicalJsonV1Result(receipt)).pipe(
+      const output = yield* Effect.fromResult(canonicalJsonV1Result(report)).pipe(
         Effect.mapError(
           (cause) =>
             new ForwardPerformanceProgramError({

@@ -11,14 +11,17 @@ const agent: TengriAgent = {
   architecture: 'amd64',
   cpuMillis: 2_000,
   memoryMib: 4_096,
-  workspaceGib: 16,
+  workspaceGib: 32,
+  uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  runtimeEpoch: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+  policyVersion: '1',
+  power: { idleTimeoutMinutes: 60 },
   nodeName: 'ryzen',
   message: '',
   createdAt: '2026-08-26T00:00:00Z',
   readyAt: '2026-08-26T00:01:00Z',
   lastActivityAt: '2026-08-26T00:01:00Z',
   idleDeadline: '2026-08-26T01:01:00Z',
-  expiresAt: '2026-08-26T04:00:00Z',
   conditions: [],
 }
 
@@ -83,9 +86,7 @@ describe('Tengri desktop lifecycle gate', () => {
     expect(desktopRefreshDelay({ kind: 'ready', agent: { ...agent, idleDeadline: '2026-08-26T00:00:01Z' } }, now)).toBe(
       1_250,
     )
-    expect(
-      desktopRefreshDelay({ kind: 'sleeping', agent: { ...agent, expiresAt: '2026-08-26T00:00:00.500Z' } }, now),
-    ).toBe(1_000)
+    expect(desktopRefreshDelay({ kind: 'sleeping', agent: agent }, now)).toBe(30_000)
     expect(desktopRefreshDelay({ kind: 'create' }, now)).toBeNull()
   })
 })

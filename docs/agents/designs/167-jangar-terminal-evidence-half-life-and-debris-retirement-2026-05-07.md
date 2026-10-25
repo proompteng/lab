@@ -1,6 +1,6 @@
 # 167. Jangar Terminal Evidence Half-Life And Debris Retirement (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 Date: 2026-05-07
 Owner: Victor Chen, Jangar Engineering
 Scope: Jangar control-plane terminal evidence, retained failure accounting, database evidence carry, rollout admission,
@@ -13,8 +13,6 @@ Companion Torghut contract:
 Extends:
 
 - `166-jangar-evidence-capability-ledger-and-observer-lease-gates-2026-05-07.md`
-- `165-jangar-proof-settlement-broker-and-profit-repair-packet-gates-2026-05-07.md`
-- `163-jangar-scoped-evidence-debt-and-retained-failure-quarantine-2026-05-07.md`
 - `docs/torghut/design-system/v6/170-torghut-data-witness-capability-bonds-and-capital-observation-gates-2026-05-07.md`
 
 ## Decision

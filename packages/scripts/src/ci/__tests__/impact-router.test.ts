@@ -2,6 +2,43 @@ import { describe, expect, test } from 'bun:test'
 import { loadImpactMap, matchesGlob, selectImpactPlan } from '../impact-router'
 
 const map = loadImpactMap('.github/ci/impact-map.yml')
+const rootScriptMap = loadImpactMap('.github/ci/root-script-map.yml')
+
+describe('root script ownership', () => {
+  test.each([
+    ['argocd/applications/tengri/network-policies.yaml', ['kube-router']],
+    ['scripts/seal-tengri-runtime.ts', ['tengri-secrets']],
+    ['scripts/hermes/validate-production.ts', ['hermes']],
+    ['argocd/applications/hermes/statefulset.yaml', ['hermes']],
+    ['argocd/applications/hermes/network-policy.yaml', ['hermes', 'kube-router']],
+    ['scripts/cluster-upgrades/ceph_upgrade_gate.py', ['cluster-upgrades']],
+    ['argocd/applications/keycloak/postgres-upgrade-backup.yaml', ['cluster-upgrades']],
+    ['argocd/applications/forgejo/upstream-image.json', ['forgejo']],
+    ['scripts/jangar/validate-flamingo-hard-migration.ts', ['flamingo']],
+    ['argocd/applications/flamingo/deployment.yaml', ['flamingo']],
+    ['.github/workflows/pull-request.yml', ['all']],
+    ['.github/ci/root-script-map.yml', ['all']],
+    ['packages/scripts/src/ci/impact-router.ts', ['all']],
+    ['scripts/validate-manifests.sh', ['planner']],
+  ])('selects only the suites owning %s', (path, expected) => {
+    expect(selectImpactPlan([path], rootScriptMap).validationTargets).toEqual(expected)
+    expect(selectImpactPlan([path], map).validationTargets).toContain('root-scripts')
+  })
+
+  test('combines owned suites once in deterministic order', () => {
+    expect(
+      selectImpactPlan(
+        ['scripts/seal-tengri-runtime.ts', 'scripts/forgejo/publish_image_test.py', 'scripts/forgejo/publish-image.sh'],
+        rootScriptMap,
+      ).validationTargets,
+    ).toEqual(['forgejo', 'tengri-secrets'])
+  })
+
+  test.each(['services/ofz/src/control.rs', 'proto/proompteng/authz/v1/authz.proto'])(
+    'keeps Landing consumer validation for %s',
+    (path) => expect(selectImpactPlan([path], map).validationTargets).toContain('landing'),
+  )
+})
 
 describe('impact router', () => {
   test('matches recursive and root-only globs', () => {
@@ -155,6 +192,14 @@ describe('impact router', () => {
     expect(plan.validationTargets).toEqual(['kubeconform'])
   })
 
+  test.each([
+    'services/ofz/test-ha-manifests.sh',
+    'services/ofz/tests/ha_manifests.py',
+    '.github/workflows/pull-request.yml',
+  ])('routes the HA render checker through schema validation: %s', (file) => {
+    expect(selectImpactPlan([file], map).validationTargets).toContain('kubeconform')
+  })
+
   test('routes Argo CD application changes through scripts contract tests', () => {
     const plan = selectImpactPlan(['argocd/applications/argocd/overlays/argocd-cm.yaml'], map)
     expect(plan.validationTargets).toEqual(['argo-lint', 'kubeconform'])
@@ -190,6 +235,7 @@ describe('impact router', () => {
   test('routes every Hermes production surface through root script validation', () => {
     const cases = [
       ['argocd/applications/hermes/statefulset.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
+      ['argocd/applications/kargo/stages.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
       ['argocd/applications/observability/graf-mimir-rules.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
       [
         'argocd/applications/observability/cluster-metrics-alloy-config.river',
@@ -206,7 +252,7 @@ describe('impact router', () => {
       ['argocd/applicationsets/platform.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
       ['docs/runbooks/hermes-production-rollout.md', ['root-scripts']],
       ['.github/ci/impact-map.yml', ['root-scripts', 'workflow-lint']],
-      ['.github/workflows/pull-request.yml', ['root-scripts', 'workflow-lint']],
+      ['.github/workflows/pull-request.yml', ['kubeconform', 'root-scripts', 'workflow-lint']],
       ['.github/workflows/hermes-agent-mirror.yml', ['root-scripts', 'workflow-lint']],
     ] as const
 

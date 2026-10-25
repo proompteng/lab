@@ -122,7 +122,7 @@ Boundary: `services/agents/src/app-routes/**` TanStack Start control-plane UI ro
 
 ## Control-Plane Source Boundaries
 
-Summary: 163 control-plane source files, 50182 LOC across 6 current boundaries.
+Summary: 163 control-plane source files, 50184 LOC across 6 current boundaries.
 
 Tests (`*.test.*`, `*.spec.*`) and generated (`*.gen.*`, `*.generated.*`) source are excluded from these structural counts.
 
@@ -132,7 +132,7 @@ Boundary: `services/jangar/src/server/app.ts`, `control-plane*.ts`, and `torghut
 
 | File                                                                                      |  LOC |
 | ----------------------------------------------------------------------------------------- | ---: |
-| `services/jangar/src/server/app.ts`                                                       |   65 |
+| `services/jangar/src/server/app.ts`                                                       |   67 |
 | `services/jangar/src/server/control-plane-action-clock.ts`                                |  277 |
 | `services/jangar/src/server/control-plane-action-custody.ts`                              |  596 |
 | `services/jangar/src/server/control-plane-authority-provenance-settlement.ts`             |  791 |

@@ -1,0 +1,944 @@
+{
+  "records": [
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "0",
+      "value": "{\"ingestTs\":\"2026-10-10T23:01:00.123456789Z\",\"eventTs\":\"2026-10-10T23:00:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":1,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:00:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "1",
+      "value": "{\"ingestTs\":\"2026-10-10T23:02:00.123456789Z\",\"eventTs\":\"2026-10-10T23:01:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":2,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:01:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "2",
+      "value": "{\"ingestTs\":\"2026-10-10T23:03:00.123456789Z\",\"eventTs\":\"2026-10-10T23:02:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":3,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:02:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "3",
+      "value": "{\"ingestTs\":\"2026-10-10T23:04:00.123456789Z\",\"eventTs\":\"2026-10-10T23:03:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":4,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:03:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "4",
+      "value": "{\"ingestTs\":\"2026-10-10T23:05:00.123456789Z\",\"eventTs\":\"2026-10-10T23:04:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":5,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:04:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "5",
+      "value": "{\"ingestTs\":\"2026-10-10T23:06:00.123456789Z\",\"eventTs\":\"2026-10-10T23:05:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":6,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:05:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "6",
+      "value": "{\"ingestTs\":\"2026-10-10T23:07:00.123456789Z\",\"eventTs\":\"2026-10-10T23:06:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":7,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:06:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "7",
+      "value": "{\"ingestTs\":\"2026-10-10T23:08:00.123456789Z\",\"eventTs\":\"2026-10-10T23:07:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":8,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:07:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "8",
+      "value": "{\"ingestTs\":\"2026-10-10T23:09:00.123456789Z\",\"eventTs\":\"2026-10-10T23:08:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":9,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:08:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "9",
+      "value": "{\"ingestTs\":\"2026-10-10T23:10:00.123456789Z\",\"eventTs\":\"2026-10-10T23:09:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":10,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:09:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "10",
+      "value": "{\"ingestTs\":\"2026-10-10T23:11:00.123456789Z\",\"eventTs\":\"2026-10-10T23:10:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":11,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:10:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "11",
+      "value": "{\"ingestTs\":\"2026-10-10T23:12:00.123456789Z\",\"eventTs\":\"2026-10-10T23:11:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":12,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:11:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "12",
+      "value": "{\"ingestTs\":\"2026-10-10T23:13:00.123456789Z\",\"eventTs\":\"2026-10-10T23:12:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":13,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:12:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "13",
+      "value": "{\"ingestTs\":\"2026-10-10T23:14:00.123456789Z\",\"eventTs\":\"2026-10-10T23:13:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":14,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:13:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "14",
+      "value": "{\"ingestTs\":\"2026-10-10T23:15:00.123456789Z\",\"eventTs\":\"2026-10-10T23:14:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":15,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:14:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "15",
+      "value": "{\"ingestTs\":\"2026-10-10T23:16:00.123456789Z\",\"eventTs\":\"2026-10-10T23:15:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":16,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:15:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "16",
+      "value": "{\"ingestTs\":\"2026-10-10T23:17:00.123456789Z\",\"eventTs\":\"2026-10-10T23:16:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":17,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:16:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "17",
+      "value": "{\"ingestTs\":\"2026-10-10T23:18:00.123456789Z\",\"eventTs\":\"2026-10-10T23:17:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":18,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:17:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "18",
+      "value": "{\"ingestTs\":\"2026-10-10T23:19:00.123456789Z\",\"eventTs\":\"2026-10-10T23:18:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":19,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:18:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "19",
+      "value": "{\"ingestTs\":\"2026-10-10T23:20:00.123456789Z\",\"eventTs\":\"2026-10-10T23:19:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":20,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:19:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "20",
+      "value": "{\"ingestTs\":\"2026-10-10T23:21:00.123456789Z\",\"eventTs\":\"2026-10-10T23:20:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":21,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:20:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "21",
+      "value": "{\"ingestTs\":\"2026-10-10T23:22:00.123456789Z\",\"eventTs\":\"2026-10-10T23:21:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":22,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:21:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "22",
+      "value": "{\"ingestTs\":\"2026-10-10T23:23:00.123456789Z\",\"eventTs\":\"2026-10-10T23:22:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":23,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:22:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "23",
+      "value": "{\"ingestTs\":\"2026-10-10T23:24:00.123456789Z\",\"eventTs\":\"2026-10-10T23:23:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":24,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:23:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "24",
+      "value": "{\"ingestTs\":\"2026-10-10T23:25:00.123456789Z\",\"eventTs\":\"2026-10-10T23:24:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":25,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:24:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "25",
+      "value": "{\"ingestTs\":\"2026-10-10T23:26:00.123456789Z\",\"eventTs\":\"2026-10-10T23:25:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":26,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:25:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "26",
+      "value": "{\"ingestTs\":\"2026-10-10T23:27:00.123456789Z\",\"eventTs\":\"2026-10-10T23:26:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":27,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:26:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "27",
+      "value": "{\"ingestTs\":\"2026-10-10T23:28:00.123456789Z\",\"eventTs\":\"2026-10-10T23:27:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":28,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:27:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "28",
+      "value": "{\"ingestTs\":\"2026-10-10T23:29:00.123456789Z\",\"eventTs\":\"2026-10-10T23:28:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":29,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:28:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "29",
+      "value": "{\"ingestTs\":\"2026-10-10T23:30:00.123456789Z\",\"eventTs\":\"2026-10-10T23:29:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":30,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:29:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "30",
+      "value": "{\"ingestTs\":\"2026-10-10T23:31:00.123456789Z\",\"eventTs\":\"2026-10-10T23:30:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":31,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:30:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "31",
+      "value": "{\"ingestTs\":\"2026-10-10T23:32:00.123456789Z\",\"eventTs\":\"2026-10-10T23:31:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":32,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:31:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "32",
+      "value": "{\"ingestTs\":\"2026-10-10T23:33:00.123456789Z\",\"eventTs\":\"2026-10-10T23:32:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":33,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:32:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "33",
+      "value": "{\"ingestTs\":\"2026-10-10T23:34:00.123456789Z\",\"eventTs\":\"2026-10-10T23:33:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":34,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:33:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "34",
+      "value": "{\"ingestTs\":\"2026-10-10T23:35:00.123456789Z\",\"eventTs\":\"2026-10-10T23:34:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":35,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:34:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "35",
+      "value": "{\"ingestTs\":\"2026-10-10T23:36:00.123456789Z\",\"eventTs\":\"2026-10-10T23:35:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":36,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:35:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "36",
+      "value": "{\"ingestTs\":\"2026-10-10T23:37:00.123456789Z\",\"eventTs\":\"2026-10-10T23:36:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":37,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:36:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "37",
+      "value": "{\"ingestTs\":\"2026-10-10T23:38:00.123456789Z\",\"eventTs\":\"2026-10-10T23:37:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":38,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:37:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "38",
+      "value": "{\"ingestTs\":\"2026-10-10T23:39:00.123456789Z\",\"eventTs\":\"2026-10-10T23:38:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":39,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:38:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "39",
+      "value": "{\"ingestTs\":\"2026-10-10T23:40:00.123456789Z\",\"eventTs\":\"2026-10-10T23:39:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":40,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:39:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "40",
+      "value": "{\"ingestTs\":\"2026-10-10T23:41:00.123456789Z\",\"eventTs\":\"2026-10-10T23:40:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":41,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:40:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "41",
+      "value": "{\"ingestTs\":\"2026-10-10T23:42:00.123456789Z\",\"eventTs\":\"2026-10-10T23:41:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":42,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:41:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "42",
+      "value": "{\"ingestTs\":\"2026-10-10T23:43:00.123456789Z\",\"eventTs\":\"2026-10-10T23:42:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":43,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:42:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "43",
+      "value": "{\"ingestTs\":\"2026-10-10T23:44:00.123456789Z\",\"eventTs\":\"2026-10-10T23:43:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":44,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:43:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "44",
+      "value": "{\"ingestTs\":\"2026-10-10T23:45:00.123456789Z\",\"eventTs\":\"2026-10-10T23:44:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":45,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:44:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "45",
+      "value": "{\"ingestTs\":\"2026-10-10T23:46:00.123456789Z\",\"eventTs\":\"2026-10-10T23:45:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":46,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:45:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "46",
+      "value": "{\"ingestTs\":\"2026-10-10T23:47:00.123456789Z\",\"eventTs\":\"2026-10-10T23:46:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":47,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:46:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "47",
+      "value": "{\"ingestTs\":\"2026-10-10T23:48:00.123456789Z\",\"eventTs\":\"2026-10-10T23:47:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":48,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:47:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "48",
+      "value": "{\"ingestTs\":\"2026-10-10T23:49:00.123456789Z\",\"eventTs\":\"2026-10-10T23:48:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":49,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:48:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "49",
+      "value": "{\"ingestTs\":\"2026-10-10T23:50:00.123456789Z\",\"eventTs\":\"2026-10-10T23:49:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":50,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:49:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "50",
+      "value": "{\"ingestTs\":\"2026-10-10T23:51:00.123456789Z\",\"eventTs\":\"2026-10-10T23:50:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":51,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:50:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "51",
+      "value": "{\"ingestTs\":\"2026-10-10T23:52:00.123456789Z\",\"eventTs\":\"2026-10-10T23:51:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":52,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:51:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "52",
+      "value": "{\"ingestTs\":\"2026-10-10T23:53:00.123456789Z\",\"eventTs\":\"2026-10-10T23:52:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":53,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:52:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "53",
+      "value": "{\"ingestTs\":\"2026-10-10T23:54:00.123456789Z\",\"eventTs\":\"2026-10-10T23:53:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":54,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:53:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "54",
+      "value": "{\"ingestTs\":\"2026-10-10T23:55:00.123456789Z\",\"eventTs\":\"2026-10-10T23:54:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":55,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:54:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "55",
+      "value": "{\"ingestTs\":\"2026-10-10T23:56:00.123456789Z\",\"eventTs\":\"2026-10-10T23:55:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":56,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:55:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "56",
+      "value": "{\"ingestTs\":\"2026-10-10T23:57:00.123456789Z\",\"eventTs\":\"2026-10-10T23:56:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":57,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:56:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "57",
+      "value": "{\"ingestTs\":\"2026-10-10T23:58:00.123456789Z\",\"eventTs\":\"2026-10-10T23:57:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":58,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:57:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "58",
+      "value": "{\"ingestTs\":\"2026-10-10T23:59:00.123456789Z\",\"eventTs\":\"2026-10-10T23:58:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":59,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:58:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "59",
+      "value": "{\"ingestTs\":\"2026-10-11T00:00:00.123456789Z\",\"eventTs\":\"2026-10-10T23:59:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":60,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-10T23:59:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    },
+    {
+      "topic": "bayn.market-data.crypto.v1",
+      "partition": 3,
+      "offset": "60",
+      "value": "{\"ingestTs\":\"2026-10-11T00:01:00.123456789Z\",\"eventTs\":\"2026-10-11T00:00:00Z\",\"feed\":\"us\",\"channel\":\"bars\",\"symbol\":\"SOL/USD\",\"seq\":61,\"payload\":{\"T\":\"b\",\"S\":\"SOL/USD\",\"t\":\"2026-10-11T00:00:00Z\",\"o\":100.123456789,\"h\":100.123456789,\"l\":100.123456789,\"c\":100.123456789,\"v\":0.000000001,\"vw\":100.123456789},\"version\":2,\"provider\":\"alpaca\",\"marketSession\":\"continuous\",\"delayClass\":\"real_time_crypto\"}"
+    }
+  ],
+  "feature": {
+    "material": {
+      "schemaVersion": "dorvud.crypto-market-feature.v2",
+      "definitionId": "dorvud.crypto-continuous-1m.v2",
+      "definitionHash": "eb2568eb1debf5a0897afe76a6c8e9566d9d6730227dbf0632a37afba852ba7c",
+      "provider": "alpaca",
+      "location": "us",
+      "marketSession": "continuous",
+      "delayClass": "real_time_crypto",
+      "symbol": "SOL/USD",
+      "windowStartMs": 1791673200000,
+      "windowEndMs": 1791676860000,
+      "historyPrefixHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "historyHash": "484d934c7aac97213fc6038be5d07bcaf8b173476b02fe7db1f1e75bbb29d4da",
+      "inputs": [
+        {
+          "eventTimeNanos": "1791673200000000000",
+          "ingestionTimeNanos": "1791673260123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "0",
+          "contentHash": "b17670870041cdd179c266df8095f38a5e014ebdea00c4c25fba00a4f0454f41"
+        },
+        {
+          "eventTimeNanos": "1791673260000000000",
+          "ingestionTimeNanos": "1791673320123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "1",
+          "contentHash": "92066ef9055c56b4de4ae254aa868b3a90fc70a995e4b8a7d079f47c1bb85dfd"
+        },
+        {
+          "eventTimeNanos": "1791673320000000000",
+          "ingestionTimeNanos": "1791673380123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "2",
+          "contentHash": "0fe7daa07269627133152cff9b2bcb8b7b3bff7f64f4fd84d4b5359251b6e3f1"
+        },
+        {
+          "eventTimeNanos": "1791673380000000000",
+          "ingestionTimeNanos": "1791673440123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "3",
+          "contentHash": "cd1f3ccb1ea2d64c11798a07764161c23d9903ecd9b8b9df043338be12a8c67b"
+        },
+        {
+          "eventTimeNanos": "1791673440000000000",
+          "ingestionTimeNanos": "1791673500123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "4",
+          "contentHash": "41355fb79003dff8d008984a7853fad887134d82dd08e5585e2fb61744bce6eb"
+        },
+        {
+          "eventTimeNanos": "1791673500000000000",
+          "ingestionTimeNanos": "1791673560123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "5",
+          "contentHash": "77aaf88ea750778e6d52b1096b008e52792a05712179fa3f107767f9c250edf2"
+        },
+        {
+          "eventTimeNanos": "1791673560000000000",
+          "ingestionTimeNanos": "1791673620123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "6",
+          "contentHash": "d9e711d83a8d275511e1fde4a6dc87d5f44eebc3219812f98ef97205eb70b163"
+        },
+        {
+          "eventTimeNanos": "1791673620000000000",
+          "ingestionTimeNanos": "1791673680123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "7",
+          "contentHash": "2532f13c4ba5eb6ce1d6b3bf1ada36d4f613f45050dd80f74abdee9d5e484f44"
+        },
+        {
+          "eventTimeNanos": "1791673680000000000",
+          "ingestionTimeNanos": "1791673740123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "8",
+          "contentHash": "8fd4eaba03af782c8414570bd072f260a7af3129f29b8e6b7160f8f86dd61c26"
+        },
+        {
+          "eventTimeNanos": "1791673740000000000",
+          "ingestionTimeNanos": "1791673800123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "9",
+          "contentHash": "a38c698dbf16f3cf1bdeafc2167fff22b27aea4c8e2d36b14240008a03b93384"
+        },
+        {
+          "eventTimeNanos": "1791673800000000000",
+          "ingestionTimeNanos": "1791673860123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "10",
+          "contentHash": "97ff58cf32cce9fc1c0ce4769f0a6d185c6ee1b049d8a382a04acce569324030"
+        },
+        {
+          "eventTimeNanos": "1791673860000000000",
+          "ingestionTimeNanos": "1791673920123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "11",
+          "contentHash": "2924ebe582acc5ae47b9be24e7b9fe8f92e4c1d5cf709d68c7fe8055a5ff779d"
+        },
+        {
+          "eventTimeNanos": "1791673920000000000",
+          "ingestionTimeNanos": "1791673980123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "12",
+          "contentHash": "c95ea8ece0535d02199edea698255a3ffb8d784cd0e4c4d7b240c0a5c779a172"
+        },
+        {
+          "eventTimeNanos": "1791673980000000000",
+          "ingestionTimeNanos": "1791674040123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "13",
+          "contentHash": "98dc8a3b6dedc9584d7ea009404fcb90b5b3582c43bb7873c5659acc8937bec8"
+        },
+        {
+          "eventTimeNanos": "1791674040000000000",
+          "ingestionTimeNanos": "1791674100123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "14",
+          "contentHash": "a304f9a476a8a89558de807d740832d0ece21b10438314f2627b486dc6ba5832"
+        },
+        {
+          "eventTimeNanos": "1791674100000000000",
+          "ingestionTimeNanos": "1791674160123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "15",
+          "contentHash": "d24deea943bdf63a4d91b18c3318205fcc10050f823f7a02b3058eaa976e33af"
+        },
+        {
+          "eventTimeNanos": "1791674160000000000",
+          "ingestionTimeNanos": "1791674220123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "16",
+          "contentHash": "256d954d8f66bc5f7cd5a5220c94ea6d0352a88e99c7398766ea22e21f14b389"
+        },
+        {
+          "eventTimeNanos": "1791674220000000000",
+          "ingestionTimeNanos": "1791674280123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "17",
+          "contentHash": "919ce79278cee833446b3935e8bad42ce73a6b6777d64dcd03c80ed553625aef"
+        },
+        {
+          "eventTimeNanos": "1791674280000000000",
+          "ingestionTimeNanos": "1791674340123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "18",
+          "contentHash": "b7409ee9747bce7dbd8510ef5f36f56237810b21b22f3bf1ba130a17abfa37ce"
+        },
+        {
+          "eventTimeNanos": "1791674340000000000",
+          "ingestionTimeNanos": "1791674400123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "19",
+          "contentHash": "8ccf303f2022d55bdb65989855c280d1fb6411f9c3fbfd513122f81689b38ff4"
+        },
+        {
+          "eventTimeNanos": "1791674400000000000",
+          "ingestionTimeNanos": "1791674460123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "20",
+          "contentHash": "7d3cf5e397c92914d72581a5500f80b52d8c0ea1c994b8f510a401dfb1c3f1b1"
+        },
+        {
+          "eventTimeNanos": "1791674460000000000",
+          "ingestionTimeNanos": "1791674520123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "21",
+          "contentHash": "c1e0db880c36ddd293a602c62f4f02ac65273c470fb6c20c94e4250a3cbf338f"
+        },
+        {
+          "eventTimeNanos": "1791674520000000000",
+          "ingestionTimeNanos": "1791674580123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "22",
+          "contentHash": "c8fa1d1af25bf717a4eb70a3ff7e323162aa6ca888adea3f4e5bcc440fe896de"
+        },
+        {
+          "eventTimeNanos": "1791674580000000000",
+          "ingestionTimeNanos": "1791674640123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "23",
+          "contentHash": "43e48abdbd7070792e480f5815cbca4a2bab285144c9288d507e82115146c6d4"
+        },
+        {
+          "eventTimeNanos": "1791674640000000000",
+          "ingestionTimeNanos": "1791674700123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "24",
+          "contentHash": "3bceb945e8451faf50fe67141f840a648e4bfac10d984b548c965bf84261da37"
+        },
+        {
+          "eventTimeNanos": "1791674700000000000",
+          "ingestionTimeNanos": "1791674760123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "25",
+          "contentHash": "40bb0865f1f2674e3ae06cc7f7a0ced39d69117c1cf72584a1f1e9e71ede2bfd"
+        },
+        {
+          "eventTimeNanos": "1791674760000000000",
+          "ingestionTimeNanos": "1791674820123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "26",
+          "contentHash": "a9ac5ec1122d50d4f55f4d03ee15bd38b5eee51d73f4e31ab951050404f33892"
+        },
+        {
+          "eventTimeNanos": "1791674820000000000",
+          "ingestionTimeNanos": "1791674880123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "27",
+          "contentHash": "1fd979b39e47d9e2497e0b02ae89ed138d700ccafc546c7d4b367457d997df45"
+        },
+        {
+          "eventTimeNanos": "1791674880000000000",
+          "ingestionTimeNanos": "1791674940123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "28",
+          "contentHash": "a7dcc0b08775d68e79d4752e59970645107b2a4d3be978e759e988cbd1db2563"
+        },
+        {
+          "eventTimeNanos": "1791674940000000000",
+          "ingestionTimeNanos": "1791675000123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "29",
+          "contentHash": "f5159bb5458ef275021aa1023509ba97387e09f3ecc81606aba5eee2e20b6d25"
+        },
+        {
+          "eventTimeNanos": "1791675000000000000",
+          "ingestionTimeNanos": "1791675060123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "30",
+          "contentHash": "17bec2d11229bd182c7d8f94ad15ea9b552c69d1e69edd3d94b5a84ce6caaf68"
+        },
+        {
+          "eventTimeNanos": "1791675060000000000",
+          "ingestionTimeNanos": "1791675120123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "31",
+          "contentHash": "758e94739ad35b007187d6fb45142a765142be15f90830321cef8aed9f089ca6"
+        },
+        {
+          "eventTimeNanos": "1791675120000000000",
+          "ingestionTimeNanos": "1791675180123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "32",
+          "contentHash": "980957ea51718eb220f15fb00befcc27b47b9ac5440414c67e08f081e048def9"
+        },
+        {
+          "eventTimeNanos": "1791675180000000000",
+          "ingestionTimeNanos": "1791675240123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "33",
+          "contentHash": "893106b37339b6d7e30af79bf9977b033a0a0887bc482f15cb8177b0db461868"
+        },
+        {
+          "eventTimeNanos": "1791675240000000000",
+          "ingestionTimeNanos": "1791675300123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "34",
+          "contentHash": "04994ac60a8152bb76dede63356566b55672cd282f14eb75bc09e83d0d7346e1"
+        },
+        {
+          "eventTimeNanos": "1791675300000000000",
+          "ingestionTimeNanos": "1791675360123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "35",
+          "contentHash": "60cdd9ce6543a34ee96f542b0cc357f94d25d53ecc31c3f92cc5baa37cd0db4b"
+        },
+        {
+          "eventTimeNanos": "1791675360000000000",
+          "ingestionTimeNanos": "1791675420123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "36",
+          "contentHash": "52357762046138c63d5d331b12ecf086084ef76d5ce5dc91e9cbaf021dbae39c"
+        },
+        {
+          "eventTimeNanos": "1791675420000000000",
+          "ingestionTimeNanos": "1791675480123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "37",
+          "contentHash": "365bb229c1e74210f9a1a4d6b749f33156460e17f294cfeb1039afb1421b24c2"
+        },
+        {
+          "eventTimeNanos": "1791675480000000000",
+          "ingestionTimeNanos": "1791675540123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "38",
+          "contentHash": "21ddae8cc996d5f3fb518c6b452d6fb374cb885d581ca19044ae188d0cfe4f4c"
+        },
+        {
+          "eventTimeNanos": "1791675540000000000",
+          "ingestionTimeNanos": "1791675600123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "39",
+          "contentHash": "bc241a8107a1a7f59aedcfb27ffe2974aef60539ccf5280920fc5536324d5ca8"
+        },
+        {
+          "eventTimeNanos": "1791675600000000000",
+          "ingestionTimeNanos": "1791675660123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "40",
+          "contentHash": "df16acc09297c9ae0b5da541a8d2ce0739f7462b9310312e79d7593592287d72"
+        },
+        {
+          "eventTimeNanos": "1791675660000000000",
+          "ingestionTimeNanos": "1791675720123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "41",
+          "contentHash": "5fce8e932dc685c5498fb2739e5288ce4efa62f6ddb7d653dc44cd3e3f4a3235"
+        },
+        {
+          "eventTimeNanos": "1791675720000000000",
+          "ingestionTimeNanos": "1791675780123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "42",
+          "contentHash": "5f289634f409ffe002f98ab030fa37de442ea1eecf30b62b07b7025e1c84c503"
+        },
+        {
+          "eventTimeNanos": "1791675780000000000",
+          "ingestionTimeNanos": "1791675840123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "43",
+          "contentHash": "f4c58f22c7005ba4ba05e3dc2b3c82641117bacba671c15a4d42fb1688555e3d"
+        },
+        {
+          "eventTimeNanos": "1791675840000000000",
+          "ingestionTimeNanos": "1791675900123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "44",
+          "contentHash": "2190b9efff655eea2b454d6735084e28abd7c01a78eb1a67f82ce07b812a6a63"
+        },
+        {
+          "eventTimeNanos": "1791675900000000000",
+          "ingestionTimeNanos": "1791675960123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "45",
+          "contentHash": "da63dc64b6fdd760531348b7fac9db8df93347743708317ffd899091c3227854"
+        },
+        {
+          "eventTimeNanos": "1791675960000000000",
+          "ingestionTimeNanos": "1791676020123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "46",
+          "contentHash": "26377d7d0998cce3f53dc4f5acd7a2eaf9f2e106beb6c833065cbadb86890f75"
+        },
+        {
+          "eventTimeNanos": "1791676020000000000",
+          "ingestionTimeNanos": "1791676080123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "47",
+          "contentHash": "a7a80e91c73a054c91f7a4cc5aafb1df3c9c44552d08d0583fc82cbf4989a98a"
+        },
+        {
+          "eventTimeNanos": "1791676080000000000",
+          "ingestionTimeNanos": "1791676140123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "48",
+          "contentHash": "e71f51d4d914856c5bff9472c69e19322923cbf3f06b8de088be674fda2225de"
+        },
+        {
+          "eventTimeNanos": "1791676140000000000",
+          "ingestionTimeNanos": "1791676200123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "49",
+          "contentHash": "c05183bcda83bb80e671ab649bc428ed3e2405c66a8eca2e90423af89cd578c2"
+        },
+        {
+          "eventTimeNanos": "1791676200000000000",
+          "ingestionTimeNanos": "1791676260123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "50",
+          "contentHash": "45e38400b85b10e6790a9e4ccf2241ebd2213abe8e6ddb2d1efe99cf5755715f"
+        },
+        {
+          "eventTimeNanos": "1791676260000000000",
+          "ingestionTimeNanos": "1791676320123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "51",
+          "contentHash": "e1691fb08030620bbc70a53821ef7fdc4d50a2880bdd620a223b1b9f2fbf621b"
+        },
+        {
+          "eventTimeNanos": "1791676320000000000",
+          "ingestionTimeNanos": "1791676380123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "52",
+          "contentHash": "5873747465d58144a9ee4bdaf03b3cfbe374dd1f9e34391cd6971126b3b47f5e"
+        },
+        {
+          "eventTimeNanos": "1791676380000000000",
+          "ingestionTimeNanos": "1791676440123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "53",
+          "contentHash": "e430171568a5d8987a441c1c61b7ff8b26983e62988d2c002f76124848129377"
+        },
+        {
+          "eventTimeNanos": "1791676440000000000",
+          "ingestionTimeNanos": "1791676500123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "54",
+          "contentHash": "c0ebb35b44ac87e3227ceb1d905902239f7ea1c54c5b42c6cfe80cf8b367121b"
+        },
+        {
+          "eventTimeNanos": "1791676500000000000",
+          "ingestionTimeNanos": "1791676560123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "55",
+          "contentHash": "e4c6096ee51a493e6dcb7ef0e8c199234ca60c6fe3bd168812a1544e4039d18a"
+        },
+        {
+          "eventTimeNanos": "1791676560000000000",
+          "ingestionTimeNanos": "1791676620123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "56",
+          "contentHash": "336566f08ec5658390934f262847db76937041b75deb268b320fcf23a77664c3"
+        },
+        {
+          "eventTimeNanos": "1791676620000000000",
+          "ingestionTimeNanos": "1791676680123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "57",
+          "contentHash": "b0e8c1930a719cf8b3ad36b2829f99683b7cd23236ed48a0b1ca21d2e28bc7bb"
+        },
+        {
+          "eventTimeNanos": "1791676680000000000",
+          "ingestionTimeNanos": "1791676740123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "58",
+          "contentHash": "b4ccce98aaa9253521c09e1c1c3f6549675f193ac7be38ec991f6fa660e595b9"
+        },
+        {
+          "eventTimeNanos": "1791676740000000000",
+          "ingestionTimeNanos": "1791676800123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "59",
+          "contentHash": "507efb58d5a491b8e9e25603aed104209e06196bff4d58b5646a968f6f529023"
+        },
+        {
+          "eventTimeNanos": "1791676800000000000",
+          "ingestionTimeNanos": "1791676860123456789",
+          "sourceTopic": "bayn.market-data.crypto.v1",
+          "sourcePartition": 3,
+          "sourceOffset": "60",
+          "contentHash": "44c5fbd51b35a9bd79b15afb009ab2670c9e9cc19a8b0d3e4349ab075dd895bd"
+        }
+      ],
+      "priceWindow": {
+        "referencePrice": "100.123456789",
+        "rangeHighPrice": "100.123456789",
+        "rangeLowPrice": "100.123456789",
+        "lastClosePrice": "100.123456789",
+        "totalVolume": "0.00000003"
+      },
+      "technical": {
+        "ema12PriceMicros": {
+          "status": "READY",
+          "value": "100123457"
+        },
+        "ema26PriceMicros": {
+          "status": "READY",
+          "value": "100123457"
+        },
+        "macdPriceMicros": {
+          "status": "READY",
+          "value": "0"
+        },
+        "macdSignalPriceMicros": {
+          "status": "READY",
+          "value": "0"
+        },
+        "macdHistogramPriceMicros": {
+          "status": "READY",
+          "value": "0"
+        },
+        "rsi14Micros": {
+          "status": "READY",
+          "value": "0"
+        },
+        "bollingerMiddlePriceMicros": {
+          "status": "READY",
+          "value": "100123457"
+        },
+        "bollingerUpperPriceMicros": {
+          "status": "READY",
+          "value": "100123457"
+        },
+        "bollingerLowerPriceMicros": {
+          "status": "READY",
+          "value": "100123457"
+        },
+        "weightedClose5mPriceMicros": {
+          "status": "READY",
+          "value": "100123457"
+        },
+        "weightedClose30mPriceMicros": {
+          "status": "READY",
+          "value": "100123457"
+        },
+        "vwap5mPriceMicros": {
+          "status": "READY",
+          "value": "100123457"
+        },
+        "vwap30mPriceMicros": {
+          "status": "READY",
+          "value": "100123457"
+        },
+        "realizedVolatility60ReturnsPpm": {
+          "status": "READY",
+          "value": "0"
+        }
+      }
+    },
+    "featureId": "8cb78446f47508dc9939fa893f9c2b7c5eb0d7dd7bcfe833a1ff0a9d8b9ae35d",
+    "computedAtMs": 1791676862123,
+    "producerRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

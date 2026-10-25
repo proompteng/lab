@@ -26,7 +26,7 @@ The app serves on port `3000`.
 
 `apps/kitty-krew/Dockerfile` uses a multi-stage Bun build with repo-root context:
 
-- builder image: `oven/bun:1.4.0-alpine`
+- builder image: `oven/bun:1.4.2-alpine`
 - build context: `.`
 - Dockerfile path: `./apps/kitty-krew/Dockerfile`
 

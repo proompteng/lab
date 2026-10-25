@@ -1,7 +1,6 @@
 import { Data, Effect, Result } from 'effect'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
-import { addUtcDays, currentUtcDate } from '../../time'
 import type { BrokerConnection } from '../connection'
 import {
   BrokerReadError,
@@ -15,7 +14,6 @@ import {
   AccountStatus,
   OrderCollection,
   SortDirection,
-  marketCalendarPreflightRangeDays,
   readPreflightTimeoutMs,
   type Account,
   type AccountConfigurationObservation,
@@ -24,7 +22,6 @@ import {
   type ReadPreflight,
   type ReadResult,
 } from './model'
-import { Pipeable } from '../../pipeable'
 
 const missingOrderId = '00000000-0000-4000-8000-000000000000'
 const missingClientOrderId = 'bayn-observe-read-proof-does-not-exist'
@@ -87,7 +84,7 @@ const verifyBrokerReadPermissions = (
   })
 }
 
-const verifyBrokerAccountPermissionsDataFirst = (
+export const verifyBrokerAccountPermissions = (
   account: Account,
   configuration: AccountConfigurationObservation,
 ): Result.Result<VerifiedBrokerAccountPermissions, BrokerAccountPreflightFailure> => {
@@ -99,8 +96,6 @@ const verifyBrokerAccountPermissionsDataFirst = (
     fractionalTrading: true,
   })
 }
-
-export const verifyBrokerAccountPermissions = Pipeable.dual(2, verifyBrokerAccountPermissionsDataFirst)
 
 const permissionFailure = (
   connection: BrokerConnection,
@@ -166,7 +161,7 @@ const verifyOrderLookup = (
     ),
   )
 
-const verifyReadAccessDataFirst = (
+export const verifyReadAccess = (
   connection: BrokerConnection,
   read: BrokerReadShape,
 ): Effect.Effect<ReadPreflight, BrokerReadError | BrokerAccountPreflightError> =>
@@ -176,8 +171,6 @@ const verifyReadAccessDataFirst = (
     const permissions = yield* Effect.fromResult(verifyBrokerReadPermissions(account.value)).pipe(
       Effect.mapError((failure) => permissionFailure(connection, failure)),
     )
-    const calendarStart = yield* currentUtcDate
-    const calendarEnd = addUtcDays(calendarStart, marketCalendarPreflightRangeDays - 1)
     const responses = yield* Effect.all(
       {
         positions: read.positions,
@@ -188,9 +181,8 @@ const verifyReadAccessDataFirst = (
           direction: SortDirection.Descending,
         }),
         fills: read.fillActivities({ pageSize: 1, direction: SortDirection.Descending }),
-        marketCalendar: read.marketCalendar({ start: calendarStart, end: calendarEnd }),
       },
-      { concurrency: 5 },
+      { concurrency: 4 },
     )
     const order = responses.recentOrders.value[0] ?? responses.openOrders.value[0]
     const lookups =
@@ -232,8 +224,6 @@ const verifyReadAccessDataFirst = (
           ordersHash,
           fillCount: responses.fills.value.items.length,
           fillsHash,
-          marketCalendarSessionCount: responses.marketCalendar.value.sessions.length,
-          marketCalendarHash: responses.marketCalendar.value.normalizedResponseHash,
           ...lookups,
         }
       }),
@@ -268,8 +258,6 @@ const verifyReadAccessDataFirst = (
         ordersHash: proof.ordersHash,
         fillCount: proof.fillCount,
         fillsHash: proof.fillsHash,
-        marketCalendarSessionCount: proof.marketCalendarSessionCount,
-        marketCalendarHash: proof.marketCalendarHash,
         orderById: proof.orderById,
         orderByClientId: proof.orderByClientId,
       }),
@@ -290,5 +278,3 @@ const verifyReadAccessDataFirst = (
     }),
     Effect.withLogSpan('broker.read.preflight'),
   )
-
-export const verifyReadAccess = Pipeable.dual(2, verifyReadAccessDataFirst)

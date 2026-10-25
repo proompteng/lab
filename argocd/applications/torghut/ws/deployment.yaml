@@ -21,7 +21,7 @@ spec:
         app: torghut-ws
       annotations:
         kubectl.kubernetes.io/restartedAt: 2026-05-01T01:25:51.190Z
-        torghut.proompteng.ai/ws-config-generation: bayn-intraday-symbol-budget-v2
+        torghut.proompteng.ai/ws-config-generation: bayn-jev-latest-iex-v1
     spec:
       serviceAccountName: torghut-runtime
       securityContext:
@@ -77,6 +77,13 @@ spec:
               value: e2d7b6de591204e7a182c246661b060957c929ef
             - name: JAVA_TOOL_OPTIONS
               value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=25.0 -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError
+            - name: DORVUD_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: dorvud-glitchtip
+                  key: DORVUD_GLITCHTIP_DSN
+            - name: DORVUD_ERROR_SERVICE
+              value: torghut-ws
           ports:
             - containerPort: 8080
               name: http

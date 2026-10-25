@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { Effect } from 'effect'
 
@@ -8,6 +9,7 @@ import { currentActivityContext } from '../src/worker/activity-context'
 import type { WorkflowServiceClient } from '../src/worker/runtime'
 import { WorkerRuntime } from '../src/worker/runtime'
 import { defineWorkflow } from '../src/workflow/definition'
+import { PollActivityTaskQueueResponseSchema, type RespondActivityTaskFailedRequest } from '../src/proto/temporal/api/workflowservice/v1/request_response_pb'
 
 const waitFor = async (predicate: () => boolean, timeoutMs = 2_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs
@@ -31,6 +33,67 @@ const waitForAbort = async (signal?: AbortSignal) => {
     signal?.addEventListener('abort', () => reject(abortError), { once: true })
   })
 }
+
+
+test('worker leaves retryable activity errors to Temporal when backoff exceeds the attempt timeout', async () => {
+  const config = createTestTemporalConfig({ stickySchedulingEnabled: false })
+  const observability = createObservabilityStub()
+  let polls = 0
+  let invocations = 0
+  const failures: RespondActivityTaskFailedRequest[] = []
+  const now = Date.now()
+  const timestamp = { seconds: BigInt(Math.floor(now / 1000)), nanos: (now % 1000) * 1_000_000 }
+  const workflowService = {
+    pollWorkflowTaskQueue: async (_request: unknown, { signal }: { signal?: AbortSignal }) =>
+      await waitForAbort(signal),
+    pollActivityTaskQueue: async (_request: unknown, { signal }: { signal?: AbortSignal }) => {
+      if (polls++ > 0) return await waitForAbort(signal)
+      return create(PollActivityTaskQueueResponseSchema, {
+        taskToken: new Uint8Array([21]),
+        workflowExecution: { workflowId: 'retry-deadline', runId: 'run-1' },
+        activityId: 'activity-1',
+        activityType: { name: 'failOnce' },
+        attempt: 1,
+        scheduledTime: timestamp,
+        startedTime: timestamp,
+        startToCloseTimeout: { seconds: 1n },
+        scheduleToCloseTimeout: { seconds: 10n },
+        retryPolicy: { initialInterval: { seconds: 2n }, maximumAttempts: 3, backoffCoefficient: 1 },
+      })
+    },
+    respondActivityTaskFailed: async (request: RespondActivityTaskFailedRequest) => {
+      failures.push(request)
+      return {}
+    },
+  } as unknown as WorkflowServiceClient
+  const runtime = await WorkerRuntime.create({
+    config,
+    workflowService,
+    workflows: [defineWorkflow('retryDeadline', () => Effect.void)],
+    activities: {
+      failOnce: async () => {
+        invocations += 1
+        throw new Error('temporary failure')
+      },
+    },
+    logger: observability.services.logger,
+    metrics: observability.services.metricsRegistry,
+    metricsExporter: observability.services.metricsExporter,
+    pollers: { workflow: 0 },
+  })
+  const running = runtime.run()
+  try {
+    await waitFor(() => failures.length > 0)
+    expect(invocations).toBe(1)
+    const failure = failures[0]?.failure?.failureInfo
+    expect(failure?.case).toBe('applicationFailureInfo')
+    if (failure?.case !== 'applicationFailureInfo') throw new Error('Activity failure missing')
+    expect(failure.value.nonRetryable).toBe(false)
+  } finally {
+    await runtime.shutdown()
+    await running
+  }
+})
 
 test('worker retries transient activity completion RPC failures', async () => {
   const config: TemporalConfig = createTestTemporalConfig({

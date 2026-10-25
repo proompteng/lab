@@ -414,18 +414,26 @@ spec:
                       - /spec/job/upgradeMode
                 automation: auto
                 enabled: "true"
-              - name: bayn
-                path: argocd/applications/bayn
-                # Bayn's reviewed main build writes immutable release pins here.
-                # The branch is generated deployment state, not a second review boundary.
-                targetRevision: codex/bayn-deploy
+              - name: bayn-valkey
+                path: argocd/applications/bayn-valkey
                 namespace: bayn
                 renderWithLovely: false
                 annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: "true"
+              - name: bayn
+                path: argocd/applications/bayn
+                targetRevision: kargo/bayn
+                namespace: bayn
+                renderWithLovely: false
+                annotations:
+                  kargo.akuity.io/authorized-stage: lab-delivery:bayn
                   argocd.argoproj.io/sync-wave: "7"
                   argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
                 managedNamespaceMetadata:
                   labels:
+                    external-secrets.proompteng.ai/enabled: "true"
                     # The TigerBeetle client requires an explicit io_uring seccomp exception.
                     # The Bayn container remains non-root with no capabilities or privilege escalation.
                     pod-security.kubernetes.io/enforce: privileged

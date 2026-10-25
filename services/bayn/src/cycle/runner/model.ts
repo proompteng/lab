@@ -2,19 +2,25 @@ import { Data, Effect } from 'effect'
 
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { AutonomousCycle, CycleExecutionPolicy } from '../model'
-import type { CycleAcquireReceipt, CycleDecisionBindingEvidence } from '../store'
+import type { CycleAcquireReceipt, CycleDecisionBindingEvidence } from '../store/model'
+import type { CycleWaitingDetails, DecisionReadiness, DecisionReadinessReason } from './readiness'
+import type { AdmissionProtectionEvidence } from './pass-observation'
+
+export type { CycleWaitReason } from './readiness'
 
 export class CycleDecisionBuildError extends Data.TaggedError('CycleDecisionBuildError')<{
   readonly failure: 'contract' | 'database' | 'market-data' | 'not-ready' | 'operational' | 'store'
   readonly message: string
+  readonly readiness?: DecisionReadiness
   readonly cause?: unknown
 }> {}
 
 export interface CycleRunContext<R = never> {
   readonly cycleBindingId: string
-  readonly strategyName: 'intraday-momentum'
+  readonly strategyName: 'jev'
   readonly strategyProtocolHash: string
   readonly accountId: string
+  readonly authorityGenerationHash?: string
   readonly executionPolicy: Extract<
     CycleExecutionPolicy,
     { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }
@@ -23,12 +29,18 @@ export interface CycleRunContext<R = never> {
     cycle: AutonomousCycle,
     reconciliationCompleted?: Effect.Effect<void>,
   ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, R>
-  readonly buildDecisionEvidence?: (
+  readonly buildDecisionEvidence: (
     document: CycleDecisionDocument,
   ) => Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError, R>
 }
 
 export type CycleRunResult =
+  | {
+      readonly outcome: 'ADMISSION_WAITING'
+      readonly observedAt: string
+      readonly readiness: DecisionReadiness & { readonly reason: DecisionReadinessReason.AccountProtection }
+      readonly admissionProtection: AdmissionProtectionEvidence
+    }
   | {
       readonly outcome: 'WINDOW_CLOSED'
       readonly observedAt: string
@@ -38,12 +50,18 @@ export type CycleRunResult =
       readonly observedAt: string
       readonly cycle: AutonomousCycle
     }
-  | {
+  | ({
       readonly outcome: 'RECOVERED'
-      readonly action: 'ACTIVATED' | 'BLOCKED' | 'BOUND_DECISION' | 'COMPLETED' | 'NO_TRADE' | 'WAITING'
       readonly observedAt: string
       readonly cycle: AutonomousCycle
-    }
+    } & (
+      | {
+          readonly action: 'ACTIVATED' | 'BLOCKED' | 'BOUND_DECISION' | 'COMPLETED' | 'NO_TRADE'
+          readonly waitReason?: never
+          readonly readiness?: never
+        }
+      | ({ readonly action: 'WAITING' } & CycleWaitingDetails)
+    ))
   | {
       readonly outcome: 'ACQUIRED' | 'REACQUIRED'
       readonly executionSessionDate: string
@@ -81,6 +99,11 @@ export class CycleRunnerError extends Data.TaggedError('CycleRunnerError')<{
 }> {}
 
 export type CyclePassObservation =
+  | {
+      readonly outcome: 'WAITING'
+      readonly observedAt: string
+      readonly waitReason: 'BROKER_OBSERVATION_PENDING'
+    }
   | {
       readonly outcome: 'SUCCEEDED'
       readonly observedAt: string

@@ -359,11 +359,27 @@ class RemountTests(unittest.TestCase):
 
     def test_unstage_timeout_uncordons_owned_node(self) -> None:
         runner = FakeKubectl(mapped_after_unstage=True)
-        with self.assertRaises(MODULE.RemountError):
-            MODULE.Workflow(config(timeout=0.001), runner).run()
+        now = [0.0]
+        # Advance only at poll boundaries: a real 1 ms deadline can fail the
+        # three-sample quiet-I/O preflight before the node is ever cordoned.
+        workflow = MODULE.Workflow(
+            config(timeout=3, poll=1),
+            runner,
+            clock=lambda: now[0],
+            sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
+        )
+        with self.assertRaisesRegex(MODULE.RemountError, "timed out waiting for old UID/RBD unstage"):
+            workflow.run()
         patches = [args for args, _ in runner.calls if args[3:5] == ("patch", "node")]
         self.assertEqual(len(patches), 2)
+        self.assertTrue(runner.evicted)
         self.assertFalse(runner.node_state["spec"]["unschedulable"])
+        self.assertNotIn(MODULE.OWNER_ANNOTATION, runner.node_state["metadata"].get("annotations", {}))
+        self.assertEqual(now[0], 5)
+        names = [event["name"] for event in workflow.audit["events"]]
+        self.assertIn("osd-quiet-window", names)
+        self.assertIn("unstage-observation", names)
+        self.assertIn("uncordoned", names)
 
     def test_uncertain_cordon_response_is_cleaned_by_token(self) -> None:
         runner = FakeKubectl(uncertain_cordon=True)

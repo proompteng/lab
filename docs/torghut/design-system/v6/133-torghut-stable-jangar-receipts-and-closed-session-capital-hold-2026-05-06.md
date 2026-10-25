@@ -1,6 +1,6 @@
 # 133. Torghut Stable Jangar Receipts And Closed-Session Capital Hold (2026-05-06)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

@@ -1,6 +1,6 @@
 # 64. Torghut Hypothesis Vaults and Post-Cost Profit Tapes Contract (2026-03-21)
 
-Status: Approved for implementation (`plan`)
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Executive summary
 

@@ -1,6 +1,6 @@
 # 173. Torghut No-Notional Repair Options Desk And Promotion Custody (2026-05-07)
 
-Status: Accepted for engineer and deployer handoff
+Status: Historical design contract. Validate against current source, GitOps, and runtime evidence.
 
 ## Decision
 

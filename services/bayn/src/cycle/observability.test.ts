@@ -1,3 +1,4 @@
+import { Result } from 'effect'
 import { expect, test } from 'bun:test'
 
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
@@ -5,8 +6,8 @@ import { CycleState, CycleTerminalReason } from './model'
 import {
   CycleOperationsCondition,
   CycleOperationsReason,
-  deriveCycleOperationsStatus,
   type CycleOperationsProjection,
+  deriveCycleOperationsStatusResult,
 } from './observability'
 
 const checkedAt = '2026-08-31T18:00:00.000Z'
@@ -17,10 +18,12 @@ const projection: CycleOperationsProjection = {
     accountId: 'sandbox-account',
     signalSessionDate: '2026-08-31',
     executionSessionDate: '2026-08-31',
+    executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
     phase: CycleState.Blocked,
     snapshotId: null,
     decisionHash: null,
     terminalReason: CycleTerminalReason.Authority,
+    publicationDeadlineAt: null,
     submissionOpenAt: '2026-08-31T14:30:00.000Z',
     submissionCutoffAt: '2026-08-31T19:00:00.000Z',
     executionOpenAt: '2026-08-31T13:30:00.000Z',
@@ -62,25 +65,52 @@ const thresholds = {
   unknownMutationThresholdMs: 60_000,
 }
 
-test('treats a recovered terminal cycle as waiting while current execution authority is clear', () => {
-  const status = deriveCycleOperationsStatus(projection, Date.parse(checkedAt), Authority.Execution, thresholds)
+test('reports a blocked current session after authority recovers', () => {
+  const status = Result.getOrThrow(
+    deriveCycleOperationsStatusResult(projection, Date.parse(checkedAt), Authority.Execution, thresholds),
+  )
 
   expect(status).toMatchObject({
-    condition: CycleOperationsCondition.Waiting,
+    condition: CycleOperationsCondition.Failed,
     reason: CycleOperationsReason.LastCycleBlocked,
-    alerts: { cycleFailed: false, killActive: false },
+    alerts: { cycleFailed: true, killActive: false },
   })
 })
 
+test('does not carry a historical authority-blocked cycle into the next session health', () => {
+  const now = Date.parse('2026-09-01T13:00:00.000Z')
+  const status = Result.getOrThrow(
+    deriveCycleOperationsStatusResult(
+      {
+        ...projection,
+        reconciliation:
+          projection.reconciliation === null
+            ? null
+            : {
+                ...projection.reconciliation,
+                reconciledAt: new Date(now).toISOString(),
+              },
+      },
+      now,
+      Authority.Execution,
+      thresholds,
+    ),
+  )
+  expect(status.condition).toBe(CycleOperationsCondition.Waiting)
+  expect(status.alerts.cycleFailed).toBe(false)
+})
+
 test('keeps a non-authority terminal cycle failed while execution authority is configured', () => {
-  const status = deriveCycleOperationsStatus(
-    {
-      ...projection,
-      last: projection.last === null ? null : { ...projection.last, terminalReason: CycleTerminalReason.DataInvalid },
-    },
-    Date.parse(checkedAt),
-    Authority.Execution,
-    thresholds,
+  const status = Result.getOrThrow(
+    deriveCycleOperationsStatusResult(
+      {
+        ...projection,
+        last: projection.last === null ? null : { ...projection.last, terminalReason: CycleTerminalReason.DataInvalid },
+      },
+      Date.parse(checkedAt),
+      Authority.Execution,
+      thresholds,
+    ),
   )
 
   expect(status).toMatchObject({
@@ -91,14 +121,16 @@ test('keeps a non-authority terminal cycle failed while execution authority is c
 })
 
 test('continues to fail closed when the current authority kill remains active', () => {
-  const status = deriveCycleOperationsStatus(
-    {
-      ...projection,
-      authority: projection.authority === null ? null : { ...projection.authority, kill: KillState.Active },
-    },
-    Date.parse(checkedAt),
-    Authority.Execution,
-    thresholds,
+  const status = Result.getOrThrow(
+    deriveCycleOperationsStatusResult(
+      {
+        ...projection,
+        authority: projection.authority === null ? null : { ...projection.authority, kill: KillState.Active },
+      },
+      Date.parse(checkedAt),
+      Authority.Execution,
+      thresholds,
+    ),
   )
 
   expect(status).toMatchObject({
@@ -107,3 +139,79 @@ test('continues to fail closed when the current authority kill remains active', 
     alerts: { cycleFailed: true, killActive: true },
   })
 })
+
+test('waits for a newly created intraday cycle to acquire its first snapshot', () => {
+  if (projection.last === null) throw new Error('missing fixture cycle')
+  const now = Date.parse(checkedAt)
+  const current = {
+    ...projection.last,
+    phase: CycleState.Pending,
+    terminalAt: null,
+    terminalReason: null,
+    publicationDeadlineAt: null,
+    createdAt: new Date(now - 10_000).toISOString(),
+    updatedAt: new Date(now - 10_000).toISOString(),
+  }
+  const state = { ...projection, current, last: null, unfinishedCycleCount: 1 }
+  const status = Result.getOrThrow(deriveCycleOperationsStatusResult(state, now, Authority.Execution, thresholds))
+  expect(status).toMatchObject({
+    condition: CycleOperationsCondition.Waiting,
+    reason: CycleOperationsReason.AwaitingSignalPublication,
+    alerts: { cycleStalled: false },
+  })
+  const stale = Result.getOrThrow(
+    deriveCycleOperationsStatusResult(state, now + 50_000, Authority.Execution, thresholds),
+  )
+  expect(stale).toMatchObject({
+    condition: CycleOperationsCondition.Stalled,
+    reason: CycleOperationsReason.AttemptStale,
+    alerts: { cycleStalled: true },
+  })
+})
+
+test('uses the actual publication deadline for a cycle with a scheduled publication', () => {
+  if (projection.last === null) throw new Error('missing fixture cycle')
+  const now = Date.parse(checkedAt)
+  const current = {
+    ...projection.last,
+    phase: CycleState.Pending,
+    terminalAt: null,
+    terminalReason: null,
+    publicationDeadlineAt: new Date(now + 30_000).toISOString(),
+  }
+  const state = { ...projection, current, last: null, unfinishedCycleCount: 1 }
+  expect(
+    Result.getOrThrow(deriveCycleOperationsStatusResult(state, now, Authority.Execution, thresholds)).condition,
+  ).toBe(CycleOperationsCondition.Waiting)
+  expect(
+    Result.getOrThrow(deriveCycleOperationsStatusResult(state, now + 30_000, Authority.Execution, thresholds)),
+  ).toMatchObject({
+    condition: CycleOperationsCondition.Stalled,
+    reason: CycleOperationsReason.MissedPublicationDeadline,
+  })
+})
+
+test.each([KillState.Clear, KillState.Active])(
+  'unused admission expiry preserves authority health with kill=%s',
+  (kill) => {
+    const status = Result.getOrThrow(
+      deriveCycleOperationsStatusResult(
+        {
+          ...projection,
+          last:
+            projection.last === null
+              ? null
+              : { ...projection.last, terminalReason: CycleTerminalReason.UnusedEntryExpired },
+          authority: projection.authority === null ? null : { ...projection.authority, kill },
+        },
+        Date.parse(checkedAt),
+        Authority.Execution,
+        thresholds,
+      ),
+    )
+    expect(status.condition).toBe(
+      kill === KillState.Clear ? CycleOperationsCondition.Waiting : CycleOperationsCondition.Failed,
+    )
+    expect(status.alerts.cycleFailed).toBe(kill === KillState.Active)
+  },
+)
