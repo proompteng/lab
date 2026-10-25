@@ -33,6 +33,9 @@ metadata:
 spec:
   serviceName: arc-buildkit-amd64
   replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
   selector:
     matchLabels:
       app.kubernetes.io/name: arc-buildkit
@@ -133,6 +136,9 @@ metadata:
 spec:
   serviceName: arc-buildkit-arm64
   replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
   selector:
     matchLabels:
       app.kubernetes.io/name: arc-buildkit
