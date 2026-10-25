@@ -7,6 +7,7 @@ import { Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect'
 import { sha256 } from '../hash'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
+import { defaultJevProtocolDocument } from '../jev/protocol'
 import { exportJevStudySession } from '../jev/study-export'
 import { verifyJevStudyInventory } from '../jev/study-inventory'
 import { PostgresClientLive } from './postgres-client'
@@ -23,8 +24,14 @@ postgresTest(
       throw new Error('Study export tests require a local _test database')
     const schema = `study_export_${randomUUID().replaceAll('-', '')}`
     url.searchParams.set('options', `-c search_path=${schema}`)
-    const evidence = nativeJevDecisionEvidence()
-    const laterEntry = nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:31:02.000Z'), false)
+    const protocol = { ...defaultJevProtocolDocument, candidateSymbols: ['AAPL'] }
+    const evidence = nativeJevDecisionEvidence(
+      nativeJevFixture(JevPurpose.Entry, undefined, 'jev-native-test', protocol),
+    )
+    const laterEntry = nativeJevDecisionEvidence(
+      nativeJevFixture(JevPurpose.Entry, '2026-09-04T14:31:02.000Z', 'jev-native-test', protocol),
+      false,
+    )
     const plan = evidence.batchPlan
     const accountId = evidence.observation.portfolio.brokerState.account.accountId
     const sessionDate = evidence.observation.manifest.sessionDate
