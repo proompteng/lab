@@ -20,7 +20,7 @@ import {
   ReadAuditResponseSchema,
   ResourceKind,
   WorkspaceRole,
-} from '@/lib/generated/proompteng/authz/v1/authz_pb'
+} from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
 import { resolveGithubIdentity } from '@/lib/tengri/github-identity'
 import {
   noStoreHeaders,
@@ -30,7 +30,7 @@ import {
   requireTengriIdentity,
   tengriRouteError,
 } from '@/lib/tengri/http'
-import { OfzError, ofzCall } from '@/lib/platform/ofz'
+import { OfzError, ofzCall } from '@/lib/tengri/ofz'
 
 export const dynamic = 'force-dynamic'
 const actions = {

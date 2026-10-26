@@ -2,8 +2,9 @@ import 'server-only'
 
 import * as grpc from '@grpc/grpc-js'
 import { type DescMessage, type DescMethodUnary, type MessageInitShape, type MessageShape } from '@bufbuild/protobuf'
-import { attestedCaller } from './rpc'
+import { attestedCaller } from '../platform/rpc'
 
+const BFF_ID = 'spiffe://proompteng.ai/ns/proompteng/sa/proompteng'
 const OFZ_ID = 'spiffe://proompteng.ai/ns/ofz/sa/ofz-api'
 const call = attestedCaller(() => ({ target: process.env.OFZ_GRPC_ENDPOINT?.trim() || '', peer: OFZ_ID }))
 
@@ -15,7 +16,7 @@ export class OfzError extends Error {
   ) {
     super(
       status === 401
-        ? 'Authorization expired or is invalid.'
+        ? 'Your session expired. Sign in again.'
         : status === 403
           ? 'Ofz denied this request.'
           : status === 409
@@ -37,7 +38,7 @@ export function isOfzConfigured() {
   return Boolean(
     process.env.OFZ_GRPC_ENDPOINT?.trim() &&
     process.env.SPIFFE_ENDPOINT_SOCKET?.trim() &&
-    process.env.SPIFFE_ID?.trim(),
+    process.env.SPIFFE_ID?.trim() === BFF_ID,
   )
 }
 
@@ -45,11 +46,11 @@ export async function ofzCall<I extends DescMessage, O extends DescMessage>(
   method: DescMethodUnary<I, O>,
   input: MessageInitShape<I>,
   signal?: AbortSignal,
-  timeoutMs = 30_000,
 ): Promise<MessageShape<O>> {
   if (!isOfzConfigured()) throw new OfzError(503)
   try {
-    return await call(method, input, signal, timeoutMs)
+    const renewal = method.localName === 'check' && 'streamReceiptId' in input && Boolean(input.streamReceiptId)
+    return await call(method, input, signal, renewal ? 2000 : 30_000)
   } catch (error) {
     throw platformRpcError(error)
   }

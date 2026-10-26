@@ -10,8 +10,8 @@ import {
   CommandState,
   ExecuteCommandRequestSchema,
   type CommandReceipt,
-} from '../generated/proompteng/authz/v1/authz_pb'
-import { OfzError, ofzCall } from '../platform/ofz'
+} from './generated/proompteng/authz/v1/authz_pb'
+import { OfzError, ofzCall } from './ofz'
 
 type LifecycleCommand = MessageInitShape<typeof ExecuteCommandRequestSchema>['command']
 

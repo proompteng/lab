@@ -45,7 +45,7 @@ export function parseSpiffeId(value: string) {
 }
 
 export function verifySpiffePeer(expectedId: string, certificate: Pick<PeerCertificate, 'subjectaltname'>) {
-  if (certificate.subjectaltname !== `URI:${expectedId}`) return new Error('Unexpected SPIFFE identity')
+  if (certificate.subjectaltname !== `URI:${expectedId}`) return new Error('Unexpected Tengri SPIFFE identity')
   return undefined
 }
 

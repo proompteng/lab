@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { Pool } from 'pg'
 import { z } from 'zod'
-import { OfzError } from '../platform/ofz'
+import { OfzError } from './ofz'
 
 let pool: Pool | undefined
 let configuration: string | undefined

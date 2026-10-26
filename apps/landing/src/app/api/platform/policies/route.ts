@@ -4,7 +4,7 @@ import {
   PlatformAuthorizationService,
   GetPlatformConfigurationResponseSchema,
   WritePolicyRelationshipsResponseSchema,
-} from '@/lib/generated/proompteng/authz/v1/platform_pb'
+} from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
 import { humanContext } from '@/lib/tengri/authorization'
 import {
   noStoreHeaders,
@@ -14,7 +14,7 @@ import {
   requireTengriIdentity,
   tengriRouteError,
 } from '@/lib/tengri/http'
-import { ofzCall } from '@/lib/platform/ofz'
+import { ofzCall } from '@/lib/tengri/ofz'
 const relationship = z.strictObject({
   resource: z.strictObject({ kind: z.string().min(1).max(128), id: z.string().min(1).max(256) }),
   relation: z.string().min(1).max(128),

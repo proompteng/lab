@@ -22,7 +22,7 @@ import {
   ReadAuditResponseSchema,
   type ListAccessResponse,
   type ReadAuditResponse,
-} from '@/lib/generated/proompteng/authz/v1/authz_pb'
+} from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
 
 type View = 'workspace' | 'platform' | 'audit'
 const actions = ['membership', 'collaborator', 'quota', 'grant', 'revoke', 'transfer', 'emergency'] as const

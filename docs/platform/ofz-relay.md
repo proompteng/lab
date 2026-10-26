@@ -50,8 +50,8 @@ are outside those operations. A new effectful operation requires its own reviewe
 
 The public `AuthorizationService` endpoint is removed. Existing Tengri consumers use `TengriAuthorizationService`;
 platform clients use `PlatformAuthorizationService` and `RelayService`. Namespace/connector enum actions and commands,
-`CheckConnectorAgent`, the dormant opt-in flag and their native definitions are removed. Guest API protocol 10 rejects
-the previous installation and HTTP envelope contracts. There is no fallback or dual implementation.
+`CheckConnectorAgent`, the dormant opt-in flag and their native definitions are removed. Guest API protocol 9 rejects
+the previous installation contract. There is no fallback or dual implementation.
 
 The SQL migration is checksum-bound and leaves the original migration and bootstrap receipts unchanged. Policy
 onboarding records a separate approved intent, revokes retired grants and removes retired native relationships before
@@ -89,7 +89,6 @@ Both MCP clients expose operation and receipt IDs in `_meta.relay`. After a lost
 authorized status lookup and retain an error result because the original provider response is unavailable. A recorded
 `started` state remains unconfirmed. Neither client resends Execute to recover a transport failure.
 
-Web RPC, SPIFFE and Ofz clients live in `apps/landing/src/lib/platform`; generated contracts live in `src/lib/generated`.
 Tengri owns guest installation and its session/workspace integration. The former shared catalog GET under
 `/api/tengri/connectors` is removed. Web and guest images must roll together for the new required proxy envelope.
 

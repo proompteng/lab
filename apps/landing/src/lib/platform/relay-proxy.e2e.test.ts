@@ -3,7 +3,7 @@ import * as grpc from '@grpc/grpc-js'
 import * as loader from '@grpc/proto-loader'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
-import { createSpiffeFixture } from './spiffe.fixture'
+import { createSpiffeFixture } from '../tengri/spiffe.fixture'
 
 void mock.module('server-only', () => ({}))
 const { POST } = await import('../../app/api/platform/relay/agent/route')

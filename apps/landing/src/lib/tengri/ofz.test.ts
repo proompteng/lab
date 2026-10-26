@@ -7,7 +7,7 @@ import {
   CheckResponseSchema,
   type CheckRequest,
   type CheckResponse,
-} from '../generated/proompteng/authz/v1/authz_pb'
+} from './generated/proompteng/authz/v1/authz_pb'
 import { createSpiffeFixture } from './spiffe.fixture'
 
 void mock.module('server-only', () => ({}))
@@ -34,7 +34,7 @@ afterAll(() => {
   }
 })
 
-test('audited checks can wait for commit while callers can select a short observation deadline', async () => {
+test('audited checks can wait for commit while receipt renewals keep their short deadline', async () => {
   const spiffe = await createSpiffeFixture()
   fixture = spiffe
   const identity = spiffe.certificate('ofz', 'spiffe://proompteng.ai/ns/ofz/sa/ofz-api')
@@ -85,12 +85,7 @@ test('audited checks can wait for commit while callers can select a short observ
   expect(decision.allowed).toBe(true)
   expect(decision.validUntilUnixMs > BigInt(Date.now())).toBe(true)
   try {
-    await ofzCall(
-      TengriAuthorizationService.method.check,
-      { streamReceiptId: decision.auditReceiptId },
-      undefined,
-      2000,
-    )
+    await ofzCall(TengriAuthorizationService.method.check, { streamReceiptId: decision.auditReceiptId })
     throw new Error('receipt renewal exceeded its deadline')
   } catch (error) {
     expect(error).toBeInstanceOf(OfzError)

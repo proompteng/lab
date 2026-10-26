@@ -13,7 +13,7 @@ import { chromium, expect as browserExpect } from '@playwright/test'
 import { Pool } from 'pg'
 import { z } from 'zod'
 import { accessCommandSchema, MAX_ACCESS_COMMAND_BYTES } from './access-schemas'
-import { createSpiffeFixture } from '../platform/spiffe.fixture'
+import { createSpiffeFixture } from './spiffe.fixture'
 
 void mock.module('server-only', () => ({}))
 const identityTest = process.env.OFZ_IDENTITY_FIXTURE === '1' ? test : test.skip
@@ -439,7 +439,7 @@ identityTest(
       { stdio: 'ignore' },
     )
     // The HTTPS adapter executes the actual route functions. Only HTML and GitHub are fixtures.
-    const { ofzCall: realOfzCall, OfzError, isOfzConfigured } = await import('../platform/ofz')
+    const { ofzCall: realOfzCall, OfzError, isOfzConfigured } = await import('./ofz')
     let loseEstablishmentReply = true
     let loseCommandReply = false
     const establishmentAttempts: string[] = []
@@ -463,7 +463,7 @@ identityTest(
       return result
     }
     // Simulate one lost reply after the real Ofz transaction and RPC have succeeded.
-    void mock.module('../platform/ofz', () => ({ ofzCall: withReplyLoss, OfzError, isOfzConfigured }))
+    void mock.module('./ofz', () => ({ ofzCall: withReplyLoss, OfzError, isOfzConfigured }))
     const { getTengriIdentity } = await import('./auth')
     const authRoute = await import('@/app/api/auth/[...all]/route')
     const { verifyGithubIdentity } = await import('./github-identity')
@@ -818,8 +818,8 @@ identityTest(
     const firstApi = await startApi(firstApiPort)
     await startApi(secondApiPort)
     const apiEndpoint = await routingEndpoint(ofzPort, firstApiPort)
-    const { ofzCall } = await import('../platform/ofz')
-    const { TengriAuthorizationService } = await import('../generated/proompteng/authz/v1/authz_pb')
+    const { ofzCall } = await import('./ofz')
+    const { TengriAuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
     await ofzCall(TengriAuthorizationService.method.getPolicyState, {}).catch((error) => {
       throw new Error('Ofz wire handshake failed', { cause: error.cause || error })
     })

@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { toBinary } from '@bufbuild/protobuf'
-import { RequestContextSchema, type RequestContext } from '../generated/proompteng/authz/v1/authz_pb'
+import { RequestContextSchema, type RequestContext } from './generated/proompteng/authz/v1/authz_pb'
 
 const uuid = /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 

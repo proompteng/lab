@@ -1,10 +1,10 @@
 import { z } from 'zod'
 import { toJson } from '@bufbuild/protobuf'
-import { GetExecutionResponseSchema, RelayService } from '@/lib/generated/proompteng/relay/v1/relay_pb'
+import { GetExecutionResponseSchema, RelayService } from '@/lib/tengri/generated/proompteng/relay/v1/relay_pb'
 import { relayCall } from '@/lib/platform/relay'
 import { relayEnvelope } from '@/lib/platform/relay-envelope'
 import { noStoreHeaders, readTengriJsonBody, tengriRouteError } from '@/lib/tengri/http'
-import { OfzError } from '@/lib/platform/ofz'
+import { OfzError } from '@/lib/tengri/ofz'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {

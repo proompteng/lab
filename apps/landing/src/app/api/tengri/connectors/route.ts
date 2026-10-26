@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { relayCall } from '@/lib/platform/relay'
-import { RelayService } from '@/lib/generated/proompteng/relay/v1/relay_pb'
-import { PlatformAuthorizationService } from '@/lib/generated/proompteng/authz/v1/platform_pb'
+import { RelayService } from '@/lib/tengri/generated/proompteng/relay/v1/relay_pb'
+import { PlatformAuthorizationService } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
 import { connectorAgent, getAgent } from '@/lib/tengri/grpc'
 import { humanContext } from '@/lib/tengri/authorization'
 import {
@@ -12,7 +12,7 @@ import {
   requireTengriIdentity,
   tengriRouteError,
 } from '@/lib/tengri/http'
-import { OfzError, ofzCall } from '@/lib/platform/ofz'
+import { OfzError, ofzCall } from '@/lib/tengri/ofz'
 const install = z.strictObject({
   operationId: z.uuid(),
   agentId: z.string().min(1).max(128),

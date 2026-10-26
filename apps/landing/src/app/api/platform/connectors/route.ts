@@ -1,5 +1,5 @@
 import { relayCall } from '@/lib/platform/relay'
-import { RelayService } from '@/lib/generated/proompteng/relay/v1/relay_pb'
+import { RelayService } from '@/lib/tengri/generated/proompteng/relay/v1/relay_pb'
 import { noStoreHeaders, requireSameOriginGet, requireTengriIdentity, tengriRouteError } from '@/lib/tengri/http'
 
 export const dynamic = 'force-dynamic'

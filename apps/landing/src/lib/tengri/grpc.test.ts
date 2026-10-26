@@ -1,16 +1,16 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { create, fromBinary } from '@bufbuild/protobuf'
-import { RequestContextSchema, SessionSchema } from '../generated/proompteng/authz/v1/authz_pb'
+import { RequestContextSchema, SessionSchema } from './generated/proompteng/authz/v1/authz_pb'
 import type { TengriIdentity } from './auth'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
-import { createSpiffeFixture } from '../platform/spiffe.fixture'
+import { createSpiffeFixture } from './spiffe.fixture'
 import { codexModelFixtures } from '../../components/tengri/codex-models.fixture'
 
 void mock.module('server-only', () => ({}))
-const { verifySpiffePeer } = await import('../platform/spiffe')
+const { verifySpiffePeer } = await import('./spiffe')
 
 const secret = '68'.repeat(32)
 const workspaceUid = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
@@ -91,7 +91,7 @@ let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let receiverAudience = '77777777-7777-4777-8777-777777777777'
-let receiverGuestApiProtocolVersion = 10
+let receiverGuestApiProtocolVersion = 9
 let fileWriteCalls = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
@@ -805,12 +805,12 @@ describe('Tengri gRPC BFF transport', () => {
       receiverAudience = '77777777-7777-4777-8777-777777777777'
     }
   })
-  test('accepts guest API 10 before sending canonical file writes', async () => {
+  test('accepts guest API 9 before sending canonical file writes', async () => {
     const { writeFile } = await import('./grpc')
     const before = fileWriteCalls
     const previous = receiverGuestApiProtocolVersion
     try {
-      receiverGuestApiProtocolVersion = 10
+      receiverGuestApiProtocolVersion = 9
       await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
       expect(fileWriteCalls).toBe(before + 1)
     } finally {
@@ -822,7 +822,7 @@ describe('Tengri gRPC BFF transport', () => {
     const { writeFile } = await import('./grpc')
     const before = fileWriteCalls
     try {
-      for (const version of [0, 4, 5, 6, 7, 8, 9, 11]) {
+      for (const version of [0, 4, 5, 6, 7, 8, 10]) {
         receiverGuestApiProtocolVersion = version
         expect(
           await rejection(writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')),
@@ -830,7 +830,7 @@ describe('Tengri gRPC BFF transport', () => {
         expect(fileWriteCalls).toBe(before)
       }
     } finally {
-      receiverGuestApiProtocolVersion = 10
+      receiverGuestApiProtocolVersion = 9
     }
     await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
     expect(fileWriteCalls).toBe(before + 1)

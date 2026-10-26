@@ -44,11 +44,11 @@ import {
   workspaceRemovalComplete,
   type LifecycleIntent,
 } from './lifecycle-command'
-import type { CommandReceipt } from '../generated/proompteng/authz/v1/authz_pb'
+import type { CommandReceipt } from './generated/proompteng/authz/v1/authz_pb'
 import { readTengriBffSecret } from './runtime-secrets'
-import { OfzError } from '../platform/ofz'
+import { OfzError } from './ofz'
 import { parseCodexModelPage, type TengriCodexOptions } from './codex-models'
-import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from '../platform/spiffe'
+import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 import { codexHistoryResponse } from './codex-history-stream'
 import { codexRunSchema, type TengriCodexRun } from './codex-run'
@@ -1048,7 +1048,7 @@ async function metadata(
   const { injectTrace } = await import('@/lib/observability/server')
   injectTrace((key, header) => value.set(key, header))
   const binding = await invokeUnary<RawRecord>(client, 'getRequestAudience', {}, value, 2000, signal)
-  if (binding.guestApiProtocolVersion !== 10) {
+  if (binding.guestApiProtocolVersion !== 9) {
     throw new TengriUnavailableError('Tengri controller does not support the required guest API version')
   }
   if (typeof binding.audience !== 'string') throw new TengriUnavailableError('Tengri request audience is missing')

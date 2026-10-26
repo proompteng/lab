@@ -10,7 +10,6 @@ on:
       - 'packages/platform-client/**'
       - 'proto/proompteng/relay/**'
       - 'apps/landing/src/lib/platform/**'
-      - 'apps/landing/src/lib/generated/**'
       - 'apps/landing/src/app/api/platform/**'
       - 'services/tengri/**'
       - 'services/nanoagent/**'
@@ -83,7 +82,6 @@ on:
       - 'packages/platform-client/**'
       - 'proto/proompteng/relay/**'
       - 'apps/landing/src/lib/platform/**'
-      - 'apps/landing/src/lib/generated/**'
       - 'apps/landing/src/app/api/platform/**'
       - 'services/nanoagent/**'
       - 'services/ofz/**'
@@ -174,7 +172,7 @@ jobs:
       - name: Verify generated authorization client
         run: |
           buf generate --template services/ofz/buf.gen.yaml --path proto/proompteng/authz --path proto/proompteng/relay
-          git diff --exit-code -- apps/landing/src/lib/generated
+          git diff --exit-code -- apps/landing/src/lib/tengri/generated
       - name: Verify real browser identity and shared sessions
         run: bash services/ofz/test-control.sh identity
 

@@ -1,7 +1,7 @@
 import { create, fromBinary } from '@bufbuild/protobuf'
 import { describe, expect, test } from 'bun:test'
 import vector from '../../../../../services/tengri/fixtures/ofz-request-v2.json'
-import { ActorSchema, RequestContextSchema } from '../generated/proompteng/authz/v1/authz_pb'
+import { ActorSchema, RequestContextSchema } from './generated/proompteng/authz/v1/authz_pb'
 import { signTengriMetadata } from './internal-auth'
 
 const context = () => fromBinary(RequestContextSchema, Buffer.from(vector.contextBase64, 'base64'))

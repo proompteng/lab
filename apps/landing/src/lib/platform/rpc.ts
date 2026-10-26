@@ -11,7 +11,7 @@ import {
   type MessageInitShape,
   type MessageShape,
 } from '@bufbuild/protobuf'
-import { SpiffeSource, verifySpiffePeer } from './spiffe'
+import { SpiffeSource, verifySpiffePeer } from '../tengri/spiffe'
 
 export function attestedCaller(configuration: () => { target: string; peer: string }) {
   let source: SpiffeSource | undefined
