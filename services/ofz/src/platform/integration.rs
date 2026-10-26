@@ -1173,6 +1173,8 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     assert_eq!(provider_error.code(), Code::PermissionDenied);
     assert!(!provider_error.message().contains("PRIVATE_PROVIDER_ERROR"));
     assert_eq!(connection.query_one("SELECT count(*) FROM ofz.platform_executions WHERE operation_id=$1 AND outcome='failed' AND upstream_status=403",&[&Uuid::parse_str(&denied.operation_id).unwrap()]).await.unwrap().get::<_,i64>(0),1);
+    enrollment_refresh.abort();
+    assert!(enrollment_refresh.await.unwrap_err().is_cancelled());
     let before = requests.load(std::sync::atomic::Ordering::SeqCst);
     mutations::execute(
         &database,
@@ -1186,6 +1188,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     )
     .await
     .unwrap();
+    relay.refresh_enrollment().await;
     assert_eq!(
         relay
             .get_execution(delegated_lookup(&completed_payload, &created))
@@ -1226,14 +1229,12 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     let renewed = mutations::execute(&database, &native, policy::BFF_ID, Command::Create(renewal))
         .await
         .unwrap();
-    assert_eq!(
-        relay
-            .get_execution(delegated_lookup(&completed_payload, &renewed))
-            .await
-            .unwrap_err()
-            .code(),
-        Code::Unauthenticated
-    );
+    relay.refresh_enrollment().await;
+    let inactive = relay
+        .get_execution(delegated_lookup(&completed_payload, &renewed))
+        .await
+        .unwrap_err();
+    assert_eq!(inactive.code(), Code::Unauthenticated, "{inactive}");
     mutations::execute(
         &database,
         &native,
@@ -1247,6 +1248,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     )
     .await
     .unwrap();
+    relay.refresh_enrollment().await;
     let recovered = relay
         .get_execution(delegated_lookup(&completed_payload, &renewed))
         .await
@@ -1284,6 +1286,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     .await
     .unwrap();
     assert!(revoked.version > renewed.version);
+    relay.refresh_enrollment().await;
     connection
         .execute(
             "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
@@ -1437,6 +1440,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     )
     .await
     .unwrap();
+    relay.refresh_enrollment().await;
     assert_eq!(
         relay
             .get_execution(delegated_lookup(&completed_payload, &rebound))
@@ -1571,6 +1575,7 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     )
     .await
     .unwrap();
+    relay.refresh_enrollment().await;
     assert_eq!(
         relay
             .get_execution(delegated_lookup_binding(
@@ -1598,7 +1603,6 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     );
     grpc.abort();
     kube_task.abort();
-    enrollment_refresh.abort();
 }
 async fn kubernetes_fixture(
     directory: &std::path::Path,

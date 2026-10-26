@@ -199,17 +199,21 @@ The default `cache.nixos.org` fallback remains available for Nixpkgs
 dependencies, so CI should not duplicate broad upstream Nixpkgs closures into
 Attic.
 
-Image builds and cache downloads have a default 20-minute deadline, configurable
-through the existing `image_build_timeout` input. Archive uploads have a
+Image builds and cache downloads have one shared 45-minute deadline. Cold JVM
+images need time to download large JDK dependencies from the public cache
+before they can populate Attic; shorter per-image deadlines interrupted those
+downloads and made the retry start them again. Archive uploads have a separate
 30-minute deadline. The shared workflow records upload success or failure for
 every image size.
 
-Attic chunks large NARs at a 1 MiB average, with 256 KiB minimum and 4 MiB
-maximum chunks. The former 64 KiB average produced about 32,768 chunk references
-for a 2 GiB archive and saturated PostgreSQL WAL sync during concurrent CI
-uploads. The larger chunks reduce that metadata work by about sixteenfold.
-Changing the chunk boundaries temporarily reduces deduplication against older
-uploads; existing cached NARs retain their recorded chunks.
+Attic chunks NARs of at least 16 MiB at a 16 MiB average, with 4 MiB minimum
+and 32 MiB maximum chunks. A 2 GiB archive therefore needs roughly 128 chunk
+references. The server releases each chunk through a separate database task;
+the former 1 MiB average generated about 2,000 tasks per large upload and
+exhausted the connection pool during concurrent CI uploads. The 32 MiB maximum
+bounds each upload's chunk buffers. Changing boundaries temporarily reduces
+deduplication against older uploads; existing cached NARs retain their recorded
+chunks.
 
 The helper refuses to run without a token:
 

@@ -4,13 +4,24 @@ import type { OperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { chartAssessments, makeChartDecisionsRequest, type ChartAssessments } from './chart-questions'
+import {
+  chartAssessments,
+  makeChartDecisionsRequest,
+  type ChartAssessments,
+  type ChartAssessmentsMaterial,
+} from './chart-questions'
 import { JevClient, type JevError, type JevInference } from './client'
 import { decodeJevResponse, JevFailure, JevResponseSchema, type JevRequest } from './contract'
 import { DecisionsClient, type DecisionsError, type DecisionsInference, type DecisionsUsageSchema } from './decisions'
 import { jevEntryEconomics } from './entry-economics'
 import { prepareEntryInferenceInput, type EntryInferenceInput } from './entry-inference-input'
-import { makeEntryProposals, EntrySetup, ProposalRejection, type EntryProposal } from './entry-proposals'
+import {
+  mayHaveFundableSourceProposal,
+  makeEntryProposals,
+  EntrySetup,
+  ProposalRejection,
+  type EntryProposal,
+} from './entry-proposals'
 import { makeEntryJudgmentRequest } from './entry-questions'
 
 export type VisualFailureEvidence = {
@@ -23,7 +34,8 @@ type ProposalEvaluation = {
   readonly proposals: readonly EntryProposal[]
   readonly rejections: readonly { readonly setup: EntrySetup; readonly reason: ProposalRejection }[]
 }
-type HandoffDisposition =
+type HandoffDispositionFor<A extends ChartAssessmentsMaterial> =
+  | { readonly status: 'SOURCE_INFEASIBLE' }
   | { readonly status: 'VISUAL_FAILED'; readonly failure: VisualFailureEvidence }
   | {
       readonly status: 'PREPARATION_FAILED'
@@ -33,26 +45,32 @@ type HandoffDisposition =
   | {
       readonly status: 'NO_FUNDED_PROPOSALS'
       readonly visual: DecisionsInference
-      readonly assessments: ChartAssessments
+      readonly assessments: A
       readonly evaluation: ProposalEvaluation
     }
   | {
       readonly status: 'READY'
       readonly visual: DecisionsInference
-      readonly assessments: ChartAssessments
+      readonly assessments: A
       readonly evaluation: ProposalEvaluation
       readonly jevRequest: JevRequest
       readonly jevRequestHash: string
     }
 
+type HandoffDisposition = HandoffDispositionFor<ChartAssessments>
+
 export interface EntryHandoff {
-  readonly schemaVersion: 'bayn.entry-handoff.v1'
+  readonly schemaVersion: 'bayn.entry-handoff.v2'
   readonly requestId: string
   readonly inputHash: string
   readonly visualRequestHash: string
   readonly recordedAt: string
   readonly disposition: HandoffDisposition
   readonly handoffHash: string
+}
+export type EntryHandoffMaterial = Omit<EntryHandoff, 'disposition' | 'schemaVersion'> & {
+  readonly schemaVersion: 'bayn.entry-handoff.v1' | 'bayn.entry-handoff.v2'
+  readonly disposition: HandoffDispositionFor<ChartAssessmentsMaterial>
 }
 
 export class EntryInferenceJournal extends Context.Service<
@@ -103,19 +121,49 @@ const rejectedJevUsage = (error: JevError, expectedRequestHash: string) => {
     : null
 }
 
-export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual: DecisionsInference) =>
-  Result.gen(function* () {
-    const chart = yield* makeNativeChartEvidence(input.chartSource)
-    return yield* deriveEntryDispositionForChart(input, visual, chart)
-  })
-
-export const deriveEntryDispositionForChart = (
-  input: Pick<EntryInferenceInput, 'numericalState' | 'protocol' | 'funding'>,
-  visual: DecisionsInference,
+export const hasFeasibleEntrySource = (
+  input: Pick<EntryInferenceInput, 'protocol' | 'funding'>,
   chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
 ) =>
   Result.gen(function* () {
-    const assessments = yield* chartAssessments(chart, visual.response)
+    const economics = yield* jevEntryEconomics({
+      protocol: input.protocol,
+      symbol: chart.symbol,
+      bidMicros: BigInt(input.funding.bidMicros),
+      askMicros: BigInt(input.funding.askMicros),
+      capitalMicros: input.funding.capitalMicros,
+      cryptoFeeTier: input.funding.cryptoFeeTier,
+    })
+    return economics === null
+      ? false
+      : yield* mayHaveFundableSourceProposal({
+          chart,
+          economics,
+          protocol: input.protocol,
+          bidMicros: BigInt(input.funding.bidMicros),
+        })
+  })
+
+export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual: DecisionsInference) =>
+  Result.gen(function* () {
+    const chart = yield* makeNativeChartEvidence(input.chartSource)
+    return yield* deriveEntryDispositionForChart(
+      input,
+      visual,
+      chart,
+      yield* chartAssessments(chart, visual.response),
+      makeEntryJudgmentRequest,
+    )
+  })
+
+export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMaterial>(
+  input: Pick<EntryInferenceInput, 'numericalState' | 'protocol' | 'funding'>,
+  visual: DecisionsInference,
+  chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
+  assessments: A,
+  prepareJudgments: typeof makeEntryJudgmentRequest,
+) =>
+  Result.gen(function* () {
     const economics = yield* jevEntryEconomics({
       protocol: input.protocol,
       symbol: chart.symbol,
@@ -140,14 +188,14 @@ export const deriveEntryDispositionForChart = (
             protocol: input.protocol,
             bidMicros: BigInt(input.funding.bidMicros),
           })
-    const jev = yield* makeEntryJudgmentRequest({
+    const jev = yield* prepareJudgments({
       numericalState: input.numericalState,
       chart,
       assessments,
       proposals: evaluation.proposals,
     })
     return jev === null
-      ? ({ status: 'NO_FUNDED_PROPOSALS', visual, assessments, evaluation } satisfies HandoffDisposition)
+      ? ({ status: 'NO_FUNDED_PROPOSALS', visual, assessments, evaluation } as const)
       : ({
           status: 'READY',
           visual,
@@ -155,7 +203,7 @@ export const deriveEntryDispositionForChart = (
           evaluation,
           jevRequest: jev.request,
           jevRequestHash: jev.requestHash,
-        } satisfies HandoffDisposition)
+        } as const)
   })
 
 export const evaluateClaimedEntryInference = (claim: {
@@ -192,7 +240,7 @@ export const evaluateClaimedEntryInference = (claim: {
       })
     const chart = yield* Effect.fromResult(makeNativeChartEvidence(prepared.input.chartSource))
     const visualRequest = yield* Effect.fromResult(makeChartDecisionsRequest(chart))
-    const decisions = yield* DecisionsClient
+    const feasible = yield* Effect.fromResult(hasFeasibleEntrySource(prepared.input, chart))
     const journal = yield* EntryInferenceJournal
     const visualNow = yield* Clock.currentTimeMillis
     if (visualNow >= expires || visualNow < now)
@@ -200,54 +248,59 @@ export const evaluateClaimedEntryInference = (claim: {
         category: 'DEADLINE',
         message: 'Original evidence window expired before chart dispatch',
       })
-    const visual = yield* decisions.evaluate(visualRequest.request, expires - visualNow).pipe(
-      Effect.timeoutOrElse({
-        duration: expires - visualNow,
-        orElse: () =>
-          Effect.fail(
-            new EntryInferenceError({
-              category: 'DEADLINE',
-              message: 'Original evidence window expired during chart inference',
-            }),
-          ),
-      }),
-      Effect.result,
-    )
     let disposition: HandoffDisposition
-    if (Result.isFailure(visual)) {
-      const failure = visual.failure
-      disposition = {
-        status: 'VISUAL_FAILED',
-        failure:
-          failure instanceof EntryInferenceError
-            ? { category: 'DEADLINE', httpStatus: null, responseHash: null, usage: null }
-            : {
-                category: failure.category,
-                httpStatus: failure.status ?? null,
-                responseHash: failure.requestHash === visualRequest.requestHash ? (failure.responseHash ?? null) : null,
-                usage: failure.requestHash === visualRequest.requestHash ? (failure.usage ?? null) : null,
-              },
-      }
-    } else {
-      const expectedResponseHash = yield* Effect.fromResult(canonicalHashV1Result(visual.success.response))
-      const visualReturnedAt = yield* Clock.currentTimeMillis
-      const sourceBound =
-        visual.success.requestHash === visualRequest.requestHash &&
-        visual.success.responseHash === expectedResponseHash &&
-        Date.parse(visual.success.startedAt) >= now &&
-        visual.success.completedAt >= visual.success.startedAt &&
-        Date.parse(visual.success.completedAt) <= visualReturnedAt
-      if (!sourceBound)
-        disposition = { status: 'PREPARATION_FAILED', visual: visual.success, reason: 'VISUAL_RECEIPT_MISMATCH' }
-      else {
-        const derived = deriveEntryHandoffDisposition(prepared.input, visual.success)
-        disposition = Result.isSuccess(derived)
-          ? derived.success
-          : { status: 'PREPARATION_FAILED', visual: visual.success, reason: 'DERIVATION_CONTRACT' }
+    if (!feasible) disposition = { status: 'SOURCE_INFEASIBLE' }
+    else {
+      const decisions = yield* DecisionsClient
+      const visual = yield* decisions.evaluate(visualRequest.request, expires - visualNow).pipe(
+        Effect.timeoutOrElse({
+          duration: expires - visualNow,
+          orElse: () =>
+            Effect.fail(
+              new EntryInferenceError({
+                category: 'DEADLINE',
+                message: 'Original evidence window expired during chart inference',
+              }),
+            ),
+        }),
+        Effect.result,
+      )
+      if (Result.isFailure(visual)) {
+        const failure = visual.failure
+        disposition = {
+          status: 'VISUAL_FAILED',
+          failure:
+            failure instanceof EntryInferenceError
+              ? { category: 'DEADLINE', httpStatus: null, responseHash: null, usage: null }
+              : {
+                  category: failure.category,
+                  httpStatus: failure.status ?? null,
+                  responseHash:
+                    failure.requestHash === visualRequest.requestHash ? (failure.responseHash ?? null) : null,
+                  usage: failure.requestHash === visualRequest.requestHash ? (failure.usage ?? null) : null,
+                },
+        }
+      } else {
+        const expectedResponseHash = yield* Effect.fromResult(canonicalHashV1Result(visual.success.response))
+        const visualReturnedAt = yield* Clock.currentTimeMillis
+        const sourceBound =
+          visual.success.requestHash === visualRequest.requestHash &&
+          visual.success.responseHash === expectedResponseHash &&
+          Date.parse(visual.success.startedAt) >= now &&
+          visual.success.completedAt >= visual.success.startedAt &&
+          Date.parse(visual.success.completedAt) <= visualReturnedAt
+        if (!sourceBound)
+          disposition = { status: 'PREPARATION_FAILED', visual: visual.success, reason: 'VISUAL_RECEIPT_MISMATCH' }
+        else {
+          const derived = deriveEntryHandoffDisposition(prepared.input, visual.success)
+          disposition = Result.isSuccess(derived)
+            ? derived.success
+            : { status: 'PREPARATION_FAILED', visual: visual.success, reason: 'DERIVATION_CONTRACT' }
+        }
       }
     }
     const material = {
-      schemaVersion: 'bayn.entry-handoff.v1' as const,
+      schemaVersion: 'bayn.entry-handoff.v2' as const,
       requestId: claim.requestId,
       inputHash: prepared.requestHash,
       visualRequestHash: visualRequest.requestHash,

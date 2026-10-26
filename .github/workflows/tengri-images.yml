@@ -276,7 +276,7 @@ jobs:
       - build
       - validate-tengri
       - validate-nanoagent
-    runs-on: arc-arm64
+    runs-on: arc-amd64-publish
     timeout-minutes: 30
     permissions:
       contents: read
@@ -296,9 +296,6 @@ jobs:
           [[ "${source_sha}" == "${expected_source_sha}" ]]
           printf 'source_sha=%s\n' "${source_sha}" >> "${GITHUB_OUTPUT}"
           printf 'source_timestamp=%s\n' "$(git show -s --format=%cI HEAD)" >> "${GITHUB_OUTPUT}"
-
-      - name: Set up Docker Buildx
-        uses: ./.github/actions/setup-buildkit
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.10.0

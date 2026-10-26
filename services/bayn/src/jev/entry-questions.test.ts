@@ -26,8 +26,7 @@ const fixture = () => {
   const anchors: Readonly<Record<string, number>> = {
     support_anchor: 0,
     resistance_anchor: 2,
-    base_first_bar: 0,
-    base_last_bar: 1,
+    base_last_bar: 0,
   }
   const assessments = Result.getOrThrow(
     chartAssessments(chart, {
@@ -42,7 +41,7 @@ const fixture = () => {
               confidence: 0.8,
               probabilities: question.choices.map((choice, index) => ({
                 value: choice.value,
-                probability: index === anchors[question.name] ? 1 : 0,
+                probability: index === (anchors[question.name] ?? 0) ? 1 : 0,
               })),
             },
       ),

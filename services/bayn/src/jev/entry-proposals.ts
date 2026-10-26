@@ -5,7 +5,7 @@ import { canonicalHashV1Result } from '../hash'
 import { PositiveIntegerSchema, Sha256Schema, SymbolSchema, UtcInstantSchema } from '../schemas'
 import { numberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import type { NativeChartEvidence } from './chart-evidence'
-import type { ChartAssessments } from './chart-questions'
+import type { ChartAssessmentsMaterial } from './chart-questions'
 import { JevContractError } from './contract'
 import type { JevEntryEconomics } from './entry-economics'
 import { jevExitLimitValue } from './liquidation-economics'
@@ -74,6 +74,7 @@ export type EntryProposal = typeof EntryProposalSchema.Type
 export enum ProposalRejection {
   NoQuantity = 'NO_BUY_QUANTITY',
   ChartRefused = 'CHART_EVIDENCE_REFUSED',
+  NoStructure = 'STRUCTURE_NOT_IDENTIFIED',
   IncoherentStructure = 'SOURCE_STRUCTURE_INCOHERENT',
   InvalidPrices = 'INVALID_PROTECTIVE_PRICES',
   Unfunded = 'TARGET_DOES_NOT_COVER_COSTS',
@@ -86,9 +87,98 @@ const sourcePrice = (value: number) =>
     return yield* scaledNumber(Number(BigDecimal.scale(rounded, 6).value), 'proposal source price', 1)
   })
 
+type ProposalFundingInput = {
+  readonly symbol: string
+  readonly economics: JevEntryEconomics
+  readonly protocol: JevProtocol
+  readonly bidMicros: bigint
+  readonly stop: bigint
+  readonly target: bigint
+}
+
+const fundProposalPrices = (input: ProposalFundingInput) =>
+  Result.gen(function* () {
+    const { symbol, economics, protocol, bidMicros, stop, target } = input
+    const stopLimit = quantizeInstrumentPriceMicros(
+      symbol,
+      (stop * BigInt(10_000 - protocol.maximumEntryLimitSlippageBps) + 9_999n) / 10_000n,
+      'UP',
+    )
+    if (stopLimit <= 0n || stopLimit > stop || stop >= bidMicros || target <= BigInt(economics.maximumEntryPriceMicros))
+      return { status: 'REJECTED', reason: ProposalRejection.InvalidPrices } as const
+    const liquidation = { protocol, symbol, quantityAtoms: BigInt(economics.receivedQuantityAtoms) }
+    const stopValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: stopLimit })
+    const targetValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: target })
+    const acquisition = BigInt(economics.acquisitionCostMicros)
+    if (
+      stopValue.conservativeNetMicros <= 0n ||
+      stopValue.conservativeNetMicros >= acquisition ||
+      targetValue.conservativeNetMicros <= acquisition
+    )
+      return { status: 'REJECTED', reason: ProposalRejection.Unfunded } as const
+    return {
+      status: 'FUNDED',
+      stopLimit,
+      stopNet: stopValue.conservativeNetMicros,
+      targetNet: targetValue.conservativeNetMicros,
+    } as const
+  })
+
+export const mayHaveFundableSourceProposal = (input: {
+  readonly chart: NativeChartEvidence
+  readonly economics: JevEntryEconomics
+  readonly protocol: JevProtocol
+  readonly bidMicros: bigint
+}) =>
+  Result.gen(function* () {
+    const { chart, economics, protocol, bidMicros } = input
+    const sourcePrices = chart.bars.map((bar) => Result.all({ high: sourcePrice(bar.high), low: sourcePrice(bar.low) }))
+    // An unselected, unrepresentable bar cannot prove that every selectable proposal is unfundable.
+    if (sourcePrices.some(Result.isFailure)) return true
+    const prices = yield* Result.all(sourcePrices)
+    const highest = prices.reduce((maximum, price) => (price.high > maximum ? price.high : maximum), 0n)
+    const target = quantizeInstrumentPriceMicros(chart.symbol, highest - 1n, 'DOWN')
+    for (const price of prices) {
+      const funding = yield* fundProposalPrices({
+        symbol: chart.symbol,
+        economics,
+        protocol,
+        bidMicros,
+        stop: quantizeInstrumentPriceMicros(chart.symbol, price.low - 1n, 'DOWN'),
+        target,
+      })
+      if (funding.status === 'FUNDED') return true
+    }
+    for (const [first, initial] of prices.entries()) {
+      let high = initial.high
+      let low = initial.low
+      for (let last = first + 1; last < prices.length - 1; last++) {
+        const previousBar = chart.bars[last - 1]
+        const lastBar = chart.bars[last]
+        const price = prices[last]
+        if (previousBar === undefined || lastBar === undefined || price === undefined)
+          return yield* Result.fail(new JevContractError({ message: 'Source feasibility window is inconsistent' }))
+        if (previousBar.minuteBeforeWindowEnd !== lastBar.minuteBeforeWindowEnd + 1) break
+        high = price.high > high ? price.high : high
+        low = price.low < low ? price.low : low
+        if (high <= low || bidMicros <= high) continue
+        const funding = yield* fundProposalPrices({
+          symbol: chart.symbol,
+          economics,
+          protocol,
+          bidMicros,
+          stop: quantizeInstrumentPriceMicros(chart.symbol, low - 1n, 'DOWN'),
+          target: quantizeInstrumentPriceMicros(chart.symbol, high + high - low, 'DOWN'),
+        })
+        if (funding.status === 'FUNDED') return true
+      }
+    }
+    return false
+  })
+
 export const makeEntryProposals = (input: {
   readonly chart: NativeChartEvidence
-  readonly assessments: ChartAssessments
+  readonly assessments: ChartAssessmentsMaterial
   readonly economics: JevEntryEconomics
   readonly protocol: JevProtocol
   readonly bidMicros: bigint
@@ -122,26 +212,16 @@ export const makeEntryProposals = (input: {
       return yield* Result.fail(new JevContractError({ message: 'Proposal requires identified source bars' }))
     const add = (source: typeof ProposalMaterial.fields.source.Type, stop: bigint, target: bigint) =>
       Result.gen(function* () {
-        const entry = BigInt(economics.maximumEntryPriceMicros)
-        const stopLimit = quantizeInstrumentPriceMicros(
-          chart.symbol,
-          (stop * BigInt(10_000 - protocol.maximumEntryLimitSlippageBps) + 9_999n) / 10_000n,
-          'UP',
-        )
-        if (stopLimit <= 0n || stopLimit > stop || stop >= bidMicros || target <= entry) {
-          reject(source.setup, ProposalRejection.InvalidPrices)
-          return
-        }
-        const liquidation = { protocol, symbol: chart.symbol, quantityAtoms: BigInt(economics.receivedQuantityAtoms) }
-        const stopValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: stopLimit })
-        const targetValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: target })
-        const acquisition = BigInt(economics.acquisitionCostMicros)
-        if (
-          stopValue.conservativeNetMicros <= 0n ||
-          stopValue.conservativeNetMicros >= acquisition ||
-          targetValue.conservativeNetMicros <= acquisition
-        ) {
-          reject(source.setup, ProposalRejection.Unfunded)
+        const funding = yield* fundProposalPrices({
+          symbol: chart.symbol,
+          economics,
+          protocol,
+          bidMicros,
+          stop,
+          target,
+        })
+        if (funding.status === 'REJECTED') {
+          reject(source.setup, funding.reason)
           return
         }
         const material = yield* Schema.decodeUnknownResult(ProposalMaterial)({
@@ -155,22 +235,24 @@ export const makeEntryProposals = (input: {
           maximumHoldingMinutes: protocol.maximumHoldingMinutes,
           maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
           stopPriceMicros: stop.toString(),
-          stopLimitPriceMicros: stopLimit.toString(),
+          stopLimitPriceMicros: funding.stopLimit.toString(),
           profitLimitPriceMicros: target.toString(),
           funding: {
             maximumQuantityAtoms: economics.maximumQuantityAtoms,
             receivedQuantityAtoms: economics.receivedQuantityAtoms,
             maximumTargetWeight: economics.maximumTargetWeight,
             acquisitionCostMicros: economics.acquisitionCostMicros,
-            estimatedStopNetMicros: stopValue.conservativeNetMicros.toString(),
-            estimatedTargetNetMicros: targetValue.conservativeNetMicros.toString(),
+            estimatedStopNetMicros: funding.stopNet.toString(),
+            estimatedTargetNetMicros: funding.targetNet.toString(),
           },
         })
         proposals.push({ ...material, proposalId: yield* canonicalHashV1Result(material) })
       })
 
     const { support, resistance, base } = assessments
-    if (
+    if (support.anchor.status === 'NOT_IDENTIFIED' || resistance.anchor.status === 'NOT_IDENTIFIED') {
+      reject(EntrySetup.SupportRecovery, ProposalRejection.NoStructure)
+    } else if (
       support.presence.status === 'REFUSED' ||
       resistance.presence.status === 'REFUSED' ||
       support.anchor.status === 'REFUSED' ||
@@ -193,7 +275,13 @@ export const makeEntryProposals = (input: {
         quantizeInstrumentPriceMicros(chart.symbol, high - 1n, 'DOWN'),
       )
     }
-    if (base.presence.status === 'REFUSED' || base.first.status === 'REFUSED' || base.last.status === 'REFUSED') {
+    if (base.first.status === 'NOT_IDENTIFIED' || base.last.status === 'NOT_IDENTIFIED') {
+      reject(EntrySetup.BaseBreakout, ProposalRejection.NoStructure)
+    } else if (
+      base.presence.status === 'REFUSED' ||
+      base.first.status === 'REFUSED' ||
+      base.last.status === 'REFUSED'
+    ) {
       reject(EntrySetup.BaseBreakout, ProposalRejection.ChartRefused)
     } else {
       const first = yield* barFor(base.first.barId)

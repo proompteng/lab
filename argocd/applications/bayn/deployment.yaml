@@ -88,25 +88,16 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "60c3149349abb7bbfb763c7418d4c12065cb56c3554ea9cbbf1667bc720379c5"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "897ff8cb54a059b08a4d5b79da5d05a9d08605f3c42b6e50fce05aa3600c5662"
+              value: "a78704828c7a35005ea20f4c1d20d4b318f26df292d5f39f1ab22c2ddd7f23f7"
             # Runtime verifies the reviewed activation identity against its compiled strategy contract.
             - name: BAYN_STRATEGY_NAME
               value: jev
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "616099d14e8cad145ca103a36e9afce5d7865b6e857b4d3981fccc3d0058b82e"
+              value: "a48e910d15049bea7eaa69c10d36bc36242c1b867ce45f08700973db45f231d7"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
               value: "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab"
             - name: BAYN_BROKER_ACCESS
               value: read-only
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"46ea546cd7bf679c9b56311e8e64c28d6d36dad550d2594fdf04f766cde77e47","authoredActivation":{"sourceRevision":"264735d18ae2075bcde2bd162f68df980b09c13e","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:a8807cea2888383ad6e42713c5e977314324d8b7cdb1362c9005ca57bf0bb3fc"},"activation":{"sourceRevision":"264735d18ae2075bcde2bd162f68df980b09c13e","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:a8807cea2888383ad6e42713c5e977314324d8b7cdb1362c9005ca57bf0bb3fc"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             # sha256("bayn/authority-generation/autonomous-observe-v15")

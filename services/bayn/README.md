@@ -59,12 +59,19 @@ candlestick image from verified completed bars, asks OpenAI Decisions API for ty
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
 
-Entry input v2 scales the volume histogram to the largest observed bar, including fractional crypto quantities.
-An all-zero window has no positive volume height. Migration 148 requires v2 for new requests; current inference rejects
-v1. Read-only financial projection reproduces retained v1 images with their original whole-unit scale so original
-provider usage, partial costs and immutable receipt hashes remain verifiable.
+Entry input v3 scales the volume histogram to the largest observed bar, including fractional crypto quantities.
+An all-zero window has no positive volume height. Base starts are conditional on the identified end: one request asks
+the end and a separate start question for every eligible end, and code consumes only the selected end's start answer.
+Each start choice covers all earlier source bars and an explicit no-base option. Ends must leave at least two base bars
+and one newer completed bar. An unused branch's refusal cannot veto a supported proposal.
+Migration 149 requires input v3 and handoff v2 for new execution; current inference rejects input v1 and v2.
+Late handoffs for original expired requests retain their original financial evidence contract and cannot restart inference.
+Read-only financial projection
+reproduces the original independent questions for both retained versions, with the original whole-unit volume scale
+for v1 and relative scale for v2. Original provider usage, partial costs and immutable receipt hashes remain verifiable.
 The migration requires terminal cycles, flat inventory, settled orders, complete accounting, fresh exact reconciliation
-and no unexpired inference claims. It preserves the active authority generation, capital, loss and turnover history.
+and no unexpired inference claims. It restricts prior PAPER authority for native OBSERVE recovery and a reviewed
+same-account mandate bound to the new question policy. Operator holds, capital, loss and turnover history remain intact.
 
 Jev answers separate Nouls about each proposal's observed setup, stop invalidation and overhead obstruction. Code selects
 supported proposals and binds their prices and funded quantity to protected execution. An unrelated unsupported setup
@@ -105,6 +112,12 @@ pricing or liquidation, and a withdrawn required benchmark still blocks the snap
 contradictory quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
 schema rejection caused by the withdrawal. Original capture receipts retain their exact recorded disposition; old
 rejection receipts cannot be relabeled as accepted evidence.
+
+Before chart dispatch, the native source-feasibility gate rejects only sources for which neither existing proposal
+template can cover the unchanged protective-price and funding rules. `SOURCE_INFEASIBLE` handoffs are independently
+reproduced from the sealed input and record both providers as undispatched at zero cost. Possible sources still use
+the original chart, Jev, deadline and risk gates. See [pre-chart feasibility](../../docs/bayn/pre-chart-feasibility.md)
+for the existing-data proof, verifier and rollout contract.
 
 Native Jev admission commits the verified source observation, sealed batch plan and every requested candidate claim
 in one PostgreSQL transaction before any provider call. Only the successful creator receives dispatch rights. Retries,
@@ -206,7 +219,8 @@ changes to immutable ledger amounts. The calculation retains the original fill p
 nine-decimal broker averages before rounding the reported remaining cost to micros.
 
 Entry inference renders the verified completed bars into a deterministic candlestick PNG. OpenAI Decisions returns
-independent typed chart-presence judgments and source-bar anchors. Code constructs at most one support-recovery and
+typed chart-presence judgments and source-bar anchors, with each base start explicitly conditioned on its end.
+Code constructs at most one support-recovery and
 one base-breakout proposal from those anchors, then retains the exact handoff before Jev receives the proposals and
 numerical market evidence. Jev answers independent questions about setup confirmation, stop invalidation and target
 obstruction. Code selects a supported funded proposal, with every native quote, sizing, funding and order-risk check.
@@ -220,7 +234,7 @@ inference-bound ceiling is rejected before decision construction and again at th
 before a completed-minute boundary remains usable only within its original quote-age limit. Neither provider calls,
 persistence nor a new minute renew the original ten-second inference lifetime.
 
-Protocol v24 and entry input v22 replace their executable predecessors. Migration 147 requires flat settled inventory,
+Protocol v24, entry state v22 and entry input v3 define the current executable contracts. Migration 147 requires flat settled inventory,
 terminal mutation cycles, fresh exact reconciliation, complete accounting and no unexpired provider claims before
 restricting new authority to v24. Activation uses the same account, preserved financial history and native PAPER
 mandate against the verified image delivered through Kargo and GitOps. Historical financial evidence remains immutable.
