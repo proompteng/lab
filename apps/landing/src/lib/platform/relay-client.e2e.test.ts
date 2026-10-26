@@ -3,7 +3,7 @@ import * as grpc from '@grpc/grpc-js'
 import * as loader from '@grpc/proto-loader'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
-import { createSpiffeFixture } from '../tengri/spiffe.fixture'
+import { createSpiffeFixture } from './spiffe.fixture'
 
 const binary = process.env.RELAY_CLIENT_FIXTURE_BIN
 const ownId = 'spiffe://proompteng.ai/ns/opencode/sa/opencode'

@@ -11,7 +11,7 @@ import {
   type MessageInitShape,
   type MessageShape,
 } from '@bufbuild/protobuf'
-import { SpiffeSource, verifySpiffePeer } from '../tengri/spiffe'
+import { SpiffeSource, verifySpiffePeer } from './spiffe'
 
 export function attestedCaller(configuration: () => { target: string; peer: string }) {
   let source: SpiffeSource | undefined
@@ -44,7 +44,7 @@ export function attestedCaller(configuration: () => { target: string; peer: stri
     })
     client = new grpc.Client(target, credentials, {
       'grpc.max_receive_message_length': 1_114_112,
-      'grpc.max_send_message_length': 131_072,
+      'grpc.max_send_message_length': 262_144,
     })
     const current = client
     setTimeout(() => current.close(), Math.max(0, material.expiresAt - Date.now())).unref()

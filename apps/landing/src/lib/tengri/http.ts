@@ -3,7 +3,7 @@ import 'server-only'
 import { getTengriIdentity } from '@/lib/tengri/auth'
 import { TengriUnavailableError } from '@/lib/tengri/grpc'
 import { MAX_EDITABLE_FILE_BYTES } from '@/lib/tengri/schemas'
-import { OfzError } from './ofz'
+import { OfzError } from '../platform/ofz'
 import { reportServerError } from '@/lib/observability/server'
 
 type RateWindow = { count: number; resetsAt: number }

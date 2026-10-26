@@ -4,7 +4,8 @@ on:
     paths:
       - 'services/relay/**'
       - 'apps/landing/src/lib/platform/**'
-      - 'apps/landing/src/lib/tengri/spiffe.fixture.ts'
+      - 'apps/landing/src/lib/generated/**'
+      - 'apps/landing/src/app/api/platform/**'
       - 'packages/platform-client/**'
       - 'services/ofz/**'
       - 'proto/proompteng/authz/**'
@@ -18,7 +19,8 @@ on:
     paths:
       - 'services/relay/**'
       - 'apps/landing/src/lib/platform/**'
-      - 'apps/landing/src/lib/tengri/spiffe.fixture.ts'
+      - 'apps/landing/src/lib/generated/**'
+      - 'apps/landing/src/app/api/platform/**'
       - 'packages/platform-client/**'
       - 'services/ofz/**'
       - 'proto/proompteng/authz/**'
@@ -69,7 +71,7 @@ jobs:
           bun-version: 1.4.2
       - name: Install client fixture dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
-      - name: Verify standalone MCP client with attested TLS peers
+      - name: Verify MCP clients and public proxy with attested TLS peers
         run: bash services/relay/test-client.sh
   image:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

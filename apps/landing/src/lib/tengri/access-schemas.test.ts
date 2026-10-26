@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import { accessCommandSchema, type AccessCommand } from './access-schemas'
-import { ObservationScopeSchema } from './generated/proompteng/authz/v1/authz_pb'
+import { ObservationScopeSchema } from '../generated/proompteng/authz/v1/authz_pb'
 
 const collaborator = {
   action: 'collaborator',

@@ -1,15 +1,10 @@
 import { z } from 'zod'
-import { RelayService } from '@/lib/tengri/generated/proompteng/relay/v1/relay_pb'
+import { toJson } from '@bufbuild/protobuf'
+import { GetExecutionResponseSchema, RelayService } from '@/lib/generated/proompteng/relay/v1/relay_pb'
 import { relayCall } from '@/lib/platform/relay'
+import { relayEnvelope } from '@/lib/platform/relay-envelope'
 import { noStoreHeaders, readTengriJsonBody, tengriRouteError } from '@/lib/tengri/http'
-import { OfzError } from '@/lib/tengri/ofz'
-const envelope = z.strictObject({
-  body: z
-    .string()
-    .min(1)
-    .max(87_384)
-    .regex(/^[A-Za-z0-9+/]*={0,2}$/),
-})
+import { OfzError } from '@/lib/platform/ofz'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
@@ -24,19 +19,19 @@ export async function POST(request: Request) {
     const delegationId = z.uuid().parse(request.headers.get('x-relay-delegation'))
     const proof = request.headers.get('dpop') || ''
     if (!credential || proof.length > 16_384 || !proof) throw new OfzError(401)
-    const body = Buffer.from(envelope.parse(await readTengriJsonBody(request, { maxBytes: 90_000 })).body, 'base64')
-    if (body.length > 65_536) throw new OfzError(400)
-    const result = await relayCall(
-      RelayService.method.execute,
-      {
-        subject: {
-          clientService: 'tengri-web',
-          identity: { case: 'delegation', value: { delegationId, credential, proof } },
-        },
-        body,
+    const envelope = relayEnvelope.parse(await readTengriJsonBody(request, { maxBytes: 360_000 }))
+    const input = {
+      subject: {
+        clientService: 'tengri-web',
+        identity: { case: 'delegation' as const, value: { delegationId, credential, proof } },
       },
-      request.signal,
-    )
+      body: envelope.body,
+    }
+    if (envelope.kind === 'lookup') {
+      const result = await relayCall(RelayService.method.getExecution, input, request.signal)
+      return Response.json(toJson(GetExecutionResponseSchema, result), { headers: noStoreHeaders() })
+    }
+    const result = await relayCall(RelayService.method.execute, input, request.signal)
     return Response.json(
       {
         operationId: result.operationId,

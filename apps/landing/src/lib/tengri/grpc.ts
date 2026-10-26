@@ -44,11 +44,11 @@ import {
   workspaceRemovalComplete,
   type LifecycleIntent,
 } from './lifecycle-command'
-import type { CommandReceipt } from './generated/proompteng/authz/v1/authz_pb'
+import type { CommandReceipt } from '../generated/proompteng/authz/v1/authz_pb'
 import { readTengriBffSecret } from './runtime-secrets'
-import { OfzError } from './ofz'
+import { OfzError } from '../platform/ofz'
 import { parseCodexModelPage, type TengriCodexOptions } from './codex-models'
-import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
+import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from '../platform/spiffe'
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 import { codexHistoryResponse } from './codex-history-stream'
 import { codexRunSchema, type TengriCodexRun } from './codex-run'

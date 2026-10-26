@@ -1,16 +1,16 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { create, fromBinary } from '@bufbuild/protobuf'
-import { RequestContextSchema, SessionSchema } from './generated/proompteng/authz/v1/authz_pb'
+import { RequestContextSchema, SessionSchema } from '../generated/proompteng/authz/v1/authz_pb'
 import type { TengriIdentity } from './auth'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
-import { createSpiffeFixture } from './spiffe.fixture'
+import { createSpiffeFixture } from '../platform/spiffe.fixture'
 import { codexModelFixtures } from '../../components/tengri/codex-models.fixture'
 
 void mock.module('server-only', () => ({}))
-const { verifySpiffePeer } = await import('./spiffe')
+const { verifySpiffePeer } = await import('../platform/spiffe')
 
 const secret = '68'.repeat(32)
 const workspaceUid = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'

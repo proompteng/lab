@@ -73,16 +73,25 @@ not prove connector execution. Production rollout and this acceptance remain out
 
 - `GET /api/platform/policies` returns the current policy version and action/resource catalog.
 - `POST /api/platform/policies` writes declared relationships through Ofz with current administrator authority and MFA.
-- `GET /api/tengri/connectors` returns the shared Relay operations and enrolled target identities.
+- `GET /api/platform/connectors` returns the shared Relay operations and enrolled target identities.
 - `POST /api/tengri/connectors` installs a selected connector/operation/target delegation into the current guest and
   activates it only after acknowledgement. It accepts a stable operation ID, agent ID, connector ID, operation names,
   target names and expiry; the server derives actions, resources and the current execution binding.
 - `DELETE /api/tengri/connectors` revokes the Ofz delegation before removing the guest tool configuration.
-- `/api/platform/relay/agent` forwards the guest's proof-bound exact request body to Relay. It cannot select an identity
-  or client on the guest's behalf.
+- `/api/platform/relay/agent` forwards the guest's proof-bound exact request body to Relay. Its strict envelope requires
+  `kind: "execute"` or `kind: "lookup"` and a canonical base64 body. Lookup signs a distinct body containing the original
+  execution bytes. The proxy cannot select an identity or client on the guest's behalf.
 
 The standalone `relay-client` MCP bridge uses the same operation catalog and execution body with its own registered
 SPIFFE workload identity. It does not route through the Tengri BFF or create a workspace.
+
+Both MCP clients expose operation and receipt IDs in `_meta.relay`. After a lost response they perform one fresh
+authorized status lookup and retain an error result because the original provider response is unavailable. A recorded
+`started` state remains unconfirmed. Neither client resends Execute to recover a transport failure.
+
+Web RPC, SPIFFE and Ofz clients live in `apps/landing/src/lib/platform`; generated contracts live in `src/lib/generated`.
+Tengri owns guest installation and its session/workspace integration. The former shared catalog GET under
+`/api/tengri/connectors` is removed. Web and guest images must roll together for the new required proxy envelope.
 
 See [Ofz service/policy onboarding](../../services/ofz/platform/README.md),
 [Relay execution](../../services/relay/README.md) and [OpenCode integration](../../services/opencode/README.md).
