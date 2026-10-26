@@ -46,18 +46,6 @@ ACTIVE_STATES = ("in_progress", "queued", "waiting", "pending", "requested")
 MAX_LOG_BYTES = 16 * 1024 * 1024
 LOKI_MAX_SAMPLE_AGE_SECONDS = 168 * 3600
 METRICS = {
-    "ci_job_phase_duration_seconds": (
-        "histogram",
-        "Observed job queue, execution and step-phase durations.",
-    ),
-    "ci_buildkit_phase_duration_seconds": (
-        "histogram",
-        "Observed BuildKit exporter durations; may overlap job steps.",
-    ),
-    "ci_workflow_duration_seconds": (
-        "histogram",
-        "Workflow attempt duration from attempt-specific job timestamps.",
-    ),
     "ci_job_collection_delay_seconds": (
         "histogram",
         "Delay from job completion to collection after initial installation.",
@@ -532,22 +520,6 @@ class Store:
                     labels(record),
                     record["collection_delay_seconds"],
                 )
-            for key, value in record["durations"].items():
-                self.observe(
-                    record["job_id"],
-                    key,
-                    "ci_job_phase_duration_seconds",
-                    labels(record, phase=key),
-                    value,
-                )
-            for key, value in cache["durations"].items():
-                self.observe(
-                    record["job_id"],
-                    "buildkit_" + key,
-                    "ci_buildkit_phase_duration_seconds",
-                    labels(record, phase=key),
-                    value,
-                )
             stream = {"service": "ci-observability", "kind": "job", **labels(record)}
             self.db.execute(
                 "INSERT INTO outbox(stamp, labels, line) VALUES (?, ?, ?)",
@@ -594,14 +566,6 @@ class Store:
             ).fetchone()
             if row and row["state"] == "complete":
                 return
-            if record["duration_seconds"] is not None:
-                self.observe(
-                    f"run:{run['id']}:{run['run_attempt']}",
-                    "workflow_execution",
-                    "ci_workflow_duration_seconds",
-                    attrs,
-                    record["duration_seconds"],
-                )
             self.db.execute(
                 "UPDATE attempts SET state='complete', run=? WHERE run_id=? AND attempt=?",
                 (json.dumps(record), run["id"], run["run_attempt"]),
@@ -624,6 +588,8 @@ class Store:
             for name, (kind, help_text) in METRICS.items()
         ]
         for row in self.db.execute("SELECT * FROM aggregates ORDER BY metric, labels"):
+            if row["metric"] not in METRICS:
+                continue
             attrs = json.loads(row["labels"])
             for bound, value in zip(BUCKETS, json.loads(row["buckets"])):
                 output.append(
