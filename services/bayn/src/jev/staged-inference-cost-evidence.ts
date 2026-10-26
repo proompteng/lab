@@ -50,7 +50,8 @@ export interface VisualCostStage {
   readonly claimHash: string | null
   readonly terminalHash: string | null
   readonly skipHash: string | null
-  readonly startedAt: string | undefined
+  readonly tariffAt: string | undefined
+  readonly recordedStartedAt: string | undefined
   readonly outcome: 'UNKNOWN' | 'NOT_DISPATCHED' | 'RECEIVED' | 'REJECTED'
   readonly usage: typeof DecisionsUsageSchema.Type | null
   readonly handoffHash: string | null
@@ -106,7 +107,8 @@ export const readStagedInferenceCostEvidence = (row: {
         claimHash: claim?.claimHash ?? null,
         terminalHash: terminal?.terminalHash ?? null,
         skipHash: skip?.skipHash ?? null,
-        startedAt: outcome?.status === 'RECEIVED' ? outcome.inference.startedAt : claim?.claimedAt,
+        tariffAt: outcome?.status === 'RECEIVED' ? outcome.inference.startedAt : claim?.claimedAt,
+        recordedStartedAt: outcome?.status === 'RECEIVED' ? outcome.inference.startedAt : undefined,
         outcome: zero
           ? 'NOT_DISPATCHED'
           : usage === null
