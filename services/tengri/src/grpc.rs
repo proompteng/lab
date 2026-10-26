@@ -46,7 +46,7 @@ pub mod proto {
 use proto::{
     Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
     CodexEvent, CodexEventKind, CodexHistoryPage, CodexHistoryPart, CodexImage, CodexLogin,
-    CodexModels, CodexRun, CodexThread, CodexThreads, CodexTurn, CreateAgentRequest,
+    CodexModels, CodexRun, CodexRuns, CodexThread, CodexThreads, CodexTurn, CreateAgentRequest,
     CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest,
     Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest, GetCodexAccountRequest,
     GetCodexLoginRequest, GetCodexRunRequest, InterruptCodexTurnRequest,
@@ -956,10 +956,7 @@ impl MicroVmControlPlane for ControlPlane {
             .guest(&principal, &request.agent_id, &request.thread_id)
             .await?;
         if request.archived
-            && let Some(run) = crate::runs::active(self, &principal).await?
-            && run.agent_id == request.agent_id
-            && run.thread_id == request.thread_id
-            && !run.state.terminal()
+            && crate::runs::thread_active(self, &principal, &request.thread_id).await?
         {
             return Err(Status::failed_precondition(
                 "Wait for the response to finish before archiving this chat",
@@ -1103,19 +1100,21 @@ impl MicroVmControlPlane for ControlPlane {
         Ok(Response::new(codex_run(snapshot)?))
     }
 
-    async fn get_active_codex_run(
+    async fn get_active_codex_runs(
         &self,
         request: Request<GetAgentRequest>,
-    ) -> Result<Response<CodexRun>, Status> {
-        let principal = self.authorize(&request, "GetActiveCodexRun").await?;
+    ) -> Result<Response<CodexRuns>, Status> {
+        let principal = self.authorize(&request, "GetActiveCodexRuns").await?;
         let request = request.into_inner();
         self.agent_access(&principal, &request.id, "").await?;
-        let result = match crate::runs::active(self, &principal).await? {
-            Some(snapshot) if snapshot.agent_id == request.id => codex_run(snapshot)?,
-            Some(_) => return Err(Status::permission_denied("run unavailable")),
-            None => CodexRun::default(),
-        };
-        Ok(Response::new(result))
+        let mut runs = Vec::new();
+        for snapshot in crate::runs::active(self, &principal).await? {
+            if snapshot.agent_id != request.id {
+                return Err(Status::permission_denied("run unavailable"));
+            }
+            runs.push(codex_run(snapshot)?);
+        }
+        Ok(Response::new(CodexRuns { runs }))
     }
 
     async fn get_codex_run(

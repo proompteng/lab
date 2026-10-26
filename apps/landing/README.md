@@ -296,6 +296,7 @@ Local `/workspace/...` links in agent messages open file tabs above the conversa
 and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source
 shows numbered lines and highlights an optional `:line:column` or `#LlineCcolumn` reference. Other text files show source.
 File reads use the authenticated file API, with loading, retry, and bounded previews. Web links still open externally.
+File tabs and Finder Quick Look accept textual XML and JSON media types, including the XML type reported for Rust source.
 Resource previews use the authenticated `stat-file` metadata lookup without enumerating siblings. Folder resources
 open a directory listing, with child navigation, parent navigation,
 an empty-folder state, and refresh. The workspace root and folder links with trailing slashes are supported.

@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { NodeServices } from '@effect/platform-node'
-import { ConfigProvider, Context, Effect, ManagedRuntime, Redacted, Result } from 'effect'
+import { ConfigProvider, Context, Effect, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 import { SqlClient } from 'effect/sql'
 
 import requestMigration from '../migrations/0076_jev_evaluation_evidence'
 import resolutionMigration from '../migrations/0077_jev_evaluation_resolution'
 import expenseMigration from '../migrations/0091_inference_expense_quotes'
+import inferenceRequestVersion from '../migrations/0150_inference_request_version'
 import { makeInferenceExpenseQuote, type InferenceExpenseSource } from './inference-expense'
 import { expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
 import { makeInferenceExpenseStore } from './inference-expense-postgres'
@@ -46,6 +47,7 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
         yield* sql`CREATE FUNCTION reject_evidence_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN RAISE EXCEPTION 'immutable fixture evidence'; END; $$`
         yield* requestMigration
+        yield* inferenceRequestVersion
         yield* resolutionMigration
         yield* expenseMigration
         yield* sql`CREATE TABLE jev_inference_handoffs (request_id text PRIMARY KEY, handoff_hash text NOT NULL, payload jsonb NOT NULL)`
@@ -79,6 +81,29 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
       VALUES (${source.requestId}, ${quote.line.resolutionHash}, ${sql.json(source.resolution)}) ON CONFLICT DO NOTHING`
       return quote
     })
+
+  test('retains the immutable request payload with its database-derived wire version', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const source = expenseSourceFixture()
+        yield* persistSource(source)
+        const sql = yield* PgClient.PgClient
+        const rows = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ schemaVersion: Schema.String, payload: Schema.Unknown })]),
+        )(
+          yield* sql`SELECT schema_version AS "schemaVersion", payload FROM jev_evaluation_requests WHERE request_id=${source.requestId}`,
+        )
+        expect(rows[0]).toEqual({ schemaVersion: source.request.schemaVersion, payload: source.request })
+        expect(
+          Result.isFailure(
+            yield* sql`UPDATE jev_evaluation_requests SET schema_version='invented' WHERE request_id=${source.requestId}`.pipe(
+              Effect.result,
+            ),
+          ),
+        ).toBe(true)
+      }),
+    )
+  })
 
   test('discovers only the bound account and replays frozen quotes before and after verification', async () => {
     const result = await runtime.runPromise(

@@ -104,11 +104,7 @@ impl Service {
                 request_hash: check.request_hash.clone(),
                 outcome: outcome.into(),
                 upstream_status: status,
-                result_hash: if result.is_empty() && outcome != "succeeded" {
-                    Vec::new()
-                } else {
-                    Sha256::digest(result).to_vec()
-                },
+                result_hash: result_hash(outcome, result),
             }))
             .await?
             .into_inner();
@@ -450,9 +446,25 @@ impl RelayService for Service {
     }
 }
 
+fn result_hash(outcome: &str, result: &[u8]) -> Vec<u8> {
+    if result.is_empty() && !matches!(outcome, "succeeded" | "withheld") {
+        Vec::new()
+    } else {
+        Sha256::digest(result).to_vec()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completed_empty_results_retain_a_digest_for_receipt_lookup() {
+        for outcome in ["succeeded", "withheld"] {
+            assert_eq!(result_hash(outcome, b""), Sha256::digest(b"").to_vec());
+        }
+        assert!(result_hash("failed", b"").is_empty());
+    }
 
     #[tokio::test]
     async fn workloads_cannot_assert_another_identity_in_the_same_service() {

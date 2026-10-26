@@ -91,7 +91,7 @@ let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let receiverAudience = '77777777-7777-4777-8777-777777777777'
-let receiverGuestApiProtocolVersion = 9
+let receiverGuestApiProtocolVersion = 10
 let fileWriteCalls = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
@@ -483,23 +483,25 @@ beforeAll(async () => {
         stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
       })
     },
-    getActiveCodexRun(
+    getActiveCodexRuns(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
-      callback(
-        null,
-        call.request.id === 'agent-empty'
-          ? {}
-          : {
-              runId: '11111111-1111-4111-8111-111111111111',
-              agentId: call.request.id,
-              threadId: 'thread-selected',
-              stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
-            },
-      )
+      callback(null, {
+        runs:
+          call.request.id === 'agent-empty'
+            ? []
+            : [
+                {
+                  runId: '11111111-1111-4111-8111-111111111111',
+                  agentId: call.request.id,
+                  threadId: 'thread-selected',
+                  stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+                },
+              ],
+      })
     },
     getCodexRun(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -780,15 +782,17 @@ describe('Tengri gRPC BFF transport', () => {
     ).toMatchObject({ status: 409, code: 'control_not_dispatched' })
   })
   test('recovers the server-owned active run and distinguishes an empty workspace', async () => {
-    const { getActiveCodexRun } = await import('./grpc')
-    expect(await getActiveCodexRun(identity, 'agent-test')).toEqual({
-      runId: '11111111-1111-4111-8111-111111111111',
-      agentId: 'agent-test',
-      threadId: 'thread-selected',
-      state: { phase: 'running', turnId: 'turn-selected' },
-    })
+    const { getActiveCodexRuns } = await import('./grpc')
+    expect(await getActiveCodexRuns(identity, 'agent-test')).toEqual([
+      {
+        runId: '11111111-1111-4111-8111-111111111111',
+        agentId: 'agent-test',
+        threadId: 'thread-selected',
+        state: { phase: 'running', turnId: 'turn-selected' },
+      },
+    ])
     expect(receivedRequest).toEqual({ id: 'agent-test' })
-    expect(await getActiveCodexRun(identity, 'agent-empty')).toBeNull()
+    expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual([])
   })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')
@@ -809,12 +813,12 @@ describe('Tengri gRPC BFF transport', () => {
       receiverAudience = '77777777-7777-4777-8777-777777777777'
     }
   })
-  test('accepts guest API 9 before sending canonical file writes', async () => {
+  test('accepts guest API 10 before sending canonical file writes', async () => {
     const { writeFile } = await import('./grpc')
     const before = fileWriteCalls
     const previous = receiverGuestApiProtocolVersion
     try {
-      receiverGuestApiProtocolVersion = 9
+      receiverGuestApiProtocolVersion = 10
       await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
       expect(fileWriteCalls).toBe(before + 1)
     } finally {
@@ -826,7 +830,7 @@ describe('Tengri gRPC BFF transport', () => {
     const { writeFile } = await import('./grpc')
     const before = fileWriteCalls
     try {
-      for (const version of [0, 4, 5, 6, 7, 8, 10]) {
+      for (const version of [0, 4, 5, 6, 7, 8, 9, 11]) {
         receiverGuestApiProtocolVersion = version
         expect(
           await rejection(writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')),
@@ -834,7 +838,7 @@ describe('Tengri gRPC BFF transport', () => {
         expect(fileWriteCalls).toBe(before)
       }
     } finally {
-      receiverGuestApiProtocolVersion = 9
+      receiverGuestApiProtocolVersion = 10
     }
     await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
     expect(fileWriteCalls).toBe(before + 1)
