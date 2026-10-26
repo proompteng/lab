@@ -207,6 +207,29 @@ structure and source anchors. Code funds source-anchored recovery and breakout p
 Jev request, and selects from atomic proposal-specific judgments. Both providers share the original inference deadline.
 Account risk, broker protection, fee accounting and exact reconciliation remain mandatory.
 [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the source contracts and venue capabilities.
+
+The conditional base-question migration uses entry input v3 and handoff v2. It chooses an end, then consumes only the
+start question conditioned on that end, retaining every earlier source bar and an explicit no-base answer. Migration 149
+requires terminal cycles, flat settled inventory, complete accounting, fresh exact reconciliation and no unexpired claims.
+It restricts prior PAPER authority for native OBSERVE recovery, preserves operator holds and all account risk history,
+and rejects retired execution inputs. Frozen financial readers retain the original v1/v2 requests and provider costs.
+The source phase removes the prior sealed capital request and its three runtime lineages. After its exact published image
+and native OBSERVE recovery are verified, the reviewed same-account PAPER request must bind the new strategy identity
+and that image, with the existing monetary limits, risk policy, broker identity and holding limit. Natural funded-plan
+selection and protected fee-reconciled round trips still require evidence from that activated deployment.
+
+Migration 149 and native OBSERVE recovery completed on 2026-10-26 against source
+`788008ed66d47f9dd39decebb084b5ab225b197a` and immutable digest
+`sha256:cb5c2b93f19aa37ea798be981dfeba55ceadb0553e8a158994a0f34f77ce0c7c`, through Kargo commit
+`86e05a0addcad3f6515b8181b9b257ea71084bfd`. Readback preserved the original 802 accounting and 381 cash-fee record
+hashes and peak-equity history, with flat inventory and fresh exact reconciliation.
+
+PAPER request `15449657ab84a1322bb94f53ac1fba9a26b994e5881726aa3b72d05842c24720` binds that verified image and the
+conditional question policy. Its sealed identity and all three runtime lineages restore the same account, grant kind,
+risk policy and monetary limits. Native PAPER activation and natural crypto and equity round trips remain separate
+acceptance requirements.
+
+The following receipts record the preceding v24 source rollout and mandate.
 The source rollout and native OBSERVE recovery completed against source
 `264735d18ae2075bcde2bd162f68df980b09c13e` and immutable digest
 `sha256:a8807cea2888383ad6e42713c5e977314324d8b7cdb1362c9005ca57bf0bb3fc`, through Kargo commit
