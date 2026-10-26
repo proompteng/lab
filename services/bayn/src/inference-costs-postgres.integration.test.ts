@@ -268,10 +268,9 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`DELETE FROM jev_evaluation_requests`
-        yield* insertSources(
-          sql,
-          Array.from({ length: 10_001 }, (_, index) => retainedSource(index, 1)),
-        )
+        yield* sql`INSERT INTO jev_evaluation_requests
+          SELECT md5(n::text) || md5(n::text), ${request.cycleId}, ${request.authorityGenerationHash}, '{}'::jsonb
+          FROM generate_series(1, 10001) AS n`
         return yield* Effect.result(readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01'))
       }),
     )
