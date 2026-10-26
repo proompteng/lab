@@ -38,12 +38,15 @@ test.skipIf(!binary)(
         'forbidden',
         'not-found',
         'denied',
+        'invalid-receipt',
+        'invalid-text',
         'unavailable',
         'invalid',
         'wrong-peer',
       ]) {
         const upstreamFailure = scenario === 'forbidden' ? 403 : scenario === 'not-found' ? 404 : 0
         const recordedOutcome = upstreamFailure ? 'failed' : scenario === 'started' ? 'started' : 'succeeded'
+        const providerResult = scenario === 'invalid-text' ? Buffer.from([0xff]) : Buffer.from('fixture pod status')
         const peerId = scenario === 'wrong-peer' ? 'spiffe://proompteng.ai/ns/tengri/sa/tengri' : relayId
         const certificate = fixture.certificate(scenario, peerId)
         let executionBody: Buffer | undefined
@@ -87,7 +90,7 @@ test.skipIf(!binary)(
             expect(payload.binding).toBeNull()
             expect(payload.delegationId).toBeNull()
             executionBody = Buffer.from(call.request.body)
-            if (scenario !== 'success') {
+            if (!['success', 'invalid-receipt', 'invalid-text'].includes(scenario)) {
               const code =
                 upstreamFailure === 403 || scenario === 'denied'
                   ? grpc.status.PERMISSION_DENIED
@@ -99,9 +102,10 @@ test.skipIf(!binary)(
             }
             callback(null, {
               operationId: payload.operationId,
-              result: Buffer.from('fixture pod status'),
+              result: scenario === 'invalid-receipt' ? Buffer.from('private fixture result') : providerResult,
               contentType: 'application/json',
-              authorizationReceiptId: '11111111-1111-4111-8111-111111111111',
+              authorizationReceiptId:
+                scenario === 'invalid-receipt' ? 'invalid' : '11111111-1111-4111-8111-111111111111',
               executionReceiptId: '22222222-2222-4222-8222-222222222222',
             })
           },
@@ -138,7 +142,7 @@ test.skipIf(!binary)(
                 upstreamStatus: upstreamFailure || (scenario === 'started' ? 0 : 200),
                 resultHash:
                   recordedOutcome === 'succeeded'
-                    ? createHash('sha256').update('fixture pod status').digest()
+                    ? createHash('sha256').update(providerResult).digest()
                     : Buffer.alloc(0),
                 requestHash: createHash('sha256').update(executionBody!).digest(),
                 updatedAtUnixMs: Date.now().toString(),
@@ -227,6 +231,10 @@ test.skipIf(!binary)(
               })
             }
             if (scenario === 'denied') expect(result._meta.relay).toEqual({ operationId, outcome: 'unknown' })
+            if (['invalid-receipt', 'invalid-text'].includes(scenario)) {
+              expect(result.content[0].text).toContain('DataLoss')
+              expect(result._meta.relay.executionReceiptId).toBe('22222222-2222-4222-8222-222222222222')
+            }
             expect(lookups - beforeLookups).toBe(1)
           }
         } else {
@@ -236,8 +244,8 @@ test.skipIf(!binary)(
         server.forceShutdown()
         server = undefined
       }
-      expect(executions).toBe(8)
-      expect(lookups).toBe(7)
+      expect(executions).toBe(10)
+      expect(lookups).toBe(9)
     } finally {
       server?.forceShutdown()
       fixture.close()
