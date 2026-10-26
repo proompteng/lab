@@ -1160,8 +1160,9 @@ units without rounding each call. Session accounts debit estimated inference exp
 estimate clearing (code 230). The trading ledger and broker cash balances retain their existing units and purpose.
 
 Migration 150 stores the request wire version as a generated column derived from its immutable payload. Expense
-discovery uses that metadata to classify already quoted requests, so each background pass does not deTOAST historical
-chart payloads just to count their provider stages. The selected pending batch still loads and verifies the original
+discovery groups historical quote coverage using that metadata, then materializes at most 64 pending request IDs.
+It loads full payloads only for that batch, avoiding repeated per-request quote probes and historical chart payload
+reads. The selected pending batch still loads and verifies the original
 request, handoff, receipt and resolution. Late receipts remain discoverable and existing quote identities do not change.
 
 This projection starts with sessions on 2026-10-05 and the reviewed, frozen Jev 1.13.0 list-price assumption:
