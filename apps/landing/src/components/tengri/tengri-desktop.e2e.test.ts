@@ -6197,9 +6197,11 @@ test('saves the sleep timeout immediately and reads it back after reload', async
   const settings = page.getByRole('region', { name: 'Settings window' })
   await openSettingsPane(settings, 'Power & Sleep')
   const timeout = settings.getByLabel('Sleep when inactive')
+  await timeout.focus()
   await timeout.selectOption('1')
   await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(1)
   await expect(timeout).toBeEnabled()
+  await expect(timeout).toBeFocused()
   await page.reload()
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   await openSettingsPane(settings, 'Power & Sleep')
@@ -6241,6 +6243,10 @@ test('keeps a failed sleep preference visible and retries the same value', async
   await started.promise
   await openSettingsPane(settings, 'About')
   release.resolve()
+  await expect(timeout).toBeEnabled()
+  await expect(
+    settings.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'About', exact: true }),
+  ).toBeFocused()
   await openSettingsPane(settings, 'Power & Sleep')
   await expect(settings.getByRole('alert')).toContainText('Sleep settings could not be saved')
   await expect(timeout).toHaveValue('5')

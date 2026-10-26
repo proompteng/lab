@@ -87,8 +87,22 @@ export function PowerSettingsForm({
           disabled={disabled || isSubmitting}
           className="max-w-[55%] rounded-md border border-white/10 bg-zinc-600/45 px-2 py-1 text-[12px] text-zinc-100 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50"
           onChange={(event) => {
-            setValue('idleTimeoutMinutes', Number(event.currentTarget.value), { shouldDirty: true })
-            void save()
+            const control = event.currentTarget
+            const restoreFocus = document.activeElement === control
+            setValue('idleTimeoutMinutes', Number(control.value), { shouldDirty: true })
+            void save().finally(() => {
+              if (!restoreFocus) return
+              window.requestAnimationFrame(() => {
+                if (
+                  document.hasFocus() &&
+                  document.activeElement === document.body &&
+                  control.isConnected &&
+                  !control.disabled &&
+                  control.getClientRects().length > 0
+                )
+                  control.focus({ preventScroll: true })
+              })
+            })
           }}
         >
           {intervals.map((value) => (
