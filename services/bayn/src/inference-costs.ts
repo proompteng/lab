@@ -9,12 +9,11 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from './schemas'
-import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest, JevOutcome } from './jev/evidence'
+import { JevOutcome } from './jev/evidence'
 import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost-evidence'
-import { decodeEntryHandoff } from './jev/entry-inference-evidence'
+import { readSequentialInferenceCostEvidence } from './jev/sequential-inference-cost-evidence'
 import { JevFailure, jevModel } from './jev/contract'
 import { decisionsModel } from './jev/decisions'
-import { decodeJevResolution } from './jev/resolution'
 
 export class InferenceCostError extends Data.TaggedError('InferenceCostError')<{
   readonly message: string
@@ -211,21 +210,7 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
         ],
       }
     }
-    const request = yield* decodeJevEvaluationRequest(row.request)
-    const receipt = row.receipt === null ? null : yield* decodeJevEvaluationReceipt(request, row.receipt)
-    const resolution = row.resolution === null ? null : yield* decodeJevResolution(request, receipt, row.resolution)
-    const handoff =
-      row.handoff === null
-        ? null
-        : yield* decodeEntryHandoff(
-            {
-              requestId: request.requestId,
-              input: request.request,
-              observedAt: request.observedAt,
-              expiresAt: request.expiresAt,
-            },
-            row.handoff,
-          )
+    const { request, receipt, resolution, handoff } = yield* readSequentialInferenceCostEvidence(row)
     if (
       receipt?.outcome.status === JevOutcome.Completed &&
       (handoff === null || handoff.handoffHash !== receipt.outcome.completion.handoff.handoffHash)

@@ -9,7 +9,7 @@ import { JevProtocolSchema } from './protocol'
 
 const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
 export const EntryInferenceInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.entry-inference-input.v1'),
+  schemaVersion: Schema.Literal('bayn.entry-inference-input.v2'),
   numericalState: Schema.Record(Schema.String, Schema.Json),
   chartSource: ChartSourceSchema,
   protocol: JevProtocolSchema,
@@ -21,10 +21,12 @@ export const EntryInferenceInputSchema = Schema.Struct({
   }),
 })
 export type EntryInferenceInput = typeof EntryInferenceInputSchema.Type
+export type EntryInferenceMaterial = Omit<EntryInferenceInput, 'schemaVersion'> & {
+  readonly schemaVersion: 'bayn.entry-inference-input.v1' | 'bayn.entry-inference-input.v2'
+}
 
-export const prepareEntryInferenceInput = (input: unknown) =>
+export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
   Result.gen(function* () {
-    const value = yield* Schema.decodeUnknownResult(EntryInferenceInputSchema, strictParseOptions)(input)
     yield* Schema.decodeUnknownResult(
       Schema.Struct({
         schemaVersion: Schema.Literal('bayn.jev-entry-state.v22'),
@@ -57,8 +59,15 @@ export const prepareEntryInferenceInput = (input: unknown) =>
       return yield* Result.fail(
         new JevContractError({ message: 'Entry inference input exceeds the native transport budget' }),
       )
-    const detached = yield* Schema.decodeUnknownResult(Schema.fromJsonString(EntryInferenceInputSchema))(body)
-    return { input: detached, body, requestHash: yield* canonicalHashV1Result(detached) }
+    return { body, requestHash: yield* canonicalHashV1Result(value) }
+  })
+
+export const prepareEntryInferenceInput = (input: unknown) =>
+  Result.gen(function* () {
+    const value = yield* Schema.decodeUnknownResult(EntryInferenceInputSchema, strictParseOptions)(input)
+    const prepared = yield* verifyEntryInferenceSource(value)
+    const detached = yield* Schema.decodeUnknownResult(Schema.fromJsonString(EntryInferenceInputSchema))(prepared.body)
+    return { input: detached, ...prepared }
   }).pipe(
     Result.mapError(
       (cause) => new JevContractError({ message: 'Entry inference input violates its source-bound contract', cause }),
