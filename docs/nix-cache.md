@@ -199,8 +199,10 @@ The default `cache.nixos.org` fallback remains available for Nixpkgs
 dependencies, so CI should not duplicate broad upstream Nixpkgs closures into
 Attic.
 
-Image builds and cache downloads have a default 20-minute deadline, configurable
-through the existing `image_build_timeout` input. Archive uploads have a
+Image builds and cache downloads have one shared 45-minute deadline. Cold JVM
+images need time to download large JDK dependencies from the public cache
+before they can populate Attic; shorter per-image deadlines interrupted those
+downloads and made the retry start them again. Archive uploads have a separate
 30-minute deadline. The shared workflow records upload success or failure for
 every image size.
 

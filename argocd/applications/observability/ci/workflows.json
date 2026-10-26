@@ -23,6 +23,10 @@
   ],
   "arc-placement-acceptance.yml": [
     {
+      "id": "publication-tools",
+      "pattern": "^Verify publication runner(?: \\(.*\\))?$"
+    },
+    {
       "id": "local-build",
       "pattern": "^Slot .* local scratch build(?: \\(.*\\))?$"
     },
