@@ -7057,6 +7057,176 @@ for (const width of [1440, 390]) {
   })
 }
 
+for (const failure of ['service unavailable', 'network'] as const) {
+  test(`recovers native chat index after transient ${failure}`, async ({ page }) => {
+    const store: ThreadStore = {
+      threads: [{ id: 'thread-retained', title: 'Retained chat', updatedAt: 1, archived: false }],
+    }
+    await mockTengri(page, { threadStore: store })
+    let unavailable = false
+    let reads = 0
+    let failedReads = 0
+    await page.route('**/api/tengri', (route) => {
+      if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'list-threads')
+        return route.fallback()
+      reads += 1
+      if (!unavailable) return route.fallback()
+      failedReads += 1
+      return failure === 'network'
+        ? route.abort('failed')
+        : route.fulfill({ status: 503, json: { error: 'Tengri control plane is unavailable' } })
+    })
+    await page.goto('/')
+    const sidebar = page.getByTestId('agent-conversation-sidebar')
+    await expect(sidebar.getByRole('button', { name: 'Retained chat', exact: true })).toBeVisible()
+    const composer = page.getByRole('textbox', { name: 'Message your agent', exact: true })
+    await composer.fill('Keep this draft while chats reconnect')
+    unavailable = true
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect.poll(() => failedReads).toBeGreaterThanOrEqual(2)
+    await expect(sidebar.getByRole('button', { name: 'Retained chat', exact: true })).toBeEnabled()
+    await expect(composer).toHaveValue('Keep this draft while chats reconnect')
+    store.threads[0].title = 'Recovered chat'
+    unavailable = false
+    await expect(sidebar.getByRole('button', { name: 'Recovered chat', exact: true })).toBeVisible({ timeout: 10_000 })
+    await expect(sidebar.getByRole('alert')).toHaveCount(0)
+    await expect(sidebar.getByRole('button', { name: 'Retry chats', exact: true })).toHaveCount(0)
+    await expect(composer).toHaveValue('Keep this draft while chats reconnect')
+    const recoveredReads = reads
+    await page.waitForTimeout(2500)
+    expect(reads).toBe(recoveredReads)
+  })
+}
+
+test('keeps denied native chat index reads explicit without automatic retries', async ({ page }) => {
+  await mockTengri(page, {
+    threadStore: { threads: [{ id: 'thread-readable', title: 'Readable chat', updatedAt: 1, archived: false }] },
+  })
+  let denied = true
+  let reads = 0
+  await page.route('**/api/tengri', (route) => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'list-threads')
+      return route.fallback()
+    reads += 1
+    return denied ? route.fulfill({ status: 403, json: { error: 'Chat access denied' } }) : route.fallback()
+  })
+  await page.goto('/')
+  const sidebar = page.getByTestId('agent-conversation-sidebar')
+  await expect(sidebar.getByRole('alert')).toHaveText('Chat access denied')
+  const deniedReads = reads
+  await page.waitForTimeout(2500)
+  expect(reads).toBe(deniedReads)
+  denied = false
+  await sidebar.getByRole('button', { name: 'Retry chats', exact: true }).click()
+  await expect(sidebar.getByRole('button', { name: 'Readable chat', exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('alert')).toHaveCount(0)
+})
+
+test('retries the same native chat index page without dropping loaded chats', async ({ page }) => {
+  await mockTengri(page, {
+    threadStore: {
+      threads: Array.from({ length: 55 }, (_, index) => ({
+        id: `thread-page-${index}`,
+        title: `Paged chat ${index}`,
+        updatedAt: 100 - index,
+        archived: false,
+      })),
+    },
+  })
+  const cursors: string[] = []
+  await page.route('**/api/tengri', (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action !== 'list-threads' || !action.cursor) return route.fallback()
+    cursors.push(action.cursor)
+    return cursors.length === 1
+      ? route.fulfill({ status: 503, json: { error: 'Chat page is temporarily unavailable' } })
+      : route.fallback()
+  })
+  await page.goto('/')
+  const sidebar = page.getByTestId('agent-conversation-sidebar')
+  await expect(sidebar.locator('[data-conversation-id]')).toHaveCount(50)
+  await sidebar.getByRole('button', { name: 'Load older chats', exact: true }).click()
+  await expect.poll(() => cursors.length).toBeGreaterThan(0)
+  await expect(sidebar.locator('[data-conversation-id]')).toHaveCount(50)
+  await expect(sidebar.locator('[data-conversation-id]')).toHaveCount(55, { timeout: 10_000 })
+  expect(cursors).toEqual(['page:50', 'page:50'])
+})
+
+test('cancels native chat index retry when switching to archived chats', async ({ page }) => {
+  await mockTengri(page, {
+    threadStore: { threads: [{ id: 'thread-archived-retry', title: 'Archived result', updatedAt: 1, archived: true }] },
+  })
+  let activeReads = 0
+  await page.route('**/api/tengri', (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action !== 'list-threads' || action.archived) return route.fallback()
+    activeReads += 1
+    return route.fulfill({ status: 503, json: { error: 'Active chats are temporarily unavailable' } })
+  })
+  await page.goto('/')
+  const sidebar = page.getByTestId('agent-conversation-sidebar')
+  await expect.poll(() => activeReads).toBeGreaterThan(0)
+  await sidebar.getByRole('button', { name: 'Archived chats', exact: true }).click()
+  await expect(sidebar.getByRole('button', { name: 'Archived result', exact: true })).toBeVisible()
+  const readsBeforeWaiting = activeReads
+  await page.waitForTimeout(2500)
+  expect(activeReads).toBe(readsBeforeWaiting)
+  await expect(sidebar.getByRole('button', { name: 'Archived result', exact: true })).toBeVisible()
+})
+
+test('pauses native chat index recovery while an archive outcome is unconfirmed', async ({ page }) => {
+  const store: ThreadStore = {
+    threads: [{ id: 'thread-writing-retry', title: 'Keep archive receipt', updatedAt: 1, archived: false }],
+  }
+  await mockTengri(page, { threadStore: store })
+  let unavailable = false
+  let reads = 0
+  let writes = 0
+  let releaseArchive!: () => void
+  const archiveResponse = new Promise<void>((resolve) => {
+    releaseArchive = resolve
+  })
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action === 'list-threads') {
+      reads += 1
+      return unavailable
+        ? route.fulfill({ status: 503, json: { error: 'Chats are temporarily unavailable' } })
+        : route.fallback()
+    }
+    if (action.action !== 'set-thread-archived') return route.fallback()
+    writes += 1
+    store.threads[0].archived = true
+    await archiveResponse
+    return route.fulfill({ status: 503, json: { error: 'Archive confirmation was interrupted' } })
+  })
+  await page.goto('/')
+  const sidebar = page.getByTestId('agent-conversation-sidebar')
+  await expect(sidebar.getByRole('button', { name: 'Keep archive receipt', exact: true })).toBeVisible()
+  unavailable = true
+  const beforeFailure = reads
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect.poll(() => reads).toBeGreaterThan(beforeFailure)
+  await sidebar.getByRole('button', { name: 'Chat actions for Keep archive receipt', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+  await expect.poll(() => writes).toBe(1)
+  try {
+    const readsDuringArchive = reads
+    await page.waitForTimeout(2500)
+    expect(reads).toBe(readsDuringArchive)
+  } finally {
+    releaseArchive()
+  }
+  await expect(sidebar.getByRole('alert')).toHaveText('Archive confirmation was interrupted')
+  unavailable = false
+  await sidebar.getByRole('button', { name: 'Retry chats', exact: true }).click()
+  await expect(sidebar.locator('[data-conversation-id="thread-writing-retry"]')).toHaveCount(0)
+  expect(writes).toBe(1)
+})
+
 test('retains native sessions after archive failure and pages through older chats', async ({ page }) => {
   const store: ThreadStore = {
     threads: Array.from({ length: 55 }, (_, index) => ({
