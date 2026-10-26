@@ -153,6 +153,71 @@ test('retains relative-volume chart costs with the original independent question
   expect(Result.isFailure(decodeJevEvaluationRequest(row.request))).toBe(true)
 })
 
+test.each(['bayn.entry-inference-input.v1', 'bayn.entry-inference-input.v2'] as const)(
+  'reproduces undispatched source costs only for a retained contract that supported the gate: %s',
+  (version) => {
+    const row = retained(version)
+    const input = {
+      ...row.request.request,
+      funding: { ...row.request.request.funding, bidMicros: '500000000', askMicros: '500020000' },
+    }
+    const { requestId: _requestId, ...originalRequest } = row.request
+    const requestMaterial = {
+      ...originalRequest,
+      request: input,
+      requestHash: Result.getOrThrow(canonicalHashV1Result(input)),
+    }
+    const request = { ...requestMaterial, requestId: Result.getOrThrow(canonicalHashV1Result(requestMaterial)) }
+    const { handoffHash: _handoffHash, ...originalHandoff } = row.handoff
+    const handoffMaterial = {
+      ...originalHandoff,
+      requestId: request.requestId,
+      inputHash: request.requestHash,
+      disposition: { status: 'SOURCE_INFEASIBLE' },
+    }
+    const handoff = { ...handoffMaterial, handoffHash: Result.getOrThrow(canonicalHashV1Result(handoffMaterial)) }
+    const { receiptHash: _receiptHash, ...originalReceipt } = row.receipt
+    const receiptMaterial = {
+      ...originalReceipt,
+      requestId: request.requestId,
+      outcome: {
+        status: JevOutcome.Completed,
+        completion: { handoff, completedAt: request.expiresAt, jev: { status: 'NOT_REQUESTED' } },
+      },
+    }
+    const receipt = { ...receiptMaterial, receiptHash: Result.getOrThrow(canonicalHashV1Result(receiptMaterial)) }
+    const packet = { request, handoff, receipt, resolution: null }
+    const decoded = readSequentialInferenceCostEvidence(packet)
+    if (version === 'bayn.entry-inference-input.v1') {
+      expect(Result.isFailure(decoded)).toBe(true)
+      return
+    }
+    expect(Result.getOrThrow(decoded).handoff?.handoffHash).toBe(handoff.handoffHash)
+    const quotes = Result.getOrThrow(
+      makeInferenceExpenseQuotes(
+        {
+          ...packet,
+          accountId: 'retained-source-cost-fixture',
+          sessionDate: '2026-10-25',
+          asOf: request.expiresAt,
+          requestId: request.requestId,
+          cycleId: request.cycleId,
+          authorityGenerationHash: request.authorityGenerationHash,
+        },
+        { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
+      ),
+    )
+    expect(quotes).toHaveLength(2)
+    expect(
+      quotes.every(
+        (quote) =>
+          quote.line.usageStatus === InferenceUsageStatus.NotDispatched && quote.line.estimatedCostPicoUsd === '0',
+      ),
+    ).toBe(true)
+    expect(Result.isFailure(decodeJevEvaluationRequest(request))).toBe(true)
+  },
+)
+
 test('rejects altered historical image identity and provider clocks even when outer hashes are recomputed', () => {
   const row = retained()
   const altered = { ...row.handoff, visualRequestHash: 'e'.repeat(64) }

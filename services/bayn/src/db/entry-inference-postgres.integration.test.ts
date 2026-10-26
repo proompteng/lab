@@ -19,6 +19,10 @@ import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore, evaluateClaimedJevOnce } from '../jev/evaluation'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
+import { JevPurpose } from '../jev/portfolio'
+import { makeNativeChartEvidence } from '../jev/chart-evidence'
+import { makeChartDecisionsRequest } from '../jev/chart-questions'
+import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { JevResolutionStatus } from '../jev/resolution'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { utcInstantFromEpochMillis } from '../time'
@@ -182,6 +186,78 @@ integration('committed sequential provider handoff', () => {
         expect(
           yield* sql`SELECT handoff_hash FROM jev_inference_handoffs WHERE request_id=${request.requestId}`,
         ).toEqual([])
+      }),
+    ))
+
+  test('commits the current source-infeasible handoff and receipt without provider evidence', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sourceFixture = nativeJevFixture(
+          JevPurpose.Entry,
+          request.observedAt,
+          fixture.portfolio.brokerState.account.accountId,
+          { ...fixture.protocol, maximumGrossWeight: 0.000001, maximumSymbolWeight: 0.000001 },
+          'e'.repeat(64),
+        )
+        const sourceBatch = yield* Effect.fromResult(
+          makeJevTradingSignalBatch({
+            observation: sourceFixture.observation.payload,
+            expiresAt: request.expiresAt,
+            planVersion: JevBatchPlanVersion.V7,
+          }),
+        )
+        const planned = sourceBatch.candidates.find((value) => value.status === JevCandidatePlanStatus.Requested)
+        if (planned?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing source-infeasible request')
+        const source = planned.request
+        yield* (yield* CycleStore).acquire(sourceFixture.draft, source.observedAt)
+        yield* (yield* CandidateObservationStore).record(sourceFixture.observation)
+        yield* TestClock.setTime(Date.parse(source.observedAt)).pipe(
+          Effect.andThen(
+            Effect.flatMap(JevBatchStore, (store) => store.begin(sourceBatch, sourceFixture.observation.payload)),
+          ),
+          Effect.provide(TestClock.layer()),
+        )
+        const chart = yield* Effect.fromResult(makeNativeChartEvidence(source.request.chartSource))
+        const visual = yield* Effect.fromResult(makeChartDecisionsRequest(chart))
+        const material = {
+          schemaVersion: 'bayn.entry-handoff.v2',
+          requestId: source.requestId,
+          inputHash: source.requestHash,
+          visualRequestHash: visual.requestHash,
+          recordedAt: source.observedAt,
+          disposition: { status: 'SOURCE_INFEASIBLE' },
+        }
+        const handoff = yield* Effect.fromResult(
+          decodeEntryHandoff(
+            {
+              requestId: source.requestId,
+              input: source.request,
+              observedAt: source.observedAt,
+              expiresAt: source.expiresAt,
+            },
+            { ...material, handoffHash: yield* Effect.fromResult(canonicalHashV1Result(material)) },
+          ),
+        )
+        const sql = yield* PgClient.PgClient
+        yield* (yield* EntryInferenceJournal).recordHandoff(handoff)
+        const receipt = yield* Effect.fromResult(
+          makeJevEvaluationReceipt(source, {
+            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+            requestId: source.requestId,
+            startedAt: source.observedAt,
+            completedAt: source.observedAt,
+            outcome: {
+              status: JevOutcome.Completed,
+              completion: { handoff, completedAt: source.observedAt, jev: { status: 'NOT_REQUESTED' } },
+            },
+          }),
+        )
+        expect((yield* (yield* JevEvaluationStore).record(source, receipt)).status).toBe(JevResolutionStatus.Recorded)
+        expect((yield* (yield* JevEvaluationStore).read(source.requestId))?.receipt).toEqual(receipt)
+        expect(
+          yield* sql`SELECT payload->>'schemaVersion' AS version,payload#>>'{disposition,status}' AS status
+          FROM jev_inference_handoffs WHERE request_id=${source.requestId}`,
+        ).toEqual([{ version: 'bayn.entry-handoff.v2', status: 'SOURCE_INFEASIBLE' }])
       }),
     ))
 
