@@ -200,9 +200,10 @@ dependencies, so CI should not duplicate broad upstream Nixpkgs closures into
 Attic.
 
 Image builds and cache downloads have a default 20-minute deadline, configurable
-through the existing `image_build_timeout` input. Archive uploads have a
-30-minute deadline. The shared workflow records upload success or failure for
-every image size.
+through the existing `image_build_timeout` input. Jangar uses 45 minutes because
+its cold build downloads large JDK and editor dependencies from the public
+cache before it can populate Attic. Archive uploads have a 30-minute deadline.
+The shared workflow records upload success or failure for every image size.
 
 Attic chunks large NARs at a 1 MiB average, with 256 KiB minimum and 4 MiB
 maximum chunks. The former 64 KiB average produced about 32,768 chunk references
