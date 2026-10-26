@@ -5,7 +5,9 @@ import { canonicalHashV1Result } from '../hash'
 import { makeInferenceExpenseQuotes } from '../inference-expense'
 import { InferenceStage, InferenceUsageStatus } from '../inference-costs'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { makeChartDecisionsRequest } from './chart-questions'
+import { makeInitialChartStageRequest } from './staged-chart-questions'
+import { makeStagedSkipReceipt } from './staged-checkpoint'
+import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { decodeEntryHandoff } from './entry-inference-evidence'
 import { prepareEntryInferenceInput } from './entry-inference-input'
@@ -24,15 +26,26 @@ const skipped = () => {
   )
   const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
   const visual = Result.getOrThrow(
-    makeChartDecisionsRequest({ chart, protocol: request.request.protocol, funding: request.request.funding }),
+    makeInitialChartStageRequest({ chart, protocol: request.request.protocol, funding: request.request.funding }),
+  )
+  const skip = Result.getOrThrow(
+    makeStagedSkipReceipt({
+      schemaVersion: 'bayn.staged-skip-receipt.v1',
+      stage: 'BASE_START',
+      requestId: request.requestId,
+      predecessorHash: null,
+      reason: 'SOURCE_INFEASIBLE',
+      recordedAt: request.observedAt,
+    }),
   )
   const material = {
-    schemaVersion: 'bayn.entry-handoff.v3' as const,
+    schemaVersion: 'bayn.entry-handoff.v4' as const,
     requestId: request.requestId,
     inputHash: request.requestHash,
     visualRequestHash: visual.requestHash,
     recordedAt: request.observedAt,
     disposition: { status: 'SOURCE_INFEASIBLE' as const },
+    baseStart: { status: 'NOT_REQUESTED' as const, skip },
   }
   const handoff = Result.getOrThrow(
     decodeEntryHandoff(
@@ -47,7 +60,7 @@ const skipped = () => {
   )
   const receipt = Result.getOrThrow(
     makeJevEvaluationReceipt(request, {
-      schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+      schemaVersion: 'bayn.jev-evaluation-receipt.v3',
       requestId: request.requestId,
       startedAt: request.observedAt,
       completedAt: request.observedAt,
@@ -57,18 +70,27 @@ const skipped = () => {
       },
     }),
   )
-  return { request, handoff, receipt }
+  return { request, handoff, receipt, stagedCheckpoint: { claims: [], terminals: [], skips: [skip] } }
 }
 
 for (const completed of [true, false])
-  test(`prices both stages as undispatched after the infeasible handoff, completion=${completed}`, () => {
+  test(`prices authenticated undispatched stages after the infeasible handoff, completion=${completed}`, () => {
     const row = skipped()
     const quotes = Result.getOrThrow(
       makeInferenceExpenseQuotes(
         {
           ...row,
           receipt: completed ? row.receipt : null,
-          resolution: null,
+          resolution: completed
+            ? Result.getOrThrow(
+                makeJevResolution(row.request, row.receipt, {
+                  schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+                  requestId: row.request.requestId,
+                  status: JevResolutionStatus.Recorded,
+                  receiptHash: row.receipt.receiptHash,
+                }),
+              )
+            : null,
           requestId: row.request.requestId,
           cycleId: row.request.cycleId,
           authorityGenerationHash: row.request.authorityGenerationHash,
@@ -79,11 +101,10 @@ for (const completed of [true, false])
         { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
       ),
     )
-    expect(quotes).toHaveLength(2)
-    expect(quotes.map((q) => ('stage' in q.line ? q.line.stage : null)).toSorted()).toEqual([
-      InferenceStage.Chart,
-      InferenceStage.Jev,
-    ])
+    expect(quotes).toHaveLength(completed ? 3 : 1)
+    expect(quotes.map((q) => ('stage' in q.line ? q.line.stage : null)).toSorted()).toEqual(
+      completed ? [InferenceStage.BaseStart, InferenceStage.Chart, InferenceStage.Jev] : [InferenceStage.BaseStart],
+    )
     for (const quote of quotes) {
       expect(quote.line.usageStatus).toBe(InferenceUsageStatus.NotDispatched)
       expect(quote.line.inputTokens).toBe('0')

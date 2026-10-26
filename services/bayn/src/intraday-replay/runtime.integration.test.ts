@@ -1412,7 +1412,10 @@ durableTest.each(
         yield* runtime.reconcile
         if (scenario === 'measured-entry-expired') {
           const state = yield* broker.snapshot
-          expect(measuredCalls).toHaveLength(2 * eligibleEntrySymbols.length)
+          expect(measuredCalls).toHaveLength(3 * eligibleEntrySymbols.length)
+          for (const stage of ['CHART', 'BASE_START', 'JEV'] as const)
+            expect(measuredCalls.filter((call) => call.stage === stage)).toHaveLength(eligibleEntrySymbols.length)
+          expect(new Set(measuredCalls.map((call) => call.requestHash)).size).toBe(measuredCalls.length)
           expect(measuredCalls.every((call) => call.outcome.status === 'RECEIVED')).toBe(true)
           expect(state.orders).toHaveLength(0)
           expect(state.fills).toHaveLength(0)
@@ -1512,10 +1515,14 @@ durableTest.each(
             expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
           }
           if (scenario === 'measured-exit') {
-            expect(measuredCalls).toHaveLength(2 * eligibleEntrySymbols.length)
+            expect(measuredCalls).toHaveLength(3 * eligibleEntrySymbols.length)
             const entryCalls = measuredCalls.filter((call) => call.stage === 'JEV')
             expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(eligibleEntrySymbols.length)
+            expect(measuredCalls.filter((call) => call.stage === 'BASE_START')).toHaveLength(
+              eligibleEntrySymbols.length,
+            )
             expect(entryCalls).toHaveLength(eligibleEntrySymbols.length)
+            expect(new Set(measuredCalls.map((call) => call.requestHash)).size).toBe(measuredCalls.length)
             for (const call of measuredCalls) {
               expect(call.outcome.status).toBe('RECEIVED')
               expect(Date.parse(call.providerCompletedAt) - Date.parse(call.providerStartedAt)).toBeGreaterThanOrEqual(

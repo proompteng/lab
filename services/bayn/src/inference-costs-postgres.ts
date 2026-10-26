@@ -94,15 +94,22 @@ export const readInferenceExpenseSnapshot = (
             )
             SELECT cut.as_of, cut.request_count, cut.quote_count, 'CUT'::text AS kind, NULL::jsonb AS payload FROM cut
             UNION ALL
-            SELECT cut.as_of, cut.request_count, cut.quote_count, 'REQUEST', (to_jsonb(item) - 'chartCheckpoint') ||
+            SELECT cut.as_of, cut.request_count, cut.quote_count, 'REQUEST', (to_jsonb(item) - 'chartCheckpoint' - 'stagedCheckpoint') ||
               CASE WHEN item."chartCheckpoint" IS NULL THEN '{}'::jsonb
-                ELSE jsonb_build_object('chartCheckpoint', item."chartCheckpoint") END
+                ELSE jsonb_build_object('chartCheckpoint', item."chartCheckpoint") END ||
+              CASE WHEN item."stagedCheckpoint" IS NULL THEN '{}'::jsonb
+                ELSE jsonb_build_object('stagedCheckpoint', item."stagedCheckpoint") END
               FROM cut CROSS JOIN (
                 SELECT request.request_id AS "requestId", request.cycle_id AS "cycleId",
                   request.authority_generation_hash AS "authorityGenerationHash",
                   request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution, handoff.payload AS handoff,
                   CASE WHEN chart_claim.request_id IS NULL THEN NULL ELSE
-                    jsonb_build_object('claim', chart_claim.payload, 'terminal', chart_terminal.payload) END AS "chartCheckpoint"
+                    jsonb_build_object('claim', chart_claim.payload, 'terminal', chart_terminal.payload) END AS "chartCheckpoint",
+                  CASE WHEN request.schema_version='bayn.jev-evaluation-request.v3' THEN jsonb_build_object(
+                    'claims', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_dispatch_claims WHERE request_id=request.request_id),'[]'::jsonb),
+                    'terminals', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_terminal_receipts WHERE request_id=request.request_id),'[]'::jsonb),
+                    'skips', COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C") FROM jev_staged_skip_receipts WHERE request_id=request.request_id),'[]'::jsonb)
+                  ) END AS "stagedCheckpoint"
                 FROM jev_evaluation_requests AS request
                 JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
                 LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
@@ -165,9 +172,11 @@ export const readInferenceExpenseSnapshot = (
           if (requests.length !== cut.request_count || quoteRows.length !== cut.quote_count)
             return yield* new InferenceCostError({ message: 'Inference cost snapshot row coverage differs' })
           const evidence: DecodedInferenceCostEvidence = {
-            schemaVersion: requests.some((row) => row.chartCheckpoint !== undefined)
-              ? 'bayn.inference-cost-evidence.v3'
-              : 'bayn.inference-cost-evidence.v2',
+            schemaVersion: requests.some((row) => row.stagedCheckpoint !== undefined)
+              ? 'bayn.inference-cost-evidence.v4'
+              : requests.some((row) => row.chartCheckpoint !== undefined)
+                ? 'bayn.inference-cost-evidence.v3'
+                : 'bayn.inference-cost-evidence.v2',
             accountBindingHash,
             sessionDate: scope.sessionDate,
             asOf: cut.as_of,

@@ -6,6 +6,7 @@ import {
   HistoricalInferenceCostLineSchema,
   StagedInferenceCostLineSchema,
   CheckpointInferenceCostLineSchema,
+  ThreeStageInferenceCostLineSchema,
   HistoricalInferenceRateSchema,
   InferenceStage,
   inferenceStageKey,
@@ -76,6 +77,14 @@ export type InferenceExpenseSource = typeof InferenceExpenseSourceSchema.Type
 
 export const InferenceExpenseQuoteSchema = Schema.Union([
   Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.inference-expense-quote.v4'),
+    accountBindingHash: Sha256Schema,
+    sessionDate: IsoDateSchema,
+    line: ThreeStageInferenceCostLineSchema,
+    rate: Schema.NullOr(InferenceRateSchema),
+    quoteHash: Sha256Schema,
+  }),
+  Schema.Struct({
     schemaVersion: Schema.Literal('bayn.inference-expense-quote.v3'),
     accountBindingHash: Sha256Schema,
     sessionDate: IsoDateSchema,
@@ -137,7 +146,11 @@ const expenseSourceEvidence = (source: InferenceExpenseSource) =>
     })
     return yield* decodeInferenceCostEvidence({
       schemaVersion:
-        source.chartCheckpoint === undefined ? 'bayn.inference-cost-evidence.v2' : 'bayn.inference-cost-evidence.v3',
+        source.stagedCheckpoint !== undefined
+          ? 'bayn.inference-cost-evidence.v4'
+          : source.chartCheckpoint === undefined
+            ? 'bayn.inference-cost-evidence.v2'
+            : 'bayn.inference-cost-evidence.v3',
       accountBindingHash,
       sessionDate: source.sessionDate,
       asOf: source.asOf,
@@ -151,6 +164,7 @@ const expenseSourceEvidence = (source: InferenceExpenseSource) =>
           resolution: source.resolution,
           handoff: source.handoff,
           ...(source.chartCheckpoint === undefined ? {} : { chartCheckpoint: source.chartCheckpoint }),
+          ...(source.stagedCheckpoint === undefined ? {} : { stagedCheckpoint: source.stagedCheckpoint }),
         },
       ],
     })
@@ -164,6 +178,11 @@ const quotesFromEvidence = (evidence: DecodedInferenceCostEvidence, rateCard: Ex
       report.requests
         .filter((line) => {
           const source = sources.get(line.requestId)
+          if (source?.stagedCheckpoint !== undefined)
+            return (
+              source.resolution !== null ||
+              ('stageClaimHash' in line && (line.stageClaimHash !== null || line.stageSkipHash !== null))
+            )
           return (
             source?.chartCheckpoint === undefined ||
             source.resolution !== null ||
@@ -177,11 +196,13 @@ const quotesFromEvidence = (evidence: DecodedInferenceCostEvidence, rateCard: Ex
               if ((yield* canonicalHashV1Result(candidate)) === line.rateHash) rate = candidate
             const material = {
               schemaVersion:
-                'chartClaimHash' in line
-                  ? 'bayn.inference-expense-quote.v3'
-                  : 'stage' in line
-                    ? 'bayn.inference-expense-quote.v2'
-                    : 'bayn.inference-expense-quote.v1',
+                'stageClaimHash' in line
+                  ? 'bayn.inference-expense-quote.v4'
+                  : 'chartClaimHash' in line
+                    ? 'bayn.inference-expense-quote.v3'
+                    : 'stage' in line
+                      ? 'bayn.inference-expense-quote.v2'
+                      : 'bayn.inference-expense-quote.v1',
               accountBindingHash: evidence.accountBindingHash,
               sessionDate: evidence.sessionDate,
               line,
@@ -244,6 +265,21 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
     if (quoteHash !== expected)
       return yield* Result.fail(new InferenceCostError({ message: 'Frozen inference expense quote hash differs' }))
     const line = quote.line
+    if (
+      'stageClaimHash' in line &&
+      ((line.stageClaimHash !== null && line.usageStatus === InferenceUsageStatus.NotDispatched) ||
+        (line.stageTerminalHash !== null && line.stageClaimHash === null) ||
+        (line.stageSkipHash !== null &&
+          (line.stage !== InferenceStage.BaseStart ||
+            line.stageClaimHash !== null ||
+            line.stageTerminalHash !== null ||
+            line.usageStatus !== InferenceUsageStatus.NotDispatched)) ||
+        (line.stage === InferenceStage.Jev &&
+          (line.stageClaimHash !== null || line.stageTerminalHash !== null || line.stageSkipHash !== null)))
+    )
+      return yield* Result.fail(
+        new InferenceCostError({ message: 'Staged expense identity contradicts its dispatch disposition' }),
+      )
     if ('chartClaimHash' in line && line.usageStatus === InferenceUsageStatus.NotDispatched)
       return yield* Result.fail(
         new InferenceCostError({ message: 'A dispatch checkpoint cannot prove no provider call' }),
@@ -264,7 +300,7 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         return yield* Result.fail(
           new InferenceCostError({ message: 'Undispatched inference cannot consume cache tokens' }),
         )
-      if (quote.rate !== null && quote.rate.provider !== (line.stage === InferenceStage.Chart ? 'openai' : 'typesafe'))
+      if (quote.rate !== null && quote.rate.provider !== (line.stage === InferenceStage.Jev ? 'typesafe' : 'openai'))
         return yield* Result.fail(new InferenceCostError({ message: 'Stage tariff belongs to another provider' }))
     }
     if (line.usageStatus === InferenceUsageStatus.Unknown) {
@@ -282,7 +318,8 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
       if (
         (line.receiptHash === null &&
           !('handoffHash' in line && line.handoffHash !== null) &&
-          !('chartTerminalHash' in line && line.chartTerminalHash !== null)) ||
+          !('chartTerminalHash' in line && line.chartTerminalHash !== null) &&
+          !('stageSkipHash' in line && line.stageSkipHash !== null)) ||
         line.inputTokens !== '0' ||
         line.outputTokens !== '0' ||
         line.estimatedCostPicoUsd !== '0' ||
@@ -298,7 +335,8 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
       if (
         (line.receiptHash === null &&
           !('handoffHash' in line && line.handoffHash !== null) &&
-          !('chartTerminalHash' in line && line.chartTerminalHash !== null)) ||
+          !('chartTerminalHash' in line && line.chartTerminalHash !== null) &&
+          !('stageTerminalHash' in line && line.stageTerminalHash !== null)) ||
         line.inputTokens === null ||
         line.outputTokens === null
       )
@@ -352,11 +390,63 @@ const verifyQuoteFromEvidence = (evidence: DecodedInferenceCostEvidence, valid: 
     return valid
   })
 
-type QuoteSourcePrefix = Pick<InferenceExpenseSource, 'receipt' | 'handoff' | 'resolution' | 'chartCheckpoint'>
+type QuoteSourcePrefix = Pick<
+  InferenceExpenseSource,
+  'receipt' | 'handoff' | 'resolution' | 'chartCheckpoint' | 'stagedCheckpoint'
+>
 
-const quoteSourcePrefix = (source: QuoteSourcePrefix, quote: InferenceExpenseQuote) =>
+const quoteSourcePrefix = (
+  source: QuoteSourcePrefix,
+  quote: InferenceExpenseQuote,
+): Result.Result<QuoteSourcePrefix, InferenceCostError> =>
   Result.gen(function* () {
     const line = quote.line
+    if ('stageClaimHash' in line) {
+      const checkpoint = source.stagedCheckpoint
+      if (checkpoint === undefined)
+        return yield* Result.fail(new InferenceCostError({ message: 'Staged expense has no versioned source journal' }))
+      if (line.stage === InferenceStage.Jev || (line.stageClaimHash === null && line.stageSkipHash === null))
+        return {
+          receipt:
+            line.receiptHash !== null ||
+            (line.handoffHash !== null &&
+              (line.stage !== InferenceStage.Jev || line.usageStatus === InferenceUsageStatus.NotDispatched))
+              ? source.receipt
+              : null,
+          handoff: line.handoffHash !== null ? source.handoff : null,
+          resolution: source.resolution,
+          stagedCheckpoint: checkpoint,
+        }
+      const claim = checkpoint.claims.find((item) => item.stage === line.stage)
+      const terminal = checkpoint.terminals.find((item) => item.stage === line.stage)
+      const skip = checkpoint.skips.find((item) => item.stage === line.stage)
+      if (
+        (line.stageClaimHash !== null && claim?.claimHash !== line.stageClaimHash) ||
+        (line.stageTerminalHash !== null && terminal?.terminalHash !== line.stageTerminalHash) ||
+        (line.stageSkipHash !== null && skip?.skipHash !== line.stageSkipHash)
+      )
+        return yield* Result.fail(
+          new InferenceCostError({ message: 'Staged expense differs from its immutable checkpoint identity' }),
+        )
+      return {
+        receipt: null,
+        handoff: null,
+        resolution: null,
+        stagedCheckpoint: {
+          claims: checkpoint.claims.filter(
+            (item) =>
+              item.stage === line.stage ||
+              (line.stage === InferenceStage.BaseStart && item.stage === InferenceStage.Chart),
+          ),
+          terminals: checkpoint.terminals.filter(
+            (item) =>
+              (item.stage === line.stage && item.terminalHash === line.stageTerminalHash) ||
+              (line.stage === InferenceStage.BaseStart && item.stage === InferenceStage.Chart),
+          ),
+          skips: checkpoint.skips.filter((item) => item.stage === line.stage && item.skipHash === line.stageSkipHash),
+        },
+      }
+    }
     const staged = 'stage' in line
     const checkpoint = 'chartClaimHash' in line ? source.chartCheckpoint : undefined
     if (
@@ -391,6 +481,7 @@ const sameQuoteSourcePrefix = (source: QuoteSourcePrefix, prefix: QuoteSourcePre
   prefix.receipt === source.receipt &&
   prefix.handoff === source.handoff &&
   prefix.resolution === source.resolution &&
+  prefix.stagedCheckpoint === source.stagedCheckpoint &&
   prefix.chartCheckpoint === source.chartCheckpoint
 
 const decodeQuoteSourcePrefix = (source: DecodedInferenceCostRequest, prefix: QuoteSourcePrefix, asOf: string) =>
@@ -462,6 +553,7 @@ export const verifyInferenceExpenseCoverage = (
           prefix.resolution !== null,
           prefix.chartCheckpoint?.claim.claimHash ?? null,
           prefix.chartCheckpoint?.terminal?.terminalHash ?? null,
+          prefix.stagedCheckpoint === undefined ? null : yield* canonicalHashV1Result(prefix.stagedCheckpoint),
         ])
         const existing = prefixes.get(key)
         if (existing !== undefined) prepared = existing
@@ -488,7 +580,13 @@ export const verifyInferenceExpenseCoverage = (
           ('chartClaimHash' in row.quote.line ? row.quote.line.chartClaimHash : null) ===
             ('chartClaimHash' in line ? line.chartClaimHash : null) &&
           ('chartTerminalHash' in row.quote.line ? row.quote.line.chartTerminalHash : null) ===
-            ('chartTerminalHash' in line ? line.chartTerminalHash : null),
+            ('chartTerminalHash' in line ? line.chartTerminalHash : null) &&
+          ('stageClaimHash' in row.quote.line ? row.quote.line.stageClaimHash : null) ===
+            ('stageClaimHash' in line ? line.stageClaimHash : null) &&
+          ('stageTerminalHash' in row.quote.line ? row.quote.line.stageTerminalHash : null) ===
+            ('stageTerminalHash' in line ? line.stageTerminalHash : null) &&
+          ('stageSkipHash' in row.quote.line ? row.quote.line.stageSkipHash : null) ===
+            ('stageSkipHash' in line ? line.stageSkipHash : null),
       )
       if (matches.length === 0) {
         missingQuoteCount++
@@ -613,7 +711,9 @@ export const buildInferenceExpensePlan = (
         scope,
         'stage' in quote.line && quote.line.stage === InferenceStage.Chart
           ? `bayn.inference-expense.transfer.v2:${quote.accountBindingHash}:${quote.line.requestId}:CHART`
-          : `bayn.inference-expense.transfer.v1:${quote.accountBindingHash}:${quote.line.requestId}`,
+          : 'stage' in quote.line && quote.line.stage === InferenceStage.BaseStart
+            ? `bayn.inference-expense.transfer.v3:${quote.accountBindingHash}:${quote.line.requestId}:BASE_START`
+            : `bayn.inference-expense.transfer.v1:${quote.accountBindingHash}:${quote.line.requestId}`,
         quote.quoteHash,
         BigInt(amount),
       )

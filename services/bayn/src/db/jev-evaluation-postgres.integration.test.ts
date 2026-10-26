@@ -1,6 +1,6 @@
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { defaultJevProtocolDocument } from '../jev/protocol'
-import { entryCompletionFixture } from '../jev/entry-inference.test-support'
+import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
 import { EntryInferenceJournalLive } from './entry-inference-postgres'
 import { DecisionsClient } from '../jev/decisions'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
@@ -57,7 +57,8 @@ const makeRuntime = () =>
       Layer.provideMerge(NodeServices.layer),
     ),
   )
-const fixture = nativeJevFixture(undefined, undefined, undefined, {
+const replayAccountId = `replay-${'d'.repeat(64)}`
+const fixture = nativeJevFixture(undefined, undefined, replayAccountId, {
   ...defaultJevProtocolDocument,
   candidateSymbols: ['AAPL'],
 })
@@ -75,16 +76,24 @@ if (candidate?.status !== 'REQUESTED') throw Error('Fixture requires its exact a
 const request = candidate.request
 const receipt = Result.getOrThrow(
   makeJevEvaluationReceipt(request, {
-    schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+    schemaVersion: 'bayn.jev-evaluation-receipt.v3',
     requestId: request.requestId,
     startedAt: request.observedAt,
     completedAt: request.observedAt,
     outcome: { status: JevOutcome.Completed, completion: entryCompletionFixture(request, request.observedAt, 0.9) },
   }),
 )
-const commitHandoff = Effect.flatMap(EntryInferenceJournal, (journal) =>
-  journal.recordHandoff(entryCompletionFixture(request).handoff),
-)
+const commitHandoff = Effect.gen(function* () {
+  const journal = yield* EntryInferenceJournal
+  const checkpoint = stagedCheckpointFixture(request)
+  for (const claim of checkpoint.claims) {
+    yield* journal.recordVisualClaim(claim)
+    const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
+    if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+  }
+  for (const skip of checkpoint.skips) yield* journal.recordBaseStartSkip(skip)
+  yield* journal.recordHandoff(entryCompletionFixture(request).handoff)
+})
 const recorded = Result.getOrThrow(
   makeJevResolution(request, receipt, {
     schemaVersion: 'bayn.jev-evaluation-resolution.v1',
@@ -115,6 +124,8 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
+        yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+          VALUES (${replayAccountId}, ${'d'.repeat(64)}, ${request.observedAt})`
         yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
         yield* sql`INSERT INTO authority_generations (
         generation_hash, schema_version, maximum, authority_version, activated_at
@@ -172,11 +183,12 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
               receipt: recovered.receipt,
               resolution: recovered.resolution,
               handoff: null,
+              stagedCheckpoint: { claims: [], terminals: [], skips: [] },
             },
             { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
           ),
         )
-        expect(quotes).toHaveLength(2)
+        expect(quotes).toHaveLength(3)
         expect(
           quotes.every(
             (quote) =>

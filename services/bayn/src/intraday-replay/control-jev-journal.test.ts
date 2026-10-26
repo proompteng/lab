@@ -1,9 +1,10 @@
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
-import { makeChartDecisionsRequest } from '../jev/chart-questions'
+import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
+import { stageResponseIdentity } from '../jev/staged-checkpoint'
 import type { ReplayInferenceCall } from './inference-timing'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { Clock, Effect, FileSystem, Layer, Option, Result, Schema } from 'effect'
+import { Clock, Effect, FileSystem, Layer, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { canonicalHashV1Result } from '../hash'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
@@ -11,8 +12,11 @@ import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { DecisionsClient, prepareDecisionsRequest } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { chartInferenceFixture, entryCompletionFixture } from '../jev/entry-inference.test-support'
-import { SymbolSchema } from '../schemas'
+import {
+  nativeChartInference,
+  entryCompletionFixture,
+  stagedCheckpointFixture,
+} from '../jev/entry-inference.test-support'
 import { decideJevEntry } from '../jev/decision'
 import { makeJevObservation } from '../jev/observation'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -77,7 +81,7 @@ const seed = (journal: Effect.Success<typeof setup>['journal']) =>
 const receipt = (evaluationRequest = request) =>
   Result.getOrThrow(
     makeJevEvaluationReceipt(evaluationRequest, {
-      schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+      schemaVersion: 'bayn.jev-evaluation-receipt.v3',
       requestId: evaluationRequest.requestId,
       startedAt: observation.observedAt,
       completedAt: observation.observedAt,
@@ -87,8 +91,19 @@ const receipt = (evaluationRequest = request) =>
       },
     }),
   )
+const retainCheckpoint = (journal: Effect.Success<typeof setup>['journal'], value = request) =>
+  Effect.gen(function* () {
+    const checkpoint = stagedCheckpointFixture(value, observation.observedAt)
+    for (const claim of checkpoint.claims) {
+      yield* journal.handoffs.recordVisualClaim(claim)
+      const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
+      if (terminal !== undefined) yield* journal.handoffs.recordVisualTerminal(terminal)
+    }
+    for (const skip of checkpoint.skips) yield* journal.handoffs.recordBaseStartSkip(skip)
+  })
 const record = (journal: Effect.Success<typeof setup>['journal'], value = request) =>
   Effect.gen(function* () {
+    yield* retainCheckpoint(journal, value)
     yield* journal.handoffs.recordHandoff(entryCompletionFixture(value, observation.observedAt).handoff)
     return yield* journal.evaluations.record(value, receipt(value))
   })
@@ -124,15 +139,7 @@ test('native entry commits source and request before inference, reproduces its r
           evaluate: (raw) =>
             Effect.gen(function* () {
               const prepared = Result.getOrThrow(prepareDecisionsRequest(raw))
-              const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: SymbolSchema }))(
-                prepared.request.input[0].content[2].data,
-              ).pipe(Effect.orDie)
-              const candidate = plan.candidates.find((value) => value.symbol === symbol)
-              if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing chart source')
-              const inferred = chartInferenceFixture(
-                candidate.request.request,
-                new Date(yield* Clock.currentTimeMillis).toISOString(),
-              )
+              const inferred = nativeChartInference(raw, new Date(yield* Clock.currentTimeMillis).toISOString())
               expect(inferred.requestHash).toBe(prepared.requestHash)
               return inferred
             }),
@@ -162,6 +169,7 @@ test('a durable pending claim forbids another call, expires once, and preserves 
     Effect.gen(function* () {
       const { journal } = yield* setup
       yield* seed(journal)
+      yield* retainCheckpoint(journal)
       yield* journal.handoffs.recordHandoff(entryCompletionFixture(request, observation.observedAt).handoff)
       expect((yield* journal.batches.begin(plan, observation)).dispatches).toEqual([])
       expect((yield* journal.batches.finish(plan.batchId)).result).toBeNull()
@@ -223,7 +231,7 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       if (disposition.status !== 'READY' || completion.jev.status !== 'RECEIVED')
         throw Error('Fixture requires both provider stages')
       const visual = Result.getOrThrow(
-        makeChartDecisionsRequest({
+        makeInitialChartStageRequest({
           chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
           protocol: request.request.protocol,
           funding: request.request.funding,
@@ -252,7 +260,45 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       }
       expect(chartCall.requestHash).not.toBe(request.requestHash)
       expect(jevCall.requestHash).not.toBe(request.requestHash)
+      const checkpoint = stagedCheckpointFixture(request, observation.observedAt)
+      const chartClaim = checkpoint.claims.find((row) => row.stage === 'CHART')
+      const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+      const baseClaim = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+      const baseTerminal = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
+      if (
+        chartClaim === undefined ||
+        chartTerminal?.outcome.status !== 'RECEIVED' ||
+        baseClaim === undefined ||
+        baseTerminal?.outcome.status !== 'RECEIVED'
+      )
+        throw Error('Fixture requires staged evidence')
+      expect(Result.isFailure(yield* journal.retainCall(chartCall).pipe(Effect.result))).toBe(true)
+      yield* journal.handoffs.recordVisualClaim(chartClaim)
       yield* journal.retainCall(chartCall)
+      yield* journal.handoffs.recordVisualTerminal(chartTerminal)
+      const base = Result.getOrThrow(
+        makeSelectedBaseStartStageRequest(
+          {
+            chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+            protocol: request.request.protocol,
+            funding: request.request.funding,
+          },
+          stageResponseIdentity(chartTerminal.outcome.inference),
+        ),
+      )
+      if (base.status !== 'PREPARED') throw Error('Fixture requires base start')
+      const baseCall: ReplayInferenceCall = {
+        ...common,
+        schemaVersion: 'bayn.replay-inference-call.v3',
+        stage: 'BASE_START',
+        request: base.request,
+        requestHash: base.requestHash,
+        outcome: baseTerminal.outcome,
+      }
+      expect(Result.isFailure(yield* journal.retainCall(baseCall).pipe(Effect.result))).toBe(true)
+      yield* journal.handoffs.recordVisualClaim(baseClaim)
+      yield* journal.retainCall(baseCall)
+      yield* journal.handoffs.recordVisualTerminal(baseTerminal)
       expect(Result.isFailure(yield* journal.retainCall(jevCall).pipe(Effect.result))).toBe(true)
       expect(
         Result.isFailure(
@@ -261,6 +307,6 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       ).toBe(true)
       yield* journal.handoffs.recordHandoff(completion.handoff)
       yield* journal.retainCall(jevCall)
-      expect((yield* journal.calls).map((call) => call.stage)).toEqual(['CHART', 'JEV'])
+      expect((yield* journal.calls).map((call) => call.stage)).toEqual(['CHART', 'BASE_START', 'JEV'])
     }),
   ))

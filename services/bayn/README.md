@@ -59,21 +59,28 @@ candlestick image from verified completed bars, asks OpenAI Decisions API for ty
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
 
-Entry input v4 binds the completed chart, current bid and ask, bounded entry and fee break-even objective.
-Code offers only source anchors and contiguous base intervals that satisfy the same complete-plan funding arithmetic
-used after inference. Support and resistance choices include explicit no-match answers, even for a single eligible bar.
-All source bars and the full image remain visible, including closer obstructions outside the offered objectives.
-An eligible price is not evidence of a defended support or consolidation; independent visual and Jev judgments remain
-required. Base starts are conditional on the selected end, and an unused branch's refusal cannot veto another setup.
-The volume histogram scales to the largest observed bar, including fractional crypto quantities.
-
-Migration 152 requires input v4, protocol v25, assessments v3 and handoff v3 for current execution. It preserves the
-chart-dispatch and terminal-cost checkpoints introduced by migration 151. Retired input v1/v2/v3 and their original
-images, questions, receipts and costs remain reproducible only through financial audit readers. Late terminal receipts
-and original-version handoffs cannot restart inference. The migration requires terminal cycles, flat inventory,
-settled orders, complete accounting, fresh exact reconciliation and no unexpired inference claims. It restricts prior
-PAPER authority for native OBSERVE recovery and a reviewed same-account mandate bound to the new question policy.
-Operator holds, capital, loss and turnover history remain intact.
+Entry input v4 retains relative volume, including fractional crypto quantities and an empty histogram for all-zero windows.
+Chart transport first asks presence, support/resistance anchors and the base end. Only an authenticated selected end
+can produce a second OpenAI request containing its single conditional base-start question. This extra billable
+`BASE_START` stage shares the original ten-second deadline with CHART and Jev; no timeout or transport cap is raised.
+Each start choice covers all earlier source bars and an explicit no-base option. Ends must leave at least two base bars
+and one newer completed bar. An unused branch's refusal cannot veto a supported proposal.
+Migration 152 admits only outer request v3, input v4, handoff v3 and the exact v25 policy for new execution.
+Current inference rejects retained inputs v1–v3. Migration 151 and its historical checkpoint identities remain unchanged.
+Each visual stage has one immutable dispatch admission and a separately durable terminal receipt. A duplicate admission
+cannot redispatch an uncertain call. Late terminal evidence can settle costs but cannot authorize a successor or renew expiry.
+An explicit authenticated BASE_START skip proves non-dispatch; absent or incomplete stage evidence remains unknown.
+Financial evidence/quotes v4 preserve three separate stage keys and transfer identities, retain unknown-to-metered history,
+validate the complete graph before reproducing old quote prefixes, and never count a stage twice.
+Late handoffs for original expired requests retain their original financial evidence contract and cannot restart inference.
+Read-only financial projection
+reproduces the original independent questions for v1/v2 and conditional all-end questions for v3, with the original
+whole-unit volume scale for v1 and relative scale for v2/v3. Original usage, costs and receipt hashes remain verifiable.
+The migration requires terminal cycles, flat inventory, settled orders, complete accounting, fresh exact reconciliation
+and no unexpired inference claims. It fails closed if any precondition is absent, then restricts effective authority to
+OBSERVE with the kill switch ACTIVE and `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`. It does not grant or rearm PAPER authority.
+A separately approved same-account mandate must bind the new question policy before activation; publishing a build
+or passing tests is not activation evidence. Operator holds, capital, loss and turnover history remain intact.
 
 Jev answers separate Nouls about each proposal's observed setup, stop invalidation and overhead obstruction. Code selects
 supported proposals and binds their prices and funded quantity to protected execution. An unrelated unsupported setup
@@ -236,9 +243,9 @@ inference-bound ceiling is rejected before decision construction and again at th
 before a completed-minute boundary remains usable only within its original quote-age limit. Neither provider calls,
 persistence nor a new minute renew the original ten-second inference lifetime.
 
-Protocol v25, entry state v22 and entry input v4 define the current executable contracts. Migration 147 requires flat settled inventory,
+Protocol v24, entry state v22 and entry input v3 define the current executable contracts. Migration 147 requires flat settled inventory,
 terminal mutation cycles, fresh exact reconciliation, complete accounting and no unexpired provider claims before
-restricting new authority to the current protocol. Activation uses the same account, preserved financial history and native PAPER
+restricting new authority to v24. Activation uses the same account, preserved financial history and native PAPER
 mandate against the verified image delivered through Kargo and GitOps. Historical financial evidence remains immutable.
 Held positions use their sealed code-owned stop, profit target and maximum hold. See
 [strategy protection](../../docs/bayn/strategy-protection.md) for broker protection, failure behavior and evidence.

@@ -51,7 +51,7 @@ export const evaluateClaimedJevOnce = (dispatch: JevDispatch) =>
       if (now >= Date.parse(request.expiresAt)) {
         const notDispatched = yield* Effect.fromResult(
           makeJevEvaluationReceipt(request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+            schemaVersion: 'bayn.jev-evaluation-receipt.v3',
             requestId: request.requestId,
             startedAt: utcInstantFromEpochMillis(started),
             completedAt: utcInstantFromEpochMillis(now),
@@ -80,7 +80,7 @@ export const evaluateClaimedJevOnce = (dispatch: JevDispatch) =>
     const completedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
     const receipt = yield* Effect.fromResult(
       makeJevEvaluationReceipt(request, {
-        schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+        schemaVersion: 'bayn.jev-evaluation-receipt.v3',
         requestId: request.requestId,
         startedAt: utcInstantFromEpochMillis(started),
         completedAt,

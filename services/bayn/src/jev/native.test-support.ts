@@ -361,7 +361,7 @@ export const nativeJevBatchResult = (
           return { status: JevCandidateResultStatus.Excluded, symbol: candidate.symbol }
         const receipt = Result.getOrThrow(
           makeJevEvaluationReceipt(candidate.request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+            schemaVersion: 'bayn.jev-evaluation-receipt.v3',
             requestId: candidate.request.requestId,
             startedAt: at,
             completedAt: at,

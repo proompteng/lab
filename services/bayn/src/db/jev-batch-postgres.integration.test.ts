@@ -1,5 +1,5 @@
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { entryCompletionFixture } from '../jev/entry-inference.test-support'
+import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
 import { EntryInferenceJournalLive } from './entry-inference-postgres'
 import { DecisionsClient } from '../jev/decisions'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
@@ -894,6 +894,14 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const batches = yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, delayed))
         yield* batches.begin(plan, fixture.observation.payload)
         for (const candidate of requested) {
+          const journal = yield* EntryInferenceJournal
+          const checkpoint = stagedCheckpointFixture(candidate.request, plan.observedAt)
+          for (const claim of checkpoint.claims) {
+            yield* journal.recordVisualClaim(claim)
+            const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
+            if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+          }
+          for (const skip of checkpoint.skips) yield* journal.recordBaseStartSkip(skip)
           yield* (yield* EntryInferenceJournal).recordHandoff(
             entryCompletionFixture(candidate.request, plan.observedAt).handoff,
           )
@@ -901,7 +909,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             candidate.request,
             Result.getOrThrow(
               makeJevEvaluationReceipt(candidate.request, {
-                schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+                schemaVersion: 'bayn.jev-evaluation-receipt.v3',
                 requestId: candidate.request.requestId,
                 startedAt: plan.observedAt,
                 completedAt: plan.observedAt,
@@ -1033,6 +1041,14 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const store = yield* JevBatchStore
         const requests = yield* JevEvaluationStore
         yield* store.begin(plan, fixture.observation.payload)
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(first.request, plan.observedAt)
+        for (const claim of checkpoint.claims) {
+          yield* journal.recordVisualClaim(claim)
+          const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
+          if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+        }
+        for (const skip of checkpoint.skips) yield* journal.recordBaseStartSkip(skip)
         yield* (yield* EntryInferenceJournal).recordHandoff(
           entryCompletionFixture(first.request, plan.observedAt).handoff,
         )
@@ -1051,7 +1067,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(resolved.receipt).toBeNull()
         const late = Result.getOrThrow(
           makeJevEvaluationReceipt(first.request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+            schemaVersion: 'bayn.jev-evaluation-receipt.v3',
             requestId: first.request.requestId,
             startedAt: plan.observedAt,
             completedAt: plan.expiresAt,
@@ -1194,16 +1210,19 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         Effect.gen(function* () {
           const wave = yield* Deferred.make<void>()
           const all = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
           const fiber = yield* evaluateJevBatch(plan, fixture.observation.payload).pipe(
             Effect.provideService(JevClient, {
               evaluate: (request, budgetMs) =>
                 Effect.gen(function* () {
+                  expect(budgetMs).toBeGreaterThan(0)
+                  expect(budgetMs).toBeLessThanOrEqual(Date.parse(plan.expiresAt) - (yield* Clock.currentTimeMillis))
                   calls += 1
                   active += 1
                   maximum = Math.max(maximum, active)
                   if (calls === 4) yield* Deferred.succeed(wave, undefined)
                   if (calls === requested.length) yield* Deferred.succeed(all, undefined)
-                  yield* Effect.sleep('1 second')
+                  yield* Deferred.await(release)
                   return yield* successful.evaluate(request, budgetMs)
                 }).pipe(
                   Effect.ensuring(
@@ -1217,11 +1236,14 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           )
           yield* Deferred.await(wave)
           expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
-          yield* TestClock.adjust('200 millis')
           yield* Deferred.await(all)
-          yield* TestClock.adjust('1 second')
+          expect(active).toBe(requested.length)
+          expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
+          yield* TestClock.adjust('200 millis')
+          yield* Deferred.succeed(release, undefined)
           const result = (yield* Fiber.join(fiber)).result
           if (result === null) throw new Error('Complete batch not finalized')
+          expect(Date.parse(result.completedAt)).toBeLessThan(Date.parse(plan.expiresAt))
           expect(calls).toBe(requested.length)
           expect(maximum).toBe(requested.length)
           expect(active).toBe(0)
@@ -1263,14 +1285,35 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           const batches = yield* JevBatchStore
           const sql = yield* PgClient.PgClient
           const admission = yield* batches.begin(plan, fixture.observation.payload)
-          const unresolved = admission.dispatches[0]
-          if (unresolved === undefined) throw new Error('Finalization race requires an unresolved claim')
-          // Pause recovery for the final claim only, so peer inference cannot exhaust its idle connection deadline.
-          yield* Effect.forEach(admission.dispatches.slice(1), evaluateClaimedJevOnce, { concurrency: 'unbounded' })
           const paused = yield* Deferred.make<void>()
           const resume = yield* Deferred.make<void>()
           const inserting = yield* Deferred.make<void>()
           const inserted = yield* Deferred.make<void>()
+          const readyToRecord = yield* Deferred.make<void>()
+          const record = yield* Deferred.make<void>()
+          const evaluations = yield* JevEvaluationStore
+          let prepared = 0
+          // Complete authentic provider/checkpoint work before holding an idle SQL transaction.
+          // Receipts remain absent until the pending finalizer reaches its original lock barrier.
+          const evaluating = yield* Effect.forEach(admission.dispatches, evaluateClaimedJevOnce, {
+            concurrency: 'unbounded',
+          }).pipe(
+            Effect.provideService(JevEvaluationStore, {
+              ...evaluations,
+              record: (request, receipt) =>
+                Effect.gen(function* () {
+                  prepared += 1
+                  if (prepared === admission.dispatches.length) yield* Deferred.succeed(readyToRecord, undefined)
+                  yield* Deferred.await(record)
+                  return yield* evaluations.record(request, receipt)
+                }),
+            }),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* Deferred.await(readyToRecord)
+          expect(prepared).toBe(admission.dispatches.length)
+          expect(yield* sql`SELECT request_id FROM jev_evaluation_receipts`).toEqual([])
+          expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([])
           const held = new Proxy(sql, {
             apply(target, receiver, argumentsList) {
               const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
@@ -1287,7 +1330,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             .finish(plan.batchId)
             .pipe(Effect.forkScoped({ startImmediately: true }))
           yield* Deferred.await(paused)
-          yield* evaluateClaimedJevOnce(unresolved)
+          yield* Deferred.succeed(record, undefined)
+          yield* Fiber.join(evaluating)
           const monitored = new Proxy(sql, {
             apply(target, receiver, argumentsList) {
               const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
