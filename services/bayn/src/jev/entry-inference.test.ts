@@ -57,6 +57,7 @@ const providers = (
     readonly chartClaimDenied?: boolean
     readonly chartClaimDelay?: number
     readonly chartTerminalFails?: boolean
+    readonly chartTerminalDelay?: number
   } = {},
 ) => {
   const events: string[] = []
@@ -135,6 +136,7 @@ const providers = (
       recordChartTerminal: () =>
         Effect.gen(function* () {
           checkpointEvents.push('terminal')
+          if (options.chartTerminalDelay !== undefined) yield* Effect.sleep(options.chartTerminalDelay)
           if (options.chartTerminalFails)
             return yield* operationalError({
               component: 'journal',
@@ -231,6 +233,14 @@ describe('claimed sequential entry inference', () => {
     const setup = providers({ chartClaimDelay: 10_000 })
     expect(Result.isFailure(await run(fixture(), setup, 10_000))).toBe(true)
     expect(setup.checkpointEvents).toEqual(['claim'])
+  })
+
+  test('late terminal persistence retains chart evidence but never grants a fresh Jev window', async () => {
+    const setup = providers({ chartTerminalDelay: 10_000 })
+    const result = Result.getOrThrow(await run(fixture(), setup, 10_000))
+    expect(setup.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'handoff'])
+    expect(result.jev.status).toBe('NOT_DISPATCHED')
+    expect(result.handoff.recordedAt).toBe(fixture().expiresAt)
   })
 
   test('commits a source-infeasible result before either provider is dispatched', async () => {

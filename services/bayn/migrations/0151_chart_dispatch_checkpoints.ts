@@ -88,7 +88,8 @@ export default Effect.gen(function* () {
         (source->>'schemaVersion'='bayn.jev-evaluation-request.v1' AND NEW.payload->>'schemaVersion'='bayn.inference-expense-quote.v1')
         OR (source->>'schemaVersion'='bayn.jev-evaluation-request.v2' AND NEW.payload->>'schemaVersion'='bayn.inference-expense-quote.v2'
           AND NEW.payload #>> '{line,stage}' IN ('CHART','JEV')
-          AND (NEW.payload #>> '{line,stage}'='JEV' OR claim IS NULL))
+          AND (NEW.payload #>> '{line,stage}'='JEV' OR claim IS NULL)
+          AND (claim IS NULL OR EXISTS (SELECT 1 FROM jev_evaluation_resolutions WHERE request_id=NEW.payload #>> '{line,requestId}')))
         OR (source->>'schemaVersion'='bayn.jev-evaluation-request.v2'
           AND source #>> '{request,schemaVersion}'='bayn.entry-inference-input.v3'
           AND source #>> '{request,protocol,schemaVersion}'='bayn.jev.protocol.v24'

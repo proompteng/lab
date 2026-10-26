@@ -73,8 +73,10 @@ export const makeInferenceExpenseStore = (
           ELSE receipt.receipt_hash END
       WHERE cycle.account_id = ${accountId} AND cycle.execution_session_date >= ${coverageFrom}::date
         AND (resolution.request_id IS NOT NULL OR chart_claim.request_id IS NOT NULL)
-      GROUP BY request.request_id, request.schema_version
-      HAVING count(quote.request_id) < CASE WHEN request.schema_version='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
+      GROUP BY request.request_id, request.schema_version, resolution.request_id, chart_claim.request_id
+      HAVING count(quote.request_id) < CASE
+        WHEN chart_claim.request_id IS NOT NULL AND resolution.request_id IS NULL THEN 1
+        WHEN request.schema_version='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
       ORDER BY request.request_id COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
     )
     SELECT ${source} AS source

@@ -18,6 +18,7 @@ import {
   type JevEvaluationRequest,
 } from '../jev/evidence'
 import { EntryInferenceJournal } from '../jev/entry-inference'
+import { JevFailure } from '../jev/contract'
 import { decodeChartCheckpoint, verifyChartCheckpointHandoff } from '../jev/chart-checkpoint'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
 import { makeChartDecisionsRequest } from '../jev/chart-questions'
@@ -165,6 +166,12 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             const request = yield* Effect.fromResult(decodeJevEvaluationRequest(rawRequest))
             const receipt = yield* Effect.fromResult(decodeJevEvaluationReceipt(request, rawReceipt))
             const saved = yield* requireEvaluation(request)
+            if (
+              receipt.outcome.status === JevOutcome.Failed &&
+              receipt.outcome.failure === JevFailure.NotDispatched &&
+              (yield* read('chart-claim', request.requestId)) !== null
+            )
+              return yield* failure('Undispatched receipt cannot omit a committed chart claim')
             if (receipt.outcome.status === JevOutcome.Completed) {
               const handoff = yield* Effect.fromResult(
                 decodeEntryHandoff(

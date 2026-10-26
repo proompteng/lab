@@ -155,29 +155,36 @@ export const makeInferenceExpenseQuotes = (
       rateCard,
     )
     return yield* Result.all(
-      report.requests.map((line) =>
-        Result.gen(function* () {
-          let rate: typeof InferenceRateSchema.Type | null = null
-          for (const candidate of rateCard.rates)
-            if ((yield* canonicalHashV1Result(candidate)) === line.rateHash) rate = candidate
-          const material = {
-            schemaVersion:
-              'chartClaimHash' in line
-                ? 'bayn.inference-expense-quote.v3'
-                : 'stage' in line
-                  ? 'bayn.inference-expense-quote.v2'
-                  : 'bayn.inference-expense-quote.v1',
-            accountBindingHash,
-            sessionDate: source.sessionDate,
-            line,
-            rate,
-          }
-          return yield* Schema.decodeUnknownResult(
-            InferenceExpenseQuoteSchema,
-            strictParseOptions,
-          )({ ...material, quoteHash: yield* canonicalHashV1Result(material) })
-        }),
-      ),
+      report.requests
+        .filter(
+          (line) =>
+            source.chartCheckpoint === undefined ||
+            source.resolution !== null ||
+            ('stage' in line && line.stage === InferenceStage.Chart),
+        )
+        .map((line) =>
+          Result.gen(function* () {
+            let rate: typeof InferenceRateSchema.Type | null = null
+            for (const candidate of rateCard.rates)
+              if ((yield* canonicalHashV1Result(candidate)) === line.rateHash) rate = candidate
+            const material = {
+              schemaVersion:
+                'chartClaimHash' in line
+                  ? 'bayn.inference-expense-quote.v3'
+                  : 'stage' in line
+                    ? 'bayn.inference-expense-quote.v2'
+                    : 'bayn.inference-expense-quote.v1',
+              accountBindingHash,
+              sessionDate: source.sessionDate,
+              line,
+              rate,
+            }
+            return yield* Schema.decodeUnknownResult(
+              InferenceExpenseQuoteSchema,
+              strictParseOptions,
+            )({ ...material, quoteHash: yield* canonicalHashV1Result(material) })
+          }),
+        ),
     )
   }).pipe(
     Result.mapError((cause) =>
@@ -336,6 +343,11 @@ export const verifyInferenceExpenseQuote = (source: InferenceExpenseSource, quot
       staged &&
       line.handoffHash !== null &&
       (line.stage === InferenceStage.Chart || line.usageStatus === InferenceUsageStatus.NotDispatched)
+    if (checkpoint !== undefined)
+      yield* makeInferenceExpenseQuotes(source, {
+        schemaVersion: 'bayn.inference-rate-card.v1',
+        rates: valid.rate === null ? [] : [valid.rate],
+      })
     const expected = yield* makeInferenceExpenseQuote(
       {
         ...(({ chartCheckpoint: _checkpoint, ...legacy }) => legacy)(source),
@@ -349,6 +361,7 @@ export const verifyInferenceExpenseQuote = (source: InferenceExpenseSource, quot
             }),
         receipt: line.receiptHash !== null || independentHandoff ? source.receipt : null,
         handoff: staged && line.handoffHash !== null ? source.handoff : null,
+        resolution: checkpoint === undefined ? source.resolution : null,
       },
       { schemaVersion: 'bayn.inference-rate-card.v1', rates: valid.rate === null ? [] : [valid.rate] },
       staged ? line.stage : undefined,

@@ -11,6 +11,8 @@ import {
   type InferenceExpenseSource,
 } from '../inference-expense'
 import { makeNativeChartEvidence } from './chart-evidence'
+import { JevResolutionStatus, makeJevResolution } from './resolution'
+import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { makeChartDecisionsRequest } from './chart-questions'
 import {
   decodeChartCheckpoint,
@@ -69,6 +71,31 @@ const chartQuote = (value: InferenceExpenseSource) => {
   return quote
 }
 
+test('unresolved discovery freezes only CHART and abandonment creates the first stable Jev quote', () => {
+  const initial = quotes(source)
+  expect(initial).toHaveLength(1)
+  const resolution = Result.getOrThrow(
+    makeJevResolution(request, null, {
+      schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+      requestId: request.requestId,
+      status: JevResolutionStatus.Abandoned,
+      abandonedAt: request.expiresAt,
+    }),
+  )
+  const abandoned = { ...source, resolution }
+  const after = quotes(abandoned)
+  expect(after).toHaveLength(2)
+  expect(chartQuote(abandoned).quoteHash).toBe(initial[0]?.quoteHash)
+  for (const quote of [...initial, ...after])
+    expect(Result.isSuccess(verifyInferenceExpenseQuote(abandoned, quote))).toBe(true)
+  const late = { ...abandoned, chartCheckpoint: { claim, terminal } }
+  for (const quote of [...initial, ...after, ...quotes(late)])
+    expect(Result.isSuccess(verifyInferenceExpenseQuote(late, quote))).toBe(true)
+  expect(Result.getOrThrow(buildInferenceExpensePlan([...initial, ...after, ...quotes(late)])).transfers).toHaveLength(
+    1,
+  )
+})
+
 test('claim-only crash remains unknown; late terminal creates immutable metered identity without a handoff', () => {
   const unknown = chartQuote(source)
   expect(unknown.schemaVersion).toBe('bayn.inference-expense-quote.v3')
@@ -112,6 +139,26 @@ test('committing the same handoff preserves chart quote identity and rejects sub
   const after = chartQuote({ ...value, handoff: completion.handoff })
   expect(after.quoteHash).toBe(before.quoteHash)
   expect(Result.isSuccess(verifyChartCheckpointHandoff(value.chartCheckpoint, completion.handoff))).toBe(true)
+  const receipt = Result.getOrThrow(
+    makeJevEvaluationReceipt(request, {
+      schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+      requestId: request.requestId,
+      startedAt: request.observedAt,
+      completedAt: completion.completedAt,
+      outcome: { status: JevOutcome.Completed, completion },
+    }),
+  )
+  const resolution = Result.getOrThrow(
+    makeJevResolution(request, receipt, {
+      schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+      requestId: request.requestId,
+      status: JevResolutionStatus.Recorded,
+      receiptHash: receipt.receiptHash,
+    }),
+  )
+  const completed = { ...value, handoff: completion.handoff, receipt, resolution }
+  expect(Result.isSuccess(verifyInferenceExpenseQuote(completed, chartQuote(source)))).toBe(true)
+  expect(Result.isSuccess(verifyInferenceExpenseQuote(completed, before))).toBe(true)
   const substituted = {
     ...completion.handoff,
     disposition: { ...disposition, visual: { ...disposition.visual, responseHash: 'f'.repeat(64) } },
