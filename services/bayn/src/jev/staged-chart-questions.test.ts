@@ -19,6 +19,7 @@ import {
   decodeSelectedBaseStartStageResponse,
   makeInitialChartStageRequest,
   makeSelectedBaseStartStageRequest,
+  stagedChartAssessments,
 } from './staged-chart-questions'
 
 const source = (count: number, extreme = false) => ({
@@ -187,6 +188,8 @@ describe('funded staged chart transport', () => {
       reason: 'NO_ELIGIBLE_BASE',
       predecessor: { requestHash: receipt.requestHash, responseHash: receipt.responseHash },
     })
+    expect(Result.isSuccess(stagedChartAssessments(context, receipt, null))).toBe(true)
+    expect(Result.isFailure(stagedChartAssessments(context, receipt, receipt))).toBe(true)
     expect(
       Result.isFailure(
         makeSelectedBaseStartStageRequest(
@@ -246,6 +249,8 @@ describe('funded staged chart transport', () => {
       const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(fundedSource(chart), receipt))
       expect(next.status).toBe('NOT_REQUESTED')
       if (next.status === 'NOT_REQUESTED') expect(next.reason).toBe(reason)
+      expect(Result.isSuccess(stagedChartAssessments(fundedSource(chart), receipt, null))).toBe(true)
+      expect(Result.isFailure(stagedChartAssessments(fundedSource(chart), receipt, receipt))).toBe(true)
       expect(
         Result.isFailure(decodeSelectedBaseStartStageResponse(fundedSource(chart), receipt, receiptFor(first, noBase))),
       ).toBe(true)
@@ -279,6 +284,9 @@ describe('funded staged chart transport', () => {
           makeSelectedBaseStartStageRequest(fundedSource(chart), receiptFor(first, { ...raw, answers })),
         ),
       ).toBe(true)
+      expect(
+        Result.isFailure(stagedChartAssessments(fundedSource(chart), receiptFor(first, { ...raw, answers }), null)),
+      ).toBe(true)
     }
   })
 
@@ -291,6 +299,7 @@ describe('funded staged chart transport', () => {
     if (next.status !== 'PREPARED') throw new Error('Expected selected base start')
     const start = responseFor(next.request)
     const startReceipt = receiptFor(next, start)
+    expect(Result.isSuccess(stagedChartAssessments(fundedSource(chart), initialReceipt, startReceipt))).toBe(true)
     const changedSource = source(6)
     const changed = Result.getOrThrow(
       makeNativeChartEvidence({
@@ -301,6 +310,7 @@ describe('funded staged chart transport', () => {
     const changedFirst = Result.getOrThrow(makeInitialChartStageRequest(fundedSource(changed)))
     expect(changedFirst.requestHash).not.toBe(first.requestHash)
     expect(Result.isFailure(makeSelectedBaseStartStageRequest(fundedSource(changed), initialReceipt))).toBe(true)
+    expect(Result.isFailure(stagedChartAssessments(fundedSource(changed), initialReceipt, startReceipt))).toBe(true)
     const changedInitialReceipt = receiptFor(changedFirst, raw)
     const changedNext = Result.getOrThrow(
       makeSelectedBaseStartStageRequest(fundedSource(changed), changedInitialReceipt),

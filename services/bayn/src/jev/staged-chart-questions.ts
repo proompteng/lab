@@ -21,9 +21,21 @@ export const makeInitialChartStageRequest = (source: ChartDecisionSource) => bui
 
 export const makeSelectedBaseStartStageRequest = (source: ChartDecisionSource, initialResponse: unknown) =>
   Result.gen(function* () {
-    const { chart } = source
     const initial = yield* makeInitialChartStageRequest(source)
-    const { response, responseHash } = yield* decodeBoundStageResponse(initial, initialResponse)
+    const decoded = yield* decodeBoundStageResponse(initial, initialResponse)
+    return yield* selectedBaseStartFromChart(source, initial, decoded)
+  })
+
+// Private to the two raw-input boundaries below: reuse only the initial request
+// and response they have already reproduced together in this invocation.
+const selectedBaseStartFromChart = (
+  source: ChartDecisionSource,
+  initial: Result.Result.Success<ReturnType<typeof makeInitialChartStageRequest>>,
+  decoded: Result.Result.Success<ReturnType<typeof decodeBoundStageResponse>>,
+) =>
+  Result.gen(function* () {
+    const { chart } = source
+    const { response, responseHash } = decoded
     const predecessor = { requestHash: initial.requestHash, responseHash }
     if (chart.bars.length < 3)
       return { status: 'NOT_REQUESTED' as const, reason: 'INSUFFICIENT_BARS' as const, predecessor }
@@ -79,13 +91,13 @@ export const stagedChartAssessments = (source: ChartDecisionSource, initial: unk
   Result.gen(function* () {
     const prepared = yield* makeInitialChartStageRequest(source)
     const chartResponse = yield* decodeBoundStageResponse(prepared, initial)
-    const next = yield* makeSelectedBaseStartStageRequest(source, initial)
+    const next = yield* selectedBaseStartFromChart(source, prepared, chartResponse)
     if (next.status === 'NOT_REQUESTED') {
       if (baseStart !== null)
         return yield* Result.fail(new JevContractError({ message: 'Skipped base start has unexpected response' }))
       return yield* chartAssessmentsFromResponse(source.chart, chartResponse.response, prepared.request)
     }
-    const base = yield* decodeSelectedBaseStartStageResponse(source, initial, baseStart)
+    const base = yield* decodeBoundStageResponse(next, baseStart)
     // Combine only validated answers for pure structural derivation. This is not a
     // fabricated provider receipt: both original receipts remain separate evidence.
     return yield* chartAssessmentsFromResponse(
