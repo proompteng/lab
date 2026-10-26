@@ -88,7 +88,13 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
     exp_annotations: rule.annotations,
   })
   const cases: Record<string, unknown>[] = []
-  const check = (name: string, values: ReturnType<typeof series>, fires: boolean, genericFires = false, at = '2m') => {
+  const check = (
+    name: string,
+    values: ReturnType<typeof series>,
+    fires: boolean,
+    genericFires = false,
+    { at = '2m', inputIncident = fires }: { readonly at?: string; readonly inputIncident?: boolean } = {},
+  ) => {
     cases.push({
       name,
       interval: '30s',
@@ -98,7 +104,7 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
         { expr: generic.expr, eval_time: at, exp_samples: genericFires ? [sample] : [] },
       ],
       alert_rule_test: [
-        { alertname: input.alert, eval_time: at, exp_alerts: fires ? [alert(input)] : [] },
+        { alertname: input.alert, eval_time: at, exp_alerts: inputIncident ? [alert(input)] : [] },
         { alertname: generic.alert, eval_time: at, exp_alerts: genericFires ? [alert(generic)] : [] },
       ],
     })
@@ -110,11 +116,19 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
     series({ first: '0+0x10', cutoff: '60+0x10' }),
     true,
     false,
-    '30s',
+    { at: '30s' },
   )
   check('healthy inputs', series({ input: '0+0x10', ready: '1+0x10' }), false)
   check('preopen and warmup despite an old input condition', series({ first: '180+0x10' }), false, true)
-  check('submission cutoff is exclusive', series({ cutoff: '120+0x10' }), false)
+  check(
+    'submission cutoff is exclusive while the incident remains held',
+    series({ cutoff: '120+0x10' }),
+    false,
+    false,
+    {
+      inputIncident: true,
+    },
+  )
   check('bound decisions need no new entry window', series({ bound: '1+0x10' }), false)
   check('inactive cycle', series({ phase: '0+0x10' }), false)
   check('stale runtime projection closes runtime readiness', series({ runtime: '0+0x10' }), false, true)
@@ -125,13 +139,15 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
   check('another readiness failure keeps the generic notification', series({ input: '0+0x10' }), false, true)
   check('missing telemetry remains unknown', [], false)
   check(
-    'stale series do not fabricate recovery or failure',
+    'stale series close the input gate without fabricating an immediate recovery',
     series(
       Object.fromEntries(
         (Object.keys(metrics) as Metric[]).map((key) => [key, `${defaults[key]?.split('+')[0]}+0x2 stale`]),
       ),
     ),
     false,
+    false,
+    { inputIncident: true },
   )
   for (const key of ['input', 'phase', 'bound', 'first', 'cutoff', 'runtime', 'observation', 'up'] as const) {
     check(
@@ -194,14 +210,15 @@ test('evaluates input-window gates, replica identity, de-duplication and alert d
     ],
   })
   cases.push({
-    name: 'observed input failure fires immediately and recovery clears the notification',
+    name: 'observed input failure fires immediately and short recoveries retain one incident',
     interval: '30s',
     input_series: series({ input: '1 1 1 0 1 1 1 0 0' }),
     alert_rule_test: [
-      { alertname: input.alert, eval_time: '90s', exp_alerts: [] },
+      { alertname: input.alert, eval_time: '90s', exp_alerts: [alert(input)] },
       { alertname: input.alert, eval_time: '150s', exp_alerts: [alert(input)] },
       { alertname: input.alert, eval_time: '3m', exp_alerts: [alert(input)] },
-      { alertname: input.alert, eval_time: '210s', exp_alerts: [] },
+      { alertname: input.alert, eval_time: '210s', exp_alerts: [alert(input)] },
+      { alertname: input.alert, eval_time: '9m', exp_alerts: [] },
     ],
   })
   const directory = mkdtempSync(join(tmpdir(), 'bayn-input-window-promql-'))

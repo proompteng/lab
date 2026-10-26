@@ -237,6 +237,40 @@ class CollectorTests(unittest.TestCase):
             self.store.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0], 1
         )
 
+    def test_phase_cohorts_fit_the_shared_metric_series_budget(self):
+        for index in range(40):
+            value = run()
+            value["path"] = f".github/workflows/image-{index}.yml"
+            record = job_record(value, job())
+            record["job_id"] += index
+            record["durations"] = {
+                phase: 12
+                for phase in (
+                    "queue",
+                    "execution",
+                    "build",
+                    "runner_setup",
+                    "publish",
+                    "unattributed",
+                )
+            }
+            self.store.save_job(record, cache_evidence(""))
+        metrics = self.store.render(self.now)
+        samples = [
+            line for line in metrics.splitlines() if line and not line.startswith("#")
+        ]
+        self.assertLess(len(samples), 2000)
+        self.assertIn('phase="build"', metrics)
+        self.assertIn('percentile="95"', metrics)
+        self.assertIn("ci_jobs_completed", metrics)
+
+    def test_retained_histogram_rows_cannot_reintroduce_unbounded_phase_series(self):
+        self.store.observe(
+            "retained", "build", "ci_job_phase_duration_seconds", {"phase": "build"}, 12
+        )
+        metrics = self.store.render(self.now)
+        self.assertNotIn("ci_job_phase_duration_seconds", metrics)
+
     def test_attempt_specific_jobs_exclude_carried_forward_earlier_attempt(self):
         first, second = run(1), run(2)
         first["conclusion"] = "cancelled"
@@ -278,7 +312,9 @@ class CollectorTests(unittest.TestCase):
         self.store.finish(value, [job()])
         text = self.store.render(self.now)
         self.assertIn('outcome="success",phase="execution"', text)
-        self.assertIn('outcome="failure",workflow=', text)
+        self.assertRegex(
+            text, r'ci_workflows_completed\{[^\n]*outcome="failure"[^\n]*\} 1'
+        )
         self.assertNotIn(
             "not-retained",
             self.store.db.execute("SELECT run FROM attempts").fetchone()[0],
@@ -438,10 +474,14 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(
             self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1
         )
-        counts = self.store.db.execute(
-            "SELECT count FROM aggregates WHERE metric='ci_job_phase_duration_seconds'"
-        ).fetchall()
-        self.assertTrue(all(row[0] == 1 for row in counts))
+        metrics = self.store.render(self.now)
+        completed = [
+            line
+            for line in metrics.splitlines()
+            if line.startswith("ci_jobs_completed{")
+        ]
+        self.assertTrue(completed)
+        self.assertTrue(all(line.endswith(" 1") for line in completed))
 
     def test_slow_historical_discovery_cannot_starve_pending_attempts(self):
         api = FakeGitHub({1: run()}, {1: [job()]})
