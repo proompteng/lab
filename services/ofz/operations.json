@@ -1175,6 +1175,12 @@
   },
   {
     "surface": "ofz_platform",
+    "operation": "GetPlatformExecution",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
     "operation": "WritePolicyRelationships",
     "action": "ACTION_POLICY_COMMAND",
     "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
@@ -1210,9 +1216,16 @@
     "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
   },
   {
-    "surface": "bff_http",
-    "operation": "GET /api/tengri/connectors",
-    "action": "ACTION_POLICY_CHECK"
+    "surface": "relay",
+    "operation": "GetExecution",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
+  },
+  {
+    "surface": "platform_http",
+    "operation": "GET /api/platform/connectors",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
   },
   {
     "surface": "bff_http",

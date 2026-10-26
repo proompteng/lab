@@ -28,6 +28,13 @@ struct Arguments {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tail_lines: Option<u32>,
 }
+#[derive(Debug, Deserialize, Serialize)]
+struct PreparedRequest {
+    operation: String,
+    arguments: Arguments,
+    path: String,
+    query: Vec<(String, String)>,
+}
 pub fn name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 253
@@ -253,30 +260,31 @@ impl Connector for Kubernetes {
             }
         };
         Ok(Normalized {
-            connector: self.id.clone(),
-            operation: operation.into(),
             action: action.into(),
             resources: vec![PlatformResource {
                 kind: "kubernetes.namespace".into(),
                 id: format!("{}/{}", self.id, namespace.uid),
                 target,
             }],
-            canonical_arguments: serde_json::to_vec(&args)
-                .map_err(|_| Status::invalid_argument("invalid normalized Kubernetes arguments"))?,
-            path,
-            query,
+            prepared_request: serde_json::to_vec(&PreparedRequest {
+                operation: operation.into(),
+                arguments: args,
+                path,
+                query,
+            })
+            .map_err(|_| Status::internal("encode prepared Kubernetes request"))?,
         })
     }
     async fn execute(&self, request: &Normalized) -> Result<Output, Failure> {
-        let args: Arguments =
-            serde_json::from_slice(&request.canonical_arguments).map_err(|_| Failure {
-                status: Status::internal("invalid normalized Kubernetes arguments"),
+        let prepared: PreparedRequest =
+            serde_json::from_slice(&request.prepared_request).map_err(|_| Failure {
+                status: Status::internal("invalid prepared Kubernetes request"),
                 upstream_status: 0,
             })?;
         let namespace = self
             .namespaces
             .iter()
-            .find(|n| n.name == args.namespace)
+            .find(|n| n.name == prepared.arguments.namespace)
             .ok_or_else(|| Failure {
                 status: Status::permission_denied("namespace no longer registered"),
                 upstream_status: 0,
@@ -318,15 +326,15 @@ impl Connector for Kubernetes {
             });
         }
         let (mut bytes, upstream_status) = self
-            .read(&request.path, &request.query, token, 1_048_576)
+            .read(&prepared.path, &prepared.query, token, 1_048_576)
             .await?;
-        if request.operation != "logs" {
+        if prepared.operation != "logs" {
             let value =
                 serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|_| Failure {
                     status: Status::unavailable("invalid Kubernetes JSON response"),
                     upstream_status,
                 })?;
-            if request.operation == "status" {
+            if prepared.operation == "status" {
                 let items = value
                     .get("items")
                     .and_then(serde_json::Value::as_array)
@@ -361,7 +369,7 @@ impl Connector for Kubernetes {
         }
         Ok(Output {
             bytes,
-            content_type: if request.operation == "logs" {
+            content_type: if prepared.operation == "logs" {
                 "text/plain; charset=utf-8"
             } else {
                 "application/json"
@@ -405,10 +413,11 @@ mod tests {
             request.resources[0].target,
             "pod/ofz-db-1/container/postgres"
         );
-        assert_eq!(request.path, "/api/v1/namespaces/ofz/pods/ofz-db-1/log");
-        assert!(request.query.contains(&("tailLines".into(), "100".into())));
+        let prepared: PreparedRequest = serde_json::from_slice(&request.prepared_request).unwrap();
+        assert_eq!(prepared.path, "/api/v1/namespaces/ofz/pods/ofz-db-1/log");
+        assert!(prepared.query.contains(&("tailLines".into(), "100".into())));
         assert!(
-            request
+            prepared
                 .query
                 .contains(&("limitBytes".into(), "262144".into()))
         );

@@ -5,6 +5,7 @@ on:
       - 'services/relay/**'
       - 'apps/landing/src/lib/platform/**'
       - 'apps/landing/src/lib/tengri/spiffe.fixture.ts'
+      - 'apps/landing/src/app/api/platform/**'
       - 'packages/platform-client/**'
       - 'services/ofz/**'
       - 'proto/proompteng/authz/**'
@@ -19,6 +20,7 @@ on:
       - 'services/relay/**'
       - 'apps/landing/src/lib/platform/**'
       - 'apps/landing/src/lib/tengri/spiffe.fixture.ts'
+      - 'apps/landing/src/app/api/platform/**'
       - 'packages/platform-client/**'
       - 'services/ofz/**'
       - 'proto/proompteng/authz/**'
@@ -59,6 +61,7 @@ jobs:
           cargo fmt --manifest-path services/relay/Cargo.toml --check
           cargo clippy --manifest-path services/relay/Cargo.toml --locked --all-targets -- -D warnings
           cargo test --manifest-path services/relay/Cargo.toml --locked --all-targets
+          cargo test --manifest-path services/relay/Cargo.toml --locked -p platform-client
       - name: Qualify native policy package
         run: bash services/ofz/qualify-platform.sh
       - name: Execute both platform clients through Ofz and Relay
@@ -68,7 +71,7 @@ jobs:
           bun-version: 1.4.2
       - name: Install client fixture dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
-      - name: Verify standalone MCP client with attested TLS peers
+      - name: Verify MCP clients and public proxy with attested TLS peers
         run: bash services/relay/test-client.sh
   image:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

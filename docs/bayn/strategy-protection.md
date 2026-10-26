@@ -8,6 +8,9 @@ account risk and holding/session safeguards remain mandatory. Deployment and nat
 ## Model contract
 
 The original verified numerical snapshot and deterministic candlestick image identify the same completed source bars.
+The volume histogram uses relative heights across those bars, so changing asset units does not change their
+proportions. Current entry input v2 identifies that rendering contract. The original v1 images remain reproducible
+only for financial audit; they cannot authorize new inference or entries.
 OpenAI Decisions API judges support, resistance and consolidation and selects actual source-bar anchors. Presence judgments
 and anchor probabilities remain explicit, including refusals. Anchors alone do not establish that a structure is present.
 
