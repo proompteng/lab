@@ -105,11 +105,19 @@ test('funding values a native take-profit at its submitted minimum sell price', 
       ],
     }),
   )
-  const visual = nativeChartInference(Result.getOrThrow(makeChartDecisionsRequest(chart)).request, chart.windowEndAt)
+  const chartSource = {
+    chart,
+    protocol,
+    funding: { bidMicros: '100000000', askMicros: '100000000', capitalMicros: '100000000000', cryptoFeeTier: null },
+  }
+  const visual = nativeChartInference(
+    Result.getOrThrow(makeChartDecisionsRequest(chartSource)).request,
+    chart.windowEndAt,
+  )
   const { proposals } = Result.getOrThrow(
     makeEntryProposals({
       chart,
-      assessments: Result.getOrThrow(chartAssessments(chart, visual.response)),
+      assessments: Result.getOrThrow(chartAssessments(chartSource, visual.response)),
       economics,
       protocol,
       bidMicros: 100_000_000n,

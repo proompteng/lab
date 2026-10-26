@@ -22,11 +22,12 @@ import {
   DecisionsInferenceSchema,
   DecisionsUsageSchema,
   decodeDecisionsResponse,
+  prepareDecisionsRequest,
   validDecisionsUsage,
   type DecisionsError,
   type DecisionsResponse,
 } from './decisions'
-import { deriveEntryDispositionForChart, hasFeasibleEntrySource, type EntryHandoffMaterial } from './entry-inference'
+import { deriveEntryDispositionForChart, type EntryHandoffMaterial } from './entry-inference'
 import {
   prepareEntryInferenceInput,
   type EntryInferenceInput,
@@ -73,7 +74,7 @@ const makeDispositionSchema = <S extends Schema.Top>(assessments: S) =>
     }),
   ])
 export const makeEntryHandoffSchema = <
-  V extends 'bayn.entry-handoff.v1' | 'bayn.entry-handoff.v2',
+  V extends 'bayn.entry-handoff.v1' | 'bayn.entry-handoff.v2' | 'bayn.entry-handoff.v3',
   S extends Schema.Top,
 >(
   schemaVersion: V,
@@ -88,7 +89,7 @@ export const makeEntryHandoffSchema = <
     disposition: makeDispositionSchema(assessments),
     handoffHash: Sha256Schema,
   })
-export const EntryHandoffSchema = makeEntryHandoffSchema('bayn.entry-handoff.v2', ChartAssessmentsSchema)
+export const EntryHandoffSchema = makeEntryHandoffSchema('bayn.entry-handoff.v3', ChartAssessmentsSchema)
 export const makeEntryInferenceCompletionSchema = <S extends Schema.Top>(handoff: S) =>
   Schema.Struct({
     handoff,
@@ -120,14 +121,21 @@ export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
   Result.gen(function* () {
     const prepared = yield* prepareEntryInferenceInput(source.input)
     const chart = yield* makeNativeChartEvidence(prepared.input.chartSource)
+    const visualRequest = yield* makeChartDecisionsRequest({
+      chart,
+      protocol: prepared.input.protocol,
+      funding: prepared.input.funding,
+    })
     return yield* decodeEntryHandoffForChart({
       source,
       input,
       inputHash: prepared.requestHash,
       chart,
       handoffSchema: EntryHandoffSchema,
-      prepareVisual: makeChartDecisionsRequest,
-      assessVisual: chartAssessmentsFromResponse,
+      sourceFeasible: visualRequest.sourceFeasible,
+      prepareVisual: () => Result.succeed(visualRequest),
+      assessVisual: (sourceChart, response) =>
+        chartAssessmentsFromResponse(sourceChart, response, visualRequest.request),
       prepareJudgments: makeEntryJudgmentRequest,
     })
   })
@@ -138,6 +146,7 @@ export const decodeEntryHandoffForChart = <H extends EntryHandoffMaterial>({
   inputHash,
   chart,
   handoffSchema,
+  sourceFeasible,
   prepareVisual,
   assessVisual,
   prepareJudgments,
@@ -147,7 +156,13 @@ export const decodeEntryHandoffForChart = <H extends EntryHandoffMaterial>({
   readonly inputHash: string
   readonly chart: NativeChartEvidence
   readonly handoffSchema: Schema.Decoder<H>
-  readonly prepareVisual: typeof makeChartDecisionsRequest
+  readonly sourceFeasible: boolean | null
+  readonly prepareVisual: (
+    chart: NativeChartEvidence,
+  ) => Result.Result<
+    Pick<Result.Result.Success<ReturnType<typeof prepareDecisionsRequest>>, 'request' | 'requestHash'>,
+    JevContractError | DecisionsError
+  >
   readonly assessVisual: (
     chart: NativeChartEvidence,
     response: DecisionsResponse,
@@ -168,10 +183,7 @@ export const decodeEntryHandoffForChart = <H extends EntryHandoffMaterial>({
       return yield* invalid('Entry handoff identity or source input does not reproduce')
     const disposition = handoff.disposition
     if (disposition.status === 'SOURCE_INFEASIBLE') {
-      if (
-        source.input.schemaVersion === 'bayn.entry-inference-input.v1' ||
-        (yield* hasFeasibleEntrySource(source.input, chart))
-      )
+      if (sourceFeasible !== false)
         return yield* invalid('Source-infeasible evidence contains a fundable source or retired input')
       return handoff
     }

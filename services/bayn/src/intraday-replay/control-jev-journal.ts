@@ -403,7 +403,9 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
       recordChartTerminal: (input) =>
         atomic(
           Effect.gen(function* () {
-            const request = yield* read('request', input.requestId)
+            const request = yield* Effect.fromResult(
+              decodeJevEvaluationRequest(yield* read('request', input.requestId)),
+            )
             const claim = yield* read('chart-claim', input.requestId)
             yield* Effect.fromResult(decodeChartCheckpoint(request, { claim, terminal: input }))
             const existing = yield* read('chart-terminal', input.requestId)
@@ -505,7 +507,13 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
                 continue
               if (call.stage === 'CHART') {
                 const chart = yield* Effect.fromResult(makeNativeChartEvidence(request.request.chartSource))
-                const expected = yield* Effect.fromResult(makeChartDecisionsRequest(chart))
+                const expected = yield* Effect.fromResult(
+                  makeChartDecisionsRequest({
+                    chart,
+                    protocol: request.request.protocol,
+                    funding: request.request.funding,
+                  }),
+                )
                 if (expected.requestHash !== call.requestHash) continue
               } else {
                 const raw = yield* read('handoff', request.requestId)

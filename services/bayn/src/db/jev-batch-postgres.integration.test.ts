@@ -1263,6 +1263,10 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           const batches = yield* JevBatchStore
           const sql = yield* PgClient.PgClient
           const admission = yield* batches.begin(plan, fixture.observation.payload)
+          const unresolved = admission.dispatches[0]
+          if (unresolved === undefined) throw new Error('Finalization race requires an unresolved claim')
+          // Pause recovery for the final claim only, so peer inference cannot exhaust its idle connection deadline.
+          yield* Effect.forEach(admission.dispatches.slice(1), evaluateClaimedJevOnce, { concurrency: 'unbounded' })
           const paused = yield* Deferred.make<void>()
           const resume = yield* Deferred.make<void>()
           const inserting = yield* Deferred.make<void>()
@@ -1283,7 +1287,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             .finish(plan.batchId)
             .pipe(Effect.forkScoped({ startImmediately: true }))
           yield* Deferred.await(paused)
-          yield* Effect.forEach(admission.dispatches, evaluateClaimedJevOnce, { concurrency: 'unbounded' })
+          yield* evaluateClaimedJevOnce(unresolved)
           const monitored = new Proxy(sql, {
             apply(target, receiver, argumentsList) {
               const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)

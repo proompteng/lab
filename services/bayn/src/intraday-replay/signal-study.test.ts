@@ -112,7 +112,7 @@ test('round trip rejects a zero entry budget', () => {
 test('screen reproduces actual Jev selection and fixes deterministic selections from past evidence', () => {
   const result = Result.getOrThrow(prepareSignalStudyBatch(batch()))
   expect(result.modelStatus).toBe('AVAILABLE')
-  expect(result.selected[SignalScreenRule.Jev]).toBe('AMD')
+  expect(result.selected[SignalScreenRule.Jev]).toBe('AAPL')
   expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
   expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.judgmentSupport).toBeCloseTo(0.9)
   const wait = Result.getOrThrow(prepareSignalStudyBatch(batch(false)))
@@ -125,6 +125,9 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
     'support_recovery_confirmed',
     'support_recovery_stop_invalidates',
     'support_recovery_target_obstructed',
+    'base_breakout_confirmed',
+    'base_breakout_stop_invalidates',
+    'base_breakout_target_obstructed',
   ])
   expect(factors.answers['support_recovery_confirmed']).toMatchObject({ type: 'noul', noul: expect.closeTo(0.1) })
 })

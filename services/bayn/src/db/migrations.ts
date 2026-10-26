@@ -1,3 +1,4 @@
+import fundedSourceAnchors from '../../migrations/0152_funded_source_anchors'
 import chartDispatchCheckpoints from '../../migrations/0151_chart_dispatch_checkpoints'
 import inferenceRequestVersion from '../../migrations/0150_inference_request_version'
 import conditionalBaseAnchors from '../../migrations/0149_conditional_base_anchors'
@@ -153,6 +154,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '152_funded_source_anchors': fundedSourceAnchors,
   '151_chart_dispatch_checkpoints': chartDispatchCheckpoints,
   '150_inference_request_version': inferenceRequestVersion,
   '148_relative_chart_volume': relativeChartVolume,

@@ -560,7 +560,7 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   expect(report).toMatchObject({
     diagnosticOnly: true,
     schemaVersion: 'bayn.jev-abstention-report.v3',
-    protocol: 'bayn.jev.protocol.v24',
+    protocol: 'bayn.jev.protocol.v25',
     inputDefinition: 'bayn.jev-entry-state.v22',
     selectedSymbols: [],
     profitableEdgeProven: false,
@@ -571,7 +571,7 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
     jevStatus: 'RECEIVED',
     selectedProposalId: null,
     rejection: 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS',
-    fundedPlanCount: 1,
+    fundedPlanCount: 2,
     horizonMinutes: 15,
     coverage: { suppliedBarCount: 30 },
   })
@@ -600,6 +600,9 @@ test('diagnostics retain atomic judgments and source identities without inventin
     'support_recovery_confirmed',
     'support_recovery_stop_invalidates',
     'support_recovery_target_obstructed',
+    'base_breakout_confirmed',
+    'base_breakout_stop_invalidates',
+    'base_breakout_target_obstructed',
   ])
   expect(Object.values(candidate.judgments).every((judgment) => judgment.type === 'noul')).toBe(true)
   expect(candidate.plans.every((plan) => /^[a-f0-9]{64}$/.test(plan.proposalId))).toBe(true)

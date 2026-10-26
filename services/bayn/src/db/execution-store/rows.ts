@@ -191,6 +191,7 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.jev.protocol.v22',
       'bayn.jev.protocol.v23',
       'bayn.jev.protocol.v24',
+      'bayn.jev.protocol.v25',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),

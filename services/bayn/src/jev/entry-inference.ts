@@ -20,14 +20,12 @@ import { JevClient, type JevError, type JevInference } from './client'
 import { decodeJevResponse, JevFailure, JevResponseSchema, type JevRequest } from './contract'
 import { DecisionsClient, type DecisionsError, type DecisionsInference, type DecisionsUsageSchema } from './decisions'
 import { jevEntryEconomics } from './entry-economics'
-import { prepareEntryInferenceInput, type EntryInferenceInput } from './entry-inference-input'
 import {
-  mayHaveFundableSourceProposal,
-  makeEntryProposals,
-  EntrySetup,
-  ProposalRejection,
-  type EntryProposal,
-} from './entry-proposals'
+  prepareEntryInferenceInput,
+  type EntryInferenceInput,
+  type EntryInferenceMaterial,
+} from './entry-inference-input'
+import { makeEntryProposals, EntrySetup, ProposalRejection, type EntryProposal } from './entry-proposals'
 import { makeEntryJudgmentRequest } from './entry-questions'
 
 export type VisualFailureEvidence = {
@@ -66,7 +64,7 @@ type HandoffDispositionFor<A extends ChartAssessmentsMaterial> =
 type HandoffDisposition = HandoffDispositionFor<ChartAssessments>
 
 export interface EntryHandoff {
-  readonly schemaVersion: 'bayn.entry-handoff.v2'
+  readonly schemaVersion: 'bayn.entry-handoff.v3'
   readonly requestId: string
   readonly inputHash: string
   readonly visualRequestHash: string
@@ -75,7 +73,7 @@ export interface EntryHandoff {
   readonly handoffHash: string
 }
 export type EntryHandoffMaterial = Omit<EntryHandoff, 'disposition' | 'schemaVersion'> & {
-  readonly schemaVersion: 'bayn.entry-handoff.v1' | 'bayn.entry-handoff.v2'
+  readonly schemaVersion: 'bayn.entry-handoff.v1' | 'bayn.entry-handoff.v2' | 'bayn.entry-handoff.v3'
   readonly disposition: HandoffDispositionFor<ChartAssessmentsMaterial>
 }
 
@@ -131,29 +129,6 @@ const rejectedJevUsage = (error: JevError, expectedRequestHash: string) => {
     : null
 }
 
-export const hasFeasibleEntrySource = (
-  input: Pick<EntryInferenceInput, 'protocol' | 'funding'>,
-  chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
-) =>
-  Result.gen(function* () {
-    const economics = yield* jevEntryEconomics({
-      protocol: input.protocol,
-      symbol: chart.symbol,
-      bidMicros: BigInt(input.funding.bidMicros),
-      askMicros: BigInt(input.funding.askMicros),
-      capitalMicros: input.funding.capitalMicros,
-      cryptoFeeTier: input.funding.cryptoFeeTier,
-    })
-    return economics === null
-      ? false
-      : yield* mayHaveFundableSourceProposal({
-          chart,
-          economics,
-          protocol: input.protocol,
-          bidMicros: BigInt(input.funding.bidMicros),
-        })
-  })
-
 export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual: DecisionsInference) =>
   Result.gen(function* () {
     const chart = yield* makeNativeChartEvidence(input.chartSource)
@@ -161,13 +136,13 @@ export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual
       input,
       visual,
       chart,
-      yield* chartAssessments(chart, visual.response),
+      yield* chartAssessments({ chart, protocol: input.protocol, funding: input.funding }, visual.response),
       makeEntryJudgmentRequest,
     )
   })
 
 export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMaterial>(
-  input: Pick<EntryInferenceInput, 'numericalState' | 'protocol' | 'funding'>,
+  input: Pick<EntryInferenceMaterial, 'numericalState' | 'protocol' | 'funding'>,
   visual: DecisionsInference,
   chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
   assessments: A,
@@ -249,8 +224,14 @@ export const evaluateClaimedEntryInference = (claim: {
         message: 'Entry inference claim is outside its original evidence window',
       })
     const chart = yield* Effect.fromResult(makeNativeChartEvidence(prepared.input.chartSource))
-    const visualRequest = yield* Effect.fromResult(makeChartDecisionsRequest(chart))
-    const feasible = yield* Effect.fromResult(hasFeasibleEntrySource(prepared.input, chart))
+    const visualRequest = yield* Effect.fromResult(
+      makeChartDecisionsRequest({
+        chart,
+        protocol: prepared.input.protocol,
+        funding: prepared.input.funding,
+      }),
+    )
+    const feasible = visualRequest.sourceFeasible
     const journal = yield* EntryInferenceJournal
     const visualNow = yield* Clock.currentTimeMillis
     if (visualNow >= expires || visualNow < now)
@@ -358,7 +339,7 @@ export const evaluateClaimedEntryInference = (claim: {
       }
     }
     const material = {
-      schemaVersion: 'bayn.entry-handoff.v2' as const,
+      schemaVersion: 'bayn.entry-handoff.v3' as const,
       requestId: claim.requestId,
       inputHash: prepared.requestHash,
       visualRequestHash: visualRequest.requestHash,
