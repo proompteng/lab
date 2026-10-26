@@ -5,9 +5,10 @@ import { Effect, Schema } from 'effect'
 import { canonicalHashV1Result } from './hash'
 import {
   InferenceCostError,
-  InferenceCostEvidenceSchema,
   InferenceCostRequestSchema,
-  type InferenceCostEvidence,
+  decodeInferenceCostRequest,
+  type DecodedInferenceCostEvidence,
+  type DecodedInferenceCostRequest,
 } from './inference-costs'
 import type { InferenceExpenseRecord } from './inference-expense'
 import { decodeInferenceExpenseSessionRows } from './inference-expense-postgres'
@@ -42,7 +43,7 @@ export const readInferenceExpenseSnapshot = (
   sessionDate: string,
   writerFence?: WriterFenceService,
 ): Effect.Effect<
-  { readonly evidence: InferenceCostEvidence; readonly quotes: readonly InferenceExpenseRecord[] },
+  { readonly evidence: DecodedInferenceCostEvidence; readonly quotes: readonly InferenceExpenseRecord[] },
   InferenceCostError
 > =>
   Effect.gen(function* () {
@@ -92,12 +93,21 @@ export const readInferenceExpenseSnapshot = (
               ) AS item
           `
           const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
+          const requests: DecodedInferenceCostRequest[] = []
           while (true) {
             // A single source row bounds FETCH's utility-result spool as well as each statement's work.
             const batch = yield* sql<Record<string, unknown>>`FETCH NEXT FROM ${cursor}`.pipe(
               Effect.flatMap(Schema.decodeUnknownEffect(SnapshotSchema)),
             )
             if (batch.length === 0) break
+            for (const row of batch)
+              if (row.kind === SnapshotRowKind.Request) {
+                if (requests.length === maximumRequests)
+                  return yield* new InferenceCostError({
+                    message: 'Inference cost read exceeded its complete-report limit',
+                  })
+                requests.push(yield* Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of)))
+              }
             rows.push(...batch)
           }
           yield* sql`CLOSE ${cursor}`
@@ -105,16 +115,13 @@ export const readInferenceExpenseSnapshot = (
           const cut = cuts[0]
           if (cuts.length !== 1 || cut === undefined || rows.some((row) => row.as_of !== cut.as_of))
             return yield* new InferenceCostError({ message: 'Inference cost snapshot time is unavailable' })
-          const requests = rows.flatMap((row) => (row.kind === SnapshotRowKind.Request ? [row.payload] : []))
-          if (requests.length > maximumRequests)
-            return yield* new InferenceCostError({ message: 'Inference cost read exceeded its complete-report limit' })
-          const evidence = yield* Schema.decodeUnknownEffect(InferenceCostEvidenceSchema)({
+          const evidence: DecodedInferenceCostEvidence = {
             schemaVersion: 'bayn.inference-cost-evidence.v2',
             accountBindingHash,
             sessionDate: scope.sessionDate,
             asOf: cut.as_of,
             requests,
-          })
+          }
           const quotes = yield* decodeInferenceExpenseSessionRows(
             rows.flatMap((row) => (row.kind === SnapshotRowKind.Quote ? [row.payload] : [])),
             scope.sessionDate,

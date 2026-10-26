@@ -348,16 +348,80 @@ export interface InferenceCostReport {
   readonly reportHash: string
 }
 
-/** Operating-expense evidence only; broker cash and trading authority are separate ledgers. */
-export const makeInferenceCostReport = (
-  evidenceInput: unknown,
-  rateCardInput: unknown,
-): Result.Result<InferenceCostReport, InferenceCostError> =>
+export type DecodedInferenceCostRequest = typeof InferenceCostRequestSchema.Type & {
+  readonly requestSchemaVersion: 'bayn.jev-evaluation-request.v1' | 'bayn.jev-evaluation-request.v2'
+  readonly sourceFingerprint: string
+  readonly stages: readonly Stage[]
+}
+export type DecodedInferenceCostEvidence = Omit<InferenceCostEvidence, 'schemaVersion' | 'requests'> & {
+  readonly schemaVersion: 'bayn.inference-cost-evidence.v1' | 'bayn.inference-cost-evidence.v2'
+  readonly requests: readonly DecodedInferenceCostRequest[]
+}
+
+/** Reproduce each immutable source once, while its snapshot cursor is making progress. */
+export const decodeInferenceCostRequest = (input: unknown, asOf: string) =>
+  Result.gen(function* () {
+    const row = yield* Schema.decodeUnknownResult(InferenceCostRequestSchema, strictParseOptions)(input)
+    const graph = yield* costStages(row)
+    const { request, receipt, resolution } = graph
+    if (
+      request.requestId !== row.requestId ||
+      request.cycleId !== row.cycleId ||
+      request.authorityGenerationHash !== row.authorityGenerationHash ||
+      request.observedAt > asOf
+    )
+      return yield* failure('Inference request scope differs')
+    if (
+      (receipt !== null && receipt.completedAt > asOf) ||
+      (resolution !== null && 'abandonedAt' in resolution && resolution.abandonedAt > asOf) ||
+      (graph.handoffAt !== null && graph.handoffAt > asOf)
+    )
+      return yield* failure('Inference evidence exceeds its as-of cut')
+    return {
+      ...row,
+      requestSchemaVersion: request.schemaVersion,
+      sourceFingerprint: yield* canonicalHashV1Result(row),
+      stages: graph.stages,
+    } satisfies DecodedInferenceCostRequest
+  }).pipe(
+    Result.mapError((cause) =>
+      cause instanceof InferenceCostError
+        ? cause
+        : new InferenceCostError({ message: 'Inference cost source is malformed', cause }),
+    ),
+  )
+
+export const decodeInferenceCostEvidence = (input: unknown) =>
   Result.gen(function* () {
     const evidence = yield* Schema.decodeUnknownResult(
       Schema.Union([InferenceCostEvidenceSchema, HistoricalCostEvidenceSchema]),
       strictParseOptions,
-    )(evidenceInput)
+    )(input)
+    const sourceRows =
+      evidence.schemaVersion === 'bayn.inference-cost-evidence.v2'
+        ? evidence.requests
+        : evidence.requests.map((row) => ({ ...row, handoff: null }))
+    const requests = yield* Result.all(sourceRows.map((row) => decodeInferenceCostRequest(row, evidence.asOf)))
+    if (
+      evidence.schemaVersion === 'bayn.inference-cost-evidence.v1' &&
+      requests.some((row) => row.requestSchemaVersion !== 'bayn.jev-evaluation-request.v1')
+    )
+      return yield* failure('Historical financial evidence cannot carry current execution requests')
+    return { ...evidence, requests } satisfies DecodedInferenceCostEvidence
+  }).pipe(
+    Result.mapError((cause) =>
+      cause instanceof InferenceCostError
+        ? cause
+        : new InferenceCostError({ message: 'Inference cost evidence is malformed', cause }),
+    ),
+  )
+
+/** Operating-expense evidence only; broker cash and trading authority are separate ledgers. */
+export const makeInferenceCostReport = (
+  evidence: DecodedInferenceCostEvidence,
+  rateCardInput: unknown,
+): Result.Result<InferenceCostReport, InferenceCostError> =>
+  Result.gen(function* () {
     const rateCard = yield* Schema.decodeUnknownResult(InferenceRateCardSchema, strictParseOptions)(rateCardInput)
     for (const [index, rate] of rateCard.rates.entries()) {
       if (rate.effectiveFrom >= rate.effectiveUntil) return yield* failure('Inference rate interval must be nonempty')
@@ -390,39 +454,14 @@ export const makeInferenceCostReport = (
       notDispatchedRequestCount = 0,
       unpricedUsageCount = 0,
       rejectedResponseUsageCount = 0
-    const sourceRows =
-      evidence.schemaVersion === 'bayn.inference-cost-evidence.v2'
-        ? evidence.requests
-        : evidence.requests.map((row) => ({ ...row, handoff: null }))
-    for (const row of sourceRows) {
-      const graph = yield* costStages(row)
-      if (
-        evidence.schemaVersion === 'bayn.inference-cost-evidence.v1' &&
-        graph.request.schemaVersion !== 'bayn.jev-evaluation-request.v1'
-      )
-        return yield* failure('Historical financial evidence cannot carry current execution requests')
-      const { request, receipt, resolution } = graph
-      if (
-        request.requestId !== row.requestId ||
-        request.cycleId !== row.cycleId ||
-        request.authorityGenerationHash !== row.authorityGenerationHash ||
-        request.observedAt > evidence.asOf
-      )
-        return yield* failure('Inference request scope differs')
-      if (
-        (receipt !== null && receipt.completedAt > evidence.asOf) ||
-        (resolution !== null && 'abandonedAt' in resolution && resolution.abandonedAt > evidence.asOf) ||
-        (graph.handoffAt !== null && graph.handoffAt > evidence.asOf)
-      )
-        return yield* failure('Inference evidence exceeds its as-of cut')
-      const fingerprint = yield* canonicalHashV1Result(row)
-      const prior = fingerprints.get(request.requestId)
+    for (const row of evidence.requests) {
+      const prior = fingerprints.get(row.requestId)
       if (prior !== undefined) {
-        if (prior !== fingerprint) return yield* failure('Duplicate inference evidence conflicts')
+        if (prior !== row.sourceFingerprint) return yield* failure('Duplicate inference evidence conflicts')
         continue
       }
-      fingerprints.set(request.requestId, fingerprint)
-      for (const stage of graph.stages) {
+      fingerprints.set(row.requestId, row.sourceFingerprint)
+      for (const stage of row.stages) {
         const measured = stage.usage
         const startedAt = stage.startedAt
         const priced =
@@ -442,8 +481,8 @@ export const makeInferenceCostReport = (
               ? null
               : yield* priceInferenceUsage(measured, priced.rate)
         const common = {
-          requestId: request.requestId,
-          cycleId: request.cycleId,
+          requestId: row.requestId,
+          cycleId: row.cycleId,
           receiptHash: stage.receiptHash,
           resolutionHash: stage.resolutionHash,
           model: stage.model,

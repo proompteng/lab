@@ -4,8 +4,8 @@ import { Effect, FileSystem, Result } from 'effect'
 
 import { sha256, canonicalHashV1Result } from './hash'
 import { parseInferenceCostArgs } from './inference-cost-command'
-import { makeInferenceCostReport } from './inference-costs'
-import { expenseSourceFixture } from './inference-expense.test-support'
+
+import { costReportFromEvidence, expenseSourceFixture } from './inference-expense.test-support'
 import { readOperatingCostPacket } from './operating-cost-files'
 import {
   makeOperatingCostReport,
@@ -23,7 +23,7 @@ const inference = (missing = false) => {
   const row = expenseSourceFixture({ inputTokens: 100_000, missing })
   const request = row.request
   return Result.getOrThrow(
-    makeInferenceCostReport(
+    costReportFromEvidence(
       {
         schemaVersion: 'bayn.inference-cost-evidence.v2',
         accountBindingHash: account,
