@@ -1,8 +1,8 @@
-import { Clock, Context, Effect, Redacted, Result } from 'effect'
+import { Clock, Context, Effect } from 'effect'
 
 import type { OperationalError } from '../errors'
 import { utcInstantFromEpochMillis } from '../time'
-import { JevClient, JevError } from './client'
+import { evaluateClaimedEntryInference } from './entry-inference'
 import { JevFailure } from './contract'
 import {
   decodeJevEvaluationRequest,
@@ -51,16 +51,13 @@ export const evaluateClaimedJevOnce = (dispatch: JevDispatch) =>
       if (now >= Date.parse(request.expiresAt)) {
         const notDispatched = yield* Effect.fromResult(
           makeJevEvaluationReceipt(request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
             requestId: request.requestId,
             startedAt: utcInstantFromEpochMillis(started),
             completedAt: utcInstantFromEpochMillis(now),
             outcome: {
               status: JevOutcome.Failed,
               failure: JevFailure.NotDispatched,
-              httpStatus: null,
-              responseHash: null,
-              rejectedResponse: null,
             },
           }),
         )
@@ -68,38 +65,27 @@ export const evaluateClaimedJevOnce = (dispatch: JevDispatch) =>
       }
       return yield* new JevEvidenceError({ message: 'Jev request expired or its clock regressed during persistence' })
     }
-    const client = yield* JevClient
-    const result = yield* client.evaluate(request.request).pipe(
-      Effect.timeoutOrElse({
-        duration: Date.parse(request.expiresAt) - now,
-        orElse: () =>
-          Effect.fail(
-            new JevError({
-              failure: JevFailure.Timeout,
-              message: 'Jev request validity expired during inference',
-              requestHash: request.requestHash,
-            }),
-          ),
+    const completion = yield* evaluateClaimedEntryInference({
+      requestId: request.requestId,
+      input: request.request,
+      observedAt: request.observedAt,
+      expiresAt: request.expiresAt,
+      claimedAt: dispatch.claimedAt,
+    }).pipe(
+      Effect.catchTags({
+        EntryInferenceError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
+        JevContractError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
+        DecisionsError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
       }),
-      Effect.result,
     )
     const completedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
     const receipt = yield* Effect.fromResult(
       makeJevEvaluationReceipt(request, {
-        schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+        schemaVersion: 'bayn.jev-evaluation-receipt.v2',
         requestId: request.requestId,
         startedAt: utcInstantFromEpochMillis(started),
         completedAt,
-        outcome: Result.isSuccess(result)
-          ? { status: JevOutcome.Received, inference: result.success }
-          : {
-              status: JevOutcome.Failed,
-              failure: result.failure.failure,
-              httpStatus: result.failure.status ?? null,
-              responseHash: result.failure.responseHash ?? null,
-              rejectedResponse:
-                result.failure.rejectedResponse === undefined ? null : Redacted.value(result.failure.rejectedResponse),
-            },
+        outcome: { status: JevOutcome.Completed, completion },
       }),
     )
     const resolution = yield* Effect.fromResult(

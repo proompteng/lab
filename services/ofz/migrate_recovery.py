@@ -655,7 +655,12 @@ def main():
         credentials = json.loads(
             (args.evidence / "destination-identities.json").read_text()
         )
-        destination = client(args.destination, credentials["ofz-recovery-custodian"])
+        identity = (
+            "ofz-audit-export"
+            if args.mode == "rebind-audit"
+            else "ofz-recovery-custodian"
+        )
+        destination = client(args.destination, credentials[identity])
         if args.mode == "rebind-audit":
             rebind_audit(destination, args.evidence)
             return

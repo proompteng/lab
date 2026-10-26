@@ -2,6 +2,8 @@ import { CandidateObservationStore } from '../observe-composition/candidate-obse
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
+import { DecisionsClient } from '../jev/decisions'
+import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevPositionStore } from '../jev/portfolio'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer } from 'effect'
@@ -32,6 +34,8 @@ export const autonomousRuntimeServices = Effect.all({
   jevBatchStore: JevBatchStore,
   jevEvaluationStore: JevEvaluationStore,
   jevClient: JevClient,
+  decisionsClient: DecisionsClient,
+  entryInferenceJournal: EntryInferenceJournal,
   jevPositionStore: JevPositionStore,
   candidateObservationStore: CandidateObservationStore,
   pgClient: PgClient.PgClient,
@@ -64,6 +68,8 @@ export const makeAutonomousCycleResources = (
     Layer.succeed(JevBatchStore, runtimeServices.jevBatchStore),
     Layer.succeed(JevEvaluationStore, runtimeServices.jevEvaluationStore),
     Layer.succeed(JevClient, runtimeServices.jevClient),
+    Layer.succeed(DecisionsClient, runtimeServices.decisionsClient),
+    Layer.succeed(EntryInferenceJournal, runtimeServices.entryInferenceJournal),
     Layer.succeed(JevPositionStore, runtimeServices.jevPositionStore),
     Layer.succeed(CandidateObservationStore, runtimeServices.candidateObservationStore),
     Layer.succeed(BrokerRead, runtimeServices.session.read),

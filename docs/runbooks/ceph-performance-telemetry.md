@@ -150,7 +150,8 @@ values are `osd_mclock_override_recovery_settings=false`, `osd_recovery_max_acti
 `osd_recovery_max_active_hdd=3`, `osd_max_backfills=1`, and `osd_scrub_sleep=0`.
 The zero generic recovery value selects the media-specific defaults; it does not disable recovery.
 
-Scrubs remain eligible all day with `osd_max_scrubs=1` to bound HDD contention for database WAL. mClock disables `osd_scrub_sleep`, so retaining
+Scrubs remain eligible all day with `osd_max_scrubs=3` to catch up with overdue deep scrubs. Compare scrub progress with
+database WAL latency because concurrent scans share the HDDs. mClock disables `osd_scrub_sleep`, so retaining
 `0.1` would misrepresent the effective behavior. Removing these overrides is configuration hygiene, not a claim of
 measured throughput gain. Do not alter IOPS capacities without a separately controlled calibration.
 

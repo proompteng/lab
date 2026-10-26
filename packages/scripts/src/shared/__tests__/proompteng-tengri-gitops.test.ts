@@ -25,7 +25,7 @@ test('Proompteng rate limits use connection peers without trusting supplied prox
 test('Proompteng withholds Kargo discovery until the coordinated Tengri cutover is ready', () => {
   const workflow = readManifest('.github/workflows/product-nix-images.yml')
   expect(workflow.jobs['build-proompteng'].with.publish_kargo_tag).toBe(
-    "${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY == 'true' }}",
+    "${{ needs.changes.outputs.cutover_ready == 'true' }}",
   )
 })
 

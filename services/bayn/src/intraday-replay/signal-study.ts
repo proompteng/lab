@@ -1,5 +1,5 @@
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
-import { JevEntrySetup } from '../jev/trade-plan-choices'
+import { selectSupportedEntryProposal } from '../jev/entry-questions'
 import { momentumControlCandidates } from './momentum-control'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
@@ -47,9 +47,9 @@ export enum SignalScreenRule {
 }
 
 export const signalStudyDefinition = {
-  schemaVersion: 'bayn.jev-signal-study-definition.v4',
+  schemaVersion: 'bayn.jev-signal-study-definition.v5',
   cryptoFees: cryptoTakerFeeSchedule,
-  factorBins: { probabilityEdges: [0, 0.25, 0.5, 0.65, 0.8, 1], setupQuality: 'floor of native score' },
+  factorBins: { probabilityEdges: [0, 0.25, 0.5, 0.65, 0.8, 1] },
   horizonMs: 15 * 60_000,
   entryBudgetMicros: '10000000000',
   entrySizing:
@@ -134,12 +134,19 @@ export const prepareSignalStudyBatch = (input: unknown) =>
       const t = signalStudyDefinition.breakoutThresholds
       const liquid = quote.bidSize > 0 && quote.askSize > 0 && metrics.spreadBps <= t.spreadBps
       const inference = inferences.find((entry) => entry.symbol === candidate.symbol)?.inference
-      const answer = inference?.response.answers['setup']
+      const selection =
+        inference?.handoff.disposition.status === 'READY' && inference.jev.status === 'RECEIVED'
+          ? yield* selectSupportedEntryProposal({
+              proposals: inference.handoff.disposition.evaluation.proposals,
+              response: inference.jev.inference.response,
+            })
+          : null
       const retained = batchResult?.candidates.find((entry) => entry.symbol === candidate.symbol)
       const factors =
         retained?.status === JevCandidateResultStatus.Resolved &&
-        retained.receipt?.outcome.status === JevOutcome.Received
-          ? retained.receipt.outcome.inference
+        retained.receipt?.outcome.status === JevOutcome.Completed &&
+        retained.receipt.outcome.completion.jev.status === 'RECEIVED'
+          ? retained.receipt.outcome.completion.jev.inference
           : undefined
       signals.push({
         symbol: candidate.symbol,
@@ -154,7 +161,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
                 responseHash: factors.responseHash,
                 answers: factors.response.answers,
               },
-        setupProbability: answer?.type === 'choice' ? (answer.probabilities[JevEntrySetup.Upward] ?? null) : null,
+        judgmentSupport: selection?.selected?.judgmentSupport ?? null,
         breakout:
           liquid &&
           metrics.lookbackReturnBps >= t.lookbackReturnBps &&
@@ -223,8 +230,6 @@ export const summarizeSignalFactorOutcomes = (
         else if (answer.type === 'score') factors.push([name, String(Math.floor(answer.score))])
         else {
           factors.push([name, answer.choice])
-          if (name === 'setup' && answer.probabilities[JevEntrySetup.Upward] !== undefined)
-            factors.push(['setupProbability', bin(answer.probabilities[JevEntrySetup.Upward])])
         }
       }
     for (const [dimension, value] of [
@@ -503,7 +508,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       readonly decidedAt: string
       readonly symbol: string
       readonly selectedBy: readonly SignalScreenRule[]
-      readonly setupProbability: number | null
+      readonly judgmentSupport: number | null
       readonly factors: FactorEvidence
       readonly outcome: HypothesisOutcome
       readonly fills: readonly EconomicReplayFill[]
@@ -548,7 +553,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
           decidedAt: batch.decidedAt,
           symbol: signal.symbol,
           selectedBy: Object.values(SignalScreenRule).filter((rule) => batch.selected[rule] === signal.symbol),
-          setupProbability: signal.setupProbability,
+          judgmentSupport: signal.judgmentSupport,
           factors: signal.factors,
         }
         if (
