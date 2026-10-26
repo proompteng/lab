@@ -189,7 +189,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [runId, setRunId] = useState('')
   const [runRecovered, setRunRecovered] = useState(false)
   const recoverInitialRun = useRef(true)
-  const [workspaceRun, setWorkspaceRun] = useState<TengriCodexRun | null>(null)
+  const [workspaceRuns, setWorkspaceRuns] = useState<TengriCodexRun[]>([])
   const [run, setRun] = useState<TengriCodexRun | null>(null)
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
@@ -268,11 +268,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const runCanAcceptApprovals =
     runMatchesThread &&
     (run?.state.phase === 'running' || run?.state.phase === 'waiting_for_approval' || run?.state.phase === 'recovering')
-  const canStartTurn =
-    runRecovered &&
-    Boolean(selectedOptions) &&
-    (!run || codexRunIsTerminal(run)) &&
-    (!workspaceRun || codexRunIsTerminal(workspaceRun))
+  const canStartTurn = runRecovered && Boolean(selectedOptions) && (!run || codexRunIsTerminal(run))
   const optionsRef = useRef<TengriCodexOptions>({})
   optionsRef.current = selectedOptions ?? {}
   const accountChecked = account !== null
@@ -334,15 +330,19 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     setRunRecovered(false)
     async function recover() {
       try {
-        const active = await runTengriAction<TengriCodexRun | null>(
-          { action: 'active-codex-run', agentId },
+        const activeRuns = await runTengriAction<TengriCodexRun[]>(
+          { action: 'active-codex-runs', agentId },
           controller.signal,
         )
         if (controller.signal.aborted) return
-        if (active && active.agentId !== agentId) throw new Error('Active run belongs to another workspace')
+        if (activeRuns.some((run) => run.agentId !== agentId))
+          throw new Error('Active run belongs to another workspace')
+        const active =
+          activeRuns.find((run) => run.threadId === threadId) ??
+          (!threadId && recoverInitialRun.current ? activeRuns[0] : undefined)
         const recoveredFailure = lastRecoveryFailure
         setError((current) => (current === recoveredFailure ? '' : current))
-        setWorkspaceRun(active)
+        setWorkspaceRuns(activeRuns)
         if (active && ((!threadId && recoverInitialRun.current) || active.threadId === threadId)) {
           if (!threadId) {
             resetTranscriptUi(active.threadId)
@@ -353,7 +353,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         }
         recoverInitialRun.current = false
         setRunRecovered(true)
-        if (active && active.threadId !== threadId) timer = setTimeout(() => void recover(), 2000)
+        if (activeRuns.some((run) => !codexRunIsTerminal(run))) timer = setTimeout(() => void recover(), 2000)
       } catch (cause) {
         if (controller.signal.aborted) return
         lastRecoveryFailure = runRecoveryError(cause, 'Active run recovery failed')
@@ -417,7 +417,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           setCurrentActiveTurnId(next.state.turnId)
         }
         if (codexRunIsTerminal(next)) {
-          setWorkspaceRun((current) => (current?.runId === next.runId ? null : current))
+          setWorkspaceRuns((current) => current.filter((run) => run.runId !== next.runId))
           setCurrentActiveTurnId('')
           if ('reason' in next.state) setError(next.state.reason)
           return
@@ -536,7 +536,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
 
   useEffect(() => {
     recoverInitialRun.current = true
-    setWorkspaceRun(null)
+    setWorkspaceRuns([])
     setAccount(null)
     setModels(null)
     setModelError('')
@@ -1342,7 +1342,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           completeCodexOperation(operationKey, operation.id)
           throw new Error(accepted.state.reason)
         }
-        setWorkspaceRun(accepted)
+        setWorkspaceRuns((current) => [...current.filter((run) => run.threadId !== accepted.threadId), accepted])
         if (threadIdRef.current === currentThread.id) {
           setRun(accepted)
           setRunId(accepted.runId)
@@ -1751,12 +1751,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           agentId={agentId}
           enabled={account.authenticated}
           selected={threadId ? { id: threadId, unavailable: conversationMissing } : null}
-          busyThreadId={
-            workspaceRun && !codexRunIsTerminal(workspaceRun)
-              ? workspaceRun.threadId
-              : activeTurnId || submittingHere
-                ? threadId
-                : ''
+          busyThreadIds={
+            new Set([
+              ...workspaceRuns.filter((run) => !codexRunIsTerminal(run)).map((run) => run.threadId),
+              ...(activeTurnId || submittingHere ? [threadId] : []),
+            ])
           }
           canSelect={canChangeConversation}
           revision={sessionRevision}
@@ -1863,19 +1862,6 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     group.items[0].card
                   ),
                 )}
-                {workspaceRun && workspaceRun.threadId !== threadId && !codexRunIsTerminal(workspaceRun) ? (
-                  <p role="status" className="text-copy-14 text-zinc-400">
-                    Another conversation has an active run.{' '}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => switchConversation(workspaceRun.threadId)}
-                    >
-                      Open it to continue or stop it
-                    </button>
-                    .
-                  </p>
-                ) : null}
                 {runActivity ? (
                   <p role="status" aria-label="Agent activity" className="text-copy-14 text-zinc-400">
                     {runActivity}

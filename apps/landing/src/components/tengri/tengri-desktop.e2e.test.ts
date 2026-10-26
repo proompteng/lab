@@ -836,20 +836,20 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
               : recoveryRecords(String(action.threadId), options),
         })
         return
-      case 'active-codex-run': {
-        const existing = [...runs.values()].find(
+      case 'active-codex-runs': {
+        const existing = [...runs.values()].filter(
           (run) =>
             run.agentId === action.agentId &&
             !['succeeded', 'failed', 'cancelled', 'rejected'].includes(String(run.state.phase)),
         )
-        if (existing) {
+        if (existing.length) {
           result = existing
           break
         }
         // Without seeded history there is no recoverable run. Avoid evaluating a
         // document that may be reloading while this request is still in flight.
         if (!options.resumeThreadRawJson && !options.resumeThreadRawJsonById) {
-          result = null
+          result = []
           break
         }
         // waitForFunction survives document replacement; a primitive result stays readable after reload.
@@ -871,8 +871,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
             runId,
             result as { runId: string; agentId: string; threadId: string; state: Record<string, unknown> },
           )
+          result = [result]
         } else {
-          result = null
+          result = []
         }
         break
       }
@@ -7109,8 +7110,17 @@ test('reconciles a lost archive response by reading the native index without res
   expect(writes).toBe(1)
 })
 
-test('keeps session navigation usable while preventing archive of an active response', async ({ page }) => {
-  await mockTengri(page, {
+test('stops recovery polling when no conversations are running', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  await expect(page.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await page.clock.runFor(60_000)
+  expect(mock.actions.filter((action) => action.action === 'active-codex-runs')).toHaveLength(1)
+})
+
+test('runs another conversation while keeping each active response unarchivable', async ({ page }) => {
+  const mock = await mockTengri(page, {
     threadStore: {
       threads: [
         { id: 'thread-working', title: 'Working', updatedAt: 2, archived: false },
@@ -7133,6 +7143,28 @@ test('keeps session navigation usable while preventing archive of an active resp
   await sidebar.locator('[data-conversation-id="thread-other"]').click()
   await expect(page.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
   await expect(sidebar.getByRole('button', { name: 'New conversation', exact: true })).toBeEnabled()
+  await page.getByRole('textbox', { name: 'Message your agent' }).fill('Work in the second conversation')
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(1)
+  expect(mock.actions.find((action) => action.action === 'send-turn')?.threadId).toBe('thread-other')
+  expect(mock.actions.some((action) => action.action === 'interrupt-turn')).toBe(false)
+  await expect(page.getByText('Another conversation has an active run.', { exact: false })).toHaveCount(0)
+  for (const title of ['Working', 'Other']) {
+    await sidebar.getByRole('button', { name: `Chat actions for ${title}`, exact: true }).click()
+    await expect(page.getByRole('menuitem', { name: 'Finish response to archive', exact: true })).toBeDisabled()
+    await page.keyboard.press('Escape')
+  }
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await sidebar.locator('[data-conversation-id="thread-working"]').click()
+  await page.getByRole('button', { name: 'Stop response', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'interrupt-turn')?.runId)
+    .toBe('77777777-7777-4777-8777-777777777777')
+  await sidebar.locator('[data-conversation-id="thread-other"]').click()
+  await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await page.screenshot({ path: test.info().outputPath('concurrent-conversations.png') })
 })
 
 test('clears unsent text and images when starting another new conversation', async ({ page }) => {
@@ -7193,7 +7225,9 @@ test('recovers a run started in an already open conversation before steering it'
   await expect(composer).toBeFocused()
 })
 
-test('serializes workspace runs while retaining each conversation draft and accepted prompt', async ({ page }) => {
+test('runs conversations concurrently while retaining each conversation draft and accepted prompt', async ({
+  page,
+}) => {
   const activeThread = JSON.stringify({ thread: { turns: [{ id: 'turn-1', status: 'inProgress', items: [] }] } })
   const mock = await mockTengri(page, { resumeThreadRawJson: activeThread })
   await page.goto('/')
@@ -7209,19 +7243,8 @@ test('serializes workspace runs while retaining each conversation draft and acce
   await expect(composer).toBeFocused()
   await expect(tengri.getByRole('article', { name: 'Your message' })).toHaveCount(0)
   await composer.fill('Work on the second conversation.')
-  await expect(tengri.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
-  await expect(tengri.getByText('Another conversation has an active run.', { exact: false })).toBeVisible()
-  await emitCodexEvent(page, {
-    sequence: 1,
-    method: 'turn/completed',
-    kind: 'thread-state',
-    threadId: 'thread-1',
-    turnId: 'turn-1',
-    itemId: '',
-    approvalId: '',
-    text: '',
-    rawJson: '{}',
-  })
+  await expect(tengri.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await expect(tengri.getByText('Another conversation has an active run.', { exact: false })).toHaveCount(0)
   await tengri.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'create-thread').length).toBe(2)
   await expect
@@ -9735,7 +9758,7 @@ test('recovers the exact durable run and pending approval with empty browser sto
   expect(action?.operationId).toMatch(/^[0-9a-f-]{36}$/)
 })
 
-for (const recoveryAction of ['active-codex-run', 'codex-run'] as const) {
+for (const recoveryAction of ['active-codex-runs', 'codex-run'] as const) {
   test(`clears a recovered ${recoveryAction} outage without sending another turn`, async ({ page }) => {
     await page.clock.install()
     const mock = await mockTengri(page, {

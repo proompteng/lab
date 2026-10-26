@@ -17,7 +17,7 @@ export function AgentSessionList({
   agentId,
   enabled,
   selected,
-  busyThreadId,
+  busyThreadIds,
   canSelect,
   revision,
   onSelect,
@@ -26,7 +26,7 @@ export function AgentSessionList({
   agentId: string
   enabled: boolean
   selected: { id: string; unavailable: boolean } | null
-  busyThreadId: string
+  busyThreadIds: ReadonlySet<string>
   canSelect: boolean
   revision: number
   onSelect: (threadId: string) => void
@@ -136,7 +136,7 @@ export function AgentSessionList({
           {threads.map((thread) => {
             const unavailable = thread.id === selected?.id && selected.unavailable
             const active = thread.id === selected?.id && !index.archived
-            const busy = thread.id === busyThreadId
+            const busy = busyThreadIds.has(thread.id)
             return (
               <li key={thread.id} className="group relative mb-0.5 flex min-w-0 items-center">
                 <button
