@@ -147,6 +147,11 @@ awake. An accepted durable run remains a sleep inhibitor until it reaches a term
 replaces the old deadline atomically. If automatic sleep has already claimed the running workspace, the update fails
 rather than reporting a saved timeout while the committed sleep proceeds; resume before retrying.
 
+A temporary authorization veto pauses an active workspace without clearing its running intent. Execution stays
+stopped while permission is denied; a fresh Ofz permit is required before the saved snapshot resumes automatically.
+Quarantine, explicit sleep and committed idle sleep still clear running intent. The desktop distinguishes the temporary
+pause from sleep and refreshes its state without sending a lifecycle command.
+
 The journal consumes a snapshot before vCPUs run. A failed save can recover only its still-live guest. A failed restore,
 changed disk/image/kernel/CPU identity, lost active runner, or missing Pod retains the claim and home for fenced recovery.
 No Lease expiry or missing Kubernetes object proves that a previous storage writer stopped.
