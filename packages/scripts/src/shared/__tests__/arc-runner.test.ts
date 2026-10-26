@@ -178,6 +178,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(pod.nodeSelector).toEqual({ 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'turin' })
     expect(pod.automountServiceAccountToken).toBe(false)
     expect(pod.containers.map((container: { name: string }) => container.name)).toEqual(['runner'])
+    expect(pod.containers[0].securityContext.privileged).toBe(false)
     expect(pod.initContainers).toBeUndefined()
     expect(pod.containers[0].resources.requests).toEqual({ cpu: '1', memory: '2Gi', 'ephemeral-storage': '2Gi' })
     expect(pod.volumes).toEqual([{ name: 'work', emptyDir: { sizeLimit: '32Gi' } }])

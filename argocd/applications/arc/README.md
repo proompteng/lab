@@ -29,8 +29,13 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - `arc-amd64-publish` reserves two idle publication runners and scales to four on Turin. Each single-container runner
   requests one CPU, 2Gi memory and 2Gi ephemeral storage, with limits of four CPUs, 8Gi memory and 32Gi storage. Its
   workspace is disposable `emptyDir`; it uses the same Kargo-promoted runner image and GitHub credential as the build
-  sets. It has no Kubernetes API token, scratch PVC or sidecar. Keep native image builds on the architecture-specific
-  sets so queued builds cannot consume the publication runners.
+  sets. Registry clients run in an unprivileged container with no Docker or BuildKit daemon, Kubernetes API token,
+  scratch PVC or sidecar. Keep native image builds on the architecture-specific sets so queued builds cannot consume
+  the publication runners.
+- Shared Nix index publication, Agents receipt assembly, and the Tengri, Restate, Temporal, Codex devbox, Buzz and Kata
+  publication jobs use `arc-amd64-publish`. Their native builds keep the existing architecture-specific labels.
+- Optional Nix image-archive warming has a 30-minute upload budget and 30-second termination grace. A timeout keeps
+  its failed cache status and warning, then releases the build runner. Registry publication remains authoritative.
 - `local-path-ci-amd64` uses per-class node paths: Turin's Transcend scratch mount and Ryzen's local XFS mount. Other
   storage classes retain their existing paths. Each runner uses one 45Gi generic ephemeral PVC for `/nix`,
   `/home/runner/.cache`, `/tmp`, and `/home/runner/_work`. The init copies the image's Nix tree before the
