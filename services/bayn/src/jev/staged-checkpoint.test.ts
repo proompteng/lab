@@ -13,6 +13,33 @@ import { makeJevResolution, JevResolutionStatus } from './resolution'
 
 const request = entryEvaluationRequestFixture()
 const checkpoint = stagedCheckpointFixture(request)
+test('selected-request reuse remains local to each complete or partial journal decode', () => {
+  for (const [claims, terminals] of [
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [2, 1],
+    [2, 2],
+  ]) {
+    const partial = {
+      claims: checkpoint.claims.slice(0, claims),
+      terminals: checkpoint.terminals.slice(0, terminals),
+      skips: [],
+    }
+    expect(Result.getOrThrow(decodeStagedCheckpoint(request, partial))).toEqual(partial)
+  }
+  const original = checkpoint.terminals[0]
+  if (original?.outcome.status !== 'RECEIVED') throw new Error('Expected chart response')
+  const chart = {
+    ...original,
+    outcome: { ...original.outcome, inference: { ...original.outcome.inference } },
+  }
+  const changed = { ...checkpoint, terminals: [chart, ...checkpoint.terminals.slice(1)] }
+  expect(Result.getOrThrow(decodeStagedCheckpoint(request, changed))).toEqual(checkpoint)
+  chart.outcome.inference.responseHash = 'f'.repeat(64)
+  expect(Result.isFailure(decodeStagedCheckpoint(request, changed))).toBe(true)
+  expect(Result.getOrThrow(decodeStagedCheckpoint(request, checkpoint))).toEqual(checkpoint)
+})
 test('staged journal binds selected end and preserves incomplete dispatch as unknown', () => {
   expect(Result.isSuccess(decodeStagedCheckpoint(request, checkpoint))).toBe(true)
   const empty = Result.getOrThrow(

@@ -113,6 +113,17 @@ export const decodeStagedCheckpoint = (requestInput: unknown, input: unknown) =>
     const chartSource = { chart, protocol: request.request.protocol, funding: request.request.funding }
     const initial = yield* makeInitialChartStageRequest(chartSource)
     const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+    // Claims and terminals must reproduce the same selected request within this decode.
+    // Keep the derivation local: every new decode still validates the full source graph.
+    let selectedBase: ReturnType<typeof makeSelectedBaseStartStageRequest> | undefined
+    const selectedBaseRequest = () => {
+      if (chartTerminal?.outcome.status !== 'RECEIVED')
+        return invalid('Base start requires a received chart predecessor')
+      return (selectedBase ??= makeSelectedBaseStartStageRequest(
+        chartSource,
+        stageResponseIdentity(chartTerminal.outcome.inference),
+      ))
+    }
     for (const claim of checkpoint.claims) {
       const { claimHash, ...material } = claim
       if (
@@ -137,10 +148,7 @@ export const decodeStagedCheckpoint = (requestInput: unknown, input: unknown) =>
           claim.claimedAt < chartTerminal.recordedAt
         )
           return yield* invalid('Base start claim has no preceding committed chart response')
-        const next = yield* makeSelectedBaseStartStageRequest(
-          chartSource,
-          stageResponseIdentity(chartTerminal.outcome.inference),
-        )
+        const next = yield* selectedBaseRequest()
         if (
           next.status !== 'PREPARED' ||
           claim.providerRequestHash !== next.requestHash ||
@@ -166,10 +174,7 @@ export const decodeStagedCheckpoint = (requestInput: unknown, input: unknown) =>
           terminal.stage === 'CHART'
             ? initial
             : chartTerminal?.outcome.status === 'RECEIVED'
-              ? yield* makeSelectedBaseStartStageRequest(
-                  chartSource,
-                  stageResponseIdentity(chartTerminal.outcome.inference),
-                )
+              ? yield* selectedBaseRequest()
               : null
         if (
           prepared === null ||
@@ -212,10 +217,7 @@ export const decodeStagedCheckpoint = (requestInput: unknown, input: unknown) =>
         if (chartTerminal.outcome.status === 'FAILED') {
           if (skip.reason !== 'CHART_FAILED') return yield* invalid('Failed chart has a contradictory base start skip')
         } else {
-          const next = yield* makeSelectedBaseStartStageRequest(
-            chartSource,
-            stageResponseIdentity(chartTerminal.outcome.inference),
-          )
+          const next = yield* selectedBaseRequest()
           if (next.status !== 'NOT_REQUESTED' || next.reason !== skip.reason)
             return yield* invalid('Base start skip changes the source-selected eligibility')
         }
