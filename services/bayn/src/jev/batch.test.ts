@@ -22,7 +22,7 @@ import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { evaluationRequestFixture } from './test-support'
 import { entryEvaluationRequestFixture, entryCompletionFixture } from './entry-inference.test-support'
 import type { EntryInferenceCompletion } from './entry-inference'
-import type { JevEvaluationRequest } from './evidence'
+import type { JevEvaluationReceipt, JevEvaluationRequest } from './evidence'
 
 const request = evaluationRequestFixture()
 const second = entryEvaluationRequestFixture(request.observedAt, 'AMZN')
@@ -203,6 +203,52 @@ describe('complete Jev batch evidence', () => {
     const { resultHash: _, ...lateMaterial } = result
     const late = Result.getOrThrow(makeJevBatchResult(plan, { ...lateMaterial, completedAt: at(10001) }))
     expect(Result.isFailure(usableJevBatchInferences(plan, late, 10001))).toBe(true)
+  })
+
+  test('selection reproduces provider evidence even when altered receipts and batches are resealed', () => {
+    const { resultHash: _originalResultHash, ...material } = Result.getOrThrow(
+      makeJevBatchResult(plan, resultMaterial()),
+    )
+    const candidate = material.candidates[0]
+    if (
+      candidate?.status !== JevCandidateResultStatus.Resolved ||
+      candidate.receipt === null ||
+      candidate.receipt.outcome.status !== JevOutcome.Completed
+    )
+      throw new Error('Expected a completed candidate')
+    const completion = candidate.receipt.outcome.completion
+    if (completion.handoff.disposition.status !== 'READY') throw new Error('Expected a funded handoff')
+    const disposition = completion.handoff.disposition
+    const changedDispositions = [
+      { ...disposition, visual: { ...disposition.visual, responseHash: 'f'.repeat(64) } },
+      { ...disposition, assessments: { ...disposition.assessments, barsHash: 'f'.repeat(64) } },
+      { ...disposition, jevRequestHash: 'f'.repeat(64) },
+    ]
+    for (const changedDisposition of changedDispositions) {
+      const { handoffHash: _, ...originalHandoff } = completion.handoff
+      const handoffMaterial = { ...originalHandoff, disposition: changedDisposition }
+      const handoff = { ...handoffMaterial, handoffHash: Result.getOrThrow(canonicalHashV1Result(handoffMaterial)) }
+      const { receiptHash: _receiptHash, ...originalReceipt } = candidate.receipt
+      const receiptMaterial = {
+        ...originalReceipt,
+        outcome: { status: JevOutcome.Completed, completion: { ...completion, handoff } },
+      } satisfies Omit<JevEvaluationReceipt, 'receiptHash'>
+      const receipt = { ...receiptMaterial, receiptHash: Result.getOrThrow(canonicalHashV1Result(receiptMaterial)) }
+      const resolution = Result.getOrThrow(
+        makeJevResolution(request, receipt, {
+          schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+          requestId: request.requestId,
+          status: JevResolutionStatus.Recorded,
+          receiptHash: receipt.receiptHash,
+        }),
+      )
+      const altered = {
+        ...material,
+        candidates: [{ ...candidate, receipt, resolution }, ...material.candidates.slice(1)],
+      }
+      const result = { ...altered, resultHash: Result.getOrThrow(canonicalHashV1Result(altered)) }
+      expect(Result.isFailure(usableJevBatchInferences(plan, result, 450))).toBe(true)
+    }
   })
 
   test('a failed candidate remains explicit and prevents using only the successful candidate', () => {

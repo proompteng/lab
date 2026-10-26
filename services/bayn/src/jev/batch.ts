@@ -13,7 +13,7 @@ import {
   JevEvaluationReceiptSchema,
   JevEvaluationRequestSchema,
   JevEvidenceError,
-  usableJevInference,
+  jevInferenceAvailableAt,
 } from './evidence'
 import { decodeJevResolution, JevResolutionSchema, JevResolutionStatus } from './resolution'
 
@@ -218,7 +218,7 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
         candidate.receipt === null
       )
         return yield* invalid('Every requested Jev candidate must have a recorded result before selection')
-      const inference = yield* usableJevInference(planned.request, candidate.receipt, now)
+      const inference = yield* jevInferenceAvailableAt(planned.request, candidate.receipt, now)
       inferences.push({ symbol: candidate.symbol, requestId: candidate.requestId, inference })
     }
     if (
