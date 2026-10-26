@@ -90,3 +90,9 @@ Each platform authorization checks the current registered action, resource type,
 recovery generation, fence and archive health. Delegated access intersects the grant with the issuer's current
 permission and required execution binding. An allowed decision follows a durable audit and fresh authority checks;
 a previous receipt can identify an invocation but cannot replace a current permission check.
+
+`GetPlatformExecution` is restricted to registered executors. It requires fresh authorization with a lookup-body
+hash distinct from the original execution hash. The immutable authorization receipt binds the original client,
+action, resources and owner. Delegated receipts resolve ownership through the recorded issuer, so client-selected
+agent IDs cannot reveal another issuer's execution. Lookup checks authority again before returning receipt metadata
+and digests. It returns no result body and does not change execution state.
