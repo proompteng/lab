@@ -15,6 +15,7 @@ import {
 } from 'react'
 
 import { signOutTengri } from '@/lib/tengri/auth-client'
+import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
 import {
   APP_TITLES,
@@ -255,6 +256,12 @@ export function ReadyDesktop({
     initialWindowState(viewport, ['finder', 'tengri']),
   )
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
+  useEffect(() => {
+    if (busyAction !== null) return
+    const controller = new AbortController()
+    void renewWorkspaceConnections(agent.id, controller.signal)
+    return () => controller.abort()
+  }, [agent.id, agent.runtimeEpoch, busyAction])
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [codeRequest, setCodeRequest] = useState<TargetedCodeOpenRequest | null>(null)

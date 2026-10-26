@@ -15,6 +15,7 @@ import {
   type AccessCommand,
 } from '@/lib/tengri/access-schemas'
 import { startTengriSignIn } from '@/lib/tengri/auth-client'
+import { ServicePolicyPanel } from './service-policy-panel'
 import {
   Action,
   ExecuteCommandResponseSchema,
@@ -24,7 +25,7 @@ import {
   type ReadAuditResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
 
-type View = 'workspace' | 'platform' | 'audit'
+type View = 'workspace' | 'platform' | 'policies' | 'audit'
 const actions = ['membership', 'collaborator', 'quota', 'grant', 'revoke', 'transfer', 'emergency'] as const
 const lines = (value: string) => value.split('\n').filter(Boolean)
 const formSchema = z
@@ -148,6 +149,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   const boundedViewer = role === 'viewer' && enabled && form.watch('viewerContent')
   const load = useCallback(
     async (signal?: AbortSignal, cursor = '') => {
+      if (view === 'policies') return
       const query = new URLSearchParams({ view })
       if (cursor) query.set('cursor', cursor)
       if (view === 'workspace' && workspaceUid) query.set('workspace', workspaceUid)
@@ -175,6 +177,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     setCredential('')
   }, [view, setValue])
   useEffect(() => {
+    setError('')
     setRoster(undefined)
     setAudit(undefined)
     if (!active) return
@@ -320,7 +323,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   return (
     <section className="space-y-4 text-zinc-200" aria-label="Access administration">
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Access view">
-        {(['workspace', 'platform', 'audit'] as const)
+        {(['workspace', 'platform', 'policies', 'audit'] as const)
           .filter((item) => item !== 'workspace' || workspaceUid)
           .map((item) => (
             <Button
@@ -331,10 +334,23 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
               onClick={() => setView(item)}
               aria-pressed={view === item}
             >
-              {item === 'workspace' ? 'Workspace' : item === 'platform' ? 'Platform' : 'Audit'}
+              {item === 'workspace'
+                ? 'Workspace'
+                : item === 'platform'
+                  ? 'Platform'
+                  : item === 'policies'
+                    ? 'Service policies'
+                    : 'Audit'}
             </Button>
           ))}
-        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void load()}>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={busy}
+          hidden={view === 'policies'}
+          onClick={() => void load()}
+        >
           Refresh
         </Button>
         <Button
@@ -349,7 +365,10 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
           Verify passkey
         </Button>
       </div>
-      <p className="text-xs leading-5 text-zinc-400">
+      <div hidden={view !== 'policies'}>
+        <ServicePolicyPanel active={active && view === 'policies'} />
+      </div>
+      <p hidden={view === 'policies'} className="text-xs leading-5 text-zinc-400">
         Owners manage workspace collaborators and bounded diagnostic grants. Platform administrators manage membership,
         quotas and platform policy. Developer access includes a root shell. Removing it quarantines the retained
         workspace until credentials and the guest are recovered. Viewers see metadata unless the owner explicitly

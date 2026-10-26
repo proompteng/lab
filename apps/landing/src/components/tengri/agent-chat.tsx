@@ -29,6 +29,7 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useId, type ReactNode } from 'react'
+import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
 import {
   codexOptionsForSelection,
   codexReasoningLabels,
@@ -291,6 +292,23 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const responsePending = Boolean(activeTurnId || (submittingHere && !submittedTurnCompleted) || runPending)
   const readingImages = images.some((image) => image.input === null)
   const canChangeConversation = !readingImages
+  const renewConnections = runPending && (run?.state.phase === 'running' || run?.state.phase === 'recovering')
+  useEffect(() => {
+    if (!renewConnections) return
+    const controller = new AbortController()
+    let pending = false
+    const timer = window.setInterval(() => {
+      if (pending) return
+      pending = true
+      void renewWorkspaceConnections(agentId, controller.signal).finally(() => {
+        pending = false
+      })
+    }, 60_000)
+    return () => {
+      controller.abort()
+      window.clearInterval(timer)
+    }
+  }, [agentId, renewConnections])
 
   useEffect(() => {
     if (!archivedThread || readingImages) return
