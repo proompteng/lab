@@ -1287,6 +1287,10 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           const admission = yield* batches.begin(plan, fixture.observation.payload)
           const paused = yield* Deferred.make<void>()
           const resume = yield* Deferred.make<void>()
+          const readyToBegin = yield* Deferred.make<void>()
+          const begin = yield* Deferred.make<void>()
+          const readyToInsert = yield* Deferred.make<void>()
+          const insert = yield* Deferred.make<void>()
           const inserting = yield* Deferred.make<void>()
           const inserted = yield* Deferred.make<void>()
           const readyToRecord = yield* Deferred.make<void>()
@@ -1294,7 +1298,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           const evaluations = yield* JevEvaluationStore
           let prepared = 0
           // Complete authentic provider/checkpoint work before holding an idle SQL transaction.
-          // Receipts remain absent until the pending finalizer reaches its original lock barrier.
+          // Receipts remain absent until the pending finalizer selects recovery before BEGIN.
           const evaluating = yield* Effect.forEach(admission.dispatches, evaluateClaimedJevOnce, {
             concurrency: 'unbounded',
           }).pipe(
@@ -1315,6 +1319,15 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           expect(yield* sql`SELECT request_id FROM jev_evaluation_receipts`).toEqual([])
           expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([])
           const held = new Proxy(sql, {
+            get(target, property, receiver) {
+              if (property === 'withTransaction')
+                return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+                  Deferred.succeed(readyToBegin, undefined).pipe(
+                    Effect.andThen(Deferred.await(begin)),
+                    Effect.andThen(target.withTransaction(effect)),
+                  )
+              return Reflect.get(target, property, receiver)
+            },
             apply(target, receiver, argumentsList) {
               const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
               const query = statement.compile()[0]
@@ -1329,20 +1342,30 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           const pending = yield* (yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, held)))
             .finish(plan.batchId)
             .pipe(Effect.forkScoped({ startImmediately: true }))
-          yield* Deferred.await(paused)
+          // Keep the pending path selected while receipts are absent, but do not
+          // open its transaction during expensive receipt/result reproduction.
+          yield* Deferred.await(readyToBegin)
           yield* Deferred.succeed(record, undefined)
           yield* Fiber.join(evaluating)
           const monitored = new Proxy(sql, {
             apply(target, receiver, argumentsList) {
               const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
               return statement.compile()[0].includes('INSERT INTO jev_batch_results')
-                ? Deferred.succeed(inserting, undefined).pipe(Effect.andThen(statement))
+                ? Deferred.succeed(readyToInsert, undefined).pipe(
+                    Effect.andThen(Deferred.await(insert)),
+                    Effect.andThen(Deferred.succeed(inserting, undefined)),
+                    Effect.andThen(statement),
+                  )
                 : statement
             },
           })
           const recorded = yield* (yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, monitored)))
             .finish(plan.batchId)
             .pipe(Effect.ensuring(Deferred.succeed(inserted, undefined)), Effect.forkScoped({ startImmediately: true }))
+          yield* Deferred.await(readyToInsert)
+          yield* Deferred.succeed(begin, undefined)
+          yield* Deferred.await(paused)
+          yield* Deferred.succeed(insert, undefined)
           yield* Deferred.await(inserting)
           let observed = false
           for (let attempt = 0; attempt < 100; attempt += 1) {
