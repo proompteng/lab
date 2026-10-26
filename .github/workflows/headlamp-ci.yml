@@ -65,7 +65,6 @@ jobs:
       package_attr: headlamp-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
-      image_build_timeout: 20m
 
   nix-image:
     if: >-
@@ -84,6 +83,5 @@ jobs:
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      image_build_timeout: 20m
     secrets:
       ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
