@@ -5,7 +5,7 @@ import { canonicalHashV1Result } from '../hash'
 import { PositiveIntegerSchema, Sha256Schema, SymbolSchema, UtcInstantSchema } from '../schemas'
 import { numberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import type { NativeChartEvidence } from './chart-evidence'
-import type { ChartAssessments } from './chart-questions'
+import type { ChartAssessmentsMaterial } from './chart-questions'
 import { JevContractError } from './contract'
 import type { JevEntryEconomics } from './entry-economics'
 import { jevExitLimitValue } from './liquidation-economics'
@@ -74,6 +74,7 @@ export type EntryProposal = typeof EntryProposalSchema.Type
 export enum ProposalRejection {
   NoQuantity = 'NO_BUY_QUANTITY',
   ChartRefused = 'CHART_EVIDENCE_REFUSED',
+  NoStructure = 'STRUCTURE_NOT_IDENTIFIED',
   IncoherentStructure = 'SOURCE_STRUCTURE_INCOHERENT',
   InvalidPrices = 'INVALID_PROTECTIVE_PRICES',
   Unfunded = 'TARGET_DOES_NOT_COVER_COSTS',
@@ -177,7 +178,7 @@ export const mayHaveFundableSourceProposal = (input: {
 
 export const makeEntryProposals = (input: {
   readonly chart: NativeChartEvidence
-  readonly assessments: ChartAssessments
+  readonly assessments: ChartAssessmentsMaterial
   readonly economics: JevEntryEconomics
   readonly protocol: JevProtocol
   readonly bidMicros: bigint
@@ -249,7 +250,9 @@ export const makeEntryProposals = (input: {
       })
 
     const { support, resistance, base } = assessments
-    if (
+    if (support.anchor.status === 'NOT_IDENTIFIED' || resistance.anchor.status === 'NOT_IDENTIFIED') {
+      reject(EntrySetup.SupportRecovery, ProposalRejection.NoStructure)
+    } else if (
       support.presence.status === 'REFUSED' ||
       resistance.presence.status === 'REFUSED' ||
       support.anchor.status === 'REFUSED' ||
@@ -272,7 +275,13 @@ export const makeEntryProposals = (input: {
         quantizeInstrumentPriceMicros(chart.symbol, high - 1n, 'DOWN'),
       )
     }
-    if (base.presence.status === 'REFUSED' || base.first.status === 'REFUSED' || base.last.status === 'REFUSED') {
+    if (base.first.status === 'NOT_IDENTIFIED' || base.last.status === 'NOT_IDENTIFIED') {
+      reject(EntrySetup.BaseBreakout, ProposalRejection.NoStructure)
+    } else if (
+      base.presence.status === 'REFUSED' ||
+      base.first.status === 'REFUSED' ||
+      base.last.status === 'REFUSED'
+    ) {
       reject(EntrySetup.BaseBreakout, ProposalRejection.ChartRefused)
     } else {
       const first = yield* barFor(base.first.barId)

@@ -79,7 +79,7 @@ jobs:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
       NIX_IMAGE_BUILD_ATTIC_TIMEOUT: 45m
-      NIX_IMAGE_CACHE_WARM_TIMEOUT: 2m
+      NIX_IMAGE_CACHE_WARM_TIMEOUT: 30m
       NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
       - name: Start checkout timer
