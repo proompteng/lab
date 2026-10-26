@@ -112,6 +112,9 @@ overwrite that branch or its managed deployment metadata. If an Application is r
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
 authorized break-glass direct deployment is an incident action, not a normal release path.
 
+Changes restricted to Bayn `*.test.ts` modules retain normal pull-request validation and do not publish a new Bayn
+image from `main`. This avoids execution-controller reactivation when production code is unchanged.
+
 Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
 main-published immutable image. The selected image owns the exact source revision used for checkout, runtime bindings
 and activation lineage, so a newer unpublished main commit cannot hold a completed release. Its Stage updates the
