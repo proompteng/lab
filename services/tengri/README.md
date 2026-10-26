@@ -508,7 +508,7 @@ conversation. Attachment and native operation receipts remain with the retained 
 
 ## Durable Codex runs
 
-Guest API 8 provides direct file metadata and requires canonical UUID operation identities for every submission and
+Guest API 10 requires conversation-scoped pending-operation fences and retains direct file metadata and canonical UUID operation identities for every submission and
 control, plus confirmed native command cleanup before reporting cancellation. The web BFF, controller and guest must
 agree on this version; the operation inventory rejects drift. Older guests require a fenced cold replacement on their
 retained home.

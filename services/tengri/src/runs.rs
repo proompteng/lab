@@ -116,6 +116,7 @@ struct Admission {
 #[serde(deny_unknown_fields)]
 struct Claim {
     workspace_uid: String,
+    owner_hash: String,
     thread_id: String,
     run_id: String,
 }
@@ -301,6 +302,7 @@ pub(crate) async fn submit(
     let workspace_uid = principal.context.workspace_uid.clone();
     let claim = Claim {
         workspace_uid: workspace_uid.clone(),
+        owner_hash: principal.owner_hash.clone(),
         thread_id: input.thread_id.clone(),
         run_id: input.id.clone(),
     };
@@ -355,31 +357,55 @@ pub(crate) async fn active(
     principal: &Principal,
 ) -> Result<Vec<Snapshot>, Status> {
     tokio::time::timeout(STATUS_RECOVERY_TIMEOUT, async {
-        let client = TengriWorkspaceRunsIngressClient::from_client(
-            ingress()?,
-            principal.context.workspace_uid.clone(),
-        );
-        let ids = recover_status("active", || async {
-            let query = Query {
-                run_id: String::new(),
-                owner_hash: principal.owner_hash.clone(),
-                workspace_uid: principal.context.workspace_uid.clone(),
-                digest: None,
-                expires_at_ms: crate::ofz::now_ms()? + 2000,
-            };
-            let envelope = seal(service, "active-query", &query).await?;
-            let response = client
-                .active(Json(envelope))
-                .call()
-                .await
-                .map_err(read_error)?;
-            Ok(response.into_body().map_err(read_error)?.into_inner())
-        })
-        .await?;
-        futures::future::try_join_all(ids.iter().map(|id| read(service, principal, id, None))).await
+        let claims = active_claims(service, principal).await?;
+        futures::future::try_join_all(
+            claims
+                .iter()
+                .filter(|claim| claim.owner_hash == principal.owner_hash)
+                .map(|claim| read(service, principal, &claim.run_id, None)),
+        )
+        .await
     })
     .await
     .map_err(|_| Status::unavailable("active run recovery timed out"))?
+}
+
+pub(crate) async fn thread_active(
+    service: &ControlPlane,
+    principal: &Principal,
+    thread_id: &str,
+) -> Result<bool, Status> {
+    Ok(active_claims(service, principal)
+        .await?
+        .iter()
+        .any(|claim| claim.thread_id == thread_id))
+}
+
+async fn active_claims(
+    service: &ControlPlane,
+    principal: &Principal,
+) -> Result<Vec<Claim>, Status> {
+    let client = TengriWorkspaceRunsIngressClient::from_client(
+        ingress()?,
+        principal.context.workspace_uid.clone(),
+    );
+    recover_status("active", || async {
+        let query = Query {
+            run_id: String::new(),
+            owner_hash: principal.owner_hash.clone(),
+            workspace_uid: principal.context.workspace_uid.clone(),
+            digest: None,
+            expires_at_ms: crate::ofz::now_ms()? + 2000,
+        };
+        let envelope = seal(service, "active-query", &query).await?;
+        let response = client
+            .active(Json(envelope))
+            .call()
+            .await
+            .map_err(read_error)?;
+        Ok(response.into_body().map_err(read_error)?.into_inner())
+    })
+    .await
 }
 
 pub(crate) async fn control(
@@ -938,6 +964,7 @@ impl TengriWorkspaceRuns {
                     || admission.principal.context.workspace_uid != workspace_uid
                     || admission.claim.run_id != admission.input.id
                     || admission.claim.thread_id != admission.input.thread_id
+                    || admission.claim.owner_hash != admission.principal.owner_hash
                     || Uuid::parse_str(&admission.input.id).is_err()
                     || input_digest(&admission.input).map_err(terminal)? != admission.digest
                 {
@@ -994,7 +1021,7 @@ impl TengriWorkspaceRuns {
         &self,
         ctx: SharedObjectContext<'_>,
         envelope: Json<Envelope>,
-    ) -> HandlerResult<Json<Vec<String>>> {
+    ) -> HandlerResult<Json<Vec<Claim>>> {
         let workspace = ctx.key().to_owned();
         ctx.run(|| async {
             let query: Query = open(&self.service, "active-query", &envelope.0)
@@ -1015,7 +1042,6 @@ impl TengriWorkspaceRuns {
                 .map(Json::into_inner)
                 .unwrap_or_default()
                 .into_values()
-                .map(|claim| claim.run_id)
                 .collect(),
         ))
     }

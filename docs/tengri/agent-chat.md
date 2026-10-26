@@ -112,10 +112,16 @@ allows concurrent active turns, and Nanoagent already tracks active turns by thr
 key, while independent run workflows can execute concurrently; see the
 [Rust SDK object contract](https://docs.rs/restate-sdk/0.12.1/restate_sdk/attr.object.html).
 
-The workspace object now maps each conversation to its claim. Stop is stored under its exact run ID, and the sleep
+The workspace object now maps each conversation to its claim and submitting principal. Active-run recovery returns only the caller's runs, while other principals' claims still prevent duplicate work in their conversations. Stop is stored under its exact run ID, and the sleep
 fence holds all active run IDs under the existing resource-version CAS. Independent conversations therefore share
 the workspace without sharing execution or cancellation ownership. They still share files under `/workspace`;
 concurrent edits to the same file have the same conflict risk as parallel terminals.
+
+Guest API 10 scopes Nanoagent's pending-operation fence by the SHA-256 hash of the thread ID. An uncertain start in
+one conversation cannot prevent another conversation from journaling and dispatching its own start. Reconciliation
+and duplicate suppression retain the exact operation UUID. The controller, guest and BFF reject earlier API versions.
+The existing publication guard holds Kargo aliases until retained homes and prepared slots are qualified and enrolled
+for protocol 10; draining old runs and pending-operation fences precedes the retained-home replacement.
 
 ## Event and recovery contract
 

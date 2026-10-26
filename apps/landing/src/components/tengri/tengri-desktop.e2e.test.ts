@@ -7110,6 +7110,15 @@ test('reconciles a lost archive response by reading the native index without res
   expect(writes).toBe(1)
 })
 
+test('stops recovery polling when no conversations are running', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  await expect(page.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await page.clock.runFor(60_000)
+  expect(mock.actions.filter((action) => action.action === 'active-codex-runs')).toHaveLength(1)
+})
+
 test('runs another conversation while keeping each active response unarchivable', async ({ page }) => {
   const mock = await mockTengri(page, {
     threadStore: {

@@ -214,7 +214,23 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
                                 serde_json::json!({"code":408,"message":"run query expired"}),
                             )
                         } else {
-                            (200, serde_json::json!(["run-current"]))
+                            (
+                                200,
+                                serde_json::json!([
+                                    Claim {
+                                        workspace_uid: query.workspace_uid.clone(),
+                                        owner_hash: query.owner_hash.clone(),
+                                        thread_id: "thread-fixture".into(),
+                                        run_id: "run-current".into()
+                                    },
+                                    Claim {
+                                        workspace_uid: query.workspace_uid.clone(),
+                                        owner_hash: "b".repeat(64),
+                                        thread_id: "foreign-thread".into(),
+                                        run_id: "foreign-run".into()
+                                    }
+                                ]),
+                            )
                         }
                     } else if key == "run-current"
                         && status_calls.fetch_add(1, Ordering::SeqCst) == 0
@@ -281,7 +297,7 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(active_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(active_calls.load(Ordering::SeqCst), 4);
     assert_eq!(status_calls.load(Ordering::SeqCst), 2);
 }
 
@@ -289,7 +305,20 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
 #[ignore = "child process for isolated read recovery tests"]
 async fn recovering_status_read_child() {
     let service = fixture();
-    let snapshot = active(&service, &principal()).await.unwrap().remove(0);
+    let mut snapshots = active(&service, &principal()).await.unwrap();
+    assert_eq!(snapshots.len(), 1, "foreign runs must not poison recovery");
+    let snapshot = snapshots.remove(0);
+    assert!(
+        thread_active(&service, &principal(), "foreign-thread")
+            .await
+            .unwrap(),
+        "archiving still protects other principals' active conversations"
+    );
+    assert!(
+        !thread_active(&service, &principal(), "missing-thread")
+            .await
+            .unwrap()
+    );
     assert_eq!(
         snapshot.state,
         State::Running {
@@ -621,6 +650,7 @@ async fn admission(service: &ControlPlane, input: Input) -> Envelope {
     let principal = principal();
     let claim = Claim {
         workspace_uid: principal.context.workspace_uid.clone(),
+        owner_hash: principal.owner_hash.clone(),
         thread_id: input.thread_id.clone(),
         run_id: input.id.clone(),
     };
@@ -715,6 +745,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let proof_run = Uuid::new_v4().to_string();
     let proof_claim = Claim {
         workspace_uid: Uuid::new_v4().to_string(),
+        owner_hash: principal().owner_hash,
         thread_id: "proof-thread".into(),
         run_id: proof_run.clone(),
     };
@@ -868,7 +899,10 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         .unwrap()
         .into_inner();
     assert_eq!(
-        active.into_iter().collect::<BTreeSet<_>>(),
+        active
+            .into_iter()
+            .map(|claim| claim.run_id)
+            .collect::<BTreeSet<_>>(),
         BTreeSet::from([input.id.clone(), parallel.id.clone()])
     );
     let expired = Query {
@@ -910,6 +944,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     );
     let claim = Claim {
         workspace_uid: query.workspace_uid,
+        owner_hash: principal().owner_hash,
         thread_id: input.thread_id.clone(),
         run_id: input.id.clone(),
     };

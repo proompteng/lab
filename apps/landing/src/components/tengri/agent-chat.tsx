@@ -353,7 +353,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         }
         recoverInitialRun.current = false
         setRunRecovered(true)
-        timer = setTimeout(() => void recover(), 2000)
+        if (activeRuns.some((run) => !codexRunIsTerminal(run))) timer = setTimeout(() => void recover(), 2000)
       } catch (cause) {
         if (controller.signal.aborted) return
         lastRecoveryFailure = runRecoveryError(cause, 'Active run recovery failed')

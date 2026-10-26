@@ -956,14 +956,7 @@ impl MicroVmControlPlane for ControlPlane {
             .guest(&principal, &request.agent_id, &request.thread_id)
             .await?;
         if request.archived
-            && crate::runs::active(self, &principal)
-                .await?
-                .iter()
-                .any(|run| {
-                    run.agent_id == request.agent_id
-                        && run.thread_id == request.thread_id
-                        && !run.state.terminal()
-                })
+            && crate::runs::thread_active(self, &principal, &request.thread_id).await?
         {
             return Err(Status::failed_precondition(
                 "Wait for the response to finish before archiving this chat",
