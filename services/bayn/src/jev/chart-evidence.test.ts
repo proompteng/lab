@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { sha256 } from '../hash'
-import { makeNativeChartEvidence, renderNativeCandlesPng } from './chart-evidence'
+import { makeNativeChartEvidence, makeRetainedChartEvidenceV1, renderNativeCandlesPng } from './chart-evidence'
 
 const source = {
   symbol: 'AAPL',
@@ -20,6 +20,28 @@ test('repeated chart evidence retains the exact uncached renderer bytes', () => 
   expect(first.pngHash).toBe(sha256(png))
   expect(first.image).toBe(`data:image/png;base64,${png.toString('base64')}`)
   expect(repeated).toEqual(first)
+})
+
+test('volume heights retain the same proportions for fractional asset units', () => {
+  const fractional = source.bars.map((bar) => ({ ...bar, volume: bar.volume / 10_000_000 }))
+  expect(renderNativeCandlesPng(fractional)).toEqual(renderNativeCandlesPng(source.bars))
+})
+
+test('retained fractional-volume images have a separate cache identity', () => {
+  const fractional = { ...source, bars: source.bars.map((bar) => ({ ...bar, volume: bar.volume / 10_000_000 })) }
+  const current = Result.getOrThrow(makeNativeChartEvidence(fractional))
+  const retained = Result.getOrThrow(makeRetainedChartEvidenceV1(fractional))
+  expect(current.barsHash).toBe(retained.barsHash)
+  expect(current.pngHash).not.toBe(retained.pngHash)
+  expect(Result.getOrThrow(makeNativeChartEvidence(fractional))).toEqual(current)
+  expect(Result.getOrThrow(makeRetainedChartEvidenceV1(fractional))).toEqual(retained)
+})
+
+test('an all-zero volume window retains zero-height bars', () => {
+  const empty = { ...source, bars: source.bars.map((bar) => ({ ...bar, volume: 0 })) }
+  expect(Result.getOrThrow(makeNativeChartEvidence(empty)).image).toBe(
+    Result.getOrThrow(makeRetainedChartEvidenceV1(empty)).image,
+  )
 })
 
 test('caller changes to returned evidence cannot poison a later chart', () => {

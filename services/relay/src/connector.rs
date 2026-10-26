@@ -2,13 +2,9 @@ use platform_client::{authz::PlatformResource, relay::ConnectorOperation};
 use tonic::Status;
 #[derive(Clone, Debug)]
 pub struct Normalized {
-    pub connector: String,
-    pub operation: String,
     pub action: String,
     pub resources: Vec<PlatformResource>,
-    pub canonical_arguments: Vec<u8>,
-    pub path: String,
-    pub query: Vec<(String, String)>,
+    pub prepared_request: Vec<u8>,
 }
 pub struct Output {
     pub bytes: Vec<u8>,

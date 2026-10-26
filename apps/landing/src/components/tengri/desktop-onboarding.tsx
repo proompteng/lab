@@ -235,6 +235,17 @@ function DesktopGate({
       />
     )
   }
+  if (gate.kind === 'paused') {
+    return (
+      <ActionWindow
+        icon={<Cloud className="h-7 w-7 text-zinc-300" />}
+        title={`${gate.agent.displayName} is temporarily paused`}
+        detail="Your workspace is saved. Tengri will reconnect automatically."
+        actionLabel="Try Again"
+        onAction={() => void onRefresh()}
+      />
+    )
+  }
   if (gate.kind === 'sleeping')
     return <SleepingAgentWindow principalId={principalId} agent={gate.agent} onChanged={onRefresh} />
   if (gate.kind === 'failed') {
