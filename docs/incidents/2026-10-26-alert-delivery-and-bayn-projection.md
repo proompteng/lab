@@ -248,11 +248,10 @@ The transport gate uses the corrected patterns and remains independent of API re
 ## Follow-up actions
 
 - Shared HDD latency remains a capacity limitation. The scrub comparison is observational, and a bounded quiet
-  window does not establish long-term storage recovery. Preserve transaction durability. A prepared trial changes
-  only `osd_max_scrubs` from three to one and compares write latency, producer failures and deep-scrub progress
-  after existing reservations drain. That trial is pending clarification of the user's explicit selection of three;
-  the deployed cap remains three. Do not attribute an improvement to concurrency without comparable load and
-  advancing integrity checks. Storage isolation or additional hardware requires a separate concrete decision.
+  window does not establish long-term storage recovery. Preserve transaction durability and `osd_max_scrubs=3`.
+  The user confirmed that the cap must remain three; the proposed reduction trial is canceled. All six running
+  OSDs reported three at 16:21 UTC. Investigate queueing and workload I/O with this constraint fixed. Storage
+  isolation or additional hardware requires a separate concrete decision.
 - Ceph still has overdue deep scrubs and a previously recorded October 20 daemon crash. Preserve the integrity
   warnings and require advancing scrub progress; do not archive or silence them to make health appear clean.
 - `BaynResearchCostCoverageIncomplete` remains a quiet warning for incomplete research cost evidence. Missing
