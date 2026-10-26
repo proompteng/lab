@@ -36,7 +36,7 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
       PgClient.layer({ url: Redacted.make(url.toString()), transformJson: false, maxConnections: 2 }),
     )
   })
-  beforeEach(async () => {
+  const resetDatabase = async (withRequestVersion = true) => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -47,7 +47,7 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
         yield* sql`CREATE FUNCTION reject_evidence_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN RAISE EXCEPTION 'immutable fixture evidence'; END; $$`
         yield* requestMigration
-        yield* inferenceRequestVersion
+        if (withRequestVersion) yield* inferenceRequestVersion
         yield* resolutionMigration
         yield* expenseMigration
         yield* sql`CREATE TABLE jev_inference_handoffs (request_id text PRIMARY KEY, handoff_hash text NOT NULL, payload jsonb NOT NULL)`
@@ -56,7 +56,8 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
           ADD COLUMN handoff_hash text GENERATED ALWAYS AS (payload #>> '{line,handoffHash}') STORED`
       }),
     )
-  })
+  }
+  beforeEach(() => resetDatabase())
   afterAll(async () => {
     if (runtime === undefined) return
     await runtime.runPromise(
@@ -81,6 +82,55 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
       VALUES (${source.requestId}, ${quote.line.resolutionHash}, ${sql.json(source.resolution)}) ON CONFLICT DO NOTHING`
       return quote
     })
+
+  test('backfills populated legacy requests without changing retained evidence or expense discovery', async () => {
+    await resetDatabase(false)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const pending = expenseSourceFixture()
+        const frozen = expenseSourceFixture({ key: 'b' })
+        const missing = expenseSourceFixture({ key: 'c', missing: true })
+        const other = expenseSourceFixture({ key: 'd', accountId: 'other-account' })
+        yield* persistSource(pending)
+        const frozenQuote = yield* persistSource(frozen)
+        yield* persistSource(missing)
+        yield* persistSource(other)
+        const store = makeInferenceExpenseStore(sql, pending.accountId, '1970-01-01')
+        yield* store.freeze([frozenQuote])
+        const evidence = () => sql`SELECT request_id, payload::text AS payload_bytes,
+          payload->>'schemaVersion' AS wire_version FROM jev_evaluation_requests ORDER BY request_id COLLATE "C"`
+        const before = yield* evidence()
+        // This legacy fixture has one provider stage, no handoff and one immutable quote at most.
+        const oldDiscovery = yield* sql`SELECT request.request_id
+          FROM autonomous_cycles AS cycle
+          JOIN jev_evaluation_requests AS request ON request.cycle_id=cycle.cycle_id
+          JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id=request.request_id
+          LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id=request.request_id
+          WHERE cycle.account_id=${pending.accountId} AND cycle.execution_session_date >= '1970-01-01'::date
+          AND (SELECT count(*) FROM inference_expense_quotes AS quote
+            WHERE quote.request_id=request.request_id AND quote.handoff_hash IS NULL
+            AND quote.receipt_hash IS NOT DISTINCT FROM receipt.receipt_hash)
+            < CASE WHEN request.payload->>'schemaVersion'='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
+          ORDER BY request.request_id COLLATE "C" LIMIT 64`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ request_id: Schema.String })))),
+        )
+        yield* inferenceRequestVersion
+        expect(yield* evidence()).toEqual(before)
+        expect(
+          yield* sql`SELECT request_id FROM jev_evaluation_requests
+          WHERE schema_version IS DISTINCT FROM payload->>'schemaVersion'`,
+        ).toHaveLength(0)
+        const discovered = yield* store.newSources
+        expect(discovered.map((source) => ({ request_id: source.requestId }))).toEqual([...oldDiscovery])
+        expect(discovered.map((source) => source.requestId).sort()).toEqual(
+          [pending.requestId, missing.requestId].sort(),
+        )
+        expect(discovered.find((source) => source.requestId === pending.requestId)?.request).toEqual(pending.request)
+        expect(discovered.find((source) => source.requestId === missing.requestId)?.request).toEqual(missing.request)
+      }),
+    )
+  })
 
   test('retains the immutable request payload with its database-derived wire version', async () => {
     await runtime.runPromise(
