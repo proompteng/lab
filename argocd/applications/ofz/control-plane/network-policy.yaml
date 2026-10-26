@@ -24,7 +24,13 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [tengri, tengri-kube-broker, tengri-connector-broker]
+                values: [tengri]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: relay
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: relay
       ports:
         - protocol: TCP
           port: 9443

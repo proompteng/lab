@@ -140,6 +140,18 @@ and home, saves a full generation, flushes backing files, reaps Firecracker, and
 acknowledgement. Root edits, shell processes, Codex state, and home files resume from that snapshot. Scheduler memory
 requests stay reserved; resident guest RAM is released.
 
+Power & Sleep settings save immediately when the timeout menu changes. Background Codex reads and event-stream
+reconnects, terminal heartbeats, and empty terminal frames do not reset the idle clock. Their control-admission CAS
+still excludes an already claimed sleep. User commands, terminal input/output, and active agent work keep the workspace
+awake. An accepted durable run remains a sleep inhibitor until it reaches a terminal state. A timeout update
+replaces the old deadline atomically. If automatic sleep has already claimed the running workspace, the update fails
+rather than reporting a saved timeout while the committed sleep proceeds; resume before retrying.
+
+A temporary authorization veto pauses an active workspace without clearing its running intent. Execution stays
+stopped while permission is denied; a fresh Ofz permit is required before the saved snapshot resumes automatically.
+Quarantine, explicit sleep and committed idle sleep still clear running intent. The desktop distinguishes the temporary
+pause from sleep and refreshes its state without sending a lifecycle command.
+
 The journal consumes a snapshot before vCPUs run. A failed save can recover only its still-live guest. A failed restore,
 changed disk/image/kernel/CPU identity, lost active runner, or missing Pod retains the claim and home for fenced recovery.
 No Lease expiry or missing Kubernetes object proves that a previous storage writer stopped.
@@ -230,7 +242,8 @@ old memory snapshot.
    sleep exclusion before reopening normal work.
 
 After product acceptance, verify that no competing unqualified native publisher is active, then restore
-`TENGRI_PREPARED_SLOT_CUTOVER_READY=true` for normal delivery. Keep the Application unpaused and its source, sync policy
+`TENGRI_PREPARED_SLOT_GUEST_API_VERSION` to the qualified source's guest API protocol for normal delivery. Keep the
+Application unpaused and its source, sync policy
 and Kargo metadata intact. Set the publication hold again before a future incompatible guest API or snapshot change.
 
 If the replacement fails, keep traffic closed and retain the home and claim for repair. Once the new guest writes,
@@ -246,8 +259,9 @@ Production cutover requires separate authorization. An isolated Docker fixture g
 
 Image delivery is held independently of source merge. The image workflow still requires component and strict KVM
 acceptance and can publish verified immutable `sha-<source>` images and their retained indexes. It withholds both
-discoverable `kargo-sha-<source>` aliases unless the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY` is exactly
-`true`; an unset or false value keeps the current automatic Kargo policy from selecting this migration. Leave it held
+discoverable `kargo-sha-<source>` aliases unless the repository variable `TENGRI_PREPARED_SLOT_GUEST_API_VERSION` matches
+`GUEST_API_PROTOCOL_VERSION` in the qualified source. An unset, malformed or different protocol keeps the current
+automatic Kargo policy from selecting this migration. Leave it held
 until the approved old writers are fenced and every retained home is enrolled with the exact staged guest digest.
 The Proompteng image workflow uses the same hold for its Kargo alias because conversation recovery now requires the
 streaming Tengri RPC. Stage its immutable image too, then release both applications from the same reviewed source
@@ -293,8 +307,8 @@ A reviewed cutover follows this order:
    `runtime.proompteng.ai/home-uid`, and `runtime.proompteng.ai/image` for the approved immutable boot image. Set the home initialization annotation to `complete`.
    Update that MicroVM's image to the same boot digest and retain its owner/finalizer. Do not set a new Pod UID yet.
    An operator enrollment must contain external proof of old-writer fencing; Lease creation itself supplies none.
-5. After the approved fencing, Secret cleanup and enrollment are complete, set `TENGRI_PREPARED_SLOT_CUTOVER_READY`
-   to `true` and rerun the image workflow for the same approved `main` commit and staged image pair. Require all
+5. After the approved fencing, Secret cleanup and enrollment are complete, set `TENGRI_PREPARED_SLOT_GUEST_API_VERSION`
+   to the qualified source's guest API protocol and rerun the image workflow for the same approved `main` commit and staged image pair. Require all
    validation/signing gates again; the workflow then exposes both aliases through the normal publication path.
    Kargo's existing automatic policy promotes that pair and Argo reconciles its generated branch. The pool prepares the
    reserved retained home, records the new Pod UID, and binds/adopts it. Open lifecycle traffic only after those slots

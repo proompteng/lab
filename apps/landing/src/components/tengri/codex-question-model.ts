@@ -11,6 +11,7 @@ export type QuestionField = {
   secret: boolean
   choices: { label: string; value: string; description: string }[]
   freeText: boolean
+  defaultValue?: string
   minLength?: number
   maxLength?: number
   minimum?: number

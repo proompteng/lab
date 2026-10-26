@@ -2,7 +2,7 @@ import { afterAll, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import {
-  AuthorizationService,
+  TengriAuthorizationService,
   CheckRequestSchema,
   CheckResponseSchema,
   type CheckRequest,
@@ -59,7 +59,7 @@ test('audited checks can wait for commit while receipt renewals keep their short
   service.addService(
     {
       check: {
-        path: `/${AuthorizationService.typeName}/Check`,
+        path: `/${TengriAuthorizationService.typeName}/Check`,
         requestStream: false,
         responseStream: false,
         requestSerialize: (value: CheckRequest) => Buffer.from(toBinary(CheckRequestSchema, value)),
@@ -81,11 +81,11 @@ test('audited checks can wait for commit while receipt renewals keep their short
   process.env.SPIFFE_ENDPOINT_SOCKET = spiffe.endpoint
   process.env.SPIFFE_ID = spiffe.ownId
   process.env.SPIFFE_WORKLOAD_API_PROTO_PATH = spiffe.protoPath
-  const decision = await ofzCall(AuthorizationService.method.check, {})
+  const decision = await ofzCall(TengriAuthorizationService.method.check, {})
   expect(decision.allowed).toBe(true)
   expect(decision.validUntilUnixMs > BigInt(Date.now())).toBe(true)
   try {
-    await ofzCall(AuthorizationService.method.check, { streamReceiptId: decision.auditReceiptId })
+    await ofzCall(TengriAuthorizationService.method.check, { streamReceiptId: decision.auditReceiptId })
     throw new Error('receipt renewal exceeded its deadline')
   } catch (error) {
     expect(error).toBeInstanceOf(OfzError)
