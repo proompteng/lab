@@ -81,7 +81,7 @@ and cannot reproduce retained production request hashes.
 
 The current source must reproduce the decision, including the sealed chart handoff and both provider stages,
 before diagnostics are emitted. Unsupported historical contracts and tampered evidence fail. Protocol
-`bayn.jev.protocol.v24` is distinct from entry input `bayn.jev-entry-state.v22`; both appear in report v3.
+`bayn.jev.protocol.v25` is distinct from numerical state `bayn.jev-entry-state.v22`; both appear in report v3.
 
 Each requested candidate reports the handoff and provider status, exact proposal IDs and source anchors, raw atomic
 Jev judgments, code-owned selection or rejection, funded-plan count, target rise from the observed bid, net reward/risk,
@@ -100,7 +100,7 @@ Historical protocol v16 / input v15 / entry-target v5 evidence requires the
 version-pinned offline source `d285f01c1fe2c5815dbb54b44aaae3dc0ab4af2b`.
 That revision reproduced the retained historical PAPER cohort with its original
 native source bundle. Use a separate checkout of that exact commit for historical
-reproduction, never the live deployment. Current protocol v24 / entry input v22 /
+reproduction, never the live deployment. Current protocol v25 / numerical state v22 /
 entry-target v7 source rejects the older envelope; do not rewrite version tags or
 reinterpret old model choices as current sequential chart evidence and atomic judgments. Neither
 historical observations nor this source pin grant current execution authority.

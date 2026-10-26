@@ -215,7 +215,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
       )(
         yield* sql`INSERT INTO jev_batch_results (batch_id, result_hash, payload)
           VALUES (${plan.batchId}, ${result.resultHash}, ${sql.json(result)})
-          ON CONFLICT (batch_id) DO NOTHING RETURNING payload`,
+          ON CONFLICT DO NOTHING RETURNING payload`,
       )
       const row = rows[0]
       if (row !== undefined) {

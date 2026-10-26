@@ -24,7 +24,11 @@ const retained = (
   const input = {
     ...current.request,
     schemaVersion,
-    protocol: { ...current.request.protocol, entryQuestionPolicyHash: retainedSequentialQuestionPolicyHash },
+    protocol: {
+      ...current.request.protocol,
+      schemaVersion: 'bayn.jev.protocol.v24' as const,
+      entryQuestionPolicyHash: retainedSequentialQuestionPolicyHash,
+    },
     chartSource: { ...current.request.chartSource, bars },
     numericalState: { ...current.request.numericalState, candidate: { symbol: current.symbol, bars1m: bars } },
   }

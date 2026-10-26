@@ -10,13 +10,13 @@ import { calculateSessionFees, receivedCryptoFee } from '../strategy/execution-m
 import { JevContractError } from './contract'
 import { maximumAllocatedBuyQuantities } from './entry-sizing'
 import { jevBreakEvenExitBid, jevBreakEvenExitLimitPrice } from './liquidation-economics'
-import type { JevProtocol } from './protocol'
+import type { JevProtocolMaterial } from './protocol'
 
-export const jevMaximumEntryAskMicros = (protocol: JevProtocol, observedAsk: bigint): bigint =>
+export const jevMaximumEntryAskMicros = (protocol: JevProtocolMaterial, observedAsk: bigint): bigint =>
   (observedAsk * BigInt(10_000 + protocol.maximumEntryQuoteDriftBps)) / 10_000n
 
 export const jevEntryEconomics = (input: {
-  readonly protocol: JevProtocol
+  readonly protocol: JevProtocolMaterial
   readonly symbol: string
   readonly bidMicros: bigint
   readonly askMicros: bigint
