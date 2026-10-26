@@ -206,11 +206,20 @@ integration('committed sequential provider handoff', () => {
             Result.isFailure(yield* sql.withTransaction(journal.recordChartClaim(claim)).pipe(Effect.result)),
           ).toBe(true)
           const store = makeInferenceExpenseStore(sql, replayAccountId, '1970-01-01')
+          // A synthetic tariff prices this September fixture only; never backdate the production rate card.
+          const fixtureRateCard = {
+            ...inferenceExpenseRateCard,
+            rates: inferenceExpenseRateCard.rates.map((rate) => ({
+              ...rate,
+              source: 'Synthetic checkpoint lifecycle fixture tariff, not provider pricing evidence.',
+              effectiveFrom: '1970-01-01T00:00:00.000Z',
+            })),
+          }
           const find = (rows: readonly { readonly requestId: string }[]) =>
             rows.some((row) => row.requestId === current.requestId)
           const initialSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
           if (initialSource === undefined) throw new Error('Missing unresolved checkpoint expense')
-          const initial = Result.getOrThrow(makeInferenceExpenseQuotes(initialSource, inferenceExpenseRateCard))
+          const initial = Result.getOrThrow(makeInferenceExpenseQuotes(initialSource, fixtureRateCard))
           expect(initial).toHaveLength(1)
           expect(initial.every((quote) => quote.line.usageStatus === 'UNKNOWN_USAGE')).toBe(true)
           yield* store.freeze(initial)
@@ -221,7 +230,7 @@ integration('committed sequential provider handoff', () => {
           yield* (yield* JevEvaluationStore).abandon(current, lateAt)
           const abandonedSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
           if (abandonedSource === undefined) throw new Error('Missing first resolved Jev expense')
-          const abandoned = Result.getOrThrow(makeInferenceExpenseQuotes(abandonedSource, inferenceExpenseRateCard))
+          const abandoned = Result.getOrThrow(makeInferenceExpenseQuotes(abandonedSource, fixtureRateCard))
           yield* store.freeze(abandoned)
           expect(find(yield* store.newSources)).toBe(false)
           const terminal = Result.getOrThrow(
@@ -237,7 +246,13 @@ integration('committed sequential provider handoff', () => {
           yield* journal.recordChartTerminal(terminal)
           const lateSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
           if (lateSource === undefined) throw new Error('Late chart metering was not rediscovered')
-          const late = Result.getOrThrow(makeInferenceExpenseQuotes(lateSource, inferenceExpenseRateCard))
+          const historicalRates = Result.getOrThrow(makeInferenceExpenseQuotes(lateSource, inferenceExpenseRateCard))
+          expect(
+            historicalRates.find((quote) => 'stage' in quote.line && quote.line.stage === InferenceStage.Chart)?.line
+              .estimatedCostPicoUsd,
+          ).toBeNull()
+          expect(Result.getOrThrow(buildInferenceExpensePlan(historicalRates)).transfers).toHaveLength(0)
+          const late = Result.getOrThrow(makeInferenceExpenseQuotes(lateSource, fixtureRateCard))
           yield* store.freeze(late)
           expect(find(yield* store.newSources)).toBe(false)
           const saved = yield* sql`SELECT payload FROM inference_expense_quotes WHERE request_id=${current.requestId}`
