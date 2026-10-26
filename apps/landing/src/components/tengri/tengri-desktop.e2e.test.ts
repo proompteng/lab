@@ -9049,6 +9049,7 @@ test('previews Rust file links with XML media types at the requested line', asyn
   await tengri.getByRole('button', { name: 'Relay source', exact: true }).click()
   const preview = tengri.getByRole('region', { name: 'File preview' })
   await expect(preview.locator('[data-selected="true"]')).toContainText('fn relay_execution() {}')
+  await expect(preview.locator('[data-selected="true"]')).toBeInViewport({ ratio: 1 })
   await expect(preview.getByRole('heading')).toHaveText(`${path}:107`)
   await expect(preview.getByRole('alert')).toHaveCount(0)
   expect(paths).toEqual([path, path])
