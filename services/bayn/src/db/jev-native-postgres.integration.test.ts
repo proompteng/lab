@@ -1725,10 +1725,21 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
 
   test('entry waits for a new completed window after restart instead of buying another inference batch', async () => {
     let calls = 0
+    const phase = (name: string, startedAt: number, elapsedMs: number) =>
+      Effect.logInfo({
+        event: 'bayn.test.entry-window-cadence-phase',
+        phase: name,
+        observationOffsetMs: elapsedMs,
+        wallDurationMs: Math.round(performance.now() - startedAt),
+        jevCalls: calls,
+      })
     const observeAt = (elapsedMs: number) =>
       Effect.gen(function* () {
+        const fixtureStartedAt = performance.now()
         const at = utcInstantFromEpochMillis(observed + elapsedMs)
         const next = nativeJevFixture(JevPurpose.Entry, at)
+        yield* phase('fixture', fixtureStartedAt, elapsedMs)
+        const setupStartedAt = performance.now()
         yield* acquireEntryCycle(at)
         const reconciliation = {
           ...next.portfolio.brokerState.reconciliation,
@@ -1741,11 +1752,15 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           ${reconciliation.expectedHash}, ${reconciliation.observedHash}, ${reconciliation.contentHash},
           ${reconciliation.status}, '[]'::jsonb, ${reconciliation.reconciledAt})`
         yield* TestClock.setTime(observed + elapsedMs)
-        return yield* evaluateJevObservation({
+        yield* phase('cycle-and-reconciliation', setupStartedAt, elapsedMs)
+        const evaluationStartedAt = performance.now()
+        const result = yield* evaluateJevObservation({
           ...nativeInput,
           portfolio: { ...next.portfolio, brokerState: { ...next.portfolio.brokerState, reconciliation } },
           snapshot: next.snapshot,
         }).pipe(Effect.result)
+        yield* phase('evaluation', evaluationStartedAt, elapsedMs)
+        return result
       }).pipe(
         Effect.provideService(JevClient, {
           evaluate: (request) =>
@@ -1759,12 +1774,17 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         Effect.provide(TestClock.layer()),
       )
     const first = await runtime.runPromise(observeAt(0))
+    const firstAssertionsStartedAt = performance.now()
     expect(Result.isSuccess(first)).toBe(true)
     if (Result.isSuccess(first)) expect(Result.getOrThrow(decideJevEntry(first.success)).selectedSymbols).toEqual([])
     expect(calls).toBe(15)
+    await Effect.runPromise(phase('first-assertions', firstAssertionsStartedAt, 0))
+    const restartStartedAt = performance.now()
     await runtime.dispose()
     runtime = makeRuntime()
+    await Effect.runPromise(phase('runtime-restart', restartStartedAt, 1000))
     const repeated = await runtime.runPromise(observeAt(1000))
+    const repeatedAssertionsStartedAt = performance.now()
     expect(Result.isFailure(repeated)).toBe(true)
     if (Result.isFailure(repeated))
       expect(repeated.failure).toMatchObject({
@@ -1772,7 +1792,9 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         availableAt: utcInstantFromEpochMillis(observed + 60_000),
       })
     expect(calls).toBe(15)
+    await Effect.runPromise(phase('same-window-assertions', repeatedAssertionsStartedAt, 1000))
     const fresh = await runtime.runPromise(observeAt(60_000))
+    const assertionsStartedAt = performance.now()
     expect(Result.isSuccess(fresh)).toBe(true)
     expect(calls).toBe(30)
     expect(
@@ -1783,6 +1805,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         }),
       ),
     ).toEqual([{ count: 2 }])
+    await Effect.runPromise(phase('final-assertions', assertionsStartedAt, 60_000))
   }, 30_000)
 
   test('rejects unstored reconciliation, a substituted cycle and an uncommitted observation', async () => {
