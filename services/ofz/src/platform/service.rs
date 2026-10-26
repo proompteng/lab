@@ -1,5 +1,5 @@
 use super::{
-    authorization, catalog, executions,
+    authorization, catalog, connections, executions,
     mutations::{self, Command},
     onboarding,
 };
@@ -43,7 +43,7 @@ impl PlatformAuthorizationService for Service {
         if registry::configured()?.service(&peer).is_none() {
             return Err(Status::permission_denied("registered service required"));
         }
-        onboarding::verify(&self.database).await?;
+        onboarding::verify_configuration(&self.database).await?;
         Ok(Response::new(proto::GetPlatformConfigurationResponse {
             policy_version: self.database.state().await?.version,
             relay_clients: registry::configured()?
@@ -73,6 +73,72 @@ impl PlatformAuthorizationService for Service {
                 authorization::check(&self.database, &self.native, &peer, request.into_inner())
                     .await?,
             ),
+        }))
+    }
+    async fn list_platform_connections(
+        &self,
+        request: Request<proto::ListPlatformConnectionsRequest>,
+    ) -> Result<Response<proto::ListPlatformConnectionsResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform connection service is busy"))?;
+        connections::list(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn put_platform_connection(
+        &self,
+        request: Request<proto::PutPlatformConnectionRequest>,
+    ) -> Result<Response<proto::PutPlatformConnectionResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform connection service is busy"))?;
+        let input = request.into_inner();
+        let connection_id = input.connection_id.clone();
+        let version = input
+            .expected_version
+            .checked_add(1)
+            .ok_or_else(|| Status::invalid_argument("connection version overflow"))?;
+        let outcome = mutations::execute(
+            &self.database,
+            &self.native,
+            &peer,
+            Command::PutConnection(input),
+        )
+        .await?;
+        Ok(Response::new(proto::PutPlatformConnectionResponse {
+            connection_id,
+            version,
+            credential_generation: outcome.version,
+            decision: Some(outcome.decision),
+        }))
+    }
+    async fn revoke_platform_connection(
+        &self,
+        request: Request<proto::RevokePlatformConnectionRequest>,
+    ) -> Result<Response<proto::RevokePlatformConnectionResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform connection service is busy"))?;
+        let input = request.into_inner();
+        let connection_id = input.connection_id.clone();
+        let outcome = mutations::execute(
+            &self.database,
+            &self.native,
+            &peer,
+            Command::RevokeConnection(input),
+        )
+        .await?;
+        Ok(Response::new(proto::RevokePlatformConnectionResponse {
+            connection_id,
+            credential_generation: outcome.version,
+            decision: Some(outcome.decision),
         }))
     }
     async fn record_platform_execution(
@@ -143,6 +209,7 @@ impl PlatformAuthorizationService for Service {
             delegation_id: outcome.delegation_id,
             credential: outcome.credential,
             decision: Some(outcome.decision),
+            credential_generation: outcome.version,
         }))
     }
     async fn activate_platform_delegation(
