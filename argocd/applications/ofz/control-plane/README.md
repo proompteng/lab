@@ -32,11 +32,11 @@ listener availability; real authorization checks establish policy behavior.
 
 Two exporter replicas share the existing PostgreSQL session lease. The rolling strategy starts no extra replica,
 keeping the active connection and standby leases within the archive role's four-connection limit. Exporter Pods mount
-only their database credential, database CA and NUC writer credential. NetworkPolicy allows DNS, PostgreSQL and
-`100.78.240.108:9444`. Native policy and NUC custodian credentials are absent.
+only their database credential, database CA and Ceph bucket writer credential. NetworkPolicy allows DNS, PostgreSQL
+and the private Ceph object gateway. Native policy and bucket custodian credentials are absent.
 
-The API initially serves with the SQL platform fence set. Deploy the independent NUC archive first and verify its
-private TLS endpoint from another peer, then verify actual Kubernetes exports and acknowledgements. The reviewed
+The API initially serves with the SQL platform fence set. Verify the [Ceph recovery store](../../../../services/ofz/recovery.md)
+and actual Kubernetes exports and acknowledgements before activation. The reviewed
 owner bootstrap hook uses the protected approved manifest. Activate only after identity, audit and coordinated runtime
 checks pass. Keep the Kubernetes workspace-creation fence until the final controller/guest release is installed.
 The dedicated Keycloak realm and the valid `auth.proompteng.ai` certificate are required before opening sessions.

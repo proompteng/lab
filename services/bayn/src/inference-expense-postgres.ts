@@ -65,7 +65,7 @@ export const makeInferenceExpenseStore = (
           WHEN quote.provider_stage = 'CHART' AND NOT COALESCE(receipt.payload #>> '{outcome,failure}' = 'NOT_DISPATCHED', false) THEN NULL
           WHEN quote.provider_stage = 'JEV' AND handoff.handoff_hash IS NOT NULL AND handoff.payload #>> '{disposition,status}' <> 'READY' THEN NULL
           ELSE receipt.receipt_hash END
-    ) < CASE WHEN request.payload->>'schemaVersion'='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
+    ) < CASE WHEN request.schema_version='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
     ORDER BY request.request_id COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
   `.pipe(
     Effect.flatMap(
