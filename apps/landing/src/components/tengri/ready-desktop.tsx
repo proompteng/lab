@@ -269,13 +269,14 @@ export function ReadyDesktop({
       if (pending) return
       pending = true
       try {
-        const active = await runTengriAction<TengriCodexRun | null>(
-          { action: 'active-codex-run', agentId: agent.id },
+        const activeRuns = await runTengriAction<TengriCodexRun[]>(
+          { action: 'active-codex-runs', agentId: agent.id },
           controller.signal,
         )
         if (controller.signal.aborted) return
-        if (active && active.agentId !== agent.id) throw new Error('Active run belongs to another workspace')
-        if (active && (active.state.phase === 'running' || active.state.phase === 'recovering'))
+        if (activeRuns.some((run) => run.agentId !== agent.id))
+          throw new Error('Active run belongs to another workspace')
+        if (activeRuns.some((run) => run.state.phase === 'running' || run.state.phase === 'recovering'))
           await renewWorkspaceConnections(agent.id, controller.signal)
       } catch {
         if (!controller.signal.aborted) reportBrowserFailure('tengri.connection-renewal')
