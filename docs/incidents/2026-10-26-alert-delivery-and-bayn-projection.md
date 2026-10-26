@@ -46,6 +46,13 @@ There were independent causes for notification amplification and missing telemet
    controller failure caused both APIs to report `CYCLE_RUNNER_UNAVAILABLE` at 07:30 UTC even though database
    connectivity and cycle observation were available. Earlier `READY` samples therefore did not establish
    sustained recovery. Discovery must group metadata once before loading the bounded pending batch.
+6. The remaining Mimir HTTP 500s expired at approximately 5.00 seconds. Effective configuration showed a
+   five-second distributor deadline around a Kafka writer with a ten-second timeout and two-second overhead;
+   Alloy clients allow thirty seconds. The ruler's internal distributor allowed ten seconds. Callers could cancel
+   writes before Kafka's existing bounded
+   write budget completed. Give HTTP distributors and the ruler's internal distributor a fifteen-second caller
+   budget while retaining the Kafka and exporter limits. This does not repair physical disk latency or justify
+   treating stale samples or Kafka delivery failures as healthy.
 
 ## Five Whys
 
@@ -161,6 +168,24 @@ Deployment acceptance must separately establish the reviewed revision, rendered 
 configuration, all three ingester targets, zero new series-limit rejections during the observation window, restored
 Bayn scrapes and the exact API revision's native heartbeat. Bayn recovery also requires direct repeated status reads
 and its cycle observation path; fewer emails do not satisfy that gate.
+
+The grouped discovery repair merged as [PR #15431](https://github.com/proompteng/lab/pull/15431), commit
+`10c83f54a0ee23bb9326dc19448600be91086424`, after all 26 CI checks passed. Local validation passed 3,859 unit tests
+with zero failures; 869 external cases were skipped. The native PostgreSQL suites passed 26 tests, with three
+TigerBeetle-dependent cases skipped locally and the selected ledger integration passing in CI. A read-only
+production comparison in one snapshot returned zero pending rows for both queries: the grouped plan touched
+19,274 buffers versus 199,386. The first grouped read took 1.522 seconds with 1,675 physical reads; a subsequent
+warm read took 184.681 ms, versus 249.518 ms for the cached original. These samples do not establish a latency SLO.
+
+The main image build `40289906963` published both architectures and index
+`sha256:d11a478260dfea498dd1b1a140313e543ba472baa7a11347b7cf56edd931275c`. Freight
+`a5695a6ceef4dd1e9c46597930f61e89487c4fc8` automatically promoted through `kargo/bayn` commit
+`68798bd4d5bdc02a425d599da5f8ca89bb827d7e`; Kargo verification succeeded at 08:15:02 UTC. Both API replicas
+directly reported `READY` at 08:18 UTC. A subsequent test-only main commit `3893402f2e29a337c90f21b31b903e373fa334f2`
+published another image and promoted at 08:21 UTC. Its production expense-discovery source is identical. At
+08:22 UTC both APIs were ready, natural expense passes had discovered three sources and verified six quotes with
+zero gaps, and no Bayn statements had been canceled since 08:15 UTC. Series-limit counters still had zero additional
+drops. Kafka acknowledgement errors persisted, so the complete transport-recovery gate remained unsatisfied.
 
 ## Follow-up actions
 
