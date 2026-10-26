@@ -8,7 +8,7 @@ import requestMigration from '../migrations/0076_jev_evaluation_evidence'
 import resolutionMigration from '../migrations/0077_jev_evaluation_resolution'
 import expenseMigration from '../migrations/0091_inference_expense_quotes'
 import inferenceRequestVersion from '../migrations/0150_inference_request_version'
-import { makeInferenceExpenseQuote, type InferenceExpenseSource } from './inference-expense'
+import { inferenceExpenseBatchSize, makeInferenceExpenseQuote, type InferenceExpenseSource } from './inference-expense'
 import { expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
 import { makeInferenceExpenseStore } from './inference-expense-postgres'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from './test-environment.test-support'
@@ -154,6 +154,42 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
       }),
     )
   })
+
+  test('discovers ordered pending batches after quoted history without borrowing another account', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const accountId = 'bounded-expense-account'
+        const sources = Array.from({ length: inferenceExpenseBatchSize * 3 + 3 }, (_, index) =>
+          expenseSourceFixture({
+            key: (index % 15).toString(16),
+            authorityGenerationHash: index.toString(16).padStart(64, '0'),
+            accountId,
+          }),
+        )
+        const store = makeInferenceExpenseStore(yield* PgClient.PgClient, accountId, '1970-01-01')
+        for (const [index, source] of sources.entries()) {
+          const quote = yield* persistSource(source)
+          if (index < inferenceExpenseBatchSize * 2) yield* store.freeze([quote])
+        }
+        yield* persistSource(expenseSourceFixture({ key: 'f', accountId: 'foreign-expense-account' }))
+        const pending = sources
+          .slice(inferenceExpenseBatchSize * 2)
+          .map((source) => source.requestId)
+          .sort()
+        const first = yield* store.newSources
+        expect(first.map((source) => source.requestId)).toEqual(pending.slice(0, inferenceExpenseBatchSize))
+        expect(first.every((source) => source.accountId === accountId)).toBe(true)
+        yield* store.freeze(
+          yield* Effect.forEach(first, (source) =>
+            Effect.fromResult(makeInferenceExpenseQuote(source, expenseRateFixture)),
+          ),
+        )
+        expect((yield* store.newSources).map((source) => source.requestId)).toEqual(
+          pending.slice(inferenceExpenseBatchSize),
+        )
+      }),
+    )
+  }, 30_000)
 
   test('retains an abandoned gap and later discovers its immutable late receipt', async () => {
     await runtime.runPromise(
