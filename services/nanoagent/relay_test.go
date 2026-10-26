@@ -52,7 +52,7 @@ func TestRelayConfigurationInstallsOnlyAScopedGrantAndReloadsTools(t *testing.T)
 	defer cancel()
 	connection := "11111111-1111-4111-8111-111111111111"
 	credential := strings.Repeat("a", 43)
-	params, _ := json.Marshal(relayConfiguration{DelegationID: connection, ConnectorID: "galactic", ClientService: "tengri-web", Binding: relayBinding{Service: "tengri", ID: "33333333-3333-4333-8333-333333333333", Generation: "44444444-4444-4444-8444-444444444444"}, Endpoint: "https://proompteng.ai/api/platform/relay/agent", Credential: credential, Operations: []relayOperation{{Name: "search", Description: "Search issues", InputSchema: json.RawMessage(`{"type":"object"}`)}}})
+	params, _ := json.Marshal(relayConfiguration{ConnectionID: connection, relayGeneration: relayGeneration{RecoveryGeneration: 1, CredentialGeneration: 1}, DelegationID: "22222222-2222-4222-8222-222222222222", ConnectorID: "galactic", ClientService: "tengri-web", Binding: relayBinding{Service: "tengri", ID: "33333333-3333-4333-8333-333333333333", Generation: "44444444-4444-4444-8444-444444444444"}, Endpoint: "https://proompteng.ai/api/platform/relay/agent", Credential: credential, Operations: []relayOperation{{Name: "status", Description: "Read pod status", ReadOnly: true, InputSchema: json.RawMessage(`{"type":"object"}`)}}})
 	done := make(chan error, 1)
 	go func() {
 		result, err := supervisor.call(ctx, "relay/configure", params)
@@ -93,7 +93,7 @@ func TestRelayConfigurationInstallsOnlyAScopedGrantAndReloadsTools(t *testing.T)
 		t.Fatal("grant configuration was not persisted")
 	}
 	go func() {
-		_, err := supervisor.call(ctx, "relay/remove", json.RawMessage(`{"delegationId":"11111111-1111-4111-8111-111111111111"}`))
+		_, err := supervisor.call(ctx, "relay/remove", json.RawMessage(`{"connectionId":"11111111-1111-4111-8111-111111111111","recoveryGeneration":"1","credentialGeneration":"2"}`))
 		done <- err
 	}()
 	write = readCodexWireRequest(t, writer)

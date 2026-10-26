@@ -9,16 +9,72 @@ prometheus.remote_write "mimir" {
 	}
 }
 
+discovery.kubernetes "mimir_ingesters" {
+	role = "pod"
+
+	namespaces {
+		names = ["observability"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app.kubernetes.io/name=mimir,app.kubernetes.io/component=ingester"
+	}
+}
+
+discovery.relabel "mimir_ingester_metrics" {
+	targets = discovery.kubernetes.mimir_ingesters.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_port_name"]
+		regex         = "http-metrics"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		replacement  = "observability"
+		target_label = "namespace"
+	}
+
+	rule {
+		replacement  = "mimir"
+		target_label = "service"
+	}
+}
+
+prometheus.relabel "mimir_ingester_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|cortex_ingester_(active_series|memory_series|local_limits)|cortex_discarded_samples_total"
+	}
+}
+
+prometheus.scrape "mimir_ingesters" {
+	job_name        = "mimir-ingester"
+	targets         = discovery.relabel.mimir_ingester_metrics.output
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.relabel.mimir_ingester_metrics.receiver]
+}
+
 prometheus.scrape "ci_observability" {
 	job_name = "ci-observability"
-	targets = [{
+	targets  = [{
 		"__address__" = "ci-observability.arc.svc.cluster.local:9101",
 		"namespace"   = "arc",
 		"service"     = "ci-observability",
 	}]
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"
-	forward_to     = [prometheus.remote_write.mimir.receiver]
+	forward_to      = [prometheus.remote_write.mimir.receiver]
 }
 
 discovery.kubernetes "cnpg_pods" {

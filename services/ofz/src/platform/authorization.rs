@@ -96,7 +96,7 @@ pub async fn human_context(
     database: &Database,
     session: &proto::PlatformHumanSession,
     operation: &str,
-    administration: bool,
+    fresh_mfa: bool,
 ) -> Result<(proto::RequestContext, State, u64), Status> {
     let state = database.state().await?;
     let context = proto::RequestContext {
@@ -118,10 +118,10 @@ pub async fn human_context(
     let expiry = decision::session(
         database,
         &context,
-        if administration {
+        if fresh_mfa {
             proto::Action::TargetsManage
         } else {
-            proto::Action::WorkspaceMetadataRead
+            proto::Action::PolicyRead
         },
         &state,
     )
@@ -268,7 +268,7 @@ pub async fn evaluate(
                 .get()
                 .await
                 .map_err(|_| Status::unavailable("delegation database pool unavailable"))?;
-            let row = connection.query_opt("SELECT agent_id,issuer_id,client_service,credential_hash,proof_key_thumbprint,actions,resources,binding,expires_at_ms,recovery_generation FROM ofz.platform_delegations WHERE id=$1 AND active AND NOT revoked AND expires_at_ms>ofz.now_ms()", &[&id]).await.map_err(sql_error)?
+            let row = connection.query_opt("SELECT d.agent_id,d.issuer_id,d.client_service,d.credential_hash,d.proof_key_thumbprint,d.actions,d.resources,d.binding,d.expires_at_ms,d.recovery_generation FROM ofz.platform_delegations d JOIN ofz.platform_connections c ON c.id=d.connection_id AND c.enabled AND c.version=d.connection_version AND c.last_delegation_id=d.id WHERE d.id=$1 AND d.active AND NOT d.revoked AND d.expires_at_ms>ofz.now_ms()", &[&id]).await.map_err(sql_error)?
                 .ok_or_else(|| Status::unauthenticated("active delegation required"))?;
             if row.get::<_, String>(2) != client.id
                 || row.get::<_, Vec<u8>>(3) != Sha256::digest(proof.credential.as_bytes()).to_vec()
