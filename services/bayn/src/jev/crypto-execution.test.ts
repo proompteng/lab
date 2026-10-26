@@ -85,7 +85,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       const batchPlan = Result.getOrThrow(
         makeJevTradingSignalBatch({
           observation,
-          planVersion: JevBatchPlanVersion.V6,
+          planVersion: JevBatchPlanVersion.V7,
           expiresAt: new Date(Date.parse(observedAt) + protocol.inferenceValidityMs).toISOString(),
         }),
       )
@@ -94,7 +94,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         decideJevEntry({
           observation,
           batchPlan,
-          batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => 'wait', 0.42),
+          batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => false, 0.42),
           decidedAt,
         }),
       )

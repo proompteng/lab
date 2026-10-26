@@ -57,7 +57,7 @@ export const advancePositionProtection = (request: {
   Effect.gen(function* () {
     const { input, cycle, document, protocol, policy, reconciliation, capability } = request
     const target = document.strategyDecision
-    if (target?.schemaVersion !== 'bayn.jev-entry-target.v6' || Object.keys(target.exitPolicy.plans).length === 0)
+    if (target?.schemaVersion !== 'bayn.jev-entry-target.v7' || Object.keys(target.exitPolicy.plans).length === 0)
       return { _tag: 'Ready' } as const
     const plan = Object.values(target.exitPolicy.plans)[0]
     if (plan === undefined) return { _tag: 'Ready' } as const

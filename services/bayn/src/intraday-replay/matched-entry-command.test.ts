@@ -120,10 +120,14 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, max
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V6,
+      planVersion: JevBatchPlanVersion.V7,
     }),
   )
-  const evidence = { ...retained, batchPlan, batchResult: nativeJevBatchResult(batchPlan, retained.decidedAt) }
+  const evidence = {
+    ...retained,
+    batchPlan,
+    batchResult: nativeJevBatchResult(batchPlan, retained.decidedAt, (symbol) => symbol === 'AAPL'),
+  }
   const { decidedAt: _decidedAt, ...batch } = evidence
   const at = Date.parse(snapshot.manifest.observedAt)
   const events = [
@@ -508,7 +512,7 @@ test('all scheduled native inventories retain zero-batch sessions without fillin
   )
 })
 
-test('native inventories round-trip pending entry and management batches with no-batch cycles', async () => {
+test('native inventories round-trip pending entry batches and no-batch cycles', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const data = fixture()
@@ -516,34 +520,16 @@ test('native inventories round-trip pending entry and management batches with no
       const directory = yield* fs.makeTempDirectoryScoped()
       const arrivals = `${directory}/arrivals.gz`
       yield* fs.writeFile(arrivals, gzipSync(data.body))
-      const { decidedAt: _at, ...management } = nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Manage), 'hold')
       const retained = inventoryFor(data)
-      const batchRows = [
-        ...retained.batches.map((batch) => ({ ...batch, resultHash: null })),
-        {
-          batchId: management.batchPlan.batchId,
-          cycleId: management.batchPlan.cycleId,
-          observationHash: management.batchPlan.observationHash,
-          purpose: JevPurpose.Manage,
-          resultHash: null,
-        },
-      ].sort((a, b) => a.batchId.localeCompare(b.batchId))
+      const batchRows = retained.batches.map((batch) => ({ ...batch, resultHash: null }))
       const cycles = [...retained.cycles]
-      if (!cycles.some((cycle) => cycle.cycleId === management.batchPlan.cycleId))
-        cycles.push({
-          cycleId: management.batchPlan.cycleId,
-          protocolHash: data.registration.protocolHash,
-          state: CycleState.Completed,
-          decisionHash: null,
-        })
-      cycles.sort((a, b) => a.cycleId.localeCompare(b.cycleId))
       const { receiptHash: _hash, ...original } = retained.receipt
       const receipt = {
         ...original,
         cycleCount: cycles.length,
-        batchCount: 2,
-        managementBatchCount: 1,
-        pendingResultCount: 2,
+        batchCount: 1,
+        managementBatchCount: 0,
+        pendingResultCount: 1,
       }
       const bytes = JSON.stringify({
         ...retained,
@@ -558,7 +544,7 @@ test('native inventories round-trip pending entry and management batches with no
         ...data.input,
         study: {
           ...data.input.study,
-          batches: [...data.input.study.batches, management].map((batch) => ({ ...batch, batchResult: null })),
+          batches: data.input.study.batches.map((batch) => ({ ...batch, batchResult: null })),
         },
         inventory: data.input.inventory.map((scope, index) => (index === 0 ? { ...scope, evidenceHash } : scope)),
         witnesses: [{ path, sha256: evidenceHash }],
@@ -591,7 +577,9 @@ test('witnessed immediate and delayed arms on the same symbol keep independent f
       expect(pair?.immediateMomentum?.fills[0]?.observedAt).toBe(new Date(at + 100).toISOString())
       expect(pair?.delayedMomentum?.fills[0]?.observedAt).toBe(new Date(at + 5200).toISOString())
       expect(pair?.immediateMomentum?.fills[0]?.priceMicros).not.toBe(pair?.delayedMomentum?.fills[0]?.priceMicros)
-      expect(pair?.jev).toEqual(pair?.delayedMomentum)
+      expect(pair?.jev?.status).toBe('RESOLVED')
+      expect(pair?.jev?.fills[0]?.symbol).toBe(pair?.delayedMomentum?.fills[0]?.symbol)
+      expect(pair?.jev?.fills[0]?.observedAt).toBe(pair?.delayedMomentum?.fills[0]?.observedAt)
       expect(pair?.immediateMomentum?.episodes[0]?.exitedAtMs).not.toBe(pair?.delayedMomentum?.episodes[0]?.exitedAtMs)
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
@@ -803,9 +791,11 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
+      if (report === undefined) return yield* Effect.die('Expected a completed study report')
       expect(report.schemaVersion).toBe('bayn.matched-entry-study.v8')
       expect(report.pairs).toHaveLength(1)
-      expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.delayedMomentum)
+      expect(report.pairs[0]?.jev?.fills[0]?.symbol).toBe(report.pairs[0]?.delayedMomentum?.fills[0]?.symbol)
+      expect(report.pairs[0]?.jev?.fills[0]?.observedAt).toBe(report.pairs[0]?.delayedMomentum?.fills[0]?.observedAt)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')
       expect(report.pairs[0]?.jev?.episodes[0]?.exitedAtMs).toBe(
         Date.parse(report.observations[0]?.decidedAt ?? '') + 100 + 15 * 60_000 + 100,

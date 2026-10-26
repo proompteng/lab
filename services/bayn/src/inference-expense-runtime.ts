@@ -10,7 +10,8 @@ import {
   buildInferenceExpensePlan,
   inferenceExpenseLedger,
   inferenceExpenseRateCard,
-  makeInferenceExpenseQuote,
+  makeInferenceExpenseQuotes,
+  inferenceExpenseBatchSize,
 } from './inference-expense'
 import { postInferenceExpenses } from './inference-expense-journal'
 import { makeInferenceExpenseStore } from './inference-expense-postgres'
@@ -20,13 +21,14 @@ import { makeTigerBeetleRequestClient, type TigerBeetleRequestClient } from './t
 export const runInferenceExpensePass = Effect.fn('bayn.inference-expense.pass')(function* (
   store: Pick<ReturnType<typeof makeInferenceExpenseStore>, 'newSources' | 'freeze' | 'pending' | 'acknowledge'>,
   client: TigerBeetleRequestClient,
-  rateCard: Parameters<typeof makeInferenceExpenseQuote>[1] = inferenceExpenseRateCard,
+  rateCard: Parameters<typeof makeInferenceExpenseQuotes>[1] = inferenceExpenseRateCard,
 ) {
   const sources = yield* store.newSources
-  const quotes = yield* Effect.forEach(sources, (source) =>
-    Effect.fromResult(makeInferenceExpenseQuote(source, rateCard)),
-  )
-  yield* store.freeze(quotes)
+  const quotes = (yield* Effect.forEach(sources, (source) =>
+    Effect.fromResult(makeInferenceExpenseQuotes(source, rateCard)),
+  )).flat()
+  for (let offset = 0; offset < quotes.length; offset += inferenceExpenseBatchSize)
+    yield* store.freeze(quotes.slice(offset, offset + inferenceExpenseBatchSize))
   const pending = yield* store.pending
   const plan = yield* Effect.fromResult(buildInferenceExpensePlan(pending))
   yield* postInferenceExpenses(client, plan)

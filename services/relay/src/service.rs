@@ -1,4 +1,4 @@
-use crate::connector::Connector;
+use crate::connector::{Connector, Normalized};
 use platform_client::{
     authz::{self, platform_authorization_service_client::PlatformAuthorizationServiceClient},
     relay::{self, relay_service_server::RelayService},
@@ -85,23 +85,7 @@ impl Service {
             .into_inner()
             .decision
             .ok_or_else(|| Status::unavailable("platform decision missing"))?;
-        let now = now_ms()?;
-        if !decision.allowed {
-            return Err(Status::permission_denied(
-                "Ofz denied this connector operation",
-            ));
-        }
-        if decision.revision.is_empty()
-            || uuid::Uuid::parse_str(&decision.audit_receipt_id).is_err()
-            || decision.recovery_generation == 0
-            || decision.valid_until_unix_ms <= now
-            || decision.valid_until_unix_ms > now + 2000
-        {
-            return Err(Status::unavailable(
-                "invalid or expired platform authorization",
-            ));
-        }
-        Ok(decision)
+        validate_decision(decision)
     }
     async fn outcome(
         &self,
@@ -135,27 +119,13 @@ impl Service {
         }
         Ok(response.audit_receipt_id)
     }
-    async fn invoke(
+    fn client_subject(
         &self,
         peer: &str,
-        input: relay::ExecuteRequest,
-    ) -> Result<relay::ExecuteResponse, Status> {
-        if input.body.len() > 65_536 {
-            return Err(Status::invalid_argument(
-                "execution body exceeds its byte budget",
-            ));
-        }
-        let payload: platform_client::ExecutionPayload = serde_json::from_slice(&input.body)
-            .map_err(|_| Status::invalid_argument("invalid platform execution payload"))?;
-        if uuid::Uuid::parse_str(&payload.operation_id).is_err() {
-            return Err(Status::invalid_argument(
-                "execution operation UUID required",
-            ));
-        }
-        let subject = input
-            .subject
-            .as_ref()
-            .ok_or_else(|| Status::unauthenticated("platform subject required"))?;
+        subject: &authz::PlatformSubject,
+        client_service: &str,
+        delegation_id: Option<&str>,
+    ) -> Result<(), Status> {
         self.client(peer, &subject.client_service)?;
         if matches!(subject.identity.as_ref(), Some(authz::platform_subject::Identity::WorkloadId(identity)) if identity != peer)
         {
@@ -163,18 +133,24 @@ impl Service {
                 "workload subject must match its attested caller",
             ));
         }
-        if payload.client_service != subject.client_service
+        if client_service != subject.client_service
             || match &subject.identity {
                 Some(authz::platform_subject::Identity::Delegation(proof)) => {
-                    payload.delegation_id.as_deref() != Some(&proof.delegation_id)
+                    delegation_id != Some(proof.delegation_id.as_str())
                 }
-                _ => payload.delegation_id.is_some(),
+                _ => delegation_id.is_some(),
             }
         {
             return Err(Status::permission_denied(
                 "execution subject differs from its signed body",
             ));
         }
+        Ok(())
+    }
+    fn normalize(
+        &self,
+        payload: &platform_client::ExecutionPayload,
+    ) -> Result<(&dyn Connector, Normalized), Status> {
         let connector = self
             .connectors
             .get(&payload.connector_id)
@@ -207,6 +183,108 @@ impl Service {
                 "adapter target differs from its registered operation",
             ));
         }
+        Ok((connector.as_ref(), normalized))
+    }
+    async fn lookup(
+        &self,
+        peer: &str,
+        input: relay::GetExecutionRequest,
+    ) -> Result<relay::GetExecutionResponse, Status> {
+        if input.body.len() > platform_client::MAX_RELAY_REQUEST_BYTES {
+            return Err(Status::invalid_argument(
+                "execution lookup exceeds its byte budget",
+            ));
+        }
+        let lookup: platform_client::ExecutionLookup = serde_json::from_slice(&input.body)
+            .map_err(|_| Status::invalid_argument("invalid execution lookup"))?;
+        let payload = parse_execution(lookup.execution_body.as_bytes())?;
+        let subject = input
+            .subject
+            .as_ref()
+            .ok_or_else(|| Status::unauthenticated("platform subject required"))?;
+        self.client_subject(
+            peer,
+            subject,
+            &payload.client_service,
+            lookup.delegation_id.as_deref(),
+        )?;
+        let same_binding = match (&payload.binding, &lookup.binding) {
+            (None, None) => true,
+            (Some(original), Some(current)) => {
+                original.service == current.service && original.id == current.id
+            }
+            _ => false,
+        };
+        if !same_binding {
+            return Err(Status::permission_denied(
+                "execution lookup binding changed",
+            ));
+        }
+        let (_, normalized) = self.normalize(&payload)?;
+        let execution_hash = Sha256::digest(lookup.execution_body.as_bytes()).to_vec();
+        let response = self
+            .ofz
+            .clone()
+            .get_platform_execution(request(authz::GetPlatformExecutionRequest {
+                authorization: Some(authz::CheckPlatformAccessRequest {
+                    operation_id: payload.operation_id.clone(),
+                    subject: input.subject,
+                    action: normalized.action,
+                    resources: normalized.resources,
+                    request_hash: Sha256::digest(&input.body).to_vec(),
+                    binding: lookup.binding,
+                    audit_receipt_id: String::new(),
+                }),
+                execution_request_hash: execution_hash.clone(),
+            }))
+            .await?
+            .into_inner();
+        let decision = validate_decision(
+            response
+                .decision
+                .ok_or_else(|| Status::unavailable("lookup decision missing"))?,
+        )?;
+        let execution = response
+            .execution
+            .ok_or_else(|| Status::unavailable("execution snapshot missing"))?;
+        if execution.operation_id != payload.operation_id
+            || execution.request_hash != execution_hash
+            || !matches!(
+                execution.outcome.as_str(),
+                "started" | "succeeded" | "failed" | "withheld"
+            )
+            || uuid::Uuid::parse_str(&execution.authorization_receipt_id).is_err()
+            || uuid::Uuid::parse_str(&execution.execution_receipt_id).is_err()
+            || execution.upstream_status > 599
+            || execution.updated_at_unix_ms == 0
+            || (!execution.result_hash.is_empty() && execution.result_hash.len() != 32)
+            || (matches!(execution.outcome.as_str(), "succeeded" | "withheld")
+                && execution.result_hash.len() != 32)
+        {
+            return Err(Status::unavailable("invalid execution snapshot"));
+        }
+        Ok(relay::GetExecutionResponse {
+            execution: Some(execution),
+            lookup_receipt_id: decision.audit_receipt_id,
+        })
+    }
+    async fn invoke(
+        &self,
+        peer: &str,
+        input: relay::ExecuteRequest,
+    ) -> Result<relay::ExecuteResponse, Status> {
+        let payload = parse_execution(&input.body)?;
+        let subject = input
+            .subject
+            .as_ref()
+            .ok_or_else(|| Status::unauthenticated("platform subject required"))?;
+        self.client_subject(
+            peer,
+            subject,
+            &payload.client_service,
+            payload.delegation_id.as_deref(),
+        )?;
+        let (connector, normalized) = self.normalize(&payload)?;
         let hash = Sha256::digest(&input.body).to_vec();
         let mut check = authz::CheckPlatformAccessRequest {
             operation_id: payload.operation_id.clone(),
@@ -280,6 +358,40 @@ impl Service {
         })
     }
 }
+fn parse_execution(body: &[u8]) -> Result<platform_client::ExecutionPayload, Status> {
+    if body.len() > platform_client::MAX_EXECUTION_BODY_BYTES {
+        return Err(Status::invalid_argument(
+            "execution body exceeds its byte budget",
+        ));
+    }
+    let payload: platform_client::ExecutionPayload = serde_json::from_slice(body)
+        .map_err(|_| Status::invalid_argument("invalid platform execution payload"))?;
+    if uuid::Uuid::parse_str(&payload.operation_id).is_err() {
+        return Err(Status::invalid_argument(
+            "execution operation UUID required",
+        ));
+    }
+    Ok(payload)
+}
+fn validate_decision(decision: authz::PlatformDecision) -> Result<authz::PlatformDecision, Status> {
+    let now = now_ms()?;
+    if !decision.allowed {
+        return Err(Status::permission_denied(
+            "Ofz denied this connector operation",
+        ));
+    }
+    if decision.revision.is_empty()
+        || uuid::Uuid::parse_str(&decision.audit_receipt_id).is_err()
+        || decision.recovery_generation == 0
+        || decision.valid_until_unix_ms <= now
+        || decision.valid_until_unix_ms > now + 2000
+    {
+        return Err(Status::unavailable(
+            "invalid or expired platform authorization",
+        ));
+    }
+    Ok(decision)
+}
 fn now_ms() -> Result<u64, Status> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -288,6 +400,23 @@ fn now_ms() -> Result<u64, Status> {
 }
 #[tonic::async_trait]
 impl RelayService for Service {
+    async fn get_execution(
+        &self,
+        input: Request<relay::GetExecutionRequest>,
+    ) -> Result<Response<relay::GetExecutionResponse>, Status> {
+        let peer = tls::peer(&input)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("Relay is busy"))?;
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            self.lookup(&peer, input.into_inner()),
+        )
+        .await
+        .map_err(|_| Status::deadline_exceeded("Relay lookup deadline"))?
+        .map(Response::new)
+    }
     async fn list_operations(
         &self,
         input: Request<relay::ListOperationsRequest>,
@@ -354,6 +483,59 @@ mod tests {
             }),
             body: serde_json::to_vec(&payload).unwrap(),
         };
+        let lookup = relay::GetExecutionRequest {
+            subject: input.subject.clone(),
+            body: serde_json::to_vec(&platform_client::ExecutionLookup {
+                execution_body: String::from_utf8(input.body.clone()).unwrap(),
+                binding: None,
+                delegation_id: None,
+            })
+            .unwrap(),
+        };
+        assert_eq!(
+            service
+                .lookup(first, lookup.clone())
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::PermissionDenied
+        );
+        assert_eq!(
+            service
+                .lookup(second, lookup.clone())
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound
+        );
+        assert_eq!(
+            service
+                .invoke(
+                    second,
+                    relay::ExecuteRequest {
+                        subject: lookup.subject,
+                        body: lookup.body,
+                    }
+                )
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
+        assert_eq!(
+            service
+                .lookup(
+                    second,
+                    relay::GetExecutionRequest {
+                        subject: input.subject.clone(),
+                        body: input.body.clone(),
+                    }
+                )
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
         assert_eq!(
             service
                 .invoke(first, input.clone())

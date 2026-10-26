@@ -1,3 +1,8 @@
+import { DecisionsClient } from '../jev/decisions'
+import { EntryInferenceJournal } from '../jev/entry-inference'
+import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
+import { makeReplayInferenceBudget } from './inference-timing'
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { equityMarketProfile } from '../jev/markets'
 
 import { assessBacktestSession, BacktestIssue } from './backtest'
@@ -62,7 +67,7 @@ import {
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
-import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { makeReplayInferenceTiming, type ReplayInferenceCall } from './inference-timing'
 import { makeRecoveryClockFixture } from './recovery-clock.test-support'
 import { BrokerRead } from '../broker/alpaca/model'
 import {
@@ -150,11 +155,11 @@ durableTest.each(
     const partialEntryReentry = scenario === 'measured-partial-entry-reentry' || clockDelay || slippedExit
     const noTrade =
       scenario === 'no-trade' || scenario === 'no-trade-finalization' || scenario === 'no-trade-with-excluded-source'
-    // Every quote-eligible symbol reaches Jev; the fixture model only enters AAPL or AMZN.
+    // Every quote-eligible symbol reaches Jev; the fixture model ranks AAPL above AMZN.
     const eligibleEntrySymbols = [...equityMarketProfile.candidateSymbols]
     const finalizationAtMs = Date.parse('2026-09-04T19:54:15Z')
     let managementCalls = 0
-    const measuredCalls: ReplayJevCall[] = []
+    const measuredCalls: ReplayInferenceCall[] = []
     let measuredProviderClock: TestClock.TestClock | undefined
     let expiredStartedSubmit = false
     let expiredApprovedIntent = false
@@ -360,6 +365,8 @@ durableTest.each(
       Layer.provide(NodeServices.layer),
     )
     const stores = Layer.mergeAll(
+      EntryInferenceJournalLive,
+      Layer.succeed(DecisionsClient, chartProviderFixture),
       CandidateObservationStoreLive,
       JevBatchStoreLive,
       JevPositionStoreLive,
@@ -422,9 +429,10 @@ durableTest.each(
         measuredProviderClock = providerClock
         yield* providerClock.setTime(Date.parse('2026-09-21T12:00:00.000Z'))
         const timing = measured
-          ? yield* makeReplayJevTiming({
+          ? yield* makeReplayInferenceTiming({
+              budget: makeReplayInferenceBudget(1000),
               measureDatabaseTime: (operation) => operation,
-              provider,
+              providers: { jev: provider, chart: chartProviderFixture },
               providerClock,
               advanceTo: (atMs) =>
                 advanceMarketTo(atMs).pipe(
@@ -449,7 +457,10 @@ durableTest.each(
               retain: (call) =>
                 Effect.gen(function* () {
                   measuredCalls.push(call)
-                  if (scenario === 'measured-entry-expired' && measuredCalls.length === eligibleEntrySymbols.length)
+                  if (
+                    scenario === 'measured-entry-expired' &&
+                    measuredCalls.filter((call) => call.stage === 'JEV').length === eligibleEntrySymbols.length
+                  )
                     yield* providerClock.adjust(11_000)
                 }),
             })
@@ -599,7 +610,8 @@ durableTest.each(
         }
         const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
           Effect.provideService(MutationStore, untouchedExpiry ? expiryMutations : mutations),
-          Effect.provideService(JevClient, timing?.client ?? provider),
+          Effect.provideService(JevClient, timing?.clients.jev ?? provider),
+          Effect.provideService(DecisionsClient, timing?.clients.chart ?? chartProviderFixture),
           (operation) => (timing === undefined ? operation : timing.run(operation)),
           Effect.map((engine) => ({
             ...engine,
@@ -905,7 +917,7 @@ durableTest.each(
           })
           expect(recovered.generationHash).not.toBe(runtime.authorityGenerationHash)
           expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
-          const restarted = yield* createRuntime.pipe(Effect.provideService(JevClient, timing?.client ?? provider))
+          const restarted = yield* createRuntime.pipe(Effect.provideService(JevClient, timing?.clients.jev ?? provider))
           expect(restarted.authorityGenerationHash).toBe(recovered.generationHash)
           if (timing === undefined) throw new Error('Missing measured timing')
           yield* passUnavailableCryptoAdmission(restarted)
@@ -915,7 +927,8 @@ durableTest.each(
             yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
           }
           expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
-          expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length * 2)
+          expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(eligibleEntrySymbols.length * 2)
+          expect(measuredCalls.filter((call) => call.stage === 'JEV')).toHaveLength(eligibleEntrySymbols.length * 2)
           expect(
             yield* sql`SELECT state, count(*)::int AS count FROM autonomous_cycles GROUP BY state ORDER BY state`,
           ).toEqual([
@@ -1101,6 +1114,8 @@ durableTest.each(
             Context.add(IntentStore, intents),
             Context.add(MutationStore, mutations),
             Context.add(JevClient, yield* JevClient),
+            Context.add(DecisionsClient, yield* DecisionsClient),
+            Context.add(EntryInferenceJournal, yield* EntryInferenceJournal),
             Context.add(JevEvaluationStore, yield* JevEvaluationStore),
             Context.add(JevBatchStore, yield* JevBatchStore),
             Context.add(JevPositionStore, yield* JevPositionStore),
@@ -1148,6 +1163,7 @@ durableTest.each(
             ),
           )
           let lostResponses = 0
+          const submitResponseLost = yield* Deferred.make<void>()
           const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
             Effect.gen(function* () {
               const generation = yield* store.authorityGeneration.readResearchAuthorityGeneration(generationHash)
@@ -1190,6 +1206,7 @@ durableTest.each(
                                 lostResponses += 1
                               }),
                             ),
+                            Effect.andThen(Deferred.succeed(submitResponseLost, undefined)),
                             Effect.andThen(Effect.never),
                           ),
                       }
@@ -1220,17 +1237,21 @@ durableTest.each(
               const owned = yield* Deferred.await(published)
               return { owner, advance: owned.advance.pipe(Effect.provideContext(resources)) }
             })
-          const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+          const deadlineClock = yield* TestClock.make()
+          yield* Deferred.await(submitResponseLost).pipe(
+            Effect.andThen(deadlineClock.adjust(3000)),
+            Effect.forkChild({ startImmediately: true }),
+          )
           const healthy = yield* openOwner(runtime.authorityGenerationHash, 'Mutation', true)
           const recoveryAdvances = []
           for (let attempt = 0; attempt < 20 && lostResponses === 0; attempt++) {
             yield* advanceBy(1000)
-            const advance = yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
+            const advance = yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
             recoveryAdvances.push(advance.observation)
           }
           expect(lostResponses, JSON.stringify(recoveryAdvances)).toBe(1)
           yield* advanceBy(1000)
-          yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
+          yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, deadlineClock))
           expect(healthy.owner.pollUnsafe()).toBeDefined()
           yield* Fiber.join(healthy.owner)
           const restricted = yield* readAuthority
@@ -1240,6 +1261,7 @@ durableTest.each(
             kill: KillState.Active,
           })
           expect((yield* broker.snapshot).fills).toHaveLength(scenario === 'recovery-filled' ? 1 : 0)
+          const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
           const recovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
           const concurrentRecovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
           let lastRecovery
@@ -1390,7 +1412,7 @@ durableTest.each(
         yield* runtime.reconcile
         if (scenario === 'measured-entry-expired') {
           const state = yield* broker.snapshot
-          expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length)
+          expect(measuredCalls).toHaveLength(2 * eligibleEntrySymbols.length)
           expect(measuredCalls.every((call) => call.outcome.status === 'RECEIVED')).toBe(true)
           expect(state.orders).toHaveLength(0)
           expect(state.fills).toHaveLength(0)
@@ -1490,18 +1512,14 @@ durableTest.each(
             expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
           }
           if (scenario === 'measured-exit') {
-            expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length)
-            const entryCalls = measuredCalls.filter((call) => {
-              const action = call.request.questions['action']
-              return (
-                action?.type === 'choice' && Object.keys(action.criteria).some((choice) => choice.startsWith('plan_'))
-              )
-            })
+            expect(measuredCalls).toHaveLength(2 * eligibleEntrySymbols.length)
+            const entryCalls = measuredCalls.filter((call) => call.stage === 'JEV')
+            expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(eligibleEntrySymbols.length)
             expect(entryCalls).toHaveLength(eligibleEntrySymbols.length)
             for (const call of measuredCalls) {
               expect(call.outcome.status).toBe('RECEIVED')
               expect(Date.parse(call.providerCompletedAt) - Date.parse(call.providerStartedAt)).toBeGreaterThanOrEqual(
-                100,
+                call.stage === 'JEV' ? 100 : 0,
               )
             }
             const lastEntryResponse = Math.max(
@@ -1700,16 +1718,14 @@ durableTest.each(
           evaluate: (raw) =>
             Effect.gen(function* () {
               const started = yield* Clock.currentTimeMillis
-              const { request } = Result.getOrThrow(prepareJevRequest(raw))
+              const { request, requestHash } = Result.getOrThrow(prepareJevRequest(raw))
               const { candidate } = yield* Schema.decodeUnknownEffect(
                 Schema.Struct({ candidate: Schema.Struct({ symbol: Schema.String }) }),
-              )(request.state)
+              )(request.state).pipe(Effect.orDie)
               const symbol = candidate.symbol
-              const action = request.questions['action']
-              const managing = action?.type === 'choice' && 'exit' in action.criteria
-              if (managing) {
+              if (Object.values(request.questions).some((question) => question.type !== 'noul')) {
                 managementCalls += 1
-                throw new Error('Native position exits must not request model management')
+                throw new Error('Native inference accepts only atomic entry judgments; exits are code-owned')
               }
               if (measured) {
                 if (measuredProviderClock === undefined) throw new Error('Missing independent provider test clock')
@@ -1718,12 +1734,13 @@ durableTest.each(
               const now = yield* Clock.currentTimeMillis
               if (scenario === 'failed-model-response') {
                 const rejected = {
-                  ...nativeJevInference(raw, utcInstantFromEpochMillis(now), 'enter').response,
+                  ...nativeJevInference(raw, utcInstantFromEpochMillis(now), true).response,
                   answers: {},
                 }
                 return yield* new JevError({
                   failure: JevFailure.Response,
                   message: 'Response has billed usage but no valid decision answers',
+                  requestHash,
                   responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
                   rejectedResponse: Redacted.make(rejected),
                 })
@@ -1732,7 +1749,8 @@ durableTest.each(
                 ...nativeJevInference(
                   raw,
                   utcInstantFromEpochMillis(now),
-                  noTrade || !['AAPL', 'AMZN'].includes(symbol) ? 'wait' : 'enter',
+                  noTrade || !['AAPL', 'AMZN'].includes(symbol) ? false : true,
+                  symbol === 'AMZN' ? 0.8 : 0.9,
                 ),
                 startedAt: utcInstantFromEpochMillis(started),
               }

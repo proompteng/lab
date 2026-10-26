@@ -1,0 +1,456 @@
+{
+  "agents-build-push.yml": [
+    {
+      "id": "controller-image",
+      "pattern": "^controller-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "control-plane-image",
+      "pattern": "^control-plane-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "agents-shell-image",
+      "pattern": "^agents-shell-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "runner-image",
+      "pattern": "^runner-image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "write-values",
+      "pattern": "^write-values(?: \\(.*\\))?$"
+    }
+  ],
+  "arc-placement-acceptance.yml": [
+    {
+      "id": "publication-tools",
+      "pattern": "^Verify publication runner(?: \\(.*\\))?$"
+    },
+    {
+      "id": "local-build",
+      "pattern": "^Slot .* local scratch build(?: \\(.*\\))?$"
+    },
+    {
+      "id": "verify-placement",
+      "pattern": "^verify-placement(?: \\(.*\\))?$"
+    }
+  ],
+  "arc-runner-build-push.yml": [
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "attic-build-push.yaml": [
+    {
+      "id": "build-and-push",
+      "pattern": "^build-and-push(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "bayn-build-push.yml": [
+    {
+      "id": "image",
+      "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "bayn-ci.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
+      "id": "pr-checks",
+      "pattern": "^pr-checks(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "gepa",
+      "pattern": "^gepa(?: \\(.*\\))?$"
+    },
+    {
+      "id": "unit-tests",
+      "pattern": "^unit-tests(?: \\(.*\\))?$"
+    },
+    {
+      "id": "market-data-replay",
+      "pattern": "^market-data-replay(?: \\(.*\\))?$"
+    },
+    {
+      "id": "postgres-integration",
+      "pattern": "^postgres-integration(?: \\(.*\\))?$"
+    },
+    {
+      "id": "archive-integration",
+      "pattern": "^archive-integration(?: \\(.*\\))?$"
+    },
+    {
+      "id": "ledger-integration",
+      "pattern": "^ledger-integration(?: \\(.*\\))?$"
+    },
+    {
+      "id": "dependency-input-invariant",
+      "pattern": "^dependency-input-invariant(?: \\(.*\\))?$"
+    },
+    {
+      "id": "image",
+      "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "required",
+      "pattern": "^Bayn release gate(?: \\(.*\\))?$"
+    }
+  ],
+  "bumba-ci.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
+      "id": "pr-checks",
+      "pattern": "^pr-checks(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "atlas-integration",
+      "pattern": "^atlas-integration(?: \\(.*\\))?$"
+    },
+    {
+      "id": "dependency-closure",
+      "pattern": "^dependency-closure(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "buzz-relay-build-push.yml": [
+    {
+      "id": "verify",
+      "pattern": "^verify(?: \\(.*\\))?$"
+    },
+    {
+      "id": "build",
+      "pattern": "^build(?: \\(.*\\))?$"
+    },
+    {
+      "id": "publish-index",
+      "pattern": "^publish-index(?: \\(.*\\))?$"
+    }
+  ],
+  "codex-devbox.yml": [
+    {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?$"
+    },
+    {
+      "id": "build",
+      "pattern": "^build(?: \\(.*\\))?$"
+    },
+    {
+      "id": "publish",
+      "pattern": "^publish(?: \\(.*\\))?$"
+    }
+  ],
+  "dernier-build-push.yaml": [
+    {
+      "id": "build-and-push",
+      "pattern": "^build-and-push(?: \\(.*\\))?$"
+    }
+  ],
+  "docker-build-common.yaml": [
+    {
+      "id": "build",
+      "pattern": "^build(?: \\(.*\\))?$"
+    }
+  ],
+  "forgejo-image-publish.yml": [
+    {
+      "id": "publish",
+      "pattern": "^publish(?: \\(.*\\))?$"
+    }
+  ],
+  "froussard-ci.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
+      "id": "test",
+      "pattern": "^test(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "dependency-closure",
+      "pattern": "^dependency-closure(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "graf-build-push.yaml": [
+    {
+      "id": "build-and-push",
+      "pattern": "^build-and-push(?: \\(.*\\))?$"
+    }
+  ],
+  "headlamp-ci.yml": [
+    {
+      "id": "validate-manifests",
+      "pattern": "^validate-manifests(?: \\(.*\\))?$"
+    },
+    {
+      "id": "nix-image-pr",
+      "pattern": "^nix-image-pr(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "hermes-agent-mirror.yml": [
+    {
+      "id": "mirror",
+      "pattern": "^mirror(?: \\(.*\\))?$"
+    }
+  ],
+  "hermes-toolchain-build-push.yml": [
+    {
+      "id": "verify-agent-mirror",
+      "pattern": "^verify-agent-mirror(?: \\(.*\\))?$"
+    },
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "jangar-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "kata-firecracker-extension.yaml": [
+    {
+      "id": "changes",
+      "pattern": "^Select Kata and catalog jobs(?: \\(.*\\))?$"
+    },
+    {
+      "id": "catalog",
+      "pattern": "^Validate Talos 1\\.14 catalog(?: \\(.*\\))?$"
+    },
+    {
+      "id": "publish-catalog",
+      "pattern": "^Publish signed Talos 1\\.14 catalog(?: \\(.*\\))?$"
+    },
+    {
+      "id": "build",
+      "pattern": "^Build .* extension(?: \\(.*\\))?$"
+    },
+    {
+      "id": "publish",
+      "pattern": "^Publish signed multi-architecture extension(?: \\(.*\\))?$"
+    },
+    {
+      "id": "installers",
+      "pattern": "^Build .* installer(?: \\(.*\\))?$"
+    }
+  ],
+  "manual-docker-build-push.yaml": [
+    {
+      "id": "mirror",
+      "pattern": "^mirror(?: \\(.*\\))?$"
+    }
+  ],
+  "nix-oci-build-common.yml": [
+    {
+      "id": "build-platform",
+      "pattern": "^build-platform(?: \\(.*\\))?$"
+    },
+    {
+      "id": "publish-index",
+      "pattern": "^publish-index(?: \\(.*\\))?$"
+    }
+  ],
+  "ofz.yaml": [
+    {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?$"
+    },
+    {
+      "id": "build-ofz",
+      "pattern": "^build-ofz(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "oirat-ci.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
+      "id": "pr-checks",
+      "pattern": "^pr-checks(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "dependency-closure",
+      "pattern": "^dependency-closure(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "opencode-build-push.yml": [
+    {
+      "id": "image",
+      "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "opencode-ci.yml": [
+    {
+      "id": "migration",
+      "pattern": "^migration(?: \\(.*\\))?$"
+    },
+    {
+      "id": "image",
+      "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "product-nix-images.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
+      "id": "build-proompteng",
+      "pattern": "^build-proompteng(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "verify-app-dependency-closure",
+      "pattern": "^Verify App dependency closure(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "build-app",
+      "pattern": "^build-app(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "build-synthesis",
+      "pattern": "^build-synthesis(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "build-docs",
+      "pattern": "^build-docs(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "relay.yml": [
+    {
+      "id": "validate",
+      "pattern": "^validate(?: \\(.*\\))?$"
+    },
+    {
+      "id": "image",
+      "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "restate-images.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
+      "id": "build",
+      "pattern": "^Restate build and fault tests \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "publish",
+      "pattern": "^publish(?: \\(.*\\))?$"
+    }
+  ],
+  "sag-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "signal-publisher-build-push.yml": [
+    {
+      "id": "changes",
+      "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
+      "id": "dependency-closure",
+      "pattern": "^dependency-closure(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
+      "id": "image",
+      "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "symphony-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "temporal-worker-images.yml": [
+    {
+      "id": "build",
+      "pattern": "^Temporal worker build and heartbeat tests \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "publish",
+      "pattern": "^publish(?: \\(.*\\))?$"
+    }
+  ],
+  "tengri-images.yml": [
+    {
+      "id": "validate-tengri",
+      "pattern": "^Validate Tengri(?: \\(.*\\))?$"
+    },
+    {
+      "id": "validate-nanoagent",
+      "pattern": "^Validate Nanoagent(?: \\(.*\\))?$"
+    },
+    {
+      "id": "build",
+      "pattern": "^Build native \\(.*\\)(?: \\(.*\\))?$"
+    },
+    {
+      "id": "publish",
+      "pattern": "^publish(?: \\(.*\\))?$"
+    }
+  ],
+  "torghut-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "torghut-hyperliquid-feed-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "torghut-notebook-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "torghut-ta-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "torghut-ws-build-push.yaml": [
+    {
+      "id": "nix-image",
+      "pattern": "^nix-image(?: \\(.*\\))?(?: /.*)?$"
+    }
+  ],
+  "vecteur-manual-build-push.yaml": [
+    {
+      "id": "build-and-push",
+      "pattern": "^build-and-push(?: \\(.*\\))?$"
+    }
+  ]
+}

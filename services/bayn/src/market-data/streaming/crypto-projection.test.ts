@@ -41,7 +41,7 @@ test('native candidate and benchmark features reproduce a Sunday snapshot crossi
 
 test('crypto requests keep executable quote signals separate from completed-bar relative returns', () => {
   const { snapshot, rows } = cryptoMarketFixture()
-  const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'BTC/USD')).body).state
+  const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'BTC/USD')).body).numericalState
   expect(state.relativeSignals.pricingBasis).toBe('COMPLETED_BAR_CLOSE')
   expect(state.relativeSignals.comparisonAt).toBe(snapshot.manifest.rangeEndAt)
   expect(state.relativeSignals.lookbackMinutes).toBe(30)
@@ -61,8 +61,10 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
   (symbol) => {
     const fresh = cryptoMarketFixture(symbol)
     const oldPrint = cryptoMarketFixture(symbol, { tradeLagMs: 12 * 60_000, tradePrice: 100 })
-    const freshState = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(fresh.snapshot, symbol)).body).state
-    const oldPrintState = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(oldPrint.snapshot, symbol)).body).state
+    const freshState = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(fresh.snapshot, symbol)).body).numericalState
+    const oldPrintState = JSON.parse(
+      Result.getOrThrow(jevRequestForSnapshot(oldPrint.snapshot, symbol)).body,
+    ).numericalState
     expect(oldPrintState.candidate.currentPriceSignals.breakoutBps).toBe(
       freshState.candidate.currentPriceSignals.breakoutBps,
     )
@@ -81,8 +83,10 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
 test('a wider current crypto quote changes funded entry costs without changing completed-bar outperformance', () => {
   const narrow = cryptoMarketFixture('BTC/USD', { quoteSpreadBps: 1 })
   const wide = cryptoMarketFixture('BTC/USD', { quoteSpreadBps: 20 })
-  const narrowState = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(narrow.snapshot, 'BTC/USD')).body).state
-  const wideState = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(wide.snapshot, 'BTC/USD')).body).state
+  const narrowState = JSON.parse(
+    Result.getOrThrow(jevRequestForSnapshot(narrow.snapshot, 'BTC/USD')).body,
+  ).numericalState
+  const wideState = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(wide.snapshot, 'BTC/USD')).body).numericalState
   expect(wideState.relativeSignals).toEqual(narrowState.relativeSignals)
   expect(wideState.candidate.currentPriceSignals.breakoutBps).toBe(
     narrowState.candidate.currentPriceSignals.breakoutBps,
@@ -141,7 +145,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     expect(() => cryptoMarketFixture(symbol, { missingTradeSymbols: [benchmark] })).not.toThrow()
     const { snapshot, rows } = cryptoMarketFixture(symbol, { tradeLagMs: 60_000 })
     expect(jevStalePricingSymbols(snapshot)).toEqual([])
-    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, symbol)).body).state
+    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, symbol)).body).numericalState
     expect(state.candidate.quote.ageMs).toBe(1000)
     expect(state.candidate.latestTrade.ageMs).toBe(61000)
     expect(state.benchmark.pricingBasis).toBe('COMPLETED_BAR_CLOSE')

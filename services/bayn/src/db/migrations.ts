@@ -1,3 +1,5 @@
+import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
+import sequentialEntryInference from '../../migrations/0147_sequential_entry_inference'
 import accountBoundEntryFees from '../../migrations/0146_account_bound_entry_fees'
 import currentQuoteBreakout from '../../migrations/0145_current_quote_breakout'
 import alignedSignalPeriods from '../../migrations/0144_aligned_signal_periods'
@@ -148,7 +150,9 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '148_relative_chart_volume': relativeChartVolume,
   '145_current_quote_breakout': currentQuoteBreakout,
+  '147_sequential_entry_inference': sequentialEntryInference,
   '146_account_bound_entry_fees': accountBoundEntryFees,
   '143_executable_profit_limits': executableProfitLimits,
   '144_aligned_signal_periods': alignedSignalPeriods,
