@@ -37,6 +37,8 @@ const operation = create(ConnectorOperationSchema, {
   targets: [{ name: 'diagnostics', resource: { kind: 'kubernetes.namespace', id: 'galactic/immutable-uid' } }],
 })
 let connection: PlatformConnection | undefined
+let precedingConnections: PlatformConnection[] = []
+let catalog = [operation]
 let generation = BigInt(10)
 let recoveryGeneration = BigInt(3)
 let runtime = firstRuntime
@@ -61,7 +63,7 @@ void mock.module('./ofz', () => ({
     expect(body.issuer).toEqual({ humanId: 'github:7', sessionId: workspace, origin: 'https://proompteng.ai' })
     if (method.name === 'ListPlatformConnections')
       return create(ListPlatformConnectionsResponseSchema, {
-        connections: connection ? [clone(PlatformConnectionSchema, connection)] : [],
+        connections: [...precedingConnections, ...(connection ? [clone(PlatformConnectionSchema, connection)] : [])],
         recoveryGeneration,
       })
     if (method.name === 'PutPlatformConnection') {
@@ -155,7 +157,7 @@ void mock.module('./ofz', () => ({
 void mock.module('../platform/relay', () => ({
   relayCall: async () => {
     events.push({ name: 'catalog', body: {} })
-    return { operations: [operation] }
+    return { operations: catalog }
   },
 }))
 void mock.module('./grpc', () => ({
@@ -213,6 +215,8 @@ const disconnect = () =>
 beforeEach(() => {
   identity.session.idleDeadlineUnixMs = BigInt(Date.now() + 3_600_000)
   connection = undefined
+  precedingConnections = []
+  catalog = [operation]
   generation = BigInt(10)
   recoveryGeneration = BigInt(3)
   runtime = firstRuntime
@@ -273,6 +277,41 @@ test('credential issuance cannot outlive the current human idle deadline', async
   expect(events.find((event) => event.name === 'CreatePlatformDelegation')?.body.expiresAtUnixMs).toBe(
     identity.session.idleDeadlineUnixMs,
   )
+})
+
+test('unavailable saved scopes stay denied while later connections renew', async () => {
+  await saveConnection(identity, save())
+  if (!connection) throw new Error('Missing fixture connection')
+  connection.expiresAtUnixMs = BigInt(Date.now() - 1)
+  connection.credentialActive = false
+  const saved = connection
+  precedingConnections = ['removed', 'recreated'].map((connectorId) => {
+    const unavailable = clone(PlatformConnectionSchema, saved)
+    unavailable.id = randomUUID()
+    unavailable.clientReference = workspace + '/' + connectorId
+    return unavailable
+  })
+  const recreated = clone(ConnectorOperationSchema, operation)
+  recreated.connectorId = 'recreated'
+  const target = recreated.targets[0]?.resource
+  if (!target) throw new Error('Missing fixture target')
+  target.id = 'galactic/recreated-uid'
+  catalog.push(recreated)
+  events.length = 0
+  let failure: unknown
+  try {
+    await reconcileConnections(identity, 'microvm-fixture')
+  } catch (error) {
+    failure = error
+  }
+  expect(connection.credentialActive).toBe(true)
+  expect(precedingConnections.every((entry) => !entry.credentialActive)).toBe(true)
+  expect(
+    events.filter((event) => event.name === 'CreatePlatformDelegation').map((event) => event.body.connectionId),
+  ).toEqual([connectionId])
+  expect(failure).toMatchObject({ status: 409 })
+  if (!(failure instanceof Error)) throw new Error('Missing renewal failure')
+  for (const entry of precedingConnections) expect(failure.message).toContain(entry.id)
 })
 
 test('replaces an inactive installation after gateway interruption with a freshly acknowledged credential', async () => {

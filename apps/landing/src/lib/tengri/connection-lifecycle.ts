@@ -100,6 +100,7 @@ async function reconcile(context: Authority) {
   const catalog = renew.length
     ? await relayCall(RelayService.method.listOperations, { clientService: 'tengri-web' }, context.signal)
     : undefined
+  const unavailable: string[] = []
   for (const connection of snapshot.connections) {
     context.signal?.throwIfAborted()
     if (!connection.enabled) {
@@ -111,8 +112,9 @@ async function reconcile(context: Authority) {
     let selection: ReturnType<typeof savedConnectionOperations>
     try {
       selection = savedConnectionOperations(catalog.operations, connection, context.agent.uid)
-    } catch (error) {
-      throw new TengriUnavailableError(error instanceof Error ? error.message : 'Saved connection unavailable', 409)
+    } catch {
+      unavailable.push(connection.id)
+      continue
     }
     const expiresAtUnixMs = [
       context.identity.session.expiresAtUnixMs,
@@ -188,6 +190,11 @@ async function reconcile(context: Authority) {
       throw error
     }
   }
+  if (unavailable.length)
+    throw new TengriUnavailableError(
+      `Saved scopes are unavailable for connections ${unavailable.join(', ')}. Review these connections before changing them.`,
+      409,
+    )
   return list(context)
 }
 
