@@ -1,10 +1,13 @@
 # Nanoagent guest API
 
-The guest includes [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
-Its connector handlers require the exact server-side setting
-`TENGRI_CONNECTORS_ENABLED=true`; the default denies calls before creating
-identity files or changing Codex configuration. Packaging the client does not
-install a connector or change normal conversation startup.
+Relay client installation is an authenticated guest-control operation. It uses the shared
+[Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit
+installation acknowledgement before activation. The former dormant connector gate and contract are removed.
+
+The Relay MCP bridge uses the platform proxy's required execute-or-lookup envelope. Each request has its own proof
+over the exact body. After a lost execution response, the bridge requests receipt metadata without resending the
+operation. It returns an MCP error with the known outcome or `unknown`; it cannot recover the original result body.
+Successful calls and recovery responses include operation and receipt IDs in `_meta.relay`.
 
 `internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
@@ -55,7 +58,7 @@ failures stop immediately; closing the viewer cancels any retry without reportin
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
-[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 8 adds `StatFile`,
+[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 9 hard-migrates Relay client installation; protocol 8 added `StatFile`,
 which reads one path's metadata without listing its siblings. It uses the existing file-observation authority and
 workspace confinement. The controller rejects older guest API versions; roll out the paired controller and guest
 images together. The signed Ofz request protocol remains version 4. Nanoagent serves HTTP/2 gRPC and preview

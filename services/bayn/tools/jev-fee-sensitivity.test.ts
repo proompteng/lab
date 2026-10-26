@@ -36,7 +36,7 @@ test('native sensitivity keeps received coin atoms distinct from cent-rounded se
 test('optional provenance preserves sealed decision and default report, without qualifying profit', () => {
   const { snapshot } = cryptoMarketFixture('SOL/USD')
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot))
-  const evidence = nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, 'wait')
+  const evidence = nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, false)
   const strategyDecision = Result.getOrThrow(decideJevEntry(evidence))
   const document = { mode: 'PAPER', bindings: { cycleId: observation.payload.cycleId }, strategyDecision }
   const original = hash(document)

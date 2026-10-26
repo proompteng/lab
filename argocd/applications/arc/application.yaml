@@ -312,12 +312,11 @@ spec:
                   value: "true"
                   effect: NoSchedule
               topologySpreadConstraints:
-                # Four 16Gi runners cannot fit Ryzen's 61.82Gi allocatable. Allow the
-                # nine shared-label slots to reach three on Ryzen and six on Turin.
+                # Available memory decides the host split. A full Ryzen must not strand
+                # runners while Turin has capacity; scratch admission still checks free space.
                 - maxSkew: 3
-                  minDomains: 2
                   topologyKey: kubernetes.io/hostname
-                  whenUnsatisfiable: DoNotSchedule
+                  whenUnsatisfiable: ScheduleAnyway
                   nodeTaintsPolicy: Honor
                   labelSelector:
                     matchLabels:
@@ -453,6 +452,77 @@ spec:
                   emptyDir: {}
                 - name: dind-externals
                   emptyDir: {}
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.14.2
+      helm:
+        releaseName: arc-runner-set-publish
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
+          githubConfigUrl: https://github.com/proompteng/lab
+          githubConfigSecret: github-token
+          runnerScaleSetName: arc-amd64-publish
+          scaleSetLabels:
+            - arc-amd64-publish
+          minRunners: 2
+          maxRunners: 4
+          listenerTemplate:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              containers:
+                - name: listener
+          template:
+            spec:
+              automountServiceAccountToken: false
+              nodeSelector:
+                kubernetes.io/arch: amd64
+                kubernetes.io/hostname: turin
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              securityContext:
+                runAsNonRoot: false
+                fsGroup: 1001
+                fsGroupChangePolicy: OnRootMismatch
+              containers:
+                - name: runner
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  securityContext:
+                    privileged: false
+                  command: [ "/home/runner/run.sh" ]
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: "2Gi"
+                      ephemeral-storage: "2Gi"
+                    limits:
+                      cpu: "4"
+                      memory: "8Gi"
+                      ephemeral-storage: "32Gi"
+                  env:
+                    - name: ARC_RUNNER_NODE_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: spec.nodeName
+                    - name: ACTIONS_RUNNER_POD_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                      value: "false"
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+              volumes:
+                - name: work
+                  emptyDir:
+                    sizeLimit: 32Gi
   destination:
     server: https://kubernetes.default.svc
     namespace: arc

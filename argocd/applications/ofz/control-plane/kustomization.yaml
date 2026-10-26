@@ -16,3 +16,4 @@ resources:
   - database-ca-reader.yaml
   - database-ca-publisher.yaml
   - activation.yaml
+  - policies.yaml

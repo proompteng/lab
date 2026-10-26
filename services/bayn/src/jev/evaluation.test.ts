@@ -9,9 +9,13 @@ import { JevFailure } from './contract'
 import { JevOutcome, type JevEvaluationReceipt } from './evidence'
 import { evaluateClaimedJevOnce, JevEvaluationStore, recoverExpiredJevEvaluation } from './evaluation'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
-import { evaluationRequestFixture, inferenceFixture, responseFixture } from './test-support'
+import { evaluationRequestFixture } from './test-support'
+import { entryCompletionFixture, entryInferenceFixtureLayer } from './entry-inference.test-support'
 
 const request = evaluationRequestFixture()
+const completion = entryCompletionFixture(request)
+if (completion.jev.status !== 'RECEIVED') throw Error('Fixture requires Jev receipt')
+const inference = completion.jev.inference
 const dispatch = { request, claimedAt: request.observedAt }
 const memoryStore = () => {
   const receipts: JevEvaluationReceipt[] = []
@@ -49,12 +53,13 @@ test('dispatch retains the provider answer before exposing a usable inference', 
   const result = await Effect.runPromise(
     evaluateClaimedJevOnce(dispatch).pipe(
       Effect.provideService(JevEvaluationStore, memory.store),
-      Effect.provideService(JevClient, { evaluate: () => Effect.succeed(inferenceFixture()) }),
+      Effect.provideService(JevClient, { evaluate: () => Effect.succeed(inference) }),
+      Effect.provide(entryInferenceFixtureLayer),
       Effect.provide(TestClock.layer()),
     ),
   )
   expect(memory.receipts).toEqual([result.receipt])
-  expect(result.inference).toEqual(inferenceFixture())
+  expect(result.inference).toEqual(completion)
 })
 
 test('a claim whose commit crosses expiry retains a zero-cost undispatched receipt', async () => {
@@ -65,6 +70,7 @@ test('a claim whose commit crosses expiry retains a zero-cost undispatched recei
       Effect.result,
       Effect.provideService(JevEvaluationStore, memory.store),
       Effect.provideService(JevClient, { evaluate: () => Effect.die('Expired dispatch must not call the provider') }),
+      Effect.provide(entryInferenceFixtureLayer),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -82,6 +88,7 @@ test.each(['invalid', request.expiresAt, '1969-12-31T23:59:59.999Z'])(
         Effect.result,
         Effect.provideService(JevEvaluationStore, memory.store),
         Effect.provideService(JevClient, { evaluate: () => Effect.die('Invalid claim must not dispatch') }),
+        Effect.provide(entryInferenceFixtureLayer),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -92,8 +99,7 @@ test.each(['invalid', request.expiresAt, '1969-12-31T23:59:59.999Z'])(
 
 test('failed response bytes remain exact evidence', async () => {
   const memory = memoryStore()
-  const rejected = responseFixture()
-  rejected.answers.direction.probabilities = { favorable: 0.9, unfavorable: 0.02, unclear: 0.07 }
+  const rejected = { ...inference.response, answers: { invalid: { type: 'noul', noul: 2 } } }
   const responseHash = Result.getOrThrow(canonicalHashV1Result(rejected))
   const result = await Effect.runPromise(
     evaluateClaimedJevOnce(dispatch).pipe(
@@ -104,22 +110,23 @@ test('failed response bytes remain exact evidence', async () => {
           Effect.fail(
             new JevError({
               failure: JevFailure.Response,
-              message: 'invalid total',
+              message: 'invalid answer',
+              requestHash: inference.requestHash,
               responseHash,
               rejectedResponse: Redacted.make(rejected),
             }),
           ),
       }),
+      Effect.provide(entryInferenceFixtureLayer),
       Effect.provide(TestClock.layer()),
     ),
   )
   expect(Result.isFailure(result)).toBe(true)
-  expect(memory.receipts[0]?.outcome).toEqual({
-    status: JevOutcome.Failed,
-    failure: JevFailure.Response,
-    httpStatus: null,
-    responseHash,
-    rejectedResponse: rejected,
+  expect(memory.receipts[0]?.outcome).toMatchObject({
+    status: JevOutcome.Completed,
+    completion: {
+      jev: { status: 'FAILED', failure: JevFailure.Response, httpStatus: null, responseHash, usage: rejected.usage },
+    },
   })
 })
 
@@ -130,7 +137,8 @@ test('receipt persistence failure withholds the inference', async () => {
     evaluateClaimedJevOnce(dispatch).pipe(
       Effect.result,
       Effect.provideService(JevEvaluationStore, { ...memory.store, record: () => Effect.fail(failure) }),
-      Effect.provideService(JevClient, { evaluate: () => Effect.succeed(inferenceFixture()) }),
+      Effect.provideService(JevClient, { evaluate: () => Effect.succeed(inference) }),
+      Effect.provide(entryInferenceFixtureLayer),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -162,11 +170,15 @@ test('timeout cancels inference and retains its failed receipt', async () => {
             ),
           ),
       }),
+      Effect.provide(entryInferenceFixtureLayer),
       Effect.provide(TestClock.layer()),
     ),
   )
   expect(canceled).toBe(1)
-  expect(memory.receipts[0]?.outcome).toMatchObject({ status: JevOutcome.Failed, failure: JevFailure.Timeout })
+  expect(memory.receipts[0]?.outcome).toMatchObject({
+    status: JevOutcome.Completed,
+    completion: { jev: { status: 'FAILED', failure: JevFailure.Timeout } },
+  })
 })
 
 test('interruption cancels the provider and leaves recovery to the committed claim', async () => {
@@ -191,6 +203,7 @@ test('interruption cancels the provider and leaves recovery to the committed cla
             ),
           ),
       }),
+      Effect.provide(entryInferenceFixtureLayer),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -212,7 +225,8 @@ test('late evidence cannot replace abandonment or supply an entry', async () => 
     evaluateClaimedJevOnce(dispatch).pipe(
       Effect.result,
       Effect.provideService(JevEvaluationStore, { ...memory.store, record: () => Effect.succeed(resolution) }),
-      Effect.provideService(JevClient, { evaluate: () => Effect.succeed(inferenceFixture()) }),
+      Effect.provideService(JevClient, { evaluate: () => Effect.succeed(inference) }),
+      Effect.provide(entryInferenceFixtureLayer),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -226,6 +240,10 @@ test('only expired requests may be abandoned', async () => {
       expect(Result.isFailure(yield* recoverExpiredJevEvaluation(request).pipe(Effect.result))).toBe(true)
       yield* TestClock.setTime(Date.parse(request.expiresAt))
       expect((yield* recoverExpiredJevEvaluation(request)).resolution.status).toBe(JevResolutionStatus.Abandoned)
-    }).pipe(Effect.provideService(JevEvaluationStore, memory.store), Effect.provide(TestClock.layer())),
+    }).pipe(
+      Effect.provideService(JevEvaluationStore, memory.store),
+      Effect.provide(entryInferenceFixtureLayer),
+      Effect.provide(TestClock.layer()),
+    ),
   )
 })

@@ -44,3 +44,7 @@ uuid = { version = "1.18.1", features = ["serde", "v4"] }
 [build-dependencies]
 prost-build = "0.14.4"
 tonic-prost-build = "0.14.6"
+
+[dev-dependencies]
+platform-client = { path = "../../packages/platform-client" }
+relay = { path = "../relay" }

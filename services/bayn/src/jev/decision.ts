@@ -13,14 +13,15 @@ import {
 } from '../schemas'
 import type { StrategyDefinition } from '../strategy/core'
 import { JevBatchPlanSchema, JevBatchResultSchema, usableJevBatchInferences } from './batch'
-import { JevContractError, type JevRequest } from './contract'
+import { JevContractError } from './contract'
+import type { EntryInferenceInput } from './entry-inference-input'
+import { selectSupportedEntryProposal } from './entry-questions'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, reproduceJevTradingSignalBatchEvidence } from './trading-signals'
 import { JevCandidatePlanStatus } from './batch'
-import { JevEntrySetup, selectedJevTradePlan } from './trade-plan-choices'
-import { type JevFundedExitPlan } from './strategy-exit-plan'
+import { entryProposalExitPlan, type JevFundedExitPlan } from './strategy-exit-plan'
 
 export const JevDecisionEvidenceSchema = Schema.Struct({
   observation: JevObservationSchema,
@@ -64,52 +65,60 @@ export const selectJevEntryCandidates = (
   inferences: Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['inferences'],
   requests: readonly {
     readonly symbol: string
-    readonly request: { readonly request: JevRequest }
+    readonly request: { readonly request: EntryInferenceInput }
     readonly status: JevCandidatePlanStatus.Requested
   }[],
 ) =>
   Result.gen(function* () {
-    const entryPlanRejections: Record<
-      string,
-      'MODEL_WAIT' | 'MODEL_AVOID' | 'MODEL_SETUP_UNSUPPORTED' | 'NO_FUNDED_CANDIDATES'
-    > = {}
-    const eligible: { symbol: string; probability: number; weight: number; exitPlan: JevFundedExitPlan }[] = []
+    const entryPlanRejections: Record<string, 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS' | 'NO_FUNDED_CANDIDATES'> = {}
+    const eligible: {
+      symbol: string
+      judgmentSupport: number
+      modeledLossMicros: bigint
+      weight: number
+      exitPlan: JevFundedExitPlan
+    }[] = []
     for (const { symbol, inference } of inferences) {
-      const answer = inference.response.answers['action']
-      const setup = inference.response.answers['setup']
       const quote = observation.snapshot.latestQuotes[symbol]
-      if (answer?.type !== 'choice' || setup?.type !== 'choice' || quote === undefined)
-        return yield* unavailable('Jev entry has no typed setup, economic plan or verified quote')
-      const probability = setup.probabilities[setup.choice]
-      if (probability === undefined) return yield* unavailable('Jev setup answer is missing its chosen probability')
-      const quoteEligible = (yield* jevEntryQuoteExclusion(quote)) === null
       const candidate = requests.find((entry) => entry.symbol === symbol)
-      if (candidate?.status !== JevCandidatePlanStatus.Requested)
-        return yield* unavailable('Jev selected entry has no sealed request')
-      const plan = yield* selectedJevTradePlan(candidate.request.request, inference.response)
-      if (plan === null) {
-        const question = candidate.request.request.questions['action']
-        const hasPlans =
-          question?.type === 'choice' && Object.keys(question.criteria).some((key) => key.startsWith('plan_'))
-        entryPlanRejections[symbol] = !hasPlans
-          ? 'NO_FUNDED_CANDIDATES'
-          : setup.choice !== JevEntrySetup.Upward
-            ? 'MODEL_SETUP_UNSUPPORTED'
-            : answer.choice === 'wait'
-              ? 'MODEL_WAIT'
-              : 'MODEL_AVOID'
+      if (quote === undefined || candidate === undefined)
+        return yield* unavailable('Entry inference has no verified quote or sealed source request')
+      const disposition = inference.handoff.disposition
+      if (disposition.status === 'SOURCE_INFEASIBLE' || disposition.status === 'NO_FUNDED_PROPOSALS') {
+        entryPlanRejections[symbol] = 'NO_FUNDED_CANDIDATES'
         continue
       }
-      if (plan.levels.symbol !== symbol) return yield* unavailable('Selected Jev plan belongs to another symbol')
-      if (!quoteEligible) continue
-      eligible.push({ symbol, probability, weight: observation.protocol.maximumSymbolWeight, exitPlan: plan })
+      if (disposition.status !== 'READY' || inference.jev.status !== 'RECEIVED')
+        return yield* unavailable('Entry inference has no complete source-bound provider judgments')
+      const choice = yield* selectSupportedEntryProposal({
+        proposals: disposition.evaluation.proposals,
+        response: inference.jev.inference.response,
+      })
+      if (choice.selected === null) {
+        entryPlanRejections[symbol] = 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS'
+        continue
+      }
+      if ((yield* jevEntryQuoteExclusion(quote)) !== null) continue
+      const { proposal, judgmentSupport, modeledLossMicros } = choice.selected
+      if (proposal.symbol !== symbol) return yield* unavailable('Selected proposal belongs to another symbol')
+      eligible.push({
+        symbol,
+        judgmentSupport,
+        modeledLossMicros,
+        weight: proposal.funding.maximumTargetWeight,
+        exitPlan: entryProposalExitPlan(proposal),
+      })
     }
     eligible.sort(
       (left, right) =>
-        right.probability - left.probability || (left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0),
+        right.judgmentSupport - left.judgmentSupport ||
+        (left.modeledLossMicros < right.modeledLossMicros
+          ? -1
+          : left.modeledLossMicros > right.modeledLossMicros
+            ? 1
+            : left.symbol.localeCompare(right.symbol)),
     )
-    const selected = eligible.slice(0, observation.protocol.maximumPositions)
-    return { entryPlanRejections, selected }
+    return { entryPlanRejections, selected: eligible.slice(0, observation.protocol.maximumPositions) }
   })
 
 export const decideJevEntry = (input: unknown) =>
@@ -124,7 +133,7 @@ export const decideJevEntry = (input: unknown) =>
     )
     const selectedSymbols = selected.map(({ symbol }) => symbol)
     return {
-      schemaVersion: 'bayn.jev-entry-target.v6' as const,
+      schemaVersion: 'bayn.jev-entry-target.v7' as const,
       strategy: 'jev' as const,
       entryPlanRejections,
       exitPolicy: jevPositionExitPolicy(
@@ -148,11 +157,11 @@ export const decideJevEntry = (input: unknown) =>
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev entry target could not be derived', cause })))
 
 const TargetBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-entry-target.v6'),
+  schemaVersion: Schema.Literal('bayn.jev-entry-target.v7'),
   strategy: Schema.Literal('jev'),
   entryPlanRejections: Schema.Record(
     SymbolSchema,
-    Schema.Literals(['MODEL_WAIT', 'MODEL_AVOID', 'MODEL_SETUP_UNSUPPORTED', 'NO_FUNDED_CANDIDATES']),
+    Schema.Literals(['UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS', 'NO_FUNDED_CANDIDATES']),
   ),
   exitPolicy: JevPositionExitPolicySchema,
   sessionDate: IsoDateSchema,

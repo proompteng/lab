@@ -31,6 +31,7 @@ pub struct Principal {
 impl Principal {
     pub(crate) fn refresh_run_context(&mut self) -> Result<(), Status> {
         self.context.deadline_unix_ms = ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
+        self.context.runtime_epoch.clear();
         Ok(())
     }
 
