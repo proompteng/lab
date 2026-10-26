@@ -1,11 +1,73 @@
 use platform_client::{
-    ExecutionPayload,
+    ExecutionLookup, ExecutionPayload, MAX_RELAY_REQUEST_BYTES,
     authz::{PlatformSubject, platform_subject},
-    relay::{ExecuteRequest, ListOperationsRequest, relay_service_client::RelayServiceClient},
+    relay::{
+        ExecuteRequest, GetExecutionRequest, ListOperationsRequest,
+        relay_service_client::RelayServiceClient,
+    },
     request, tls,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+async fn uncertain_execution(
+    client: &mut RelayServiceClient<tonic::transport::Channel>,
+    subject: PlatformSubject,
+    operation_id: &str,
+    body: Vec<u8>,
+) -> anyhow::Result<Value> {
+    let request_hash = Sha256::digest(&body).to_vec();
+    let lookup = ExecutionLookup {
+        execution_body: String::from_utf8(body)?,
+        binding: None,
+        delegation_id: None,
+    };
+    let observed = client
+        .get_execution(request(GetExecutionRequest {
+            subject: Some(subject),
+            body: serde_json::to_vec(&lookup)?,
+        }))
+        .await;
+    let mut metadata = json!({"operationId":operation_id,"outcome":"unknown"});
+    let mut text = format!(
+        "The response for operation {operation_id} was lost. Its outcome could not be confirmed. The request was not resent."
+    );
+    if let Ok(response) = observed {
+        let response = response.into_inner();
+        if let Some(execution) = response.execution.filter(|execution| {
+            execution.operation_id == operation_id
+                && execution.request_hash == request_hash
+                && matches!(
+                    execution.outcome.as_str(),
+                    "started" | "succeeded" | "failed" | "withheld"
+                )
+                && uuid::Uuid::parse_str(&execution.authorization_receipt_id).is_ok()
+                && uuid::Uuid::parse_str(&execution.execution_receipt_id).is_ok()
+                && uuid::Uuid::parse_str(&response.lookup_receipt_id).is_ok()
+                && execution.upstream_status <= 599
+                && execution.updated_at_unix_ms > 0
+                && (execution.result_hash.is_empty() || execution.result_hash.len() == 32)
+                && (!matches!(execution.outcome.as_str(), "succeeded" | "withheld")
+                    || execution.result_hash.len() == 32)
+        }) {
+            text = format!(
+                "The response for operation {operation_id} was lost. Relay recorded its outcome as {}. The original result is unavailable. The request was not resent.",
+                execution.outcome
+            );
+            metadata = json!({
+                "operationId":operation_id,
+                "outcome":execution.outcome,
+                "authorizationReceiptId":execution.authorization_receipt_id,
+                "executionReceiptId":execution.execution_receipt_id,
+                "lookupReceiptId":response.lookup_receipt_id,
+                "upstreamStatus":execution.upstream_status,
+                "updatedAtUnixMs":execution.updated_at_unix_ms,
+            });
+        }
+    }
+    Ok(json!({"content":[{"type":"text","text":text}],"isError":true,"_meta":{"relay":metadata}}))
+}
 
 async fn handle(
     client: &mut RelayServiceClient<tonic::transport::Channel>,
@@ -60,16 +122,35 @@ async fn handle(
                 binding: None,
                 delegation_id: None,
             };
+            let subject = PlatformSubject {
+                client_service: service.into(),
+                identity: Some(platform_subject::Identity::WorkloadId(identity.into())),
+            };
+            let body = serde_json::to_vec(&payload)?;
             let response = client
                 .execute(request(ExecuteRequest {
-                    subject: Some(PlatformSubject {
-                        client_service: service.into(),
-                        identity: Some(platform_subject::Identity::WorkloadId(identity.into())),
-                    }),
-                    body: serde_json::to_vec(&payload)?,
+                    subject: Some(subject.clone()),
+                    body: body.clone(),
                 }))
-                .await?
-                .into_inner();
+                .await;
+            let response = match response {
+                Ok(response) => response.into_inner(),
+                Err(error)
+                    if matches!(
+                        error.code(),
+                        tonic::Code::Cancelled
+                            | tonic::Code::Unknown
+                            | tonic::Code::DeadlineExceeded
+                            | tonic::Code::ResourceExhausted
+                            | tonic::Code::Internal
+                            | tonic::Code::Unavailable
+                            | tonic::Code::AlreadyExists
+                    ) =>
+                {
+                    return uncertain_execution(client, subject, &payload.operation_id, body).await;
+                }
+                Err(error) => return Err(error.into()),
+            };
             if response.operation_id != payload.operation_id
                 || uuid::Uuid::parse_str(&response.authorization_receipt_id).is_err()
                 || uuid::Uuid::parse_str(&response.execution_receipt_id).is_err()
@@ -77,7 +158,7 @@ async fn handle(
                 anyhow::bail!("Relay execution receipt is invalid");
             }
             Ok(
-                json!({"content":[{"type":"text","text":String::from_utf8(response.result)?}],"isError":false}),
+                json!({"content":[{"type":"text","text":String::from_utf8(response.result)?}],"isError":false,"_meta":{"relay":{"operationId":response.operation_id,"outcome":"succeeded","authorizationReceiptId":response.authorization_receipt_id,"executionReceiptId":response.execution_receipt_id}}}),
             )
         }
         _ => anyhow::bail!("unsupported MCP method"),
@@ -96,7 +177,7 @@ async fn main() -> anyhow::Result<()> {
         "spiffe://proompteng.ai/ns/relay/sa/relay",
     )?)
     .max_decoding_message_size(1_114_112)
-    .max_encoding_message_size(131_072);
+    .max_encoding_message_size(MAX_RELAY_REQUEST_BYTES);
     let mut input = tokio::io::BufReader::new(tokio::io::stdin());
     let mut stdout = tokio::io::stdout();
     loop {

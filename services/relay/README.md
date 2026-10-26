@@ -33,6 +33,17 @@ visible; callers must not treat it as confirmed completion.
 The durable start is an exclusive claim across Relay replicas. Even an identical start retry is rejected; only the
 transaction that first creates the execution may dispatch it. Terminal outcome retries return their original receipt.
 
+`GetExecution` observes that claim without dispatching a provider request. The client submits an `ExecutionLookup`
+envelope containing the exact original execution body, its current binding and its current delegation ID. A delegated
+client signs the lookup envelope with a fresh proof. Execution and lookup bodies are distinct, so a proof for one
+cannot authorize the other. Ofz checks current permission before and after reading the receipt. Lookup also requires
+the original client, owner, resources and request hash. Renewed credentials can observe their issuer's earlier
+execution; another workload or issuer cannot. Expired or revoked authority cannot read the snapshot.
+
+The snapshot contains the original authorization receipt, latest execution receipt, outcome, timestamps, provider
+status and digests. It does not contain the result. `started` means completion remains unconfirmed. Status lookup
+cannot turn an uncertain outcome into a successful tool response or recover a lost result body.
+
 Ofz supplies Relay's enrolled clients. Relay refreshes that roster every two seconds, clears it on a failed refresh,
 and rejects a roster older than ten seconds. The same roster guards TLS handshakes and every RPC, including existing
 connections. Adding a client requires no second identity allowlist in Relay.
@@ -42,6 +53,9 @@ connections. Adding a client requires no second identity allowlist in Relay.
 `packages/platform-client` supplies Rust protobuf types, exact-peer SPIFFE TLS and the shared execution body.
 The `relay-client` binary is an MCP stdio bridge for independent workloads such as OpenCode. Each operation asserts
 that workload's registered identity; it contains no Tengri workspace or human session.
+Successful tool responses include operation and receipt IDs in `_meta.relay`. After an uncertain transport outcome,
+the bridge performs one authorized status lookup with the retained original body. It never resends Execute. The MCP
+response remains an error because the original result is unavailable, and includes the confirmed outcome or `unknown`.
 
 The Tengri BFF installs a proof-bound delegation into the current guest. Ofz creates it inactive. The BFF activates it
 only after the guest acknowledges its exact delegation ID and proof-key thumbprint. Ofz checks the issuer's current
@@ -58,12 +72,15 @@ namespace identities are operator configuration. Tokens are read for every invoc
 cargo fmt --manifest-path services/relay/Cargo.toml --check
 cargo clippy --manifest-path services/relay/Cargo.toml --locked --all-targets -- -D warnings
 cargo test --manifest-path services/relay/Cargo.toml --locked --all-targets
+cargo test --manifest-path services/relay/Cargo.toml --locked -p platform-client
 bash services/ofz/qualify-platform.sh
 bash services/ofz/test-control.sh platform
 bash services/relay/test-client.sh
 ```
 
-The integration fixture uses real PostgreSQL and SpiceDB plus an isolated TLS Kubernetes API. It never uses production
-credentials or grants. The MCP fixture runs the actual Rust client with an isolated Workload API and verifies the
-expected peer and rejection of a trusted certificate bearing another SPIFFE identity. Production cluster acceptance
-is a distinct rollout gate.
+The integration fixture uses real PostgreSQL and SpiceDB plus an isolated TLS Kubernetes API. It adds a third client
+and policy through fixture definitions, and executes a second adapter that has no HTTP request. The shared connector
+type contains opaque adapter-owned prepared bytes. HTTP paths and query parameters belong to the Kubernetes adapter.
+The fixture never uses production credentials or grants. The MCP fixture runs the actual Rust client with an isolated
+Workload API and verifies the expected peer, rejection of a trusted certificate bearing another SPIFFE identity, and
+lookup after lost responses without another execution. Production cluster acceptance is a distinct rollout gate.

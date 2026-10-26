@@ -1,5 +1,6 @@
 pub mod authorization;
 pub mod catalog;
+pub mod executions;
 pub mod mutations;
 pub mod onboarding;
 pub mod service;
