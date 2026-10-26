@@ -22,11 +22,20 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
   signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
-- One `arc-amd64` scale set serves nine AMD64 slots under the existing workflow label. Each runner reserves 16Gi memory. Four cannot fit Ryzen's measured 61.82Gi allocatable. A required two-host spread
-  with `maxSkew: 3` therefore places nine concurrent Pods as three on Ryzen and six on Turin. The minimum remains two.
-  A missing host or insufficient Ryzen headroom leaves excess jobs queued. Re-evaluate this guard before increasing
-  Ryzen's allocatable memory or changing reservations. `arc-arm64` has eight slots on Altra; `analysis-arm64` retains
-  its separate one-slot limit.
+- One `arc-amd64` scale set serves nine AMD64 build slots under the existing workflow label. Each runner reserves
+  16Gi memory. Host spread is a scheduling preference; the scheduler can use Turin when Ryzen has no room for another
+  runner. Node affinity, memory requests and the scratch bootstrap's free-space check still apply. The minimum remains
+  two. `arc-arm64` has eight build slots on Altra; `analysis-arm64` retains its separate one-slot limit.
+- `arc-amd64-publish` reserves two idle publication runners and scales to four on Turin. Each single-container runner
+  requests one CPU, 2Gi memory and 2Gi ephemeral storage, with limits of four CPUs, 8Gi memory and 32Gi storage. Its
+  workspace is disposable `emptyDir`; it uses the same Kargo-promoted runner image and GitHub credential as the build
+  sets. Registry clients run in an unprivileged container with no Docker or BuildKit daemon, Kubernetes API token,
+  scratch PVC or sidecar. Keep native image builds on the architecture-specific sets so queued builds cannot consume
+  the publication runners.
+- Shared Nix index publication, Agents receipt assembly, and the Tengri, Restate, Temporal, Codex devbox, Buzz and Kata
+  publication jobs use `arc-amd64-publish`. Their native builds keep the existing architecture-specific labels.
+- Optional Nix image-archive warming has a 30-minute upload budget and 30-second termination grace. A timeout keeps
+  its failed cache status and warning, then releases the build runner. Registry publication remains authoritative.
 - `local-path-ci-amd64` uses per-class node paths: Turin's Transcend scratch mount and Ryzen's local XFS mount. Other
   storage classes retain their existing paths. Each runner uses one 45Gi generic ephemeral PVC for `/nix`,
   `/home/runner/.cache`, `/tmp`, and `/home/runner/_work`. The init copies the image's Nix tree before the
@@ -51,17 +60,14 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 
 The single `arc-amd64` scale set has `minRunners: 2` and `maxRunners: 9`. Keep its existing GitHub identity and label.
 Separate ARC sets with a duplicate label do not provide a reliable combined queue, and ARC 0.14.2 does not update an
-existing registered set's labels. This migration adds neither a second AMD64 set nor a host-specific GitHub label.
+existing registered set's labels. Native builds keep that one label; publication has its own `arc-amd64-publish` label.
 
-Ryzen has 128GiB installed, but its current 64GiB GPU reservation leaves 61.82GiB allocatable. Three runners reserve
-48Gi and twelve logical CPUs. The 2026-10-12 native inventory measured 11.94GiB and 6.57 logical CPUs
-for retained workloads after application Ceph clients and Bayn left Ryzen. The resulting request total is about
-59.94GiB and 18.57 logical CPUs. Require fresh non-runner requests below 13.82GiB before promotion. Each single-container runner requests 4 CPUs and 16Gi and permits 20 CPUs and 32Gi, matching the former aggregate
-runner/DinD envelope. The existing memory overcommit policy remains; simultaneous limit-sized bursts can exceed
-Ryzen capacity. Check node pressure and etcd latency during actual builds. No BIOS change or
-reboot is needed now.
-A future all-five Ryzen move requires the [Bosgame memory procedure](../../../devices/ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation)
-and a reviewed revision of the two-host spread.
+Ryzen has 128GiB installed, but its 64GiB GPU reservation leaves about 61.82GiB allocatable. Its non-runner requests
+change as other workloads move. The 2026-10-26 queue investigation measured 27.63GiB, enough for two 16Gi runners,
+instead of the three assumed by the former hard spread. That rule stranded runners despite Turin's free capacity.
+`ScheduleAnyway` keeps host balance as a preference without imposing a fixed three/six split. Each build runner still
+requests four CPUs and 16Gi and permits 20 CPUs and 32Gi. Check fresh node requests, pressure, local scratch capacity
+and etcd latency during actual builds. No BIOS or node configuration change is part of this queue fix.
 
 Apply the local storage class and complete the [Ryzen placement rollout](../../../devices/galactic/scheduling/README.md)
 before promoting ARC through Kargo. Verify the provisioner has reloaded all five per-class path maps, and exercise an
@@ -70,13 +76,18 @@ normally. Existing Pods retain their original claims until ARC retires them. ARM
 normal limit increases from five to eight; its minimum stays one and its existing node-local workspaces remain.
 Check Altra's node filesystem and image filesystem before promotion: its 2026-10-12 disk-pressure event recovered
 through native image reclamation and the kubelet's five-minute transition period. Do not override a pressure taint.
-The Kargo Stage continues updating the same three runner scale sets.
+The Kargo Stage updates the two native build sets, the publication set and the separate analysis set together.
 
 Dispatch `.github/workflows/arc-placement-acceptance.yml` from `main` after reconciliation. All nine matrix jobs request
 only `arc-amd64`, exercise local scratch, Nix and a direct BuildKit build with a local file export, then wait at a nine-slot barrier. The final job requires nine
-distinct runner Pods, three on Ryzen and six on Turin, with at least 45 seconds of overlap. This proves ordinary shared-label
-capacity rather than a separate host-pinned test route. Read back memory pressure, etcd latency and NVMe contention
+distinct runner Pods on the two eligible hosts, at most three on Ryzen, with at least 45 seconds of overlap. It also
+checks the publication pool's registry access and tooling. This proves ordinary shared-label capacity without assuming
+an exact host split. Read back memory pressure, etcd latency and NVMe contention
 throughout that window; Ryzen scratch shares its physical NVMe with Talos `/var`.
+
+Deploy new runner pools through the runner-image/Kargo path before changing workflow routing. Otherwise the image
+workflow's own publication job can wait for a pool whose creation depends on that image. Once the new pool is ready,
+migrate publication jobs directly to `arc-amd64-publish`; retain their validation, signatures and discovery gates.
 
 Capacity changes use a reviewed Git change and the normal runner-image/Kargo delivery path. If storage contention
 returns, restore `minRunners: 0` and `maxRunners: 1` through that path. Existing busy runners finish before the count
