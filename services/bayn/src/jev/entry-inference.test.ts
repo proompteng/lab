@@ -182,6 +182,59 @@ const run = (claim: ReturnType<typeof fixture>, setup: ReturnType<typeof provide
   )
 
 describe('claimed sequential entry inference', () => {
+  test('commits a source-infeasible result before either provider is dispatched', async () => {
+    const claim = fixture()
+    const input = {
+      ...claim.input,
+      funding: { ...claim.input.funding, bidMicros: '500000000', askMicros: '500020000' },
+    }
+    const setup = providers()
+    const result = Result.getOrThrow(await run({ ...claim, input }, setup))
+    expect(setup.events).toEqual(['handoff'])
+    expect(result.handoff.disposition).toEqual({ status: 'SOURCE_INFEASIBLE' })
+    expect(result.jev).toEqual({ status: 'NOT_REQUESTED' })
+    expect(Result.isSuccess(decodeEntryInferenceCompletion({ ...claim, input }, result))).toBe(true)
+  })
+
+  test('rejects a resealed infeasibility claim when the source can fund a proposal', async () => {
+    const claim = fixture()
+    const result = Result.getOrThrow(await run(claim, providers()))
+    const { handoffHash: _, ...original } = result.handoff
+    const material = { ...original, disposition: { status: 'SOURCE_INFEASIBLE' } }
+    const changed = { ...material, handoffHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+    expect(Result.isFailure(decodeEntryHandoff(claim, changed))).toBe(true)
+  })
+
+  test('retains skip accounting after a late commit without extending entry validity', async () => {
+    const original = fixture()
+    const claim = {
+      ...original,
+      input: {
+        ...original.input,
+        funding: { ...original.input.funding, bidMicros: '500000000', askMicros: '500020000' },
+      },
+    }
+    const setup = providers({ commitDelay: 10_001 })
+    const result = Result.getOrThrow(await run(claim, setup, 10_001))
+    expect(setup.events).toEqual(['handoff'])
+    expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, result))).toBe(true)
+    expect(Result.isFailure(usableEntryInferenceCompletion(claim, result, at + 10_001))).toBe(true)
+  })
+
+  test('does not dispatch providers or replace an existing source-infeasible handoff', async () => {
+    const original = fixture()
+    const claim = {
+      ...original,
+      input: {
+        ...original.input,
+        funding: { ...original.input.funding, bidMicros: '500000000', askMicros: '500020000' },
+      },
+    }
+    const setup = providers({ existingHandoff: true })
+    expect(Result.isFailure(await run(claim, setup))).toBe(true)
+    expect(setup.events).toEqual(['handoff'])
+  })
+
   test('rejects a position-management purpose without dispatching entry providers', async () => {
     const claim = fixture()
     const setup = providers()
