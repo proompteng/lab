@@ -248,9 +248,26 @@ test('failed guest calls use a fresh proof for status lookup and never resend ex
       clientService: 'tengri-web',
       binding: { service: 'tengri', id: 'workspace', generation: 'generation' },
     }
-    for (const scenario of ['succeeded', 'started', 'failed', 'withheld', 'forbidden', 'not-found', 'denied', 'unavailable', 'invalid']) {
-      const upstreamFailure = scenario === 'forbidden' ? 403 : scenario === 'not-found' ? 404 : 0
-      const recordedOutcome = upstreamFailure ? 'failed' : scenario === 'invalid' ? 'succeeded' : scenario
+    for (const scenario of [
+      'succeeded',
+      'started',
+      'failed',
+      'withheld',
+      'forbidden',
+      'forbidden-body-error',
+      'not-found',
+      'denied',
+      'unreadable-response',
+      'invalid-receipt',
+      'unavailable',
+      'invalid',
+    ]) {
+      const upstreamFailure = ['forbidden', 'forbidden-body-error'].includes(scenario)
+        ? 403
+        : scenario === 'not-found' ? 404 : 0
+      const recordedOutcome = upstreamFailure
+        ? 'failed'
+        : ['invalid', 'unreadable-response', 'invalid-receipt'].includes(scenario) ? 'succeeded' : scenario
       const kinds = []
       const proofs = []
       let original
@@ -263,6 +280,23 @@ test('failed guest calls use a fresh proof for status lookup and never resend ex
         assert.equal(proof.bht, createHash('sha256').update(raw).digest('base64url'))
         if (envelope.kind === 'execute') {
           original = raw
+          if (scenario === 'forbidden-body-error') {
+            const body = new ReadableStream({
+              start(controller) {
+                controller.error(new Error('private fixture body error'))
+              },
+            })
+            return new Response(body, { status: 403 })
+          }
+          if (scenario === 'unreadable-response') return new Response('private fixture unreadable response')
+          if (scenario === 'invalid-receipt') {
+            return Response.json({
+              operationId: JSON.parse(original).operationId,
+              authorizationReceiptId: 'invalid',
+              executionReceiptId: '66666666-6666-4666-8666-666666666666',
+              result: 'private fixture result',
+            })
+          }
           if (upstreamFailure || scenario === 'denied')
             return new Response('private fixture provider response', { status: upstreamFailure || 403 })
           throw new Error('fixture lost response')
@@ -284,7 +318,7 @@ test('failed guest calls use a fresh proof for status lookup and never resend ex
             requestHash: createHash('sha256')
               .update(scenario === 'invalid' ? 'wrong request' : original)
               .digest('base64'),
-            resultHash: ['succeeded', 'withheld', 'invalid'].includes(scenario)
+            resultHash: ['succeeded', 'withheld'].includes(recordedOutcome)
               ? createHash('sha256').update('fixture result').digest('base64')
               : '',
             upstreamStatus: upstreamFailure || (scenario === 'failed' ? 403 : scenario === 'started' ? 0 : 200),

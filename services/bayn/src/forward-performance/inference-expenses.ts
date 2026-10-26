@@ -6,7 +6,7 @@ import {
   InferenceCostError,
   inferenceStageKey,
   makeInferenceCostReport,
-  type InferenceCostEvidence,
+  type DecodedInferenceCostEvidence,
 } from '../inference-costs'
 import { readInferenceExpenseSnapshot } from '../inference-costs-postgres'
 import { verifyInferenceExpenseCoverage, type InferenceExpenseQuote } from '../inference-expense'
@@ -33,7 +33,7 @@ export interface ForwardInferenceExpenseSession {
 }
 
 export const summarizeForwardInferenceExpenses = (
-  evidence: InferenceCostEvidence,
+  evidence: DecodedInferenceCostEvidence,
   accountId: string,
   frozen: readonly { readonly quote: InferenceExpenseQuote; readonly verifiedAt: string | null }[],
   authorityGenerationHash?: string,

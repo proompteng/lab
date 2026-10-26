@@ -1,11 +1,24 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
+import { decodeInferenceCostEvidence, makeInferenceCostReport } from './inference-costs'
 import { JevFailure, type JevRequest } from './jev/contract'
 import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost-evidence'
 import { JevResolutionStatus, makeJevResolution } from './jev/resolution'
 import { requestFixture, responseFixture } from './jev/test-support'
-import type { InferenceExpenseSource } from './inference-expense'
+import { verifyInferenceExpenseCoverage, type InferenceExpenseSource } from './inference-expense'
+
+export const costReportFromEvidence = (evidence: unknown, rates: unknown) =>
+  decodeInferenceCostEvidence(evidence).pipe(Result.flatMap((decoded) => makeInferenceCostReport(decoded, rates)))
+
+export const expenseCoverageFromEvidence = (
+  evidence: unknown,
+  accountId: string,
+  frozen: Parameters<typeof verifyInferenceExpenseCoverage>[2],
+) =>
+  decodeInferenceCostEvidence(evidence).pipe(
+    Result.flatMap((decoded) => verifyInferenceExpenseCoverage(decoded, accountId, frozen)),
+  )
 
 export const expenseRateFixture = {
   schemaVersion: 'bayn.inference-rate-card.v1',

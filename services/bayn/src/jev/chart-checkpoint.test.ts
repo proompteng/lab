@@ -2,12 +2,13 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { InferenceUsageStatus } from '../inference-costs'
+import { InferenceUsageStatus, decodeInferenceCostEvidence, makeInferenceCostReport } from '../inference-costs'
 import {
   buildInferenceExpensePlan,
   inferenceExpenseRateCard,
   makeInferenceExpenseQuotes,
   verifyInferenceExpenseQuote,
+  verifyInferenceExpenseCoverage,
   type InferenceExpenseSource,
 } from '../inference-expense'
 import { makeNativeChartEvidence } from './chart-evidence'
@@ -65,6 +66,20 @@ const source: InferenceExpenseSource = {
 }
 const quotes = (value: InferenceExpenseSource) =>
   Result.getOrThrow(makeInferenceExpenseQuotes(value, inferenceExpenseRateCard))
+const decodedEvidence = (value: InferenceExpenseSource) => {
+  const { accountId, sessionDate, asOf, ...row } = value
+  return Result.getOrThrow(
+    decodeInferenceCostEvidence({
+      schemaVersion: 'bayn.inference-cost-evidence.v3',
+      accountBindingHash: Result.getOrThrow(
+        canonicalHashV1Result({ schemaVersion: 'bayn.inference-cost-account.v1', accountId }),
+      ),
+      sessionDate,
+      asOf,
+      requests: [row],
+    }),
+  )
+}
 const chartQuote = (value: InferenceExpenseSource) => {
   const quote = quotes(value).find((item) => 'stage' in item.line && item.line.stage === 'CHART')
   if (quote === undefined) throw new Error('Missing chart quote')
@@ -159,11 +174,29 @@ test('committing the same handoff preserves chart quote identity and rejects sub
   const completed = { ...value, handoff: completion.handoff, receipt, resolution }
   expect(Result.isSuccess(verifyInferenceExpenseQuote(completed, chartQuote(source)))).toBe(true)
   expect(Result.isSuccess(verifyInferenceExpenseQuote(completed, before))).toBe(true)
+  const frozen = [chartQuote(source), ...quotes(completed)].map((quote) => ({ quote, verifiedAt: completed.asOf }))
+  const decoded = decodedEvidence(completed)
+  expect(
+    Result.getOrThrow(verifyInferenceExpenseCoverage(decoded, completed.accountId, frozen)).completeMeteredCoverage,
+  ).toBe(true)
+  expect(Result.getOrThrow(buildInferenceExpensePlan(frozen.map(({ quote }) => quote))).transfers).toHaveLength(2)
+  const isolated = structuredClone(completed)
+  const facts = decodedEvidence(isolated)
+  const expected = Result.getOrThrow(makeInferenceCostReport(facts, inferenceExpenseRateCard))
+  Object.defineProperty(isolated.request, 'schemaVersion', {
+    get: () => {
+      throw new Error('Pricing must use decoded checkpoint facts')
+    },
+  })
+  expect(Result.getOrThrow(makeInferenceCostReport(facts, inferenceExpenseRateCard))).toEqual(expected)
   const substituted = {
     ...completion.handoff,
     disposition: { ...disposition, visual: { ...disposition.visual, responseHash: 'f'.repeat(64) } },
   }
   expect(Result.isFailure(verifyChartCheckpointHandoff(value.chartCheckpoint, substituted))).toBe(true)
+  expect(
+    Result.isFailure(verifyInferenceExpenseQuote({ ...completed, handoff: substituted }, chartQuote(source))),
+  ).toBe(true)
 })
 
 test('rehashing a wrong request, expired claim, response or cross-request terminal never authenticates it', () => {
