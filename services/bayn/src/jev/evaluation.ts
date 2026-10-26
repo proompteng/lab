@@ -75,7 +75,6 @@ export const evaluateClaimedJevOnce = (dispatch: JevDispatch) =>
       Effect.catchTags({
         EntryInferenceError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
         JevContractError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
-        DecisionsError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
       }),
     )
     const completedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)

@@ -32,7 +32,8 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
             const [row] = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]))(
               yield* sql`SELECT payload FROM jev_evaluation_requests WHERE request_id=${input.requestId} FOR UPDATE`,
             )
-            yield* Effect.fromResult(decodeChartCheckpoint(row.payload, { claim: input, terminal: null }))
+            const request = yield* Effect.fromResult(decodeJevEvaluationRequest(row.payload))
+            yield* Effect.fromResult(decodeChartCheckpoint(request, { claim: input, terminal: null }))
             const existing =
               yield* sql`SELECT payload FROM jev_chart_dispatch_claims WHERE request_id=${input.requestId}`
             if (existing.length > 0) {
@@ -66,7 +67,8 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
             FROM jev_evaluation_requests request JOIN jev_chart_dispatch_claims claim USING (request_id)
             WHERE request.request_id=${input.requestId} FOR UPDATE OF request`,
             )
-            yield* Effect.fromResult(decodeChartCheckpoint(row.request, { claim: row.claim, terminal: input }))
+            const request = yield* Effect.fromResult(decodeJevEvaluationRequest(row.request))
+            yield* Effect.fromResult(decodeChartCheckpoint(request, { claim: row.claim, terminal: input }))
             yield* sql`INSERT INTO jev_chart_terminal_receipts (request_id, claim_hash, terminal_hash, payload)
           VALUES (${input.requestId},${input.claimHash},${input.terminalHash},${sql.json(input)})
           ON CONFLICT (request_id) DO NOTHING`

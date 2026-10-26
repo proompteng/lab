@@ -23,9 +23,11 @@ const skipped = () => {
     makeJevEvaluationRequest({ ...base, request: prepared.input, requestHash: prepared.requestHash }),
   )
   const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
-  const visual = Result.getOrThrow(makeChartDecisionsRequest(chart))
+  const visual = Result.getOrThrow(
+    makeChartDecisionsRequest({ chart, protocol: request.request.protocol, funding: request.request.funding }),
+  )
   const material = {
-    schemaVersion: 'bayn.entry-handoff.v2' as const,
+    schemaVersion: 'bayn.entry-handoff.v3' as const,
     requestId: request.requestId,
     inputHash: request.requestHash,
     visualRequestHash: visual.requestHash,

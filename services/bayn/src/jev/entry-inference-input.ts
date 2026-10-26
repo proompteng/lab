@@ -5,11 +5,11 @@ import { canonicalHashV1Result, canonicalJsonWithHashV1Result } from '../hash'
 import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { ChartSourceSchema, decodeChartSource } from './chart-evidence'
 import { JevContractError } from './contract'
-import { JevProtocolSchema } from './protocol'
+import { JevProtocolSchema, type JevProtocolMaterial } from './protocol'
 
 const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
 export const EntryInferenceInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.entry-inference-input.v3'),
+  schemaVersion: Schema.Literal('bayn.entry-inference-input.v4'),
   numericalState: Schema.Record(Schema.String, Schema.Json),
   chartSource: ChartSourceSchema,
   protocol: JevProtocolSchema,
@@ -21,11 +21,13 @@ export const EntryInferenceInputSchema = Schema.Struct({
   }),
 })
 export type EntryInferenceInput = typeof EntryInferenceInputSchema.Type
-export type EntryInferenceMaterial = Omit<EntryInferenceInput, 'schemaVersion'> & {
+export type EntryInferenceMaterial = Omit<EntryInferenceInput, 'schemaVersion' | 'protocol'> & {
   readonly schemaVersion:
     | 'bayn.entry-inference-input.v1'
     | 'bayn.entry-inference-input.v2'
     | 'bayn.entry-inference-input.v3'
+    | 'bayn.entry-inference-input.v4'
+  readonly protocol: JevProtocolMaterial
 }
 
 export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>

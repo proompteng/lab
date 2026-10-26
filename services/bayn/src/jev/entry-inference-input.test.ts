@@ -10,7 +10,7 @@ const bars = [
   { minuteBeforeWindowEnd: 1, open: 100.5, high: 102, low: 100, close: 101, volume: 20 },
 ]
 const input = {
-  schemaVersion: 'bayn.entry-inference-input.v3',
+  schemaVersion: 'bayn.entry-inference-input.v4',
   numericalState: {
     schemaVersion: 'bayn.jev-entry-state.v22',
     task: { decisionPurpose: 'ENTRY' },
@@ -24,8 +24,12 @@ const input = {
 }
 
 describe('sequential entry inference input', () => {
-  test('rejects both retired chart-question input contracts for execution', () => {
-    for (const schemaVersion of ['bayn.entry-inference-input.v1', 'bayn.entry-inference-input.v2'])
+  test('rejects all retired chart-question input contracts for execution', () => {
+    for (const schemaVersion of [
+      'bayn.entry-inference-input.v1',
+      'bayn.entry-inference-input.v2',
+      'bayn.entry-inference-input.v3',
+    ])
       expect(Result.isFailure(prepareEntryInferenceInput({ ...input, schemaVersion }))).toBe(true)
   })
 
