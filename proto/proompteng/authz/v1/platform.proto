@@ -1,0 +1,172 @@
+syntax = "proto3";
+
+package proompteng.authz.v1;
+
+option go_package = "github.com/proompteng/lab/gen/proompteng/authz/v1;authzv1";
+
+service PlatformAuthorizationService {
+  rpc GetPlatformConfiguration(GetPlatformConfigurationRequest) returns (GetPlatformConfigurationResponse);
+  rpc CheckPlatformAccess(CheckPlatformAccessRequest) returns (CheckPlatformAccessResponse);
+  rpc RecordPlatformExecution(RecordPlatformExecutionRequest) returns (RecordPlatformExecutionResponse);
+  rpc GetPlatformExecution(GetPlatformExecutionRequest) returns (GetPlatformExecutionResponse);
+  rpc WritePolicyRelationships(WritePolicyRelationshipsRequest) returns (WritePolicyRelationshipsResponse);
+  rpc CreatePlatformDelegation(CreatePlatformDelegationRequest) returns (CreatePlatformDelegationResponse);
+  rpc ActivatePlatformDelegation(ActivatePlatformDelegationRequest) returns (ActivatePlatformDelegationResponse);
+  rpc RevokePlatformDelegation(RevokePlatformDelegationRequest) returns (RevokePlatformDelegationResponse);
+}
+
+message GetPlatformConfigurationRequest {}
+message GetPlatformConfigurationResponse {
+  uint64 policy_version = 1;
+  string policy_catalog_json = 2;
+  repeated RegisteredRelayClient relay_clients = 3;
+}
+message RegisteredRelayClient {
+  string id = 1;
+  repeated string identities = 2;
+}
+
+message RecordPlatformExecutionRequest {
+  string operation_id = 1;
+  string authorization_receipt_id = 2;
+  bytes request_hash = 3;
+  string outcome = 4;
+  uint32 upstream_status = 5;
+  bytes result_hash = 6;
+}
+message RecordPlatformExecutionResponse {
+  string audit_receipt_id = 1;
+}
+
+message GetPlatformExecutionRequest {
+  CheckPlatformAccessRequest authorization = 1;
+  bytes execution_request_hash = 2;
+}
+message PlatformExecution {
+  string operation_id = 1;
+  string outcome = 2;
+  string authorization_receipt_id = 3;
+  string execution_receipt_id = 4;
+  uint32 upstream_status = 5;
+  bytes result_hash = 6;
+  bytes request_hash = 7;
+  uint64 updated_at_unix_ms = 8;
+}
+message GetPlatformExecutionResponse {
+  PlatformExecution execution = 1;
+  PlatformDecision decision = 2;
+}
+
+message PlatformResource {
+  string kind = 1;
+  string id = 2;
+  string target = 3;
+}
+
+message PlatformHumanSession {
+  string human_id = 1;
+  string session_id = 2;
+  string origin = 3;
+}
+
+message PlatformDelegationProof {
+  string delegation_id = 1;
+  string credential = 2;
+  string proof = 3;
+}
+
+message PlatformSubject {
+  oneof identity {
+    string workload_id = 1;
+    PlatformHumanSession human = 2;
+    PlatformDelegationProof delegation = 3;
+  }
+  string client_service = 4;
+}
+
+message PlatformBinding {
+  string service = 1;
+  string id = 2;
+  string generation = 3;
+}
+
+message CheckPlatformAccessRequest {
+  string operation_id = 1;
+  PlatformSubject subject = 2;
+  string action = 3;
+  repeated PlatformResource resources = 4;
+  bytes request_hash = 5;
+  PlatformBinding binding = 6;
+  string audit_receipt_id = 7;
+}
+
+message PlatformDecision {
+  bool allowed = 1;
+  string revision = 2;
+  string audit_receipt_id = 3;
+  uint64 valid_until_unix_ms = 4;
+  uint64 recovery_generation = 5;
+}
+
+message PolicyRelationship {
+  PlatformResource resource = 1;
+  string relation = 2;
+  string subject_kind = 3;
+  string subject_id = 4;
+  bool enabled = 5;
+}
+
+message WritePolicyRelationshipsRequest {
+  string operation_id = 1;
+  PlatformHumanSession administrator = 2;
+  uint64 expected_policy_version = 3;
+  repeated PolicyRelationship relationships = 4;
+  string reason = 5;
+}
+
+message CreatePlatformDelegationRequest {
+  string operation_id = 1;
+  PlatformHumanSession issuer = 2;
+  string client_service = 3;
+  string agent_id = 4;
+  repeated string actions = 5;
+  repeated PlatformResource resources = 6;
+  string proof_key_thumbprint = 7;
+  uint64 expires_at_unix_ms = 8;
+  PlatformBinding binding = 9;
+}
+
+message CreatePlatformDelegationResponse {
+  string delegation_id = 1;
+  string credential = 2;
+  PlatformDecision decision = 3;
+}
+
+message RevokePlatformDelegationRequest {
+  string operation_id = 1;
+  PlatformHumanSession issuer = 2;
+  string delegation_id = 3;
+}
+
+message ActivatePlatformDelegationRequest {
+  string operation_id = 1;
+  PlatformHumanSession issuer = 2;
+  string delegation_id = 3;
+  string proof_key_thumbprint = 4;
+}
+
+message CheckPlatformAccessResponse {
+  PlatformDecision decision = 1;
+}
+
+message WritePolicyRelationshipsResponse {
+  PlatformDecision decision = 1;
+}
+
+message ActivatePlatformDelegationResponse {
+  PlatformDecision decision = 1;
+}
+
+message RevokePlatformDelegationResponse {
+  PlatformDecision decision = 1;
+}

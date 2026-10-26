@@ -272,6 +272,9 @@ may not be available in this distribution. The old Monaco shell and its browser 
 The composer's **Approvals** selector offers **Ask first** and **Auto approve**. The browser remembers this per
 workspace and automatically resolves advertised action confirmations while the chat is open. Questions remain manual:
 native multi-question requests, supported primitive MCP forms and HTTPS URL confirmations render answer controls.
+Async questions in `agentMessage.questions` also render choices and free-text answers, including after history reload.
+They use Codex's identified desktop reply envelope through normal durable send/steer operations, preserving any
+composer draft and attachments. Matching replies in native history keep answered controls retired after reload.
 The signed guest response contract keeps typed answers separate from action decisions. Failed submissions preserve
 the form for retry, and failed auto-approvals expose manual controls without an automatic retry loop.
 Resolved approvals and answers stay retired for the open workspace, including across conversation changes. Older

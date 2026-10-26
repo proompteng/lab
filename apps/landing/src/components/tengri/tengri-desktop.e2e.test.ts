@@ -5,6 +5,18 @@ import { codexModelFixtures } from './codex-models.fixture'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
 import { codexThreadTitle, type TengriCodexThreadSummary } from '@/lib/tengri/codex-threads'
 
+async function openSettingsPane(settings: Locator, name: string) {
+  const sidebar = settings
+    .getByRole('navigation', { name: 'Settings sections' })
+    .getByRole('button', { name, exact: true })
+  if (await sidebar.isVisible()) await sidebar.click()
+  else {
+    const back = settings.getByRole('button', { name: 'Back to General' })
+    if (await back.isEnabled()) await back.click()
+    await settings.getByRole('button', { name: `Open ${name}`, exact: true }).click()
+  }
+}
+
 const user = {
   id: '424242',
   name: 'Ada Lovelace',
@@ -1041,7 +1053,8 @@ test('aborts cold browser startup on close so guest lifecycle actions can procee
   await expect(chrome.getByRole('status')).toHaveText('Starting Chrome…')
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   const settings = page.getByRole('region', { name: 'Settings window', exact: true })
-  const sleep = settings.getByRole('button', { name: 'Sleep Agent', exact: true })
+  await openSettingsPane(settings, 'Power & Sleep')
+  const sleep = settings.getByRole('button', { name: 'Sleep', exact: true })
   await expect(sleep).toBeDisabled()
   await chrome.getByRole('button', { name: 'Close Chrome', exact: true }).click()
   await expect
@@ -3221,7 +3234,8 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   const dock = page.getByRole('navigation', { name: 'Dock' })
   await dock.getByRole('button', { name: 'Open Settings' }).click()
   const settings = page.getByRole('region', { name: 'Settings window' })
-  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await openSettingsPane(settings, 'Power & Sleep')
+  await settings.getByRole('button', { name: 'Sleep', exact: true }).click()
   await expect.poll(() => mock.actions.some((action) => action.action === 'sleep-agent')).toBe(true)
   const sleeping = page.getByRole('dialog', { name: 'Tengri is sleeping' })
   await expect(sleeping).toBeVisible()
@@ -3237,6 +3251,7 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
       .filter({ hasText: /^Connected$/ }),
   ).toHaveAttribute('data-connection-state', 'connected')
   await dock.getByRole('button', { name: 'Open Settings' }).click()
+  await openSettingsPane(settings, 'About')
   await settings.getByRole('button', { name: 'Delete Agent' }).click()
   const deleteDialog = page.getByRole('alertdialog', { name: /Delete “Tengri”/ })
   await expect(deleteDialog).toContainText('persistent workspace')
@@ -3555,6 +3570,7 @@ test('propagates deletion cleanup to every open desktop tab', async ({ page }) =
   const dock = page.getByRole('navigation', { name: 'Dock' })
   await dock.getByRole('button', { name: 'Open Settings' }).click()
   const settings = page.getByRole('region', { name: 'Settings window' })
+  await openSettingsPane(settings, 'About')
   await settings.getByRole('button', { name: 'Delete Agent' }).click()
   await page
     .getByRole('alertdialog', { name: /Delete “Tengri”/ })
@@ -3622,10 +3638,9 @@ test('can sleep and cancel a hanging model catalog without closing chat', async 
   try {
     await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Settings' }).click()
     const settings = page.getByRole('region', { name: 'Settings window' })
-    for (const name of ['Sleep Agent', 'Sign Out', 'Delete Agent']) {
-      await expect(settings.getByRole('button', { name, exact: true })).toBeEnabled()
-    }
-    await settings.getByRole('button', { name: 'Sleep Agent', exact: true }).click()
+    await openSettingsPane(settings, 'Power & Sleep')
+    await expect(settings.getByRole('button', { name: 'Sleep', exact: true })).toBeEnabled()
+    await settings.getByRole('button', { name: 'Sleep', exact: true }).click()
     await cancelled
     await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
   } finally {
@@ -3651,14 +3666,15 @@ test('recovers the model catalog after a rejected lifecycle transition cancels i
     await mock.heldCodexModelsStarted
     await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Settings' }).click()
     const settings = page.getByRole('region', { name: 'Settings window' })
-    await settings.getByRole('button', { name: 'Sleep Agent', exact: true }).click()
+    await openSettingsPane(settings, 'Power & Sleep')
+    await settings.getByRole('button', { name: 'Sleep', exact: true }).click()
     await sleepStarted.promise
     options.holdCodexModels = false
     mock.releaseHeldCodexModels()
     await page.clock.runFor(1_100)
     expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(1)
     releaseSleep.resolve()
-    await expect(settings.getByRole('button', { name: 'Sleep Agent', exact: true })).toBeEnabled()
+    await expect(settings.getByRole('button', { name: 'Sleep', exact: true })).toBeEnabled()
     await page.clock.runFor(2_100)
     const tengri = page.getByRole('region', { name: 'Tengri window' })
     await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
@@ -3676,15 +3692,18 @@ test('blocks lifecycle changes while Settings has a guest request in flight', as
   const dock = page.getByRole('navigation', { name: 'Dock' })
   await dock.getByRole('button', { name: 'Open Settings' }).click()
   const settings = page.getByRole('region', { name: 'Settings window' })
-  const lifecycleButtons = settings.getByRole('button').filter({ hasText: /Sleep Agent|Sign Out|Delete Agent/ })
+  await openSettingsPane(settings, 'Power & Sleep')
+  const lifecycleButtons = settings.getByRole('button', { name: 'Sleep', exact: true })
+  await openSettingsPane(settings, 'Codex')
   await expect.poll(() => mock.actions.filter((action) => action.action === 'codex-account').length).toBeGreaterThan(1)
-  await expect(lifecycleButtons).toHaveCount(3)
+  await openSettingsPane(settings, 'Power & Sleep')
+  await expect(lifecycleButtons).toHaveCount(1)
   for (const button of await lifecycleButtons.all()) await expect(button).toBeDisabled()
   expect(mock.actions.some((action) => action.action === 'sleep-agent')).toBe(false)
 
   mock.releaseHeldCodexAccount()
-  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
-  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(settings.getByRole('button', { name: 'Sleep', exact: true })).toBeEnabled()
+  await settings.getByRole('button', { name: 'Sleep', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
 })
 
@@ -3700,17 +3719,15 @@ test('blocks lifecycle changes while Tengri has a device-login refresh in flight
   const dock = page.getByRole('navigation', { name: 'Dock' })
   await dock.getByRole('button', { name: 'Open Settings' }).click()
   const settings = page.getByRole('region', { name: 'Settings window' })
+  await openSettingsPane(settings, 'Power & Sleep')
+  await openSettingsPane(settings, 'Codex')
   await expect.poll(() => mock.actions.filter((action) => action.action === 'codex-account').length).toBeGreaterThan(2)
-  for (const button of await settings
-    .getByRole('button')
-    .filter({ hasText: /Sleep Agent|Sign Out|Delete Agent/ })
-    .all()) {
-    await expect(button).toBeDisabled()
-  }
+  await openSettingsPane(settings, 'Power & Sleep')
+  await expect(settings.getByRole('button', { name: 'Sleep', exact: true })).toBeDisabled()
 
   mock.releaseHeldCodexAccount()
-  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
-  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(settings.getByRole('button', { name: 'Sleep', exact: true })).toBeEnabled()
+  await settings.getByRole('button', { name: 'Sleep', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
 })
 
@@ -3751,8 +3768,9 @@ test('does not refresh the guest account after sleep starts', async ({ page }) =
   const dock = page.getByRole('navigation', { name: 'Dock' })
   await dock.getByRole('button', { name: 'Open Settings' }).click()
   const settings = page.getByRole('region', { name: 'Settings window' })
-  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
-  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await openSettingsPane(settings, 'Power & Sleep')
+  await expect(settings.getByRole('button', { name: 'Sleep', exact: true })).toBeEnabled()
+  await settings.getByRole('button', { name: 'Sleep', exact: true }).click()
   await mock.waitForHeldLifecycleAction()
   const accountRequestCount = mock.actions.filter((action) => action.action === 'codex-account').length
 
@@ -3771,11 +3789,12 @@ test('keeps the desktop active after superseded sleep and allocates a fresh oper
   const dock = page.getByRole('navigation', { name: 'Dock' })
   await dock.getByRole('button', { name: 'Open Settings' }).click()
   const settings = page.getByRole('region', { name: 'Settings window' })
-  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await openSettingsPane(settings, 'Power & Sleep')
+  await settings.getByRole('button', { name: 'Sleep', exact: true }).click()
   await expect(page.getByText('A newer workspace transition replaced this request.')).toBeVisible()
   await expect(dock).toBeVisible()
-  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
-  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(settings.getByRole('button', { name: 'Sleep', exact: true })).toBeEnabled()
+  await settings.getByRole('button', { name: 'Sleep', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
   const sleeps = mock.actions.filter((action) => action.action === 'sleep-agent')
   expect(sleeps).toHaveLength(2)
@@ -3788,6 +3807,7 @@ test('keeps a committed delete transition gated when snapshot refresh fails', as
 
   const dock = page.getByRole('navigation', { name: 'Dock' })
   await dock.getByRole('button', { name: 'Open Settings' }).click()
+  await openSettingsPane(page.getByRole('region', { name: 'Settings window' }), 'About')
   await page.getByRole('region', { name: 'Settings window' }).getByRole('button', { name: 'Delete Agent' }).click()
   await page
     .getByRole('alertdialog', { name: /Delete “Tengri”/ })
@@ -5296,7 +5316,7 @@ test('adds another passkey from Settings and retries a failed start', async ({ p
   await page.route('https://auth.proompteng.ai/passkey-fixture', (route) => route.fulfill({ body: 'Passkey setup' }))
   await page.goto('/')
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-  await page.getByRole('button', { name: 'Access', exact: true }).click()
+  await page.getByRole('button', { name: 'Privacy & Security', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Add another passkey', exact: true })).toBeInViewport()
   await page.screenshot({ path: testInfo.outputPath('passkey-settings.png') })
   await page.getByRole('button', { name: 'Add another passkey', exact: true }).click()
@@ -5400,6 +5420,7 @@ test('creates with a new name after deleting a workspace whose creation reply wa
   await expect(page.getByText('Creation response is uncertain')).toBeVisible()
   await page.reload()
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  await openSettingsPane(page.getByRole('region', { name: 'Settings window' }), 'About')
   await page.getByRole('region', { name: 'Settings window' }).getByRole('button', { name: 'Delete Agent' }).click()
   await page
     .getByRole('alertdialog', { name: /Delete “Original workspace”/ })
@@ -5589,6 +5610,7 @@ test('uses functional close controls and disables unavailable actions in confirm
   await page.goto('/')
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   const settings = page.getByRole('region', { name: 'Settings window' })
+  await openSettingsPane(settings, 'About')
   await settings.getByRole('button', { name: 'Delete Agent' }).click()
   const dialog = page.getByRole('alertdialog', { name: /Delete “Tengri”/ })
   const controls = dialog.getByRole('group', { name: 'Window controls' })
@@ -6112,7 +6134,7 @@ test('navigates Finder with sortable columns, breadcrumbs, Go to Folder, and fil
   ).toEqual([])
 })
 
-test('renders native Finder and Settings layouts with accessible navigation', async ({ page }) => {
+test('renders the native Finder layout with accessible navigation', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-08-26T12:34:00.000Z'))
   await mockTengri(page)
   await page.goto('/')
@@ -6131,80 +6153,161 @@ test('renders native Finder and Settings layouts with accessible navigation', as
     .toBe(true)
   await page.mouse.move(0, 0)
   await expect.soft(finder).toHaveScreenshot('tengri-finder.png')
+})
 
-  await dock.getByRole('button', { name: 'Open Settings' }).click()
+test('renders focused macOS settings panes with accessible navigation', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-08-26T12:34:00.000Z'))
+  const fixture = await mockTengri(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   const settings = page.getByRole('region', { name: 'Settings window' })
-  await expect(settings.getByRole('heading', { name: 'General', exact: true })).toBeVisible()
+  await expect(settings.getByRole('heading', { name: 'General', exact: true }).first()).toBeVisible()
+  await expect(settings.getByLabel('Sleep when inactive')).toHaveCount(0)
+  const accountRequests = fixture.actions.filter((action) => action.action === 'codex-account').length
   await page.mouse.move(0, 0)
   await expect.soft(settings).toHaveScreenshot('tengri-settings.png')
-  await page.screenshot({ path: test.info().outputPath('tengri-desktop-polish.png') })
-  await settings.getByRole('button', { name: 'Runtime', exact: true }).click()
-  await expect(settings.getByRole('heading', { name: 'Runtime', exact: true })).toBeInViewport()
-  await settings.getByRole('button', { name: 'Lifecycle', exact: true }).click()
-  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeInViewport()
+  await openSettingsPane(settings, 'About')
+  await expect(settings.getByText('Firecracker')).toBeVisible()
+  await expect(settings.getByLabel('Sleep when inactive')).toHaveCount(0)
+  await openSettingsPane(settings, 'Power & Sleep')
+  await expect(settings.getByLabel('Sleep when inactive')).toHaveValue('60')
+  expect(fixture.actions.filter((action) => action.action === 'codex-account')).toHaveLength(accountRequests)
+  await settings.getByRole('button', { name: 'Back to General' }).click()
+  await expect(settings.getByRole('button', { name: 'Open About', exact: true })).toBeVisible()
+  await settings.getByRole('textbox', { name: 'Search Settings' }).fill('sleep')
+  await expect(settings.getByRole('navigation', { name: 'Settings sections' }).getByRole('button')).toHaveCount(1)
+  await openSettingsPane(settings, 'Power & Sleep')
+  await page.setViewportSize({ width: 390, height: 680 })
+  await settings.getByRole('button', { name: 'Maximize Settings' }).click()
+  await expect(settings.getByLabel('Sleep when inactive')).toBeVisible()
+  await settings.getByRole('button', { name: 'Back to General' }).click()
+  await settings.getByRole('button', { name: 'Open About', exact: true }).click()
+  await expect(settings.getByText('Firecracker')).toBeVisible()
+  await settings.screenshot({ path: test.info().outputPath('tengri-settings-mobile.png') })
   const results = await new AxeBuilder({ page }).analyze()
   expect(
     results.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
   ).toEqual([])
-
-  await page.setViewportSize({ width: 390, height: 680 })
-  await settings.getByRole('button', { name: 'Maximize Settings' }).click()
-  const bounds = await settings.boundingBox()
-  expect(bounds).not.toBeNull()
-  expect(bounds!.width).toBeLessThanOrEqual(390)
-  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeVisible()
 })
 
-test('saves power settings, validates idle limits, and reads them back after reload', async ({ page }) => {
+test('saves the sleep timeout immediately and reads it back after reload', async ({ page }) => {
   const fixture = await mockTengri(page)
   await page.goto('/')
-  const dock = page.getByRole('navigation', { name: 'Dock' })
-  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   const settings = page.getByRole('region', { name: 'Settings window' })
-  await settings.getByRole('button', { name: 'Lifecycle', exact: true }).click()
-  const automaticSleep = settings.getByRole('switch', { name: 'Automatic sleep' })
-  const timeout = settings.getByLabel('Idle timeout in minutes')
-  await expect(automaticSleep).toBeChecked()
-  await expect(timeout).toHaveValue('60')
-  await timeout.fill('1441')
-  await settings.getByRole('button', { name: 'Save power settings' }).click()
-  await expect(timeout).toHaveAttribute('aria-invalid', 'true')
-  expect(fixture.actions.filter((action) => action.action === 'update-power-settings')).toHaveLength(0)
-  await automaticSleep.click()
-  await settings.getByRole('button', { name: 'Save power settings' }).click()
-  await expect(settings.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible()
-  expect(fixture.actions.filter((action) => action.action === 'update-power-settings')).toEqual([
-    {
-      action: 'update-power-settings',
-      agentId: readyAgent.id,
-      power: { idleTimeoutMinutes: 0 },
-    },
-  ])
+  await openSettingsPane(settings, 'Power & Sleep')
+  const timeout = settings.getByLabel('Sleep when inactive')
+  await timeout.focus()
+  await timeout.selectOption('1')
+  await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(1)
+  await expect(timeout).toBeEnabled()
+  await expect(timeout).toBeFocused()
   await page.reload()
-  await dock.getByRole('button', { name: 'Open Settings' }).click()
-  await settings.getByRole('button', { name: 'Lifecycle', exact: true }).click()
-  await expect(automaticSleep).not.toBeChecked()
-  await expect(timeout).toHaveValue('0')
-  await automaticSleep.click()
-  await timeout.fill('5')
-  await settings.getByRole('button', { name: 'Save power settings' }).click()
-  await expect(settings.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible()
-  expect(fixture.actions.filter((action) => action.action === 'update-power-settings').at(-1)).toEqual({
-    action: 'update-power-settings',
-    agentId: readyAgent.id,
-    power: { idleTimeoutMinutes: 5 },
-  })
-  await settings.screenshot({ path: test.info().outputPath('tengri-power-settings.png') })
-  await page.setViewportSize({ width: 390, height: 680 })
-  await settings.getByRole('button', { name: 'Maximize Settings' }).click()
-  await automaticSleep.scrollIntoViewIfNeeded()
-  await expect(automaticSleep).toBeVisible()
-  await expect(timeout).toBeVisible()
-  const accessibility = await new AxeBuilder({ page }).analyze()
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  await openSettingsPane(settings, 'Power & Sleep')
+  await expect(timeout).toHaveValue('1')
+  await timeout.selectOption('0')
+  await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(0)
+  await expect(timeout).toBeEnabled()
+  await timeout.selectOption('60')
+  await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(60)
   expect(
-    accessibility.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
-  ).toEqual([])
+    fixture.actions.filter((action) => action.action === 'update-power-settings').map((action) => action.power),
+  ).toEqual([{ idleTimeoutMinutes: 1 }, { idleTimeoutMinutes: 0 }, { idleTimeoutMinutes: 60 }])
+  await settings.screenshot({ path: test.info().outputPath('tengri-power-settings.png') })
 })
+
+test('keeps a failed sleep preference visible and retries the same value', async ({ page }) => {
+  const fixture = await mockTengri(page)
+  let fail = true
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  await page.route('**/api/tengri', async (route) => {
+    if (
+      route.request().method() === 'POST' &&
+      route.request().postDataJSON()?.action === 'update-power-settings' &&
+      fail
+    ) {
+      fail = false
+      started.resolve()
+      await release.promise
+      await route.fulfill({ status: 503, json: { error: 'Sleep settings could not be saved' } })
+    } else await route.fallback()
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await openSettingsPane(settings, 'Power & Sleep')
+  const timeout = settings.getByLabel('Sleep when inactive')
+  await timeout.selectOption('5')
+  await started.promise
+  await openSettingsPane(settings, 'About')
+  release.resolve()
+  await expect(timeout).toBeEnabled()
+  await expect(
+    settings.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'About', exact: true }),
+  ).toBeFocused()
+  await openSettingsPane(settings, 'Power & Sleep')
+  await expect(settings.getByRole('alert')).toContainText('Sleep settings could not be saved')
+  await expect(timeout).toHaveValue('5')
+  expect(fixture.getAgent()?.power.idleTimeoutMinutes).toBe(60)
+  await settings.getByRole('button', { name: 'Try Again' }).click()
+  await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(5)
+  await expect(settings.getByRole('alert')).toHaveCount(0)
+})
+
+for (const outcome of ['success', 'uncertain'] as const) {
+  test(`retains access operations and one-time credentials across settings panes: ${outcome}`, async ({ page }) => {
+    await mockTengri(page)
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const operations: string[] = []
+    await page.route('**/api/tengri/access?**', (route) =>
+      route.fulfill({ json: { version: '1', workspaceState: 'active' } }),
+    )
+    await page.route('**/api/tengri/access', async (route) => {
+      const command = route.request().postDataJSON()
+      operations.push(command.operationId)
+      started.resolve()
+      await release.promise
+      if (outcome === 'uncertain' && operations.length === 1) {
+        await route.fulfill({ status: 503, json: { error: 'The result could not be confirmed' } })
+      } else
+        await route.fulfill({
+          json: {
+            receipt: {
+              operationId: command.operationId,
+              version: '2',
+              auditReceiptId: 'fixture-audit',
+              agentCredential: 'fixture-only-not-a-real-credential',
+            },
+          },
+        })
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+    const settings = page.getByRole('region', { name: 'Settings window' })
+    await openSettingsPane(settings, 'Privacy & Security')
+    await settings.getByLabel('Change', { exact: true }).selectOption('grant')
+    await settings.getByLabel('Diagnostic agent UUID').fill('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
+    await settings.getByLabel('Proof key thumbprint').fill('a'.repeat(43))
+    await settings.getByLabel('Reason', { exact: true }).fill('Settings navigation regression fixture')
+    await settings.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await started.promise
+    await openSettingsPane(settings, 'General')
+    release.resolve()
+    await openSettingsPane(settings, 'Privacy & Security')
+    if (outcome === 'uncertain') {
+      await settings.getByRole('button', { name: 'Retry pending change' }).click()
+      await expect.poll(() => operations.length).toBe(2)
+      expect(operations[1]).toBe(operations[0])
+    }
+    await expect(settings.getByLabel('New diagnostic credential')).toHaveValue('fixture-only-not-a-real-credential')
+    await openSettingsPane(settings, 'About')
+    await openSettingsPane(settings, 'Privacy & Security')
+    await expect(settings.getByLabel('New diagnostic credential')).toHaveValue('fixture-only-not-a-real-credential')
+  })
+}
 
 test('prepares suggested prompts and grows multiline drafts without sending them', async ({ page }) => {
   const mock = await mockTengri(page)
@@ -6930,6 +7033,49 @@ test('clears unsent text and images when starting another new conversation', asy
   await expect(tengri.getByRole('list', { name: 'Image attachments' })).toHaveCount(0)
   await expect(composer).toBeFocused()
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+})
+
+test('recovers a run started in an already open conversation before steering it', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '77777777-7777-4777-8777-777777777777',
+    agentId: 'microvm-ada',
+    threadId: 'thread-shared',
+    state: { phase: 'succeeded', turnId: 'turn-previous' },
+  }
+  const mock = await mockTengri(page, {
+    durableRun: run,
+    threadStore: { threads: [{ id: run.threadId, title: 'Shared conversation', updatedAt: 1, archived: false }] },
+    resumeThreadRawJson: JSON.stringify({ thread: { turns: [] } }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-shared'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+  await composer.fill('Keep this draft')
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  run.state = { phase: 'running', turnId: 'turn-shared' }
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'thread-state',
+    method: 'turn/started',
+    threadId: run.threadId,
+    turnId: 'turn-shared',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{}',
+  })
+  await expect(composer).toHaveValue('Keep this draft')
+  await expect(chat.getByRole('button', { name: 'Steer turn', exact: true })).toBeEnabled()
+  await composer.fill('')
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  await composer.fill('Continue the current work')
+  await chat.getByRole('button', { name: 'Steer turn', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'steer-turn'))
+    .toMatchObject({ runId: run.runId, threadId: run.threadId, turnId: 'turn-shared' })
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+  await expect(composer).toBeFocused()
 })
 
 test('serializes workspace runs while retaining each conversation draft and accepted prompt', async ({ page }) => {
@@ -8920,6 +9066,224 @@ test('retains accepted steering messages when replay recovery has not persisted 
   await expect(prompt).toBeEnabled()
   await expect(message).toHaveText('Also include the deployment notes.')
   await expect(message).toHaveCount(1)
+})
+
+for (const width of [1440, 390]) {
+  test(`restores async questions and submits desktop-compatible answers without clearing drafts at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const item = {
+      id: 'async-call',
+      type: 'agentMessage',
+      text: width === 1440 ? 'The rollout is waiting for your environment choice.' : '',
+      delivery: 'async',
+      questions: [{ title: 'Which environment?', options: ['Staging', 'Production'] }, { title: 'Any notes?' }],
+    }
+    const items: Record<string, unknown>[] = [item]
+    const options: MockOptions = {
+      preserveDraftStorageOnReload: true,
+      threadStore: { threads: [{ id: 'thread-active', title: 'Async questions', updatedAt: 1, archived: false }] },
+      resumeThreadRawJson: JSON.stringify({ thread: { turns: [{ id: 'turn-previous', status: 'completed', items }] } }),
+    }
+    const mock = await mockTengri(page, options)
+    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-active'))
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const prompt = chat.getByRole('textbox', { name: /^(Message your agent|Steer the current turn)$/ })
+    const question = chat.getByRole('article', { name: 'Agent question', exact: true })
+    await expect(question).toContainText('Which environment?')
+    if (item.text) await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+    await question.screenshot({ path: test.info().outputPath(`async-question-${width}.png`) })
+    await expect(question.getByRole('radio', { name: 'Staging', exact: true })).toBeChecked()
+    await expect(question.getByRole('textbox', { name: 'Other answer: Which environment?', exact: true })).toHaveValue(
+      '',
+    )
+    expect(mock.actions.some((action) => action.action === 'send-turn' || action.action === 'answer-questions')).toBe(
+      false,
+    )
+    await page.reload()
+    await expect(question).toContainText('Any notes?')
+    await prompt.fill('Keep my newer draft.')
+    await question.getByRole('radio', { name: 'Production', exact: true }).check()
+    await question.getByRole('textbox', { name: 'Any notes?', exact: true }).fill('Preserve the files.')
+    await expect(question.getByRole('button', { name: 'Submit answers', exact: true })).toBeEnabled()
+    await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+    await expect(question).toHaveCount(0)
+    if (item.text) await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+    await expect(prompt).toHaveValue('Keep my newer draft.')
+    const sends = mock.actions.filter((action) => action.action === 'send-turn')
+    expect(sends).toHaveLength(1)
+    const text = String(sends[0].text)
+    expect(
+      JSON.parse(
+        text.slice('<send_user_message_question_reply>'.length, -'</send_user_message_question_reply>'.length),
+      ),
+    ).toEqual([
+      {
+        questionItemId: '["request_user_input_async","async-call",0]',
+        question: 'Which environment?',
+        answer: 'Production',
+      },
+      {
+        questionItemId: '["request_user_input_async","async-call",1]',
+        question: 'Any notes?',
+        answer: 'Preserve the files.',
+      },
+    ])
+    expect(
+      mock.actions.some((action) => action.action === 'answer-questions' || action.action === 'resolve-approval'),
+    ).toBe(false)
+    await expect(chat.getByRole('article', { name: 'Your message' })).toContainText('Preserve the files.')
+    await expect(chat.getByRole('article', { name: 'Your message' })).not.toContainText(
+      'send_user_message_question_reply',
+    )
+    items.push({ id: 'answer-1', type: 'userMessage', content: [{ type: 'text', text }] })
+    options.resumeThreadRawJson = JSON.stringify({
+      thread: { turns: [{ id: 'turn-previous', status: 'completed', items }] },
+    })
+    await page.reload()
+    await expect(chat.getByRole('article', { name: 'Your message' })).toContainText('Preserve the files.')
+    await expect(question).toHaveCount(0)
+    if (item.text) await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+    expect(mock.actions.filter((action) => action.action === 'send-turn')).toHaveLength(1)
+  })
+}
+
+test('renders live async questions and retries their exact steering operation after an interrupted answer', async ({
+  page,
+}) => {
+  const mock = await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+    }),
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-active')
+    localStorage.setItem('tengri-approval-mode:microvm-ada', 'auto')
+  })
+  const attempts: Record<string, unknown>[] = []
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action !== 'steer-turn') return route.fallback()
+    attempts.push(action)
+    if (attempts.length === 1) return route.fulfill({ status: 503, json: { error: 'Answer delivery was interrupted' } })
+    return route.fallback()
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const prompt = chat.getByRole('textbox', { name: /^(Message your agent|Steer the current turn)$/ })
+  await expect(prompt).toBeEnabled()
+  const item = {
+    id: 'live-question',
+    type: 'agentMessage',
+    text: 'I can keep investigating while you choose a target.',
+    delivery: 'async',
+    questions: [{ title: 'Which target?', options: ['Default'] }],
+  }
+  for (const [sequence, method] of [
+    [1, 'item/started'],
+    [2, 'item/completed'],
+  ] as const)
+    await emitCodexEvent(page, {
+      sequence,
+      method,
+      kind: 'assistant-text',
+      threadId: 'thread-active',
+      turnId: 'turn-active',
+      itemId: item.id,
+      text: item.text,
+      approvalId: '',
+      rawJson: JSON.stringify({ params: { item } }),
+    })
+  const question = chat.getByRole('article', { name: 'Agent question', exact: true })
+  await expect(question).toHaveCount(1)
+  await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+  await question
+    .getByRole('textbox', { name: 'Other answer: Which target?', exact: true })
+    .pressSequentially('Default with a canary')
+  await expect(question.getByRole('textbox')).toHaveValue('Default with a canary')
+  for (let sequence = 3; sequence < 504; sequence++)
+    await emitCodexEvent(page, {
+      sequence,
+      kind: 'tool-output',
+      method: 'item/completed',
+      threadId: 'thread-active',
+      turnId: 'turn-active',
+      itemId: `activity-${sequence}`,
+      text: 'Still working',
+      approvalId: '',
+      rawJson: '{}',
+    })
+  await expect(question).toHaveCount(1)
+  await expect(question.getByRole('textbox')).toHaveValue('Default with a canary')
+  await prompt.fill('Do not replace this draft.')
+  await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+  await expect(question.getByRole('alert')).toHaveText('Answer delivery was interrupted')
+  await expect(question.getByRole('textbox')).toHaveValue('Default with a canary')
+  await expect(prompt).toHaveValue('Do not replace this draft.')
+  await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+  await expect(question).toHaveCount(0)
+  await expect(chat.getByRole('article', { name: 'Codex response' })).toContainText(item.text)
+  expect(attempts).toHaveLength(2)
+  expect(attempts[0].operationId).toBe(attempts[1].operationId)
+  expect(attempts[0].text).toBe(attempts[1].text)
+  expect(attempts[1]).toMatchObject({ action: 'steer-turn', threadId: 'thread-active', turnId: 'turn-active' })
+  expect(
+    mock.actions.some((action) => action.action === 'answer-questions' || action.action === 'resolve-approval'),
+  ).toBe(false)
+})
+
+test('keeps async question dismissal scoped to its conversation', async ({ page }) => {
+  const rawJson = JSON.stringify({
+    thread: {
+      turns: [
+        {
+          id: 'turn-old',
+          status: 'completed',
+          items: [
+            {
+              id: 'shared-history-item',
+              type: 'agentMessage',
+              text: '',
+              questions: [{ title: 'Continue?', options: ['Yes', 'No'] }],
+            },
+          ],
+        },
+      ],
+    },
+  })
+  const mock = await mockTengri(page, {
+    threadStore: {
+      threads: [
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2, archived: false },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 1, archived: false },
+      ],
+    },
+    resumeThreadRawJsonById: { 'thread-alpha': rawJson, 'thread-beta': rawJson },
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha'))
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const question = chat.getByRole('article', { name: 'Agent question', exact: true })
+  await question.getByRole('button', { name: 'Dismiss for now', exact: true }).click()
+  await expect(question).toHaveCount(0)
+  expect(
+    mock.actions.some((action) => ['send-turn', 'steer-turn', 'answer-questions'].includes(String(action.action))),
+  ).toBe(false)
+  await chat.locator('[data-conversation-id="thread-beta"]').click()
+  await expect(question).toContainText('Continue?')
+  await chat.locator('[data-conversation-id="thread-alpha"]').click()
+  await expect(chat.locator('[data-conversation-id="thread-alpha"]')).toHaveAttribute('aria-current', 'true')
+  await expect(question).toHaveCount(0)
+  await chat.locator('[data-conversation-id="thread-beta"]').click()
+  await expect(question).toContainText('Continue?')
+  const prompt = chat.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await prompt.fill('Use the current setup instead.')
+  await prompt.press('Enter')
+  await expect(question).toHaveCount(0)
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(1)
 })
 
 test('auto-approves actions while keeping questions and elicitation forms manual', async ({ page }) => {

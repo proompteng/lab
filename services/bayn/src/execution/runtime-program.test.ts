@@ -1,3 +1,5 @@
+import { makeReplayInferenceBudget } from '../intraday-replay/inference-timing'
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { describe, expect, test } from 'bun:test'
 
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Option, Result } from 'effect'
@@ -18,7 +20,7 @@ import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker
 import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
 import { ReplayBrokerFailure } from '../intraday-replay/broker'
-import { makeReplayJevTiming } from '../intraday-replay/jev-timing'
+import { makeReplayInferenceTiming } from '../intraday-replay/inference-timing'
 import { BrokerMode, type Policy } from '../risk'
 import {
   BrokerAccess,
@@ -1541,10 +1543,14 @@ for (const phase of [
         yield* marketClock.setTime(Date.parse(observedAt))
         let clockUnavailable = false
         const delay = (at: typeof phase) => (phase === at ? providerClock.setTime(providerStart + 10_000) : Effect.void)
-        const timing = yield* makeReplayJevTiming({
+        const timing = yield* makeReplayInferenceTiming({
+          budget: makeReplayInferenceBudget(1000),
           measureDatabaseTime: (operation) => operation,
           providerClock,
-          provider: { evaluate: () => Effect.die('final authorization must not call Jev') },
+          providers: {
+            jev: { evaluate: () => Effect.die('final authorization must not call Jev') },
+            chart: chartProviderFixture,
+          },
           advanceTo: (atMs) =>
             clockUnavailable
               ? Effect.fail(new ReplayBrokerFailure({ message: 'Timeline source unavailable' }))
