@@ -7098,29 +7098,38 @@ for (const failure of ['service unavailable', 'network'] as const) {
   })
 }
 
-test('keeps denied native chat index reads explicit without automatic retries', async ({ page }) => {
-  await mockTengri(page, {
-    threadStore: { threads: [{ id: 'thread-readable', title: 'Readable chat', updatedAt: 1, archived: false }] },
+for (const failure of [
+  { name: 'denied', status: 403, body: { error: 'Chat access denied' } },
+  {
+    name: 'malformed',
+    status: 502,
+    body: { error: 'The agent returned an invalid chat index', code: 'chat_index_invalid' },
+  },
+]) {
+  test(`keeps ${failure.name} native chat index reads explicit without automatic retries`, async ({ page }) => {
+    await mockTengri(page, {
+      threadStore: { threads: [{ id: 'thread-readable', title: 'Readable chat', updatedAt: 1, archived: false }] },
+    })
+    let denied = true
+    let reads = 0
+    await page.route('**/api/tengri', (route) => {
+      if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'list-threads')
+        return route.fallback()
+      reads += 1
+      return denied ? route.fulfill({ status: failure.status, json: failure.body }) : route.fallback()
+    })
+    await page.goto('/')
+    const sidebar = page.getByTestId('agent-conversation-sidebar')
+    await expect(sidebar.getByRole('alert')).toHaveText(failure.body.error)
+    const deniedReads = reads
+    await page.waitForTimeout(2500)
+    expect(reads).toBe(deniedReads)
+    denied = false
+    await sidebar.getByRole('button', { name: 'Retry chats', exact: true }).click()
+    await expect(sidebar.getByRole('button', { name: 'Readable chat', exact: true })).toBeVisible()
+    await expect(sidebar.getByRole('alert')).toHaveCount(0)
   })
-  let denied = true
-  let reads = 0
-  await page.route('**/api/tengri', (route) => {
-    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'list-threads')
-      return route.fallback()
-    reads += 1
-    return denied ? route.fulfill({ status: 403, json: { error: 'Chat access denied' } }) : route.fallback()
-  })
-  await page.goto('/')
-  const sidebar = page.getByTestId('agent-conversation-sidebar')
-  await expect(sidebar.getByRole('alert')).toHaveText('Chat access denied')
-  const deniedReads = reads
-  await page.waitForTimeout(2500)
-  expect(reads).toBe(deniedReads)
-  denied = false
-  await sidebar.getByRole('button', { name: 'Retry chats', exact: true }).click()
-  await expect(sidebar.getByRole('button', { name: 'Readable chat', exact: true })).toBeVisible()
-  await expect(sidebar.getByRole('alert')).toHaveCount(0)
-})
+}
 
 test('retries the same native chat index page without dropping loaded chats', async ({ page }) => {
   await mockTengri(page, {

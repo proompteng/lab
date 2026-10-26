@@ -68,6 +68,7 @@ export function AgentSessionList({
           (cause instanceof TengriRequestError &&
             cause.code !== 'model_catalog_invalid' &&
             cause.code !== 'conversation_history_invalid' &&
+            cause.code !== 'chat_index_invalid' &&
             (cause.status === 408 || cause.status === 429 || cause.status >= 500))
         setIndex((current) =>
           retryable

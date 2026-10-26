@@ -546,7 +546,7 @@ export async function listCodexThreads(
   try {
     return parseCodexThreadPage(stringValue(response.rawJson))
   } catch {
-    throw new TengriUnavailableError('The agent returned an invalid chat index', 502)
+    throw new TengriUnavailableError('The agent returned an invalid chat index', 502, 'chat_index_invalid')
   }
 }
 
