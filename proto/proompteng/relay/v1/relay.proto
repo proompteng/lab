@@ -7,6 +7,7 @@ option go_package = "github.com/proompteng/lab/gen/proompteng/relay/v1;relayv1";
 service RelayService {
   rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse);
   rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc GetExecution(GetExecutionRequest) returns (GetExecutionResponse);
 }
 message ListOperationsRequest {
   string client_service = 1;
@@ -37,4 +38,12 @@ message ExecuteResponse {
   string content_type = 3;
   string authorization_receipt_id = 4;
   string execution_receipt_id = 5;
+}
+message GetExecutionRequest {
+  proompteng.authz.v1.PlatformSubject subject = 1;
+  bytes body = 2;
+}
+message GetExecutionResponse {
+  proompteng.authz.v1.PlatformExecution execution = 1;
+  string lookup_receipt_id = 2;
 }

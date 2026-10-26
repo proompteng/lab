@@ -10,7 +10,7 @@ const bars = [
   { minuteBeforeWindowEnd: 1, open: 100.5, high: 102, low: 100, close: 101, volume: 20 },
 ]
 const input = {
-  schemaVersion: 'bayn.entry-inference-input.v1',
+  schemaVersion: 'bayn.entry-inference-input.v2',
   numericalState: {
     schemaVersion: 'bayn.jev-entry-state.v22',
     task: { decisionPurpose: 'ENTRY' },
@@ -69,6 +69,12 @@ describe('sequential entry inference input', () => {
           },
         }),
       ),
+    ).toBe(true)
+  })
+
+  test('rejects the retired whole-unit volume rendering contract for execution', () => {
+    expect(
+      Result.isFailure(prepareEntryInferenceInput({ ...input, schemaVersion: 'bayn.entry-inference-input.v1' })),
     ).toBe(true)
   })
 })
