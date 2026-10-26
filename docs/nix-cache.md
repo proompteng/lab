@@ -187,8 +187,8 @@ Cache correctness is proven by real Nix image workflows:
 
 - pull requests consume the public Attic cache without `ATTIC_TOKEN`
 - `main` builds real image derivations such as `.#atticd-image`
-- `main` pushes final image archives up to 256 MiB, without their dependency
-  closures; larger archives are reported as size skips
+- `main` pushes every final image archive, including multi-GiB outputs, without
+  their dependency closures
 - registry publication is handled by Skopeo from the Nix-built tarball, not by
   Docker Buildx
 - the workflow summary records Attic substitutions, `cache.nixos.org`
@@ -198,6 +198,11 @@ Cache correctness is proven by real Nix image workflows:
 The default `cache.nixos.org` fallback remains available for Nixpkgs
 dependencies, so CI should not duplicate broad upstream Nixpkgs closures into
 Attic.
+
+Image builds and cache downloads have a default 20-minute deadline, configurable
+through the existing `image_build_timeout` input. Archive uploads have a
+30-minute deadline. The shared workflow records upload success or failure for
+every image size.
 
 The helper refuses to run without a token:
 
