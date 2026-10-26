@@ -133,7 +133,7 @@ integration('committed sequential provider handoff', () => {
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
           const journal = yield* EntryInferenceJournal
-          const original = entryEvaluationRequestFixture(new Date().toISOString(), 'MSFT')
+          const original = entryEvaluationRequestFixture(new Date().toISOString())
           const expiredVisual = chartInferenceFixture(request.request, request.observedAt)
           const expiredClaim = Result.getOrThrow(
             makeChartDispatchClaim({
