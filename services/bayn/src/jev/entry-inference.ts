@@ -4,7 +4,12 @@ import type { OperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { chartAssessments, makeChartDecisionsRequest, type ChartAssessments } from './chart-questions'
+import {
+  chartAssessments,
+  makeChartDecisionsRequest,
+  type ChartAssessments,
+  type ChartAssessmentsMaterial,
+} from './chart-questions'
 import { JevClient, type JevError, type JevInference } from './client'
 import { decodeJevResponse, JevFailure, JevResponseSchema, type JevRequest } from './contract'
 import { DecisionsClient, type DecisionsError, type DecisionsInference, type DecisionsUsageSchema } from './decisions'
@@ -29,7 +34,7 @@ type ProposalEvaluation = {
   readonly proposals: readonly EntryProposal[]
   readonly rejections: readonly { readonly setup: EntrySetup; readonly reason: ProposalRejection }[]
 }
-type HandoffDisposition =
+type HandoffDispositionFor<A extends ChartAssessmentsMaterial> =
   | { readonly status: 'SOURCE_INFEASIBLE' }
   | { readonly status: 'VISUAL_FAILED'; readonly failure: VisualFailureEvidence }
   | {
@@ -40,26 +45,32 @@ type HandoffDisposition =
   | {
       readonly status: 'NO_FUNDED_PROPOSALS'
       readonly visual: DecisionsInference
-      readonly assessments: ChartAssessments
+      readonly assessments: A
       readonly evaluation: ProposalEvaluation
     }
   | {
       readonly status: 'READY'
       readonly visual: DecisionsInference
-      readonly assessments: ChartAssessments
+      readonly assessments: A
       readonly evaluation: ProposalEvaluation
       readonly jevRequest: JevRequest
       readonly jevRequestHash: string
     }
 
+type HandoffDisposition = HandoffDispositionFor<ChartAssessments>
+
 export interface EntryHandoff {
-  readonly schemaVersion: 'bayn.entry-handoff.v1'
+  readonly schemaVersion: 'bayn.entry-handoff.v2'
   readonly requestId: string
   readonly inputHash: string
   readonly visualRequestHash: string
   readonly recordedAt: string
   readonly disposition: HandoffDisposition
   readonly handoffHash: string
+}
+export type EntryHandoffMaterial = Omit<EntryHandoff, 'disposition' | 'schemaVersion'> & {
+  readonly schemaVersion: 'bayn.entry-handoff.v1' | 'bayn.entry-handoff.v2'
+  readonly disposition: HandoffDispositionFor<ChartAssessmentsMaterial>
 }
 
 export class EntryInferenceJournal extends Context.Service<
@@ -136,16 +147,23 @@ export const hasFeasibleEntrySource = (
 export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual: DecisionsInference) =>
   Result.gen(function* () {
     const chart = yield* makeNativeChartEvidence(input.chartSource)
-    return yield* deriveEntryDispositionForChart(input, visual, chart)
+    return yield* deriveEntryDispositionForChart(
+      input,
+      visual,
+      chart,
+      yield* chartAssessments(chart, visual.response),
+      makeEntryJudgmentRequest,
+    )
   })
 
-export const deriveEntryDispositionForChart = (
+export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMaterial>(
   input: Pick<EntryInferenceInput, 'numericalState' | 'protocol' | 'funding'>,
   visual: DecisionsInference,
   chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
+  assessments: A,
+  prepareJudgments: typeof makeEntryJudgmentRequest,
 ) =>
   Result.gen(function* () {
-    const assessments = yield* chartAssessments(chart, visual.response)
     const economics = yield* jevEntryEconomics({
       protocol: input.protocol,
       symbol: chart.symbol,
@@ -170,14 +188,14 @@ export const deriveEntryDispositionForChart = (
             protocol: input.protocol,
             bidMicros: BigInt(input.funding.bidMicros),
           })
-    const jev = yield* makeEntryJudgmentRequest({
+    const jev = yield* prepareJudgments({
       numericalState: input.numericalState,
       chart,
       assessments,
       proposals: evaluation.proposals,
     })
     return jev === null
-      ? ({ status: 'NO_FUNDED_PROPOSALS', visual, assessments, evaluation } satisfies HandoffDisposition)
+      ? ({ status: 'NO_FUNDED_PROPOSALS', visual, assessments, evaluation } as const)
       : ({
           status: 'READY',
           visual,
@@ -185,7 +203,7 @@ export const deriveEntryDispositionForChart = (
           evaluation,
           jevRequest: jev.request,
           jevRequestHash: jev.requestHash,
-        } satisfies HandoffDisposition)
+        } as const)
   })
 
 export const evaluateClaimedEntryInference = (claim: {
@@ -282,7 +300,7 @@ export const evaluateClaimedEntryInference = (claim: {
       }
     }
     const material = {
-      schemaVersion: 'bayn.entry-handoff.v1' as const,
+      schemaVersion: 'bayn.entry-handoff.v2' as const,
       requestId: claim.requestId,
       inputHash: prepared.requestHash,
       visualRequestHash: visualRequest.requestHash,

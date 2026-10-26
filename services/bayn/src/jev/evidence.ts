@@ -4,11 +4,7 @@ import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevFailure } from './contract'
 import { EntryInferenceInputSchema, prepareEntryInferenceInput } from './entry-inference-input'
-import {
-  EntryInferenceCompletionSchema,
-  decodeEntryInferenceCompletion,
-  usableEntryInferenceCompletion,
-} from './entry-inference-evidence'
+import { EntryInferenceCompletionSchema, decodeEntryInferenceCompletion } from './entry-inference-evidence'
 
 const RequestMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-evaluation-request.v2'),
@@ -122,14 +118,18 @@ export const decodeJevEvaluationReceipt = (request: JevEvaluationRequest, input:
     Result.mapError(() => new JevEvidenceError({ message: 'Stored entry receipt is malformed or does not reproduce' })),
   )
 
-export const usableJevInference = (request: JevEvaluationRequest, receipt: JevEvaluationReceipt, now: number) =>
-  now < Date.parse(receipt.completedAt)
-    ? invalid('Entry receipt is not yet available')
-    : receipt.outcome.status === JevOutcome.Completed
-      ? usableEntryInferenceCompletion(entrySource(request), receipt.outcome.completion, now).pipe(
-          Result.mapError(
-            () =>
-              new JevEvidenceError({ message: 'Entry inference failed or is outside its original validity window' }),
-          ),
-        )
-      : invalid('Entry inference did not complete and cannot authorize an order')
+export const jevInferenceAvailableAt = (request: JevEvaluationRequest, receipt: JevEvaluationReceipt, now: number) => {
+  if (!Number.isSafeInteger(now) || now < Date.parse(receipt.completedAt) || now >= Date.parse(request.expiresAt))
+    return invalid('Entry receipt is unavailable or outside its original validity window')
+  if (receipt.outcome.status !== JevOutcome.Completed)
+    return invalid('Entry inference did not complete and cannot authorize an order')
+  const completion = receipt.outcome.completion
+  if (
+    completion.handoff.disposition.status === 'VISUAL_FAILED' ||
+    completion.handoff.disposition.status === 'PREPARATION_FAILED' ||
+    completion.jev.status === 'FAILED' ||
+    completion.jev.status === 'NOT_DISPATCHED'
+  )
+    return invalid('Entry inference failed and cannot authorize an order')
+  return Result.succeed(completion)
+}

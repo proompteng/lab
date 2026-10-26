@@ -42,7 +42,7 @@ const check = (symbol: string, values: readonly { high: number; low: number }[],
   const assessed = { status: 'ASSESSED', probability: 1 } as const
   const anchor = (barId: string) => ({ ...assessed, barId })
   const assessments: ChartAssessments = {
-    schemaVersion: 'bayn.chart-assessments.v1',
+    schemaVersion: 'bayn.chart-assessments.v2',
     symbol,
     windowEndAt: chart.windowEndAt,
     barsHash: chart.barsHash,

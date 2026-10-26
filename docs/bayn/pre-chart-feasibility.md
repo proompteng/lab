@@ -37,7 +37,7 @@ The private native export frozen at `2026-10-26T00:10:38.309606Z` contains 684 v
 The verifier uses the real entry Effect, immutable handoff decoder, receipt decoder and expense projection for skipped
 requests. Possible sources terminate at an offline sentinel before returning any model response. Historical input-v1
 sources use their original renderer for preservation checks. For dispatch probes only, they are explicitly projected
-to the current input-v2 format with the same source bars, prices, funding and protocol. Historical responses are never
+to the current input-v3 format and question policy with the same source bars, prices, funding and economic protocol. Historical responses are never
 assigned to those projected requests, and neither probe requests nor receipts are written to a trading database.
 
 Build the verifier for Node and run it with the pinned Node runtime. Production PNG hashing uses Node's zlib; running
@@ -61,9 +61,11 @@ an impossible source saves inference work; it does not establish a Jev edge, a b
 ## Rollout and recovery
 
 Use the normal immutable Bayn build and `lab-delivery/bayn` Kargo promotion through `kargo/bayn` and Argo. The gate changes
-provider dispatch and evidence, not the economic acceptance policy or existing mandate identity. It requires no database
-migration. Current handoff and expense tables already enforce the original request, immutable hash and provider-stage
-bindings.
+provider dispatch and evidence, not the economic acceptance policy. The original feasibility-only change required no
+mandate or database migration. The conditional-anchor migration uses input v3, handoff v2 and migration 149, retaining
+`SOURCE_INFEASIBLE`, the native OBSERVE cutover and a new reviewed same-account mandate for the revised question policy.
+Retained input-v2 skips remain reproducible for financial audit. Handoff and expense tables enforce the original
+request, immutable hash and provider-stage bindings.
 
 Readers and the single execution writer must all use the promoted image. Older binaries do not decode the new
 `SOURCE_INFEASIBLE` variant and fail closed if they encounter it during rollout. After the new variant is persisted,
