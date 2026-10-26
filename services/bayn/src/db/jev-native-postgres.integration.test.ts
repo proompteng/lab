@@ -1060,7 +1060,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V7)
         expect(calls.toSorted()).toEqual([...equityMarketProfile.candidateSymbols].sort())
         expect(result.batchPlan.candidates.filter((candidate) => candidate.status === 'EXCLUDED')).toHaveLength(0)
-        expect(Result.getOrThrow(decideJevEntry(result)).selectedSymbols).toEqual(['AMD'])
+        expect(Result.getOrThrow(decideJevEntry(result)).selectedSymbols).toEqual(['AAPL'])
         const store = yield* JevBatchStore
         expect((yield* store.read(result.batchPlan.batchId))?.plan).toEqual(result.batchPlan)
         const [row] =
@@ -1111,7 +1111,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }),
         )
         const r = fixture.portfolio.brokerState.reconciliation
-        const insert = (strategy: string, generationHash: string, version: number) => sql`
+        const insert = (
+          strategy: string,
+          generationHash: string,
+          version: number,
+          schemaVersion: string = protocol.schemaVersion,
+        ) => sql`
         INSERT INTO authority_generations (
           generation_hash, schema_version, activation_schema_version, previous_generation_hash,
           maximum, authority_version, activation_source_revision, activation_image_repository,
@@ -1124,15 +1129,18 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           ${generationHash}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${nativeInput.authorityGenerationHash}, ${Authority.Execution}, ${version}, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${'4'.repeat(64)}`}, ${strategy}, ${jevBehaviorHash}, ${parameterHash},
-          ${protocol.schemaVersion}, ${strategyProtocolHash}, ${replayAccountId},
+          ${schemaVersion}, ${strategyProtocolHash}, ${replayAccountId},
           'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${'9'.repeat(64)},
           ${'9'.repeat(64)}, ${r.reconciliationId}, ${r.contentHash}, ${'b'.repeat(64)}, ${fixture.observation.payload.observedAt}
         )`
         expect(Result.isFailure(yield* insert('intraday-momentum', '8'.repeat(64), 2).pipe(Effect.result))).toBe(true)
         yield* insert('jev', '9'.repeat(64), 2)
         expect(
+          Result.isFailure(yield* insert('jev', '7'.repeat(64), 3, 'bayn.jev.protocol.v24').pipe(Effect.result)),
+        ).toBe(true)
+        expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v24' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v25' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
