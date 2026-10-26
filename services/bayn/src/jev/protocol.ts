@@ -12,20 +12,27 @@ import {
   intradayDecisionDelaySeconds,
 } from '../strategy/intraday-market'
 import { JevContractError, jevModel } from './contract'
+import { chartQuestionPolicy } from './chart-questions'
+import { entryJudgmentPolicy } from './entry-questions'
+
+const entryQuestionPolicyHash = Result.getOrThrow(
+  canonicalHashV1Result({ chart: chartQuestionPolicy, jev: entryJudgmentPolicy }),
+)
 
 const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v23'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v24'),
   entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
   entryFeePolicy: Schema.Literal('broker-tier-buy-and-maximum-sell'),
-  entrySelectionPolicy: Schema.Literal('supported-setup-and-economic-plan'),
+  entrySelectionPolicy: Schema.Literal('source-anchored-proposal-judgments'),
+  entryQuestionPolicyHash: Schema.Literal(entryQuestionPolicyHash),
   maximumEntryQuoteDriftBps: Schema.Literal(10),
   maximumEntryLimitSlippageBps: Schema.Literal(10),
-  entrySignalPolicy: Schema.Literal('model-selected-entry-and-protection'),
+  entrySignalPolicy: Schema.Literal('openai-decisions-then-jev'),
   model: Schema.Literal(jevModel),
-  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v21'),
+  inputDefinition: Schema.Literal('bayn.jev-entry-state.v22'),
   marketProfiles: JevMarketProfilesSchema,
   universe: Schema.Array(SymbolSchema),
   candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(18)),
@@ -91,15 +98,16 @@ export const JevProtocolSchema = ProtocolBase.check(
 export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v23',
+  schemaVersion: 'bayn.jev.protocol.v24',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
-  entrySelectionPolicy: 'supported-setup-and-economic-plan',
+  entrySelectionPolicy: 'source-anchored-proposal-judgments',
+  entryQuestionPolicyHash,
   maximumEntryQuoteDriftBps: 10,
   maximumEntryLimitSlippageBps: 10,
-  entrySignalPolicy: 'model-selected-entry-and-protection',
+  entrySignalPolicy: 'openai-decisions-then-jev',
   model: jevModel,
-  inputDefinition: 'bayn.jev-trading-signal-state.v21',
+  inputDefinition: 'bayn.jev-entry-state.v22',
   marketProfiles: jevMarketProfiles,
   universe: jevUniverse,
   candidateSymbols: jevCandidateSymbols,
@@ -131,4 +139,4 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.executable-profit-limit.behavior.v1')
+export const jevBehaviorHash = sha256('bayn.chart-first-entry.behavior.v1')

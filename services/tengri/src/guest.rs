@@ -48,6 +48,8 @@ pub enum GuestError {
     MissingToken(String),
     #[error("Nanoagent API returned {status}: {message}")]
     Api { status: StatusCode, message: String },
+    #[error("Guest protocol {actual} requires an upgrade to protocol {required}")]
+    IncompatibleProtocol { actual: u32, required: u32 },
     #[error("Nanoagent returned invalid JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
     #[error("Nanoagent returned invalid Codex history: {0}")]

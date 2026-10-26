@@ -204,7 +204,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
           expiresAt: utcInstantFromEpochMillis(
             Date.parse(observation.payload.observedAt) + input.protocol.inferenceValidityMs,
           ),
-          planVersion: JevBatchPlanVersion.V6,
+          planVersion: JevBatchPlanVersion.V7,
         }),
       ),
     ).pipe(
@@ -216,7 +216,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
             'bayn.entry_timing.snapshot_hash': snapshot.manifest.contentHash,
             'bayn.entry_timing.input_available_at': inputAvailableAt,
           })
-          if (input.portfolio.purpose === JevPurpose.Entry && plan.schemaVersion === JevBatchPlanVersion.V6)
+          if (input.portfolio.purpose === JevPurpose.Entry && plan.schemaVersion === JevBatchPlanVersion.V7)
             yield* Effect.annotateCurrentSpan('bayn.entry_timing.deterministic_selected_at', yield* currentUtcInstant)
         }),
       ),
