@@ -73,6 +73,8 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
         yield* sql`CREATE TABLE IF NOT EXISTS jev_evaluation_receipts (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
         yield* sql`CREATE TABLE IF NOT EXISTS jev_evaluation_resolutions (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
         yield* sql`CREATE TABLE IF NOT EXISTS jev_inference_handoffs (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_chart_dispatch_claims (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_chart_terminal_receipts (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
       }),
     )
   })

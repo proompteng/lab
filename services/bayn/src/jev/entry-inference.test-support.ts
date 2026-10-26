@@ -116,7 +116,15 @@ export const entryInferenceFixtureLayer = Layer.mergeAll(
   Layer.succeed(DecisionsClient, chartProviderFixture),
   Layer.sync(EntryInferenceJournal, () => {
     const saved = new Map<string, string>()
+    const claims = new Map<string, string>()
     return {
+      recordChartClaim: (claim) =>
+        Effect.sync(() => {
+          const prior = claims.get(claim.requestId)
+          claims.set(claim.requestId, claim.claimHash)
+          return { dispatchAllowed: prior === undefined }
+        }),
+      recordChartTerminal: () => Effect.void,
       recordHandoff: (handoff) =>
         Effect.suspend(() => {
           const previous = saved.get(handoff.requestId)
