@@ -1,4 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
+import { randomUUID } from 'node:crypto'
 import { Effect, Schema } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
@@ -56,9 +57,11 @@ export const readInferenceExpenseSnapshot = (
     return yield* forwardPerformanceSnapshot(sql, writerFence)
       .withTransaction(
         Effect.gen(function* () {
-          // One statement also shares a snapshot inside a READ COMMITTED writer transaction.
-          // Individual rows avoid the driver's message-size limit on a whole session's JSON.
-          const rows = yield* sql<Record<string, unknown>>`
+          // The transaction owns this non-holdable cursor, including rollback cleanup on failure or interruption.
+          // Every fetch uses its original MVCC snapshot even inside a READ COMMITTED writer transaction.
+          const cursor = sql(`bayn_expense_${yield* Effect.sync(randomUUID)}`)
+          yield* sql`
+            DECLARE ${cursor} NO SCROLL CURSOR WITHOUT HOLD FOR
             WITH cut AS (
               SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS as_of
             )
@@ -87,7 +90,17 @@ export const readInferenceExpenseSnapshot = (
                 WHERE account_id = ${scope.accountId} AND session_date = ${scope.sessionDate}::date
                 ORDER BY quote_hash COLLATE "C" LIMIT ${maximumRequests + 1}
               ) AS item
-          `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SnapshotSchema)))
+          `
+          const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
+          while (true) {
+            // A single source row bounds FETCH's utility-result spool as well as each statement's work.
+            const batch = yield* sql<Record<string, unknown>>`FETCH NEXT FROM ${cursor}`.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(SnapshotSchema)),
+            )
+            if (batch.length === 0) break
+            rows.push(...batch)
+          }
+          yield* sql`CLOSE ${cursor}`
           const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
           const cut = cuts[0]
           if (cuts.length !== 1 || cut === undefined || rows.some((row) => row.as_of !== cut.as_of))

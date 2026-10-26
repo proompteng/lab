@@ -1187,8 +1187,10 @@ Retained rejected or abandoned responses with valid usage remain included. Earli
 The projection owns separate scoped PostgreSQL and TigerBeetle clients. Closing positions never waits for it.
 Both execution replicas may safely recover the same pending quotes. To inspect a complete private session cut:
 
-Expense reports capture requests and frozen quotes in one PostgreSQL statement, including inside the execution
-writer transaction. The reader pins a native TigerBeetle timestamp and verifies every session transfer and the
+Expense reports capture requests and frozen quotes through one transaction-scoped PostgreSQL cursor. Each fetch
+reads one source row under the cursor's original snapshot, including inside a READ COMMITTED execution writer
+transaction. Successful captures close it explicitly; its owning transaction also releases it when the transaction ends.
+The complete-session limits and operation deadlines remain unchanged. The reader pins a native TigerBeetle timestamp and verifies every session transfer and the
 history-enabled account balances at that cut. A subsequent quote read identifies legitimate charges committed
 while the report runs; unknown transfers and mismatched balances still fail. Only the original captured quotes
 contribute to the report subtotal. Trading and expense posting continue throughout the read.
