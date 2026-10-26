@@ -99,6 +99,11 @@ on:
       - 'packages/scripts/src/shared/oci.ts'
       - 'packages/scripts/src/tengri/**'
       - 'proto/proompteng/authz/**'
+      - 'services/relay/**'
+      - 'packages/platform-client/**'
+      - 'proto/proompteng/relay/**'
+      - 'apps/landing/src/lib/platform/**'
+      - 'apps/landing/src/app/api/platform/**'
       - 'services/nanoagent/**'
       - 'services/ofz/**'
       - 'services/ofz/Cargo.*'
@@ -146,6 +151,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      cutover_ready: ${{ steps.cutover.outputs.cutover_ready }}
       proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || fromJSON(steps.filter.outputs.affected).proompteng }}
       app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || fromJSON(steps.filter.outputs.affected).app }}
       synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || fromJSON(steps.filter.outputs.affected).synthesis }}
@@ -155,6 +161,19 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Check enrolled guest API protocol
+        id: cutover
+        env:
+          TENGRI_PREPARED_SLOT_GUEST_API_VERSION: ${{ vars.TENGRI_PREPARED_SLOT_GUEST_API_VERSION || '' }}
+        run: |
+          set -euo pipefail
+          required_guest_api_version="$(sed -nE 's/^pub const GUEST_API_PROTOCOL_VERSION: u32 = ([1-9][0-9]*);$/\1/p' services/tengri/src/lib.rs)"
+          cutover_ready=false
+          if [[ "${required_guest_api_version}" =~ ^[1-9][0-9]*$ && "${TENGRI_PREPARED_SLOT_GUEST_API_VERSION}" == "${required_guest_api_version}" ]]; then
+            cutover_ready=true
+          fi
+          echo "cutover_ready=${cutover_ready}" >> "${GITHUB_OUTPUT}"
 
       - name: Check for product image input changes
         if: github.event_name != 'workflow_dispatch'
@@ -207,6 +226,11 @@ jobs:
               - 'packages/scripts/src/shared/oci.ts'
               - 'packages/scripts/src/tengri/**'
               - 'proto/proompteng/authz/**'
+              - 'services/relay/**'
+              - 'packages/platform-client/**'
+              - 'proto/proompteng/relay/**'
+              - 'apps/landing/src/lib/platform/**'
+              - 'apps/landing/src/app/api/platform/**'
               - 'services/nanoagent/**'
               - 'services/ofz/**'
               - 'services/ofz/Cargo.*'
@@ -290,7 +314,7 @@ jobs:
       image_name: proompteng
       package_attr: proompteng-image
       tag: sha-${{ github.sha }}
-      publish_kargo_tag: ${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY == 'true' }}
+      publish_kargo_tag: ${{ needs.changes.outputs.cutover_ready == 'true' }}
       latest: true
     secrets: inherit
 

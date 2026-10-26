@@ -1,0 +1,15 @@
+definition kubernetes_namespace {
+    relation status_reader: human | workload
+    relation log_reader: human | workload
+    relation event_reader: human | workload
+
+    permission read_status = status_reader
+    permission read_logs = log_reader
+    permission read_events = event_reader
+}
+
+definition platform_delegation {
+    relation subject: agent with expiration
+    relation issuer: human
+    permission use = subject
+}

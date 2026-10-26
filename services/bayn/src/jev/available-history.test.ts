@@ -55,7 +55,7 @@ test('candidate and benchmark use the same actual reference minute despite diffe
     query,
   )
   const request = Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL'))
-  const state = JSON.parse(request.body).state
+  const state = JSON.parse(request.body).numericalState
   expect(state.candidate.priceWindow.referenceAt).toBe('2026-09-04T14:07:00.000Z')
   expect(state.benchmark.priceWindow.referenceAt).toBe('2026-09-04T14:03:00.000Z')
   expect(state.relativeSignals.referenceAt).toBe('2026-09-04T14:07:00.000Z')

@@ -18,7 +18,9 @@ use tokio::{
 use tokio_rustls::TlsAcceptor;
 use tonic::{Request, Status, transport::server::Connected};
 
-use crate::policy::{self, BFF_ID, CONNECTOR_BROKER_ID, CONTROLLER_ID, KUBE_BROKER_ID, OFZ_ID};
+#[cfg(test)]
+use crate::policy::BFF_ID;
+use crate::policy::{self, OFZ_ID};
 
 #[derive(Clone, Debug)]
 pub struct Peer(pub String);
@@ -61,8 +63,9 @@ pub async fn server_config() -> anyhow::Result<Arc<rustls::ServerConfig>> {
         .initial_sync_timeout(Duration::from_secs(30))
         .build()
         .await?;
-    let peers: Vec<SpiffeId> = [BFF_ID, CONTROLLER_ID, KUBE_BROKER_ID, CONNECTOR_BROKER_ID]
-        .iter()
+    let peers: Vec<SpiffeId> = crate::registry::configured()?
+        .identities()
+        .filter(|id| *id != OFZ_ID)
         .map(|id| id.parse())
         .collect::<Result<_, _>>()?;
     Ok(Arc::new(
@@ -162,7 +165,7 @@ mod tests {
     struct SlowAdmission;
 
     impl tonic::server::NamedService for SlowAdmission {
-        const NAME: &'static str = "proompteng.authz.v1.AuthorizationService";
+        const NAME: &'static str = "proompteng.authz.v1.TengriAuthorizationService";
     }
 
     impl tonic::codegen::Service<tonic::codegen::http::Request<tonic::body::Body>> for SlowAdmission {
@@ -200,7 +203,7 @@ mod tests {
                 .serve_with_incoming(incoming),
         );
         let mut client =
-            crate::proto::authorization_service_client::AuthorizationServiceClient::connect(
+            crate::proto::tengri_authorization_service_client::TengriAuthorizationServiceClient::connect(
                 format!("http://{address}"),
             )
             .await

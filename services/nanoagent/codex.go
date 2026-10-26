@@ -102,18 +102,17 @@ type codexProcessGeneration struct {
 }
 
 type codexSupervisor struct {
-	binary            string
-	browserMCP        bool
-	cwd               string
-	closed            atomic.Bool
-	requestID         atomic.Uint64
-	writePermit       chan struct{}
-	loginMu           sync.Mutex
-	relayMu           sync.Mutex
-	relayRoot         string
-	connectorsEnabled bool
-	operationMu       sync.Mutex
-	responseTimeout   time.Duration
+	binary          string
+	browserMCP      bool
+	cwd             string
+	closed          atomic.Bool
+	requestID       atomic.Uint64
+	writePermit     chan struct{}
+	loginMu         sync.Mutex
+	relayMu         sync.Mutex
+	relayRoot       string
+	operationMu     sync.Mutex
+	responseTimeout time.Duration
 
 	mu              sync.Mutex
 	command         *exec.Cmd
@@ -141,19 +140,18 @@ type codexSupervisor struct {
 
 func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 	supervisor := &codexSupervisor{
-		binary:            binary,
-		connectorsEnabled: os.Getenv("TENGRI_CONNECTORS_ENABLED") == "true",
-		cwd:               cwd,
-		writePermit:       make(chan struct{}, 1),
-		responseTimeout:   codexResponseWriteTimeout,
-		generation:        newCodexProcessGeneration(),
-		workRequests:      make(map[string]struct{}),
-		activeTurns:       make(map[string]string),
-		workChangedAt:     time.Now(),
-		pending:           make(map[string]chan codexPendingResult),
-		approvals:         make(map[string]codexApproval),
-		subscriptions:     make(map[uint64]codexSubscription),
-		shutdown:          make(chan struct{}),
+		binary:          binary,
+		cwd:             cwd,
+		writePermit:     make(chan struct{}, 1),
+		responseTimeout: codexResponseWriteTimeout,
+		generation:      newCodexProcessGeneration(),
+		workRequests:    make(map[string]struct{}),
+		activeTurns:     make(map[string]string),
+		workChangedAt:   time.Now(),
+		pending:         make(map[string]chan codexPendingResult),
+		approvals:       make(map[string]codexApproval),
+		subscriptions:   make(map[uint64]codexSubscription),
+		shutdown:        make(chan struct{}),
 	}
 	supervisor.writePermit <- struct{}{}
 	return supervisor

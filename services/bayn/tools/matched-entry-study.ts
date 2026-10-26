@@ -1,7 +1,5 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { fileURLToPath } from 'node:url'
 import { Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect'
-import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { sha256 } from '../src/hash'
 import {
   MatchedStudyInputSchema,
@@ -10,38 +8,18 @@ import {
 } from '../src/intraday-replay/matched-entry-study'
 import { SignalStudyFailure } from '../src/intraday-replay/signal-study'
 import { validateBacktestSourceReceipt } from '../src/intraday-replay/source'
+import { verifyRegisteredCheckout } from '../src/intraday-replay/registered-checkout'
 import { strictParseOptions } from '../src/schemas'
 
-export const verifyRegisteredCheckout = (sourceRevision: string) =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-    // Bind the source executing this command, independently of the caller's working directory.
-    const cwd = fileURLToPath(new URL('../../../', import.meta.url))
-    const git = (args: readonly string[]) =>
-      Effect.gen(function* () {
-        const child = yield* spawner.spawn(ChildProcess.make('git', args, { cwd, stdin: 'ignore', stderr: 'ignore' }))
-        const [output, exitCode] = yield* Effect.all(
-          [Stream.mkString(Stream.decodeText(child.stdout)), child.exitCode],
-          { concurrency: 'unbounded' },
-        )
-        if (Number(exitCode) !== 0)
-          return yield* new SignalStudyFailure({ message: 'Cannot verify the executing Git checkout' })
-        return output.trim()
-      }).pipe(
-        Effect.scoped,
-        Effect.timeout('10 seconds'),
-        Effect.mapError(
-          (cause) => new SignalStudyFailure({ message: 'Registered checkout verification failed', cause }),
-        ),
-      )
-    if ((yield* git(['rev-parse', 'HEAD'])) !== sourceRevision)
-      return yield* new SignalStudyFailure({ message: 'Executing checkout revision differs from registration' })
-    if ((yield* git(['status', '--porcelain=v1', '--untracked-files=normal', '--ignore-submodules=none'])) !== '')
-      return yield* new SignalStudyFailure({ message: 'Executing checkout must be clean and fully committed' })
-  })
+const matchedEntryUsage =
+  'Usage: node dist/research/matched-entry-study.js --input <json> --input-sha256 <sha256> --registration <json> --registration-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json> | --help'
 
 export const runMatchedCommand = (args: readonly string[]) =>
   Effect.gen(function* () {
+    if (args.length === 1 && args[0] === '--help') {
+      const stdio = yield* Stdio.Stdio
+      return yield* Stream.run(Stream.make(`${matchedEntryUsage}\n`), stdio.stdout())
+    }
     const flags = new Map<string, string>()
     for (let index = 0; index < args.length; index += 2) {
       const key = args[index]
@@ -70,8 +48,7 @@ export const runMatchedCommand = (args: readonly string[]) =>
       outputPath === undefined
     )
       return yield* new SignalStudyFailure({
-        message:
-          'Usage: bun tools/matched-entry-study.ts --input <json> --input-sha256 <sha256> --registration <json> --registration-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json>',
+        message: matchedEntryUsage,
       })
     const fs = yield* FileSystem.FileSystem
     const inputText = yield* fs.readFileString(inputPath)

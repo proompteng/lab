@@ -32,6 +32,7 @@ import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from './hash'
 import { operationalError } from './errors'
 import { prepareBacktest, runBacktest, type ReplayDatabaseConfig } from './intraday-replay/backtest'
 import { JevClientLive } from './jev/client'
+import { DecisionsClientLive } from './jev/decisions'
 import { JevHttpClientLive } from './jev/http'
 import { jevInstructions } from './jev/instructions'
 import { ReplayBrokerFailure } from './intraday-replay/broker'
@@ -136,6 +137,7 @@ const main = Effect.scoped(
     )
     const prepared = yield* Effect.fromResult(prepareBacktest(parsed, sourceReceipt))
     const jevKey = yield* Config.Redacted('BAYN_JEV_API_KEY')
+    const chartKey = yield* Config.Redacted('BAYN_OPENAI_API_KEY')
     const proxy = yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY')
     const databaseInput = yield* Config.all({
       postgresUrl: Config.Redacted('BAYN_BACKTEST_POSTGRES_URL'),
@@ -160,7 +162,7 @@ const main = Effect.scoped(
     yield* fs.writeFileString(path.join(args.outputPath, 'input.json'), raw, { flag: 'wx' })
     yield* fs.writeFileString(path.join(args.outputPath, 'source-receipt.json'), sourceReceiptText, { flag: 'wx' })
     const passesPath = path.join(args.outputPath, 'passes.ndjson.gz')
-    const inferencePath = path.join(args.outputPath, 'jev-calls.ndjson')
+    const inferencePath = path.join(args.outputPath, 'inference-calls.ndjson')
     const inferenceWrite = yield* Semaphore.make(1)
     const base = Layer.mergeAll(WriterFenceLive, JournalLive(databases)).pipe(
       Layer.provideMerge(PostgresClientLive(databases)),
@@ -205,7 +207,10 @@ const main = Effect.scoped(
         Layer.mergeAll(
           stores,
           TestClock.layer(),
-          JevClientLive(jevKey, prepared.protocol.inferenceValidityMs).pipe(Layer.provide(JevHttpClientLive(proxy))),
+          Layer.mergeAll(
+            JevClientLive(jevKey, prepared.protocol.inferenceValidityMs),
+            DecisionsClientLive(chartKey, prepared.protocol.inferenceValidityMs),
+          ).pipe(Layer.provide(JevHttpClientLive(proxy))),
         ),
       ),
       Effect.provideService(OperationDeadlineClock, deadlineClock),

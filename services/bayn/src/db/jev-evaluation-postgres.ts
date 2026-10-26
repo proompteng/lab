@@ -67,21 +67,13 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
             AND plan.authority_generation_hash = ${request.authorityGenerationHash}
             AND plan.snapshot_id = ${request.snapshotId}
             AND (
-              (
-                jsonb_array_length(plan.payload->'candidates') = 1
-                AND plan.payload #>> '{candidates,0,request,request,state,task,decisionPurpose}' = ${JevPurpose.Manage}
-                AND plan.payload #> '{candidates,0,request}' = ${sql.json(request)}
-              ) OR (
-                SELECT count(*) FILTER (WHERE candidate->>'status' = 'REQUESTED') = 1
-                  AND bool_and(
-                    candidate->>'status' = 'EXCLUDED' OR (
-                      candidate->>'status' = 'REQUESTED'
-                      AND candidate #>> '{request,request,state,task,decisionPurpose}' = ${JevPurpose.Entry}
-                      AND candidate->'request' = ${sql.json(request)}
-                    )
-                  )
-                FROM jsonb_array_elements(plan.payload->'candidates') AS candidate
-              )
+              SELECT count(*) FILTER (WHERE candidate->>'status' = 'REQUESTED') = 1
+                AND bool_and(candidate->>'status' = 'EXCLUDED' OR (
+                  candidate->>'status' = 'REQUESTED'
+                  AND candidate #>> '{request,request,numericalState,task,decisionPurpose}' = ${JevPurpose.Entry}
+                  AND candidate->'request' = ${sql.json(request)}
+                ))
+              FROM jsonb_array_elements(plan.payload->'candidates') AS candidate
             )
           FOR UPDATE OF plan
         `,

@@ -1,4 +1,9 @@
-import { jevRequestForSnapshot } from '../jev/native.test-support'
+import { EntryInferenceJournal } from '../jev/entry-inference'
+import { defaultJevProtocolDocument } from '../jev/protocol'
+import { entryCompletionFixture } from '../jev/entry-inference.test-support'
+import { EntryInferenceJournalLive } from './entry-inference-postgres'
+import { DecisionsClient } from '../jev/decisions'
+import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -14,14 +19,13 @@ import { IsoDateSchema } from '../schemas'
 import { JevBatchPlanVersion } from '../jev/batch'
 import { JevFailure } from '../jev/contract'
 import { InferenceUsageStatus } from '../inference-costs'
-import { buildInferenceExpensePlan, makeInferenceExpenseQuote } from '../inference-expense'
-import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
+import { buildInferenceExpensePlan, makeInferenceExpenseQuotes } from '../inference-expense'
+import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevClient } from '../jev/client'
 import { evaluateClaimedJevOnce, JevEvaluationStore } from '../jev/evaluation'
-import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { JevBatchStore } from '../jev/batch-evaluation'
-import { evaluationRequestFixture, inferenceFixture } from '../jev/test-support'
+import { inferenceFixture } from '../jev/test-support'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { nativeJevFixture } from '../jev/native.test-support'
@@ -36,7 +40,13 @@ const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_j
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const makeRuntime = () =>
   ManagedRuntime.make(
-    Layer.mergeAll(CycleStoreLive, CandidateObservationStoreLive, JevBatchStoreLive).pipe(
+    Layer.mergeAll(
+      CycleStoreLive,
+      CandidateObservationStoreLive,
+      JevBatchStoreLive,
+      EntryInferenceJournalLive,
+      Layer.succeed(DecisionsClient, chartProviderFixture),
+    ).pipe(
       Layer.provideMerge(JevEvaluationStoreLive),
       Layer.provideMerge(
         PostgresClientLive({
@@ -47,41 +57,33 @@ const makeRuntime = () =>
       Layer.provideMerge(NodeServices.layer),
     ),
   )
-const fixture = nativeJevFixture()
-const prepared = Result.getOrThrow(jevRequestForSnapshot(fixture.snapshot, 'AAPL'))
-const request = Result.getOrThrow(
-  makeJevEvaluationRequest({
-    schemaVersion: 'bayn.jev-evaluation-request.v1',
-    symbol: 'AAPL',
-    authorityGenerationHash: fixture.input.authorityGenerationHash,
-    requestHash: prepared.requestHash,
-    request: prepared.request,
-    cycleId: fixture.draft.identity.cycleId,
-    snapshotId: fixture.snapshot.manifest.snapshotId,
-    observedAt: fixture.observation.payload.observedAt,
-    expiresAt: new Date(
-      Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
-    ).toISOString(),
-  }),
-)
-const receipt = Result.getOrThrow(
-  makeJevEvaluationReceipt(request, {
-    schemaVersion: 'bayn.jev-evaluation-receipt.v1',
-    requestId: request.requestId,
-    startedAt: request.observedAt,
-    completedAt: request.observedAt,
-    outcome: {
-      status: JevOutcome.Received,
-      inference: tradingSignalInferenceFixture(request.request, request.observedAt),
-    },
-  }),
-)
+const fixture = nativeJevFixture(undefined, undefined, undefined, {
+  ...defaultJevProtocolDocument,
+  candidateSymbols: ['AAPL'],
+})
 const batch = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
-    expiresAt: request.expiresAt,
-    planVersion: JevBatchPlanVersion.V6,
+    expiresAt: new Date(
+      Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
+    ).toISOString(),
+    planVersion: JevBatchPlanVersion.V7,
   }),
+)
+const candidate = batch.candidates.find((candidate) => candidate.symbol === 'AAPL')
+if (candidate?.status !== 'REQUESTED') throw Error('Fixture requires its exact admitted request')
+const request = candidate.request
+const receipt = Result.getOrThrow(
+  makeJevEvaluationReceipt(request, {
+    schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+    requestId: request.requestId,
+    startedAt: request.observedAt,
+    completedAt: request.observedAt,
+    outcome: { status: JevOutcome.Completed, completion: entryCompletionFixture(request, request.observedAt, 0.9) },
+  }),
+)
+const commitHandoff = Effect.flatMap(EntryInferenceJournal, (journal) =>
+  journal.recordHandoff(entryCompletionFixture(request).handoff),
 )
 const recorded = Result.getOrThrow(
   makeJevResolution(request, receipt, {
@@ -156,12 +158,9 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         expect(recovered.receipt.outcome).toEqual({
           status: JevOutcome.Failed,
           failure: JevFailure.NotDispatched,
-          httpStatus: null,
-          responseHash: null,
-          rejectedResponse: null,
         })
-        const quote = Result.getOrThrow(
-          makeInferenceExpenseQuote(
+        const quotes = Result.getOrThrow(
+          makeInferenceExpenseQuotes(
             {
               accountId: 'fixture-account',
               sessionDate: yield* Schema.decodeUnknownEffect(IsoDateSchema)(request.observedAt.slice(0, 10)),
@@ -172,13 +171,19 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
               request,
               receipt: recovered.receipt,
               resolution: recovered.resolution,
+              handoff: null,
             },
             { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
           ),
         )
-        expect(quote.line.usageStatus).toBe(InferenceUsageStatus.NotDispatched)
-        expect(quote.line.estimatedCostPicoUsd).toBe('0')
-        expect(Result.getOrThrow(buildInferenceExpensePlan([quote])).transfers).toHaveLength(0)
+        expect(quotes).toHaveLength(2)
+        expect(
+          quotes.every(
+            (quote) =>
+              quote.line.usageStatus === InferenceUsageStatus.NotDispatched && quote.line.estimatedCostPicoUsd === '0',
+          ),
+        ).toBe(true)
+        expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers).toHaveLength(0)
       }),
     )
   })
@@ -202,46 +207,12 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
     )
   })
 
-  test('historical request bytes remain readable while superseded input cannot start or resume inference', async () => {
-    const { requestId: _, ...material } = request
-    const priorInput = evaluationRequestFixture()
-    const historical = Result.getOrThrow(
-      makeJevEvaluationRequest({
-        ...material,
-        request: priorInput.request,
-        requestHash: priorInput.requestHash,
-      }),
-    )
-    const historicalReceipt = Result.getOrThrow(
-      makeJevEvaluationReceipt(historical, {
-        schemaVersion: 'bayn.jev-evaluation-receipt.v1',
-        requestId: historical.requestId,
-        startedAt: historical.observedAt,
-        completedAt: historical.observedAt,
-        outcome: { status: JevOutcome.Received, inference: inferenceFixture(historical.observedAt) },
-      }),
-    )
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
-        VALUES (${historical.requestId}, ${historical.cycleId}, ${historical.authorityGenerationHash}, ${sql.json(historical)})`
-        const store = yield* JevEvaluationStore
-        const resolution = yield* store.record(historical, historicalReceipt)
-        expect(yield* store.read(historical.requestId)).toEqual({
-          request: historical,
-          receipt: historicalReceipt,
-          resolution,
-        })
-      }),
-    )
-  })
-
   test('rejects a competing result and preserves the first recorded inference', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* JevEvaluationStore
         yield* admit
+        yield* commitHandoff
         yield* store.record(request, receipt)
         const { receiptHash: _, ...material } = receipt
         const changed = Result.getOrThrow(
@@ -285,6 +256,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
       Effect.gen(function* () {
         const store = yield* JevEvaluationStore
         yield* admit
+        yield* commitHandoff
         yield* store.record(request, receipt)
         const sql = yield* PgClient.PgClient
         for (const operation of [
@@ -311,6 +283,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         expect(yield* store.read(request.requestId)).toBeNull()
         expect(Result.isFailure(yield* store.abandon(request, request.expiresAt).pipe(Effect.result))).toBe(true)
         yield* admit
+        yield* commitHandoff
         expect(Result.isFailure(yield* store.abandon(request, request.observedAt).pipe(Effect.result))).toBe(true)
         const resolution = yield* store.abandon(request, request.expiresAt)
         expect(resolution.status).toBe(JevResolutionStatus.Abandoned)
@@ -327,6 +300,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
       Effect.gen(function* () {
         const store = yield* JevEvaluationStore
         yield* admit
+        yield* commitHandoff
         expect(yield* store.record(request, receipt)).toEqual(recorded)
         expect(yield* store.abandon(request, request.expiresAt)).toEqual(recorded)
         expect(yield* store.read(request.requestId)).toEqual({ request, receipt, resolution: recorded })
@@ -339,6 +313,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
       Effect.gen(function* () {
         const store = yield* JevEvaluationStore
         yield* admit
+        yield* commitHandoff
         const [record, abandon] = yield* Effect.all(
           [store.record(request, receipt), store.abandon(request, request.expiresAt)],
           { concurrency: 2 },
@@ -372,6 +347,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const sql = yield* PgClient.PgClient
         const store = yield* JevEvaluationStore
         yield* admit
+        yield* commitHandoff
         yield* sql`DROP TABLE inference_expense_quotes`
         yield* sql`DROP TABLE jev_evaluation_resolutions`
         yield* sql`ALTER TABLE jev_evaluation_receipts DROP CONSTRAINT jev_receipt_request_hash`
