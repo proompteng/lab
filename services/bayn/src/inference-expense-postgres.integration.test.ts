@@ -3,6 +3,7 @@ import { PgClient } from '@effect/sql-pg'
 import { NodeServices } from '@effect/platform-node'
 import { ConfigProvider, Context, Effect, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 import { SqlClient, Statement } from 'effect/sql'
+import { canonicalHashV1Result } from './hash'
 
 import requestMigration from '../migrations/0076_jev_evaluation_evidence'
 import resolutionMigration from '../migrations/0077_jev_evaluation_resolution'
