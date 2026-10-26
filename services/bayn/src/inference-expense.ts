@@ -5,6 +5,7 @@ import {
   InferenceCostError,
   HistoricalInferenceCostLineSchema,
   StagedInferenceCostLineSchema,
+  CheckpointInferenceCostLineSchema,
   HistoricalInferenceRateSchema,
   InferenceStage,
   inferenceStageKey,
@@ -75,6 +76,14 @@ export type InferenceExpenseSource = typeof InferenceExpenseSourceSchema.Type
 
 export const InferenceExpenseQuoteSchema = Schema.Union([
   Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.inference-expense-quote.v3'),
+    accountBindingHash: Sha256Schema,
+    sessionDate: IsoDateSchema,
+    line: CheckpointInferenceCostLineSchema,
+    rate: Schema.NullOr(InferenceRateSchema),
+    quoteHash: Sha256Schema,
+  }),
+  Schema.Struct({
     schemaVersion: Schema.Literal('bayn.inference-expense-quote.v1'),
     accountBindingHash: Sha256Schema,
     sessionDate: IsoDateSchema,
@@ -127,7 +136,8 @@ const expenseSourceEvidence = (source: InferenceExpenseSource) =>
       accountId: source.accountId,
     })
     return yield* decodeInferenceCostEvidence({
-      schemaVersion: 'bayn.inference-cost-evidence.v2',
+      schemaVersion:
+        source.chartCheckpoint === undefined ? 'bayn.inference-cost-evidence.v2' : 'bayn.inference-cost-evidence.v3',
       accountBindingHash,
       sessionDate: source.sessionDate,
       asOf: source.asOf,
@@ -140,6 +150,7 @@ const expenseSourceEvidence = (source: InferenceExpenseSource) =>
           receipt: source.receipt,
           resolution: source.resolution,
           handoff: source.handoff,
+          ...(source.chartCheckpoint === undefined ? {} : { chartCheckpoint: source.chartCheckpoint }),
         },
       ],
     })
@@ -148,25 +159,40 @@ const expenseSourceEvidence = (source: InferenceExpenseSource) =>
 const quotesFromEvidence = (evidence: DecodedInferenceCostEvidence, rateCard: ExpenseRateCard) =>
   Result.gen(function* () {
     const report = yield* makeInferenceCostReport(evidence, rateCard)
+    const sources = new Map(evidence.requests.map((source) => [source.requestId, source]))
     return yield* Result.all(
-      report.requests.map((line) =>
-        Result.gen(function* () {
-          let rate: typeof InferenceRateSchema.Type | null = null
-          for (const candidate of rateCard.rates)
-            if ((yield* canonicalHashV1Result(candidate)) === line.rateHash) rate = candidate
-          const material = {
-            schemaVersion: 'stage' in line ? 'bayn.inference-expense-quote.v2' : 'bayn.inference-expense-quote.v1',
-            accountBindingHash: evidence.accountBindingHash,
-            sessionDate: evidence.sessionDate,
-            line,
-            rate,
-          }
-          return yield* Schema.decodeUnknownResult(
-            InferenceExpenseQuoteSchema,
-            strictParseOptions,
-          )({ ...material, quoteHash: yield* canonicalHashV1Result(material) })
-        }),
-      ),
+      report.requests
+        .filter((line) => {
+          const source = sources.get(line.requestId)
+          return (
+            source?.chartCheckpoint === undefined ||
+            source.resolution !== null ||
+            ('stage' in line && line.stage === InferenceStage.Chart)
+          )
+        })
+        .map((line) =>
+          Result.gen(function* () {
+            let rate: typeof InferenceRateSchema.Type | null = null
+            for (const candidate of rateCard.rates)
+              if ((yield* canonicalHashV1Result(candidate)) === line.rateHash) rate = candidate
+            const material = {
+              schemaVersion:
+                'chartClaimHash' in line
+                  ? 'bayn.inference-expense-quote.v3'
+                  : 'stage' in line
+                    ? 'bayn.inference-expense-quote.v2'
+                    : 'bayn.inference-expense-quote.v1',
+              accountBindingHash: evidence.accountBindingHash,
+              sessionDate: evidence.sessionDate,
+              line,
+              rate,
+            }
+            return yield* Schema.decodeUnknownResult(
+              InferenceExpenseQuoteSchema,
+              strictParseOptions,
+            )({ ...material, quoteHash: yield* canonicalHashV1Result(material) })
+          }),
+        ),
     )
   })
 
@@ -218,6 +244,10 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
     if (quoteHash !== expected)
       return yield* Result.fail(new InferenceCostError({ message: 'Frozen inference expense quote hash differs' }))
     const line = quote.line
+    if ('chartClaimHash' in line && line.usageStatus === InferenceUsageStatus.NotDispatched)
+      return yield* Result.fail(
+        new InferenceCostError({ message: 'A dispatch checkpoint cannot prove no provider call' }),
+      )
     if ('stage' in line) {
       if (
         line.usageStatus === InferenceUsageStatus.Unknown
@@ -250,7 +280,9 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         )
     } else if (line.usageStatus === InferenceUsageStatus.NotDispatched) {
       if (
-        (line.receiptHash === null && !('handoffHash' in line && line.handoffHash !== null)) ||
+        (line.receiptHash === null &&
+          !('handoffHash' in line && line.handoffHash !== null) &&
+          !('chartTerminalHash' in line && line.chartTerminalHash !== null)) ||
         line.inputTokens !== '0' ||
         line.outputTokens !== '0' ||
         line.estimatedCostPicoUsd !== '0' ||
@@ -264,7 +296,9 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         )
     } else {
       if (
-        (line.receiptHash === null && !('handoffHash' in line && line.handoffHash !== null)) ||
+        (line.receiptHash === null &&
+          !('handoffHash' in line && line.handoffHash !== null) &&
+          !('chartTerminalHash' in line && line.chartTerminalHash !== null)) ||
         line.inputTokens === null ||
         line.outputTokens === null
       )
@@ -318,27 +352,71 @@ const verifyQuoteFromEvidence = (evidence: DecodedInferenceCostEvidence, valid: 
     return valid
   })
 
-const quoteSourcePrefix = <S extends Pick<InferenceExpenseSource, 'receipt' | 'handoff'>>(
-  source: S,
-  quote: InferenceExpenseQuote,
-) => {
-  const line = quote.line
-  const staged = 'stage' in line
-  const independentHandoff =
-    staged &&
-    line.handoffHash !== null &&
-    (line.stage === InferenceStage.Chart || line.usageStatus === InferenceUsageStatus.NotDispatched)
-  return {
-    receipt: line.receiptHash !== null || independentHandoff ? source.receipt : null,
-    handoff: staged && line.handoffHash !== null ? source.handoff : null,
-  }
-}
+type QuoteSourcePrefix = Pick<InferenceExpenseSource, 'receipt' | 'handoff' | 'resolution' | 'chartCheckpoint'>
+
+const quoteSourcePrefix = (source: QuoteSourcePrefix, quote: InferenceExpenseQuote) =>
+  Result.gen(function* () {
+    const line = quote.line
+    const staged = 'stage' in line
+    const checkpoint = 'chartClaimHash' in line ? source.chartCheckpoint : undefined
+    if (
+      'chartClaimHash' in line &&
+      (checkpoint === undefined ||
+        checkpoint.claim.claimHash !== line.chartClaimHash ||
+        (line.chartTerminalHash !== null && checkpoint.terminal?.terminalHash !== line.chartTerminalHash))
+    )
+      return yield* Result.fail(
+        new InferenceCostError({ message: 'Frozen chart expense differs from its checkpoint identity' }),
+      )
+    const independentHandoff =
+      staged &&
+      line.handoffHash !== null &&
+      (line.stage === InferenceStage.Chart || line.usageStatus === InferenceUsageStatus.NotDispatched)
+    return {
+      receipt: line.receiptHash !== null || independentHandoff ? source.receipt : null,
+      handoff: staged && line.handoffHash !== null ? source.handoff : null,
+      resolution: checkpoint === undefined ? source.resolution : null,
+      ...(checkpoint === undefined
+        ? {}
+        : {
+            chartCheckpoint:
+              'chartTerminalHash' in line && line.chartTerminalHash === null && checkpoint.terminal !== null
+                ? { ...checkpoint, terminal: null }
+                : checkpoint,
+          }),
+    }
+  })
+
+const sameQuoteSourcePrefix = (source: QuoteSourcePrefix, prefix: QuoteSourcePrefix) =>
+  prefix.receipt === source.receipt &&
+  prefix.handoff === source.handoff &&
+  prefix.resolution === source.resolution &&
+  prefix.chartCheckpoint === source.chartCheckpoint
+
+const decodeQuoteSourcePrefix = (source: DecodedInferenceCostRequest, prefix: QuoteSourcePrefix, asOf: string) =>
+  decodeInferenceCostRequest(
+    {
+      requestId: source.requestId,
+      cycleId: source.cycleId,
+      authorityGenerationHash: source.authorityGenerationHash,
+      request: source.request,
+      ...prefix,
+    },
+    asOf,
+  )
 
 export const verifyInferenceExpenseQuote = (source: InferenceExpenseSource, quote: InferenceExpenseQuote) =>
   Result.gen(function* () {
     const valid = yield* decodeInferenceExpenseQuote(quote)
-    const evidence = yield* expenseSourceEvidence({ ...source, ...quoteSourcePrefix(source, valid) })
-    return yield* verifyQuoteFromEvidence(evidence, valid)
+    // Validate the complete graph before projecting an older immutable quote cut.
+    const evidence = yield* expenseSourceEvidence(source)
+    const current = evidence.requests[0]
+    if (current === undefined) return yield* Result.fail(new InferenceCostError({ message: 'Missing expense source' }))
+    const prefix = yield* quoteSourcePrefix(current, valid)
+    const prepared = sameQuoteSourcePrefix(current, prefix)
+      ? current
+      : yield* decodeQuoteSourcePrefix(current, prefix, evidence.asOf)
+    return yield* verifyQuoteFromEvidence({ ...evidence, requests: [prepared] }, valid)
   })
 
 export const verifyInferenceExpenseCoverage = (
@@ -373,25 +451,22 @@ export const verifyInferenceExpenseCoverage = (
           new InferenceCostError({ message: 'Frozen inference expense is outside the complete request cut' }),
         )
       const valid = yield* decodeInferenceExpenseQuote(quote)
-      const prefix = quoteSourcePrefix(source, valid)
+      const prefix = yield* quoteSourcePrefix(source, valid)
       let prepared = source
-      if (prefix.receipt !== source.receipt || prefix.handoff !== source.handoff) {
+      if (!sameQuoteSourcePrefix(source, prefix)) {
         // A frozen pending charge can bind an earlier source prefix. Reproduce each such prefix once.
-        const key = `${source.requestId}:${prefix.receipt !== null}:${prefix.handoff !== null}`
+        const key = JSON.stringify([
+          source.requestId,
+          prefix.receipt !== null,
+          prefix.handoff !== null,
+          prefix.resolution !== null,
+          prefix.chartCheckpoint?.claim.claimHash ?? null,
+          prefix.chartCheckpoint?.terminal?.terminalHash ?? null,
+        ])
         const existing = prefixes.get(key)
         if (existing !== undefined) prepared = existing
         else {
-          prepared = yield* decodeInferenceCostRequest(
-            {
-              requestId: source.requestId,
-              cycleId: source.cycleId,
-              authorityGenerationHash: source.authorityGenerationHash,
-              request: source.request,
-              resolution: source.resolution,
-              ...prefix,
-            },
-            evidence.asOf,
-          )
+          prepared = yield* decodeQuoteSourcePrefix(source, prefix, evidence.asOf)
           prefixes.set(key, prepared)
         }
       }
@@ -409,7 +484,11 @@ export const verifyInferenceExpenseCoverage = (
         (row) =>
           row.quote.line.receiptHash === line.receiptHash &&
           ('handoffHash' in row.quote.line ? row.quote.line.handoffHash : null) ===
-            ('handoffHash' in line ? line.handoffHash : null),
+            ('handoffHash' in line ? line.handoffHash : null) &&
+          ('chartClaimHash' in row.quote.line ? row.quote.line.chartClaimHash : null) ===
+            ('chartClaimHash' in line ? line.chartClaimHash : null) &&
+          ('chartTerminalHash' in row.quote.line ? row.quote.line.chartTerminalHash : null) ===
+            ('chartTerminalHash' in line ? line.chartTerminalHash : null),
       )
       if (matches.length === 0) {
         missingQuoteCount++

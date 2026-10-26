@@ -94,16 +94,22 @@ export const readInferenceExpenseSnapshot = (
             )
             SELECT cut.as_of, cut.request_count, cut.quote_count, 'CUT'::text AS kind, NULL::jsonb AS payload FROM cut
             UNION ALL
-            SELECT cut.as_of, cut.request_count, cut.quote_count, 'REQUEST', to_jsonb(item)
+            SELECT cut.as_of, cut.request_count, cut.quote_count, 'REQUEST', (to_jsonb(item) - 'chartCheckpoint') ||
+              CASE WHEN item."chartCheckpoint" IS NULL THEN '{}'::jsonb
+                ELSE jsonb_build_object('chartCheckpoint', item."chartCheckpoint") END
               FROM cut CROSS JOIN (
                 SELECT request.request_id AS "requestId", request.cycle_id AS "cycleId",
                   request.authority_generation_hash AS "authorityGenerationHash",
-                  request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution, handoff.payload AS handoff
+                  request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution, handoff.payload AS handoff,
+                  CASE WHEN chart_claim.request_id IS NULL THEN NULL ELSE
+                    jsonb_build_object('claim', chart_claim.payload, 'terminal', chart_terminal.payload) END AS "chartCheckpoint"
                 FROM jev_evaluation_requests AS request
                 JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
                 LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
                 LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
                 LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
+                LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
+                LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
                 WHERE cycle.account_id = ${scope.accountId}
                   AND cycle.execution_session_date = ${scope.sessionDate}::date
                 LIMIT ${maximumRequests + 1}
@@ -159,7 +165,9 @@ export const readInferenceExpenseSnapshot = (
           if (requests.length !== cut.request_count || quoteRows.length !== cut.quote_count)
             return yield* new InferenceCostError({ message: 'Inference cost snapshot row coverage differs' })
           const evidence: DecodedInferenceCostEvidence = {
-            schemaVersion: 'bayn.inference-cost-evidence.v2',
+            schemaVersion: requests.some((row) => row.chartCheckpoint !== undefined)
+              ? 'bayn.inference-cost-evidence.v3'
+              : 'bayn.inference-cost-evidence.v2',
             accountBindingHash,
             sessionDate: scope.sessionDate,
             asOf: cut.as_of,

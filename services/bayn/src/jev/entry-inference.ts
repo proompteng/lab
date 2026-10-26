@@ -5,6 +5,12 @@ import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeNativeChartEvidence } from './chart-evidence'
 import {
+  makeChartDispatchClaim,
+  makeChartTerminalReceipt,
+  type ChartDispatchClaim,
+  type ChartTerminalReceipt,
+} from './chart-checkpoint'
+import {
   chartAssessments,
   makeChartDecisionsRequest,
   type ChartAssessments,
@@ -76,6 +82,10 @@ export type EntryHandoffMaterial = Omit<EntryHandoff, 'disposition' | 'schemaVer
 export class EntryInferenceJournal extends Context.Service<
   EntryInferenceJournal,
   {
+    readonly recordChartClaim: (
+      claim: ChartDispatchClaim,
+    ) => Effect.Effect<{ readonly dispatchAllowed: boolean }, OperationalError>
+    readonly recordChartTerminal: (receipt: ChartTerminalReceipt) => Effect.Effect<void, OperationalError>
     readonly recordHandoff: (
       handoff: EntryHandoff,
     ) => Effect.Effect<{ readonly dispatchAllowed: boolean }, OperationalError>
@@ -251,10 +261,32 @@ export const evaluateClaimedEntryInference = (claim: {
     let disposition: HandoffDisposition
     if (!feasible) disposition = { status: 'SOURCE_INFEASIBLE' }
     else {
+      const chartClaim = yield* Effect.fromResult(
+        makeChartDispatchClaim({
+          schemaVersion: 'bayn.chart-dispatch-claim.v1',
+          stage: 'CHART',
+          requestId: claim.requestId,
+          providerRequestHash: visualRequest.requestHash,
+          claimedAt: utcInstantFromEpochMillis(visualNow),
+          expiresAt: claim.expiresAt,
+        }),
+      )
+      const admitted = yield* journal.recordChartClaim(chartClaim)
+      if (!admitted.dispatchAllowed)
+        return yield* new EntryInferenceError({
+          category: 'EXISTING_HANDOFF',
+          message: 'Chart dispatch is already claimed; replay cannot call the provider',
+        })
+      const dispatchAt = yield* Clock.currentTimeMillis
+      if (dispatchAt < visualNow || dispatchAt >= expires)
+        return yield* new EntryInferenceError({
+          category: 'DEADLINE',
+          message: 'Original evidence window expired while committing chart admission',
+        })
       const decisions = yield* DecisionsClient
-      const visual = yield* decisions.evaluate(visualRequest.request, expires - visualNow).pipe(
+      const visual = yield* decisions.evaluate(visualRequest.request, expires - dispatchAt).pipe(
         Effect.timeoutOrElse({
-          duration: expires - visualNow,
+          duration: expires - dispatchAt,
           orElse: () =>
             Effect.fail(
               new EntryInferenceError({
@@ -280,6 +312,17 @@ export const evaluateClaimedEntryInference = (claim: {
                   usage: failure.requestHash === visualRequest.requestHash ? (failure.usage ?? null) : null,
                 },
         }
+        yield* journal.recordChartTerminal(
+          yield* Effect.fromResult(
+            makeChartTerminalReceipt({
+              schemaVersion: 'bayn.chart-terminal-receipt.v1',
+              requestId: claim.requestId,
+              claimHash: chartClaim.claimHash,
+              recordedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+              outcome: { status: 'FAILED', failure: disposition.failure },
+            }),
+          ),
+        )
       } else {
         const expectedResponseHash = yield* Effect.fromResult(canonicalHashV1Result(visual.success.response))
         const visualReturnedAt = yield* Clock.currentTimeMillis
@@ -290,8 +333,23 @@ export const evaluateClaimedEntryInference = (claim: {
           visual.success.completedAt >= visual.success.startedAt &&
           Date.parse(visual.success.completedAt) <= visualReturnedAt
         if (!sourceBound)
-          disposition = { status: 'PREPARATION_FAILED', visual: visual.success, reason: 'VISUAL_RECEIPT_MISMATCH' }
+          return yield* new EntryInferenceError({
+            category: 'INPUT',
+            message: 'Chart response does not match its dispatch claim',
+          })
         else {
+          // Commit provider evidence before pure derivation or the dependent Jev call can fail.
+          yield* journal.recordChartTerminal(
+            yield* Effect.fromResult(
+              makeChartTerminalReceipt({
+                schemaVersion: 'bayn.chart-terminal-receipt.v1',
+                requestId: claim.requestId,
+                claimHash: chartClaim.claimHash,
+                recordedAt: utcInstantFromEpochMillis(visualReturnedAt),
+                outcome: { status: 'RECEIVED', inference: visual.success },
+              }),
+            ),
+          )
           const derived = deriveEntryHandoffDisposition(prepared.input, visual.success)
           disposition = Result.isSuccess(derived)
             ? derived.success
