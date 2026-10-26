@@ -237,11 +237,21 @@ export const nativeJevFixture = (
                   ],
                 }),
               )
-              const visual = nativeChartInference(Result.getOrThrow(makeChartDecisionsRequest(chart)).request, at)
+              const chartSource = {
+                chart,
+                protocol,
+                funding: {
+                  bidMicros: '102000000',
+                  askMicros: '102010000',
+                  capitalMicros: material.account.equityMicros,
+                  cryptoFeeTier: null,
+                },
+              }
+              const visual = nativeChartInference(Result.getOrThrow(makeChartDecisionsRequest(chartSource)).request, at)
               const { proposals } = Result.getOrThrow(
                 makeEntryProposals({
                   chart,
-                  assessments: Result.getOrThrow(chartAssessments(chart, visual.response)),
+                  assessments: Result.getOrThrow(chartAssessments(chartSource, visual.response)),
                   economics,
                   protocol,
                   bidMicros: 102_000_000n,

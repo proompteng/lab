@@ -23,7 +23,7 @@ export const entryEvaluationRequestFixture = (observedAt = '2026-10-25T07:00:32.
   ]
   const prepared = Result.getOrThrow(
     prepareEntryInferenceInput({
-      schemaVersion: 'bayn.entry-inference-input.v3',
+      schemaVersion: 'bayn.entry-inference-input.v4',
       numericalState: {
         schemaVersion: 'bayn.jev-entry-state.v22',
         task: { decisionPurpose: 'ENTRY' },
@@ -52,7 +52,9 @@ export const entryEvaluationRequestFixture = (observedAt = '2026-10-25T07:00:32.
 
 export const chartInferenceFixture = (input: EntryInferenceInput, at: string) => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(input.chartSource))
-  const prepared = Result.getOrThrow(makeChartDecisionsRequest(chart))
+  const prepared = Result.getOrThrow(
+    makeChartDecisionsRequest({ chart, protocol: input.protocol, funding: input.funding }),
+  )
   return nativeChartInference(prepared.request, at)
 }
 
@@ -65,19 +67,24 @@ export const nativeChartInference = (raw: unknown, at: string) => {
       ),
     }),
   )(prepared.request.input[0].content[2].data)
-  const anchors = {
-    support_anchor: source.bars.reduce((left, right) => (left.low <= right.low ? left : right)),
-    resistance_anchor: source.bars.reduce((left, right) => (left.high >= right.high ? left : right)),
-    base_last_bar: source.bars.at(-2),
-  }
   const response = Result.getOrThrow(
     decodeDecisionsResponse(prepared.request, {
       model: prepared.request.model,
       answers: prepared.request.questions.map((question) => {
         if (question.type === 'predicate') return { type: 'predicate', name: question.name, probability: 0.9 }
+        const offered = source.bars.filter((bar) => question.choices.some((choice) => choice.value === bar.id))
         const anchor = question.name.startsWith('base_first_bar_ending_')
-          ? source.bars[0]
-          : Object.entries(anchors).find(([name]) => name === question.name)?.[1]
+          ? offered[0]
+          : question.name === 'base_last_bar'
+            ? offered.at(-1)
+            : offered.reduce<(typeof offered)[number] | undefined>(
+                (selected, bar) =>
+                  selected === undefined ||
+                  (question.name === 'support_anchor' ? bar.low < selected.low : bar.high > selected.high)
+                    ? bar
+                    : selected,
+                undefined,
+              )
         if (anchor === undefined) throw new Error('Missing fixture chart anchor')
         return {
           type: 'choice',
@@ -152,7 +159,7 @@ export const entryCompletionFixture = (
     deriveEntryHandoffDisposition(request.request, chartInferenceFixture(request.request, at)),
   )
   const material = {
-    schemaVersion: 'bayn.entry-handoff.v2' as const,
+    schemaVersion: 'bayn.entry-handoff.v3' as const,
     requestId: request.requestId,
     inputHash: request.requestHash,
     visualRequestHash: disposition.visual.requestHash,

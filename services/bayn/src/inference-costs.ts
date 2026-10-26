@@ -14,7 +14,11 @@ import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost
 import { readSequentialInferenceCostEvidence } from './jev/sequential-inference-cost-evidence'
 import { JevFailure, jevModel } from './jev/contract'
 import { decisionsModel } from './jev/decisions'
-import { ChartCheckpointSchema, decodeChartCheckpoint, verifyChartCheckpointHandoff } from './jev/chart-checkpoint'
+import {
+  ChartCheckpointSchema,
+  decodeChartCheckpointForSource,
+  verifyChartCheckpointHandoff,
+} from './jev/chart-checkpoint'
 
 export class InferenceCostError extends Data.TaggedError('InferenceCostError')<{
   readonly message: string
@@ -225,7 +229,7 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
         ],
       }
     }
-    const { request, receipt, resolution, handoff } = yield* readSequentialInferenceCostEvidence(row)
+    const { request, receipt, resolution, handoff, chartRequest } = yield* readSequentialInferenceCostEvidence(row)
     if (
       receipt?.outcome.status === JevOutcome.Completed &&
       (handoff === null || handoff.handoffHash !== receipt.outcome.completion.handoff.handoffHash)
@@ -233,7 +237,9 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
       return yield* failure('Completed inference cost evidence differs from its committed chart handoff')
     const zero = receipt?.outcome.status === JevOutcome.Failed && receipt.outcome.failure === JevFailure.NotDispatched
     const checkpoint =
-      row.chartCheckpoint === undefined ? undefined : yield* decodeChartCheckpoint(row.request, row.chartCheckpoint)
+      row.chartCheckpoint === undefined
+        ? undefined
+        : yield* decodeChartCheckpointForSource({ ...request, chartRequest }, row.chartCheckpoint)
     if (checkpoint !== undefined && zero)
       return yield* failure('Undispatched evidence cannot omit a committed chart claim')
     if (checkpoint !== undefined && handoff !== null) yield* verifyChartCheckpointHandoff(checkpoint, handoff)

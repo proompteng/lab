@@ -10,8 +10,9 @@ import {
   DecisionsUsageSchema,
   decodeDecisionsResponse,
   validDecisionsUsage,
+  type DecisionsRequest,
 } from './decisions'
-import { decodeJevEvaluationRequest } from './evidence'
+import type { JevEvaluationRequest } from './evidence'
 import type { EntryHandoffMaterial } from './entry-inference'
 
 const ClaimMaterial = Schema.Struct({
@@ -65,14 +66,17 @@ export const makeChartTerminalReceipt = (input: typeof ReceiptMaterial.Type) =>
   })
 
 /** Financial evidence only: late terminal receipts never renew dispatch or trading validity. */
-export const decodeChartCheckpoint = (requestInput: unknown, input: unknown) =>
+export const decodeChartCheckpointForSource = (
+  source: Pick<JevEvaluationRequest, 'requestId' | 'observedAt' | 'expiresAt'> & {
+    readonly chartRequest: { readonly request: DecisionsRequest; readonly requestHash: string }
+  },
+  input: unknown,
+) =>
   Result.gen(function* () {
-    // The executable codec deliberately excludes retired input and question-policy versions.
-    const request = yield* decodeJevEvaluationRequest(requestInput)
+    const request = source
     const checkpoint = yield* Schema.decodeUnknownResult(ChartCheckpointSchema, strictParseOptions)(input)
     const { claimHash, ...claim } = checkpoint.claim
-    const chart = yield* makeNativeChartEvidence(request.request.chartSource)
-    const prepared = yield* makeChartDecisionsRequest(chart)
+    const prepared = source.chartRequest
     if (
       claim.requestId !== request.requestId ||
       claim.providerRequestHash !== prepared.requestHash ||
@@ -108,6 +112,17 @@ export const decodeChartCheckpoint = (requestInput: unknown, input: unknown) =>
       return yield* invalid('Chart terminal failure contains invalid metering')
     }
     return checkpoint
+  })
+
+export const decodeChartCheckpoint = (request: JevEvaluationRequest, input: unknown) =>
+  Result.gen(function* () {
+    const chart = yield* makeNativeChartEvidence(request.request.chartSource)
+    const chartRequest = yield* makeChartDecisionsRequest({
+      chart,
+      protocol: request.request.protocol,
+      funding: request.request.funding,
+    })
+    return yield* decodeChartCheckpointForSource({ ...request, chartRequest }, input)
   })
 
 export const verifyChartCheckpointHandoff = (checkpoint: ChartCheckpoint, handoff: EntryHandoffMaterial) =>

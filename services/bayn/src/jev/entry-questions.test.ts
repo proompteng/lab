@@ -5,6 +5,7 @@ import { makeNativeChartEvidence } from './chart-evidence'
 import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
 import { decodeJevResponse } from './contract'
 import { jevEntryEconomics } from './entry-economics'
+import { nativeChartInference } from './entry-inference.test-support'
 import { EntrySetup, makeEntryProposals } from './entry-proposals'
 import { makeEntryJudgmentRequest, selectSupportedEntryProposal } from './entry-questions'
 import { defaultJevProtocolDocument } from './protocol'
@@ -22,36 +23,19 @@ const fixture = () => {
       ],
     }),
   )
-  const visual = Result.getOrThrow(makeChartDecisionsRequest(chart)).request
-  const anchors: Readonly<Record<string, number>> = {
-    support_anchor: 0,
-    resistance_anchor: 2,
-    base_last_bar: 0,
+  const chartSource = {
+    chart,
+    protocol: defaultJevProtocolDocument,
+    funding: {
+      bidMicros: '104000000',
+      askMicros: '104020000',
+      capitalMicros: '100000000000',
+      cryptoFeeTier: null,
+    },
   }
+  const visual = Result.getOrThrow(makeChartDecisionsRequest(chartSource)).request
   const assessments = Result.getOrThrow(
-    chartAssessments(chart, {
-      model: visual.model,
-      answers: visual.questions.map((question) =>
-        question.type === 'predicate'
-          ? { type: 'predicate', name: question.name, probability: 0.8 }
-          : {
-              type: 'choice',
-              name: question.name,
-              choice: question.choices[anchors[question.name] ?? 0]?.value,
-              confidence: 0.8,
-              probabilities: question.choices.map((choice, index) => ({
-                value: choice.value,
-                probability: index === (anchors[question.name] ?? 0) ? 1 : 0,
-              })),
-            },
-      ),
-      usage: {
-        input_tokens: 100,
-        input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-        output_tokens: 0,
-        total_tokens: 100,
-      },
-    }),
+    chartAssessments(chartSource, nativeChartInference(visual, chart.windowEndAt).response),
   )
   const economics = Result.getOrThrow(
     jevEntryEconomics({

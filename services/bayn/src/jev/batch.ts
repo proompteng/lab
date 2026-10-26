@@ -241,7 +241,11 @@ export const jevBatchQuestionSetHash = (
     for (const candidate of candidates) {
       if (candidate.request === undefined) continue
       const chart = yield* makeNativeChartEvidence(candidate.request.request.chartSource)
-      const visual = yield* makeChartDecisionsRequest(chart)
+      const visual = yield* makeChartDecisionsRequest({
+        chart,
+        protocol: candidate.request.request.protocol,
+        funding: candidate.request.request.funding,
+      })
       specifications.push({
         symbol: candidate.symbol,
         visual: { model: visual.request.model, questions: visual.request.questions },

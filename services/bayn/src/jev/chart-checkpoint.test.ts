@@ -13,8 +13,10 @@ import {
 } from '../inference-expense'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
-import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
+import { decodeJevEvaluationRequest, JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { makeChartDecisionsRequest } from './chart-questions'
+import { makeRetainedConditionalChartDecisionsRequest } from './retained-conditional-chart-questions'
+import { retainedConditionalQuestionPolicyHash } from './sequential-inference-cost-evidence'
 import {
   decodeChartCheckpoint,
   makeChartDispatchClaim,
@@ -25,11 +27,16 @@ import {
   chartInferenceFixture,
   entryCompletionFixture,
   entryEvaluationRequestFixture,
+  nativeChartInference,
 } from './entry-inference.test-support'
 
 const request = entryEvaluationRequestFixture()
 const prepared = Result.getOrThrow(
-  makeChartDecisionsRequest(Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))),
+  makeChartDecisionsRequest({
+    chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+    protocol: request.request.protocol,
+    funding: request.request.funding,
+  }),
 )
 const claim = Result.getOrThrow(
   makeChartDispatchClaim({
@@ -85,6 +92,66 @@ const chartQuote = (value: InferenceExpenseSource) => {
   if (quote === undefined) throw new Error('Missing chart quote')
   return quote
 }
+
+test('retired v3 chart checkpoints retain exact late usage and expense identities without executable decoding', () => {
+  const input = {
+    ...request.request,
+    schemaVersion: 'bayn.entry-inference-input.v3',
+    protocol: {
+      ...request.request.protocol,
+      schemaVersion: 'bayn.jev.protocol.v24',
+      entryQuestionPolicyHash: retainedConditionalQuestionPolicyHash,
+    },
+  }
+  const { requestId: _, ...original } = request
+  const material = { ...original, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
+  const retained = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }
+  const chart = Result.getOrThrow(makeNativeChartEvidence(input.chartSource))
+  const visual = Result.getOrThrow(makeRetainedConditionalChartDecisionsRequest(chart))
+  const retainedClaim = Result.getOrThrow(
+    makeChartDispatchClaim({
+      schemaVersion: 'bayn.chart-dispatch-claim.v1',
+      stage: 'CHART',
+      requestId: retained.requestId,
+      providerRequestHash: visual.requestHash,
+      claimedAt: retained.observedAt,
+      expiresAt: retained.expiresAt,
+    }),
+  )
+  const retainedSource = {
+    ...source,
+    requestId: retained.requestId,
+    request: retained,
+    chartCheckpoint: { claim: retainedClaim, terminal: null },
+  }
+  const unknown = chartQuote(retainedSource)
+  expect(unknown.line.usageStatus).toBe(InferenceUsageStatus.Unknown)
+  const metered = nativeChartInference(visual.request, retained.observedAt)
+  const late = Result.getOrThrow(
+    makeChartTerminalReceipt({
+      schemaVersion: 'bayn.chart-terminal-receipt.v1',
+      requestId: retained.requestId,
+      claimHash: retainedClaim.claimHash,
+      recordedAt: source.asOf,
+      outcome: { status: 'RECEIVED', inference: { ...metered, completedAt: source.asOf } },
+    }),
+  )
+  const value = { ...retainedSource, chartCheckpoint: { claim: retainedClaim, terminal: late } }
+  expect(
+    Result.isFailure(
+      decodeJevEvaluationRequest(retained).pipe(
+        Result.flatMap((decoded) => decodeChartCheckpoint(decoded, value.chartCheckpoint)),
+      ),
+    ),
+  ).toBe(true)
+  const priced = chartQuote(value)
+  expect(priced.line.usageStatus).toBe(InferenceUsageStatus.Received)
+  expect(priced.quoteHash).not.toBe(unknown.quoteHash)
+  expect(Result.isSuccess(verifyInferenceExpenseQuote(value, unknown))).toBe(true)
+  expect(Result.isSuccess(verifyInferenceExpenseQuote(value, priced))).toBe(true)
+  expect(chartQuote(value)).toEqual(priced)
+  expect(Result.getOrThrow(buildInferenceExpensePlan([unknown, priced])).transfers).toHaveLength(1)
+})
 
 test('unresolved discovery freezes only CHART and abandonment creates the first stable Jev quote', () => {
   const initial = quotes(source)
