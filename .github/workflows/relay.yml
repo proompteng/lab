@@ -4,6 +4,8 @@ on:
     paths:
       - 'services/relay/**'
       - 'apps/landing/src/lib/platform/**'
+      - 'apps/landing/src/lib/tengri/connection*'
+      - 'apps/landing/src/app/api/tengri/connections/**'
       - 'apps/landing/src/lib/tengri/spiffe.fixture.ts'
       - 'apps/landing/src/app/api/platform/**'
       - 'packages/platform-client/**'
@@ -19,6 +21,8 @@ on:
     paths:
       - 'services/relay/**'
       - 'apps/landing/src/lib/platform/**'
+      - 'apps/landing/src/lib/tengri/connection*'
+      - 'apps/landing/src/app/api/tengri/connections/**'
       - 'apps/landing/src/lib/tengri/spiffe.fixture.ts'
       - 'apps/landing/src/app/api/platform/**'
       - 'packages/platform-client/**'
