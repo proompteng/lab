@@ -96,7 +96,6 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-buildkit
       - uses: sigstore/cosign-installer@v3.10.0
       - name: Publish and verify the immutable index
         env:
