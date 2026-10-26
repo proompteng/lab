@@ -2,9 +2,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { PgMigrator } from '@effect/sql-pg'
-import { Clock, Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Clock, Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import sequentialEntryInference from '../../migrations/0147_sequential_entry_inference'
+import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
 
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
@@ -387,6 +388,71 @@ integration('committed sequential provider handoff', () => {
         expect(
           yield* sql`SELECT payload FROM jev_evaluation_requests WHERE request_id=${historical.requestId}`,
         ).toEqual([{ payload: historical }])
+      }),
+    ))
+
+  test('retains original chart requests and rejects new writes with the retired image contract', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 148))),
+          table: 'schema_migrations',
+        })
+        yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
+        yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
+          VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${request.observedAt})`
+        const { requestId: _, ...original } = request
+        const oldInput = { ...request.request, schemaVersion: 'bayn.entry-inference-input.v1' }
+        const oldMaterial = {
+          ...original,
+          request: oldInput,
+          requestHash: Result.getOrThrow(canonicalHashV1Result(oldInput)),
+        }
+        const historical = { ...oldMaterial, requestId: Result.getOrThrow(canonicalHashV1Result(oldMaterial)) }
+        yield* sql`INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
+          VALUES (${historical.requestId}, ${historical.cycleId}, ${historical.authorityGenerationHash}, ${sql.json(historical)})`
+        yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+          UPDATE autonomous_cycles SET state = 'BLOCKED', terminal_reason = 'BLOCKED_AUTHORITY',
+          state_version = state_version + 1, updated_at = terminal.at, terminal_at = terminal.at
+          FROM terminal WHERE cycle_id = ${historical.cycleId}`
+        const before =
+          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${historical.requestId}`
+        yield* sql.withTransaction(relativeChartVolume)
+        expect(
+          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${historical.requestId}`,
+        ).toEqual(before)
+        const attempted = { ...historical, requestId: 'd'.repeat(64), symbol: 'AMZN' }
+        const rejected =
+          yield* sql`INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
+          VALUES (${attempted.requestId}, ${attempted.cycleId}, ${attempted.authorityGenerationHash}, ${sql.json(attempted)})`.pipe(
+            Effect.result,
+          )
+        if (Result.isSuccess(rejected)) throw new Error('Retired chart input was accepted')
+        expect(rejected.failure.reason._tag).toBe('ConstraintError')
+        yield* Schema.decodeUnknownEffect(
+          Schema.Struct({ code: Schema.Literal('23514'), constraint: Schema.Literal('jev_evaluation_requests_check') }),
+        )(rejected.failure.reason.cause)
+      }),
+    ))
+
+  test('refuses the image contract cutover while a native cycle is active', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const before =
+          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`
+        const rejected = yield* sql.withTransaction(relativeChartVolume).pipe(Effect.result)
+        if (Result.isSuccess(rejected)) throw new Error('Image contract changed while a native cycle was active')
+        const native = yield* Schema.decodeUnknownEffect(
+          Schema.Struct({ code: Schema.Literal('55000'), message: Schema.String }),
+        )(rejected.failure.reason.cause)
+        expect(native.message).toContain('relative-chart-volume cutover requires terminal cycles')
+        expect(
+          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`,
+        ).toEqual(before)
       }),
     ))
 })

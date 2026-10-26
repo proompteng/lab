@@ -59,6 +59,13 @@ candlestick image from verified completed bars, asks OpenAI Decisions API for ty
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
 
+Entry input v2 scales the volume histogram to the largest observed bar, including fractional crypto quantities.
+An all-zero window has no positive volume height. Migration 148 requires v2 for new requests; current inference rejects
+v1. Read-only financial projection reproduces retained v1 images with their original whole-unit scale so original
+provider usage, partial costs and immutable receipt hashes remain verifiable.
+The migration requires terminal cycles, flat inventory, settled orders, complete accounting, fresh exact reconciliation
+and no unexpired inference claims. It preserves the active authority generation, capital, loss and turnover history.
+
 Jev answers separate Nouls about each proposal's observed setup, stop invalidation and overhead obstruction. Code selects
 supported proposals and binds their prices and funded quantity to protected execution. An unrelated unsupported setup
 does not veto a supported proposal. Missing, refused, malformed, stale or uncertain evidence cannot authorize entry.
@@ -98,6 +105,12 @@ pricing or liquidation, and a withdrawn required benchmark still blocks the snap
 contradictory quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
 schema rejection caused by the withdrawal. Original capture receipts retain their exact recorded disposition; old
 rejection receipts cannot be relabeled as accepted evidence.
+
+Before chart dispatch, the native source-feasibility gate rejects only sources for which neither existing proposal
+template can cover the unchanged protective-price and funding rules. `SOURCE_INFEASIBLE` handoffs are independently
+reproduced from the sealed input and record both providers as undispatched at zero cost. Possible sources still use
+the original chart, Jev, deadline and risk gates. See [pre-chart feasibility](../../docs/bayn/pre-chart-feasibility.md)
+for the existing-data proof, verifier and rollout contract.
 
 Native Jev admission commits the verified source observation, sealed batch plan and every requested candidate claim
 in one PostgreSQL transaction before any provider call. Only the successful creator receives dispatch rights. Retries,

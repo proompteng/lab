@@ -10,6 +10,9 @@ controllers:
   enabled: true
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
+  env:
+    vars:
+      AGENTS_MIGRATIONS: 'auto'
 
 runner:
   image:

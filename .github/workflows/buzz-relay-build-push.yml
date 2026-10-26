@@ -128,7 +128,7 @@ jobs:
   publish-index:
     if: github.event_name != 'pull_request'
     needs: build
-    runs-on: arc-arm64
+    runs-on: arc-amd64-publish
     steps:
       - name: Checkout deployment repository
         uses: actions/checkout@v5
@@ -144,9 +144,6 @@ jobs:
           [[ "${source_sha}" == "${expected_source_sha}" ]]
           printf 'source_sha=%s\n' "${source_sha}" >> "${GITHUB_OUTPUT}"
           printf 'source_timestamp=%s\n' "$(git show -s --format=%cI HEAD)" >> "${GITHUB_OUTPUT}"
-
-      - name: Set up Docker Buildx
-        uses: ./.github/actions/setup-buildkit
 
       - name: Publish multi-architecture index
         shell: bash

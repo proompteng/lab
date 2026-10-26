@@ -8,6 +8,7 @@ service PlatformAuthorizationService {
   rpc GetPlatformConfiguration(GetPlatformConfigurationRequest) returns (GetPlatformConfigurationResponse);
   rpc CheckPlatformAccess(CheckPlatformAccessRequest) returns (CheckPlatformAccessResponse);
   rpc RecordPlatformExecution(RecordPlatformExecutionRequest) returns (RecordPlatformExecutionResponse);
+  rpc GetPlatformExecution(GetPlatformExecutionRequest) returns (GetPlatformExecutionResponse);
   rpc WritePolicyRelationships(WritePolicyRelationshipsRequest) returns (WritePolicyRelationshipsResponse);
   rpc CreatePlatformDelegation(CreatePlatformDelegationRequest) returns (CreatePlatformDelegationResponse);
   rpc ActivatePlatformDelegation(ActivatePlatformDelegationRequest) returns (ActivatePlatformDelegationResponse);
@@ -35,6 +36,25 @@ message RecordPlatformExecutionRequest {
 }
 message RecordPlatformExecutionResponse {
   string audit_receipt_id = 1;
+}
+
+message GetPlatformExecutionRequest {
+  CheckPlatformAccessRequest authorization = 1;
+  bytes execution_request_hash = 2;
+}
+message PlatformExecution {
+  string operation_id = 1;
+  string outcome = 2;
+  string authorization_receipt_id = 3;
+  string execution_receipt_id = 4;
+  uint32 upstream_status = 5;
+  bytes result_hash = 6;
+  bytes request_hash = 7;
+  uint64 updated_at_unix_ms = 8;
+}
+message GetPlatformExecutionResponse {
+  PlatformExecution execution = 1;
+  PlatformDecision decision = 2;
 }
 
 message PlatformResource {

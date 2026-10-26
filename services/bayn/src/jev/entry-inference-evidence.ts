@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { makeNativeChartEvidence } from './chart-evidence'
+import { makeNativeChartEvidence, type NativeChartEvidence } from './chart-evidence'
 import { ChartAssessmentsSchema, makeChartDecisionsRequest } from './chart-questions'
 import {
   decodeJevResponse,
@@ -19,8 +19,12 @@ import {
   decodeDecisionsResponse,
   validDecisionsUsage,
 } from './decisions'
-import { deriveEntryHandoffDisposition } from './entry-inference'
-import { prepareEntryInferenceInput, type EntryInferenceInput } from './entry-inference-input'
+import { deriveEntryDispositionForChart, hasFeasibleEntrySource } from './entry-inference'
+import {
+  prepareEntryInferenceInput,
+  type EntryInferenceInput,
+  type EntryInferenceMaterial,
+} from './entry-inference-input'
 import { EntryProposalSchema, EntrySetup, ProposalRejection } from './entry-proposals'
 
 const HttpStatus = Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 })))
@@ -29,6 +33,7 @@ const Evaluation = Schema.Struct({
   rejections: Schema.Array(Schema.Struct({ setup: Schema.Enum(EntrySetup), reason: Schema.Enum(ProposalRejection) })),
 })
 const Disposition = Schema.Union([
+  Schema.Struct({ status: Schema.Literal('SOURCE_INFEASIBLE') }),
   Schema.Struct({
     status: Schema.Literal('VISUAL_FAILED'),
     failure: Schema.Struct({
@@ -94,20 +99,43 @@ const invalid = (message: string) => Result.fail(new JevContractError({ message 
 
 export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
   Result.gen(function* () {
-    const handoff = yield* Schema.decodeUnknownResult(EntryHandoffSchema, strictParseOptions)(input)
     const prepared = yield* prepareEntryInferenceInput(source.input)
-    const { handoffHash, ...material } = handoff
     const chart = yield* makeNativeChartEvidence(prepared.input.chartSource)
+    return yield* decodeEntryHandoffForChart({ source, input, inputHash: prepared.requestHash, chart })
+  })
+
+export const decodeEntryHandoffForChart = ({
+  source,
+  input,
+  inputHash,
+  chart,
+}: {
+  readonly source: Omit<EntrySource, 'input'> & { readonly input: EntryInferenceMaterial }
+  readonly input: unknown
+  readonly inputHash: string
+  readonly chart: NativeChartEvidence
+}) =>
+  Result.gen(function* () {
+    const handoff = yield* Schema.decodeUnknownResult(EntryHandoffSchema, strictParseOptions)(input)
+    const { handoffHash, ...material } = handoff
     const visualRequest = yield* makeChartDecisionsRequest(chart)
     if (
       handoff.requestId !== source.requestId ||
-      handoff.inputHash !== prepared.requestHash ||
+      handoff.inputHash !== inputHash ||
       handoff.visualRequestHash !== visualRequest.requestHash ||
       handoff.recordedAt < source.observedAt ||
       (yield* canonicalHashV1Result(material)) !== handoffHash
     )
       return yield* invalid('Entry handoff identity or source input does not reproduce')
     const disposition = handoff.disposition
+    if (disposition.status === 'SOURCE_INFEASIBLE') {
+      if (
+        source.input.schemaVersion !== 'bayn.entry-inference-input.v2' ||
+        (yield* hasFeasibleEntrySource(source.input, chart))
+      )
+        return yield* invalid('Source-infeasible evidence contains a fundable source or retired input')
+      return handoff
+    }
     if (disposition.status === 'VISUAL_FAILED') {
       if (disposition.failure.usage !== null && !validDecisionsUsage(disposition.failure.usage))
         return yield* invalid('Failed chart inference contains inconsistent metering')
@@ -126,13 +154,13 @@ export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
         return yield* invalid('Preparation failure contradicts its chart inference receipt')
       if (
         disposition.reason === 'DERIVATION_CONTRACT' &&
-        Result.isSuccess(deriveEntryHandoffDisposition(prepared.input, visual))
+        Result.isSuccess(deriveEntryDispositionForChart(source.input, visual, chart))
       )
         return yield* invalid('A successful derivation cannot be recorded as a preparation failure')
       return handoff
     }
     if (!visualBound) return yield* invalid('Entry handoff has an unbound chart inference receipt')
-    const expected = yield* deriveEntryHandoffDisposition(prepared.input, visual)
+    const expected = yield* deriveEntryDispositionForChart(source.input, visual, chart)
     if ((yield* canonicalHashV1Result(expected)) !== (yield* canonicalHashV1Result(disposition)))
       return yield* invalid('Entry handoff changes chart judgments, funded proposals or the dependent Jev request')
     return handoff
@@ -142,24 +170,41 @@ export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
 
 export const decodeEntryInferenceCompletion = (source: EntrySource, input: unknown) =>
   Result.gen(function* () {
-    const completion = yield* Schema.decodeUnknownResult(EntryInferenceCompletionSchema, strictParseOptions)(input)
-    const handoff = yield* decodeEntryHandoff(source, completion.handoff)
+    const { handoff: rawHandoff, ...completion } = yield* Schema.decodeUnknownResult(
+      EntryInferenceCompletionSchema,
+      strictParseOptions,
+    )(input)
+    const handoff = yield* decodeEntryHandoff(source, rawHandoff)
+    return yield* verifyEntryCompletion(source, completion, handoff)
+  }).pipe(
+    Result.mapError(
+      (cause) => new JevContractError({ message: 'Entry inference completion does not reproduce', cause }),
+    ),
+  )
+
+export const verifyEntryCompletion = (
+  source: Pick<EntrySource, 'expiresAt'>,
+  completion: Omit<typeof EntryInferenceCompletionSchema.Type, 'handoff'>,
+  handoff: typeof EntryHandoffSchema.Type,
+) =>
+  Result.gen(function* () {
+    const verified = { ...completion, handoff }
     if (completion.completedAt < handoff.recordedAt)
       return yield* invalid('Inference completion precedes its provider handoff')
     const outcome = completion.jev
     if (handoff.disposition.status !== 'READY') {
       if (outcome.status !== 'NOT_REQUESTED')
         return yield* invalid('Jev cannot be dispatched without a prepared funded proposal')
-      return completion
+      return verified
     }
     if (outcome.status === 'NOT_REQUESTED')
       return yield* invalid('A prepared Jev request must retain its dispatch disposition')
     if (outcome.status === 'NOT_DISPATCHED') {
       if (completion.completedAt < source.expiresAt)
         return yield* invalid('Undispatched Jev evidence must prove original deadline expiry')
-      return completion
+      return verified
     }
-    if (outcome.status === 'FAILED') return completion
+    if (outcome.status === 'FAILED') return verified
     const inference = outcome.inference
     const prepared = yield* prepareJevRequest(handoff.disposition.jevRequest)
     if (
@@ -172,7 +217,7 @@ export const decodeEntryInferenceCompletion = (source: EntrySource, input: unkno
       Result.isFailure(decodeJevResponse(prepared.request, inference.response))
     )
       return yield* invalid('Dependent Jev inference differs from the committed request or response')
-    return completion
+    return verified
   }).pipe(
     Result.mapError(
       (cause) => new JevContractError({ message: 'Entry inference completion does not reproduce', cause }),

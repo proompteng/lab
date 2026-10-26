@@ -4,7 +4,7 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import type { PlatformResource, PlatformSubject } from "../../authz/v1/platform_pb";
+import type { PlatformExecution, PlatformResource, PlatformSubject } from "../../authz/v1/platform_pb";
 import { file_proompteng_authz_v1_platform } from "../../authz/v1/platform_pb";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file proompteng/relay/v1/relay.proto.
  */
 export const file_proompteng_relay_v1_relay: GenFile = /*@__PURE__*/
-  fileDesc("Ch9wcm9vbXB0ZW5nL3JlbGF5L3YxL3JlbGF5LnByb3RvEhNwcm9vbXB0ZW5nLnJlbGF5LnYxIi8KFUxpc3RPcGVyYXRpb25zUmVxdWVzdBIWCg5jbGllbnRfc2VydmljZRgBIAEoCSLCAQoSQ29ubmVjdG9yT3BlcmF0aW9uEhQKDGNvbm5lY3Rvcl9pZBgBIAEoCRIMCgRuYW1lGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEg4KBmFjdGlvbhgEIAEoCRIZChFpbnB1dF9zY2hlbWFfanNvbhgFIAEoDBI1Cgd0YXJnZXRzGAYgAygLMiQucHJvb21wdGVuZy5yZWxheS52MS5Db25uZWN0b3JUYXJnZXQSEQoJcmVhZF9vbmx5GAcgASgIIlgKD0Nvbm5lY3RvclRhcmdldBIMCgRuYW1lGAEgASgJEjcKCHJlc291cmNlGAIgASgLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybVJlc291cmNlIlUKFkxpc3RPcGVyYXRpb25zUmVzcG9uc2USOwoKb3BlcmF0aW9ucxgBIAMoCzInLnByb29tcHRlbmcucmVsYXkudjEuQ29ubmVjdG9yT3BlcmF0aW9uIlUKDkV4ZWN1dGVSZXF1ZXN0EjUKB3N1YmplY3QYASABKAsyJC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtU3ViamVjdBIMCgRib2R5GAIgASgMIo0BCg9FeGVjdXRlUmVzcG9uc2USFAoMb3BlcmF0aW9uX2lkGAEgASgJEg4KBnJlc3VsdBgCIAEoDBIUCgxjb250ZW50X3R5cGUYAyABKAkSIAoYYXV0aG9yaXphdGlvbl9yZWNlaXB0X2lkGAQgASgJEhwKFGV4ZWN1dGlvbl9yZWNlaXB0X2lkGAUgASgJMs8BCgxSZWxheVNlcnZpY2USaQoOTGlzdE9wZXJhdGlvbnMSKi5wcm9vbXB0ZW5nLnJlbGF5LnYxLkxpc3RPcGVyYXRpb25zUmVxdWVzdBorLnByb29tcHRlbmcucmVsYXkudjEuTGlzdE9wZXJhdGlvbnNSZXNwb25zZRJUCgdFeGVjdXRlEiMucHJvb21wdGVuZy5yZWxheS52MS5FeGVjdXRlUmVxdWVzdBokLnByb29tcHRlbmcucmVsYXkudjEuRXhlY3V0ZVJlc3BvbnNlQjtaOWdpdGh1Yi5jb20vcHJvb21wdGVuZy9sYWIvZ2VuL3Byb29tcHRlbmcvcmVsYXkvdjE7cmVsYXl2MWIGcHJvdG8z", [file_proompteng_authz_v1_platform]);
+  fileDesc("Ch9wcm9vbXB0ZW5nL3JlbGF5L3YxL3JlbGF5LnByb3RvEhNwcm9vbXB0ZW5nLnJlbGF5LnYxIi8KFUxpc3RPcGVyYXRpb25zUmVxdWVzdBIWCg5jbGllbnRfc2VydmljZRgBIAEoCSLCAQoSQ29ubmVjdG9yT3BlcmF0aW9uEhQKDGNvbm5lY3Rvcl9pZBgBIAEoCRIMCgRuYW1lGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEg4KBmFjdGlvbhgEIAEoCRIZChFpbnB1dF9zY2hlbWFfanNvbhgFIAEoDBI1Cgd0YXJnZXRzGAYgAygLMiQucHJvb21wdGVuZy5yZWxheS52MS5Db25uZWN0b3JUYXJnZXQSEQoJcmVhZF9vbmx5GAcgASgIIlgKD0Nvbm5lY3RvclRhcmdldBIMCgRuYW1lGAEgASgJEjcKCHJlc291cmNlGAIgASgLMiUucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybVJlc291cmNlIlUKFkxpc3RPcGVyYXRpb25zUmVzcG9uc2USOwoKb3BlcmF0aW9ucxgBIAMoCzInLnByb29tcHRlbmcucmVsYXkudjEuQ29ubmVjdG9yT3BlcmF0aW9uIlUKDkV4ZWN1dGVSZXF1ZXN0EjUKB3N1YmplY3QYASABKAsyJC5wcm9vbXB0ZW5nLmF1dGh6LnYxLlBsYXRmb3JtU3ViamVjdBIMCgRib2R5GAIgASgMIo0BCg9FeGVjdXRlUmVzcG9uc2USFAoMb3BlcmF0aW9uX2lkGAEgASgJEg4KBnJlc3VsdBgCIAEoDBIUCgxjb250ZW50X3R5cGUYAyABKAkSIAoYYXV0aG9yaXphdGlvbl9yZWNlaXB0X2lkGAQgASgJEhwKFGV4ZWN1dGlvbl9yZWNlaXB0X2lkGAUgASgJIloKE0dldEV4ZWN1dGlvblJlcXVlc3QSNQoHc3ViamVjdBgBIAEoCzIkLnByb29tcHRlbmcuYXV0aHoudjEuUGxhdGZvcm1TdWJqZWN0EgwKBGJvZHkYAiABKAwibAoUR2V0RXhlY3V0aW9uUmVzcG9uc2USOQoJZXhlY3V0aW9uGAEgASgLMiYucHJvb21wdGVuZy5hdXRoei52MS5QbGF0Zm9ybUV4ZWN1dGlvbhIZChFsb29rdXBfcmVjZWlwdF9pZBgCIAEoCTK0AgoMUmVsYXlTZXJ2aWNlEmkKDkxpc3RPcGVyYXRpb25zEioucHJvb21wdGVuZy5yZWxheS52MS5MaXN0T3BlcmF0aW9uc1JlcXVlc3QaKy5wcm9vbXB0ZW5nLnJlbGF5LnYxLkxpc3RPcGVyYXRpb25zUmVzcG9uc2USVAoHRXhlY3V0ZRIjLnByb29tcHRlbmcucmVsYXkudjEuRXhlY3V0ZVJlcXVlc3QaJC5wcm9vbXB0ZW5nLnJlbGF5LnYxLkV4ZWN1dGVSZXNwb25zZRJjCgxHZXRFeGVjdXRpb24SKC5wcm9vbXB0ZW5nLnJlbGF5LnYxLkdldEV4ZWN1dGlvblJlcXVlc3QaKS5wcm9vbXB0ZW5nLnJlbGF5LnYxLkdldEV4ZWN1dGlvblJlc3BvbnNlQjtaOWdpdGh1Yi5jb20vcHJvb21wdGVuZy9sYWIvZ2VuL3Byb29tcHRlbmcvcmVsYXkvdjE7cmVsYXl2MWIGcHJvdG8z", [file_proompteng_authz_v1_platform]);
 
 /**
  * @generated from message proompteng.relay.v1.ListOperationsRequest
@@ -177,6 +177,50 @@ export const ExecuteResponseSchema: GenMessage<ExecuteResponse> = /*@__PURE__*/
   messageDesc(file_proompteng_relay_v1_relay, 5);
 
 /**
+ * @generated from message proompteng.relay.v1.GetExecutionRequest
+ */
+export type GetExecutionRequest = Message<"proompteng.relay.v1.GetExecutionRequest"> & {
+  /**
+   * @generated from field: proompteng.authz.v1.PlatformSubject subject = 1;
+   */
+  subject?: PlatformSubject | undefined;
+
+  /**
+   * @generated from field: bytes body = 2;
+   */
+  body: Uint8Array;
+};
+
+/**
+ * Describes the message proompteng.relay.v1.GetExecutionRequest.
+ * Use `create(GetExecutionRequestSchema)` to create a new message.
+ */
+export const GetExecutionRequestSchema: GenMessage<GetExecutionRequest> = /*@__PURE__*/
+  messageDesc(file_proompteng_relay_v1_relay, 6);
+
+/**
+ * @generated from message proompteng.relay.v1.GetExecutionResponse
+ */
+export type GetExecutionResponse = Message<"proompteng.relay.v1.GetExecutionResponse"> & {
+  /**
+   * @generated from field: proompteng.authz.v1.PlatformExecution execution = 1;
+   */
+  execution?: PlatformExecution | undefined;
+
+  /**
+   * @generated from field: string lookup_receipt_id = 2;
+   */
+  lookupReceiptId: string;
+};
+
+/**
+ * Describes the message proompteng.relay.v1.GetExecutionResponse.
+ * Use `create(GetExecutionResponseSchema)` to create a new message.
+ */
+export const GetExecutionResponseSchema: GenMessage<GetExecutionResponse> = /*@__PURE__*/
+  messageDesc(file_proompteng_relay_v1_relay, 7);
+
+/**
  * @generated from service proompteng.relay.v1.RelayService
  */
 export const RelayService: GenService<{
@@ -195,6 +239,14 @@ export const RelayService: GenService<{
     methodKind: "unary";
     input: typeof ExecuteRequestSchema;
     output: typeof ExecuteResponseSchema;
+  },
+  /**
+   * @generated from rpc proompteng.relay.v1.RelayService.GetExecution
+   */
+  getExecution: {
+    methodKind: "unary";
+    input: typeof GetExecutionRequestSchema;
+    output: typeof GetExecutionResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_proompteng_relay_v1_relay, 0);
