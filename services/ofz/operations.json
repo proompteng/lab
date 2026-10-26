@@ -1222,9 +1222,10 @@
     "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
   },
   {
-    "surface": "bff_http",
-    "operation": "GET /api/tengri/connectors",
-    "action": "ACTION_POLICY_CHECK"
+    "surface": "platform_http",
+    "operation": "GET /api/platform/connectors",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service platform API; human policy administration or proof-bound Relay execution"
   },
   {
     "surface": "bff_http",
