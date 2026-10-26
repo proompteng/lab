@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { CryptoFeeTierSchema } from '../broker/crypto-fees'
-import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonWithHashV1Result } from '../hash'
 import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { ChartSourceSchema, decodeChartSource } from './chart-evidence'
 import { JevContractError } from './contract'
@@ -9,7 +9,7 @@ import { JevProtocolSchema } from './protocol'
 
 const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
 export const EntryInferenceInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.entry-inference-input.v2'),
+  schemaVersion: Schema.Literal('bayn.entry-inference-input.v3'),
   numericalState: Schema.Record(Schema.String, Schema.Json),
   chartSource: ChartSourceSchema,
   protocol: JevProtocolSchema,
@@ -22,7 +22,10 @@ export const EntryInferenceInputSchema = Schema.Struct({
 })
 export type EntryInferenceInput = typeof EntryInferenceInputSchema.Type
 export type EntryInferenceMaterial = Omit<EntryInferenceInput, 'schemaVersion'> & {
-  readonly schemaVersion: 'bayn.entry-inference-input.v1' | 'bayn.entry-inference-input.v2'
+  readonly schemaVersion:
+    | 'bayn.entry-inference-input.v1'
+    | 'bayn.entry-inference-input.v2'
+    | 'bayn.entry-inference-input.v3'
 }
 
 export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
@@ -54,12 +57,12 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
       return yield* Result.fail(
         new JevContractError({ message: 'Chart and numerical evidence must contain the same source bars' }),
       )
-    const body = yield* canonicalJsonV1Result(value)
+    const { body, hash: requestHash } = yield* canonicalJsonWithHashV1Result(value)
     if (Buffer.byteLength(body) > 128_000)
       return yield* Result.fail(
         new JevContractError({ message: 'Entry inference input exceeds the native transport budget' }),
       )
-    return { body, requestHash: yield* canonicalHashV1Result(value) }
+    return { body, requestHash }
   })
 
 export const prepareEntryInferenceInput = (input: unknown) =>
