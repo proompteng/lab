@@ -95,6 +95,13 @@ For host and client-volume counters and timestamped RBD mappings, use
 
 ## Scrub Catch-Up Posture
 
+Deep scrubs use `osd_scrub_chunk_max=5`, matching the unchanged five-object minimum, while retaining three concurrent
+scrubs per OSD. [Ceph's Tentacle reference](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#confval-osd_scrub_chunk_max)
+documents larger batches as a client-latency tradeoff; the default is fifteen objects. Verify all six effective
+configurations, compare database and Kafka latency, and require continued scrub progress as described below. This
+setting updates at runtime. If the smaller batch does not help, restore an explicit `15` through reviewed GitOps;
+removing the key alone does not establish that Ceph's persistent config store has reset.
+
 The shared HDD cluster uses Ceph's built-in `high_client_ops` profile to protect application latency while
 continuing scrub catch-up. Scrubs can start at any hour: `osd_scrub_begin_hour=0` and `osd_scrub_end_hour=0`.
 Each OSD allows three local and three replica scrub reservations to catch up with overdue deep scrubs.
@@ -151,6 +158,7 @@ Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 1. `osd_mclock_profile: "high_client_ops"` without custom scheduler overrides
 1. `osd_scrub_begin_hour: "0"` and `osd_scrub_end_hour: "0"`
 1. `osd_max_scrubs: "3"`
+1. `osd_scrub_chunk_max: "5"`
 1. `osd_mclock_max_sequential_bandwidth_hdd: "285212672"` (272MiB/s)
 1. `osd_memory_target: "8589934592"` (8Gi)
 1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`

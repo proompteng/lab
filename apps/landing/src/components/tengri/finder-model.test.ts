@@ -167,6 +167,14 @@ describe('Finder model', () => {
     expect(finderCanPreviewText('application/octet-stream')).toBe(false)
   })
 
+  test('previews Rust source reported with its registered XML media type', () => {
+    expect(finderCanPreviewText('application/rls-services+xml')).toBe(true)
+    expect(finderCanPreviewText('Application/Rls-Services+Xml; charset=utf-8')).toBe(true)
+    expect(finderCanPreviewText('application/vnd.api+json')).toBe(true)
+    expect(finderCanPreviewText('image/svg+xml')).toBe(false)
+    expect(finderCanPreviewText('application/vnd.example+zip')).toBe(false)
+  })
+
   test('classifies folders, source files, and ordinary files', () => {
     expect(finderFileKind({ directory: true, name: 'src' })).toBe('folder')
     expect(finderFileKind({ directory: false, name: 'main.rs' })).toBe('code')
