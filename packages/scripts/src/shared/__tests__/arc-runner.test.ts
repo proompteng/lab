@@ -39,7 +39,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
     expect(arcApplication).toContain('runnerScaleSetName: arc-amd64')
     expect(arcApplication).toContain('runnerScaleSetName: analysis-arm64')
-    expect(arcApplication).toContain('image: docker:dind')
+    expect(arcApplication).not.toContain('image: docker:dind')
     const armBlock = runnerScaleSetBlock('arc-arm64')
     expect(armBlock).toContain('emptyDir:')
     expect(armBlock).toContain('sizeLimit: 130Gi')
@@ -48,6 +48,7 @@ describe('ARC Nix runner toolchain', () => {
     const analysisBlock = runnerScaleSetBlock('analysis-arm64')
     expect(analysisBlock).toContain('emptyDir:')
     expect(analysisBlock).toContain('sizeLimit: 20Gi')
+    expect(analysisBlock).not.toContain('ACTIONS_RUNNER_CONTAINER_HOOKS')
     expect(analysisBlock).not.toContain('volumeClaimTemplate:')
     expect(analysisBlock).not.toContain('storageClassName: "rook-ceph-block"')
     expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
@@ -186,7 +187,7 @@ describe('ARC Nix runner toolchain', () => {
 
   it('isolates each job in a private BuildKit process without a sidecar or shared cache', () => {
     const application = YAML.parse(arcApplication)
-    for (const index of [1, 2]) {
+    for (const index of [1, 2, 3]) {
       const pod = application.spec.sources[index].helm.valuesObject.template.spec
       expect(pod.containers.map((container: { name: string }) => container.name)).toEqual(['runner'])
       expect(JSON.stringify(pod)).not.toMatch(/DOCKER_HOST|podman|hostPath|dind|tcp:\/\//)
