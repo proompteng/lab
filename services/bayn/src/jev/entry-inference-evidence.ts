@@ -19,7 +19,7 @@ import {
   decodeDecisionsResponse,
   validDecisionsUsage,
 } from './decisions'
-import { deriveEntryDispositionForChart } from './entry-inference'
+import { deriveEntryDispositionForChart, hasFeasibleEntrySource } from './entry-inference'
 import {
   prepareEntryInferenceInput,
   type EntryInferenceInput,
@@ -33,6 +33,7 @@ const Evaluation = Schema.Struct({
   rejections: Schema.Array(Schema.Struct({ setup: Schema.Enum(EntrySetup), reason: Schema.Enum(ProposalRejection) })),
 })
 const Disposition = Schema.Union([
+  Schema.Struct({ status: Schema.Literal('SOURCE_INFEASIBLE') }),
   Schema.Struct({
     status: Schema.Literal('VISUAL_FAILED'),
     failure: Schema.Struct({
@@ -127,6 +128,14 @@ export const decodeEntryHandoffForChart = ({
     )
       return yield* invalid('Entry handoff identity or source input does not reproduce')
     const disposition = handoff.disposition
+    if (disposition.status === 'SOURCE_INFEASIBLE') {
+      if (
+        source.input.schemaVersion !== 'bayn.entry-inference-input.v2' ||
+        (yield* hasFeasibleEntrySource(source.input, chart))
+      )
+        return yield* invalid('Source-infeasible evidence contains a fundable source or retired input')
+      return handoff
+    }
     if (disposition.status === 'VISUAL_FAILED') {
       if (disposition.failure.usage !== null && !validDecisionsUsage(disposition.failure.usage))
         return yield* invalid('Failed chart inference contains inconsistent metering')

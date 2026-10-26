@@ -27,10 +27,10 @@ data:
     endpoint = "http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80"
 
     [chunking]
-    nar-size-threshold = 1048576
-    min-size = 262144
-    avg-size = 1048576
-    max-size = 4194304
+    nar-size-threshold = 16777216
+    min-size = 4194304
+    avg-size = 16777216
+    max-size = 33554432
 
     [compression]
     type = "zstd"
