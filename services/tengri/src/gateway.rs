@@ -382,7 +382,6 @@ async fn terminal_websocket(
     if let Err(error) = access.require().await {
         return status_response(error.code(), error.message());
     }
-    state.activity.touch(&ticket.agent_id);
     let guest = match state
         .guests
         .for_agent(

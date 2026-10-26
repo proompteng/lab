@@ -106,9 +106,9 @@ pub(super) async fn bridge(
         tokio::select! {
             message = browser.recv() => {
                 let Some(Ok(message)) = message else { break };
-                activity.touch(&agent_id);
                 if matches!(message, AxumMessage::Close(_)) { break; }
                 if let Some(input) = input(message) {
+                    if input_is_activity(&input) { activity.touch(&agent_id); }
                     timings.input(&input, Instant::now());
                     if sender.send(input).await.is_err() { break; }
                 }
@@ -123,8 +123,8 @@ pub(super) async fn bridge(
                     }
                 };
                 timings.output(&message, Instant::now());
+                if output_is_activity(&message) { activity.touch(&agent_id); }
                 let Some(message) = output(message) else { break };
-                activity.touch(&agent_id);
                 if browser.send(message).await.is_err() { break; }
             }
         }
@@ -137,6 +137,19 @@ async fn report_error(browser: &mut axum::extract::ws::WebSocket, message: &str)
     let _ = browser
         .send(AxumMessage::Text(value.to_string().into()))
         .await;
+}
+
+fn input_is_activity(input: &proto::TerminalInput) -> bool {
+    use proto::terminal_input::Action;
+    match &input.action {
+        Some(Action::Input(bytes)) => !bytes.is_empty(),
+        Some(Action::Resize(_) | Action::Signal(_) | Action::Terminate(_)) => true,
+        _ => false,
+    }
+}
+
+fn output_is_activity(output: &proto::TerminalOutput) -> bool {
+    matches!(&output.event, Some(proto::terminal_output::Event::Output(data)) if !data.data.is_empty())
 }
 
 fn input(message: AxumMessage) -> Option<proto::TerminalInput> {
@@ -204,6 +217,32 @@ fn output(message: proto::TerminalOutput) -> Option<AxumMessage> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn terminal_heartbeats_do_not_keep_an_idle_workspace_awake() {
+        let ping = input(AxumMessage::Text(r#"{"type":"ping"}"#.into())).unwrap();
+        assert!(!input_is_activity(&ping));
+        assert!(!input_is_activity(
+            &input(AxumMessage::Binary(vec![].into())).unwrap()
+        ));
+        assert!(input_is_activity(
+            &input(AxumMessage::Binary(b"ls\n".to_vec().into())).unwrap()
+        ));
+        assert!(!output_is_activity(&proto::TerminalOutput {
+            event: Some(proto::terminal_output::Event::Pong(proto::Empty {}))
+        }));
+        assert!(!output_is_activity(&proto::TerminalOutput {
+            event: Some(proto::terminal_output::Event::Ready(
+                proto::TerminalReady::default()
+            ))
+        }));
+        assert!(output_is_activity(&proto::TerminalOutput {
+            event: Some(proto::terminal_output::Event::Output(proto::TerminalData {
+                sequence: 1,
+                data: b"hello".to_vec()
+            }))
+        }));
+    }
 
     #[test]
     fn timings_measure_first_output_once_and_match_guest_pongs_to_pending_pings() {

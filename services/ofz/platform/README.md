@@ -82,7 +82,7 @@ const response = await fetch('/api/platform/policies', {
 })
 ```
 
-Use the registered target's actual resource ID from `GET /api/tengri/connectors`; do not use a namespace name as policy
+Use the registered target's actual resource ID from `GET /api/platform/connectors`; do not use a namespace name as policy
 identity. `log_reader` and `event_reader` are separate assignments. Setting `enabled: false` revokes the relationship.
 Human subjects use their verified canonical Ofz human ID. Platform administration grants no workspace content access.
 
