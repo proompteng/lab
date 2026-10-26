@@ -283,6 +283,14 @@ pub async fn converge(
         .await?;
         return api.get(&microvm.name_any()).await.map_err(Into::into);
     }
+    if crate::activity::has_idle_sleep_claim(&microvm)
+        && authority.runtime_epoch == microvm.spec.runtime_epoch
+        && authority.running
+    {
+        leadership.fence()?;
+        authorization.stop_runtime(&microvm).await?;
+        return api.get(&microvm.name_any()).await.map_err(Into::into);
+    }
     let authorization_paused =
         authority.running && authority.state == "active" && !authority.runtime_allowed;
     let desired = if authority.runtime_allowed {
@@ -351,16 +359,6 @@ pub async fn converge(
     )?;
     let allocation = allocation_for(&microvm)?;
     supervisor.install_fence(leadership.fence()?).await?;
-    // A persisted reservation must survive controller replacement even after
-    // the runtime has started saving. New reservations require a fresh guest
-    // idle check and use resourceVersion to exclude concurrent durable run pins.
-    if crate::activity::has_idle_sleep_claim(&microvm)
-        && microvm.spec.desired_state != MicroVMDesiredState::Sleeping
-    {
-        leadership.fence()?;
-        authorization.stop_runtime(&microvm).await?;
-        return api.get(&microvm.name_any()).await.map_err(Into::into);
-    }
     let status = supervisor.status().await?;
     ensure!(
         matches!(status.state, SlotState::Vacant { .. })
@@ -2018,60 +2016,50 @@ mod tests {
 
     #[tokio::test]
     async fn idle_sleep_reservation_survives_reconciliation_without_reprobing_or_restoring() {
-        use axum::{Router, routing::post};
-        let mut microvm = agent();
-        microvm.status = Some(MicroVMStatus {
-            pod_uid: Some("original-pod".into()),
-            ..Default::default()
-        });
-        microvm.spec.idle_deadline = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-        microvm.metadata.annotations.get_or_insert_default().insert(
-            crate::activity::ACTIVE_RUN_ANNOTATION.into(),
-            format!("idle-sleep/{}", microvm.spec.runtime_epoch),
-        );
-        let claim = claim_for(&microvm).unwrap();
-        // Only fencing is reachable. Once sleep has been reserved, replacement
-        // controllers must finish it without requiring status, restore or guest RPCs.
-        let router =
-            Router::new().route("/slot/fence", post(|| async { axum::http::StatusCode::OK }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let lease = json!({"apiVersion":"coordination.k8s.io/v1","kind":"Lease",
-            "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod",HOME_UID_ANNOTATION:"original-pvc",HOME_NAME_ANNOTATION:"original-home"}},
-            "spec":{"holderIdentity":serde_json::to_string(&claim.allocation()).unwrap()}});
-        let (client, pending) = mock(vec![
-            get(
-                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
-                lease.clone(),
-            ),
-            get(
-                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
-                lease,
-            ),
-            get(
-                "/api/v1/namespaces/tengri/pods/slot-test",
-                json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"slot-test","uid":"original-pod"},"status":{"podIP":"127.0.0.1"}}),
-            ),
-            get(
-                "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
-                json!(microvm),
-            ),
-        ]);
-        let mut context = context(client);
-        context.identity = WorkloadIdentity::Fixture(port);
-        let authority = Arc::new(std::sync::atomic::AtomicU8::new(6));
-        context.authorization =
-            crate::authz::WorkspaceAuthorization::ControlledFixture(authority.clone());
-        let result = converge(&context, &microvm, context.leader().unwrap()).await;
-        server.abort();
-        assert!(crate::activity::has_idle_sleep_claim(&result.unwrap()));
-        assert!(pending.lock().unwrap().is_empty());
-        assert_eq!(
-            authority.load(std::sync::atomic::Ordering::SeqCst),
-            11,
-            "idle sleep must still clear the run intent"
-        );
+        for (mode, desired) in [
+            (6, MicroVMDesiredState::Running),
+            (6, MicroVMDesiredState::Sleeping),
+            (10, MicroVMDesiredState::Running),
+            (10, MicroVMDesiredState::Sleeping),
+        ] {
+            let mut microvm = agent();
+            microvm.spec.desired_state = desired;
+            microvm.status = Some(MicroVMStatus {
+                pod_uid: Some("original-pod".into()),
+                ..Default::default()
+            });
+            microvm.spec.idle_deadline = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+            microvm.metadata.annotations.get_or_insert_default().insert(
+                crate::activity::ACTIVE_RUN_ANNOTATION.into(),
+                format!("idle-sleep/{}", microvm.spec.runtime_epoch),
+            );
+            let allocation = claim_for(&microvm).unwrap().allocation();
+            let lease = json!({"apiVersion":"coordination.k8s.io/v1","kind":"Lease",
+                "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod",HOME_UID_ANNOTATION:"original-pvc",HOME_NAME_ANNOTATION:"original-home"}},
+                "spec":{"holderIdentity":serde_json::to_string(&allocation).unwrap()}});
+            let (client, pending) = mock(vec![
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    lease,
+                ),
+                get(
+                    "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                    json!(microvm),
+                ),
+            ]);
+            let mut context = context(client);
+            let authority = Arc::new(std::sync::atomic::AtomicU8::new(mode));
+            context.authorization =
+                crate::authz::WorkspaceAuthorization::ControlledFixture(authority.clone());
+            let result = converge(&context, &microvm, context.leader().unwrap()).await;
+            assert!(crate::activity::has_idle_sleep_claim(&result.unwrap()));
+            assert!(pending.lock().unwrap().is_empty());
+            assert_eq!(
+                authority.load(std::sync::atomic::Ordering::SeqCst),
+                11,
+                "committed idle sleep must clear the run intent even during an authorization pause"
+            );
+        }
     }
 
     #[tokio::test]
