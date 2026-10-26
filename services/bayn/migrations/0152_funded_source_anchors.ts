@@ -4,7 +4,7 @@ import { SqlClient } from 'effect/sql'
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
   yield* sql`SELECT pg_advisory_xact_lock(1111578958, 1)`
-  yield* sql`LOCK TABLE intents, mutation_events, autonomous_cycles, authority_state,
+  yield* sql`LOCK TABLE intents, mutation_events, autonomous_cycles, authority_state, authority_generations,
     broker_events, fills, orders, position_snapshots, accounting_transactions,
     accounting_receipts, broker_inventory_debits, reconciliations,
     jev_evaluation_requests, jev_evaluation_receipts, jev_inference_handoffs,
@@ -67,6 +67,17 @@ export default Effect.gen(function* () {
     WHERE maximum='PAPER' AND (
       (effective='PAPER' AND kill_state='CLEAR') OR reason='BLOCKED_STRATEGY_PROTOCOL_CUTOVER'
     )`
+  yield* sql`ALTER TABLE authority_generations
+    DROP CONSTRAINT authority_generations_strategy_parameter_schema_version_check,
+    DROP CONSTRAINT authority_generations_strategy_contract_check,
+    ADD CONSTRAINT authority_generations_strategy_parameter_schema_version_check CHECK (
+      strategy_parameter_schema_version = 'bayn.jev.protocol.v25'
+    ) NOT VALID,
+    ADD CONSTRAINT authority_generations_strategy_contract_check CHECK (
+      ((maximum = 'OBSERVE' AND strategy_name IS NULL AND strategy_parameter_schema_version IS NULL)
+      OR (maximum = 'PAPER' AND strategy_name = 'jev'
+        AND strategy_parameter_schema_version = 'bayn.jev.protocol.v25')) IS TRUE
+    ) NOT VALID`
   yield* sql`ALTER TABLE jev_evaluation_requests DROP CONSTRAINT jev_evaluation_requests_check,
     ADD CONSTRAINT jev_evaluation_requests_check CHECK (
       jsonb_typeof(payload) = 'object'

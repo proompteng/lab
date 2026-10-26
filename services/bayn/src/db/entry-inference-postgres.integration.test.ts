@@ -877,14 +877,19 @@ integration('committed sequential provider handoff', () => {
             UPDATE autonomous_cycles SET state='BLOCKED', terminal_reason='BLOCKED_AUTHORITY',
               state_version=state_version+1, updated_at=terminal.at, terminal_at=terminal.at
               FROM terminal WHERE cycle_id=${request.cycleId}`
-            yield* sql`CREATE TEMP TABLE authority_generations (generation_hash text, account_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE authority_generations
+              (LIKE public.authority_generations INCLUDING CONSTRAINTS) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE authority_state (
               generation_hash text,maximum text,effective text,kill_state text,reason text,version bigint,updated_at timestamptz
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE reconciliations (
               account_id text,status text,reconciled_at timestamptz,reconciliation_id text
             ) ON COMMIT DROP`
-            yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover')`
+            yield* sql`INSERT INTO authority_generations
+              (generation_hash,schema_version,maximum,authority_version,activated_at,account_id,
+                broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment)
+              VALUES (${'a'.repeat(64)},'bayn.authority-generation-history.v1','OBSERVE',1,clock_timestamp(),'paper-cutover',
+                'bayn.broker-identity.v2',${'b'.repeat(64)},'alpaca','sandbox')`
             yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER',${state.effective},
               ${state.kill},${state.reason},1,clock_timestamp())`
             yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover','EXACT',clock_timestamp(),${'b'.repeat(64)})`
