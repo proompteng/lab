@@ -651,11 +651,8 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
     expect(nixOciWorkflow).toContain("ATTIC_PUSH_NO_CLOSURE: 'true'")
     expect(nixOciWorkflow).toContain('NIX_IMAGE_CACHE_WARM_TIMEOUT: 2m')
-    expect(nixOciWorkflow).toContain('NIX_IMAGE_CACHE_WARM_MAX_BYTES: 268435456')
-    expect(nixOciWorkflow).toContain("printf 'skipped-size\\t%s\\t%s\\n'")
-    expect(nixOciWorkflow).toContain('Skipping Attic image output push for ${ARCH}')
     expect(nixOciWorkflow).toContain(
-      'timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${cache_paths[@]}"',
+      'timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${image_paths[@]}"',
     )
     expect(nixOciWorkflow).toContain(
       'Attic image output push failed for ${ARCH}; registry image push remains authoritative.',
@@ -670,9 +667,8 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/')
     expect(nixOciWorkflow).toContain('fallback = true')
     expect(nixOciWorkflow).toContain('stalled-download-timeout = 60')
-    expect(nixOciWorkflow).toContain('image_build_timeout:')
-    expect(nixOciWorkflow).toContain('default: 8m')
-    expect(nixOciWorkflow).toContain('NIX_IMAGE_BUILD_ATTIC_TIMEOUT: ${{ inputs.image_build_timeout }}')
+    expect(nixOciWorkflow).not.toContain('image_build_timeout:')
+    expect(nixOciWorkflow).toContain('NIX_IMAGE_BUILD_ATTIC_TIMEOUT: 45m')
     expect(nixOciWorkflow).toContain('timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}"')
     expect(nixOciWorkflow).toContain('build-image-${ARCH}-cache-nixos-fallback')
     expect(nixOciWorkflow).toContain('timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}" \\')
@@ -737,9 +733,6 @@ describe('native OCI build workflows', () => {
     expect(ciNixOciSummaryScript).toContain('Existing image archive bytes')
     expect(ciNixOciSummaryScript).toContain('Image archive Attic warm successes')
     expect(ciNixOciSummaryScript).toContain('Image archive Attic warm failures')
-    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm size skips')
-    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm skipped bytes')
-    expect(ciNixOciSummaryScript).toContain('count_image_cache_status_rows skipped-size')
     expect(ciNixOciSummaryScript).toContain('GITHUB_STEP_SUMMARY')
   })
 
@@ -1147,7 +1140,6 @@ describe('native OCI build workflows', () => {
     expect(headlampWorkflow).toContain('publish_kargo_tag: true')
     expect(headlampWorkflow).not.toContain('release_artifact_name:')
     expect(headlampWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(headlampWorkflow).toContain('image_build_timeout: 20m')
     expect(headlampWorkflow).toContain('sh services/headlamp/scripts/test-upstream.sh')
     expect(headlampWorkflow).not.toContain('docker/build-push-action')
     expect(headlampWorkflow).not.toContain('docker/setup-buildx-action')
@@ -1266,7 +1258,6 @@ describe('native OCI build workflows', () => {
     expect(jangarBuildWorkflow).toContain('kargo_tag_include_run_id: true')
     expect(jangarBuildWorkflow).not.toContain('release_artifact_name:')
     expect(jangarBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(jangarBuildWorkflow).toContain('image_build_timeout: 20m')
     expect(jangarBuildWorkflow).toContain("- '.github/workflows/jangar-post-deploy-verify.yml'")
     expect(jangarBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(jangarBuildWorkflow).not.toContain('docker/setup-buildx-action')
