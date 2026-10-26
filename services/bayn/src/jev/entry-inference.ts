@@ -106,6 +106,15 @@ const rejectedJevUsage = (error: JevError, expectedRequestHash: string) => {
 export const deriveEntryHandoffDisposition = (input: EntryInferenceInput, visual: DecisionsInference) =>
   Result.gen(function* () {
     const chart = yield* makeNativeChartEvidence(input.chartSource)
+    return yield* deriveEntryDispositionForChart(input, visual, chart)
+  })
+
+export const deriveEntryDispositionForChart = (
+  input: Pick<EntryInferenceInput, 'numericalState' | 'protocol' | 'funding'>,
+  visual: DecisionsInference,
+  chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
+) =>
+  Result.gen(function* () {
     const assessments = yield* chartAssessments(chart, visual.response)
     const economics = yield* jevEntryEconomics({
       protocol: input.protocol,

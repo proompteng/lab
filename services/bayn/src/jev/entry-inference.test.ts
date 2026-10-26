@@ -29,7 +29,7 @@ const fixture = () => {
     claimedAt: utcInstantFromEpochMillis(at),
     expiresAt: utcInstantFromEpochMillis(at + 10_000),
     input: {
-      schemaVersion: 'bayn.entry-inference-input.v1' as const,
+      schemaVersion: 'bayn.entry-inference-input.v2' as const,
       numericalState: {
         schemaVersion: 'bayn.jev-entry-state.v22',
         task: { decisionPurpose: 'ENTRY' },
