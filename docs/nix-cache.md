@@ -187,8 +187,8 @@ Cache correctness is proven by real Nix image workflows:
 
 - pull requests consume the public Attic cache without `ATTIC_TOKEN`
 - `main` builds real image derivations such as `.#atticd-image`
-- `main` pushes final image archives up to 256 MiB, without their dependency
-  closures; larger archives are reported as size skips
+- `main` pushes every final image archive, including multi-GiB outputs, without
+  their dependency closures
 - registry publication is handled by Skopeo from the Nix-built tarball, not by
   Docker Buildx
 - the workflow summary records Attic substitutions, `cache.nixos.org`
@@ -198,6 +198,22 @@ Cache correctness is proven by real Nix image workflows:
 The default `cache.nixos.org` fallback remains available for Nixpkgs
 dependencies, so CI should not duplicate broad upstream Nixpkgs closures into
 Attic.
+
+Image builds and cache downloads have one shared 45-minute deadline. Cold JVM
+images need time to download large JDK dependencies from the public cache
+before they can populate Attic; shorter per-image deadlines interrupted those
+downloads and made the retry start them again. Archive uploads have a separate
+30-minute deadline. The shared workflow records upload success or failure for
+every image size.
+
+Attic chunks NARs of at least 16 MiB at a 16 MiB average, with 4 MiB minimum
+and 32 MiB maximum chunks. A 2 GiB archive therefore needs roughly 128 chunk
+references. The server releases each chunk through a separate database task;
+the former 1 MiB average generated about 2,000 tasks per large upload and
+exhausted the connection pool during concurrent CI uploads. The 32 MiB maximum
+bounds each upload's chunk buffers. Changing boundaries temporarily reduces
+deduplication against older uploads; existing cached NARs retain their recorded
+chunks.
 
 The helper refuses to run without a token:
 

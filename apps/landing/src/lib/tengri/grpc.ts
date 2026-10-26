@@ -1116,6 +1116,9 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
       }
       return new TengriUnavailableError('Tengri resource already exists', 409)
     case grpc.status.FAILED_PRECONDITION:
+      if (methodName === 'updatePowerSettings' && error.details === 'automatic sleep already committed') {
+        return new TengriUnavailableError('The agent has started sleeping. Resume it, then change this setting.', 409)
+      }
       if (error.metadata.get('x-tengri-error-code')[0] === 'runtime_upgrade_required') {
         return new TengriUnavailableError(
           'This workspace needs a runtime upgrade before it can reconnect.',

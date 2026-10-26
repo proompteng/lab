@@ -95,6 +95,31 @@ for attempt in $(seq 1 60); do
     if [[ "$fixture_mode" == control ]]; then
       cargo test --locked --lib control_integration -- --ignored --nocapture
     elif [[ "$fixture_mode" == platform ]]; then
+      python3 - "$fixture_dir" <<'PY'
+import json
+import pathlib
+import sys
+directory = pathlib.Path(sys.argv[1])
+services = json.loads(pathlib.Path('platform/services.json').read_text())
+services['services'].append({
+    'id': 'fixture-client',
+    'identities': [
+        'spiffe://proompteng.ai/ns/fixture/sa/first',
+        'spiffe://proompteng.ai/ns/fixture/sa/second',
+    ],
+    'roles': ['platform.client', 'relay.client'],
+})
+policies = json.loads(pathlib.Path('platform/policies.json').read_text())
+policies['actions'].append({
+    'id': 'fixture.status.read',
+    'resourceKind': 'kubernetes.namespace',
+    'permission': 'read_status',
+})
+(directory / 'services.json').write_text(json.dumps(services))
+(directory / 'policies.json').write_text(json.dumps(policies))
+PY
+      export OFZ_SERVICES_FILE="$fixture_dir/services.json"
+      export OFZ_POLICY_CATALOG_FILE="$fixture_dir/policies.json"
       cargo test --locked --lib platform::integration -- --ignored --nocapture
     elif [[ "$fixture_mode" == bootstrap ]]; then
       cargo build --locked
