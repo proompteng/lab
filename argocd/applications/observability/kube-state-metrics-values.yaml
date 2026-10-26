@@ -21,6 +21,13 @@ collectors:
 rbac:
   extraRules:
     - apiGroups:
+        - kargo.akuity.io
+      resources:
+        - stages
+      verbs:
+        - list
+        - watch
+    - apiGroups:
         - argoproj.io
       resources:
         - applications
@@ -49,6 +56,30 @@ customResourceState:
     kind: CustomResourceStateMetrics
     spec:
       resources:
+        - groupVersionKind:
+            group: kargo.akuity.io
+            version: v1alpha1
+            kind: Stage
+          metricNamePrefix: kube_kargo
+          labelsFromPath:
+            namespace: [metadata, namespace]
+            stage: [metadata, name]
+          metrics:
+            - name: stage_last_promotion_info
+              help: The terminal phase of a Stage's last promotion.
+              each:
+                type: Info
+                info:
+                  path: [status, lastPromotion, status]
+                  labelsFromPath:
+                    phase: [phase]
+            - name: stage_current_promotion_started_at
+              help: Current promotion start timestamp in Unix seconds; absent when no promotion is active.
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, currentPromotion, status, startedAt]
+                  nilIsZero: false
         - groupVersionKind:
             group: argoproj.io
             version: v1alpha1

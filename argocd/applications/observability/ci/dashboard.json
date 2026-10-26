@@ -1707,7 +1707,7 @@
         "multi": true,
         "name": "workflow",
         "options": [],
-        "query": "label_values(ci_job_phase_duration_seconds_count, workflow)",
+        "query": "label_values(ci_jobs_completed, workflow)",
         "refresh": 2,
         "type": "query"
       },
@@ -1726,7 +1726,7 @@
         "multi": true,
         "name": "architecture",
         "options": [],
-        "query": "label_values(ci_job_phase_duration_seconds_count, architecture)",
+        "query": "label_values(ci_jobs_completed, architecture)",
         "refresh": 2,
         "type": "query"
       },
@@ -1745,7 +1745,7 @@
         "multi": true,
         "name": "runner_pool",
         "options": [],
-        "query": "label_values(ci_job_phase_duration_seconds_count, runner_pool)",
+        "query": "label_values(ci_jobs_completed, runner_pool)",
         "refresh": 2,
         "type": "query"
       },
@@ -1764,7 +1764,7 @@
         "multi": true,
         "name": "job_role",
         "options": [],
-        "query": "label_values(ci_job_phase_duration_seconds_count, job_role)",
+        "query": "label_values(ci_jobs_completed, job_role)",
         "refresh": 2,
         "type": "query"
       },
@@ -1783,7 +1783,7 @@
         "multi": true,
         "name": "job_family",
         "options": [],
-        "query": "label_values(ci_job_phase_duration_seconds_count, job_family)",
+        "query": "label_values(ci_jobs_completed, job_family)",
         "refresh": 2,
         "type": "query"
       },
@@ -1802,7 +1802,7 @@
         "multi": true,
         "name": "event",
         "options": [],
-        "query": "label_values(ci_job_phase_duration_seconds_count, event)",
+        "query": "label_values(ci_jobs_completed, event)",
         "refresh": 2,
         "type": "query"
       },

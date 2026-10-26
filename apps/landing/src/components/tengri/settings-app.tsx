@@ -1,6 +1,18 @@
 'use client'
 
-import { Bot, ChevronLeft, ChevronRight, Info, LogOut, Moon, Search, Settings, ShieldCheck, Trash2 } from 'lucide-react'
+import {
+  Bot,
+  ChevronLeft,
+  ChevronRight,
+  Info,
+  LogOut,
+  Moon,
+  Plug,
+  Search,
+  Settings,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import type { TengriAgent, TengriCodexAccount, TengriUser } from '@/lib/tengri/types'
@@ -10,6 +22,7 @@ import { DesktopAppIcon } from './desktop-app-icon'
 import { PowerSettingsForm } from './power-settings-form'
 import { PasskeyRegistration } from './passkey-registration'
 import { AccessPanel } from './access-panel'
+import { ConnectionsPanel } from './connections-panel'
 import { formatAgentDate, formatAgentResources, formatAgentUptime, shouldRefreshCodexAccount } from './settings-model'
 
 type BusyAction = 'delete' | 'sign-out' | 'sleep' | null
@@ -23,6 +36,7 @@ const settingsNavigation = [
   { id: 'general', label: 'General', icon: Settings, color: 'bg-zinc-500' },
   { id: 'power', label: 'Power & Sleep', icon: Moon, color: 'bg-indigo-500' },
   { id: 'codex', label: 'Codex', icon: Bot, color: 'bg-emerald-600' },
+  { id: 'connections', label: 'Connections', icon: Plug, color: 'bg-cyan-600' },
   { id: 'access', label: 'Privacy & Security', icon: ShieldCheck, color: 'bg-blue-500' },
   { id: 'about', label: 'About', icon: Info, color: 'bg-zinc-500' },
 ] as const
@@ -309,6 +323,15 @@ export function SettingsApp({
                   </p>
                 ) : null}
               </>
+            ) : null}
+            {visitedSections.includes('connections') ? (
+              <div hidden={selectedSection !== 'connections'}>
+                <ConnectionsPanel
+                  agent={agent}
+                  active={active && selectedSection === 'connections'}
+                  disabled={lifecycleBusy}
+                />
+              </div>
             ) : null}
             {visitedSections.includes('access') ? (
               <div hidden={selectedSection !== 'access'} className="space-y-5">

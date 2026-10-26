@@ -1,6 +1,7 @@
 import type { TengriAction, TengriDesktopSnapshot, TengriErrorCode } from '@/lib/tengri/types'
 import { readCodexHistory } from '@/lib/tengri/codex-history'
 import { tengriCreateAgentSchema } from '@/lib/tengri/schemas'
+import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
 import { z } from 'zod'
 import { reportBrowserFailure } from '@/lib/observability/client'
 
@@ -97,11 +98,13 @@ export async function runTengriAction<Result>(
       action.action !== 'codex-models' &&
       action.action !== 'list-threads' &&
       action.action !== 'resume-thread' &&
-      action.action !== 'active-codex-run' &&
+      action.action !== 'active-codex-runs' &&
       action.action !== 'codex-run',
   })
   notifyGuestOperationListeners(scope)
   try {
+    if (['send-turn', 'steer-turn', 'answer-questions', 'resolve-approval'].includes(action.action))
+      await renewWorkspaceConnections(guestAgentId, controller.signal)
     return await postTengriAction<Result>(action, { ...options, signal: controller.signal })
   } finally {
     options?.signal?.removeEventListener('abort', abortFromCaller)
@@ -288,6 +291,7 @@ function requestFailure(payload: unknown, status: number, traceId?: string | nul
       (status === 412 && record.code === 'runtime_upgrade_required') ||
       (status === 502 && record.code === 'model_catalog_invalid') ||
       (status === 502 && record.code === 'conversation_history_invalid') ||
+      (status === 502 && record.code === 'chat_index_invalid') ||
       (status === 429 && record.code === 'capacity_full'))
       ? record.code
       : undefined
