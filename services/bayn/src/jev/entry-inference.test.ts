@@ -29,9 +29,9 @@ const fixture = () => {
     claimedAt: utcInstantFromEpochMillis(at),
     expiresAt: utcInstantFromEpochMillis(at + 10_000),
     input: {
-      schemaVersion: 'bayn.entry-inference-input.v4' as const,
+      schemaVersion: 'bayn.entry-inference-input.v5' as const,
       numericalState: {
-        schemaVersion: 'bayn.jev-entry-state.v22',
+        schemaVersion: 'bayn.jev-entry-state.v23',
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol: 'AAPL', bars1m: bars },
         benchmark: { symbol: 'SPY' },

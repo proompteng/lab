@@ -3,13 +3,14 @@ import { Result, Schema } from 'effect'
 import { CryptoFeeTierSchema } from '../broker/crypto-fees'
 import { canonicalHashV1Result, canonicalJsonWithHashV1Result } from '../hash'
 import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { instrumentMarket, MarketKind } from '../instruments'
 import { ChartSourceSchema, decodeChartSource } from './chart-evidence'
 import { JevContractError } from './contract'
 import { JevProtocolSchema, type JevProtocolMaterial } from './protocol'
 
 const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
 export const EntryInferenceInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.entry-inference-input.v4'),
+  schemaVersion: Schema.Literal('bayn.entry-inference-input.v5'),
   numericalState: Schema.Record(Schema.String, Schema.Json),
   chartSource: ChartSourceSchema,
   protocol: JevProtocolSchema,
@@ -27,6 +28,7 @@ export type EntryInferenceMaterial = Omit<EntryInferenceInput, 'schemaVersion' |
     | 'bayn.entry-inference-input.v2'
     | 'bayn.entry-inference-input.v3'
     | 'bayn.entry-inference-input.v4'
+    | 'bayn.entry-inference-input.v5'
   readonly protocol: JevProtocolMaterial
 }
 
@@ -34,7 +36,7 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
   Result.gen(function* () {
     yield* Schema.decodeUnknownResult(
       Schema.Struct({
-        schemaVersion: Schema.Literal('bayn.jev-entry-state.v22'),
+        schemaVersion: Schema.Literal(value.protocol.inputDefinition),
         task: Schema.Struct({ decisionPurpose: Schema.Literal('ENTRY') }),
       }),
     )(value.numericalState)
@@ -49,7 +51,10 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
       candidate.symbol !== source.symbol ||
       session.completedBarWindowEndsAt !== source.windowEndAt ||
       !value.protocol.candidateSymbols.includes(source.symbol) ||
-      BigInt(value.funding.bidMicros) > BigInt(value.funding.askMicros)
+      BigInt(value.funding.bidMicros) > BigInt(value.funding.askMicros) ||
+      (value.schemaVersion === 'bayn.entry-inference-input.v5' &&
+        instrumentMarket(source.symbol) === MarketKind.Equity &&
+        value.funding.cryptoFeeTier !== null)
     )
       return yield* Result.fail(
         new JevContractError({ message: 'Entry inference source, symbol, funding quote or native protocol differ' }),

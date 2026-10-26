@@ -23,9 +23,9 @@ export const entryEvaluationRequestFixture = (observedAt = '2026-10-25T07:00:32.
   ]
   const prepared = Result.getOrThrow(
     prepareEntryInferenceInput({
-      schemaVersion: 'bayn.entry-inference-input.v4',
+      schemaVersion: 'bayn.entry-inference-input.v5',
       numericalState: {
-        schemaVersion: 'bayn.jev-entry-state.v22',
+        schemaVersion: 'bayn.jev-entry-state.v23',
         task: { decisionPurpose: 'ENTRY' },
         candidate: { symbol, bars1m: bars },
         session: { completedBarWindowEndsAt: windowEndAt },

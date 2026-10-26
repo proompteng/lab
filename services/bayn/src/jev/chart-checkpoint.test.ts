@@ -97,8 +97,11 @@ test('retired v3 chart checkpoints retain exact late usage and expense identitie
   const input = {
     ...request.request,
     schemaVersion: 'bayn.entry-inference-input.v3',
+    numericalState: { ...request.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
     protocol: {
       ...request.request.protocol,
+      inputDefinition: 'bayn.jev-entry-state.v22' as const,
+      entrySelectionPolicy: 'source-anchored-proposal-judgments' as const,
       schemaVersion: 'bayn.jev.protocol.v24',
       entryQuestionPolicyHash: retainedConditionalQuestionPolicyHash,
     },

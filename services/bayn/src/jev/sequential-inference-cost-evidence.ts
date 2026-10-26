@@ -4,8 +4,16 @@ import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
 import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from './chart-evidence'
 import { JevContractError, JevFailure } from './contract'
-import { makeChartDecisionsRequest } from './chart-questions'
-import { makeEntryJudgmentRequest, entryJudgmentPolicy } from './entry-questions'
+import {
+  chartQuestionPolicy,
+  ChartAssessmentsSchema,
+  chartAssessmentsFromResponse,
+  makeChartDecisionsRequest,
+} from './chart-questions'
+import {
+  makeRetainedFundedEntryJudgmentRequest,
+  retainedFundedEntryJudgmentPolicy,
+} from './retained-funded-entry-questions'
 import {
   RetainedConditionalChartAssessmentsSchema,
   makeRetainedConditionalChartDecisionsRequest,
@@ -35,7 +43,7 @@ import {
   JevOutcome,
 } from './evidence'
 import { decodeJevResolution } from './resolution'
-import { jevProtocolSchemaForQuestionPolicy } from './protocol'
+import { retainedJevProtocolSchema } from './protocol'
 import {
   RetainedChartAssessmentsSchema,
   makeRetainedChartDecisionsRequest,
@@ -48,22 +56,33 @@ export const retainedSequentialQuestionPolicyHash = Result.getOrThrow(
   canonicalHashV1Result({ chart: retainedChartQuestionPolicy, jev: retainedEntryJudgmentPolicy }),
 )
 export const retainedConditionalQuestionPolicyHash = Result.getOrThrow(
-  canonicalHashV1Result({ chart: retainedConditionalChartQuestionPolicy, jev: entryJudgmentPolicy }),
+  canonicalHashV1Result({ chart: retainedConditionalChartQuestionPolicy, jev: retainedFundedEntryJudgmentPolicy }),
+)
+export const retainedFundedQuestionPolicyHash = Result.getOrThrow(
+  canonicalHashV1Result({ chart: chartQuestionPolicy, jev: retainedFundedEntryJudgmentPolicy }),
 )
 const RetainedInput = Schema.Struct({
   ...EntryInferenceInputSchema.fields,
   schemaVersion: Schema.Literals(['bayn.entry-inference-input.v1', 'bayn.entry-inference-input.v2']),
-  protocol: jevProtocolSchemaForQuestionPolicy(retainedSequentialQuestionPolicyHash, 'bayn.jev.protocol.v24'),
+  protocol: retainedJevProtocolSchema(retainedSequentialQuestionPolicyHash, 'bayn.jev.protocol.v24'),
 })
 const RetainedRequest = Schema.Struct({ ...JevEvaluationRequestSchema.fields, request: RetainedInput })
 const RetainedConditionalInput = Schema.Struct({
   ...EntryInferenceInputSchema.fields,
   schemaVersion: Schema.Literal('bayn.entry-inference-input.v3'),
-  protocol: jevProtocolSchemaForQuestionPolicy(retainedConditionalQuestionPolicyHash, 'bayn.jev.protocol.v24'),
+  protocol: retainedJevProtocolSchema(retainedConditionalQuestionPolicyHash, 'bayn.jev.protocol.v24'),
 })
 const RetainedConditionalRequest = Schema.Struct({
   ...JevEvaluationRequestSchema.fields,
   request: RetainedConditionalInput,
+})
+const RetainedFundedRequest = Schema.Struct({
+  ...JevEvaluationRequestSchema.fields,
+  request: Schema.Struct({
+    ...EntryInferenceInputSchema.fields,
+    schemaVersion: Schema.Literal('bayn.entry-inference-input.v4'),
+    protocol: retainedJevProtocolSchema(retainedFundedQuestionPolicyHash, 'bayn.jev.protocol.v25'),
+  }),
 })
 const RetainedHandoff = makeEntryHandoffSchema('bayn.entry-handoff.v1', RetainedChartAssessmentsSchema)
 const RetainedConditionalHandoff = makeEntryHandoffSchema(
@@ -83,6 +102,8 @@ const makeRetainedReceiptSchema = <S extends Schema.Top>(handoff: S) =>
   })
 const RetainedReceipt = makeRetainedReceiptSchema(RetainedHandoff)
 const RetainedConditionalReceipt = makeRetainedReceiptSchema(RetainedConditionalHandoff)
+const RetainedFundedHandoff = makeEntryHandoffSchema('bayn.entry-handoff.v3', ChartAssessmentsSchema)
+const RetainedFundedReceipt = makeRetainedReceiptSchema(RetainedFundedHandoff)
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
 
 const retainedSourceFeasible = (
@@ -108,7 +129,7 @@ const retainedSourceFeasible = (
         })
   })
 
-// Financial projection only. The executable entry codec accepts only v4 inputs.
+// Financial projection only. The executable entry codec accepts only v5 inputs.
 export const readSequentialInferenceCostEvidence = (row: {
   readonly request: unknown
   readonly receipt: unknown
@@ -124,11 +145,12 @@ export const readSequentialInferenceCostEvidence = (row: {
             'bayn.entry-inference-input.v2',
             'bayn.entry-inference-input.v3',
             'bayn.entry-inference-input.v4',
+            'bayn.entry-inference-input.v5',
           ]),
         }),
       }),
     )(row.request)
-    if (version.request.schemaVersion === 'bayn.entry-inference-input.v4') {
+    if (version.request.schemaVersion === 'bayn.entry-inference-input.v5') {
       const request = yield* decodeJevEvaluationRequest(row.request)
       const chart = yield* makeNativeChartEvidence(request.request.chartSource)
       const chartRequest = yield* makeChartDecisionsRequest({
@@ -154,9 +176,12 @@ export const readSequentialInferenceCostEvidence = (row: {
     }
 
     const conditional = version.request.schemaVersion === 'bayn.entry-inference-input.v3'
-    const request = yield* conditional
-      ? Schema.decodeUnknownResult(RetainedConditionalRequest, strictParseOptions)(row.request)
-      : Schema.decodeUnknownResult(RetainedRequest, strictParseOptions)(row.request)
+    const funded = version.request.schemaVersion === 'bayn.entry-inference-input.v4'
+    const request = yield* funded
+      ? Schema.decodeUnknownResult(RetainedFundedRequest, strictParseOptions)(row.request)
+      : conditional
+        ? Schema.decodeUnknownResult(RetainedConditionalRequest, strictParseOptions)(row.request)
+        : Schema.decodeUnknownResult(RetainedRequest, strictParseOptions)(row.request)
     const { requestId, ...material } = request
     const prepared = yield* verifyEntryInferenceSource(request.request)
     if (
@@ -171,9 +196,18 @@ export const readSequentialInferenceCostEvidence = (row: {
       ? makeRetainedChartEvidenceV1(request.request.chartSource)
       : makeNativeChartEvidence(request.request.chartSource)
     const source = { requestId, input: request.request, observedAt: request.observedAt, expiresAt: request.expiresAt }
-    const chartRequest = yield* conditional
-      ? makeRetainedConditionalChartDecisionsRequest(chart)
-      : makeRetainedChartDecisionsRequest(chart)
+    const fundedChartRequest = funded
+      ? yield* makeChartDecisionsRequest({
+          chart,
+          protocol: request.request.protocol,
+          funding: request.request.funding,
+        })
+      : null
+    const chartRequest =
+      fundedChartRequest ??
+      (yield* conditional
+        ? makeRetainedConditionalChartDecisionsRequest(chart)
+        : makeRetainedChartDecisionsRequest(chart))
     const handoff =
       row.handoff === null
         ? null
@@ -182,21 +216,30 @@ export const readSequentialInferenceCostEvidence = (row: {
             input: row.handoff,
             inputHash: prepared.requestHash,
             chart,
-            handoffSchema: conditional ? RetainedConditionalHandoff : RetainedHandoff,
+            handoffSchema: funded ? RetainedFundedHandoff : conditional ? RetainedConditionalHandoff : RetainedHandoff,
             sourceFeasible:
-              request.request.schemaVersion === 'bayn.entry-inference-input.v1'
-                ? null
-                : yield* retainedSourceFeasible(request.request, chart),
+              fundedChartRequest !== null
+                ? fundedChartRequest.sourceFeasible
+                : request.request.schemaVersion === 'bayn.entry-inference-input.v1'
+                  ? null
+                  : yield* retainedSourceFeasible(request.request, chart),
             prepareVisual: () => Result.succeed(chartRequest),
-            assessVisual: conditional ? retainedConditionalChartAssessmentsFromResponse : retainedChartAssessments,
-            prepareJudgments: conditional ? makeEntryJudgmentRequest : makeRetainedEntryJudgmentRequest,
+            assessVisual: funded
+              ? (sourceChart, response) => chartAssessmentsFromResponse(sourceChart, response, chartRequest.request)
+              : conditional
+                ? retainedConditionalChartAssessmentsFromResponse
+                : retainedChartAssessments,
+            prepareJudgments:
+              funded || conditional ? makeRetainedFundedEntryJudgmentRequest : makeRetainedEntryJudgmentRequest,
           })
     const receipt =
       row.receipt === null
         ? null
-        : yield* conditional
-            ? Schema.decodeUnknownResult(RetainedConditionalReceipt, strictParseOptions)(row.receipt)
-            : Schema.decodeUnknownResult(RetainedReceipt, strictParseOptions)(row.receipt)
+        : yield* funded
+            ? Schema.decodeUnknownResult(RetainedFundedReceipt, strictParseOptions)(row.receipt)
+            : conditional
+              ? Schema.decodeUnknownResult(RetainedConditionalReceipt, strictParseOptions)(row.receipt)
+              : Schema.decodeUnknownResult(RetainedReceipt, strictParseOptions)(row.receipt)
     if (receipt !== null) {
       const { receiptHash, ...receiptMaterial } = receipt
       if (

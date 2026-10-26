@@ -1135,12 +1135,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         )`
         expect(Result.isFailure(yield* insert('intraday-momentum', '8'.repeat(64), 2).pipe(Effect.result))).toBe(true)
         yield* insert('jev', '9'.repeat(64), 2)
-        expect(
-          Result.isFailure(yield* insert('jev', '7'.repeat(64), 3, 'bayn.jev.protocol.v24').pipe(Effect.result)),
-        ).toBe(true)
+        for (const retired of ['bayn.jev.protocol.v24', 'bayn.jev.protocol.v25'])
+          expect(Result.isFailure(yield* insert('jev', '7'.repeat(64), 3, retired).pipe(Effect.result))).toBe(true)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v25' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v26' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(

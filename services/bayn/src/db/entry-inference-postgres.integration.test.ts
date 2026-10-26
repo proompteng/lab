@@ -10,6 +10,7 @@ import conditionalBaseAnchors from '../../migrations/0149_conditional_base_ancho
 import inferenceRequestVersion from '../../migrations/0150_inference_request_version'
 import chartDispatchCheckpoints from '../../migrations/0151_chart_dispatch_checkpoints'
 import fundedSourceAnchors from '../../migrations/0152_funded_source_anchors'
+import marketEntryStrategies from '../../migrations/0153_market_entry_strategies'
 
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
@@ -30,6 +31,7 @@ import { defaultJevProtocolDocument } from '../jev/protocol'
 import {
   retainedConditionalQuestionPolicyHash,
   retainedSequentialQuestionPolicyHash,
+  retainedFundedQuestionPolicyHash,
 } from '../jev/sequential-inference-cost-evidence'
 import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { JevResolutionStatus } from '../jev/resolution'
@@ -158,6 +160,7 @@ integration('committed sequential provider handoff', () => {
         if (!withRequestVersion) {
           yield* chartDispatchCheckpoints
           yield* sql.withTransaction(fundedSourceAnchors)
+          yield* sql.withTransaction(marketEntryStrategies)
         }
         yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
@@ -733,6 +736,7 @@ integration('committed sequential provider handoff', () => {
     ['image', 148, 'bayn.entry-inference-input.v1', relativeChartVolume],
     ['question', 149, 'bayn.entry-inference-input.v2', conditionalBaseAnchors],
     ['funded-source', 152, 'bayn.entry-inference-input.v3', fundedSourceAnchors],
+    ['market-entry', 153, 'bayn.entry-inference-input.v4', marketEntryStrategies],
   ] as const)(
     'retains original chart requests and rejects retired %s contract writes',
     async (_name, migrationId, retiredVersion, migration) =>
@@ -754,10 +758,17 @@ integration('committed sequential provider handoff', () => {
             schemaVersion: retiredVersion,
             protocol: {
               ...request.request.protocol,
-              schemaVersion: 'bayn.jev.protocol.v24',
+              schemaVersion: migrationId === 153 ? 'bayn.jev.protocol.v25' : 'bayn.jev.protocol.v24',
+              inputDefinition: 'bayn.jev-entry-state.v22',
+              entrySelectionPolicy: 'source-anchored-proposal-judgments',
               entryQuestionPolicyHash:
-                migrationId === 152 ? retainedConditionalQuestionPolicyHash : retainedSequentialQuestionPolicyHash,
+                migrationId === 153
+                  ? retainedFundedQuestionPolicyHash
+                  : migrationId === 152
+                    ? retainedConditionalQuestionPolicyHash
+                    : retainedSequentialQuestionPolicyHash,
             },
+            numericalState: { ...request.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
           }
           const oldMaterial = {
             ...original,
@@ -797,7 +808,7 @@ integration('committed sequential provider handoff', () => {
               constraint: Schema.Literal('jev_evaluation_requests_check'),
             }),
           )(rejected.failure.reason.cause)
-          if (migrationId === 152) {
+          if (migrationId >= 152) {
             const claim = Result.getOrThrow(
               makeChartDispatchClaim({
                 schemaVersion: 'bayn.chart-dispatch-claim.v1',
@@ -812,7 +823,7 @@ integration('committed sequential provider handoff', () => {
               VALUES (${claim.requestId},${claim.claimHash},${sql.json(claim)})`.pipe(Effect.result)
             expect(Result.isFailure(rejectedClaim)).toBe(true)
             const lateMaterial = {
-              schemaVersion: 'bayn.entry-handoff.v2',
+              schemaVersion: migrationId === 153 ? 'bayn.entry-handoff.v3' : 'bayn.entry-handoff.v2',
               requestId: historical.requestId,
               inputHash: historical.requestHash,
               visualRequestHash: 'c'.repeat(64),
@@ -842,6 +853,7 @@ integration('committed sequential provider handoff', () => {
     ['relative-chart-volume', relativeChartVolume],
     ['conditional-base-anchor', conditionalBaseAnchors],
     ['funded-source-anchor', fundedSourceAnchors],
+    ['market-entry-strategy', marketEntryStrategies],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -895,7 +907,7 @@ integration('committed sequential provider handoff', () => {
             yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover','EXACT',clock_timestamp(),${'b'.repeat(64)})`
             const before =
               yield* sql`SELECT generation_hash,maximum,effective,kill_state,reason,version::text AS version FROM authority_state`
-            yield* fundedSourceAnchors
+            yield* marketEntryStrategies
             expect(
               yield* sql`SELECT generation_hash,maximum,effective,kill_state,reason,version::text AS version FROM authority_state`,
             ).toEqual(

@@ -24,6 +24,7 @@ import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError } from './contract'
 import { prepareEntryInferenceInput } from './entry-inference-input'
+import { instrumentMarket, MarketKind } from '../instruments'
 import {
   decodeJevBatchPlan,
   JevBatchPlanVersion,
@@ -311,11 +312,14 @@ const requestFromSnapshot = (
     if (!continuous && session === undefined)
       return yield* unavailable('Jev signal snapshot has no matching market session')
     const observed = Date.parse(snapshot.manifest.observedAt)
-    const cryptoFeeTier = effectiveCryptoFeeTier(
-      native.portfolio.brokerState.account.cryptoFeeTier,
-      native.portfolio.brokerState.account.observedAt,
-      snapshot.manifest.observedAt,
-    )
+    const cryptoFeeTier =
+      instrumentMarket(symbol) === MarketKind.Crypto
+        ? effectiveCryptoFeeTier(
+            native.portfolio.brokerState.account.cryptoFeeTier,
+            native.portfolio.brokerState.account.observedAt,
+            snapshot.manifest.observedAt,
+          )
+        : null
     const economics = yield* jevEntryEconomics({
       cryptoFeeTier,
       protocol: native.protocol,
@@ -325,7 +329,7 @@ const requestFromSnapshot = (
       capitalMicros: native.portfolio.brokerState.account.equityMicros,
     })
     return yield* prepareEntryInferenceInput({
-      schemaVersion: 'bayn.entry-inference-input.v4',
+      schemaVersion: 'bayn.entry-inference-input.v5',
       protocol: native.protocol,
       chartSource: {
         symbol,

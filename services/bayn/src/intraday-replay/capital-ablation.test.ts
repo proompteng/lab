@@ -344,8 +344,8 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
 test('uncertain proposal judgments stay outside both funded populations', () => {
   const opp = opportunity(0, true, 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v25')
-  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('source-anchored-proposal-judgments')
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v26')
+  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('market-specific-proposal-judgments')
   expect(baseline?.metrics.filledEntries).toBe(0)
   expect(candidate?.metrics.filledEntries).toBe(0)
   expect(baseline?.eligibleOpportunityIds).toEqual(candidate?.eligibleOpportunityIds)

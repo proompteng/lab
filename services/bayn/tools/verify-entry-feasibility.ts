@@ -20,6 +20,8 @@ import { makeJevEvaluationReceipt, makeJevEvaluationRequest, JevOutcome } from '
 import { readSequentialInferenceCostEvidence } from '../src/jev/sequential-inference-cost-evidence'
 import { makeEntryJudgmentRequest } from '../src/jev/entry-questions'
 import { makeRetainedEntryJudgmentRequest } from '../src/jev/retained-entry-questions'
+import { makeRetainedFundedEntryJudgmentRequest } from '../src/jev/retained-funded-entry-questions'
+import { instrumentMarket, MarketKind } from '../src/instruments'
 import { defaultJevProtocolDocument } from '../src/jev/protocol'
 import { InferenceUsageStatus } from '../src/inference-costs'
 import { makeInferenceExpenseQuotes } from '../src/inference-expense'
@@ -63,10 +65,12 @@ const verify = Effect.gen(function* () {
         saved.visual,
         chart,
         saved.assessments,
-        input.schemaVersion === 'bayn.entry-inference-input.v3' ||
-          input.schemaVersion === 'bayn.entry-inference-input.v4'
+        input.schemaVersion === 'bayn.entry-inference-input.v5'
           ? makeEntryJudgmentRequest
-          : makeRetainedEntryJudgmentRequest,
+          : input.schemaVersion === 'bayn.entry-inference-input.v3' ||
+              input.schemaVersion === 'bayn.entry-inference-input.v4'
+            ? makeRetainedFundedEntryJudgmentRequest
+            : makeRetainedEntryJudgmentRequest,
       ),
     )
     const expectedHash = yield* Effect.fromResult(canonicalHashV1Result(saved.evaluation))
@@ -76,10 +80,17 @@ const verify = Effect.gen(function* () {
     const current = yield* Effect.fromResult(
       prepareEntryInferenceInput({
         ...input,
-        schemaVersion: 'bayn.entry-inference-input.v4',
+        schemaVersion: 'bayn.entry-inference-input.v5',
+        numericalState: { ...input.numericalState, schemaVersion: defaultJevProtocolDocument.inputDefinition },
+        funding: {
+          ...input.funding,
+          cryptoFeeTier: instrumentMarket(chart.symbol) === MarketKind.Crypto ? input.funding.cryptoFeeTier : null,
+        },
         protocol: {
           ...input.protocol,
-          schemaVersion: 'bayn.jev.protocol.v25',
+          schemaVersion: defaultJevProtocolDocument.schemaVersion,
+          inputDefinition: defaultJevProtocolDocument.inputDefinition,
+          entrySelectionPolicy: defaultJevProtocolDocument.entrySelectionPolicy,
           entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash,
         },
       }),
@@ -210,7 +221,7 @@ const verify = Effect.gen(function* () {
     unchangedFundedRequests: fundedRequests,
     actualProviderCalls: 0,
     inputProjection:
-      'Same source, prices, funding and economic protocol. Retained v1/v2/v3 inputs use v4 and its question policy only for the offline dispatch probe; original model responses retain their original contracts.',
+      'Same source, prices and economic limits. Retained inputs use v5 and its market-specific question policy only for the offline dispatch probe; equity carries no crypto tier. Original model responses retain their original contracts.',
     results,
   }
   yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })

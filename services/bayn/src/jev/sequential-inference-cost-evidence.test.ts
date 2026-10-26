@@ -6,15 +6,84 @@ import { inferenceExpenseRateCard, makeInferenceExpenseQuotes } from '../inferen
 import { InferenceStage, InferenceUsageStatus } from '../inference-costs'
 import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from './chart-evidence'
 import { deriveEntryDispositionForChart } from './entry-inference'
-import { entryEvaluationRequestFixture } from './entry-inference.test-support'
+import { chartInferenceFixture, entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { decodeJevEvaluationRequest, JevOutcome } from './evidence'
 import {
   readSequentialInferenceCostEvidence,
   retainedSequentialQuestionPolicyHash,
+  retainedFundedQuestionPolicyHash,
+  retainedConditionalQuestionPolicyHash,
 } from './sequential-inference-cost-evidence'
 import { makeRetainedChartDecisionsRequest, retainedChartAssessments } from './retained-chart-questions'
 import { makeRetainedEntryJudgmentRequest } from './retained-entry-questions'
+import { makeRetainedFundedEntryJudgmentRequest } from './retained-funded-entry-questions'
+import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
 import { decodeDecisionsResponse } from './decisions'
+
+test('retains v25 funded questions and receipts without accepting them for current execution', () => {
+  expect(retainedConditionalQuestionPolicyHash).toBe('d35ee4093641285aa36385c4ab35de978de7485ff754bebb523648adf80c8939')
+  expect(retainedFundedQuestionPolicyHash).toBe('7be14891e60d6e276aca0ac72ddd7102afe8193c9b6d1cdfd57da885e0078399')
+  const current = entryEvaluationRequestFixture()
+  const input = {
+    ...current.request,
+    schemaVersion: 'bayn.entry-inference-input.v4' as const,
+    protocol: {
+      ...current.request.protocol,
+      schemaVersion: 'bayn.jev.protocol.v25' as const,
+      inputDefinition: 'bayn.jev-entry-state.v22' as const,
+      entrySelectionPolicy: 'source-anchored-proposal-judgments' as const,
+      entryQuestionPolicyHash: retainedFundedQuestionPolicyHash,
+    },
+    numericalState: { ...current.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
+    funding: { ...current.request.funding, cryptoFeeTier: 4 as const },
+  }
+  const { requestId: _, ...original } = current
+  const material = { ...original, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
+  const request = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }
+  const chart = Result.getOrThrow(makeNativeChartEvidence(input.chartSource))
+  const source = { chart, protocol: input.protocol, funding: input.funding }
+  const visual = chartInferenceFixture(current.request, current.observedAt)
+  expect(Result.getOrThrow(makeChartDecisionsRequest(source)).requestHash).toBe(visual.requestHash)
+  const disposition = Result.getOrThrow(
+    deriveEntryDispositionForChart(
+      input,
+      visual,
+      chart,
+      Result.getOrThrow(chartAssessments(source, visual.response)),
+      makeRetainedFundedEntryJudgmentRequest,
+    ),
+  )
+  if (disposition.status !== 'READY') throw new Error('Expected original funded questions')
+  expect(Object.keys(disposition.jevRequest.questions)).toContain('support_recovery_target_obstructed')
+  expect(disposition.jevRequest.state).toMatchObject({ schemaVersion: 'bayn.jev-entry-state.v22' })
+  const handoffMaterial = {
+    schemaVersion: 'bayn.entry-handoff.v3',
+    requestId: request.requestId,
+    inputHash: request.requestHash,
+    visualRequestHash: visual.requestHash,
+    recordedAt: request.observedAt,
+    disposition,
+  }
+  const handoff = { ...handoffMaterial, handoffHash: Result.getOrThrow(canonicalHashV1Result(handoffMaterial)) }
+  const receiptMaterial = {
+    schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+    requestId: request.requestId,
+    startedAt: request.observedAt,
+    completedAt: request.expiresAt,
+    outcome: {
+      status: JevOutcome.Completed,
+      completion: { handoff, completedAt: request.expiresAt, jev: { status: 'NOT_DISPATCHED' } },
+    },
+  }
+  const receipt = { ...receiptMaterial, receiptHash: Result.getOrThrow(canonicalHashV1Result(receiptMaterial)) }
+  const decoded = Result.getOrThrow(
+    readSequentialInferenceCostEvidence({ request, handoff, receipt, resolution: null }),
+  )
+  expect(decoded.request.requestHash).toBe(request.requestHash)
+  expect(decoded.handoff?.handoffHash).toBe(handoff.handoffHash)
+  expect(decoded.receipt?.receiptHash).toBe(receipt.receiptHash)
+  expect(Result.isFailure(decodeJevEvaluationRequest(request))).toBe(true)
+})
 
 const retained = (
   schemaVersion: 'bayn.entry-inference-input.v1' | 'bayn.entry-inference-input.v2' = 'bayn.entry-inference-input.v1',
@@ -26,11 +95,17 @@ const retained = (
     schemaVersion,
     protocol: {
       ...current.request.protocol,
+      inputDefinition: 'bayn.jev-entry-state.v22' as const,
+      entrySelectionPolicy: 'source-anchored-proposal-judgments' as const,
       schemaVersion: 'bayn.jev.protocol.v24' as const,
       entryQuestionPolicyHash: retainedSequentialQuestionPolicyHash,
     },
     chartSource: { ...current.request.chartSource, bars },
-    numericalState: { ...current.request.numericalState, candidate: { symbol: current.symbol, bars1m: bars } },
+    numericalState: {
+      ...current.request.numericalState,
+      schemaVersion: 'bayn.jev-entry-state.v22',
+      candidate: { symbol: current.symbol, bars1m: bars },
+    },
   }
   const { requestId: _, ...original } = current
   const material = { ...original, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }

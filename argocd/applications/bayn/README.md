@@ -201,20 +201,21 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The replacement implementation uses `bayn.jev.protocol.v25`, `bayn.chart-first-entry.behavior.v1`, entry state v22,
+The replacement implementation uses `bayn.jev.protocol.v26`, `bayn.chart-first-entry.behavior.v1`, entry state v23,
 batch v7 and pinned `jev-1.13.0`, retaining the 15-minute holding limit. OpenAI Decisions API judgments identify chart
 structure and source anchors. Code funds source-anchored recovery and breakout proposals, commits the exact dependent
-Jev request, and selects from atomic proposal-specific judgments. Both providers share the original inference deadline.
+Jev request, and selects from market-specific atomic judgments. Equities require setup and stop invalidation; crypto
+also requires the fee-funded target to be unobstructed. Equity funding carries no crypto fee tier. Both providers share the original inference deadline.
 Account risk, broker protection, fee accounting and exact reconciliation remain mandatory.
 [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the source contracts and venue capabilities.
 
-The funded source-anchor migration uses entry input v4, assessments v3 and handoff v3. The exact live quote, bounded
+The funded source-anchor migration uses entry input v5, assessments v3 and handoff v3. The exact live quote, bounded
 entry and fee break-even price accompany the complete chart. Code offers only funded source anchors or contiguous
 base intervals, with explicit no-match answers. Jev still independently assesses each resulting proposal.
-Migration 152 retains chart dispatch and terminal-cost checkpoints, requires terminal cycles, flat settled inventory,
+Migration 153 retains chart dispatch and terminal-cost checkpoints, requires terminal cycles, flat settled inventory,
 complete accounting, fresh exact reconciliation and no unexpired claims. It restricts prior PAPER authority for native
-OBSERVE recovery and preserves operator holds and account risk history. New dispatch accepts only v4/v25; financial
-readers preserve original v1/v2/v3 provider bodies, receipt hashes and late costs.
+OBSERVE recovery and preserves operator holds and account risk history. New dispatch accepts only v5/v26; financial
+readers preserve original v1/v2/v3/v4 provider bodies, receipt hashes and late costs.
 
 The source phase removes the prior sealed capital request and its three runtime lineages. After the exact published
 image and native OBSERVE recovery are verified, a reviewed same-account PAPER request must bind the new strategy and
