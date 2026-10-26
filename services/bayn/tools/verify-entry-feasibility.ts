@@ -103,6 +103,8 @@ const verify = Effect.gen(function* () {
         }),
       ),
       Effect.provideService(EntryInferenceJournal, {
+        recordChartClaim: () => Effect.succeed({ dispatchAllowed: true }),
+        recordChartTerminal: () => Effect.void,
         recordHandoff: () =>
           Effect.sync(() => {
             committedHandoffs++

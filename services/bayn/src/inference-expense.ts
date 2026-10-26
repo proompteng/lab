@@ -5,6 +5,7 @@ import {
   InferenceCostError,
   HistoricalInferenceCostLineSchema,
   StagedInferenceCostLineSchema,
+  CheckpointInferenceCostLineSchema,
   HistoricalInferenceRateSchema,
   InferenceStage,
   inferenceStageKey,
@@ -71,6 +72,14 @@ export type InferenceExpenseSource = typeof InferenceExpenseSourceSchema.Type
 
 export const InferenceExpenseQuoteSchema = Schema.Union([
   Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.inference-expense-quote.v3'),
+    accountBindingHash: Sha256Schema,
+    sessionDate: IsoDateSchema,
+    line: CheckpointInferenceCostLineSchema,
+    rate: Schema.NullOr(InferenceRateSchema),
+    quoteHash: Sha256Schema,
+  }),
+  Schema.Struct({
     schemaVersion: Schema.Literal('bayn.inference-expense-quote.v1'),
     accountBindingHash: Sha256Schema,
     sessionDate: IsoDateSchema,
@@ -125,7 +134,8 @@ export const makeInferenceExpenseQuotes = (
     })
     const report = yield* makeInferenceCostReport(
       {
-        schemaVersion: 'bayn.inference-cost-evidence.v2',
+        schemaVersion:
+          source.chartCheckpoint === undefined ? 'bayn.inference-cost-evidence.v2' : 'bayn.inference-cost-evidence.v3',
         accountBindingHash,
         sessionDate: source.sessionDate,
         asOf: source.asOf,
@@ -138,6 +148,7 @@ export const makeInferenceExpenseQuotes = (
             receipt: source.receipt,
             resolution: source.resolution,
             handoff: source.handoff,
+            ...(source.chartCheckpoint === undefined ? {} : { chartCheckpoint: source.chartCheckpoint }),
           },
         ],
       },
@@ -150,7 +161,12 @@ export const makeInferenceExpenseQuotes = (
           for (const candidate of rateCard.rates)
             if ((yield* canonicalHashV1Result(candidate)) === line.rateHash) rate = candidate
           const material = {
-            schemaVersion: 'stage' in line ? 'bayn.inference-expense-quote.v2' : 'bayn.inference-expense-quote.v1',
+            schemaVersion:
+              'chartClaimHash' in line
+                ? 'bayn.inference-expense-quote.v3'
+                : 'stage' in line
+                  ? 'bayn.inference-expense-quote.v2'
+                  : 'bayn.inference-expense-quote.v1',
             accountBindingHash,
             sessionDate: source.sessionDate,
             line,
@@ -207,6 +223,10 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
     if (quoteHash !== expected)
       return yield* Result.fail(new InferenceCostError({ message: 'Frozen inference expense quote hash differs' }))
     const line = quote.line
+    if ('chartClaimHash' in line && line.usageStatus === InferenceUsageStatus.NotDispatched)
+      return yield* Result.fail(
+        new InferenceCostError({ message: 'A dispatch checkpoint cannot prove no provider call' }),
+      )
     if ('stage' in line) {
       if (
         line.usageStatus === InferenceUsageStatus.Unknown
@@ -239,7 +259,9 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         )
     } else if (line.usageStatus === InferenceUsageStatus.NotDispatched) {
       if (
-        (line.receiptHash === null && !('handoffHash' in line && line.handoffHash !== null)) ||
+        (line.receiptHash === null &&
+          !('handoffHash' in line && line.handoffHash !== null) &&
+          !('chartTerminalHash' in line && line.chartTerminalHash !== null)) ||
         line.inputTokens !== '0' ||
         line.outputTokens !== '0' ||
         line.estimatedCostPicoUsd !== '0' ||
@@ -253,7 +275,9 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         )
     } else {
       if (
-        (line.receiptHash === null && !('handoffHash' in line && line.handoffHash !== null)) ||
+        (line.receiptHash === null &&
+          !('handoffHash' in line && line.handoffHash !== null) &&
+          !('chartTerminalHash' in line && line.chartTerminalHash !== null)) ||
         line.inputTokens === null ||
         line.outputTokens === null
       )
@@ -298,13 +322,31 @@ export const verifyInferenceExpenseQuote = (source: InferenceExpenseSource, quot
     const valid = yield* decodeInferenceExpenseQuote(quote)
     const line = valid.line
     const staged = 'stage' in line
+    const checkpoint = 'chartClaimHash' in line ? source.chartCheckpoint : undefined
+    if (
+      'chartClaimHash' in line &&
+      (checkpoint === undefined ||
+        checkpoint.claim.claimHash !== line.chartClaimHash ||
+        (line.chartTerminalHash !== null && checkpoint.terminal?.terminalHash !== line.chartTerminalHash))
+    )
+      return yield* Result.fail(
+        new InferenceCostError({ message: 'Frozen chart expense differs from its checkpoint identity' }),
+      )
     const independentHandoff =
       staged &&
       line.handoffHash !== null &&
       (line.stage === InferenceStage.Chart || line.usageStatus === InferenceUsageStatus.NotDispatched)
     const expected = yield* makeInferenceExpenseQuote(
       {
-        ...source,
+        ...(({ chartCheckpoint: _checkpoint, ...legacy }) => legacy)(source),
+        ...(checkpoint === undefined
+          ? {}
+          : {
+              chartCheckpoint: {
+                ...checkpoint,
+                terminal: 'chartTerminalHash' in line && line.chartTerminalHash === null ? null : checkpoint.terminal,
+              },
+            }),
         receipt: line.receiptHash !== null || independentHandoff ? source.receipt : null,
         handoff: staged && line.handoffHash !== null ? source.handoff : null,
       },
@@ -371,7 +413,11 @@ export const verifyInferenceExpenseCoverage = (
         (row) =>
           row.quote.line.receiptHash === line.receiptHash &&
           ('handoffHash' in row.quote.line ? row.quote.line.handoffHash : null) ===
-            ('handoffHash' in line ? line.handoffHash : null),
+            ('handoffHash' in line ? line.handoffHash : null) &&
+          ('chartClaimHash' in row.quote.line ? row.quote.line.chartClaimHash : null) ===
+            ('chartClaimHash' in line ? line.chartClaimHash : null) &&
+          ('chartTerminalHash' in row.quote.line ? row.quote.line.chartTerminalHash : null) ===
+            ('chartTerminalHash' in line ? line.chartTerminalHash : null),
       )
       if (matches.length === 0) {
         missingQuoteCount++

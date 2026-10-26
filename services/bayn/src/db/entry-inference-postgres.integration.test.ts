@@ -8,18 +8,24 @@ import sequentialEntryInference from '../../migrations/0147_sequential_entry_inf
 import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
 import conditionalBaseAnchors from '../../migrations/0149_conditional_base_anchors'
 import inferenceRequestVersion from '../../migrations/0150_inference_request_version'
+import chartDispatchCheckpoints from '../../migrations/0151_chart_dispatch_checkpoints'
 
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { chartInferenceFixture, entryCompletionFixture } from '../jev/entry-inference.test-support'
+import {
+  chartInferenceFixture,
+  entryCompletionFixture,
+  entryEvaluationRequestFixture,
+} from '../jev/entry-inference.test-support'
+import { makeChartDispatchClaim, makeChartTerminalReceipt } from '../jev/chart-checkpoint'
 import { DecisionsClient } from '../jev/decisions'
 import { JevClient } from '../jev/client'
 import { prepareJevRequest } from '../jev/contract'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore, evaluateClaimedJevOnce } from '../jev/evaluation'
-import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
+import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
 import { JevPurpose } from '../jev/portfolio'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
 import { makeChartDecisionsRequest } from '../jev/chart-questions'
@@ -104,6 +110,7 @@ integration('committed sequential provider handoff', () => {
             loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 150))),
             table: 'schema_migrations',
           })
+        if (!withRequestVersion) yield* chartDispatchCheckpoints
         yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
       VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${request.observedAt})`
@@ -118,6 +125,106 @@ integration('committed sequential provider handoff', () => {
       }),
     )
   beforeEach(() => resetDatabase())
+
+  test('one chart admission survives a crash and later metering upgrades discovery without double charging', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const original = entryEvaluationRequestFixture(new Date().toISOString(), 'MSFT')
+        const { requestId: _, ...material } = original
+        const current = Result.getOrThrow(
+          makeJevEvaluationRequest({
+            ...material,
+            cycleId: request.cycleId,
+            authorityGenerationHash: request.authorityGenerationHash,
+          }),
+        )
+        yield* sql`INSERT INTO jev_evaluation_requests (request_id,cycle_id,authority_generation_hash,payload)
+        VALUES (${current.requestId},${current.cycleId},${current.authorityGenerationHash},${sql.json(current)})`
+        const visual = chartInferenceFixture(current.request, current.observedAt)
+        const claim = Result.getOrThrow(
+          makeChartDispatchClaim({
+            schemaVersion: 'bayn.chart-dispatch-claim.v1',
+            stage: 'CHART',
+            requestId: current.requestId,
+            providerRequestHash: visual.requestHash,
+            claimedAt: current.observedAt,
+            expiresAt: current.expiresAt,
+          }),
+        )
+        const admissions = yield* Effect.all([journal.recordChartClaim(claim), journal.recordChartClaim(claim)], {
+          concurrency: 2,
+        })
+        expect(admissions.filter((value) => value.dispatchAllowed)).toHaveLength(1)
+        expect(Result.isFailure(yield* sql.withTransaction(journal.recordChartClaim(claim)).pipe(Effect.result))).toBe(
+          true,
+        )
+        const store = makeInferenceExpenseStore(sql, fixture.portfolio.brokerState.account.accountId, '1970-01-01')
+        const find = (rows: readonly { readonly requestId: string }[]) =>
+          rows.some((row) => row.requestId === current.requestId)
+        const initialSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
+        if (initialSource === undefined) throw new Error('Missing unresolved checkpoint expense')
+        const initial = Result.getOrThrow(makeInferenceExpenseQuotes(initialSource, inferenceExpenseRateCard))
+        expect(initial.every((quote) => quote.line.usageStatus === 'UNKNOWN_USAGE')).toBe(true)
+        yield* store.freeze(initial)
+        expect(find(yield* store.newSources)).toBe(false)
+        const terminal = Result.getOrThrow(
+          makeChartTerminalReceipt({
+            schemaVersion: 'bayn.chart-terminal-receipt.v1',
+            requestId: current.requestId,
+            claimHash: claim.claimHash,
+            recordedAt: new Date().toISOString(),
+            outcome: { status: 'RECEIVED', inference: visual },
+          }),
+        )
+        yield* journal.recordChartTerminal(terminal)
+        yield* journal.recordChartTerminal(terminal)
+        const lateSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
+        if (lateSource === undefined) throw new Error('Late chart metering was not rediscovered')
+        const late = Result.getOrThrow(makeInferenceExpenseQuotes(lateSource, inferenceExpenseRateCard))
+        yield* store.freeze(late)
+        expect(find(yield* store.newSources)).toBe(false)
+        const saved = yield* sql`SELECT payload FROM inference_expense_quotes WHERE request_id=${current.requestId}`
+        expect(saved).toHaveLength(3)
+        expect((yield* store.pending).filter((quote) => quote.line.requestId === current.requestId)).toHaveLength(3)
+        expect(Result.getOrThrow(buildInferenceExpensePlan([...initial, ...late])).transfers).toHaveLength(1)
+        const { terminalHash: __, ...terminalMaterial } = terminal
+        const conflict = Result.getOrThrow(
+          makeChartTerminalReceipt({ ...terminalMaterial, recordedAt: current.expiresAt }),
+        )
+        expect(Result.isFailure(yield* journal.recordChartTerminal(conflict).pipe(Effect.result))).toBe(true)
+        expect(
+          Result.isFailure(
+            yield* sql`UPDATE jev_chart_dispatch_claims SET payload=payload WHERE request_id=${current.requestId}`.pipe(
+              Effect.result,
+            ),
+          ),
+        ).toBe(true)
+        expect(
+          Result.isFailure(
+            yield* sql`DELETE FROM jev_chart_terminal_receipts WHERE request_id=${current.requestId}`.pipe(
+              Effect.result,
+            ),
+          ),
+        ).toBe(true)
+        const notDispatched = Result.getOrThrow(
+          makeJevEvaluationReceipt(current, {
+            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+            requestId: current.requestId,
+            startedAt: current.expiresAt,
+            completedAt: current.expiresAt,
+            outcome: { status: JevOutcome.Failed, failure: JevFailure.NotDispatched, requestHash: current.requestHash },
+          }),
+        )
+        expect(
+          Result.isFailure(
+            yield* sql`INSERT INTO jev_evaluation_receipts (request_id,receipt_hash,payload)
+        VALUES (${current.requestId},${notDispatched.receiptHash},${sql.json(notDispatched)})`.pipe(Effect.result),
+          ),
+        ).toBe(true)
+      }),
+    ))
 
   test('backfills a completed current request without changing provider evidence or expense discovery', async () => {
     await resetDatabase(false)

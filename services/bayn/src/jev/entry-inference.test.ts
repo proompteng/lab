@@ -3,6 +3,7 @@ import { Clock, Effect, Fiber, Layer, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../hash'
+import { operationalError } from '../errors'
 import { utcInstantFromEpochMillis } from '../time'
 import { JevClient, JevError } from './client'
 import { decodeJevResponse, JevFailure, prepareJevRequest } from './contract'
@@ -53,15 +54,20 @@ const providers = (
     readonly jevFailure?: boolean
     readonly existingHandoff?: boolean
     readonly afterVisual?: () => void
+    readonly chartClaimDenied?: boolean
+    readonly chartClaimDelay?: number
+    readonly chartTerminalFails?: boolean
   } = {},
 ) => {
   const events: string[] = []
+  const checkpointEvents: string[] = []
   const handoffs: EntryHandoff[] = []
   const layer = Layer.mergeAll(
     Layer.succeed(DecisionsClient, {
       evaluate: (input) =>
         Effect.gen(function* () {
           events.push('visual')
+          checkpointEvents.push('visual')
           const started = yield* Clock.currentTimeMillis
           const prepared = Result.getOrThrow(prepareDecisionsRequest(input))
           if (options.visualFailure)
@@ -120,9 +126,26 @@ const providers = (
         }),
     }),
     Layer.succeed(EntryInferenceJournal, {
+      recordChartClaim: () =>
+        Effect.gen(function* () {
+          checkpointEvents.push('claim')
+          if (options.chartClaimDelay !== undefined) yield* Effect.sleep(options.chartClaimDelay)
+          return { dispatchAllowed: options.chartClaimDenied !== true }
+        }),
+      recordChartTerminal: () =>
+        Effect.gen(function* () {
+          checkpointEvents.push('terminal')
+          if (options.chartTerminalFails)
+            return yield* operationalError({
+              component: 'journal',
+              operation: 'test chart terminal commit',
+              message: 'Unavailable',
+            })
+        }),
       recordHandoff: (handoff) =>
         Effect.gen(function* () {
           events.push('handoff')
+          checkpointEvents.push('handoff')
           handoffs.push(handoff)
           const { handoffHash, ...material } = handoff
           expect(handoffHash).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
@@ -135,6 +158,7 @@ const providers = (
         Effect.gen(function* () {
           expect(handoffs).toHaveLength(1)
           events.push('jev')
+          checkpointEvents.push('jev')
           const prepared = Result.getOrThrow(prepareJevRequest(input))
           if (options.jevFailure)
             return yield* new JevError({
@@ -166,7 +190,7 @@ const providers = (
         }),
     }),
   )
-  return { events, handoffs, layer }
+  return { events, checkpointEvents, handoffs, layer }
 }
 
 const run = (
@@ -184,6 +208,31 @@ const run = (
   )
 
 describe('claimed sequential entry inference', () => {
+  test('commits one chart admission and its terminal evidence before handoff or dependent dispatch', async () => {
+    const setup = providers()
+    Result.getOrThrow(await run(fixture(), setup))
+    expect(setup.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'handoff', 'jev'])
+  })
+
+  test('an existing chart claim cannot be replayed into another provider call', async () => {
+    const setup = providers({ chartClaimDenied: true })
+    expect(Result.isFailure(await run(fixture(), setup))).toBe(true)
+    expect(setup.checkpointEvents).toEqual(['claim'])
+  })
+
+  test('terminal commit failure leaves no handoff and never dispatches Jev', async () => {
+    const setup = providers({ chartTerminalFails: true })
+    expect(Result.isFailure(await run(fixture(), setup))).toBe(true)
+    expect(setup.checkpointEvents).toEqual(['claim', 'visual', 'terminal'])
+    expect(setup.handoffs).toHaveLength(0)
+  })
+
+  test('chart admission persistence consumes the original deadline without dispatch or renewal', async () => {
+    const setup = providers({ chartClaimDelay: 10_000 })
+    expect(Result.isFailure(await run(fixture(), setup, 10_000))).toBe(true)
+    expect(setup.checkpointEvents).toEqual(['claim'])
+  })
+
   test('commits a source-infeasible result before either provider is dispatched', async () => {
     const claim = fixture()
     const input = {

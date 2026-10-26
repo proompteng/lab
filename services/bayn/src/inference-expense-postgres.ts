@@ -50,22 +50,29 @@ export const makeInferenceExpenseStore = (
     'requestId', request.request_id, 'cycleId', request.cycle_id,
     'authorityGenerationHash', request.authority_generation_hash,
     'request', request.payload, 'receipt', receipt.payload, 'resolution', resolution.payload, 'handoff', handoff.payload
-  )`)
+  ) || CASE WHEN chart_claim.request_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object(
+    'chartCheckpoint', jsonb_build_object('claim', chart_claim.payload, 'terminal', chart_terminal.payload)) END`)
   const newSources = sql<Record<string, unknown>>`
     WITH pending_requests AS MATERIALIZED (
       SELECT request.request_id
       FROM autonomous_cycles AS cycle
       JOIN jev_evaluation_requests AS request ON request.cycle_id = cycle.cycle_id
-      JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
+      LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
       LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
       LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
+      LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
+      LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
       LEFT JOIN inference_expense_quotes AS quote ON quote.request_id = request.request_id
-        AND quote.handoff_hash IS NOT DISTINCT FROM handoff.handoff_hash
+        AND quote.handoff_hash IS NOT DISTINCT FROM CASE WHEN quote.provider_stage='CHART' AND chart_claim.request_id IS NOT NULL THEN NULL ELSE handoff.handoff_hash END
+        AND quote.chart_claim_hash IS NOT DISTINCT FROM CASE WHEN quote.provider_stage='CHART' THEN chart_claim.claim_hash ELSE NULL END
+        AND quote.chart_terminal_hash IS NOT DISTINCT FROM CASE WHEN quote.provider_stage='CHART' THEN chart_terminal.terminal_hash ELSE NULL END
         AND quote.receipt_hash IS NOT DISTINCT FROM CASE
+          WHEN quote.provider_stage='CHART' AND chart_claim.request_id IS NOT NULL THEN NULL
           WHEN quote.provider_stage = 'CHART' AND NOT COALESCE(receipt.payload #>> '{outcome,failure}' = 'NOT_DISPATCHED', false) THEN NULL
           WHEN quote.provider_stage = 'JEV' AND handoff.handoff_hash IS NOT NULL AND handoff.payload #>> '{disposition,status}' <> 'READY' THEN NULL
           ELSE receipt.receipt_hash END
       WHERE cycle.account_id = ${accountId} AND cycle.execution_session_date >= ${coverageFrom}::date
+        AND (resolution.request_id IS NOT NULL OR chart_claim.request_id IS NOT NULL)
       GROUP BY request.request_id, request.schema_version
       HAVING count(quote.request_id) < CASE WHEN request.schema_version='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
       ORDER BY request.request_id COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
@@ -74,9 +81,11 @@ export const makeInferenceExpenseStore = (
     FROM pending_requests AS pending
     JOIN jev_evaluation_requests AS request ON request.request_id = pending.request_id
     JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
-    JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
+    LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
     LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
     LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
+    LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
+    LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
     ORDER BY request.request_id COLLATE "C"
   `.pipe(
     Effect.flatMap(
@@ -134,9 +143,11 @@ export const makeInferenceExpenseStore = (
     FROM inference_expense_quotes AS quote
     JOIN jev_evaluation_requests AS request ON request.request_id = quote.request_id
     JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
-    JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
+    LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
     LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
     LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
+    LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
+    LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
     WHERE quote.account_id = ${accountId} AND cycle.account_id = ${accountId}
       AND quote.session_date = cycle.execution_session_date AND quote.verified_at IS NULL
     ORDER BY quote.quote_hash COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
