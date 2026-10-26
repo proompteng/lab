@@ -1,8 +1,15 @@
+import { costReportFromEvidence } from './inference-expense.test-support'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
-import { InferenceCostCoverage, InferenceStage, InferenceUsageStatus, makeInferenceCostReport } from './inference-costs'
+import {
+  InferenceCostCoverage,
+  InferenceStage,
+  InferenceUsageStatus,
+  decodeInferenceCostEvidence,
+  makeInferenceCostReport,
+} from './inference-costs'
 import {
   buildInferenceExpensePlan,
   decodeInferenceExpenseQuote,
@@ -91,7 +98,7 @@ const evidence = (value: InferenceExpenseSource) => ({
   ],
 })
 const report = (value: InferenceExpenseSource) =>
-  Result.getOrThrow(makeInferenceCostReport(evidence(value), inferenceExpenseRateCard))
+  Result.getOrThrow(costReportFromEvidence(evidence(value), inferenceExpenseRateCard))
 const sealHandoff = (disposition: EntryHandoff['disposition']): EntryHandoff => {
   const { handoffHash: _, ...material } = { ...completion.handoff, disposition }
   return { ...material, handoffHash: Result.getOrThrow(canonicalHashV1Result(material)) }
@@ -227,17 +234,50 @@ test('a late Jev receipt completes coverage without repricing or posting the cha
   expect(quotes).toHaveLength(3)
   expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers).toHaveLength(2)
   const frozen = quotes.map((quote) => ({ quote, verifiedAt: late.asOf }))
+  const decoded = Result.getOrThrow(decodeInferenceCostEvidence(evidence(late)))
   expect(
-    Result.getOrThrow(verifyInferenceExpenseCoverage(evidence(late), late.accountId, frozen)).completeMeteredCoverage,
+    Result.getOrThrow(verifyInferenceExpenseCoverage(decoded, late.accountId, frozen)).completeMeteredCoverage,
   ).toBe(true)
   expect(
-    Result.getOrThrow(summarizeForwardInferenceExpenses(evidence(late), late.accountId, frozen))
-      .knownEstimatedCostPicoUsd,
+    Result.getOrThrow(summarizeForwardInferenceExpenses(decoded, late.accountId, frozen)).knownEstimatedCostPicoUsd,
   ).toBe('18400000')
+})
+
+test('reuses one decoded source cut for pricing and both frozen provider charges', () => {
+  const value = structuredClone(source())
+  const frozen = Result.getOrThrow(makeInferenceExpenseQuotes(value, inferenceExpenseRateCard)).map((quote) => ({
+    quote,
+    verifiedAt: value.asOf,
+  }))
+  const decoded = Result.getOrThrow(decodeInferenceCostEvidence(evidence(value)))
+  const report = Result.getOrThrow(makeInferenceCostReport(decoded, inferenceExpenseRateCard))
+  const requestPayload = value.request
+  if (typeof requestPayload !== 'object' || requestPayload === null) throw new Error('Fixture request is not an object')
+  Object.defineProperty(requestPayload, 'schemaVersion', {
+    get: () => {
+      throw new Error('Decoded cost facts must not reopen the source payload')
+    },
+  })
+  expect(Result.getOrThrow(makeInferenceCostReport(decoded, inferenceExpenseRateCard))).toEqual(report)
+  expect(
+    Result.getOrThrow(verifyInferenceExpenseCoverage(decoded, value.accountId, frozen)).completeMeteredCoverage,
+  ).toBe(true)
+})
+
+test('wire evidence cannot inject previously decoded cost facts', () => {
+  const input = evidence(source())
+  expect(
+    Result.isFailure(
+      decodeInferenceCostEvidence({
+        ...input,
+        requests: input.requests.map((row) => ({ ...row, sourceFingerprint: 'f'.repeat(64), stages: [] })),
+      }),
+    ),
+  ).toBe(true)
 })
 
 test('refuses a completed cost graph with a missing committed handoff', () => {
   expect(
-    Result.isFailure(makeInferenceCostReport(evidence({ ...source(), handoff: null }), inferenceExpenseRateCard)),
+    Result.isFailure(costReportFromEvidence(evidence({ ...source(), handoff: null }), inferenceExpenseRateCard)),
   ).toBe(true)
 })
