@@ -210,14 +210,10 @@ export async function invoke(config, operation, args, fetcher = fetch) {
   let response
   try {
     response = await send('execute', body)
-  } catch {
-    return lookupExecution(config, body, operationId, send)
-  }
-  if (!response.ok) {
-    await response.body?.cancel()
-    return lookupExecution(config, body, operationId, send, response.status)
-  }
-  try {
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw new Error('Relay execution failed')
+    }
     const result = await readRelayResponse(response)
     if (
       result?.operationId !== operationId ||
@@ -239,7 +235,7 @@ export async function invoke(config, operation, args, fetcher = fetch) {
       },
     }
   } catch {
-    return lookupExecution(config, body, operationId, send)
+    return lookupExecution(config, body, operationId, send, response?.ok === false ? response.status : undefined)
   }
 }
 
