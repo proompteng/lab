@@ -665,9 +665,10 @@ export async function sendCodexTurn(
   )
 }
 
-export async function getActiveCodexRun(identity: TengriIdentity, agentId: string) {
-  const result = await unary<RawRecord>('getActiveCodexRun', { id: agentId }, identity)
-  return result.runId ? normalizeRun(result) : null
+export async function getActiveCodexRuns(identity: TengriIdentity, agentId: string) {
+  const result = await unary<RawRecord>('getActiveCodexRuns', { id: agentId }, identity)
+  if (!Array.isArray(result.runs)) throw new TengriUnavailableError('Invalid active run list')
+  return result.runs.map(normalizeRun)
 }
 
 export async function getCodexRun(identity: TengriIdentity, agentId: string, runId: string) {

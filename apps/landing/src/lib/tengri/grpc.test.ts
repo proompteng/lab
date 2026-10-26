@@ -483,23 +483,25 @@ beforeAll(async () => {
         stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
       })
     },
-    getActiveCodexRun(
+    getActiveCodexRuns(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
-      callback(
-        null,
-        call.request.id === 'agent-empty'
-          ? {}
-          : {
-              runId: '11111111-1111-4111-8111-111111111111',
-              agentId: call.request.id,
-              threadId: 'thread-selected',
-              stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
-            },
-      )
+      callback(null, {
+        runs:
+          call.request.id === 'agent-empty'
+            ? []
+            : [
+                {
+                  runId: '11111111-1111-4111-8111-111111111111',
+                  agentId: call.request.id,
+                  threadId: 'thread-selected',
+                  stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+                },
+              ],
+      })
     },
     getCodexRun(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -780,15 +782,17 @@ describe('Tengri gRPC BFF transport', () => {
     ).toMatchObject({ status: 409, code: 'control_not_dispatched' })
   })
   test('recovers the server-owned active run and distinguishes an empty workspace', async () => {
-    const { getActiveCodexRun } = await import('./grpc')
-    expect(await getActiveCodexRun(identity, 'agent-test')).toEqual({
-      runId: '11111111-1111-4111-8111-111111111111',
-      agentId: 'agent-test',
-      threadId: 'thread-selected',
-      state: { phase: 'running', turnId: 'turn-selected' },
-    })
+    const { getActiveCodexRuns } = await import('./grpc')
+    expect(await getActiveCodexRuns(identity, 'agent-test')).toEqual([
+      {
+        runId: '11111111-1111-4111-8111-111111111111',
+        agentId: 'agent-test',
+        threadId: 'thread-selected',
+        state: { phase: 'running', turnId: 'turn-selected' },
+      },
+    ])
     expect(receivedRequest).toEqual({ id: 'agent-test' })
-    expect(await getActiveCodexRun(identity, 'agent-empty')).toBeNull()
+    expect(await getActiveCodexRuns(identity, 'agent-empty')).toEqual([])
   })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')

@@ -114,7 +114,7 @@ async fn status_reads_accept_delayed_authorized_responses() {
                     let value = if handler == "active" {
                         assert_eq!(name, "TengriWorkspaceRuns");
                         assert_eq!(key, query.workspace_uid);
-                        serde_json::Value::Null
+                        serde_json::json!([])
                     } else {
                         assert_eq!(name, "TengriAgentRun");
                         assert_eq!(key, query.run_id);
@@ -169,7 +169,7 @@ async fn status_reads_accept_delayed_authorized_responses() {
 #[ignore = "child process for the isolated status response deadline test"]
 async fn delayed_status_read_child() {
     let service = fixture();
-    assert!(active(&service, &principal()).await.unwrap().is_none());
+    assert!(active(&service, &principal()).await.unwrap().is_empty());
     let id = Uuid::new_v4().to_string();
     let snapshot = read(&service, &principal(), &id, None).await.unwrap();
     assert_eq!(snapshot.run_id, id);
@@ -214,7 +214,7 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
                                 serde_json::json!({"code":408,"message":"run query expired"}),
                             )
                         } else {
-                            (200, serde_json::json!("run-current"))
+                            (200, serde_json::json!(["run-current"]))
                         }
                     } else if key == "run-current"
                         && status_calls.fetch_add(1, Ordering::SeqCst) == 0
@@ -289,7 +289,7 @@ async fn active_recovery_renews_expired_queries_and_retries_only_transient_failu
 #[ignore = "child process for isolated read recovery tests"]
 async fn recovering_status_read_child() {
     let service = fixture();
-    let snapshot = active(&service, &principal()).await.unwrap().unwrap();
+    let snapshot = active(&service, &principal()).await.unwrap().remove(0);
     assert_eq!(
         snapshot.state,
         State::Running {
@@ -621,6 +621,7 @@ async fn admission(service: &ControlPlane, input: Input) -> Envelope {
     let principal = principal();
     let claim = Claim {
         workspace_uid: principal.context.workspace_uid.clone(),
+        thread_id: input.thread_id.clone(),
         run_id: input.id.clone(),
     };
     seal(
@@ -677,6 +678,8 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         "127.0.0.1::8080",
         "--publish",
         "127.0.0.1::9070",
+        "--tmpfs",
+        "/restate-data",
     ]);
     if cfg!(target_os = "linux") {
         command.args(["--add-host", "host.docker.internal:host-gateway"]);
@@ -712,6 +715,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let proof_run = Uuid::new_v4().to_string();
     let proof_claim = Claim {
         workspace_uid: Uuid::new_v4().to_string(),
+        thread_id: "proof-thread".into(),
         run_id: proof_run.clone(),
     };
     let mut old_stop = Control {
@@ -736,6 +740,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let prepared_input = Input {
         id: proof_claim.run_id.clone(),
         agent_id: fresh_stop.agent_id.clone(),
+        thread_id: proof_claim.thread_id.clone(),
         ..input()
     };
     proof_client
@@ -795,6 +800,32 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let parallel = Input {
+        id: Uuid::new_v4().to_string(),
+        thread_id: "parallel-thread".into(),
+        ..input.clone()
+    };
+    let parallel_client =
+        TengriAgentRunIngressClient::from_client(ingress.clone(), parallel.id.clone());
+    workspace
+        .admit(Json(admission(&service, parallel.clone()).await))
+        .call()
+        .await
+        .unwrap()
+        .into_body()
+        .unwrap();
+    loop {
+        if let Ok(snapshot) = status(&parallel_client, &service, &parallel, &owner).await
+            && matches!(snapshot.state, State::WaitingForGuest { .. })
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "independent conversation was blocked"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     let stale_steer = Control {
         id: Uuid::new_v4().to_string(),
         run_id: input.id.clone(),
@@ -836,7 +867,10 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         .into_body()
         .unwrap()
         .into_inner();
-    assert_eq!(active, Some(input.id.clone()));
+    assert_eq!(
+        active.into_iter().collect::<BTreeSet<_>>(),
+        BTreeSet::from([input.id.clone(), parallel.id.clone()])
+    );
     let expired = Query {
         run_id: input.id.clone(),
         owner_hash: owner.clone(),
@@ -876,6 +910,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     );
     let claim = Claim {
         workspace_uid: query.workspace_uid,
+        thread_id: input.thread_id.clone(),
         run_id: input.id.clone(),
     };
     assert!(
@@ -937,7 +972,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "workspace exclusion did not settle"
+            "same-conversation exclusion did not settle"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -1108,6 +1143,16 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    assert!(
+        matches!(
+            status(&parallel_client, &service, &parallel, &owner)
+                .await
+                .unwrap()
+                .state,
+            State::WaitingForGuest { .. }
+        ),
+        "Stop for one conversation cancelled its sibling"
+    );
     workspace
         .admit(Json(admission(&service, queued_input.clone()).await))
         .call()
@@ -1135,6 +1180,35 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
 }
 
 #[tokio::test]
+async fn completing_one_conversation_keeps_the_other_run_pinned() {
+    let service = fixture();
+    let first = input();
+    let second = Input {
+        thread_id: "second-thread".into(),
+        ..input()
+    };
+    service.pin_run(&principal(), &first, true).await.unwrap();
+    service.pin_run(&principal(), &second, true).await.unwrap();
+    service.pin_run(&principal(), &first, false).await.unwrap();
+    service.pin_run(&principal(), &first, false).await.unwrap();
+    let agents: kube::Api<crate::crd::MicroVM> =
+        kube::Api::namespaced(service.client.clone(), "tengri");
+    let agent = agents.get(&first.agent_id).await.unwrap();
+    let pins: BTreeSet<String> =
+        serde_json::from_str(&agent.annotations()[crate::activity::ACTIVE_RUN_ANNOTATION]).unwrap();
+    assert_eq!(pins, BTreeSet::from([second.id.clone()]));
+    service.pin_run(&principal(), &second, false).await.unwrap();
+    assert!(
+        !agents
+            .get(&first.agent_id)
+            .await
+            .unwrap()
+            .annotations()
+            .contains_key(crate::activity::ACTIVE_RUN_ANNOTATION)
+    );
+}
+
+#[tokio::test]
 async fn an_accepted_run_is_pinned_before_guest_availability_is_required() {
     let service = fixture();
     let input = input();
@@ -1149,7 +1223,7 @@ async fn an_accepted_run_is_pinned_before_guest_availability_is_required() {
         agent
             .annotations()
             .get(crate::activity::ACTIVE_RUN_ANNOTATION),
-        Some(&input.id)
+        Some(&serde_json::to_string(&vec![input.id.clone()]).unwrap())
     );
     assert_eq!(
         agent.spec.desired_state,
@@ -1192,7 +1266,7 @@ async fn snapshot_resume_rebinds_the_run_pin_to_current_authority() {
         agent
             .annotations()
             .get(crate::activity::ACTIVE_RUN_ANNOTATION),
-        Some(&input.id)
+        Some(&serde_json::to_string(&vec![input.id.clone()]).unwrap())
     );
     assert_ne!(agent.spec.runtime_epoch, admitted.context.runtime_epoch);
 }
