@@ -23,11 +23,13 @@ import {
   type ListAccessResponse,
   type ReadAuditResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/authz_pb'
+import { ServicePolicyPanel } from './service-policy-panel'
 
-type View = 'workspace' | 'platform' | 'audit'
+type AccessView = 'workspace' | 'platform' | 'audit'
+type View = AccessView | 'policies'
 type ViewState =
-  | { view: View; kind: 'loading' }
-  | { view: View; kind: 'error'; message: string }
+  | { view: AccessView; kind: 'loading' }
+  | { view: AccessView; kind: 'error'; message: string }
   | { view: 'workspace' | 'platform'; kind: 'roster'; roster: ListAccessResponse }
   | { view: 'audit'; kind: 'audit'; audit: ReadAuditResponse }
 const actions = ['membership', 'collaborator', 'quota', 'grant', 'revoke', 'transfer', 'emergency'] as const
@@ -113,11 +115,12 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   const [view, setView] = useState<View>(workspaceUid ? 'workspace' : 'platform')
   const [data, setData] = useState<ViewState>()
   const loadController = useRef<AbortController | null>(null)
+  const accessView = view === 'policies' ? 'platform' : view
   const current = data?.view === view ? data : undefined
   const roster = current?.kind === 'roster' ? current.roster : undefined
   const audit = current?.kind === 'audit' ? current.audit : undefined
   const readError = current?.kind === 'error' ? current.message : ''
-  const loading = active && (!current || current.kind === 'loading')
+  const loading = active && view !== 'policies' && (!current || current.kind === 'loading')
   const viewTitle = view === 'audit' ? 'Audit log' : view === 'platform' ? 'Platform access' : 'Workspace access'
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -159,6 +162,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
   const boundedViewer = role === 'viewer' && enabled && form.watch('viewerContent')
   const load = useCallback(
     async (cursor = '') => {
+      if (view === 'policies') return
       loadController.current?.abort()
       const controller = new AbortController()
       loadController.current = controller
@@ -334,14 +338,18 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
     <Tabs
       value={view}
       onValueChange={(value) => {
-        if (value === 'workspace' || value === 'platform' || value === 'audit') setView(value)
+        if (value === 'workspace' || value === 'platform' || value === 'audit' || value === 'policies') setView(value)
       }}
       render={<section aria-label="Access administration" />}
       className="gap-4 text-zinc-200"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <TabsList activateOnFocus aria-label="Access view" className="h-9 border border-white/10 bg-zinc-950/40 p-0.5">
-          {(['workspace', 'platform', 'audit'] as const)
+        <TabsList
+          activateOnFocus
+          aria-label="Access view"
+          className="h-auto min-h-9 max-w-full flex-wrap border border-white/10 bg-zinc-950/40 p-0.5"
+        >
+          {(['workspace', 'platform', 'audit', 'policies'] as const)
             .filter((item) => item !== 'workspace' || workspaceUid)
             .map((item) => (
               <TabsTrigger
@@ -349,13 +357,21 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                 value={item}
                 className="min-w-20 px-3 text-[13px] text-zinc-400 data-active:bg-zinc-600 data-active:text-white data-active:shadow-sm dark:data-active:bg-zinc-600"
               >
-                {item === 'workspace' ? 'Workspace' : item === 'platform' ? 'Platform' : 'Audit'}
+                {item === 'workspace'
+                  ? 'Workspace'
+                  : item === 'platform'
+                    ? 'Platform'
+                    : item === 'policies'
+                      ? 'Service policies'
+                      : 'Audit'}
               </TabsTrigger>
             ))}
         </TabsList>
-        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void load()}>
-          Refresh
-        </Button>
+        {view !== 'policies' ? (
+          <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void load()}>
+            Refresh
+          </Button>
+        ) : null}
         <Button
           type="button"
           size="sm"
@@ -368,7 +384,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
           Verify passkey
         </Button>
       </div>
-      <TabsContent key={view} value={view} className="space-y-4" aria-busy={loading}>
+      <TabsContent key={accessView} value={accessView} className="space-y-4" aria-busy={loading}>
         <h2 className="text-[13px] font-medium">{viewTitle}</h2>
         {loading ? (
           <div role="status" aria-label={`Loading ${viewTitle}`} className="space-y-3">
@@ -734,6 +750,9 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
             ) : null}
           </div>
         ) : null}
+      </TabsContent>
+      <TabsContent value="policies" keepMounted>
+        <ServicePolicyPanel active={active && view === 'policies'} />
       </TabsContent>
     </Tabs>
   )

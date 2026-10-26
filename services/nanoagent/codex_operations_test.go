@@ -164,6 +164,41 @@ func TestCodexOperationLostResponseBlocksResendAndNewIdentity(t *testing.T) {
 	}
 }
 
+func TestCodexUncertainOperationDoesNotBlockAnotherConversation(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := supervisor.call(ctx, "turn/start", json.RawMessage(operationParams))
+		done <- err
+	}()
+	readCodexWireRequest(t, writer)
+	cancel()
+	if err := <-done; !errors.Is(err, errCodexOperationUnknown) {
+		t.Fatalf("first conversation must remain uncertain: %v", err)
+	}
+	other := strings.ReplaceAll(strings.ReplaceAll(operationParams, "thread-1", "thread-2"), "11111111", "22222222")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, err := supervisor.call(ctx, "turn/start", json.RawMessage(other))
+		done <- err
+	}()
+	request := readCodexWireRequest(t, writer)
+	if request.Method != "turn/start" || !strings.Contains(string(request.Params), `"threadId":"thread-2"`) {
+		t.Fatalf("another conversation did not dispatch independently: %+v", request)
+	}
+	response, _ := json.Marshal(codexRPCMessage{ID: request.ID, Result: json.RawMessage(`{"turn":{"id":"turn-2","status":"inProgress"}}`)})
+	supervisor.readMessagesWithLimit(nil, supervisor.generation, strings.NewReader(string(response)+"\n"), codexProtocolLineMaxBytes)
+	if err := <-done; err != nil {
+		t.Fatalf("another conversation was blocked by the uncertain turn: %v", err)
+	}
+	newIdentity := strings.ReplaceAll(operationParams, "11111111", "33333333")
+	if _, err := supervisor.call(context.Background(), "turn/start", json.RawMessage(newIdentity)); !errors.Is(err, errCodexOperationUnknown) {
+		t.Fatalf("the uncertain conversation lost its own fence: %v", err)
+	}
+}
+
 func TestCodexOperationReconcilesLostAcceptanceByClientIdentityWithoutResending(t *testing.T) {
 	supervisor, writer := readyCodexSupervisor(t)
 	ctx, cancel := context.WithCancel(context.Background())

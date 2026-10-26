@@ -241,7 +241,7 @@ test('warnings require explicit email opt-in and use the existing receiver with 
     receiver: 'critical-email',
     matchers: ['severity = "warning"', 'notify = "email"'],
     group_wait: '10s',
-    group_interval: '2m',
+    group_interval: '15m',
     repeat_interval: '4h',
     continue: false,
   })
@@ -250,6 +250,25 @@ test('warnings require explicit email opt-in and use the existing receiver with 
     'default-receiver',
     'critical-email',
   ])
+})
+
+test('Mimir tenant limits use the Helm chart runtime configuration rather than ignored server values', () => {
+  const values = YAML.parse(readRepoFile('argocd/applications/observability/mimir-values.yaml'))
+  expect(values.mimir.runtimeConfig).toBeUndefined()
+  expect(values.runtimeConfig.overrides.anonymous).toEqual({
+    ingestion_rate: 20_000,
+    ingestion_burst_size: 400_000,
+    max_global_series_per_user: 300_000,
+  })
+  const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+  const allow = metricAllowlist(config, 'mimir_ingester_metrics')
+  for (const metric of [
+    'cortex_ingester_memory_series',
+    'cortex_ingester_local_limits',
+    'cortex_discarded_samples_total',
+  ])
+    expect(allow.test(metric)).toBe(true)
+  expect(allow.test('unrelated_metric')).toBe(false)
 })
 
 test('Mimir email UI links select its provisioned Grafana Alertmanager without redirecting API paths', () => {
