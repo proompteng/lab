@@ -318,7 +318,7 @@ test('alert email uses Brevo SMTP credentials from the existing secret store', (
   ])
 })
 
-test('Ceph bounded scrubs retain calibrated capacity without ineffective scrub or recovery overrides', () => {
+test('Ceph catch-up scrubs retain calibrated capacity without ineffective scrub or recovery overrides', () => {
   const values = YAML.parse(readRepoFile('argocd/applications/rook-ceph/cluster-values.yaml'))
   const config = values.cephClusterSpec.cephConfig
   for (const key of [
@@ -332,7 +332,7 @@ test('Ceph bounded scrubs retain calibrated capacity without ineffective scrub o
   expect(config.osd.osd_mclock_profile).toBe('high_client_ops')
   expect(config.osd.osd_scrub_begin_hour).toBe('0')
   expect(config.osd.osd_scrub_end_hour).toBe('0')
-  expect(config.osd.osd_max_scrubs).toBe('1')
+  expect(config.osd.osd_max_scrubs).toBe('3')
   expect([0, 1, 2, 3, 4, 5].map((id) => config[`osd.${id}`].osd_mclock_max_capacity_iops_hdd)).toEqual([
     '210',
     '250',
