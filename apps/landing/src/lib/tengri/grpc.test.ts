@@ -315,6 +315,10 @@ beforeAll(async () => {
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
+      if (call.request.id === 'sleep-committed') {
+        callback(serviceError(grpc.status.FAILED_PRECONDITION, 'automatic sleep already committed'))
+        return
+      }
       callback(null, {
         id: call.request.id,
         displayName: 'Tengri',
@@ -1473,6 +1477,16 @@ describe('Tengri gRPC BFF transport', () => {
     expect(metadataContext().sessionId).toBe(identity.session.id)
     const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.UpdatePowerSettings
     expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
+  })
+
+  test('does not report a saved timeout after automatic sleep has committed', async () => {
+    const { updatePowerSettings } = await import('./grpc')
+    expect(await rejection(updatePowerSettings(identity, 'sleep-committed', { idleTimeoutMinutes: 60 }))).toMatchObject(
+      {
+        status: 409,
+        message: 'The agent has started sleeping. Resume it, then change this setting.',
+      },
+    )
   })
 
   test('reports uncertain runtime readiness as unavailable without inventing a failed agent', async () => {
