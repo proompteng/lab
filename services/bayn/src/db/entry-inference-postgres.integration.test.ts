@@ -13,11 +13,7 @@ import chartDispatchCheckpoints from '../../migrations/0151_chart_dispatch_check
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import {
-  chartInferenceFixture,
-  entryCompletionFixture,
-  entryEvaluationRequestFixture,
-} from '../jev/entry-inference.test-support'
+import { chartInferenceFixture, entryCompletionFixture } from '../jev/entry-inference.test-support'
 import { makeChartDispatchClaim, makeChartTerminalReceipt } from '../jev/chart-checkpoint'
 import { DecisionsClient } from '../jev/decisions'
 import { JevClient } from '../jev/client'
@@ -25,7 +21,7 @@ import { prepareJevRequest } from '../jev/contract'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore, evaluateClaimedJevOnce } from '../jev/evaluation'
-import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
+import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevPurpose } from '../jev/portfolio'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
 import { makeChartDecisionsRequest } from '../jev/chart-questions'
@@ -88,6 +84,45 @@ const runtimeLayer = Layer.mergeAll(
   Layer.provideMerge(NodeServices.layer),
 )
 const makeRuntime = () => ManagedRuntime.make(runtimeLayer)
+const replaySourceHash = 'e'.repeat(64)
+const replayAccountId = `replay-${replaySourceHash}`
+const replayFixture = nativeJevFixture(undefined, undefined, replayAccountId)
+const replayBatch = Result.getOrThrow(
+  makeJevTradingSignalBatch({
+    observation: replayFixture.observation.payload,
+    expiresAt: new Date(
+      Date.parse(replayFixture.observation.payload.observedAt) + replayFixture.protocol.inferenceValidityMs,
+    ).toISOString(),
+    planVersion: JevBatchPlanVersion.V7,
+  }),
+)
+const retainReplayRequest = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  // Native fixtures intentionally reuse synthetic reconciliation identities; keep the replay graph isolated.
+  yield* sql`DROP SCHEMA public CASCADE`
+  yield* sql`CREATE SCHEMA public`
+  yield* postgresMigrations
+  const selected = replayBatch.candidates.find((value) => value.status === JevCandidatePlanStatus.Requested)
+  if (selected?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing replay entry request')
+  const current = selected.request
+  yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
+    VALUES (${replayAccountId},${replaySourceHash},${current.observedAt})`
+  yield* (yield* CycleStore).acquire(replayFixture.draft, current.observedAt)
+  yield* sql`INSERT INTO authority_generations (generation_hash,schema_version,maximum,authority_version,activated_at)
+    VALUES (${current.authorityGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,${current.observedAt})
+    ON CONFLICT (generation_hash) DO NOTHING`
+  const r = replayFixture.portfolio.brokerState.reconciliation
+  yield* sql`INSERT INTO reconciliations (reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+    VALUES (${r.reconciliationId},${r.schemaVersion},${r.accountId},${r.expectedHash},${r.observedHash},${r.contentHash},${r.status},'[]'::jsonb,${r.reconciledAt})`
+  yield* (yield* CandidateObservationStore).record(replayFixture.observation)
+  yield* TestClock.setTime(Date.parse(current.observedAt)).pipe(
+    Effect.andThen(
+      Effect.flatMap(JevBatchStore, (store) => store.begin(replayBatch, replayFixture.observation.payload)),
+    ),
+    Effect.provide(TestClock.layer()),
+  )
+  return current
+})
 
 integration('committed sequential provider handoff', () => {
   let runtime: ReturnType<typeof makeRuntime>
@@ -133,7 +168,6 @@ integration('committed sequential provider handoff', () => {
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
           const journal = yield* EntryInferenceJournal
-          const original = entryEvaluationRequestFixture(new Date().toISOString())
           const expiredVisual = chartInferenceFixture(request.request, request.observedAt)
           const expiredClaim = Result.getOrThrow(
             makeChartDispatchClaim({
@@ -152,16 +186,7 @@ integration('committed sequential provider handoff', () => {
             VALUES (${request.requestId},${expiredClaim.claimHash},${sql.json(expiredClaim)})`.pipe(Effect.result),
             ),
           ).toBe(true)
-          const { requestId: _, ...material } = original
-          const current = Result.getOrThrow(
-            makeJevEvaluationRequest({
-              ...material,
-              cycleId: request.cycleId,
-              authorityGenerationHash: request.authorityGenerationHash,
-            }),
-          )
-          yield* sql`INSERT INTO jev_evaluation_requests (request_id,cycle_id,authority_generation_hash,payload)
-        VALUES (${current.requestId},${current.cycleId},${current.authorityGenerationHash},${sql.json(current)})`
+          const current = yield* retainReplayRequest
           const visual = chartInferenceFixture(current.request, current.observedAt)
           const claim = Result.getOrThrow(
             makeChartDispatchClaim({
@@ -180,7 +205,7 @@ integration('committed sequential provider handoff', () => {
           expect(
             Result.isFailure(yield* sql.withTransaction(journal.recordChartClaim(claim)).pipe(Effect.result)),
           ).toBe(true)
-          const store = makeInferenceExpenseStore(sql, fixture.portfolio.brokerState.account.accountId, '1970-01-01')
+          const store = makeInferenceExpenseStore(sql, replayAccountId, '1970-01-01')
           const find = (rows: readonly { readonly requestId: string }[]) =>
             rows.some((row) => row.requestId === current.requestId)
           const initialSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
@@ -190,9 +215,10 @@ integration('committed sequential provider handoff', () => {
           expect(initial.every((quote) => quote.line.usageStatus === 'UNKNOWN_USAGE')).toBe(true)
           yield* store.freeze(initial)
           expect(find(yield* store.newSources)).toBe(false)
-          // Exercise the real disposable database clock; never weaken the production expiry guard.
-          yield* Effect.sleep(Math.max(0, Date.parse(current.expiresAt) - Date.now() + 20))
-          yield* (yield* JevEvaluationStore).abandon(current, new Date().toISOString())
+          // Advance only this explicit replay account's durable clock beyond the original deadline.
+          const lateAt = new Date(Date.parse(current.expiresAt) + 20).toISOString()
+          yield* sql`UPDATE simulated_execution_clocks SET observed_at=${lateAt} WHERE account_id=${replayAccountId}`
+          yield* (yield* JevEvaluationStore).abandon(current, lateAt)
           const abandonedSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
           if (abandonedSource === undefined) throw new Error('Missing first resolved Jev expense')
           const abandoned = Result.getOrThrow(makeInferenceExpenseQuotes(abandonedSource, inferenceExpenseRateCard))
@@ -203,7 +229,7 @@ integration('committed sequential provider handoff', () => {
               schemaVersion: 'bayn.chart-terminal-receipt.v1',
               requestId: current.requestId,
               claimHash: claim.claimHash,
-              recordedAt: new Date().toISOString(),
+              recordedAt: lateAt,
               outcome: { status: 'RECEIVED', inference: visual },
             }),
           )
@@ -318,18 +344,7 @@ integration('committed sequential provider handoff', () => {
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        // This is a real-account admission: use a fresh request, not the historical migration fixture.
-        const parent = candidate.request
-        const { requestId: _, ...material } = entryEvaluationRequestFixture(new Date().toISOString())
-        const request = Result.getOrThrow(
-          makeJevEvaluationRequest({
-            ...material,
-            cycleId: parent.cycleId,
-            authorityGenerationHash: parent.authorityGenerationHash,
-          }),
-        )
-        yield* sql`INSERT INTO jev_evaluation_requests (request_id,cycle_id,authority_generation_hash,payload)
-          VALUES (${request.requestId},${request.cycleId},${request.authorityGenerationHash},${sql.json(request)})`
+        const request = yield* retainReplayRequest
         const events: string[] = []
         const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen(evaluateClaimedJevOnce({ request, claimedAt: request.observedAt })),
