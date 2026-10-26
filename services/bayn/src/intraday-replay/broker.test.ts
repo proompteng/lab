@@ -23,7 +23,7 @@ import { streamingFixture } from '../testing/streaming-market-fixture'
 import { canonicalHashV1Result } from '../hash'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from './broker'
-import { fillObservation, positionSnapshot } from '../broker/observations'
+import { fillObservation, orderObservation, positionSnapshot } from '../broker/observations'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
 import { ReplayQuoteRejection } from './broker-execution-evidence'
 import { makeReplayInferenceTiming } from './inference-timing'
@@ -2198,17 +2198,31 @@ test('native bracket reduces the stop after a partial target and restores exact 
                 : observedQuote(quote),
         )
       let broker = yield* setup({ quoteAt })
-      yield* submit(broker, intent({ protection: bracketTerms }))
+      const opened = yield* submit(broker, intent({ protection: bracketTerms }))
+      const stop = opened.order.legs?.find((leg) => leg.orderType === BrokerOrderType.StopLimit)
+      if (stop === undefined) throw new Error('Missing bracket stop')
+      const before = yield* broker.read.orderById(stop.brokerOrderId)
+      const previousEvent = Result.getOrThrow(orderObservation(before.value, before.evidence))
       yield* broker.observeMarket(startMs + 1000, laterMarket(1000, 103, 2))
       yield* TestClock.setTime(startMs + 1000)
       const partial = yield* broker.checkpoint
       expect(
         partial.state.orders.find(({ order }) => order.orderType === BrokerOrderType.StopLimit)?.order.quantityAtoms,
       ).toBe('3000000000')
+      const reduced = yield* broker.read.orderById(stop.brokerOrderId)
+      const reducedEvent = Result.getOrThrow(orderObservation(reduced.value, reduced.evidence))
+      expect(reducedEvent.sourceEventId).not.toBe(previousEvent.sourceEventId)
+      expect(reduced.value.updatedAt).toBe(new Date(startMs + 1000).toISOString())
+      yield* TestClock.setTime(startMs + 1100)
+      const repeated = yield* broker.read.orderById(stop.brokerOrderId)
+      const replayEvent = Result.getOrThrow(orderObservation(repeated.value, repeated.evidence))
+      expect(replayEvent.sourceEventId).toBe(reducedEvent.sourceEventId)
+      expect(replayEvent.contentHash).toBe(reducedEvent.contentHash)
+      const retained = yield* broker.checkpoint
       broker = yield* makeReplayBroker({
         ...config,
         quoteAt,
-        restoreCheckpoint: { value: partial, expectedHash: partial.checkpointHash },
+        restoreCheckpoint: { value: retained, expectedHash: retained.checkpointHash },
       })
       yield* broker.observeMarket(startMs + 2000, laterMarket(2000, 98))
       yield* TestClock.setTime(startMs + 2000)
