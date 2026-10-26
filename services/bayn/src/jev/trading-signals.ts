@@ -325,7 +325,7 @@ const requestFromSnapshot = (
       capitalMicros: native.portfolio.brokerState.account.equityMicros,
     })
     return yield* prepareEntryInferenceInput({
-      schemaVersion: 'bayn.entry-inference-input.v1',
+      schemaVersion: 'bayn.entry-inference-input.v2',
       protocol: native.protocol,
       chartSource: {
         symbol,
