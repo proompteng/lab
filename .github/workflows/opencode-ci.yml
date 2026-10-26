@@ -38,5 +38,4 @@ jobs:
       tag: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
       source_revision: ${{ github.event.pull_request.head.sha }}
       pr_number: '${{ github.event.pull_request.number }}'
-      image_build_timeout: 20m
     secrets: inherit
