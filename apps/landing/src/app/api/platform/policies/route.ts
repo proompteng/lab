@@ -1,5 +1,6 @@
 import { toJson } from '@bufbuild/protobuf'
 import { z } from 'zod'
+import { policyWriteSchema } from '@/lib/platform/policies'
 import {
   PlatformAuthorizationService,
   GetPlatformConfigurationResponseSchema,
@@ -15,19 +16,6 @@ import {
   tengriRouteError,
 } from '@/lib/tengri/http'
 import { ofzCall } from '@/lib/tengri/ofz'
-const relationship = z.strictObject({
-  resource: z.strictObject({ kind: z.string().min(1).max(128), id: z.string().min(1).max(256) }),
-  relation: z.string().min(1).max(128),
-  subjectKind: z.enum(['human', 'workload']),
-  subjectId: z.string().min(1).max(512),
-  enabled: z.boolean(),
-})
-const write = z.strictObject({
-  operationId: z.uuid(),
-  expectedPolicyVersion: z.string().regex(/^[0-9]{1,19}$/),
-  relationships: z.array(relationship).min(1).max(128),
-  reason: z.string().min(3).max(512),
-})
 export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {
@@ -43,7 +31,9 @@ export async function POST(request: Request) {
   try {
     requireSameOrigin(request)
     const identity = await requireTengriIdentity(request)
-    const body = write.parse(await readTengriJsonBody(request, { subject: identity.subject, maxBytes: 65_536 }))
+    const body = policyWriteSchema.parse(
+      await readTengriJsonBody(request, { subject: identity.subject, maxBytes: 65_536 }),
+    )
     const context = humanContext(identity)
     const result = await ofzCall(
       PlatformAuthorizationService.method.writePolicyRelationships,
