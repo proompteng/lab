@@ -4,6 +4,10 @@ import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { equityMarketProfile } from '../jev/markets'
+import { decodeJevEvaluationRequest } from '../jev/evidence'
+import { makeNativeChartEvidence } from '../jev/chart-evidence'
+import { makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
+import { decodeStagedCheckpoint, stageResponseIdentity } from '../jev/staged-checkpoint'
 
 import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
@@ -381,6 +385,77 @@ durableTest.each(
         const initialMs = Date.parse(fixture.query.observedAt)
         yield* TestClock.setTime(initialMs)
         const sql = yield* PgClient.PgClient
+        const verifyMeasuredEntryStages = Effect.gen(function* () {
+          const rows = yield* Schema.decodeUnknownEffect(
+            Schema.Array(
+              Schema.Struct({
+                request: Schema.Unknown,
+                claims: Schema.Unknown,
+                terminals: Schema.Unknown,
+                skips: Schema.Unknown,
+              }),
+            ),
+          )(
+            yield* sql`SELECT request.payload AS request,
+            coalesce((SELECT jsonb_agg(payload) FROM jev_staged_dispatch_claims WHERE request_id=request.request_id),'[]'::jsonb) AS claims,
+            coalesce((SELECT jsonb_agg(payload) FROM jev_staged_terminal_receipts WHERE request_id=request.request_id),'[]'::jsonb) AS terminals,
+            coalesce((SELECT jsonb_agg(payload) FROM jev_staged_skip_receipts WHERE request_id=request.request_id),'[]'::jsonb) AS skips
+            FROM jev_evaluation_requests request`,
+          )
+          const expectedBaseHashes: string[] = []
+          const symbols: string[] = []
+          let skipped = 0
+          for (const row of rows) {
+            const request = Result.getOrThrow(decodeJevEvaluationRequest(row.request))
+            symbols.push(request.symbol)
+            const checkpoint = Result.getOrThrow(
+              decodeStagedCheckpoint(request, { claims: row.claims, terminals: row.terminals, skips: row.skips }),
+            )
+            const chart = checkpoint.terminals.find((terminal) => terminal.stage === 'CHART')
+            if (chart?.outcome.status !== 'RECEIVED') throw new Error('Missing measured CHART receipt')
+            const chartInference = chart.outcome.inference
+            expect(
+              measuredCalls.filter((call) => call.stage === 'CHART' && call.requestHash === chartInference.requestHash),
+            ).toHaveLength(1)
+            const next = Result.getOrThrow(
+              makeSelectedBaseStartStageRequest(
+                {
+                  chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+                  protocol: request.request.protocol,
+                  funding: request.request.funding,
+                },
+                stageResponseIdentity(chart.outcome.inference),
+              ),
+            )
+            if (next.status === 'PREPARED') {
+              expectedBaseHashes.push(next.requestHash)
+              expect(checkpoint.claims.find((claim) => claim.stage === 'BASE_START')?.providerRequestHash).toBe(
+                next.requestHash,
+              )
+              expect(checkpoint.terminals.find((terminal) => terminal.stage === 'BASE_START')?.outcome.status).toBe(
+                'RECEIVED',
+              )
+              expect(checkpoint.skips).toEqual([])
+            } else {
+              skipped++
+              expect(checkpoint.skips).toHaveLength(1)
+              expect(checkpoint.skips[0]?.reason).toBe(next.reason)
+              expect(checkpoint.claims.some((claim) => claim.stage === 'BASE_START')).toBe(false)
+            }
+          }
+          expect(symbols.toSorted()).toEqual(eligibleEntrySymbols.toSorted())
+          expect(expectedBaseHashes.length).toBeGreaterThan(0)
+          expect(skipped).toBeGreaterThan(0)
+          expect(
+            measuredCalls
+              .filter((call) => call.stage === 'BASE_START')
+              .map((call) => call.requestHash)
+              .toSorted(),
+          ).toEqual(expectedBaseHashes.toSorted())
+          expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(eligibleEntrySymbols.length)
+          expect(measuredCalls.filter((call) => call.stage === 'JEV')).toHaveLength(eligibleEntrySymbols.length)
+          expect(measuredCalls).toHaveLength(2 * eligibleEntrySymbols.length + expectedBaseHashes.length)
+        })
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
@@ -1412,9 +1487,7 @@ durableTest.each(
         yield* runtime.reconcile
         if (scenario === 'measured-entry-expired') {
           const state = yield* broker.snapshot
-          expect(measuredCalls).toHaveLength(3 * eligibleEntrySymbols.length)
-          for (const stage of ['CHART', 'BASE_START', 'JEV'] as const)
-            expect(measuredCalls.filter((call) => call.stage === stage)).toHaveLength(eligibleEntrySymbols.length)
+          yield* verifyMeasuredEntryStages
           expect(new Set(measuredCalls.map((call) => call.requestHash)).size).toBe(measuredCalls.length)
           expect(measuredCalls.every((call) => call.outcome.status === 'RECEIVED')).toBe(true)
           expect(state.orders).toHaveLength(0)
@@ -1515,13 +1588,8 @@ durableTest.each(
             expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
           }
           if (scenario === 'measured-exit') {
-            expect(measuredCalls).toHaveLength(3 * eligibleEntrySymbols.length)
+            yield* verifyMeasuredEntryStages
             const entryCalls = measuredCalls.filter((call) => call.stage === 'JEV')
-            expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(eligibleEntrySymbols.length)
-            expect(measuredCalls.filter((call) => call.stage === 'BASE_START')).toHaveLength(
-              eligibleEntrySymbols.length,
-            )
-            expect(entryCalls).toHaveLength(eligibleEntrySymbols.length)
             expect(new Set(measuredCalls.map((call) => call.requestHash)).size).toBe(measuredCalls.length)
             for (const call of measuredCalls) {
               expect(call.outcome.status).toBe('RECEIVED')
