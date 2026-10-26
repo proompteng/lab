@@ -64,7 +64,6 @@ jobs:
     with:
       image_name: torghut-ws
       package_attr: torghut-ws-image
-      image_build_timeout: 20m
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
