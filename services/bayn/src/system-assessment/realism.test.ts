@@ -58,6 +58,34 @@ describe('execution realism', () => {
     expect(Result.getOrThrow(measureRealism(evidence(), sources)).status).toBe(RealismStatus.Supported)
   })
 
+  test('accepts whole-second source timestamps throughout decision and fill evidence', () => {
+    const start = '2026-10-01T14:00:00Z'
+    const dispatched = '2026-10-01T14:00:01Z'
+    const filled = '2026-10-01T14:00:02Z'
+    const expires = '2026-10-01T14:00:03Z'
+    const input = evidence([
+      fill({
+        quoteAvailableAt: start,
+        quoteFreshUntil: expires,
+        routingStartedAt: dispatched,
+        requestDispatchedAt: dispatched,
+        submissionDeadlineAt: expires,
+        filledAt: filled,
+        expiresAt: expires,
+      }),
+    ])
+    input.decisions = [
+      { ...decision, decisionAt: start, persistedAt: start, inputs: [{ contentHash: id(2), availableAt: start }] },
+    ]
+    expect(Result.getOrThrow(measureRealism(input, sources)).status).toBe(RealismStatus.Supported)
+    input.decisions = [
+      { ...input.decisions[0]!, inputs: [{ contentHash: id(2), availableAt: '2026-10-01T14:00:00.000000001Z' }] },
+    ]
+    expect(Result.getOrThrow(measureRealism(input, sources)).violations).toContain(
+      `FUTURE_INPUT:${decision.decisionId}`,
+    )
+  })
+
   test('broker partial fills and price improvement need not equal an order lot or limit tick', () => {
     const actual = fill({ kind: ExecutionEvidenceKind.Broker, quantityStepAtoms: '100', fillPriceAtoms: '1009999' })
     expect(Result.getOrThrow(measureRealism(evidence([actual]), sources)).status).toBe(RealismStatus.Supported)
