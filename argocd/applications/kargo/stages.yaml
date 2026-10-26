@@ -704,6 +704,8 @@ spec:
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
               - key: spec.sources.3.helm.valuesObject.template.spec.containers.0.image
                 value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.4.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
         - uses: git-commit
           as: commit
           config:

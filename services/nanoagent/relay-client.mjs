@@ -53,6 +53,91 @@ async function privateFile(file, limit = 524288) {
   return readFile(file, 'utf8')
 }
 
+async function readRelayResponse(response) {
+  if (!response.body) throw new Error('The connector response is missing')
+  const reader = response.body.getReader()
+  const chunks = []
+  let total = 0
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      total += value.length
+      if (total > 2097152 + 65536) {
+        await reader.cancel()
+        throw new Error('Connector response exceeded its byte budget')
+      }
+      chunks.push(Buffer.from(value))
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+async function lookupExecution(config, body, operationId, send) {
+  const unknown = {
+    content: [
+      {
+        type: 'text',
+        text: `The response for operation ${operationId} was lost. Its outcome could not be confirmed. The request was not resent.`,
+      },
+    ],
+    isError: true,
+    _meta: { relay: { operationId, outcome: 'unknown' } },
+  }
+  try {
+    const lookup = Buffer.from(
+      JSON.stringify({
+        executionBody: body.toString('utf8'),
+        binding: config.binding,
+        delegationId: config.delegationId,
+      }),
+    )
+    const response = await send('lookup', lookup)
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw new Error('Execution lookup unavailable')
+    }
+    const result = await readRelayResponse(response)
+    const execution = result?.execution
+    const status = execution?.upstreamStatus ?? 0
+    const resultHash = execution?.resultHash ?? ''
+    if (
+      !execution ||
+      execution.operationId !== operationId ||
+      execution.requestHash !== createHash('sha256').update(body).digest('base64') ||
+      !['started', 'succeeded', 'failed', 'withheld'].includes(execution.outcome) ||
+      !uuid(execution.authorizationReceiptId) ||
+      !uuid(execution.executionReceiptId) ||
+      !uuid(result.lookupReceiptId) ||
+      !Number.isInteger(status) ||
+      status < 0 ||
+      status > 599 ||
+      typeof execution.updatedAtUnixMs !== 'string' ||
+      !/^[0-9]{1,16}$/.test(execution.updatedAtUnixMs) ||
+      !Number.isSafeInteger(Number(execution.updatedAtUnixMs)) ||
+      Number(execution.updatedAtUnixMs) <= 0 ||
+      (resultHash !== '' && (typeof resultHash !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(resultHash))) ||
+      (['succeeded', 'withheld'].includes(execution.outcome) && resultHash === '')
+    )
+      throw new Error('Invalid execution snapshot')
+    const metadata = {
+      operationId,
+      outcome: execution.outcome,
+      authorizationReceiptId: execution.authorizationReceiptId,
+      executionReceiptId: execution.executionReceiptId,
+      lookupReceiptId: result.lookupReceiptId,
+      upstreamStatus: status,
+      updatedAtUnixMs: execution.updatedAtUnixMs,
+    }
+    const text = `The response for operation ${operationId} was lost. Relay recorded its outcome as ${execution.outcome}. The original result is unavailable. The request was not resent.`
+    return { content: [{ type: 'text', text }], isError: true, _meta: { relay: metadata } }
+  } catch {
+    return unknown
+  }
+}
+
 export async function invoke(config, operation, args, fetcher = fetch) {
   const endpoint = new URL(config.endpoint)
   if (
@@ -78,49 +163,57 @@ export async function invoke(config, operation, args, fetcher = fetch) {
       delegationId: config.delegationId,
     }),
   )
-  if (body.length > 1048576) throw new Error('Connector arguments exceed their byte budget')
+  if (body.length > 65536) throw new Error('Connector arguments exceed their byte budget')
   const privateKey = await privateFile(config.keyFile, 16384)
-  const proof = proofFor({ endpoint: endpoint.toString(), credential: config.credential, privateKey, body })
-  const response = await fetcher(endpoint, {
-    method: 'POST',
-    redirect: 'error',
-    signal: AbortSignal.timeout(40000),
-    headers: {
-      'content-type': 'application/json',
-      authorization: `DPoP ${config.credential}`,
-      dpop: proof,
-      'x-relay-delegation': config.delegationId,
-    },
-    body: JSON.stringify({ body: body.toString('base64') }),
-  })
-  if (!response.ok) throw new Error('Connector access was denied or the connection is unavailable')
-  if (!response.body) throw new Error('The connector response is missing')
-  const reader = response.body.getReader()
-  const chunks = []
-  let total = 0
+  const send = (kind, bytes) =>
+    fetcher(endpoint, {
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(40000),
+      headers: {
+        'content-type': 'application/json',
+        authorization: `DPoP ${config.credential}`,
+        dpop: proofFor({ endpoint: endpoint.toString(), credential: config.credential, privateKey, body: bytes }),
+        'x-relay-delegation': config.delegationId,
+      },
+      body: JSON.stringify({ kind, body: bytes.toString('base64') }),
+    })
+  let response
   try {
-    for (;;) {
-      const { value, done } = await reader.read()
-      if (done) break
-      total += value.length
-      if (total > 2097152 + 65536) {
-        await reader.cancel()
-        throw new Error('Connector response exceeded its byte budget')
-      }
-      chunks.push(Buffer.from(value))
-    }
-  } finally {
-    reader.releaseLock()
+    response = await send('execute', body)
+  } catch {
+    return lookupExecution(config, body, operationId, send)
   }
-  const result = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-  if (
-    result.operationId !== operationId ||
-    !uuid(result.authorizationReceiptId) ||
-    !uuid(result.executionReceiptId) ||
-    typeof result.result !== 'string'
-  )
-    throw new Error('Relay execution receipt is invalid')
-  return { content: [{ type: 'text', text: result.result }], isError: false }
+  if (!response.ok) {
+    await response.body?.cancel()
+    if (response.status >= 500 || [408, 409, 429].includes(response.status))
+      return lookupExecution(config, body, operationId, send)
+    throw new Error('Connector access was denied or the connection is unavailable')
+  }
+  try {
+    const result = await readRelayResponse(response)
+    if (
+      result?.operationId !== operationId ||
+      !uuid(result.authorizationReceiptId) ||
+      !uuid(result.executionReceiptId) ||
+      typeof result.result !== 'string'
+    )
+      throw new Error('Relay execution receipt is invalid')
+    return {
+      content: [{ type: 'text', text: result.result }],
+      isError: false,
+      _meta: {
+        relay: {
+          operationId,
+          outcome: 'succeeded',
+          authorizationReceiptId: result.authorizationReceiptId,
+          executionReceiptId: result.executionReceiptId,
+        },
+      },
+    }
+  } catch {
+    return lookupExecution(config, body, operationId, send)
+  }
 }
 
 async function main() {

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
 import * as loader from '@grpc/proto-loader'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { createSpiffeFixture } from '../tengri/spiffe.fixture'
 
@@ -27,10 +28,15 @@ test.skipIf(!binary)(
     const version = relayNamespace.v1 as grpc.GrpcObject
     const service = version.RelayService as grpc.ServiceClientConstructor
     let executions = 0
+    let lookups = 0
     let server: grpc.Server | undefined
     try {
-      for (const peerId of [relayId, 'spiffe://proompteng.ai/ns/tengri/sa/tengri']) {
-        const certificate = fixture.certificate(peerId === relayId ? 'relay' : 'wrong-relay', peerId)
+      for (const scenario of ['success', 'lost', 'started', 'unavailable', 'invalid', 'wrong-peer']) {
+        const peerId = scenario === 'wrong-peer' ? 'spiffe://proompteng.ai/ns/tengri/sa/tengri' : relayId
+        const certificate = fixture.certificate(scenario, peerId)
+        let executionBody: Buffer | undefined
+        const beforeExecutions = executions
+        const beforeLookups = lookups
         server = new grpc.Server()
         server.addService(service.service, {
           listOperations(_call: grpc.ServerUnaryCall<unknown, unknown>, callback: grpc.sendUnaryData<unknown>) {
@@ -68,12 +74,53 @@ test.skipIf(!binary)(
             expect(payload.arguments).toEqual({ namespace: 'ofz' })
             expect(payload.binding).toBeNull()
             expect(payload.delegationId).toBeNull()
+            executionBody = Buffer.from(call.request.body)
+            if (scenario !== 'success') {
+              callback({ code: grpc.status.UNAVAILABLE, details: 'fixture lost response' })
+              return
+            }
             callback(null, {
               operationId: payload.operationId,
               result: Buffer.from('fixture pod status'),
               contentType: 'application/json',
               authorizationReceiptId: '11111111-1111-4111-8111-111111111111',
               executionReceiptId: '22222222-2222-4222-8222-222222222222',
+            })
+          },
+          getExecution(
+            call: grpc.ServerUnaryCall<
+              { subject: { clientService: string; workloadId: string }; body: Buffer },
+              unknown
+            >,
+            callback: grpc.sendUnaryData<unknown>,
+          ) {
+            lookups += 1
+            expect(call.metadata.get('x-ofz-contract-version')).toEqual(['1'])
+            expect(call.request.subject.clientService).toBe('opencode')
+            expect(call.request.subject.workloadId).toBe(ownId)
+            const lookup = JSON.parse(call.request.body.toString('utf8'))
+            expect(lookup.executionBody).toBe(executionBody!.toString('utf8'))
+            expect(lookup.binding).toBeNull()
+            expect(lookup.delegationId).toBeNull()
+            expect(call.request.body.equals(executionBody!)).toBe(false)
+            if (scenario === 'unavailable') {
+              callback({ code: grpc.status.UNAVAILABLE, details: 'fixture lookup unavailable' })
+              return
+            }
+            const payload = JSON.parse(lookup.executionBody)
+            callback(null, {
+              execution: {
+                operationId: scenario === 'invalid' ? '33333333-3333-4333-8333-333333333333' : payload.operationId,
+                outcome: scenario === 'started' ? 'started' : 'succeeded',
+                authorizationReceiptId: '11111111-1111-4111-8111-111111111111',
+                executionReceiptId: '22222222-2222-4222-8222-222222222222',
+                upstreamStatus: scenario === 'started' ? 0 : 200,
+                resultHash:
+                  scenario === 'started' ? Buffer.alloc(0) : createHash('sha256').update('fixture pod status').digest(),
+                requestHash: createHash('sha256').update(executionBody!).digest(),
+                updatedAtUnixMs: Date.now().toString(),
+              },
+              lookupReceiptId: '44444444-4444-4444-8444-444444444444',
             })
           },
         })
@@ -126,9 +173,27 @@ test.skipIf(!binary)(
           .split('\n')
           .map((line) => JSON.parse(line))
         expect(replies[0].result.protocolVersion).toBe('2025-03-26')
-        if (peerId === relayId) {
+        if (scenario !== 'wrong-peer') {
           expect(replies[1].result.tools[0].name).toBe('galactic__status')
-          expect(replies[2].result).toEqual({ content: [{ type: 'text', text: 'fixture pod status' }], isError: false })
+          const result = replies[2].result
+          const operationId = JSON.parse(executionBody!.toString('utf8')).operationId
+          expect(result._meta.relay.operationId).toBe(operationId)
+          expect(executions - beforeExecutions).toBe(1)
+          if (scenario === 'success') {
+            expect(result).toMatchObject({
+              content: [{ type: 'text', text: 'fixture pod status' }],
+              isError: false,
+              _meta: { relay: { outcome: 'succeeded', executionReceiptId: '22222222-2222-4222-8222-222222222222' } },
+            })
+            expect(lookups - beforeLookups).toBe(0)
+          } else {
+            expect(result.isError).toBe(true)
+            expect(result.content[0].text).toContain('The request was not resent.')
+            expect(result._meta.relay.outcome).toBe(
+              scenario === 'started' ? 'started' : scenario === 'lost' ? 'succeeded' : 'unknown',
+            )
+            expect(lookups - beforeLookups).toBe(1)
+          }
         } else {
           expect(replies[1].error.code).toBe(-32000)
           expect(replies[2].error.code).toBe(-32000)
@@ -136,11 +201,12 @@ test.skipIf(!binary)(
         server.forceShutdown()
         server = undefined
       }
-      expect(executions).toBe(1)
+      expect(executions).toBe(5)
+      expect(lookups).toBe(4)
     } finally {
       server?.forceShutdown()
       fixture.close()
     }
   },
-  30_000,
+  60_000,
 )
