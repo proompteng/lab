@@ -1531,10 +1531,18 @@ durableTest.each(
           expect(state.fills.length).toBeGreaterThanOrEqual(scenario === 'partial-exit-reentry' ? 3 : 2)
           expect(state.ledger.positions).toHaveLength(0)
           expect(
-            yield* sql`SELECT closure.document #>> '{document,strategyDecision,reason}' AS reason
+            yield* sql`SELECT closure.document #>> '{document,strategyDecision,reason}' AS reason,
+                (closure.document #>> '{document,strategyDecision,evidence,portfolio,exitRequestedAt}')::timestamptz = (
+                  SELECT min(t.occurred_at) FROM accounting_transactions t
+                  JOIN accounting_receipts r ON r.broker_event_id = t.broker_event_id AND r.intent_id = t.intent_id
+                  JOIN intents i ON i.intent_id = t.intent_id
+                  WHERE i.cycle_id = cycle.cycle_id AND i.protection IS NOT NULL AND t.side = 'SELL'
+                ) AS "boundToProtectiveFill"
               FROM autonomous_cycle_paper_closures AS closure
               JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${accountId}`,
-          ).toEqual([])
+          ).toEqual(
+            scenario === 'partial-exit-reentry' ? [{ reason: 'PROTECTION_RELEASED', boundToProtectiveFill: true }] : [],
+          )
           const reconciliation = yield* runtime.reconcile
           expect(reconciliation.report.metrics.accountingExact).toBe(true)
           expect(reconciliation.riskContext.unknownMutationCount).toBe(0)

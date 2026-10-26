@@ -210,16 +210,18 @@ const reconcileProtectionGroups = (orders: readonly ReplayBrokerOrder[], at: str
           order: { ...order, status: OrderStatus.Canceled, canceledAt: at, updatedAt: at, observedAt: at },
         }
       const active = terms._tag === 'Oco' ? parent.firstArrivedAt !== undefined : parent.status === OrderStatus.Filled
+      const quantityAtoms =
+        order.brokerOrderId === stop.brokerOrderId
+          ? (original - BigInt(profit.filledQuantityAtoms)).toString()
+          : order.quantityAtoms
+      const activated = active && (order.status === OrderStatus.Held || order.firstArrivedAt === undefined)
       return {
         ...entry,
         order: {
           ...order,
-          ...(order.brokerOrderId === stop.brokerOrderId
-            ? { quantityAtoms: (original - BigInt(profit.filledQuantityAtoms)).toString() }
-            : {}),
-          ...(active && (order.status === OrderStatus.Held || order.firstArrivedAt === undefined)
-            ? { status: OrderStatus.New, firstArrivedAt: at, updatedAt: at, observedAt: at }
-            : {}),
+          quantityAtoms,
+          ...(activated ? { status: OrderStatus.New, firstArrivedAt: at } : {}),
+          ...(activated || quantityAtoms !== order.quantityAtoms ? { updatedAt: at, observedAt: at } : {}),
         },
       }
     })
