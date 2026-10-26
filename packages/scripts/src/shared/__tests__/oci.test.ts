@@ -650,12 +650,9 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('Warm Nix image archive output in Attic')
     expect(nixOciWorkflow).toContain('mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
     expect(nixOciWorkflow).toContain("ATTIC_PUSH_NO_CLOSURE: 'true'")
-    expect(nixOciWorkflow).toContain('NIX_IMAGE_CACHE_WARM_TIMEOUT: 2m')
-    expect(nixOciWorkflow).toContain('NIX_IMAGE_CACHE_WARM_MAX_BYTES: 268435456')
-    expect(nixOciWorkflow).toContain("printf 'skipped-size\\t%s\\t%s\\n'")
-    expect(nixOciWorkflow).toContain('Skipping Attic image output push for ${ARCH}')
+    expect(nixOciWorkflow).toContain('NIX_IMAGE_CACHE_WARM_TIMEOUT: 30m')
     expect(nixOciWorkflow).toContain(
-      'timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${cache_paths[@]}"',
+      'timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${image_paths[@]}"',
     )
     expect(nixOciWorkflow).toContain(
       'Attic image output push failed for ${ARCH}; registry image push remains authoritative.',
@@ -671,7 +668,7 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('fallback = true')
     expect(nixOciWorkflow).toContain('stalled-download-timeout = 60')
     expect(nixOciWorkflow).toContain('image_build_timeout:')
-    expect(nixOciWorkflow).toContain('default: 8m')
+    expect(nixOciWorkflow).toContain('default: 20m')
     expect(nixOciWorkflow).toContain('NIX_IMAGE_BUILD_ATTIC_TIMEOUT: ${{ inputs.image_build_timeout }}')
     expect(nixOciWorkflow).toContain('timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}"')
     expect(nixOciWorkflow).toContain('build-image-${ARCH}-cache-nixos-fallback')
@@ -737,9 +734,6 @@ describe('native OCI build workflows', () => {
     expect(ciNixOciSummaryScript).toContain('Existing image archive bytes')
     expect(ciNixOciSummaryScript).toContain('Image archive Attic warm successes')
     expect(ciNixOciSummaryScript).toContain('Image archive Attic warm failures')
-    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm size skips')
-    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm skipped bytes')
-    expect(ciNixOciSummaryScript).toContain('count_image_cache_status_rows skipped-size')
     expect(ciNixOciSummaryScript).toContain('GITHUB_STEP_SUMMARY')
   })
 
