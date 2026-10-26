@@ -28,17 +28,19 @@ export default Effect.gen(function* () {
     UNIQUE(request_id,terminal_hash)
   )`
   yield* sql`CREATE FUNCTION enforce_chart_dispatch_claim() RETURNS trigger LANGUAGE plpgsql AS $function$
-    DECLARE source jsonb;
+    DECLARE source jsonb; account text; admission_at timestamptz;
     BEGIN
       SELECT payload INTO source FROM jev_evaluation_requests WHERE request_id=NEW.request_id FOR UPDATE;
+      SELECT account_id INTO account FROM autonomous_cycles WHERE cycle_id=source->>'cycleId';
+      admission_at := execution_account_commit_now(account);
       IF source->>'schemaVersion' IS DISTINCT FROM 'bayn.jev-evaluation-request.v2'
         OR source #>> '{request,schemaVersion}' IS DISTINCT FROM 'bayn.entry-inference-input.v3'
         OR source #>> '{request,protocol,schemaVersion}' IS DISTINCT FROM 'bayn.jev.protocol.v24'
         OR source #>> '{request,protocol,entryQuestionPolicyHash}' IS DISTINCT FROM 'd35ee4093641285aa36385c4ab35de978de7485ff754bebb523648adf80c8939'
         OR NEW.payload->>'expiresAt' IS DISTINCT FROM source->>'expiresAt'
         OR NOT COALESCE((NEW.payload->>'claimedAt')::timestamptz >= (source->>'observedAt')::timestamptz
-          AND (NEW.payload->>'claimedAt')::timestamptz <= clock_timestamp()
-          AND clock_timestamp() < (source->>'expiresAt')::timestamptz, false)
+          AND (NEW.payload->>'claimedAt')::timestamptz <= admission_at
+          AND admission_at < (source->>'expiresAt')::timestamptz, false)
         OR EXISTS (SELECT 1 FROM jev_evaluation_resolutions WHERE request_id=NEW.request_id)
         OR EXISTS (SELECT 1 FROM jev_inference_handoffs WHERE request_id=NEW.request_id)
         OR EXISTS (SELECT 1 FROM inference_expense_quotes WHERE request_id=NEW.request_id AND provider_stage='CHART')

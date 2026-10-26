@@ -134,6 +134,24 @@ integration('committed sequential provider handoff', () => {
           const sql = yield* PgClient.PgClient
           const journal = yield* EntryInferenceJournal
           const original = entryEvaluationRequestFixture(new Date().toISOString(), 'MSFT')
+          const expiredVisual = chartInferenceFixture(request.request, request.observedAt)
+          const expiredClaim = Result.getOrThrow(
+            makeChartDispatchClaim({
+              schemaVersion: 'bayn.chart-dispatch-claim.v1',
+              stage: 'CHART',
+              requestId: request.requestId,
+              providerRequestHash: expiredVisual.requestHash,
+              claimedAt: request.observedAt,
+              expiresAt: request.expiresAt,
+            }),
+          )
+          expect(yield* journal.recordChartClaim(expiredClaim)).toEqual({ dispatchAllowed: false })
+          expect(
+            Result.isFailure(
+              yield* sql`INSERT INTO jev_chart_dispatch_claims (request_id,claim_hash,payload)
+            VALUES (${request.requestId},${expiredClaim.claimHash},${sql.json(expiredClaim)})`.pipe(Effect.result),
+            ),
+          ).toBe(true)
           const { requestId: _, ...material } = original
           const current = Result.getOrThrow(
             makeJevEvaluationRequest({

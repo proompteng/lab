@@ -43,7 +43,9 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
             }
             const rows = yield* sql`INSERT INTO jev_chart_dispatch_claims (request_id, claim_hash, payload)
           SELECT ${input.requestId}, ${input.claimHash}, ${sql.json(input)}
-          WHERE clock_timestamp() < ${input.expiresAt}::timestamptz
+          FROM jev_evaluation_requests AS request JOIN autonomous_cycles AS cycle USING (cycle_id)
+          WHERE request.request_id=${input.requestId}
+            AND execution_account_commit_now(cycle.account_id) < ${input.expiresAt}::timestamptz
             AND NOT EXISTS (SELECT 1 FROM jev_evaluation_resolutions WHERE request_id=${input.requestId})
             AND NOT EXISTS (SELECT 1 FROM jev_inference_handoffs WHERE request_id=${input.requestId})
           RETURNING claim_hash`
