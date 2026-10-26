@@ -5,9 +5,10 @@ Relay client installation is an authenticated guest-control operation. It uses t
 installation acknowledgement before activation. The former dormant connector gate and contract are removed.
 
 The Relay MCP bridge uses the platform proxy's required execute-or-lookup envelope. Each request has its own proof
-over the exact body. After a lost execution response, the bridge requests receipt metadata without resending the
-operation. It returns an MCP error with the known outcome or `unknown`; it cannot recover the original result body.
-Successful calls and recovery responses include operation and receipt IDs in `_meta.relay`.
+over the exact body. After an execution error or lost response, including Kubernetes RBAC and missing-resource
+failures, the bridge requests receipt metadata without resending the operation. It returns an MCP error with the known
+outcome or `unknown` if lookup is denied or unavailable; it cannot recover the original result body.
+Successful calls and confirmed recovery responses include operation and receipt IDs in `_meta.relay`.
 
 `internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
