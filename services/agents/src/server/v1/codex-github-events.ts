@@ -51,6 +51,8 @@ const SUPPORTED_EVENTS = new Set([
   'issue_comment',
 ])
 
+const IGNORED_EVENTS = new Set(['ping', 'push', 'workflow_run', 'workflow_job'])
+
 const EVENT_METADATA_KEYS = [
   'event',
   'event_type',
@@ -148,9 +150,9 @@ const normalizeSha = (value: unknown) => {
 const normalizeEventName = (value: unknown) => {
   const normalized = normalizeOptionalString(value)?.toLowerCase()
   if (!normalized) return null
-  if (SUPPORTED_EVENTS.has(normalized)) return normalized
+  if (SUPPORTED_EVENTS.has(normalized) || IGNORED_EVENTS.has(normalized)) return normalized
   const suffix = normalized.split(/[.:/]/).at(-1)
-  return suffix && SUPPORTED_EVENTS.has(suffix) ? suffix : normalized
+  return suffix && (SUPPORTED_EVENTS.has(suffix) || IGNORED_EVENTS.has(suffix)) ? suffix : normalized
 }
 
 const readRecordString = (record: Record<string, unknown>, keys: string[]) => {
@@ -199,6 +201,17 @@ const inferGithubEventFromPayload = (payload: Record<string, unknown>) => {
   if (isRecord(payload.comment) && isRecord(payload.pull_request)) return 'pull_request_review_comment'
   if (isRecord(payload.review) && isRecord(payload.pull_request)) return 'pull_request_review'
   if (isRecord(payload.pull_request)) return 'pull_request'
+  if (isRecord(payload.workflow_run)) return 'workflow_run'
+  if (isRecord(payload.workflow_job)) return 'workflow_job'
+  if (
+    typeof payload.ref === 'string' &&
+    typeof payload.before === 'string' &&
+    typeof payload.after === 'string' &&
+    Array.isArray(payload.commits)
+  ) {
+    return 'push'
+  }
+  if (typeof payload.zen === 'string' && isRecord(payload.hook)) return 'ping'
   return null
 }
 
@@ -441,6 +454,9 @@ export const ingestCodexGithubEventWithServicesEffect = (
       catch: (cause) => new CodexGithubEventRequestError({ message: toErrorMessage(cause), status: 400 }),
     })
     const event = parseGithubWebhookEvent(payload, request.headers)
+    if (IGNORED_EVENTS.has(event.event)) {
+      return { ok: true, event: event.event, action: event.action, ignored: true, updatedRunIds: [] }
+    }
     if (!SUPPORTED_EVENTS.has(event.event)) {
       return yield* Effect.fail(
         new CodexGithubEventRequestError({

@@ -566,6 +566,15 @@ jobs:
           done
           echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${GITHUB_SHA}" >> "${GITHUB_ENV}"
 
+      - name: Preload published Agents runner
+        if: ${{ !contains(fromJSON(needs.plan.outputs.image_targets), 'runner') }}
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          test -n "${BUILT_AGENTS_RUNNER_IMAGE_DIGEST}"
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" crictl pull \
+            "${BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY}:${BUILT_AGENTS_RUNNER_IMAGE_TAG}@${BUILT_AGENTS_RUNNER_IMAGE_DIGEST}"
+
       - name: Run Agents integration smoke test
         env:
           AGENTS_NAMESPACE: agents-ci
