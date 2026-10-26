@@ -282,7 +282,7 @@ integration('committed sequential provider handoff', () => {
             makeJevEvaluationReceipt(current, {
               schemaVersion: 'bayn.jev-evaluation-receipt.v2',
               requestId: current.requestId,
-              startedAt: current.expiresAt,
+              startedAt: current.observedAt,
               completedAt: current.expiresAt,
               outcome: { status: JevOutcome.Failed, failure: JevFailure.NotDispatched },
             }),
