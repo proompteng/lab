@@ -5143,6 +5143,38 @@ test('supports desktop window shortcuts, independent windows, drag, and eight-ed
   await expect(tengriFrames).toHaveCount(1)
 })
 
+for (const recovery of ['automatic', 'refresh'] as const) {
+  test(`recovers a temporary authorization pause through ${recovery} observation without a resume command`, async ({
+    page,
+  }) => {
+    await page.clock.install()
+    const fixture = await mockTengri(page, {
+      agent: {
+        ...readyAgent,
+        phase: 'sleeping',
+        conditions: [
+          {
+            type: 'Ready',
+            status: 'False',
+            reason: 'AuthorizationPaused',
+            message: 'Authorization is recovering',
+            lastTransitionAt: '2026-08-26T00:01:00Z',
+          },
+        ],
+      },
+    })
+    await page.goto('/')
+    const paused = page.getByRole('dialog', { name: 'Tengri is temporarily paused' })
+    await expect(paused).toContainText('Tengri will reconnect automatically.')
+    await expect(paused.getByRole('button', { name: 'Resume Agent' })).toHaveCount(0)
+    fixture.setAgent({ ...readyAgent })
+    if (recovery === 'automatic') await page.clock.fastForward(2_000)
+    else await paused.getByRole('button', { name: 'Try Again' }).click()
+    await expect(page.getByRole('button', { name: 'Open Settings', exact: true })).toBeVisible()
+    expect(fixture.actions.filter((action) => action.action === 'resume-agent')).toEqual([])
+  })
+}
+
 test('renders truthful booting, sleeping, and failed lifecycle states', async ({ page }) => {
   await mockTengri(page, { agent: { ...readyAgent, phase: 'sleeping' } })
   await page.goto('/')
@@ -6254,6 +6286,89 @@ test('keeps a failed sleep preference visible and retries the same value', async
   await settings.getByRole('button', { name: 'Try Again' }).click()
   await expect.poll(() => fixture.getAgent()?.power.idleTimeoutMinutes).toBe(5)
   await expect(settings.getByRole('alert')).toHaveCount(0)
+})
+
+test('switches access tabs immediately and supports keyboard selection while loading', async ({ page }, testInfo) => {
+  await mockTengri(page)
+  const platformStarted = Promise.withResolvers<void>()
+  const releasePlatform = Promise.withResolvers<void>()
+  await page.route('**/api/tengri/access?**', async (route) => {
+    const view = new URL(route.request().url()).searchParams.get('view')
+    if (view === 'platform') {
+      platformStarted.resolve()
+      await releasePlatform.promise
+    }
+    await route.fulfill({
+      json:
+        view === 'audit'
+          ? { receipts: [] }
+          : { version: '1', entries: [{ subjectId: `${view}-identity`, role: 'viewer' }] },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await openSettingsPane(settings, 'Privacy & Security')
+  const access = settings.getByRole('region', { name: 'Access administration' })
+  await expect(access.getByText('workspace-identity', { exact: true })).toBeVisible()
+  await access.getByText('Platform', { exact: true }).click()
+  await platformStarted.promise
+  await expect(access.getByRole('status', { name: 'Loading Platform access' })).toBeVisible()
+  await expect(access.getByText('workspace-identity', { exact: true })).toHaveCount(0)
+  releasePlatform.resolve()
+  const platform = access.getByRole('tab', { name: 'Platform', exact: true })
+  await expect(platform).toHaveAttribute('aria-selected', 'true')
+  await expect
+    .poll(async () => {
+      const backgrounds = await access
+        .getByRole('tab')
+        .evaluateAll((tabs) => tabs.map((tab) => getComputedStyle(tab).backgroundColor))
+      return backgrounds[0] !== backgrounds[1]
+    })
+    .toBe(true)
+  await expect(access.getByRole('tabpanel', { name: 'Platform', exact: true })).toContainText('platform-identity')
+  await page.screenshot({ path: testInfo.outputPath('access-tabs.png'), animations: 'disabled' })
+  await platform.press('ArrowRight')
+  const audit = access.getByRole('tab', { name: 'Audit', exact: true })
+  await expect(audit).toBeFocused()
+  await expect(audit).toHaveAttribute('aria-selected', 'true')
+  await expect(access.getByRole('tabpanel', { name: 'Audit', exact: true })).toContainText('No audit records.')
+  await audit.press('Home')
+  await expect(access.getByRole('tab', { name: 'Workspace', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(access.getByRole('tabpanel', { name: 'Workspace', exact: true })).toContainText('workspace-identity')
+})
+
+test('cancels an obsolete access refresh when another tab is selected', async ({ page }) => {
+  await mockTengri(page)
+  const refreshStarted = Promise.withResolvers<void>()
+  const releaseRefresh = Promise.withResolvers<void>()
+  let delayRefresh = false
+  await page.route('**/api/tengri/access?**', async (route) => {
+    const view = new URL(route.request().url()).searchParams.get('view')
+    if (view === 'workspace' && delayRefresh) {
+      refreshStarted.resolve()
+      await releaseRefresh.promise
+    }
+    await route.fulfill({ json: { version: '1', entries: [{ subjectId: `${view}-identity`, role: 'viewer' }] } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await openSettingsPane(settings, 'Privacy & Security')
+  const access = settings.getByRole('region', { name: 'Access administration' })
+  await expect(access.getByText('workspace-identity', { exact: true })).toBeVisible()
+  delayRefresh = true
+  await access.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await refreshStarted.promise
+  const cancelled = page.waitForEvent('requestfailed', {
+    predicate: (request) => new URL(request.url()).searchParams.get('view') === 'workspace',
+  })
+  await access.getByRole('tab', { name: 'Platform', exact: true }).click()
+  await cancelled
+  releaseRefresh.resolve()
+  const platform = access.getByRole('tabpanel', { name: 'Platform', exact: true })
+  await expect(platform).toContainText('platform-identity')
+  await expect(access.getByText('workspace-identity', { exact: true })).toHaveCount(0)
 })
 
 for (const outcome of ['success', 'uncertain'] as const) {

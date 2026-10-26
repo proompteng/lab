@@ -104,7 +104,9 @@ export const readSequentialInferenceCostEvidence = (row: {
         if (
           completion.completedAt > receipt.completedAt ||
           handoff.recordedAt < receipt.startedAt ||
-          (handoff.disposition.status !== 'VISUAL_FAILED' && handoff.disposition.visual.startedAt < receipt.startedAt)
+          (handoff.disposition.status !== 'VISUAL_FAILED' &&
+            handoff.disposition.status !== 'SOURCE_INFEASIBLE' &&
+            handoff.disposition.visual.startedAt < receipt.startedAt)
         )
           return yield* invalid('Retained chart receipt precedes its provider evidence')
       } else if (

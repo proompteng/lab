@@ -96,6 +96,7 @@ export const makeJevEvaluationReceipt = (request: JevEvaluationRequest, input: u
         completion.completedAt > material.completedAt ||
         completion.handoff.recordedAt < material.startedAt ||
         (completion.handoff.disposition.status !== 'VISUAL_FAILED' &&
+          completion.handoff.disposition.status !== 'SOURCE_INFEASIBLE' &&
           completion.handoff.disposition.visual.startedAt < material.startedAt)
       )
         return yield* invalid('Entry receipt precedes its provider evidence or dispatch claim')

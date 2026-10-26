@@ -18,7 +18,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-buildkit
       - name: Verify publication while all build slots are occupied
         env:
           GH_TOKEN: ${{ github.token }}
@@ -40,6 +39,7 @@ jobs:
           test "$ARC_RUNNER_NODE_NAME" = turin
           test ! -S /var/run/docker.sock
           test -z "${DOCKER_HOST:-}"
+          test -z "${BUILDKIT_HOST:-}"
           nix eval --offline --expr '40 + 2' | grep -qx 42
           crane digest registry.ide-newton.ts.net/lab/arc-runner:latest
           docker buildx imagetools inspect registry.ide-newton.ts.net/lab/arc-runner:latest

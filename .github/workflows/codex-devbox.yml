@@ -90,13 +90,12 @@ jobs:
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: [validate, build]
-    runs-on: arc-amd64
+    runs-on: arc-amd64-publish
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-buildkit
       - uses: sigstore/cosign-installer@v3.10.0
       - name: Publish and verify the immutable index
         env:
