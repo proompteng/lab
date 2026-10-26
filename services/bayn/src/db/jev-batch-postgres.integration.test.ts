@@ -66,10 +66,12 @@ setDefaultTimeout(30_000)
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_jev_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const premiums = Object.fromEntries(equityMarketProfile.candidateSymbols.map((symbol) => [symbol, 0.02]))
+const replaySourceHash = 'd'.repeat(64)
+const replayAccountId = `replay-${replaySourceHash}`
 const fixture = nativeJevFixture(
   JevPurpose.Entry,
   undefined,
-  'jev-native-test',
+  replayAccountId,
   defaultJevProtocolDocument,
   'a'.repeat(64),
   premiums,
@@ -112,7 +114,7 @@ const requested = plan.candidates.filter((candidate) => candidate.status === Jev
 const excludedBase = nativeJevFixture(
   JevPurpose.Entry,
   undefined,
-  'jev-native-test',
+  replayAccountId,
   defaultJevProtocolDocument,
   'a'.repeat(64),
   Object.fromEntries(equityMarketProfile.candidateSymbols.map((symbol) => [symbol, -0.02])),
@@ -220,6 +222,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
+        yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
+          VALUES (${replayAccountId},${replaySourceHash},${fixture.snapshot.manifest.observedAt})`
         yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
         VALUES (${plan.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${plan.observedAt})`
