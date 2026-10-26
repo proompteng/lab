@@ -7,6 +7,7 @@ export type TengriErrorCode =
   | 'conversation_not_found'
   | 'control_not_dispatched'
   | 'conversation_history_invalid'
+  | 'chat_index_invalid'
   | 'file_conflict'
   | 'capacity_full'
   | 'lifecycle_superseded'

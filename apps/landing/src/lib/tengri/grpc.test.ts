@@ -427,6 +427,12 @@ beforeAll(async () => {
         attached: false,
       })
     },
+    listCodexThreads(
+      _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      callback(null, { rawJson: '{"data":[{}],"nextCursor":null}' })
+    },
     listCodexModels(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -1031,6 +1037,14 @@ describe('Tengri gRPC BFF transport', () => {
       client.close()
       oldController.forceShutdown()
     }
+  })
+
+  test('classifies malformed chat indexes as validation failures', async () => {
+    const { listCodexThreads } = await import('./grpc')
+    expect(await rejection(listCodexThreads(identity, 'agent-test', false))).toMatchObject({
+      status: 502,
+      code: 'chat_index_invalid',
+    })
   })
 
   test('treats missing model RPCs and invalid catalogs as failures without negotiating guest capabilities', async () => {
