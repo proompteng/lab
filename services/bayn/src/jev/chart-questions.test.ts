@@ -21,9 +21,9 @@ const responseFor = (request: DecisionsRequest) => ({
   model: 'gpt-6-luna',
   answers: request.questions.map((question) =>
     question.type === 'predicate'
-      ? { type: 'predicate', name: question.name, probability: 0.2 }
+      ? { type: 'predicate' as const, name: question.name, probability: 0.2 }
       : {
-          type: 'choice',
+          type: 'choice' as const,
           name: question.name,
           choice: question.choices[0]?.value,
           confidence: 0.8,
@@ -42,6 +42,44 @@ const responseFor = (request: DecisionsRequest) => ({
 })
 
 describe('source-bound chart questions', () => {
+  test('conditions the base start on its selected end and ignores refused unused branches', () => {
+    const chart = Result.getOrThrow(makeNativeChartEvidence(source))
+    const request = Result.getOrThrow(makeChartDecisionsRequest(chart)).request
+    const first = chart.bars[0]
+    const end = chart.bars.at(-2)
+    if (first === undefined || end === undefined) throw new Error('Expected source interval')
+    const name = `base_first_bar_ending_${end.chartLabel}`
+    const conditional = request.questions.find((question) => question.name === name)
+    expect(conditional?.type).toBe('choice')
+    if (conditional?.type !== 'choice') throw new Error('Missing conditional base question')
+    expect(conditional.choices.map((choice) => choice.value)).toEqual([
+      ...chart.bars.filter((bar) => bar.timestamp < end.timestamp).map((bar) => bar.id),
+      'no_base',
+    ])
+    const response = responseFor(request)
+    const assessments = Result.getOrThrow(
+      chartAssessments(chart, {
+        ...response,
+        answers: response.answers.map((answer) => {
+          if (answer.name.startsWith('base_first_bar_ending_') && answer.name !== name)
+            return { type: 'refusal', name: answer.name }
+          const value = answer.name === 'base_last_bar' ? end.id : answer.name === name ? first.id : null
+          if (answer.type !== 'choice' || value === null) return answer
+          return {
+            ...answer,
+            choice: value,
+            probabilities: answer.probabilities.map((probability) => ({
+              ...probability,
+              probability: probability.value === value ? 1 : 0,
+            })),
+          }
+        }),
+      }),
+    )
+    expect(assessments.base.first).toMatchObject({ status: 'ASSESSED', barId: first.id })
+    expect(assessments.base.last).toMatchObject({ status: 'ASSESSED', barId: end.id })
+  })
+
   test('asks separate presence and source-anchor questions over the actual chart', () => {
     const chart = Result.getOrThrow(makeNativeChartEvidence(source))
     const prepared = Result.getOrThrow(makeChartDecisionsRequest(chart))
@@ -51,18 +89,65 @@ describe('source-bound chart questions', () => {
       'base_present',
       'support_anchor',
       'resistance_anchor',
-      'base_first_bar',
       'base_last_bar',
+      'base_first_bar_ending_5',
+      'base_first_bar_ending_4',
+      'base_first_bar_ending_3',
+      'base_first_bar_ending_2',
     ])
     const first = chart.bars[0]
     expect(first?.timestamp).toBe('2026-10-25T06:54:00.000Z')
     expect(first?.chartLabel).toBe('6')
     expect(chart.bars.at(-1)?.timestamp).toBe('2026-10-25T06:59:00.000Z')
     for (const question of prepared.request.questions)
-      if (question.type === 'choice')
+      if (question.type === 'choice' && !question.name.startsWith('base_'))
         expect(question.choices.map((choice) => choice.value)).toEqual(chart.bars.map((bar) => bar.id))
+    const ends = prepared.request.questions.find((question) => question.name === 'base_last_bar')
+    if (ends?.type !== 'choice') throw new Error('Expected base end choice')
+    expect(ends.choices.map((choice) => choice.value)).toEqual([
+      ...chart.bars.slice(1, -1).map((bar) => bar.id),
+      'no_base',
+    ])
     expect(prepared.request.input[0].content[1].image_url).toBe(chart.image)
     expect(chart).toEqual(Result.getOrThrow(makeNativeChartEvidence(source)))
+  })
+
+  test('retains no-match and refuses a start outside its conditional source interval', () => {
+    const chart = Result.getOrThrow(makeNativeChartEvidence(source))
+    const request = Result.getOrThrow(makeChartDecisionsRequest(chart)).request
+    const last = chart.bars.at(-2)
+    const newest = chart.bars.at(-1)
+    if (last === undefined || newest === undefined) throw new Error('Expected source bars')
+    for (const noMatchQuestion of ['base_last_bar', `base_first_bar_ending_${last.chartLabel}`]) {
+      const response = responseFor(request)
+      const answers = response.answers.map((answer) => {
+        if (answer.type !== 'choice') return answer
+        const choice =
+          answer.name === noMatchQuestion ? 'no_base' : answer.name === 'base_last_bar' ? last.id : answer.choice
+        return {
+          ...answer,
+          choice,
+          probabilities: answer.probabilities.map((value) => ({
+            ...value,
+            probability: value.value === choice ? 1 : 0,
+          })),
+        }
+      })
+      const assessments = Result.getOrThrow(chartAssessments(chart, { ...response, answers }))
+      expect(assessments.base.first).toEqual({ status: 'NOT_IDENTIFIED' })
+      expect(assessments.base.presence).toEqual({ status: 'ASSESSED', probability: 0.2 })
+    }
+    const response = responseFor(request)
+    expect(
+      Result.isFailure(
+        chartAssessments(chart, {
+          ...response,
+          answers: response.answers.map((answer) =>
+            answer.name === `base_first_bar_ending_${last.chartLabel}` ? { ...answer, choice: newest.id } : answer,
+          ),
+        }),
+      ),
+    ).toBe(true)
   })
 
   test('retains weak presence evidence instead of treating a forced choice as an observed structure', () => {

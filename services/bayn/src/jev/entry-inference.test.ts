@@ -8,11 +8,7 @@ import { JevClient, JevError } from './client'
 import { decodeJevResponse, JevFailure, prepareJevRequest } from './contract'
 import { DecisionsClient, DecisionsError, decodeDecisionsResponse, prepareDecisionsRequest } from './decisions'
 import { EntryInferenceJournal, evaluateClaimedEntryInference, type EntryHandoff } from './entry-inference'
-import {
-  decodeEntryHandoff,
-  decodeEntryInferenceCompletion,
-  usableEntryInferenceCompletion,
-} from './entry-inference-evidence'
+import { decodeEntryHandoff, decodeEntryInferenceCompletion } from './entry-inference-evidence'
 import { defaultJevProtocolDocument } from './protocol'
 
 const at = Date.parse('2026-10-25T07:00:32.000Z')
@@ -29,7 +25,7 @@ const fixture = () => {
     claimedAt: utcInstantFromEpochMillis(at),
     expiresAt: utcInstantFromEpochMillis(at + 10_000),
     input: {
-      schemaVersion: 'bayn.entry-inference-input.v2' as const,
+      schemaVersion: 'bayn.entry-inference-input.v3' as const,
       numericalState: {
         schemaVersion: 'bayn.jev-entry-state.v22',
         task: { decisionPurpose: 'ENTRY' },
@@ -83,8 +79,7 @@ const providers = (
           const anchors: Readonly<Record<string, number>> = {
             support_anchor: 0,
             resistance_anchor: 2,
-            base_first_bar: 0,
-            base_last_bar: 1,
+            base_last_bar: 0,
           }
           const response = Result.getOrThrow(
             decodeDecisionsResponse(prepared.request, {
@@ -99,7 +94,7 @@ const providers = (
                       confidence: 0.8,
                       probabilities: question.choices.map((choice, index) => ({
                         value: choice.value,
-                        probability: index === anchors[question.name] ? 1 : 0,
+                        probability: index === (anchors[question.name] ?? 0) ? 1 : 0,
                       })),
                     },
               ),
@@ -300,12 +295,14 @@ describe('claimed sequential entry inference', () => {
     ).toBe(true)
   })
 
-  test('retains late evidence for accounting while refusing it for entry', async () => {
+  test('retains late completion evidence for accounting with its original deadline', async () => {
     const claim = fixture()
     const result = Result.getOrThrow(await run(claim, providers()))
-    const completed = Result.getOrThrow(decodeEntryInferenceCompletion(claim, result))
-    expect(Result.isSuccess(usableEntryInferenceCompletion(claim, completed, at))).toBe(true)
-    expect(Result.isFailure(usableEntryInferenceCompletion(claim, completed, at + 10_000))).toBe(true)
+    const completed = Result.getOrThrow(
+      decodeEntryInferenceCompletion(claim, { ...result, completedAt: utcInstantFromEpochMillis(at + 10_001) }),
+    )
+    expect(Date.parse(completed.completedAt)).toBeGreaterThan(Date.parse(claim.expiresAt))
+    expect(completed.handoff).toEqual(result.handoff)
   })
 
   test('keeps observed visual costs when the subsequent provider fails', async () => {

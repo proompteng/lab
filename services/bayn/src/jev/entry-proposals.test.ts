@@ -26,8 +26,7 @@ const fixture = (input = source) => {
   const anchors: Readonly<Record<string, number>> = {
     support_anchor: 0,
     resistance_anchor: 4,
-    base_first_bar: 0,
-    base_last_bar: 3,
+    base_last_bar: 2,
   }
   const assessments = Result.getOrThrow(
     chartAssessments(chart, {
@@ -42,7 +41,7 @@ const fixture = (input = source) => {
               confidence: 0.8,
               probabilities: question.choices.map((choice, index) => ({
                 value: choice.value,
-                probability: index === anchors[question.name] ? 1 : 0,
+                probability: index === (anchors[question.name] ?? 0) ? 1 : 0,
               })),
             },
       ),
@@ -69,6 +68,21 @@ const fixture = (input = source) => {
 }
 
 describe('source-anchored complete entry proposals', () => {
+  test('an unidentified base cannot remove an independently funded recovery', () => {
+    const input = fixture()
+    const result = Result.getOrThrow(
+      makeEntryProposals({
+        ...input,
+        assessments: {
+          ...input.assessments,
+          base: { ...input.assessments.base, first: { status: 'NOT_IDENTIFIED' } },
+        },
+      }),
+    )
+    expect(result.proposals.map((proposal) => proposal.source.setup)).toEqual([EntrySetup.SupportRecovery])
+    expect(result.rejections).toEqual([{ setup: EntrySetup.BaseBreakout, reason: ProposalRejection.NoStructure }])
+  })
+
   test('constructs recovery and breakout plans from selected real anchors with conservative funding', () => {
     const input = fixture()
     const { proposals, rejections } = Result.getOrThrow(makeEntryProposals(input))

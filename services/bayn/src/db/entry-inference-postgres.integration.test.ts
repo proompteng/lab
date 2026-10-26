@@ -6,6 +6,7 @@ import { Clock, Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from '
 import { TestClock } from 'effect/testing'
 import sequentialEntryInference from '../../migrations/0147_sequential_entry_inference'
 import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
+import conditionalBaseAnchors from '../../migrations/0149_conditional_base_anchors'
 
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
@@ -162,6 +163,25 @@ integration('committed sequential provider handoff', () => {
         const store = yield* JevEvaluationStore
         expect(Result.isFailure(yield* store.record(request, receipt).pipe(Effect.result))).toBe(true)
         expect((yield* store.read(request.requestId))?.receipt).toBeNull()
+      }),
+    ))
+
+  test('rejects a retired handoff contract for a current input without creating provider evidence', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const { handoffHash: _, ...current } = completion.handoff
+        const material = { ...current, schemaVersion: 'bayn.entry-handoff.v1' }
+        const historical = { ...material, handoffHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+        const rejected = yield* sql`INSERT INTO jev_inference_handoffs (request_id,handoff_hash,payload)
+          VALUES (${request.requestId},${historical.handoffHash},${sql.json(historical)})`.pipe(Effect.result)
+        if (Result.isSuccess(rejected)) throw new Error('A retired handoff was attached to current inference')
+        yield* Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.Literal('23514') }))(
+          rejected.failure.reason.cause,
+        )
+        expect(
+          yield* sql`SELECT handoff_hash FROM jev_inference_handoffs WHERE request_id=${request.requestId}`,
+        ).toEqual([])
       }),
     ))
 
@@ -391,68 +411,133 @@ integration('committed sequential provider handoff', () => {
       }),
     ))
 
-  test('retains original chart requests and rejects new writes with the retired image contract', async () =>
-    runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* PgMigrator.run({
-          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 148))),
-          table: 'schema_migrations',
-        })
-        yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
-        yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
+  test.each([
+    ['image', 148, 'bayn.entry-inference-input.v1', relativeChartVolume],
+    ['question', 149, 'bayn.entry-inference-input.v2', conditionalBaseAnchors],
+  ] as const)(
+    'retains original chart requests and rejects retired %s contract writes',
+    async (_name, migrationId, retiredVersion, migration) =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`DROP SCHEMA public CASCADE`
+          yield* sql`CREATE SCHEMA public`
+          yield* PgMigrator.run({
+            loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < migrationId))),
+            table: 'schema_migrations',
+          })
+          yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
+          yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
           VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${request.observedAt})`
-        const { requestId: _, ...original } = request
-        const oldInput = { ...request.request, schemaVersion: 'bayn.entry-inference-input.v1' }
-        const oldMaterial = {
-          ...original,
-          request: oldInput,
-          requestHash: Result.getOrThrow(canonicalHashV1Result(oldInput)),
-        }
-        const historical = { ...oldMaterial, requestId: Result.getOrThrow(canonicalHashV1Result(oldMaterial)) }
-        yield* sql`INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
+          const { requestId: _, ...original } = request
+          const oldInput = { ...request.request, schemaVersion: retiredVersion }
+          const oldMaterial = {
+            ...original,
+            request: oldInput,
+            requestHash: Result.getOrThrow(canonicalHashV1Result(oldInput)),
+          }
+          const historical = { ...oldMaterial, requestId: Result.getOrThrow(canonicalHashV1Result(oldMaterial)) }
+          yield* sql`INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
           VALUES (${historical.requestId}, ${historical.cycleId}, ${historical.authorityGenerationHash}, ${sql.json(historical)})`
-        yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+          yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
           UPDATE autonomous_cycles SET state = 'BLOCKED', terminal_reason = 'BLOCKED_AUTHORITY',
           state_version = state_version + 1, updated_at = terminal.at, terminal_at = terminal.at
           FROM terminal WHERE cycle_id = ${historical.cycleId}`
-        const before =
-          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${historical.requestId}`
-        yield* sql.withTransaction(relativeChartVolume)
-        expect(
-          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${historical.requestId}`,
-        ).toEqual(before)
-        const attempted = { ...historical, requestId: 'd'.repeat(64), symbol: 'AMZN' }
-        const rejected =
-          yield* sql`INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
+          const before =
+            yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${historical.requestId}`
+          yield* sql.withTransaction(migration)
+          expect(
+            yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${historical.requestId}`,
+          ).toEqual(before)
+          const attempted = { ...historical, requestId: 'd'.repeat(64), symbol: 'AMZN' }
+          const rejected =
+            yield* sql`INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
           VALUES (${attempted.requestId}, ${attempted.cycleId}, ${attempted.authorityGenerationHash}, ${sql.json(attempted)})`.pipe(
-            Effect.result,
-          )
-        if (Result.isSuccess(rejected)) throw new Error('Retired chart input was accepted')
-        expect(rejected.failure.reason._tag).toBe('ConstraintError')
-        yield* Schema.decodeUnknownEffect(
-          Schema.Struct({ code: Schema.Literal('23514'), constraint: Schema.Literal('jev_evaluation_requests_check') }),
-        )(rejected.failure.reason.cause)
-      }),
-    ))
+              Effect.result,
+            )
+          if (Result.isSuccess(rejected)) throw new Error('Retired chart input was accepted')
+          expect(rejected.failure.reason._tag).toBe('ConstraintError')
+          yield* Schema.decodeUnknownEffect(
+            Schema.Struct({
+              code: Schema.Literal('23514'),
+              constraint: Schema.Literal('jev_evaluation_requests_check'),
+            }),
+          )(rejected.failure.reason.cause)
+        }),
+      ),
+  )
 
-  test('refuses the image contract cutover while a native cycle is active', async () =>
+  test.each([
+    ['relative-chart-volume', relativeChartVolume],
+    ['conditional-base-anchor', conditionalBaseAnchors],
+  ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const before =
           yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`
-        const rejected = yield* sql.withTransaction(relativeChartVolume).pipe(Effect.result)
+        const rejected = yield* sql.withTransaction(migration).pipe(Effect.result)
         if (Result.isSuccess(rejected)) throw new Error('Image contract changed while a native cycle was active')
         const native = yield* Schema.decodeUnknownEffect(
           Schema.Struct({ code: Schema.Literal('55000'), message: Schema.String }),
         )(rejected.failure.reason.cause)
-        expect(native.message).toContain('relative-chart-volume cutover requires terminal cycles')
+        expect(native.message).toContain(`${name} cutover requires terminal cycles`)
         expect(
           yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`,
         ).toEqual(before)
       }),
-    ))
+    ),
+  )
+
+  test.each([
+    { effective: 'PAPER', kill: 'CLEAR', reason: null, changes: true },
+    { effective: 'OBSERVE', kill: 'ACTIVE', reason: 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER', changes: true },
+    { effective: 'OBSERVE', kill: 'ACTIVE', reason: 'operator hold', changes: false },
+    { effective: 'PAPER', kill: 'ACTIVE', reason: 'operator hold', changes: false },
+    { effective: 'OBSERVE', kill: 'ACTIVE', reason: 'reconciliation discrepancy', changes: false },
+  ])('restricts the changed strategy while preserving other authority holds: %j', async (state) =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+            UPDATE autonomous_cycles SET state='BLOCKED', terminal_reason='BLOCKED_AUTHORITY',
+              state_version=state_version+1, updated_at=terminal.at, terminal_at=terminal.at
+              FROM terminal WHERE cycle_id=${request.cycleId}`
+            yield* sql`CREATE TEMP TABLE authority_generations (generation_hash text, account_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE authority_state (
+              generation_hash text,maximum text,effective text,kill_state text,reason text,version bigint,updated_at timestamptz
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE reconciliations (
+              account_id text,status text,reconciled_at timestamptz,reconciliation_id text
+            ) ON COMMIT DROP`
+            yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover')`
+            yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER',${state.effective},
+              ${state.kill},${state.reason},1,clock_timestamp())`
+            yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover','EXACT',clock_timestamp(),${'b'.repeat(64)})`
+            const before =
+              yield* sql`SELECT generation_hash,maximum,effective,kill_state,reason,version::text AS version FROM authority_state`
+            yield* conditionalBaseAnchors
+            expect(
+              yield* sql`SELECT generation_hash,maximum,effective,kill_state,reason,version::text AS version FROM authority_state`,
+            ).toEqual(
+              state.changes
+                ? [
+                    {
+                      generation_hash: 'a'.repeat(64),
+                      maximum: 'PAPER',
+                      effective: 'OBSERVE',
+                      kill_state: 'ACTIVE',
+                      reason: 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
+                      version: '2',
+                    },
+                  ]
+                : before,
+            )
+          }),
+        )
+      }),
+    ),
+  )
 })

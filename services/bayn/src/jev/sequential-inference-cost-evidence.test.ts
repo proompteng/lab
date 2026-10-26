@@ -4,29 +4,87 @@ import { Result } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { inferenceExpenseRateCard, makeInferenceExpenseQuotes } from '../inference-expense'
 import { InferenceStage, InferenceUsageStatus } from '../inference-costs'
-import { makeRetainedChartEvidenceV1 } from './chart-evidence'
-import { makeChartDecisionsRequest } from './chart-questions'
+import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from './chart-evidence'
 import { deriveEntryDispositionForChart } from './entry-inference'
-import { entryEvaluationRequestFixture, nativeChartInference } from './entry-inference.test-support'
+import { entryEvaluationRequestFixture } from './entry-inference.test-support'
 import { decodeJevEvaluationRequest, JevOutcome } from './evidence'
-import { readSequentialInferenceCostEvidence } from './sequential-inference-cost-evidence'
+import {
+  readSequentialInferenceCostEvidence,
+  retainedSequentialQuestionPolicyHash,
+} from './sequential-inference-cost-evidence'
+import { makeRetainedChartDecisionsRequest, retainedChartAssessments } from './retained-chart-questions'
+import { makeRetainedEntryJudgmentRequest } from './retained-entry-questions'
+import { decodeDecisionsResponse } from './decisions'
 
-const retained = () => {
+const retained = (
+  schemaVersion: 'bayn.entry-inference-input.v1' | 'bayn.entry-inference-input.v2' = 'bayn.entry-inference-input.v1',
+) => {
   const current = entryEvaluationRequestFixture()
   const bars = current.request.chartSource.bars.map((bar) => ({ ...bar, volume: bar.volume / 1_000_000 }))
   const input = {
     ...current.request,
-    schemaVersion: 'bayn.entry-inference-input.v1',
+    schemaVersion,
+    protocol: { ...current.request.protocol, entryQuestionPolicyHash: retainedSequentialQuestionPolicyHash },
     chartSource: { ...current.request.chartSource, bars },
     numericalState: { ...current.request.numericalState, candidate: { symbol: current.symbol, bars1m: bars } },
   }
   const { requestId: _, ...original } = current
   const material = { ...original, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
   const request = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }
-  const chart = Result.getOrThrow(makeRetainedChartEvidenceV1(input.chartSource))
-  const visualRequest = Result.getOrThrow(makeChartDecisionsRequest(chart))
-  const visual = nativeChartInference(visualRequest.request, request.observedAt)
-  const disposition = Result.getOrThrow(deriveEntryDispositionForChart(input, visual, chart))
+  const chart = Result.getOrThrow(
+    schemaVersion === 'bayn.entry-inference-input.v1'
+      ? makeRetainedChartEvidenceV1(input.chartSource)
+      : makeNativeChartEvidence(input.chartSource),
+  )
+  const visualRequest = Result.getOrThrow(makeRetainedChartDecisionsRequest(chart))
+  const anchors = {
+    support_anchor: chart.bars.reduce((left, right) => (left.low <= right.low ? left : right)),
+    resistance_anchor: chart.bars.reduce((left, right) => (left.high >= right.high ? left : right)),
+    base_first_bar: chart.bars[0],
+    base_last_bar: chart.bars.at(-2),
+  }
+  const response = Result.getOrThrow(
+    decodeDecisionsResponse(visualRequest.request, {
+      model: visualRequest.request.model,
+      answers: visualRequest.request.questions.map((question) => {
+        if (question.type === 'predicate') return { type: 'predicate', name: question.name, probability: 0.9 }
+        const anchor = Object.entries(anchors).find(([name]) => name === question.name)?.[1]
+        if (anchor === undefined) throw new Error('Missing retained source anchor')
+        return {
+          type: 'choice',
+          name: question.name,
+          choice: anchor.id,
+          confidence: 1,
+          probabilities: question.choices.map((choice) => ({
+            value: choice.value,
+            probability: choice.value === anchor.id ? 1 : 0,
+          })),
+        }
+      }),
+      usage: {
+        input_tokens: 100,
+        input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+        output_tokens: 0,
+        total_tokens: 100,
+      },
+    }),
+  )
+  const visual = {
+    requestHash: visualRequest.requestHash,
+    responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+    startedAt: request.observedAt,
+    completedAt: request.observedAt,
+    response,
+  }
+  const disposition = Result.getOrThrow(
+    deriveEntryDispositionForChart(
+      input,
+      visual,
+      chart,
+      Result.getOrThrow(retainedChartAssessments(chart, response)),
+      makeRetainedEntryJudgmentRequest,
+    ),
+  )
   if (disposition.status !== 'READY') throw new Error('The retained fixture requires a funded proposal')
   const handoffMaterial = {
     schemaVersion: 'bayn.entry-handoff.v1',
@@ -83,6 +141,16 @@ test('retains whole-unit chart costs without accepting their input for execution
   expect(
     quotes.find((quote) => 'stage' in quote.line && quote.line.stage === InferenceStage.Chart)?.line.inputTokens,
   ).toBe('100')
+})
+
+test('retains relative-volume chart costs with the original independent questions', () => {
+  expect(retainedSequentialQuestionPolicyHash).toBe('23c4a8f7d4e746486abf2b480a591419289ca174f9d6433d46121a68356b1131')
+  const row = retained('bayn.entry-inference-input.v2')
+  const decoded = Result.getOrThrow(readSequentialInferenceCostEvidence(row))
+  expect(decoded.request.requestHash).toBe(row.request.requestHash)
+  expect(decoded.receipt?.receiptHash).toBe(row.receipt.receiptHash)
+  expect(decoded.handoff?.handoffHash).toBe(row.handoff.handoffHash)
+  expect(Result.isFailure(decodeJevEvaluationRequest(row.request))).toBe(true)
 })
 
 test('rejects altered historical image identity and provider clocks even when outer hashes are recomputed', () => {

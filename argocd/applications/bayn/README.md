@@ -207,6 +207,18 @@ structure and source anchors. Code funds source-anchored recovery and breakout p
 Jev request, and selects from atomic proposal-specific judgments. Both providers share the original inference deadline.
 Account risk, broker protection, fee accounting and exact reconciliation remain mandatory.
 [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the source contracts and venue capabilities.
+
+The conditional base-question migration uses entry input v3 and handoff v2. It chooses an end, then consumes only the
+start question conditioned on that end, retaining every earlier source bar and an explicit no-base answer. Migration 149
+requires terminal cycles, flat settled inventory, complete accounting, fresh exact reconciliation and no unexpired claims.
+It restricts prior PAPER authority for native OBSERVE recovery, preserves operator holds and all account risk history,
+and rejects retired execution inputs. Frozen financial readers retain the original v1/v2 requests and provider costs.
+The source phase removes the prior sealed capital request and its three runtime lineages. After its exact published image
+and native OBSERVE recovery are verified, the reviewed same-account PAPER request must bind the new strategy identity
+and that image, with the existing monetary limits, risk policy, broker identity and holding limit. Natural funded-plan
+selection and protected fee-reconciled round trips still require evidence from that activated deployment.
+
+The following receipts record the preceding v24 source rollout and mandate.
 The source rollout and native OBSERVE recovery completed against source
 `264735d18ae2075bcde2bd162f68df980b09c13e` and immutable digest
 `sha256:a8807cea2888383ad6e42713c5e977314324d8b7cdb1362c9005ca57bf0bb3fc`, through Kargo commit
