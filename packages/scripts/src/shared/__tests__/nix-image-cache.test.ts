@@ -22,7 +22,7 @@ const workflowEnv = Object.fromEntries(
   [...environment.items, ...stepEnvironment.items].map(({ key, value }) => [String(key), String(value)]),
 )
 
-it.each([0, 17])('attempts a multi-GiB archive upload and records Attic exit status %i', (uploadStatus) => {
+it.each([0, 17, 'stall'])('bounds a multi-GiB archive upload and records Attic result %s', (uploadStatus) => {
   const dir = mkdtempSync(join(tmpdir(), 'nix-image-cache-'))
   try {
     const bin = join(dir, 'bin')
@@ -36,7 +36,7 @@ it.each([0, 17])('attempts a multi-GiB archive upload and records Attic exit sta
     writeFileSync(join(logs, 'image-paths-amd64.txt'), `${archive}\n`)
     writeFileSync(
       join(bin, 'attic'),
-      '#!/usr/bin/env bash\nif [[ "$1" == login ]]; then exit 0; fi\nprintf "%s\\n" "$@" > "$ATTIC_TEST_PUSHED"\nexit "$ATTIC_TEST_STATUS"\n',
+      '#!/usr/bin/env bash\nif [[ "$1" == login ]]; then exit 0; fi\nprintf "%s\\n" "$@" > "$ATTIC_TEST_PUSHED"\nif [[ "$ATTIC_TEST_STATUS" == stall ]]; then sleep 10; fi\nexit "$ATTIC_TEST_STATUS"\n',
       { mode: 0o755 },
     )
     const result = Bun.spawnSync(['bash', '-c', warmScript], {
@@ -44,6 +44,7 @@ it.each([0, 17])('attempts a multi-GiB archive upload and records Attic exit sta
       env: {
         ...process.env,
         ...workflowEnv,
+        NIX_IMAGE_CACHE_WARM_TIMEOUT: uploadStatus === 'stall' ? '1s' : workflowEnv.NIX_IMAGE_CACHE_WARM_TIMEOUT,
         PATH: `${bin}:${process.env.PATH}`,
         ARCH: 'amd64',
         ATTIC_TOKEN: 'test-token',
@@ -55,7 +56,7 @@ it.each([0, 17])('attempts a multi-GiB archive upload and records Attic exit sta
     })
     expect(result.exitCode).toBe(0)
     expect(readFileSync(join(logs, 'image-cache-push-status-amd64.txt'), 'utf8')).toBe(
-      uploadStatus === 0 ? 'succeeded\t0\n' : `failed\t${uploadStatus}\n`,
+      uploadStatus === 0 ? 'succeeded\t0\n' : `failed\t${uploadStatus === 'stall' ? 124 : uploadStatus}\n`,
     )
     expect(readFileSync(pushed, 'utf8').split('\n')).toEqual([
       'push',

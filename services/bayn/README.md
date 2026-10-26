@@ -106,6 +106,12 @@ contradictory quote sides remain malformed input. Other eligible candidates can 
 schema rejection caused by the withdrawal. Original capture receipts retain their exact recorded disposition; old
 rejection receipts cannot be relabeled as accepted evidence.
 
+Before chart dispatch, the native source-feasibility gate rejects only sources for which neither existing proposal
+template can cover the unchanged protective-price and funding rules. `SOURCE_INFEASIBLE` handoffs are independently
+reproduced from the sealed input and record both providers as undispatched at zero cost. Possible sources still use
+the original chart, Jev, deadline and risk gates. See [pre-chart feasibility](../../docs/bayn/pre-chart-feasibility.md)
+for the existing-data proof, verifier and rollout contract.
+
 Native Jev admission commits the verified source observation, sealed batch plan and every requested candidate claim
 in one PostgreSQL transaction before any provider call. Only the successful creator receives dispatch rights. Retries,
 including a lost admission acknowledgement, recover existing evidence without another inference. A failed claim insertion
