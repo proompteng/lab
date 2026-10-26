@@ -143,7 +143,9 @@ requests stay reserved; resident guest RAM is released.
 Power & Sleep settings save immediately when the timeout menu changes. Background Codex reads and event-stream
 reconnects, terminal heartbeats, and empty terminal frames do not reset the idle clock. Their control-admission CAS
 still excludes an already claimed sleep. User commands, terminal input/output, and active agent work keep the workspace
-awake. An accepted durable run remains a sleep inhibitor until it reaches a terminal state.
+awake. An accepted durable run remains a sleep inhibitor until it reaches a terminal state. A timeout update
+replaces the old deadline atomically. If automatic sleep has already claimed the running workspace, the update fails
+rather than reporting a saved timeout while the committed sleep proceeds; resume before retrying.
 
 The journal consumes a snapshot before vCPUs run. A failed save can recover only its still-live guest. A failed restore,
 changed disk/image/kernel/CPU identity, lost active runner, or missing Pod retains the claim and home for fenced recovery.

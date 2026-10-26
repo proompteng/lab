@@ -461,6 +461,13 @@ impl MicroVmControlPlane for ControlPlane {
             {
                 return Err(Status::permission_denied("authorized workspace changed"));
             }
+            if agent.spec.desired_state == MicroVMDesiredState::Running
+                && crate::activity::has_idle_sleep_claim(&agent)
+            {
+                return Err(Status::failed_precondition(
+                    "automatic sleep already committed",
+                ));
+            }
             let now = Utc::now();
             let patch = json!({
                 "metadata": {
@@ -3421,7 +3428,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn power_settings_refresh_activity_changes_without_changing_authorized_workspace() {
-        for changed in ["activity", "uid", "owner", "epoch"] {
+        for changed in ["activity", "uid", "owner", "epoch", "sleep"] {
             let (service, mut handle) =
                 tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
             let barrier = Arc::new(tokio::sync::Barrier::new(2));
@@ -3429,6 +3436,8 @@ pub(crate) mod tests {
             control.authorization = WorkspaceAuthorization::SynchronizedFixture(barrier.clone());
             let mut agent = provisional_terminal_test_agent(Utc::now());
             agent.metadata.resource_version = Some("7".into());
+            agent.spec.power.idle_timeout_minutes = 1;
+            agent.spec.idle_deadline = (Utc::now() + chrono::Duration::minutes(1)).to_rfc3339();
             let principal = Principal::fixture(
                 &agent.spec.owner_hash,
                 &agent.uid().unwrap(),
@@ -3437,7 +3446,7 @@ pub(crate) mod tests {
             let request = crate::auth::signed_fixture_request(
                 UpdatePowerSettingsRequest {
                     id: agent.name_any(),
-                    idle_timeout_minutes: Some(1),
+                    idle_timeout_minutes: Some(60),
                 },
                 &principal,
                 &format!("/{CONTROL_PLANE_SERVICE}/UpdatePowerSettings"),
@@ -3461,6 +3470,12 @@ pub(crate) mod tests {
                 "uid" => agent.metadata.uid = Some(uuid::Uuid::new_v4().to_string()),
                 "owner" => agent.spec.owner_hash = owner_hash("github:another-owner"),
                 "epoch" => agent.spec.runtime_epoch = uuid::Uuid::new_v4().to_string(),
+                "sleep" => {
+                    let claim = format!("idle-sleep/{}", agent.spec.runtime_epoch);
+                    agent
+                        .annotations_mut()
+                        .insert(crate::activity::ACTIVE_RUN_ANNOTATION.into(), claim);
+                }
                 _ => {}
             }
             barrier.wait().await;
@@ -3474,8 +3489,17 @@ pub(crate) mod tests {
             );
             if changed != "activity" {
                 assert_eq!(
-                    task.await.unwrap().unwrap_err().code(),
-                    tonic::Code::PermissionDenied
+                    tokio::time::timeout(std::time::Duration::from_secs(2), task)
+                        .await
+                        .expect("a committed sleep must reject the power change before patching")
+                        .unwrap()
+                        .unwrap_err()
+                        .code(),
+                    if changed == "sleep" {
+                        tonic::Code::FailedPrecondition
+                    } else {
+                        tonic::Code::PermissionDenied
+                    }
                 );
                 continue;
             }
@@ -3486,9 +3510,20 @@ pub(crate) mod tests {
                     .unwrap();
             assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
             assert_eq!(patch["metadata"]["resourceVersion"], "8");
-            assert_eq!(patch["spec"]["power"]["idleTimeoutMinutes"], 1);
+            assert_eq!(patch["spec"]["power"]["idleTimeoutMinutes"], 60);
+            let deadline = patch["spec"]["idleDeadline"].as_str().unwrap();
+            assert!(
+                DateTime::parse_from_rfc3339(deadline).unwrap()
+                    > Utc::now() + chrono::Duration::minutes(59),
+                "increasing the timeout must replace the old one-minute deadline"
+            );
             assert!(patch["spec"].get("desiredState").is_none());
-            agent.spec.power.idle_timeout_minutes = 1;
+            agent.spec.power.idle_timeout_minutes = 60;
+            agent.spec.idle_deadline = deadline.into();
+            assert!(!crate::activity::idle_deadline_passed(
+                &agent,
+                Utc::now() + chrono::Duration::minutes(2)
+            ));
             response.send_response(
                 HttpResponse::builder()
                     .header("content-type", "application/json")
@@ -3501,7 +3536,7 @@ pub(crate) mod tests {
                     .unwrap()
                     .into_inner()
                     .idle_timeout_minutes,
-                Some(1)
+                Some(60)
             );
         }
     }
