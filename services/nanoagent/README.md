@@ -58,7 +58,7 @@ failures stop immediately; closing the viewer cancels any retry without reportin
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
-[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 9 hard-migrates Relay client installation; protocol 8 added `StatFile`,
+[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 10 scopes uncertain-operation fences to each conversation; protocol 9 hard-migrated Relay client installation; protocol 8 added `StatFile`,
 which reads one path's metadata without listing its siblings. It uses the existing file-observation authority and
 workspace confinement. The controller rejects older guest API versions; roll out the paired controller and guest
 images together. The signed Ofz request protocol remains version 4. Nanoagent serves HTTP/2 gRPC and preview
@@ -78,8 +78,8 @@ approvals, file/Codex server streams, and a bidirectional terminal stream. File 
 Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
 this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
 
-Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 7. This version
-requires confirmed command cleanup before cancellation, stable operation UUIDs, and canonical `/workspace` paths
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 10. This version
+requires conversation-scoped pending-operation fences, confirmed command cleanup before cancellation, stable operation UUIDs, and canonical `/workspace` paths
 for file operations, file events, and terminal working directories. The BFF
 requires that version in the controller's existing authenticated audience response before signing a request. The signed
 target stays unchanged through admission; only the confined filesystem translates it into the retained home. A real

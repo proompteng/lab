@@ -97,7 +97,7 @@ export async function runTengriAction<Result>(
       action.action !== 'codex-models' &&
       action.action !== 'list-threads' &&
       action.action !== 'resume-thread' &&
-      action.action !== 'active-codex-run' &&
+      action.action !== 'active-codex-runs' &&
       action.action !== 'codex-run',
   })
   notifyGuestOperationListeners(scope)
