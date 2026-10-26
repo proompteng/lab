@@ -11,7 +11,16 @@ import {
   type JevBatchResult,
 } from '../jev/batch'
 import { type JevBatchEvidence, JevBatchStore } from '../jev/batch-evaluation'
-import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest, type JevEvaluationRequest } from '../jev/evidence'
+import {
+  decodeJevEvaluationReceipt,
+  decodeJevEvaluationRequest,
+  JevOutcome,
+  type JevEvaluationRequest,
+} from '../jev/evidence'
+import { EntryInferenceJournal } from '../jev/entry-inference'
+import { makeNativeChartEvidence } from '../jev/chart-evidence'
+import { makeChartDecisionsRequest } from '../jev/chart-questions'
+import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { JevPurpose } from '../jev/portfolio'
@@ -24,9 +33,9 @@ import {
 } from '../jev/resolution'
 import { reproduceJevTradingSignalBatch } from '../jev/trading-signals'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
-import { Sha256Schema, strictParseOptions } from '../schemas'
+import { Sha256Schema, SymbolSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
-import type { ReplayJevCall } from './jev-timing'
+import type { ReplayInferenceCall } from './inference-timing'
 
 const TerminalSchema = Schema.Struct({ receipt: Schema.NullOr(Schema.Unknown), resolution: Schema.Unknown })
 
@@ -39,7 +48,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
     const pendingBatches = new Set<string>()
     const plannedRequests = new Map<string, JevEvaluationRequest>()
     const windows = new Map<string, string>()
-    const calls: ReplayJevCall[] = []
+    const calls: ReplayInferenceCall[] = []
     let interrupted = false
     const failure = (cause: unknown) =>
       operationalError({
@@ -101,6 +110,21 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
         const rawReceipt = late ?? decoded.receipt
         const receipt =
           rawReceipt === null ? null : yield* Effect.fromResult(decodeJevEvaluationReceipt(request, rawReceipt))
+        if (receipt?.outcome.status === JevOutcome.Completed) {
+          const handoff = yield* Effect.fromResult(
+            decodeEntryHandoff(
+              {
+                requestId: request.requestId,
+                input: request.request,
+                observedAt: request.observedAt,
+                expiresAt: request.expiresAt,
+              },
+              yield* read('handoff', id),
+            ),
+          )
+          if (handoff.handoffHash !== receipt.outcome.completion.handoff.handoffHash)
+            return yield* failure('Terminal inference differs from its committed provider handoff')
+        }
         const resolution = yield* Effect.fromResult(decodeJevResolution(request, receipt, decoded.resolution))
         if (late !== null && resolution.status !== JevResolutionStatus.Abandoned)
           return yield* failure('Only an abandoned request may retain a late receipt')
@@ -140,6 +164,21 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             const request = yield* Effect.fromResult(decodeJevEvaluationRequest(rawRequest))
             const receipt = yield* Effect.fromResult(decodeJevEvaluationReceipt(request, rawReceipt))
             const saved = yield* requireEvaluation(request)
+            if (receipt.outcome.status === JevOutcome.Completed) {
+              const handoff = yield* Effect.fromResult(
+                decodeEntryHandoff(
+                  {
+                    requestId: request.requestId,
+                    input: request.request,
+                    observedAt: request.observedAt,
+                    expiresAt: request.expiresAt,
+                  },
+                  yield* read('handoff', request.requestId),
+                ),
+              )
+              if (handoff.handoffHash !== receipt.outcome.completion.handoff.handoffHash)
+                return yield* failure('Inference receipt has no identical committed provider handoff')
+            }
             if (saved.receipt !== null && saved.receipt.receiptHash !== receipt.receiptHash)
               return yield* failure('A committed request has a different receipt')
             if (saved.resolution !== null) {
@@ -323,7 +362,40 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
         atomic(Effect.sync(() => Option.fromNullishOr(windows.get(`${cycleId}:${purpose}`)))),
       record: (observation) => atomic(recordObservation(observation)),
     }
+    const handoffs: EntryInferenceJournal['Service'] = {
+      recordHandoff: (input) =>
+        atomic(
+          Effect.gen(function* () {
+            const raw = yield* read('request', input.requestId)
+            const request = yield* Effect.fromResult(decodeJevEvaluationRequest(raw))
+            const handoff = yield* Effect.fromResult(
+              decodeEntryHandoff(
+                {
+                  requestId: request.requestId,
+                  input: request.request,
+                  observedAt: request.observedAt,
+                  expiresAt: request.expiresAt,
+                },
+                input,
+              ),
+            )
+            const existing = yield* read('handoff', request.requestId)
+            if (existing !== null) {
+              if (
+                (yield* Effect.fromResult(canonicalHashV1Result(existing))) !==
+                (yield* Effect.fromResult(canonicalHashV1Result(handoff)))
+              )
+                return yield* failure('A committed provider handoff has different bytes')
+              return { dispatchAllowed: false }
+            }
+            const saved = yield* requireEvaluation(request)
+            yield* write('handoff', request.requestId, handoff)
+            return { dispatchAllowed: saved.resolution === null }
+          }),
+        ),
+    }
     return {
+      handoffs,
       evaluations,
       batches: batchStore,
       observations,
@@ -349,13 +421,57 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             return hash
           }),
         ),
-      calls: Effect.sync((): readonly ReplayJevCall[] => [...calls]),
-      retainCall: (call: ReplayJevCall) =>
+      calls: Effect.sync((): readonly ReplayInferenceCall[] => [...calls]),
+      retainCall: (call: ReplayInferenceCall) =>
         atomic(
           Effect.gen(function* () {
-            const request = [...plannedRequests.values()].find((value) => value.requestHash === call.requestHash)
-            if (request === undefined || (yield* readEvaluation(request.requestId)) === null)
-              return yield* failure('Provider call has no committed request')
+            if ((yield* Effect.fromResult(canonicalHashV1Result(call.request))) !== call.requestHash)
+              return yield* failure('Provider call differs from its sealed request bytes')
+            const subject = Schema.Struct({ symbol: SymbolSchema })
+            const { symbol } = yield* call.stage === 'CHART'
+              ? Schema.decodeUnknownEffect(subject)(call.request.input[0].content[2].data)
+              : Schema.decodeUnknownEffect(Schema.Struct({ candidate: subject }))(call.request.state).pipe(
+                  Effect.map((value) => value.candidate),
+                )
+            const matches = []
+            for (const request of plannedRequests.values()) {
+              if (
+                request.symbol !== symbol ||
+                call.simulatedStartedAt < request.observedAt ||
+                call.simulatedStartedAt >= request.expiresAt
+              )
+                continue
+              if (call.stage === 'CHART') {
+                const chart = yield* Effect.fromResult(makeNativeChartEvidence(request.request.chartSource))
+                const expected = yield* Effect.fromResult(makeChartDecisionsRequest(chart))
+                if (expected.requestHash !== call.requestHash) continue
+              } else {
+                const raw = yield* read('handoff', request.requestId)
+                if (raw === null) continue
+                const handoff = yield* Effect.fromResult(
+                  decodeEntryHandoff(
+                    {
+                      requestId: request.requestId,
+                      input: request.request,
+                      observedAt: request.observedAt,
+                      expiresAt: request.expiresAt,
+                    },
+                    raw,
+                  ),
+                )
+                if (
+                  handoff.disposition.status !== 'READY' ||
+                  handoff.disposition.jevRequestHash !== call.requestHash ||
+                  call.simulatedStartedAt < handoff.recordedAt
+                )
+                  continue
+              }
+              if ((yield* readEvaluation(request.requestId)) !== null) matches.push(request.requestId)
+            }
+            if (matches.length !== 1)
+              return yield* failure(
+                'Provider stage must bind exactly one committed parent request and dependent handoff',
+              )
             const id = yield* Effect.fromResult(canonicalHashV1Result(call))
             yield* write('provider-call', id, call)
             calls.push(call)

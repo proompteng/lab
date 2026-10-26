@@ -22,7 +22,8 @@ import {
 } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
-import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
+import { JevContractError } from './contract'
+import { prepareEntryInferenceInput } from './entry-inference-input'
 import {
   decodeJevBatchPlan,
   JevBatchPlanVersion,
@@ -35,7 +36,6 @@ import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
-import { jevEntrySetupQuestion, jevTradePlanQuestion } from './trade-plan-choices'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -283,19 +283,6 @@ export const commonMomentumPrices = (
     }
   })
 
-export const jevManagementQuestions = {
-  action: {
-    type: 'choice',
-    instructions:
-      'Given `candidate`, `benchmark`, `relativeSignals` and the held long `position`, does the current market evidence support continuation over `position.remainingHoldingMinutes`, or does deterioration support exiting now? Judge the future setup from the supplied signals. Code separately enforces sizing, fees, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
-    criteria: {
-      hold: 'Continuation is supported by the current evidence over the remaining holding horizon.',
-      exit: 'Deteriorating, exhausted or contradictory current evidence supports closing the long.',
-      unclear: 'The evidence does not distinguish holding from exiting.',
-    },
-  },
-} satisfies JevRequest['questions']
-
 const requestFromSnapshot = (
   snapshot: StrategyMarketSnapshot,
   symbol: string,
@@ -303,6 +290,10 @@ const requestFromSnapshot = (
   native: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
 ) =>
   Result.gen(function* () {
+    if (native.portfolio.purpose !== JevPurpose.Entry)
+      return yield* unavailable(
+        'Model inference is restricted to flat entry observations; held positions use their bound exit policy',
+      )
     if (symbol === benchmarkSymbol) return yield* unavailable('Candidate and benchmark must be distinct')
     const candidate = yield* jevSignalFor(snapshot, symbol)
     const benchmark = yield* jevBenchmarkSignalFor(snapshot, benchmarkSymbol)
@@ -320,43 +311,41 @@ const requestFromSnapshot = (
     if (!continuous && session === undefined)
       return yield* unavailable('Jev signal snapshot has no matching market session')
     const observed = Date.parse(snapshot.manifest.observedAt)
-    let position = null
-    if (native.portfolio.purpose === JevPurpose.Manage) {
-      const held = native.portfolio.brokerState.positions.find(
-        (entry) => entry.symbol === symbol && BigInt(entry.quantityAtoms) > 0n,
-      )
-      const firstFill = native.portfolio.entryFills[0]
-      if (held === undefined || firstFill === undefined || BigInt(held.costBasisMicros) <= 0n)
-        return yield* unavailable('Jev management requires the actual long, cost basis and entry fills')
-      const heldForMinutes = (observed - Date.parse(firstFill.occurredAt)) / 60_000
-      position = {
+    const cryptoFeeTier = effectiveCryptoFeeTier(
+      native.portfolio.brokerState.account.cryptoFeeTier,
+      native.portfolio.brokerState.account.observedAt,
+      snapshot.manifest.observedAt,
+    )
+    const economics = yield* jevEntryEconomics({
+      cryptoFeeTier,
+      protocol: native.protocol,
+      symbol,
+      bidMicros: candidate.prices.bid,
+      askMicros: candidate.prices.ask,
+      capitalMicros: native.portfolio.brokerState.account.equityMicros,
+    })
+    return yield* prepareEntryInferenceInput({
+      schemaVersion: 'bayn.entry-inference-input.v2',
+      protocol: native.protocol,
+      chartSource: {
         symbol,
-        quantityUnits: Number(held.quantityAtoms) / 1_000_000_000,
-        entryFilledAt: firstFill.occurredAt,
-        heldForMinutes,
-        maximumHoldingMinutes: native.protocol.maximumHoldingMinutes,
-        remainingHoldingMinutes: Math.max(0, native.protocol.maximumHoldingMinutes - heldForMinutes),
-      }
-    }
-    const economics =
-      native.portfolio.purpose === JevPurpose.Entry
-        ? yield* jevEntryEconomics({
-            cryptoFeeTier: effectiveCryptoFeeTier(
-              native.portfolio.brokerState.account.cryptoFeeTier,
-              native.portfolio.brokerState.account.observedAt,
-              snapshot.manifest.observedAt,
-            ),
-
-            protocol: native.protocol,
-            symbol,
-            bidMicros: candidate.prices.bid,
-            askMicros: candidate.prices.ask,
-            capitalMicros: native.portfolio.brokerState.account.equityMicros,
-          })
-        : null
-    return yield* prepareJevRequest({
-      model: jevModel,
-      state: {
+        windowEndAt: snapshot.manifest.rangeEndAt,
+        bars: candidate.state.bars1m.map(({ minuteBeforeWindowEnd, open, high, low, close, volume }) => ({
+          minuteBeforeWindowEnd,
+          open,
+          high,
+          low,
+          close,
+          volume,
+        })),
+      },
+      funding: {
+        bidMicros: candidate.prices.bid.toString(),
+        askMicros: candidate.prices.ask.toString(),
+        capitalMicros: native.portfolio.brokerState.account.equityMicros,
+        cryptoFeeTier,
+      },
+      numericalState: {
         schemaVersion: native.protocol.inputDefinition,
         task: {
           positionPolicy: 'long-only',
@@ -365,7 +354,6 @@ const requestFromSnapshot = (
           purpose:
             'Evaluate the supplied trading signals. No unreported outside facts or future observations are available.',
         },
-        position,
         entryEconomics: economics,
         execution: {
           orderType: 'LIMIT',
@@ -433,13 +421,6 @@ const requestFromSnapshot = (
           benchmarkReferencePriceUsd: Number(common.benchmark.reference) / 1_000_000,
         },
       },
-      questions:
-        native.portfolio.purpose === JevPurpose.Manage
-          ? jevManagementQuestions
-          : {
-              action: yield* jevTradePlanQuestion({ snapshot, symbol, economics, protocol: native.protocol }),
-              setup: jevEntrySetupQuestion,
-            },
     })
   })
 
@@ -487,7 +468,7 @@ const batchFromObservation = (
   Result.gen(function* () {
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
-    if (planVersion !== JevBatchPlanVersion.V6)
+    if (planVersion !== JevBatchPlanVersion.V7)
       return yield* unavailable('The current trading protocol requires batch v6')
     if (Date.parse(expiresAt) !== Date.parse(observation.observedAt) + protocol.inferenceValidityMs)
       return yield* unavailable('Jev batch deadline must equal its source-controlled validity interval')
@@ -536,7 +517,7 @@ const batchFromObservation = (
         }
       }
       const request = yield* makeJevEvaluationRequest({
-        schemaVersion: 'bayn.jev-evaluation-request.v1',
+        schemaVersion: 'bayn.jev-evaluation-request.v2',
         cycleId: observation.cycleId,
         authorityGenerationHash: observation.authorityGenerationHash,
         snapshotId: manifest.snapshotId,
@@ -544,7 +525,7 @@ const batchFromObservation = (
         observedAt: manifest.observedAt,
         expiresAt,
         requestHash: prepared.requestHash,
-        request: prepared.request,
+        request: prepared.input,
       })
       candidates.push({ symbol, status: JevCandidatePlanStatus.Requested, request })
     }

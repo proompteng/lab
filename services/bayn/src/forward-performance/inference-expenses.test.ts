@@ -19,17 +19,18 @@ const frozen = sources.map((source) => ({
   verifiedAt: source.asOf,
 }))
 const evidence = {
-  schemaVersion: 'bayn.inference-cost-evidence.v1' as const,
+  schemaVersion: 'bayn.inference-cost-evidence.v2' as const,
   accountBindingHash: frozen[0]?.quote.accountBindingHash ?? '',
   sessionDate: first.sessionDate,
   asOf: first.asOf,
-  requests: sources.map(({ requestId, cycleId, authorityGenerationHash, request, receipt, resolution }) => ({
+  requests: sources.map(({ requestId, cycleId, authorityGenerationHash, request, receipt, resolution, handoff }) => ({
     requestId,
     cycleId,
     authorityGenerationHash,
     request,
     receipt,
     resolution,
+    handoff,
   })),
 }
 
