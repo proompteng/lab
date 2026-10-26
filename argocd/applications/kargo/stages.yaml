@@ -951,15 +951,15 @@ spec:
                 value: '${{ commitFrom(vars.gitRepo).ID }}'
               - key: spec.template.spec.containers.0.env.3.value
                 value: '${{ commitFrom(vars.gitRepo).ID }}'
-              - key: spec.template.spec.containers.0.env.132.value
+              - key: spec.template.spec.containers.0.env.129.value
                 value: "${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id']) }}"
-              - key: spec.template.spec.containers.0.env.133.value
+              - key: spec.template.spec.containers.0.env.130.value
                 value: "${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-build-conclusion']) }}"
-              - key: spec.template.spec.containers.0.env.134.value
+              - key: spec.template.spec.containers.0.env.131.value
                 value: '${{ imageFrom(vars.imageRepo).Digest }}'
-              - key: spec.template.spec.containers.0.env.135.value
+              - key: spec.template.spec.containers.0.env.132.value
                 value: '${{ commitFrom(vars.gitRepo).ID }}'
-              - key: spec.template.spec.containers.0.env.136.value
+              - key: spec.template.spec.containers.0.env.133.value
                 value: '${{ imageFrom(vars.imageRepo).Digest }}'
         - uses: git-commit
           as: commit

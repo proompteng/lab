@@ -291,6 +291,7 @@ function requestFailure(payload: unknown, status: number, traceId?: string | nul
       (status === 412 && record.code === 'runtime_upgrade_required') ||
       (status === 502 && record.code === 'model_catalog_invalid') ||
       (status === 502 && record.code === 'conversation_history_invalid') ||
+      (status === 502 && record.code === 'chat_index_invalid') ||
       (status === 429 && record.code === 'capacity_full'))
       ? record.code
       : undefined
