@@ -62,10 +62,10 @@ export const makeInferenceExpenseStore = (
       SELECT count(*) FROM inference_expense_quotes AS quote WHERE quote.request_id = request.request_id
         AND quote.handoff_hash IS NOT DISTINCT FROM handoff.handoff_hash
         AND quote.receipt_hash IS NOT DISTINCT FROM CASE
-          WHEN quote.provider_stage = 'CHART' AND NOT COALESCE(receipt.not_dispatched, false) THEN NULL
-          WHEN quote.provider_stage = 'JEV' AND handoff.handoff_hash IS NOT NULL AND handoff.jev_not_requested THEN NULL
+          WHEN quote.provider_stage = 'CHART' AND NOT COALESCE(receipt.payload #>> '{outcome,failure}' = 'NOT_DISPATCHED', false) THEN NULL
+          WHEN quote.provider_stage = 'JEV' AND handoff.handoff_hash IS NOT NULL AND handoff.payload #>> '{disposition,status}' <> 'READY' THEN NULL
           ELSE receipt.receipt_hash END
-    ) < request.expense_stage_count
+    ) < CASE WHEN request.schema_version='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
     ORDER BY request.request_id COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
   `.pipe(
     Effect.flatMap(

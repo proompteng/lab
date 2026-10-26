@@ -7,7 +7,6 @@ import { TestClock } from 'effect/testing'
 import sequentialEntryInference from '../../migrations/0147_sequential_entry_inference'
 import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
 import conditionalBaseAnchors from '../../migrations/0149_conditional_base_anchors'
-import expenseMetadataMigration from '../../migrations/0150_inference_expense_source_metadata'
 
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
@@ -127,31 +126,6 @@ integration('committed sequential provider handoff', () => {
         const store = yield* JevEvaluationStore
         yield* store.record(request, receipt)
         expect((yield* store.read(request.requestId))?.receipt).toEqual(receipt)
-      }),
-    ))
-
-  test('backfills staged expense metadata while preserving the original inference evidence', async () =>
-    runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`ALTER TABLE jev_evaluation_requests DROP COLUMN expense_stage_count`
-        yield* sql`ALTER TABLE jev_evaluation_receipts DROP COLUMN not_dispatched`
-        yield* sql`ALTER TABLE jev_inference_handoffs DROP COLUMN jev_not_requested`
-        yield* (yield* EntryInferenceJournal).recordHandoff(completion.handoff)
-        yield* (yield* JevEvaluationStore).record(request, receipt)
-        const evidence = sql`SELECT request.payload AS request, receipt.payload AS receipt, handoff.payload AS handoff
-          FROM jev_evaluation_requests request JOIN jev_evaluation_receipts receipt USING (request_id)
-          JOIN jev_inference_handoffs handoff USING (request_id)
-          WHERE request.request_id=${request.requestId}`
-        const original = yield* evidence
-        yield* expenseMetadataMigration
-        expect(yield* evidence).toEqual(original)
-        expect(
-          yield* sql`SELECT expense_stage_count, not_dispatched, jev_not_requested
-            FROM jev_evaluation_requests request JOIN jev_evaluation_receipts receipt USING (request_id)
-            JOIN jev_inference_handoffs handoff USING (request_id)
-            WHERE request.request_id=${request.requestId}`,
-        ).toEqual([{ expense_stage_count: 2, not_dispatched: false, jev_not_requested: false }])
       }),
     ))
 
