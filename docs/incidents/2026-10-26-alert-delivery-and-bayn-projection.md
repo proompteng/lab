@@ -144,9 +144,12 @@ and its cycle observation path; fewer emails do not satisfy that gate.
   Kargo promotion. The local result comparison does not establish production recovery.
 - Confirm the Kafka acknowledgement and database latency windows after telemetry admission recovers. Do not infer
   their resolution from notification changes or weaken transaction durability to make the alerts quiet.
-- At 06:32 UTC, distributor logs had no Kafka acknowledgement or series-limit failures in the preceding twelve
-  minutes, and PostgreSQL had no statement cancellations in that interval. PostgreSQL WAL fsync still averaged
-  approximately 287 ms over five minutes. Shared storage latency remains a separate unresolved limitation.
+- At 06:32 UTC, PostgreSQL had no statement cancellations in the preceding twelve minutes, but WAL fsync still
+  averaged approximately 287 ms over five minutes. A corrected distributor log check found Kafka acknowledgement
+  timeouts recurring through 06:37 UTC. The first check missed the log's `acknowledged` wording; its negative result
+  is invalid. No series-limit errors occurred in that fifteen-minute check. Shared storage latency and intermittent
+  Kafka transport failures remain separate unresolved limitations. Ceph already uses `high_client_ops`; the HDDs
+  were 74–94% busy, with 18 active scrubs and no misplaced or degraded placement groups.
 
 ## References
 
