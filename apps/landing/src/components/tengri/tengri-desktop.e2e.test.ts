@@ -5143,6 +5143,38 @@ test('supports desktop window shortcuts, independent windows, drag, and eight-ed
   await expect(tengriFrames).toHaveCount(1)
 })
 
+for (const recovery of ['automatic', 'refresh'] as const) {
+  test(`recovers a temporary authorization pause through ${recovery} observation without a resume command`, async ({
+    page,
+  }) => {
+    await page.clock.install()
+    const fixture = await mockTengri(page, {
+      agent: {
+        ...readyAgent,
+        phase: 'sleeping',
+        conditions: [
+          {
+            type: 'Ready',
+            status: 'False',
+            reason: 'AuthorizationPaused',
+            message: 'Authorization is recovering',
+            lastTransitionAt: '2026-08-26T00:01:00Z',
+          },
+        ],
+      },
+    })
+    await page.goto('/')
+    const paused = page.getByRole('dialog', { name: 'Tengri is temporarily paused' })
+    await expect(paused).toContainText('Tengri will reconnect automatically.')
+    await expect(paused.getByRole('button', { name: 'Resume Agent' })).toHaveCount(0)
+    fixture.setAgent({ ...readyAgent })
+    if (recovery === 'automatic') await page.clock.fastForward(2_000)
+    else await paused.getByRole('button', { name: 'Try Again' }).click()
+    await expect(page.getByRole('button', { name: 'Open Settings', exact: true })).toBeVisible()
+    expect(fixture.actions.filter((action) => action.action === 'resume-agent')).toEqual([])
+  })
+}
+
 test('renders truthful booting, sleeping, and failed lifecycle states', async ({ page }) => {
   await mockTengri(page, { agent: { ...readyAgent, phase: 'sleeping' } })
   await page.goto('/')

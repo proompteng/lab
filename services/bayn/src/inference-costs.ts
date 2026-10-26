@@ -222,24 +222,29 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
     let chartStartedAt: string | undefined = receipt?.startedAt
     if (handoff !== null) {
       const disposition = handoff.disposition
-      const metering =
-        disposition.status === 'VISUAL_FAILED'
-          ? disposition.failure.usage
-          : disposition.visual.requestHash === handoff.visualRequestHash
-            ? disposition.visual.response.usage
-            : null
-      chartStartedAt = disposition.status === 'VISUAL_FAILED' ? request.observedAt : disposition.visual.startedAt
-      if (metering !== null)
-        chartUsage = {
-          ...usage(
-            metering,
-            disposition.status === 'VISUAL_FAILED' || disposition.status === 'PREPARATION_FAILED'
-              ? InferenceUsageStatus.Rejected
-              : InferenceUsageStatus.Received,
-          ),
-          cachedInputTokens: BigInt(metering.input_tokens_details.cached_tokens),
-          cacheWriteInputTokens: BigInt(metering.input_tokens_details.cache_write_tokens),
-        }
+      if (disposition.status === 'SOURCE_INFEASIBLE') {
+        chartUsage = notDispatched()
+        chartStartedAt = undefined
+      } else {
+        const metering =
+          disposition.status === 'VISUAL_FAILED'
+            ? disposition.failure.usage
+            : disposition.visual.requestHash === handoff.visualRequestHash
+              ? disposition.visual.response.usage
+              : null
+        chartStartedAt = disposition.status === 'VISUAL_FAILED' ? request.observedAt : disposition.visual.startedAt
+        if (metering !== null)
+          chartUsage = {
+            ...usage(
+              metering,
+              disposition.status === 'VISUAL_FAILED' || disposition.status === 'PREPARATION_FAILED'
+                ? InferenceUsageStatus.Rejected
+                : InferenceUsageStatus.Received,
+            ),
+            cachedInputTokens: BigInt(metering.input_tokens_details.cached_tokens),
+            cacheWriteInputTokens: BigInt(metering.input_tokens_details.cache_write_tokens),
+          }
+      }
     }
     let jevUsage: Usage | null =
       zero || (handoff !== null && handoff.disposition.status !== 'READY') ? notDispatched() : null
