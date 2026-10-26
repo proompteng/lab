@@ -90,7 +90,7 @@ jobs:
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: [validate, build]
-    runs-on: arc-amd64
+    runs-on: arc-amd64-publish
     permissions:
       contents: read
       id-token: write

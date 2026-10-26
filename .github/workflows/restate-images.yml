@@ -120,7 +120,7 @@ jobs:
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build]
-    runs-on: arc-arm64
+    runs-on: arc-amd64-publish
     timeout-minutes: 20
     permissions:
       contents: read

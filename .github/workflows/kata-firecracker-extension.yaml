@@ -86,7 +86,7 @@ jobs:
     name: Publish signed Talos 1.14 catalog
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: catalog
-    runs-on: arc-amd64
+    runs-on: arc-amd64-publish
     timeout-minutes: 30
     permissions:
       contents: read
@@ -175,7 +175,7 @@ jobs:
     name: Publish signed multi-architecture extension
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (needs.changes.outputs.extensions == 'true' || github.event_name == 'workflow_dispatch')
     needs: [changes, build]
-    runs-on: arc-arm64
+    runs-on: arc-amd64-publish
     timeout-minutes: 30
     permissions:
       contents: read

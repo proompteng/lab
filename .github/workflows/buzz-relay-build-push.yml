@@ -128,7 +128,7 @@ jobs:
   publish-index:
     if: github.event_name != 'pull_request'
     needs: build
-    runs-on: arc-arm64
+    runs-on: arc-amd64-publish
     steps:
       - name: Checkout deployment repository
         uses: actions/checkout@v5
