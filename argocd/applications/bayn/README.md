@@ -218,6 +218,17 @@ and native OBSERVE recovery are verified, the reviewed same-account PAPER reques
 and that image, with the existing monetary limits, risk policy, broker identity and holding limit. Natural funded-plan
 selection and protected fee-reconciled round trips still require evidence from that activated deployment.
 
+Migration 149 and native OBSERVE recovery completed on 2026-10-26 against source
+`788008ed66d47f9dd39decebb084b5ab225b197a` and immutable digest
+`sha256:cb5c2b93f19aa37ea798be981dfeba55ceadb0553e8a158994a0f34f77ce0c7c`, through Kargo commit
+`86e05a0addcad3f6515b8181b9b257ea71084bfd`. Readback preserved the original 802 accounting and 381 cash-fee record
+hashes and peak-equity history, with flat inventory and fresh exact reconciliation.
+
+PAPER request `15449657ab84a1322bb94f53ac1fba9a26b994e5881726aa3b72d05842c24720` binds that verified image and the
+conditional question policy. Its sealed identity and all three runtime lineages restore the same account, grant kind,
+risk policy and monetary limits. Native PAPER activation and natural crypto and equity round trips remain separate
+acceptance requirements.
+
 The following receipts record the preceding v24 source rollout and mandate.
 The source rollout and native OBSERVE recovery completed against source
 `264735d18ae2075bcde2bd162f68df980b09c13e` and immutable digest
