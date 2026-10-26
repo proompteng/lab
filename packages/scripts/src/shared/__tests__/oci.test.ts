@@ -650,7 +650,7 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('Warm Nix image archive output in Attic')
     expect(nixOciWorkflow).toContain('mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
     expect(nixOciWorkflow).toContain("ATTIC_PUSH_NO_CLOSURE: 'true'")
-    expect(nixOciWorkflow).toContain('NIX_IMAGE_CACHE_WARM_TIMEOUT: 30m')
+    expect(nixOciWorkflow).toContain('NIX_IMAGE_CACHE_WARM_TIMEOUT: 2m')
     expect(nixOciWorkflow).toContain(
       'timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${image_paths[@]}"',
     )
