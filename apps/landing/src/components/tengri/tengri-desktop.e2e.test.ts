@@ -9011,6 +9011,50 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   expect(page.context().pages()).toHaveLength(1)
 })
 
+test('previews Rust file links with XML media types at the requested line', async ({ page }) => {
+  await mockTengri(page)
+  const path = '/workspace/lab/services/relay/src/service.rs'
+  const content = Array.from({ length: 110 }, (_, index) =>
+    index === 106 ? 'fn relay_execution() {}' : `// source line ${index + 1}`,
+  ).join('\n')
+  const paths: string[] = []
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (!['stat-file', 'read-file'].includes(action.action) || !action.path?.startsWith(path)) return route.fallback()
+    paths.push(action.path)
+    return route.fulfill({
+      json: {
+        result:
+          action.action === 'stat-file'
+            ? { path, name: 'service.rs', directory: false, size: content.length, modifiedAt: '' }
+            : { path, content, contentType: 'application/rls-services+xml' },
+      },
+    })
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent', exact: true })).toBeEnabled()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'assistant-text',
+    method: 'item/completed',
+    threadId: '',
+    turnId: '',
+    itemId: 'rust-file-reference',
+    approvalId: '',
+    rawJson: '{}',
+    text: `[Relay source](${path}:107)`,
+  })
+  await tengri.getByRole('button', { name: 'Relay source', exact: true }).click()
+  const preview = tengri.getByRole('region', { name: 'File preview' })
+  await expect(preview.locator('[data-selected="true"]')).toContainText('fn relay_execution() {}')
+  await expect(preview.getByRole('heading')).toHaveText(`${path}:107`)
+  await expect(preview.getByRole('alert')).toHaveCount(0)
+  expect(paths).toEqual([path, path])
+  await preview.screenshot({ path: 'test-results/rust-file-preview.png' })
+})
+
 test.describe('touch file previews', () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } })
 
