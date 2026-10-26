@@ -46,10 +46,17 @@ describe('native Jev entry and position observations', () => {
       { decidedAt: evidence.observation.observedAt },
     ])
       expect(Result.isFailure(Schema.decodeUnknownResult(JevEntryTargetSchema)({ ...target, ...change }))).toBe(true)
-    expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, false))).selectedSymbols).toEqual([])
-    expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, true, 0.42))).selectedSymbols).toEqual(
-      [],
-    )
+    for (const [supportsEntry, probability] of [
+      [false, 0.9],
+      [true, 0.42],
+    ] as const) {
+      // Only the recorded judgments vary; keep the same verified source and request plan.
+      const changedJudgments = {
+        ...evidence,
+        batchResult: nativeJevBatchResult(evidence.batchPlan, evidence.decidedAt, () => supportsEntry, probability),
+      }
+      expect(Result.getOrThrow(decideJevEntry(changedJudgments)).selectedSymbols).toEqual([])
+    }
   })
 
   test.each([0.1, 0.42, 0.69])('unsupported or uncertain judgments at %s cannot authorize an entry', (probability) => {

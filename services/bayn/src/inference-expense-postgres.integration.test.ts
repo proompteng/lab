@@ -2,7 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { PgClient } from '@effect/sql-pg'
 import { NodeServices } from '@effect/platform-node'
 import { ConfigProvider, Context, Effect, ManagedRuntime, Redacted, Result, Schema } from 'effect'
-import { SqlClient } from 'effect/sql'
+import { SqlClient, Statement } from 'effect/sql'
+import { canonicalHashV1Result } from './hash'
 
 import requestMigration from '../migrations/0076_jev_evaluation_evidence'
 import resolutionMigration from '../migrations/0077_jev_evaluation_resolution'
@@ -151,6 +152,61 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
             ),
           ),
         ).toBe(true)
+      }),
+    )
+  })
+
+  test('does not reopen large historical request bodies once every source is quoted', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`ALTER TABLE jev_evaluation_requests ALTER COLUMN payload SET STORAGE EXTERNAL`
+        const count = 64
+        const state = 'retained market evidence '.repeat(5_000)
+        const quotes = []
+        for (let index = 0; index < count; index++)
+          quotes.push(
+            yield* persistSource(
+              expenseSourceFixture({
+                authorityGenerationHash: Result.getOrThrow(canonicalHashV1Result({ index })),
+                state,
+              }),
+            ),
+          )
+        const store = makeInferenceExpenseStore(sql, 'fixture-account', '1970-01-01')
+        yield* store.freeze(quotes)
+        yield* sql`ANALYZE jev_evaluation_requests, jev_evaluation_receipts, inference_expense_quotes`
+        let compiled: ReturnType<Statement.Statement<unknown>['compile']> | undefined
+        expect(
+          yield* store.newSources.pipe(
+            Effect.provideService(Statement.CurrentTransformer, (statement) =>
+              Effect.sync(() => {
+                compiled = statement.compile()
+                return statement
+              }),
+            ),
+          ),
+        ).toHaveLength(0)
+        if (compiled === undefined) return yield* Effect.die('Expense lookup was not executed')
+        const [text, parameters] = compiled
+        const explain = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, FORMAT JSON) ${text}`, parameters)
+        const rows = yield* Schema.decodeUnknownEffect(
+          Schema.Array(
+            Schema.Struct({
+              'QUERY PLAN': Schema.Array(
+                Schema.Struct({
+                  Plan: Schema.Struct({ 'Shared Hit Blocks': Schema.Int, 'Shared Read Blocks': Schema.Int }),
+                }),
+              ),
+            }),
+          ),
+        )(explain)
+        const plan = rows[0]?.['QUERY PLAN'][0]?.Plan
+        if (plan === undefined) return yield* Effect.die('Expense lookup buffer evidence is absent')
+        expect(plan['Shared Hit Blocks'] + plan['Shared Read Blocks']).toBeLessThan(
+          count * Math.ceil(state.length / 8_192),
+        )
+        expect(yield* store.session('1970-01-01')).toHaveLength(count)
       }),
     )
   })
