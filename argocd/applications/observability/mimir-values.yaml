@@ -80,11 +80,12 @@ mimir:
     usage_stats:
       enabled: false
       installation_mode: helm
-  runtimeConfig:
-    overrides:
-      anonymous:
-        ingestion_rate: 20000
-        ingestion_burst_size: 400000
+runtimeConfig:
+  overrides:
+    anonymous:
+      ingestion_rate: 20000
+      ingestion_burst_size: 400000
+      max_global_series_per_user: 300000
 
 rollout_operator:
   enabled: false

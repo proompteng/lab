@@ -7,6 +7,7 @@ export type TengriErrorCode =
   | 'conversation_not_found'
   | 'control_not_dispatched'
   | 'conversation_history_invalid'
+  | 'chat_index_invalid'
   | 'file_conflict'
   | 'capacity_full'
   | 'lifecycle_superseded'
@@ -182,7 +183,7 @@ export type TengriAction =
   | { action: 'codex-login-status'; agentId: string }
   | { action: 'codex-login'; agentId: string }
   | { action: 'codex-models'; agentId: string; cursor?: string }
-  | { action: 'active-codex-run'; agentId: string }
+  | { action: 'active-codex-runs'; agentId: string }
   | { action: 'codex-run'; agentId: string; runId: string }
   | { action: 'list-threads'; agentId: string; archived: boolean; cursor?: string }
   | { action: 'set-thread-archived'; agentId: string; threadId: string; archived: boolean }
