@@ -49,6 +49,28 @@ and verify native rings, Kafka offsets, ingestion and historical queries before 
 5. `argocd/applications/observability/mimir-values.yaml`
 6. `argocd/applications/observability/tempo-v3-values.yaml`
 
+## Ofz and Relay platform alerts
+
+The `ofz-relay-platform.rules` group in [the Mimir rules](graf-mimir-rules.yaml) covers the `ofz`, `relay`, `tengri`,
+`proompteng` and standalone `opencode` Applications and Kargo Stages. It alerts on missing or unhealthy Argo observations,
+persistent sync drift, failed promotions, and active promotions that exceed thirty minutes. Missing Stage telemetry has
+its own alert so collection failure cannot silently disable promotion alerts.
+
+Kube-state-metrics reads Kargo `Stage` v1alpha1 status with list/watch access to Stages. It exports the last promotion's
+phase and the current promotion's start timestamp. Idle Stages have no current-start sample; exporting zero would
+incorrectly report an idle Stage as stalled. Alloy forwards both bounded metric families without Freight IDs or image
+tags as labels. The status paths match the installed Kargo CRD. During rollout, verify all five Stage observations in
+Mimir before relying on the promotion rules.
+
+Ofz database rules cover loss of all PostgreSQL metrics targets, database collection errors, replica target loss, and
+the absence of a completed cluster-labelled backup within thirty-six hours. All-zero `up` samples remain a
+failure. These observations do not establish replication correctness or a successful restore. The generic
+`CloudNativePgWalArchiveBacklog` rule also covers Ofz.
+
+The rules use the existing `notify: email` route. Native Prometheus scenarios in [platform-alerts.yaml](tests/platform-alerts.yaml)
+exercise firing delays, recovery, idle promotions and missing observations. Argo health and scrape health remain
+infrastructure evidence; application acceptance still requires actual authorized connector results and durable receipts.
+
 ## Required buckets
 
 - `loki-data`

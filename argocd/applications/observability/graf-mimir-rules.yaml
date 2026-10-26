@@ -3743,6 +3743,134 @@ data:
               summary: Critical Argo CD application is degraded
               description: A critical Kafka, dependent-service, or observability Argo CD application is not Healthy for 10 minutes.
               runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+      - name: ofz-relay-platform.rules
+        rules:
+          - alert: PlatformApplicationUnhealthy
+            expr: argocd_app_info{name=~"ofz|relay|tengri|proompteng|opencode",health_status!="Healthy"} == 1
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: A platform application is unhealthy
+              description: Argo CD reports {{ $labels.name }} unhealthy. Inspect its workloads and dependencies before testing connector access.
+              runbook_url: docs/platform/ofz-relay.md
+          - alert: PlatformApplicationMissing
+            expr: |
+              absent(argocd_app_info{name="ofz"})
+              or absent(argocd_app_info{name="relay"})
+              or absent(argocd_app_info{name="tengri"})
+              or absent(argocd_app_info{name="proompteng"})
+              or absent(argocd_app_info{name="opencode"})
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: A platform application is missing from Argo telemetry
+              description: No Argo CD observation exists for {{ $labels.name }}. Check metrics collection and the root-owned ApplicationSet entry; a missing Application must not appear healthy.
+              runbook_url: docs/platform/ofz-relay.md
+          - alert: PlatformApplicationOutOfSync
+            expr: argocd_app_info{name=~"ofz|relay|tengri|proompteng|opencode",sync_status!="Synced"} == 1
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: A platform application is not reconciled
+              description: '{{ $labels.name }} has not reached its committed desired state for fifteen minutes. Compare its exact Kargo revision with Argo and the live workload.'
+              runbook_url: docs/release-automation.md
+          - alert: PlatformPromotionFailed
+            expr: kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage=~"ofz|relay|tengri|proompteng|opencode",phase=~"Failed|Errored"} == 1
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: A platform image promotion failed
+              description: The last {{ $labels.stage }} promotion {{ $labels.phase }}. Inspect its selected Freight, failed step and exact source receipt; retain the previous deployed image.
+              runbook_url: docs/release-automation.md
+          - alert: PlatformPromotionStalled
+            expr: time() - kube_kargo_stage_current_promotion_started_at{namespace="lab-delivery",stage=~"ofz|relay|tengri|proompteng|opencode"} > 1800
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: A platform promotion has not finished
+              description: The current {{ $labels.stage }} promotion has been active for over thirty minutes. Inspect migration, upstream Freight verification and Argo health gates without bypassing them.
+              runbook_url: docs/release-automation.md
+          - alert: PlatformPromotionTelemetryMissing
+            expr: |
+              absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="ofz"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="relay"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="tengri"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="proompteng"})
+              or absent(kube_kargo_stage_last_promotion_info{namespace="lab-delivery",stage="opencode"})
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: ofz-relay-platform
+              notify: email
+            annotations:
+              summary: Platform promotion observations are missing
+              description: No last-promotion observation exists for {{ $labels.stage }}. Check the Stage, kube-state-metrics watch permissions and Alloy forwarding.
+              runbook_url: docs/release-automation.md
+          - alert: OfzDatabaseUnavailable
+            expr: |
+              sum(up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"}) < 1
+              or absent(up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"})
+              or max(cnpg_collector_last_collection_error{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"}) > 0
+            for: 2m
+            labels:
+              severity: critical
+              team: platform
+              namespace: ofz
+              service: ofz-db
+              notify: email
+            annotations:
+              summary: Ofz database observations are unavailable or failing
+              description: No Ofz PostgreSQL target is healthy, or a database collector cannot query PostgreSQL. Check the CNPG primary, storage, connections and collector error before restoring service.
+              runbook_url: argocd/applications/ofz/README.md
+          - alert: OfzDatabaseReplicaDegraded
+            expr: sum(up{job="cnpg-postgres",namespace="ofz",cluster="ofz-db"}) < 3
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              namespace: ofz
+              service: ofz-db
+              notify: email
+            annotations:
+              summary: Ofz has fewer than three healthy database metrics targets
+              description: The three-instance Ofz database has lost a metrics target for ten minutes. Inspect instance readiness and metrics collection; scrape health alone does not prove replication health.
+              runbook_url: argocd/applications/ofz/README.md
+          - alert: OfzDatabaseBackupStale
+            expr: |
+              time() - max(kube_cnpg_backup_stopped_at{namespace="ofz",cluster="ofz-db",phase="completed"}) > 129600
+              or absent(kube_cnpg_backup_stopped_at{namespace="ofz",cluster="ofz-db",phase="completed"})
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              namespace: ofz
+              service: ofz-db
+              notify: email
+            annotations:
+              summary: Ofz has no recent completed database backup
+              description: No completed ofz-db backup with the CNPG cluster label is newer than thirty-six hours. Check the daily ScheduledBackup, Barman plugin, object store and WAL archive. A completed backup still requires an independent restore proof.
+              runbook_url: argocd/applications/ofz/README.md
       - name: tengri-production.rules
         rules:
           - record: tengri_rollout_enabled
