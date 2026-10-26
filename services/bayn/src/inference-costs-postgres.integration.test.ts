@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, ManagedRuntime, Redacted, Result } from 'effect'
+import { Cause, Effect, Exit, ManagedRuntime, Redacted, Result } from 'effect'
+import { Statement } from 'effect/sql'
 
 import { readInferenceExpenseSnapshot } from './inference-costs-postgres'
 import { InferenceStage, makeInferenceCostReport } from './inference-costs'
@@ -8,6 +9,8 @@ import { evaluationRequestFixture } from './jev/test-support'
 import { baynTestPostgresUrl } from './test-environment.test-support'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 import { forwardPerformanceSnapshot } from './forward-performance/postgres/snapshot'
+import { expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
+import { makeInferenceExpenseQuote } from './inference-expense'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_inference_test'
@@ -254,5 +257,117 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     )
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) expect(result.failure.message).toContain('complete-report limit')
+  })
+
+  test('keeps one cursor snapshot across concurrent writes in a read-committed writer transaction', async () => {
+    const parsed = new URL(testUrl)
+    parsed.searchParams.set('options', `-c search_path=${ownedSchema}`)
+    const writer = ManagedRuntime.make(
+      PgClient.layer({ url: Redacted.make(parsed.toString()), maxConnections: 1, transformJson: false }),
+    )
+    const source = expenseSourceFixture()
+    const quote = Result.getOrThrow(makeInferenceExpenseQuote(source, expenseRateFixture))
+    let fetches = 0
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`INSERT INTO jev_evaluation_requests VALUES
+            (${source.requestId},${source.cycleId},${source.authorityGenerationHash},${sql.json(source.request)})`
+          yield* sql`INSERT INTO jev_evaluation_receipts VALUES (${source.requestId},${sql.json(source.receipt)})`
+          yield* sql`INSERT INTO jev_evaluation_resolutions VALUES (${source.requestId},${sql.json(source.resolution)})`
+          yield* sql`INSERT INTO inference_expense_quotes VALUES
+            (${quote.quoteHash},${source.accountId},${source.sessionDate}::date,${sql.json(quote)},NULL)`
+          const fence = yield* WriterFence
+          return yield* fence.transaction(
+            Effect.gen(function* () {
+              yield* sql`SELECT 1`
+              const captured = yield* readInferenceExpenseSnapshot(
+                sql,
+                source.accountId,
+                source.sessionDate,
+                fence,
+              ).pipe(
+                Effect.provideService(Statement.CurrentTransformer, (statement) =>
+                  Effect.gen(function* () {
+                    if (statement.compile()[0].trimStart().startsWith('FETCH NEXT')) {
+                      fetches++
+                      if (fetches === 2)
+                        yield* Effect.promise(() =>
+                          writer.runPromise(
+                            Effect.gen(function* () {
+                              const write = yield* PgClient.PgClient
+                              yield* write`DELETE FROM jev_evaluation_requests WHERE request_id=${request.requestId}`
+                              yield* write`UPDATE inference_expense_quotes SET verified_at=clock_timestamp() WHERE quote_hash=${quote.quoteHash}`
+                            }),
+                          ),
+                        )
+                    }
+                    return statement
+                  }),
+                ),
+              )
+              expect(
+                yield* sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_expense_%'`,
+              ).toEqual([{ count: 0 }])
+              return captured
+            }),
+          )
+        }).pipe(Effect.provide(WriterFenceLive)),
+      )
+      expect(fetches).toBeGreaterThan(2)
+      expect(result.evidence.requests.map((row) => row.requestId)).toContain(request.requestId)
+      expect(result.quotes).toEqual([{ quote, verifiedAt: null }])
+      const after = await writer.runPromise(
+        Effect.flatMap(
+          PgClient.PgClient,
+          (sql) => sql`SELECT verified_at IS NOT NULL AS verified FROM inference_expense_quotes`,
+        ),
+      )
+      expect(after).toEqual([{ verified: true }])
+    } finally {
+      await writer.dispose()
+    }
+  })
+
+  test('rolls back its cursor when capture is interrupted', async () => {
+    const exit = await runtime.runPromiseExit(
+      Effect.flatMap(PgClient.PgClient, (sql) =>
+        readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+          Effect.provideService(Statement.CurrentTransformer, (statement) =>
+            statement.compile()[0].trimStart().startsWith('FETCH NEXT') ? Effect.interrupt : Effect.succeed(statement),
+          ),
+        ),
+      ),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.hasInterrupts(exit.cause)).toBe(true)
+    expect(
+      await runtime.runPromise(
+        Effect.flatMap(
+          PgClient.PgClient,
+          (sql) => sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_expense_%'`,
+        ),
+      ),
+    ).toEqual([{ count: 0 }])
+  })
+
+  test('rolls back its cursor when a fetched source fails validation', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`UPDATE jev_evaluation_requests SET authority_generation_hash='invalid'`
+        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(Effect.result)
+      }),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    expect(
+      await runtime.runPromise(
+        Effect.flatMap(
+          PgClient.PgClient,
+          (sql) => sql`SELECT count(*)::integer AS count FROM pg_cursors WHERE name LIKE 'bayn_expense_%'`,
+        ),
+      ),
+    ).toEqual([{ count: 0 }])
   })
 })

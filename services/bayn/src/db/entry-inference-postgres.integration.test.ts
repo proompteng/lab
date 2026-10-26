@@ -7,6 +7,7 @@ import { TestClock } from 'effect/testing'
 import sequentialEntryInference from '../../migrations/0147_sequential_entry_inference'
 import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
 import conditionalBaseAnchors from '../../migrations/0149_conditional_base_anchors'
+import inferenceRequestVersion from '../../migrations/0150_inference_request_version'
 
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
@@ -91,13 +92,18 @@ integration('committed sequential provider handoff', () => {
     runtime = makeRuntime()
   })
   afterAll(async () => runtime?.dispose())
-  beforeEach(async () =>
+  const resetDatabase = async (withRequestVersion = true) =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
-        yield* postgresMigrations
+        if (withRequestVersion) yield* postgresMigrations
+        else
+          yield* PgMigrator.run({
+            loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 150))),
+            table: 'schema_migrations',
+          })
         yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
       VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${request.observedAt})`
@@ -110,8 +116,49 @@ integration('committed sequential provider handoff', () => {
           Effect.provide(TestClock.layer()),
         )
       }),
-    ),
-  )
+    )
+  beforeEach(() => resetDatabase())
+
+  test('backfills a completed current request without changing provider evidence or expense discovery', async () => {
+    await resetDatabase(false)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* (yield* EntryInferenceJournal).recordHandoff(completion.handoff)
+        yield* (yield* JevEvaluationStore).record(request, receipt)
+        const evidence = () => sql`SELECT request.payload::text AS request_bytes,
+          receipt.payload::text AS receipt_bytes, receipt.receipt_hash,
+          handoff.payload::text AS handoff_bytes, handoff.handoff_hash
+          FROM jev_evaluation_requests AS request
+          JOIN jev_evaluation_receipts AS receipt USING (request_id)
+          JOIN jev_inference_handoffs AS handoff USING (request_id)
+          WHERE request_id=${request.requestId}`
+        const before = yield* evidence()
+        expect(before).toHaveLength(1)
+        const oldDiscovery = yield* sql`SELECT request.request_id
+          FROM jev_evaluation_requests AS request
+          JOIN autonomous_cycles AS cycle USING (cycle_id)
+          JOIN jev_evaluation_resolutions AS resolution USING (request_id)
+          WHERE cycle.account_id=${fixture.portfolio.brokerState.account.accountId}
+          AND cycle.execution_session_date >= '1970-01-01'::date
+          AND (SELECT count(*) FROM inference_expense_quotes AS quote WHERE quote.request_id=request.request_id)
+            < CASE WHEN request.payload->>'schemaVersion'='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
+          ORDER BY request.request_id COLLATE "C" LIMIT 64`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ request_id: Schema.String })))),
+        )
+        yield* inferenceRequestVersion
+        expect(yield* evidence()).toEqual(before)
+        expect(
+          yield* sql`SELECT schema_version FROM jev_evaluation_requests WHERE request_id=${request.requestId}`,
+        ).toEqual([{ schema_version: request.schemaVersion }])
+        const expenses = makeInferenceExpenseStore(sql, fixture.portfolio.brokerState.account.accountId, '1970-01-01')
+        const discovered = yield* expenses.newSources
+        expect(discovered.map((source) => ({ request_id: source.requestId }))).toEqual([...oldDiscovery])
+        expect(discovered.map((source) => source.requestId)).toContain(request.requestId)
+        expect(discovered.find((source) => source.requestId === request.requestId)?.request).toEqual(request)
+      }),
+    )
+  })
 
   test('commits the exact handoff once and binds the completed receipt to it', async () =>
     runtime.runPromise(
@@ -522,6 +569,12 @@ integration('committed sequential provider handoff', () => {
           const before =
             yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${historical.requestId}`
           yield* sql.withTransaction(migration)
+          if (migrationId === 149) {
+            yield* inferenceRequestVersion
+            expect(
+              yield* sql`SELECT schema_version FROM jev_evaluation_requests WHERE request_id=${historical.requestId}`,
+            ).toEqual([{ schema_version: historical.schemaVersion }])
+          }
           expect(
             yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id = ${historical.requestId}`,
           ).toEqual(before)

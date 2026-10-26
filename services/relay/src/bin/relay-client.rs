@@ -16,6 +16,7 @@ async fn uncertain_execution(
     subject: PlatformSubject,
     operation_id: &str,
     body: Vec<u8>,
+    code: tonic::Code,
 ) -> anyhow::Result<Value> {
     let request_hash = Sha256::digest(&body).to_vec();
     let lookup = ExecutionLookup {
@@ -30,9 +31,9 @@ async fn uncertain_execution(
         }))
         .await;
     let mut metadata = json!({"operationId":operation_id,"outcome":"unknown"});
-    let mut text = format!(
-        "The response for operation {operation_id} was lost. Its outcome could not be confirmed. The request was not resent."
-    );
+    let failure = format!("Relay returned {code:?} for operation {operation_id}.");
+    let mut text =
+        format!("{failure} Its outcome could not be confirmed. The request was not resent.");
     if let Ok(response) = observed {
         let response = response.into_inner();
         if let Some(execution) = response.execution.filter(|execution| {
@@ -52,7 +53,7 @@ async fn uncertain_execution(
                     || execution.result_hash.len() == 32)
         }) {
             text = format!(
-                "The response for operation {operation_id} was lost. Relay recorded its outcome as {}. The original result is unavailable. The request was not resent.",
+                "{failure} Relay recorded its outcome as {}. The original result is unavailable. The request was not resent.",
                 execution.outcome
             );
             metadata = json!({
@@ -135,21 +136,16 @@ async fn handle(
                 .await;
             let response = match response {
                 Ok(response) => response.into_inner(),
-                Err(error)
-                    if matches!(
+                Err(error) => {
+                    return uncertain_execution(
+                        client,
+                        subject,
+                        &payload.operation_id,
+                        body,
                         error.code(),
-                        tonic::Code::Cancelled
-                            | tonic::Code::Unknown
-                            | tonic::Code::DeadlineExceeded
-                            | tonic::Code::ResourceExhausted
-                            | tonic::Code::Internal
-                            | tonic::Code::Unavailable
-                            | tonic::Code::AlreadyExists
-                    ) =>
-                {
-                    return uncertain_execution(client, subject, &payload.operation_id, body).await;
+                    )
+                    .await;
                 }
-                Err(error) => return Err(error.into()),
             };
             if response.operation_id != payload.operation_id
                 || uuid::Uuid::parse_str(&response.authorization_receipt_id).is_err()
