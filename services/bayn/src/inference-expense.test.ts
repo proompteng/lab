@@ -11,10 +11,9 @@ import {
   inferenceExpenseLedger,
   InferenceExpenseCoverageIssue,
   makeInferenceExpenseQuote,
-  verifyInferenceExpenseCoverage,
   verifyInferenceExpenseQuote,
 } from './inference-expense'
-import { expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
+import { expenseCoverageFromEvidence, expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
 import { inferenceExpenseLoop } from './inference-expense-runtime'
 
 const quote = (options: Parameters<typeof expenseSourceFixture>[0] = {}) =>
@@ -157,21 +156,20 @@ describe('inference expense quote and deterministic plan', () => {
       asOf: source.asOf,
       requests: [request],
     }
-    expect(Result.getOrThrow(verifyInferenceExpenseCoverage(evidence, source.accountId, [])).missingQuoteCount).toBe(1)
+    expect(Result.getOrThrow(expenseCoverageFromEvidence(evidence, source.accountId, [])).missingQuoteCount).toBe(1)
     expect(
-      Result.getOrThrow(
-        verifyInferenceExpenseCoverage(evidence, source.accountId, [{ quote: priced, verifiedAt: null }]),
-      ).completeMeteredCoverage,
+      Result.getOrThrow(expenseCoverageFromEvidence(evidence, source.accountId, [{ quote: priced, verifiedAt: null }]))
+        .completeMeteredCoverage,
     ).toBe(false)
     expect(
       Result.getOrThrow(
-        verifyInferenceExpenseCoverage(evidence, source.accountId, [{ quote: priced, verifiedAt: source.asOf }]),
+        expenseCoverageFromEvidence(evidence, source.accountId, [{ quote: priced, verifiedAt: source.asOf }]),
       ).completeMeteredCoverage,
     ).toBe(true)
-    expect(Result.isFailure(verifyInferenceExpenseCoverage(evidence, 'other-account', []))).toBe(true)
+    expect(Result.isFailure(expenseCoverageFromEvidence(evidence, 'other-account', []))).toBe(true)
     expect(
       Result.isFailure(
-        verifyInferenceExpenseCoverage({ ...evidence, requests: [] }, source.accountId, [
+        expenseCoverageFromEvidence({ ...evidence, requests: [] }, source.accountId, [
           { quote: priced, verifiedAt: source.asOf },
         ]),
       ),
@@ -189,7 +187,7 @@ describe('inference expense quote and deterministic plan', () => {
       asOf,
       requests: [request],
     }
-    const missing = Result.getOrThrow(verifyInferenceExpenseCoverage(evidence, accountId, []))
+    const missing = Result.getOrThrow(expenseCoverageFromEvidence(evidence, accountId, []))
     expect(missing.requestsWithCoverageIssues).toEqual([
       {
         requestId: gap.line.requestId,
@@ -202,14 +200,14 @@ describe('inference expense quote and deterministic plan', () => {
       },
     ])
     const unverified = Result.getOrThrow(
-      verifyInferenceExpenseCoverage(evidence, accountId, [{ quote: gap, verifiedAt: null }]),
+      expenseCoverageFromEvidence(evidence, accountId, [{ quote: gap, verifiedAt: null }]),
     )
     expect(unverified.requestsWithCoverageIssues[0]?.issues).toEqual([
       InferenceExpenseCoverageIssue.UnverifiedLedger,
       InferenceExpenseCoverageIssue.UnknownUsage,
     ])
     const verified = Result.getOrThrow(
-      verifyInferenceExpenseCoverage(evidence, accountId, [{ quote: gap, verifiedAt: asOf }]),
+      expenseCoverageFromEvidence(evidence, accountId, [{ quote: gap, verifiedAt: asOf }]),
     )
     expect(verified.requestsWithCoverageIssues[0]?.issues).toEqual([InferenceExpenseCoverageIssue.UnknownUsage])
     expect(verified.completeMeteredCoverage).toBe(false)
@@ -229,7 +227,7 @@ describe('inference expense quote and deterministic plan', () => {
       requests: [request],
     }
     const incomplete = Result.getOrThrow(
-      verifyInferenceExpenseCoverage(evidence, source.accountId, [{ quote: gap, verifiedAt: source.asOf }]),
+      expenseCoverageFromEvidence(evidence, source.accountId, [{ quote: gap, verifiedAt: source.asOf }]),
     )
     expect(incomplete.gapRequestCount).toBe(1)
     expect(incomplete.completeMeteredCoverage).toBe(false)
@@ -241,7 +239,7 @@ describe('inference expense quote and deterministic plan', () => {
       ...lateRequest
     } = expenseSourceFixture({ abandoned: true })
     const complete = Result.getOrThrow(
-      verifyInferenceExpenseCoverage({ ...evidence, requests: [lateRequest] }, source.accountId, [
+      expenseCoverageFromEvidence({ ...evidence, requests: [lateRequest] }, source.accountId, [
         { quote: gap, verifiedAt: source.asOf },
         { quote: late, verifiedAt: source.asOf },
       ]),

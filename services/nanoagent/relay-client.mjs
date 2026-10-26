@@ -102,12 +102,14 @@ async function readRelayResponse(response) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-async function lookupExecution(config, body, operationId, send) {
+async function lookupExecution(config, body, operationId, send, httpStatus) {
+  const failure = httpStatus ? `Relay returned HTTP ${httpStatus}` : 'Relay did not return a usable result'
+  const prefix = `${failure} for operation ${operationId}.`
   const unknown = {
     content: [
       {
         type: 'text',
-        text: `The response for operation ${operationId} was lost. Its outcome could not be confirmed. The request was not resent.`,
+        text: `${prefix} Its outcome could not be confirmed. The request was not resent.`,
       },
     ],
     isError: true,
@@ -158,7 +160,7 @@ async function lookupExecution(config, body, operationId, send) {
       upstreamStatus: status,
       updatedAtUnixMs: execution.updatedAtUnixMs,
     }
-    const text = `The response for operation ${operationId} was lost. Relay recorded its outcome as ${execution.outcome}. The original result is unavailable. The request was not resent.`
+    const text = `${prefix} Relay recorded its outcome as ${execution.outcome}. The original result is unavailable. The request was not resent.`
     return { content: [{ type: 'text', text }], isError: true, _meta: { relay: metadata } }
   } catch {
     return unknown
@@ -208,16 +210,10 @@ export async function invoke(config, operation, args, fetcher = fetch) {
   let response
   try {
     response = await send('execute', body)
-  } catch {
-    return lookupExecution(config, body, operationId, send)
-  }
-  if (!response.ok) {
-    await response.body?.cancel()
-    if (response.status >= 500 || [408, 409, 429].includes(response.status))
-      return lookupExecution(config, body, operationId, send)
-    throw new Error('Connector access was denied or the connection is unavailable')
-  }
-  try {
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw new Error('Relay execution failed')
+    }
     const result = await readRelayResponse(response)
     if (
       result?.operationId !== operationId ||
@@ -239,7 +235,7 @@ export async function invoke(config, operation, args, fetcher = fetch) {
       },
     }
   } catch {
-    return lookupExecution(config, body, operationId, send)
+    return lookupExecution(config, body, operationId, send, response?.ok === false ? response.status : undefined)
   }
 }
 

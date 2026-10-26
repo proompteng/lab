@@ -234,7 +234,7 @@ test('direct API invocation sends a scoped grant and preserves signed bytes; uns
   }
 })
 
-test('lost guest responses use a fresh proof for status lookup and never resend execution', async () => {
+test('failed guest calls use a fresh proof for status lookup and never resend execution', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'relay-recovery-'))
   try {
     const keyFile = path.join(directory, 'identity.pem')
@@ -248,7 +248,26 @@ test('lost guest responses use a fresh proof for status lookup and never resend 
       clientService: 'tengri-web',
       binding: { service: 'tengri', id: 'workspace', generation: 'generation' },
     }
-    for (const scenario of ['succeeded', 'started', 'failed', 'withheld', 'unavailable', 'invalid']) {
+    for (const scenario of [
+      'succeeded',
+      'started',
+      'failed',
+      'withheld',
+      'forbidden',
+      'forbidden-body-error',
+      'not-found',
+      'denied',
+      'unreadable-response',
+      'invalid-receipt',
+      'unavailable',
+      'invalid',
+    ]) {
+      const upstreamFailure = ['forbidden', 'forbidden-body-error'].includes(scenario)
+        ? 403
+        : scenario === 'not-found' ? 404 : 0
+      const recordedOutcome = upstreamFailure
+        ? 'failed'
+        : ['invalid', 'unreadable-response', 'invalid-receipt'].includes(scenario) ? 'succeeded' : scenario
       const kinds = []
       const proofs = []
       let original
@@ -261,6 +280,25 @@ test('lost guest responses use a fresh proof for status lookup and never resend 
         assert.equal(proof.bht, createHash('sha256').update(raw).digest('base64url'))
         if (envelope.kind === 'execute') {
           original = raw
+          if (scenario === 'forbidden-body-error') {
+            const body = new ReadableStream({
+              start(controller) {
+                controller.error(new Error('private fixture body error'))
+              },
+            })
+            return new Response(body, { status: 403 })
+          }
+          if (scenario === 'unreadable-response') return new Response('private fixture unreadable response')
+          if (scenario === 'invalid-receipt') {
+            return Response.json({
+              operationId: JSON.parse(original).operationId,
+              authorizationReceiptId: 'invalid',
+              executionReceiptId: '66666666-6666-4666-8666-666666666666',
+              result: 'private fixture result',
+            })
+          }
+          if (upstreamFailure || scenario === 'denied')
+            return new Response('private fixture provider response', { status: upstreamFailure || 403 })
           throw new Error('fixture lost response')
         }
         assert.equal(envelope.kind, 'lookup')
@@ -269,20 +307,21 @@ test('lost guest responses use a fresh proof for status lookup and never resend 
         assert.deepEqual(lookup.binding, config.binding)
         assert.equal(lookup.delegationId, config.delegationId)
         if (scenario === 'unavailable') return new Response(null, { status: 503 })
+        if (scenario === 'denied') return new Response(null, { status: 403 })
         return Response.json({
           lookupReceiptId: '44444444-4444-4444-8444-444444444444',
           execution: {
             operationId: JSON.parse(original).operationId,
-            outcome: scenario === 'invalid' ? 'succeeded' : scenario,
+            outcome: recordedOutcome,
             authorizationReceiptId: '55555555-5555-4555-8555-555555555555',
             executionReceiptId: '66666666-6666-4666-8666-666666666666',
             requestHash: createHash('sha256')
               .update(scenario === 'invalid' ? 'wrong request' : original)
               .digest('base64'),
-            resultHash: ['succeeded', 'withheld', 'invalid'].includes(scenario)
+            resultHash: ['succeeded', 'withheld'].includes(recordedOutcome)
               ? createHash('sha256').update('fixture result').digest('base64')
               : '',
-            upstreamStatus: scenario === 'failed' ? 403 : scenario === 'started' ? 0 : 200,
+            upstreamStatus: upstreamFailure || (scenario === 'failed' ? 403 : scenario === 'started' ? 0 : 200),
             updatedAtUnixMs: Date.now().toString(),
           },
         })
@@ -293,7 +332,16 @@ test('lost guest responses use a fresh proof for status lookup and never resend 
       assert.notEqual(proofs[0].bht, proofs[1].bht)
       assert.equal(result.isError, true)
       assert.equal(result._meta.relay.operationId, JSON.parse(original).operationId)
-      assert.equal(result._meta.relay.outcome, ['invalid', 'unavailable'].includes(scenario) ? 'unknown' : scenario)
+      assert.equal(result._meta.relay.outcome, ['invalid', 'unavailable', 'denied'].includes(scenario) ? 'unknown' : recordedOutcome)
+      if (upstreamFailure) {
+        assert.match(result.content[0].text, new RegExp(`HTTP ${upstreamFailure}`))
+        assert.equal(result._meta.relay.upstreamStatus, upstreamFailure)
+        assert.equal(result._meta.relay.authorizationReceiptId, '55555555-5555-4555-8555-555555555555')
+        assert.equal(result._meta.relay.executionReceiptId, '66666666-6666-4666-8666-666666666666')
+        assert.equal(result._meta.relay.lookupReceiptId, '44444444-4444-4444-8444-444444444444')
+      }
+      if (scenario === 'denied') assert.deepEqual(result._meta.relay, { operationId: JSON.parse(original).operationId, outcome: 'unknown' })
+      assert.doesNotMatch(JSON.stringify(result), /private fixture/)
       assert.match(result.content[0].text, /The request was not resent/)
     }
   } finally {
