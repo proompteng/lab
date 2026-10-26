@@ -61,6 +61,7 @@ impl AgentWorkMonitor {
 const ACTIVITY_WRITE_INTERVAL: Duration = Duration::from_secs(20);
 pub const LAST_AGENT_WORK_ANNOTATION: &str = "runtime.proompteng.ai/last-agent-work-at";
 pub const LAST_ACTIVITY_ANNOTATION: &str = "runtime.proompteng.ai/last-activity-at";
+pub(crate) const CONTROL_ADMISSION_ANNOTATION: &str = "runtime.proompteng.ai/control-admitted-at";
 pub const RESUME_STARTED_AT_ANNOTATION: &str = "runtime.proompteng.ai/resume-started-at";
 pub const ACTIVE_RUN_ANNOTATION: &str = "runtime.proompteng.ai/active-run";
 const IDLE_SLEEP_PREFIX: &str = "idle-sleep/";
@@ -169,7 +170,7 @@ impl ActivityTracker {
             let mut patch = match activity {
                 ControlActivity::Interaction => activity_metadata_patch(now),
                 ControlActivity::Observation => json!({"metadata": {"annotations": {
-                    "runtime.proompteng.ai/control-admitted-at": now.to_rfc3339()
+                    CONTROL_ADMISSION_ANNOTATION: now.to_rfc3339()
                 }}}),
             };
             patch["metadata"]["uid"] = json!(claim.microvm_uid);
