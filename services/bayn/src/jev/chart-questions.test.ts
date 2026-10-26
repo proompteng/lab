@@ -42,6 +42,31 @@ const responseFor = (request: DecisionsRequest) => ({
 })
 
 describe('source-bound chart questions', () => {
+  test('reuses deterministic request bytes without sharing mutable results or trusting a claimed chart hash', () => {
+    const chart = Result.getOrThrow(makeNativeChartEvidence(source))
+    const first = Result.getOrThrow(makeChartDecisionsRequest(chart))
+    const originalBody = first.body
+    const originalHash = first.requestHash
+    const question = first.request.questions[0]
+    if (question === undefined) throw new Error('Missing chart question')
+    Reflect.set(question, 'instructions', 'Mutated caller copy')
+    Reflect.set(first, 'body', 'Mutated caller body')
+    const second = Result.getOrThrow(makeChartDecisionsRequest(chart))
+    expect(second.request).not.toBe(first.request)
+    expect(second.body).toBe(originalBody)
+    expect(second.requestHash).toBe(originalHash)
+    expect(JSON.parse(second.body)).toEqual(second.request)
+    const bar = chart.bars[0]
+    if (bar === undefined) throw new Error('Missing chart bar')
+    const changed = Result.getOrThrow(
+      makeChartDecisionsRequest({ ...chart, bars: [{ ...bar, high: bar.high + 1 }, ...chart.bars.slice(1)] }),
+    )
+    expect(changed.requestHash).not.toBe(originalHash)
+    expect(changed.request.input[0].content[2].data).toMatchObject({
+      bars: [{ ...bar, high: bar.high + 1 }, ...chart.bars.slice(1)],
+    })
+  })
+
   test('conditions the base start on its selected end and ignores refused unused branches', () => {
     const chart = Result.getOrThrow(makeNativeChartEvidence(source))
     const request = Result.getOrThrow(makeChartDecisionsRequest(chart)).request

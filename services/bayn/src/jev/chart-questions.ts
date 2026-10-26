@@ -1,12 +1,14 @@
 import { Result, Schema } from 'effect'
 
-import { Sha256Schema, SymbolSchema, UtcInstantSchema } from '../schemas'
+import { canonicalHashV1Result } from '../hash'
+import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import type { NativeChartEvidence } from './chart-evidence'
 import { JevContractError } from './contract'
 import {
   decodeDecisionsResponse,
   decisionsModel,
   prepareDecisionsRequest,
+  DecisionsRequestSchema,
   type DecisionsRequest,
   type DecisionsResponse,
 } from './decisions'
@@ -60,7 +62,7 @@ export const chartQuestionPolicy = {
   sharedInstructions,
 }
 
-export const makeChartDecisionsRequest = (chart: NativeChartEvidence) => {
+const buildChartDecisionsRequest = (chart: NativeChartEvidence) => {
   const anchors: DecisionsRequest['questions'][number][] =
     chart.bars.length < 2
       ? []
@@ -137,6 +139,32 @@ export const makeChartDecisionsRequest = (chart: NativeChartEvidence) => {
     questions: [...presenceQuestions, ...anchors, ...baseQuestions],
   })
 }
+
+const preparedChartRequests = new Map<string, { readonly body: string; readonly requestHash: string }>()
+
+export const makeChartDecisionsRequest = (chart: NativeChartEvidence) =>
+  Result.gen(function* () {
+    const key = yield* canonicalHashV1Result({ chart, questionPolicy: chartQuestionPolicy }).pipe(
+      Result.mapError((cause) => new JevContractError({ message: 'Chart request source cannot be hashed', cause })),
+    )
+    const cached = preparedChartRequests.get(key)
+    if (cached !== undefined) {
+      const request = yield* Schema.decodeUnknownResult(
+        Schema.fromJsonString(DecisionsRequestSchema),
+        strictParseOptions,
+      )(cached.body).pipe(
+        Result.mapError((cause) => new JevContractError({ message: 'Cached chart request cannot be decoded', cause })),
+      )
+      return { request, ...cached }
+    }
+    const prepared = yield* buildChartDecisionsRequest(chart)
+    preparedChartRequests.set(key, { body: prepared.body, requestHash: prepared.requestHash })
+    if (preparedChartRequests.size > 32) {
+      const oldest = preparedChartRequests.keys().next().value
+      if (oldest !== undefined) preparedChartRequests.delete(oldest)
+    }
+    return prepared
+  })
 
 const Presence = Schema.Union([
   Schema.Struct({
