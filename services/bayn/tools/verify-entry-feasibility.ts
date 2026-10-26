@@ -18,6 +18,9 @@ import {
 } from '../src/jev/entry-inference'
 import { makeJevEvaluationReceipt, makeJevEvaluationRequest, JevOutcome } from '../src/jev/evidence'
 import { readSequentialInferenceCostEvidence } from '../src/jev/sequential-inference-cost-evidence'
+import { makeEntryJudgmentRequest } from '../src/jev/entry-questions'
+import { makeRetainedEntryJudgmentRequest } from '../src/jev/retained-entry-questions'
+import { defaultJevProtocolDocument } from '../src/jev/protocol'
 import { InferenceUsageStatus } from '../src/inference-costs'
 import { makeInferenceExpenseQuotes } from '../src/inference-expense'
 
@@ -55,7 +58,17 @@ const verify = Effect.gen(function* () {
     const saved = original.handoff?.disposition
     if (saved?.status !== 'READY' && saved?.status !== 'NO_FUNDED_PROPOSALS')
       return yield* fail('The preservation cohort must contain completed recorded chart evaluations')
-    const reproduced = yield* Effect.fromResult(deriveEntryDispositionForChart(input, saved.visual, chart))
+    const reproduced = yield* Effect.fromResult(
+      deriveEntryDispositionForChart(
+        input,
+        saved.visual,
+        chart,
+        saved.assessments,
+        input.schemaVersion === 'bayn.entry-inference-input.v3'
+          ? makeEntryJudgmentRequest
+          : makeRetainedEntryJudgmentRequest,
+      ),
+    )
     const expectedHash = yield* Effect.fromResult(canonicalHashV1Result(saved.evaluation))
     const actualHash = yield* Effect.fromResult(canonicalHashV1Result(reproduced.evaluation))
     if (expectedHash !== actualHash) return yield* fail('The final native proposal evaluation changed')
@@ -64,9 +77,13 @@ const verify = Effect.gen(function* () {
       fundedRequests++
     }
 
-    // Only the input format is projected. No historical model response is assigned to the new image or request.
+    // Original model responses retain their contracts; only the offline dispatch probe uses current questions.
     const current = yield* Effect.fromResult(
-      prepareEntryInferenceInput({ ...input, schemaVersion: 'bayn.entry-inference-input.v2' }),
+      prepareEntryInferenceInput({
+        ...input,
+        schemaVersion: 'bayn.entry-inference-input.v3',
+        protocol: { ...input.protocol, entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash },
+      }),
     )
     const { requestId: _originalId, ...material } = original.request
     const request = yield* Effect.fromResult(
@@ -184,7 +201,7 @@ const verify = Effect.gen(function* () {
     unchangedFundedRequests: fundedRequests,
     actualProviderCalls: 0,
     inputProjection:
-      'Same existing source, prices, funding and protocol. v1 inputs use current v2 format only for the offline dispatch probe; recorded model responses are never relabeled.',
+      'Same source, prices, funding and economic protocol. Retained v1/v2 inputs use v3 and its question policy only for the offline dispatch probe; original model responses retain their original contracts.',
     results,
   }
   yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
