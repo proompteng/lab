@@ -97,7 +97,8 @@ For host and client-volume counters and timestamped RBD mappings, use
 
 The shared HDD cluster uses Ceph's built-in `high_client_ops` profile to protect application latency while
 continuing scrub catch-up. Scrubs can start at any hour: `osd_scrub_begin_hour=0` and `osd_scrub_end_hour=0`.
-The one-reservation scrub limit bounds HDD contention; the seven-day deep-scrub interval and overdue health alerts remain enabled.
+Each OSD allows three local and three replica scrub reservations to catch up with overdue deep scrubs.
+The seven-day deep-scrub interval and overdue health alerts remain enabled.
 
 Scrubbing and deep scrubbing belong to mClock's background best-effort class, alongside backfill, snaptrim and PG
 deletion. Ceph Tentacle defines the built-in profile as follows:
@@ -149,7 +150,7 @@ Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 1. `bluestore_cache_autotune: "true"`
 1. `osd_mclock_profile: "high_client_ops"` without custom scheduler overrides
 1. `osd_scrub_begin_hour: "0"` and `osd_scrub_end_hour: "0"`
-1. `osd_max_scrubs: "1"`
+1. `osd_max_scrubs: "3"`
 1. `osd_mclock_max_sequential_bandwidth_hdd: "285212672"` (272MiB/s)
 1. `osd_memory_target: "8589934592"` (8Gi)
 1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`
@@ -172,7 +173,8 @@ done. In particular, remove these if they were set for a maintenance window:
 1. boosted recovery scan/chunk settings such as `osd_backfill_scan_min`,
    `osd_backfill_scan_max`, and `osd_recovery_max_chunk`
 
-The committed `osd_max_scrubs=1` target bounds concurrent scans on disks serving synchronous database WAL. The built-in profile owns all nine
+The committed `osd_max_scrubs=3` target admits concurrent scans on disks serving synchronous database WAL. Compare application latency with scrub progress.
+The built-in profile owns all nine
 `osd_mclock_scheduler_*` settings; do not retain custom overrides in the monitor config store.
 Recovery/backfill concurrency overrides are separate from this profile. Do not restore the old scrub time window.
 The HDD bandwidth value is pinned to the Seagate Exos X24 24TB sustained
@@ -252,13 +254,13 @@ yet. The overdue count usually drops only after full PG deep-scrubs complete.
 Completion requires `PG_NOT_DEEP_SCRUBBED` to disappear and the previously overdue
 PGs to have newer `last_deep_scrub_stamp` values in `ceph pg dump pgs --format json`.
 An active scrub counter or Argo sync alone does not prove the backlog has cleared.
-Keep the committed `osd_max_scrubs=1` target during catch-up. A PG marked
+Keep the committed `osd_max_scrubs=3` target during catch-up. A PG marked
 `scrubbing` may still be waiting for a replica reservation; check `scrub_schedule`
 and each OSD's `dump_scrub_reservations` before counting it as an active scan.
 Use the executable [runtime acceptance checks](galactic-storage-and-workload-recovery.md#scrub-progress-during-recovery)
-to verify both reservation limits on all six OSDs. Existing scrubs finish after a limit reduction. Compare application
-latency and scrub progress after their reservations drain; a lower configured limit alone does not prove recovery.
-If scrub debt grows without an application benefit, restore the limit to `3` through reviewed GitOps.
+to verify both reservation limits on all six OSDs. If application latency regresses, reduce the limit to `1` through
+reviewed GitOps. Existing scrubs finish after a limit reduction. Compare application latency and scrub progress after
+their reservations drain; a lower configured limit alone does not prove recovery.
 
 Reference:
 

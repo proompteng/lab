@@ -269,7 +269,7 @@ A completed development replay does not prove executable capacity or live profit
 
 ## Run
 
-Create an input with the following shape. `backtest` is the complete existing `bayn.backtest.v5` document, including
+Create an input with the following shape. `backtest` is the complete existing `bayn.backtest.v6` document, including
 its source receipt bindings and native build/strategy identity. It identifies the source experiment; it does not
 claim that controls made Jev calls or executed the production interpreter.
 

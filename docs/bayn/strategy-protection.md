@@ -1,44 +1,42 @@
 # Jev-selected trade plans and broker protection
 
-Jev judges the current setup and whether a complete entry, stop loss and take profit justify an actual trade before execution.
-Protocol v23 / signal state v21, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
-Broker protection, sizing, cost, account-risk and holding/session safeguards remain enforced.
+The replacement entry path uses OpenAI Decisions API chart judgments followed by proposal-specific Jev judgments,
+with code owning plan selection and execution. Protocol v24, entry state v22, batch v7, entry target v7, exit target v5,
+funded exit plan v4 and position-exit policy v5 define the current source contracts. Broker protection, sizing, costs,
+account risk and holding/session safeguards remain mandatory. Deployment and natural round-trip evidence remain separate.
 
 ## Model contract
 
-Jev returns two typed judgments over the same supplied state in one request. The `setup` Choice classifies the current
-observations as `upward`, `unclear` or `adverse`. Independently, the `action` Choice judges whether any supplied complete
-funded trade has observational support for a cost-covering exit within the holding deadline, or abstains. It assesses
-entry, stop, target and time-limit liquidation together. Upward structure alone cannot establish an economic trade.
-A plan option contains its stop, stop-limit, take-profit, immutable funded quantity ceiling and estimated net loss/profit.
-Code admits an entry only when the setup answer is `upward` and the actual-entry answer selects a supplied plan.
-An adverse or unclear setup rejects even a selected plan. A supported setup cannot override `wait` or `avoid`.
-Missing or malformed answers fail closed. No `enter` option exists without a complete funded plan.
-Candidates are ranked by the upward setup probability, whose three alternatives are the same for every candidate;
-plan probabilities compare only that candidate's menu. Neither quantity is a target-hit or profit probability.
-Management still asks whether to hold or exit.
-See the [Choice contract](https://docs.typesafe.ai/primitives/choice) and
-[System One programming model](https://docs.typesafe.ai/concepts/system-one).
+The original verified numerical snapshot and deterministic candlestick image identify the same completed source bars.
+The volume histogram uses relative heights across those bars, so changing asset units does not change their
+proportions. Current entry input v2 identifies that rendering contract. The original v1 images remain reproducible
+only for financial audit; they cannot authorize new inference or entries.
+OpenAI Decisions API judges support, resistance and consolidation and selects actual source-bar anchors. Presence judgments
+and anchor probabilities remain explicit, including refusals. Anchors alone do not establish that a structure is present.
 
-Code builds at most sixteen plans from four representative stop levels and up to four targets per stop. The candidate menu
-combines observed OHLC levels with explicit hypothetical price scenarios. Its scenario step is one quarter of the observed
-OHLC range, with a minimum executable tick. Stop scenarios lie one, two, four and eight steps below the observed bid.
-Market-price target scenarios lie those steps above the observed bid; three representative targets retain the range's
-price anchors after the existing fee-covering filter.
+Code derives at most two complete proposals. Support recovery places its stop one executable tick below the identified
+support and its target one tick before observed resistance. Base breakout requires the fresh bid above the identified
+completed base, places its stop below that base, and projects a target one base range above it. This target is explicitly
+labeled a projection. Neither proposal invents historical prices or requires an arbitrary multiplier grid.
 
-Each stop can also have a `NET_REWARD_ORDER_SCENARIO`. Code solves for conservative target proceeds equal to acquisition
-cost plus the complete modeled stop loss, then rounds the target up to the executable tick. Entry and exit fees, entry
-and stop execution allowances, and cash rounding remain included. This proposes a net reward of at least the modeled loss rather
-than offering a fee-only target with microscopic profit. It is a conditional payoff scenario, not an expected return or
-evidence that the price can be reached. If it cannot fit the existing liquidation search bound, code omits that scenario
-while retaining other fundable market-price choices. Range proposals retain `OBSERVED_RANGE_ORDER_SCENARIO`. Deduplication
-and conservative instrument rounding preserve the sixteen-plan bound. Jev selects the actual plan; these construction
-rules never select an entry or default exit.
+The original request, visual receipt, source anchors, funded proposals and exact dependent Jev request form one immutable
+handoff. PostgreSQL commits that handoff before dependent inference and admits at most one dependent dispatch. The final
+receipt must match the committed handoff. A retry cannot resubmit either provider; late evidence remains available for
+cost reporting without replacing an abandoned decision. Both stages share the original ten-second validity window.
 
-Every option labels its terms `HYPOTHETICAL_ORDER_PRICES`. Proposed future levels are neither recorded market observations
-nor forecasts. Observed bars, features, prices and source identities remain unchanged in model state. A fresh high can therefore
-have candidate targets without inventing historical highs. Candidate coverage and predictive usefulness still need empirical
-validation; a supplied candidate is not evidence that the market will reach it.
+Jev receives the visual judgments, relevant source bars, numerical context and actual proposal. It answers three independent
+Nouls per proposal: whether the newest sequence confirms that setup, whether the stop invalidates it, and whether observed
+overhead resistance obstructs its target. Code requires at least 0.7 support for confirmation and invalidation and at most
+0.3 obstruction. Uncertain, missing or refused required judgments do not select a proposal. These thresholds are judgment
+policies and have no demonstrated calibration to target-hit probability or profit.
+
+Code ranks supported proposals by their weakest required judgment, then lower modeled loss, then stable identity. An
+unsupported recovery does not veto a supported breakout, or conversely. There is no compound `action` choice or broad
+setup-classification veto. Position exits follow the bound stop, profit target and holding/session deadlines in code.
+
+The shared evidence instruction is the sole GEPA-editable string. Each atomic question retains its own fixed wording and
+criteria, and the strategy protocol hash binds the actual question policy. Compiled variant tests verify that changing the
+string changes outgoing questions and protocol identity while retaining native evidence reproduction.
 
 Code funds every complete plan before inference. Target proceeds must exceed acquisition cost after modeled entry and exit
 fees at the enforced take-profit sell limit. The limit is already the minimum execution price; discounting it again

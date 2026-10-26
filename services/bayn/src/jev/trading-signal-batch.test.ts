@@ -33,7 +33,7 @@ const input = {
   expiresAt: new Date(
     Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
   ).toISOString(),
-  planVersion: JevBatchPlanVersion.V6,
+  planVersion: JevBatchPlanVersion.V7,
 }
 
 const nativeObservationWithWideQuotes = (
@@ -108,7 +108,7 @@ describe('Jev trading batch source reproduction', () => {
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
       }
-      expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V6 }))).toBe(
+      expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V7 }))).toBe(
         true,
       )
     }
@@ -123,11 +123,11 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V6,
+        planVersion: JevBatchPlanVersion.V7,
       }),
     )
     const excluded = plan.candidates.find((candidate) => candidate.symbol === 'AAPL')
-    expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V6)
+    expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V7)
     expect(excluded?.status).toBe(JevCandidatePlanStatus.Excluded)
     if (excluded?.status !== JevCandidatePlanStatus.Excluded) throw new Error('Missing spread exclusion')
     expect(excluded.reason).toBe(JevEntryExclusion.Spread)
@@ -168,7 +168,7 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V6,
+        planVersion: JevBatchPlanVersion.V7,
       }),
     )
     expect(plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)).toBe(true)
@@ -180,19 +180,20 @@ describe('Jev trading batch source reproduction', () => {
     expect(Object.values(decision.targetWeights).every((weight) => weight === 0)).toBe(true)
   })
 
-  test('a held position remains eligible for Jev management despite a wide quote', () => {
+  test('held positions cannot request model inference regardless of quote width', () => {
     const native = nativeJevFixture(JevPurpose.Manage)
     const observation = nativeObservationWithWideQuotes(native, ['AAPL'])
-    const plan = Result.getOrThrow(
-      makeJevTradingSignalBatch({
-        observation: observation.payload,
-        expiresAt: new Date(
-          Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
-        ).toISOString(),
-        planVersion: JevBatchPlanVersion.V6,
-      }),
-    )
-    expect(plan.candidates[0]?.status).toBe(JevCandidatePlanStatus.Requested)
+    expect(
+      Result.isFailure(
+        makeJevTradingSignalBatch({
+          observation: observation.payload,
+          expiresAt: new Date(
+            Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
+          ).toISOString(),
+          planVersion: JevBatchPlanVersion.V7,
+        }),
+      ),
+    ).toBe(true)
   })
 
   test('entry quote eligibility uses the same exact boundary for spread and displayed size', () => {
@@ -215,7 +216,7 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(native.observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V6,
+        planVersion: JevBatchPlanVersion.V7,
       }),
     )
     const { batchId: _, ...material } = current
@@ -271,7 +272,10 @@ describe('Jev trading batch source reproduction', () => {
         candidates: material.candidates.map((candidate) => {
           if (candidate.status !== JevCandidatePlanStatus.Requested || candidate.symbol !== 'AAPL') return candidate
           const { requestId: _, ...evaluation } = candidate.request
-          const request = { ...evaluation.request, state: { fabricated: 'favorable state' } }
+          const request = {
+            ...evaluation.request,
+            numericalState: { ...evaluation.request.numericalState, fabricated: 'favorable state' },
+          }
           return {
             ...candidate,
             request: Result.getOrThrow(

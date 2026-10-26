@@ -1,10 +1,11 @@
 pub mod bootstrap;
 pub mod catalog;
 pub mod commands;
-pub mod connector_agent;
 pub mod decision;
 pub mod native;
+pub mod platform;
 pub mod policy;
+pub mod registry;
 pub mod service;
 pub mod sessions;
 pub mod store;

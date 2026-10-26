@@ -165,6 +165,20 @@ export async function createAgent(identity: TengriIdentity, displayName: string,
   return setRuntime(identity, agent.id, agent.uid, intent, true)
 }
 
+export async function connectorAgent(
+  identity: TengriIdentity,
+  agentId: string,
+  action: 'identity' | 'configure' | 'remove',
+  configuration: Record<string, unknown> = {},
+) {
+  const response = await unary<{ rawJson: string }>(
+    'connectorAgent',
+    { agentId, action, rawJson: JSON.stringify(configuration) },
+    identity,
+  )
+  return JSON.parse(response.rawJson) as unknown
+}
+
 export async function getAgent(identity: TengriIdentity, id: string) {
   return normalizeAgent(await unary<RawAgent>('getAgent', { id }, identity))
 }
@@ -1034,7 +1048,7 @@ async function metadata(
   const { injectTrace } = await import('@/lib/observability/server')
   injectTrace((key, header) => value.set(key, header))
   const binding = await invokeUnary<RawRecord>(client, 'getRequestAudience', {}, value, 2000, signal)
-  if (binding.guestApiProtocolVersion !== 8) {
+  if (binding.guestApiProtocolVersion !== 9) {
     throw new TengriUnavailableError('Tengri controller does not support the required guest API version')
   }
   if (typeof binding.audience !== 'string') throw new TengriUnavailableError('Tengri request audience is missing')
@@ -1102,6 +1116,16 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
       }
       return new TengriUnavailableError('Tengri resource already exists', 409)
     case grpc.status.FAILED_PRECONDITION:
+      if (methodName === 'updatePowerSettings' && error.details === 'automatic sleep already committed') {
+        return new TengriUnavailableError('The agent has started sleeping. Resume it, then change this setting.', 409)
+      }
+      if (error.metadata.get('x-tengri-error-code')[0] === 'runtime_upgrade_required') {
+        return new TengriUnavailableError(
+          'This workspace needs a runtime upgrade before it can reconnect.',
+          412,
+          'runtime_upgrade_required',
+        )
+      }
       if (
         ['steerCodexInput', 'resolveCodexApproval'].includes(methodName) &&
         error.details === 'Codex control was not dispatched'

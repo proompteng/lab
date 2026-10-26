@@ -12,6 +12,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  publication-tools:
+    name: Verify publication runner
+    runs-on: arc-amd64-publish
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-buildkit
+      - name: Verify publication while all build slots are occupied
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          prefix="arc-ready-$RUN_ATTEMPT-"
+          for _ in $(seq 1 90); do
+            count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
+            test "$count" = 9 && break
+            sleep 5
+          done
+          test "$count" = 9
+          sleep 10
+          start="$(date +%s)"
+          test "$ARC_RUNNER_NODE_NAME" = turin
+          test ! -S /var/run/docker.sock
+          test -z "${DOCKER_HOST:-}"
+          nix eval --offline --expr '40 + 2' | grep -qx 42
+          crane digest registry.ide-newton.ts.net/lab/arc-runner:latest
+          docker buildx imagetools inspect registry.ide-newton.ts.net/lab/arc-runner:latest
+          cosign version
+          jq -n --arg pod "$ACTIONS_RUNNER_POD_NAME" --argjson start "$start" --argjson end "$(date +%s)" \
+            '{pod:$pod,start:$start,end:$end}' > "$RUNNER_TEMP/arc-publication.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arc-publication-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/arc-publication.json
+          retention-days: 1
   local-build:
     name: Slot ${{ matrix.slot }} local scratch build
     timeout-minutes: 30
@@ -92,14 +131,18 @@ jobs:
           path: ${{ runner.temp }}/arc-complete.json
           retention-days: 1
   verify-placement:
-    needs: local-build
+    needs: [local-build, publication-tools]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: arc-proof-${{ github.run_attempt }}-*
           path: proof
-      - name: Verify three Ryzen and six Turin slots overlapped
+      - uses: actions/download-artifact@v4
+        with:
+          name: arc-publication-${{ github.run_attempt }}
+          path: publication
+      - name: Verify all nine slots overlapped on eligible hosts
         shell: bash
         run: |
           set -euo pipefail
@@ -107,7 +150,11 @@ jobs:
             length == 9 and
             ([.[].slot] | unique | length) == 9 and
             ([.[].pod] | unique | length) == 9 and
-            ([.[] | select(.node == "talos-192-168-1-194")] | length) == 3 and
-            ([.[] | select(.node == "turin")] | length) == 6 and
+            all(.[]; .node == "talos-192-168-1-194" or .node == "turin") and
+            ([.[] | select(.node == "talos-192-168-1-194")] | length) <= 3 and
             ([.[].end] | min) - ([.[].start] | max) >= 45
+          ' proof/*/arc-complete.json
+          jq -s -e --slurpfile publication publication/arc-publication.json '
+            $publication[0].start >= ([.[].start] | max) and
+            $publication[0].end <= ([.[].end] | min)
           ' proof/*/arc-complete.json
