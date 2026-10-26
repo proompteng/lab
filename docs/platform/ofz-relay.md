@@ -50,8 +50,8 @@ are outside those operations. A new effectful operation requires its own reviewe
 
 The public `AuthorizationService` endpoint is removed. Existing Tengri consumers use `TengriAuthorizationService`;
 platform clients use `PlatformAuthorizationService` and `RelayService`. Namespace/connector enum actions and commands,
-`CheckConnectorAgent`, the dormant opt-in flag and their native definitions are removed. Guest API protocol 9 rejects
-the previous installation contract. There is no fallback or dual implementation.
+`CheckConnectorAgent`, the dormant opt-in flag and their native definitions are removed. Guest API protocol 10 rejects
+the previous installation and HTTP envelope contracts. There is no fallback or dual implementation.
 
 The SQL migration is checksum-bound and leaves the original migration and bootstrap receipts unchanged. Policy
 onboarding records a separate approved intent, revokes retired grants and removes retired native relationships before

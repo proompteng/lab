@@ -58,7 +58,7 @@ failures stop immediately; closing the viewer cancels any retry without reportin
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
-[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 9 hard-migrates Relay client installation; protocol 8 added `StatFile`,
+[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Guest API protocol 10 requires the Relay execute-or-lookup envelope and rejects older guests. Protocol 9 migrated Relay client installation; protocol 8 added `StatFile`,
 which reads one path's metadata without listing its siblings. It uses the existing file-observation authority and
 workspace confinement. The controller rejects older guest API versions; roll out the paired controller and guest
 images together. The signed Ofz request protocol remains version 4. Nanoagent serves HTTP/2 gRPC and preview

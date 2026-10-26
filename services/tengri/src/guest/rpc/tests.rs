@@ -22,6 +22,8 @@ async fn identity_is_verified_over_authenticated_grpc() {
         ("expected", 3, false),
         ("expected", 4, false),
         ("expected", 7, false),
+        ("expected", 8, false),
+        ("expected", 9, false),
     ] {
         let fixture = TestServer::start(TestService {
             get_info: Some(Arc::new(move |request| {
