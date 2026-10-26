@@ -99,7 +99,10 @@ The Codex view uses a near-black canvas, quiet zinc typography, and blue for pri
 right with a soft background; agent responses stay on the left without speaker headings. A left sidebar (~240–260px) reads
 the native paginated session index, with an active highlight and **New chat** control. Session menus provide **Archive**;
 **Archived chats** provides **Restore**. Archive state survives reloads and is shared across browsers through the
-retained native history. The browser-only session registry is removed; the selected ID remains `tengri-thread:${agentId}`. Saved history
+retained native history. Transient chat-index reads retry automatically while keeping cached chats and drafts.
+The retry preserves a failed page cursor and stops after recovery; changing views or closing chat cancels it.
+Permission and validation failures retain explicit recovery controls. Index recovery never repeats an archive write.
+The browser-only session registry is removed; the selected ID remains `tengri-thread:${agentId}`. Saved history
 loads behind a message-shaped skeleton instead of flashing the empty-conversation suggestions. The animation respects
 reduced motion, and failures show the existing recovery controls. You can start or
 switch conversations while another response runs or its submission is pending. Late thread creation and send replies
