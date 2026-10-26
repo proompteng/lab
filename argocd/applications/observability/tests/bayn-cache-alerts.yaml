@@ -230,7 +230,16 @@ tests:
         dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
   - eval_time: 6m
     alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: *publication_labels
+      exp_annotations: *publication_annotations
+  - eval_time: 11m
+    alertname: BaynValkeyPublicationFailure
     exp_alerts: []
+  promql_expr_test:
+  - expr: sum(increase(bayn_valkey_failures_total{namespace="bayn",operation="put"}[5m])) > 0
+    eval_time: 6m
+    exp_samples: []
 - name: publication diagnosis lists only recent put failures and deduplicates replicas
   interval: 15s
   input_series:
@@ -312,7 +321,16 @@ tests:
       exp_annotations: *publication_annotations
   - eval_time: 6m
     alertname: BaynValkeyPublicationFailure
+    exp_alerts:
+    - exp_labels: *publication_labels
+      exp_annotations: *publication_annotations
+  - eval_time: 11m
+    alertname: BaynValkeyPublicationFailure
     exp_alerts: []
+  promql_expr_test:
+  - expr: sum(increase(bayn_valkey_failures_total{namespace="bayn",operation="put"}[5m])) > 0
+    eval_time: 6m
+    exp_samples: []
 - name: sustained cache p99 after twenty samples
   interval: 15s
   input_series:
