@@ -5,10 +5,11 @@ import { canonicalHashV1Result } from './hash'
 import { parseInferenceCostArgs } from './inference-cost-command'
 import { researchReaderConfig } from './db/research-reader-config'
 import { InferenceCostCoverage, InferenceUsageStatus, makeInferenceCostReport } from './inference-costs'
-import { JevFailure } from './jev/contract'
-import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from './jev/evidence'
+import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost-evidence'
+import { expenseSourceFixture } from './inference-expense.test-support'
 import { JevResolutionStatus, makeJevResolution } from './jev/resolution'
-import { evaluationRequestFixture, responseFixture } from './jev/test-support'
+import { responseFixture } from './jev/test-support'
+import { decodeJevEvaluationRequest } from './jev/evidence'
 
 const rateCard = {
   schemaVersion: 'bayn.inference-rate-card.v1',
@@ -35,65 +36,19 @@ const row = (
     notDispatched?: boolean
   } = {},
 ) => {
-  const base = evaluationRequestFixture()
-  const { requestId: _id, ...material } = base
-  const request = Result.getOrThrow(
-    makeJevEvaluationRequest({ ...material, cycleId: (options.cycle ?? 'a').repeat(64) }),
-  )
-  const response = {
-    ...responseFixture(),
-    usage: { input_tokens: options.inputTokens ?? 250, output_tokens: 80 },
-  }
-  // A structurally invalid answer can carry hash-bound, valid provider usage.
-  const rejected = { ...response, answers: { unrelated: { type: 'noul', noul: 0.4 } } }
-  const receipt = options.missing
-    ? null
-    : Result.getOrThrow(
-        makeJevEvaluationReceipt(request, {
-          schemaVersion: 'bayn.jev-evaluation-receipt.v1',
-          requestId: request.requestId,
-          startedAt: request.observedAt,
-          completedAt: options.notDispatched ? request.expiresAt : request.observedAt,
-          outcome: options.notDispatched
-            ? {
-                status: JevOutcome.Failed,
-                failure: JevFailure.NotDispatched,
-                httpStatus: null,
-                responseHash: null,
-                rejectedResponse: null,
-              }
-            : options.rejected
-              ? {
-                  status: JevOutcome.Failed,
-                  failure: JevFailure.Response,
-                  httpStatus: null,
-                  responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
-                  rejectedResponse: rejected,
-                }
-              : {
-                  status: JevOutcome.Received,
-                  inference: {
-                    requestHash: request.requestHash,
-                    responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
-                    startedAt: request.observedAt,
-                    completedAt: request.observedAt,
-                    response,
-                  },
-                },
-        }),
-      )
-  return {
-    requestId: request.requestId,
-    cycleId: request.cycleId,
-    authorityGenerationHash: request.authorityGenerationHash,
-    request,
-    receipt,
-    resolution: null,
-  }
+  const source = expenseSourceFixture({
+    key: options.cycle,
+    rejected: options.rejected,
+    inputTokens: options.inputTokens ?? 250,
+    missing: options.missing,
+    notDispatched: options.notDispatched,
+  })
+  const { accountId: _account, sessionDate: _date, asOf: _asOf, ...value } = source
+  return { ...value, resolution: null }
 }
 
 const evidence = (requests: readonly ReturnType<typeof row>[]) => ({
-  schemaVersion: 'bayn.inference-cost-evidence.v1',
+  schemaVersion: 'bayn.inference-cost-evidence.v2',
   accountBindingHash: 'd'.repeat(64),
   sessionDate: '1970-01-01',
   asOf: '1970-01-01T00:00:10.000Z',
@@ -101,6 +56,12 @@ const evidence = (requests: readonly ReturnType<typeof row>[]) => ({
 })
 
 describe('inference operating-cost evidence', () => {
+  test('reads retained v1 financial evidence without accepting a retired request for execution', () => {
+    const { handoff: _, ...retained } = row()
+    const historical = { ...evidence([]), schemaVersion: 'bayn.inference-cost-evidence.v1', requests: [retained] }
+    expect(Result.getOrThrow(makeInferenceCostReport(historical, rateCard)).knownEstimatedCostPicoUsd).toBe('10500000')
+    expect(Result.isFailure(decodeJevEvaluationRequest(retained.request))).toBe(true)
+  })
   test('uses positive undispatched receipts for zero cost without inventing provider usage or a tariff', () => {
     const result = Result.getOrThrow(
       makeInferenceCostReport(evidence([row({ notDispatched: true })]), { ...rateCard, rates: [] }),
@@ -134,7 +95,15 @@ describe('inference operating-cost evidence', () => {
       },
     ]) {
       const { receiptHash: _hash, ...material } = changed
-      expect(Result.isFailure(makeJevEvaluationReceipt(source.request, material))).toBe(true)
+      expect(
+        Result.isFailure(
+          decodeHistoricalJevCostEvidence(
+            source.request,
+            { ...material, receiptHash: Result.getOrThrow(canonicalHashV1Result(material)) },
+            null,
+          ),
+        ),
+      ).toBe(true)
     }
   })
 

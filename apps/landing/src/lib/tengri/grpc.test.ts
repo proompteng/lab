@@ -315,6 +315,10 @@ beforeAll(async () => {
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
+      if (call.request.id === 'sleep-committed') {
+        callback(serviceError(grpc.status.FAILED_PRECONDITION, 'automatic sleep already committed'))
+        return
+      }
       callback(null, {
         id: call.request.id,
         displayName: 'Tengri',
@@ -431,6 +435,12 @@ beforeAll(async () => {
       receivedRequest = call.request
       if (call.request.agentId === 'unimplemented-catalog') {
         callback(serviceError(grpc.status.UNIMPLEMENTED, 'model/list is unavailable'), null)
+        return
+      }
+      if (call.request.agentId === 'retained-runtime-upgrade') {
+        const error = serviceError(grpc.status.FAILED_PRECONDITION, 'retained guest protocol differs')
+        error.metadata.set('x-tengri-error-code', 'runtime_upgrade_required')
+        callback(error, null)
         return
       }
       if (call.request.agentId === 'catalog-cancel') {
@@ -1469,6 +1479,16 @@ describe('Tengri gRPC BFF transport', () => {
     expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
   })
 
+  test('does not report a saved timeout after automatic sleep has committed', async () => {
+    const { updatePowerSettings } = await import('./grpc')
+    expect(await rejection(updatePowerSettings(identity, 'sleep-committed', { idleTimeoutMinutes: 60 }))).toMatchObject(
+      {
+        status: 409,
+        message: 'The agent has started sleeping. Resume it, then change this setting.',
+      },
+    )
+  })
+
   test('reports uncertain runtime readiness as unavailable without inventing a failed agent', async () => {
     const { listAgents } = await import('./grpc')
     const previousPhase = runtimePhase
@@ -1795,6 +1815,16 @@ describe('Tengri gRPC BFF transport', () => {
       operationId: '22222222-2222-4222-8222-222222222222',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
       responseJson: Buffer.alloc(0),
+    })
+  })
+
+  test('identifies an incompatible retained guest as requiring a runtime upgrade', async () => {
+    const { listCodexModels } = await import('./grpc')
+
+    expect(await rejection(listCodexModels(identity, 'retained-runtime-upgrade'))).toMatchObject({
+      message: 'This workspace needs a runtime upgrade before it can reconnect.',
+      status: 412,
+      code: 'runtime_upgrade_required',
     })
   })
 

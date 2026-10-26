@@ -125,39 +125,30 @@ describe('ARC Nix runner toolchain', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 9')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 2')
+    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('maxRunners: 4')
+    expect(runnerScaleSetBlock('arc-amd64-publish')).toContain('minRunners: 2')
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')
     expect(arcApplication).not.toContain('arc-amd64-turin')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
-  it('places nine shared-label slots as three Ryzen and six Turin runners', () => {
+  it('keeps all nine AMD64 slots schedulable when Ryzen has no memory for another runner', () => {
     const application = YAML.parseDocument(arcApplication)
     const pod = application.getIn(['spec', 'sources', 2, 'helm', 'valuesObject', 'template', 'spec'])
     if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
     expect(pod.toJSON().topologySpreadConstraints).toEqual([
       {
         maxSkew: 3,
-        minDomains: 2,
         topologyKey: 'kubernetes.io/hostname',
-        whenUnsatisfiable: 'DoNotSchedule',
+        whenUnsatisfiable: 'ScheduleAnyway',
         nodeTaintsPolicy: 'Honor',
         labelSelector: {
           matchLabels: { 'actions.github.com/scale-set-name': 'arc-amd64', 'app.kubernetes.io/component': 'runner' },
         },
       },
     ])
-    const request = [0].reduce((total, index) => {
-      const memory = pod.getIn(['containers', index, 'resources', 'requests', 'memory'])
-      if (typeof memory !== 'string' || !/^\d+Gi$/.test(memory)) throw new Error('Expected explicit Gi memory request')
-      return total + Number.parseInt(memory, 10)
-    }, 0)
-    expect(request * 3 + 11.94).toBeLessThan(61.82)
-    expect(request * 4).toBeGreaterThan(61.82)
-    const placements = Array.from({ length: 10 }, (_, count) => count).filter(
-      (ryzen) => ryzen * request + 11.94 <= 61.82 && Math.abs(ryzen - (9 - ryzen)) <= 3,
-    )
-    expect(placements).toEqual([3])
+    expect(pod.getIn(['containers', 0, 'resources', 'requests', 'memory'])).toBe('16Gi')
     const config = YAML.parseDocument(
       readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
     )
@@ -175,6 +166,22 @@ describe('ARC Nix runner toolchain', () => {
       'local-path-turin-nvme-intel',
       'local-path-turin-nvme-transcend',
     ])
+  })
+
+  it('reserves small sidecar-free runners for publication outside the native build queues', () => {
+    const application = YAML.parse(arcApplication)
+    const source = application.spec.sources.find(
+      (source: { helm?: { valuesObject?: { runnerScaleSetName?: string } } }) =>
+        source.helm?.valuesObject?.runnerScaleSetName === 'arc-amd64-publish',
+    )
+    const pod = source.helm.valuesObject.template.spec
+    expect(pod.nodeSelector).toEqual({ 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'turin' })
+    expect(pod.automountServiceAccountToken).toBe(false)
+    expect(pod.containers.map((container: { name: string }) => container.name)).toEqual(['runner'])
+    expect(pod.containers[0].securityContext.privileged).toBe(false)
+    expect(pod.initContainers).toBeUndefined()
+    expect(pod.containers[0].resources.requests).toEqual({ cpu: '1', memory: '2Gi', 'ephemeral-storage': '2Gi' })
+    expect(pod.volumes).toEqual([{ name: 'work', emptyDir: { sizeLimit: '32Gi' } }])
   })
 
   it('isolates each job in a private BuildKit process without a sidecar or shared cache', () => {

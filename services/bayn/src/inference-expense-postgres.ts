@@ -49,7 +49,7 @@ export const makeInferenceExpenseStore = (
     'asOf', to_char(statement_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
     'requestId', request.request_id, 'cycleId', request.cycle_id,
     'authorityGenerationHash', request.authority_generation_hash,
-    'request', request.payload, 'receipt', receipt.payload, 'resolution', resolution.payload
+    'request', request.payload, 'receipt', receipt.payload, 'resolution', resolution.payload, 'handoff', handoff.payload
   )`)
   const newSources = sql<Record<string, unknown>>`
     SELECT ${source} AS source
@@ -57,10 +57,15 @@ export const makeInferenceExpenseStore = (
     JOIN jev_evaluation_requests AS request ON request.cycle_id = cycle.cycle_id
     JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
     LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
-    WHERE cycle.account_id = ${accountId} AND cycle.execution_session_date >= ${coverageFrom}::date AND NOT EXISTS (
-      SELECT 1 FROM inference_expense_quotes AS quote WHERE quote.request_id = request.request_id
-        AND quote.receipt_hash IS NOT DISTINCT FROM receipt.receipt_hash
-    )
+    LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
+    WHERE cycle.account_id = ${accountId} AND cycle.execution_session_date >= ${coverageFrom}::date AND (
+      SELECT count(*) FROM inference_expense_quotes AS quote WHERE quote.request_id = request.request_id
+        AND quote.handoff_hash IS NOT DISTINCT FROM handoff.handoff_hash
+        AND quote.receipt_hash IS NOT DISTINCT FROM CASE
+          WHEN quote.provider_stage = 'CHART' AND NOT COALESCE(receipt.payload #>> '{outcome,failure}' = 'NOT_DISPATCHED', false) THEN NULL
+          WHEN quote.provider_stage = 'JEV' AND handoff.handoff_hash IS NOT NULL AND handoff.payload #>> '{disposition,status}' <> 'READY' THEN NULL
+          ELSE receipt.receipt_hash END
+    ) < CASE WHEN request.payload->>'schemaVersion'='bayn.jev-evaluation-request.v2' THEN 2 ELSE 1 END
     ORDER BY request.request_id COLLATE "C" LIMIT ${inferenceExpenseBatchSize}
   `.pipe(
     Effect.flatMap(
@@ -120,7 +125,7 @@ export const makeInferenceExpenseStore = (
     JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
     JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
     LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
-      AND receipt.receipt_hash = quote.receipt_hash
+    LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
     WHERE quote.account_id = ${accountId} AND cycle.account_id = ${accountId}
       AND quote.session_date = cycle.execution_session_date AND quote.verified_at IS NULL
     ORDER BY quote.quote_hash COLLATE "C" LIMIT ${inferenceExpenseBatchSize}

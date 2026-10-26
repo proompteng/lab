@@ -22,8 +22,8 @@ import {
 } from './signal-study'
 
 const fixture = nativeJevFixture()
-const batch = (action = 'enter') => {
-  const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence(fixture, action)
+const batch = (supportsEntry = true) => {
+  const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence(fixture, supportsEntry)
   return evidence
 }
 const at = Date.parse(fixture.observation.payload.observedAt)
@@ -112,21 +112,25 @@ test('round trip rejects a zero entry budget', () => {
 test('screen reproduces actual Jev selection and fixes deterministic selections from past evidence', () => {
   const result = Result.getOrThrow(prepareSignalStudyBatch(batch()))
   expect(result.modelStatus).toBe('AVAILABLE')
-  expect(result.selected[SignalScreenRule.Jev]).toBe('AAPL')
+  expect(result.selected[SignalScreenRule.Jev]).toBe('AMD')
   expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
-  expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.setupProbability).toBeCloseTo(0.8)
-  const wait = Result.getOrThrow(prepareSignalStudyBatch(batch('wait')))
+  expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.judgmentSupport).toBeCloseTo(0.9)
+  const wait = Result.getOrThrow(prepareSignalStudyBatch(batch(false)))
   expect(wait.selected[SignalScreenRule.Jev]).toBeNull()
   expect(wait.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
   const factors = wait.signals.find((signal) => signal.symbol === 'AAPL')?.factors
   expect(factors?.status).toBe('AVAILABLE')
   if (factors?.status !== 'AVAILABLE') throw new Error('Missing native factors')
-  expect(Object.keys(factors.answers)).toEqual(['action', 'setup'])
-  expect(factors.answers['action']).toMatchObject({ type: 'choice', choice: 'wait' })
+  expect(Object.keys(factors.answers)).toEqual([
+    'support_recovery_confirmed',
+    'support_recovery_stop_invalidates',
+    'support_recovery_target_obstructed',
+  ])
+  expect(factors.answers['support_recovery_confirmed']).toMatchObject({ type: 'noul', noul: expect.closeTo(0.1) })
 })
 
 test('factor outcomes retain unselected candidates and unresolved labels in each denominator', () => {
-  const prepared = Result.getOrThrow(prepareSignalStudyBatch(batch('wait')))
+  const prepared = Result.getOrThrow(prepareSignalStudyBatch(batch(false)))
   const factors = prepared.signals.find((signal) => signal.symbol === 'AAPL')?.factors
   if (factors === undefined) throw new Error('Missing candidate')
   const rows = [
@@ -151,9 +155,11 @@ test('factor outcomes retain unselected candidates and unresolved labels in each
     resolvedCount: 0,
     meanExecutionReturnBpsAmongResolved: null,
   })
-  expect(summaries.find((row) => row.dimension === 'symbol' && row.factor === 'action')).toMatchObject({
+  expect(
+    summaries.find((row) => row.dimension === 'symbol' && row.factor === 'support_recovery_confirmed'),
+  ).toMatchObject({
     value: 'AAPL',
-    bin: 'wait',
+    bin: '0..0.25',
     candidateCount: 1,
     unresolvedCount: 1,
   })
@@ -164,7 +170,7 @@ test('missing model batch remains unavailable while deterministic rules retain t
   expect(prepared.modelStatus).toBe('UNAVAILABLE')
   expect(prepared.selected[SignalScreenRule.Jev]).toBeNull()
   expect(prepared.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
-  expect(prepared.signals.every((signal) => signal.setupProbability === null)).toBeTrue()
+  expect(prepared.signals.every((signal) => signal.judgmentSupport === null)).toBeTrue()
 })
 
 test.each(['partial', 'expired'] as const)('retains received factors from an unusable %s batch', (status) => {
@@ -196,7 +202,7 @@ test.each(['partial', 'expired'] as const)('retains received factors from an unu
   )
   expect(prepared.modelStatus).toBe('UNAVAILABLE')
   expect(prepared.selected[SignalScreenRule.Jev]).toBeNull()
-  expect(prepared.signals.every((signal) => signal.setupProbability === null)).toBeTrue()
+  expect(prepared.signals.every((signal) => signal.judgmentSupport === null)).toBeTrue()
   expect(prepared.signals.find((signal) => signal.symbol === 'AAPL')?.factors.status).toBe('AVAILABLE')
   expect(prepared.signals.find((signal) => signal.symbol === missing.symbol)?.factors.status).toBe(
     status === 'partial' ? 'UNAVAILABLE' : 'AVAILABLE',

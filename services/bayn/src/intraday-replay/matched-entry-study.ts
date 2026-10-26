@@ -600,7 +600,7 @@ export const runMatchedEntryStudy = (
       const studied = input.study.batches.find((candidate) => candidate.batchPlan.batchId === batch.plan.batchId)
       if (
         decision.contentHash !== retained.decisionHash ||
-        native?.schemaVersion !== 'bayn.jev-entry-target.v6' ||
+        native?.schemaVersion !== 'bayn.jev-entry-target.v7' ||
         native.evidence.batchPlan.batchId !== batch.plan.batchId ||
         native.evidence.batchPlan.observationHash !== batch.plan.observationHash ||
         decision.bindings.snapshotContentHash !== batch.snapshot.manifest.contentHash ||

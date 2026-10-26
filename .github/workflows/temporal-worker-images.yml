@@ -20,7 +20,7 @@ on:
       - 'packages/scripts/src/shared/__tests__/kargo.test.ts'
 
 concurrency:
-  group: temporal-worker-images-${{ github.ref }}
+  group: temporal-worker-images-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && '-diagnostic' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -60,6 +60,7 @@ jobs:
           context: services/temporal-worker
           platforms: linux/${{ matrix.architecture }}
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          outputs: type=image,oci-mediatypes=true
           provenance: false
           tags: ${{ env.IMAGE }}:prepare-sha-${{ github.sha }}-run-${{ github.run_id }}-${{ matrix.architecture }}
           labels: |
@@ -88,14 +89,13 @@ jobs:
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build]
-    runs-on: arc-arm64
+    runs-on: arc-amd64-publish
     timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-buildkit
       - uses: imjasonh/setup-crane@v0.4
       - uses: sigstore/cosign-installer@v3.10.0
       - name: Assemble and validate the immutable release index
