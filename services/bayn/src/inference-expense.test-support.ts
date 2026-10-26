@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
-import { JevFailure } from './jev/contract'
+import { JevFailure, type JevRequest } from './jev/contract'
 import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost-evidence'
 import { JevResolutionStatus, makeJevResolution } from './jev/resolution'
 import { requestFixture, responseFixture } from './jev/test-support'
@@ -33,8 +33,10 @@ export const expenseSourceFixture = (
     rejected?: boolean | undefined
     abandoned?: boolean
     notDispatched?: boolean | undefined
+    state?: JevRequest['state']
   } = {},
 ) => {
+  const inferenceRequest = { ...requestFixture, state: options.state ?? requestFixture.state }
   const material = {
     schemaVersion: 'bayn.jev-evaluation-request.v1',
     cycleId: (options.key ?? 'a').repeat(64),
@@ -43,8 +45,8 @@ export const expenseSourceFixture = (
     symbol: 'AAPL',
     observedAt: '1970-01-01T00:00:00.000Z',
     expiresAt: '1970-01-01T00:00:05.000Z',
-    request: requestFixture,
-    requestHash: Result.getOrThrow(canonicalHashV1Result(requestFixture)),
+    request: inferenceRequest,
+    requestHash: Result.getOrThrow(canonicalHashV1Result(inferenceRequest)),
   }
   const request = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }
   const response = { ...responseFixture(), usage: { input_tokens: options.inputTokens ?? 1, output_tokens: 80 } }

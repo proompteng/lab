@@ -1159,6 +1159,12 @@ provider stage; retained single-provider Jev expenses keep their original identi
 units without rounding each call. Session accounts debit estimated inference expense (code 510) and credit
 estimate clearing (code 230). The trading ledger and broker cash balances retain their existing units and purpose.
 
+Migration 150 materializes each request's expense stage count, a receipt's non-dispatch flag and a handoff's skipped-Jev
+flag as generated scalar columns. Queue discovery reads those columns when matching existing quotes, so already
+quoted history does not reopen large request and handoff JSON bodies. The original payloads and hashes remain
+unchanged. Late receipts, partial stage costs, the 64-source batch and the original operation deadlines retain their
+existing behavior.
+
 This projection starts with sessions on 2026-10-05 and the reviewed, frozen Jev 1.13.0 list-price assumption:
 $0.042 per million input tokens and zero output charge, verified at `https://docs.typesafe.ai/models` on
 2026-10-07 UTC. Decisions API charges use its standard input and cache tariffs, with free output, verified on

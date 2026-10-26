@@ -1,3 +1,4 @@
+import inferenceExpenseSourceMetadata from '../../migrations/0150_inference_expense_source_metadata'
 import conditionalBaseAnchors from '../../migrations/0149_conditional_base_anchors'
 import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
 import sequentialEntryInference from '../../migrations/0147_sequential_entry_inference'
@@ -153,6 +154,7 @@ import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 export const migrationLoader = PgMigrator.fromRecord({
   '148_relative_chart_volume': relativeChartVolume,
   '149_conditional_base_anchors': conditionalBaseAnchors,
+  '150_inference_expense_source_metadata': inferenceExpenseSourceMetadata,
   '145_current_quote_breakout': currentQuoteBreakout,
   '147_sequential_entry_inference': sequentialEntryInference,
   '146_account_bound_entry_fees': accountBoundEntryFees,
