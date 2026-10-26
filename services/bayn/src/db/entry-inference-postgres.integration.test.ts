@@ -318,6 +318,18 @@ integration('committed sequential provider handoff', () => {
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
+        // This is a real-account admission: use a fresh request, not the historical migration fixture.
+        const parent = candidate.request
+        const { requestId: _, ...material } = entryEvaluationRequestFixture(new Date().toISOString())
+        const request = Result.getOrThrow(
+          makeJevEvaluationRequest({
+            ...material,
+            cycleId: parent.cycleId,
+            authorityGenerationHash: parent.authorityGenerationHash,
+          }),
+        )
+        yield* sql`INSERT INTO jev_evaluation_requests (request_id,cycle_id,authority_generation_hash,payload)
+          VALUES (${request.requestId},${request.cycleId},${request.authorityGenerationHash},${sql.json(request)})`
         const events: string[] = []
         const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen(evaluateClaimedJevOnce({ request, claimedAt: request.observedAt })),
