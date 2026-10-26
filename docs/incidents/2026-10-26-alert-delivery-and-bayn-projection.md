@@ -39,6 +39,13 @@ There were independent causes for notification amplification and missing telemet
    whether it needed one provider quote or two. This repeatedly deTOASTed chart payloads even when both quotes were
    already complete. PostgreSQL recorded expense-statement cancellations while waiting for data reads. This is a
    confirmed avoidable source of I/O; it does not establish the sole cause of concurrent cycle and Kafka stalls.
+5. After version metadata was installed, discovery still performed correlated quote counts and ordered receipt
+   lookups across historical requests. The production plan estimated roughly 7,000 pending requests and expected
+   the 64-row limit to stop early. With almost all history already quoted, the real scan instead walked that
+   history. At 07:28 UTC, PostgreSQL again canceled expense discovery and several foreground statements. A later
+   controller failure caused both APIs to report `CYCLE_RUNNER_UNAVAILABLE` at 07:30 UTC even though database
+   connectivity and cycle observation were available. Earlier `READY` samples therefore did not establish
+   sustained recovery. Discovery must group metadata once before loading the bounded pending batch.
 
 ## Five Whys
 
@@ -123,8 +130,9 @@ at 06:32 UTC; the source revision was `bc6c66fa403b74f4b3b0c9c746149ea97f3a9b86`
 
 The rendered fallback Secret, resource version `740621478`, was verified after the first rollout: critical updates
 every five minutes, warnings every fifteen minutes, ten-second first delivery, unchanged repeat intervals, the
-scoped inhibition and the service/count subject. The subsequent annotation bump activates this already verified
-configuration. Active tenant configuration still requires readback after that rollout.
+scoped inhibition and the service/count subject. The subsequent annotation bump activated this already verified
+configuration. Active tenant readback at 07:02 UTC confirmed the routes, subject, resolved notifications and scoped
+inhibition. Genuine Gmail messages subsequently arrived with the new service and firing/resolved counts.
 
 On an isolated PostgreSQL 18.1 fixture containing 5,000 completed chart requests and one pending request, the expense
 repair returned the same pending source. The warm median execution time fell from 23.511 ms to 10.236 ms and shared
@@ -132,6 +140,22 @@ buffer accesses from 40,439 to 20,416. This is a local comparison, not a product
 Bayn unit suite passed 3,859 tests with zero failures; 868 external integration cases were skipped. Separately, the
 affected PostgreSQL expense and entry suites passed 25 tests against PostgreSQL 18.1; three TigerBeetle-dependent
 cases were skipped. Type checks, lint and the production build passed.
+
+The grouped discovery repair retains the same pending source on both PostgreSQL fixtures. With 5,000 completed
+single-provider requests, shared buffer accesses fall from 20,416 to 586 and warm median time from 8.488 ms to
+6.915 ms. A mixed fixture with completed single/two-provider requests and larger handoff/receipt payloads falls
+from 23,517 to 3,375 buffer accesses, with warm median time from 10.497 ms to 9.015 ms. These are local comparisons.
+An `EXPLAIN` without execution against production statistics confirms bulk metadata joins, with full-payload
+lookups only after the materialized 64-request selection. The affected PostgreSQL suites pass 26 tests, including
+ordered batches after quoted history, account isolation, immutable quotes and late receipts.
+
+[PR #15427](https://github.com/proompteng/lab/pull/15427), commit `d7f5a0136849929c94e7b11e7eae498a6ea93100`,
+reduces deep-scrub chunks from fifteen objects to five while retaining the requested `osd_max_scrubs=3`. All six
+effective daemon configurations reported the new size at 06:54:42 UTC. Adjacent five-minute windows show PostgreSQL
+WAL fsync averaging 317.342 ms before and 202.690 ms after. Kafka timeout log lines were zero in both adjacent
+windows, so their earlier recovery cannot be attributed to this change. Eighteen scrubs remained active, and all
+fourteen sampled deep-scrub counters advanced afterward. This is an observational improvement under changing
+production load; the remaining latency and later SQL cancellations prevent a sustained-storage-recovery claim.
 
 Deployment acceptance must separately establish the reviewed revision, rendered fallback Secret, active tenant
 configuration, all three ingester targets, zero new series-limit rejections during the observation window, restored
