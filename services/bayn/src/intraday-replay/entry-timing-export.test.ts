@@ -152,7 +152,7 @@ test.each([false, true])('exports exact native timing and a conservative v2 rece
   expect(Result.isSuccess(Schema.decodeUnknownResult(EntryTimingReceiptSchema)(result.timing))).toBeTrue()
   expect(result.timing.decisionHash).toBe(f.decision.contentHash)
   expect(result.timing.deterministicSymbol).toBe('AAPL')
-  expect(f.target.selectedSymbols).toEqual(abstain ? [] : ['AMD'])
+  expect(f.target.selectedSymbols).toEqual(abstain ? [] : ['AAPL'])
   const receiptNanos = intradayInstantNanos(result.timing.decisionCommittedAt)
   expect(receiptNanos).toBe(f.commitNanos + 248_266n)
   expect(receiptNanos - f.commitNanos).toBeGreaterThanOrEqual(0n)

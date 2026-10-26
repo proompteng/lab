@@ -280,7 +280,11 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
     outcome: { status: 'RECEIVED', inference },
   }
   const visualRequest = Result.getOrThrow(
-    makeChartDecisionsRequest(Result.getOrThrow(makeNativeChartEvidence(original.input.chartSource))),
+    makeChartDecisionsRequest({
+      chart: Result.getOrThrow(makeNativeChartEvidence(original.input.chartSource)),
+      protocol: original.input.protocol,
+      funding: original.input.funding,
+    }),
   )
   const chartCall: ReplayInferenceCall = {
     schemaVersion: 'bayn.replay-inference-call.v2',

@@ -5,9 +5,10 @@ import { Effect, Schema } from 'effect'
 import { canonicalHashV1Result } from './hash'
 import {
   InferenceCostError,
-  InferenceCostEvidenceSchema,
   InferenceCostRequestSchema,
-  type InferenceCostEvidence,
+  decodeInferenceCostRequest,
+  type DecodedInferenceCostEvidence,
+  type DecodedInferenceCostRequest,
 } from './inference-costs'
 import type { InferenceExpenseRecord } from './inference-expense'
 import { decodeInferenceExpenseSessionRows } from './inference-expense-postgres'
@@ -25,13 +26,27 @@ enum SnapshotRowKind {
 
 const SnapshotSchema = Schema.Array(
   Schema.Union([
-    Schema.Struct({ as_of: UtcInstantSchema, kind: Schema.Literal(SnapshotRowKind.Cut), payload: Schema.Null }),
     Schema.Struct({
       as_of: UtcInstantSchema,
+      request_count: Schema.Int,
+      quote_count: Schema.Int,
+      kind: Schema.Literal(SnapshotRowKind.Cut),
+      payload: Schema.Null,
+    }),
+    Schema.Struct({
+      as_of: UtcInstantSchema,
+      request_count: Schema.Int,
+      quote_count: Schema.Int,
       kind: Schema.Literal(SnapshotRowKind.Request),
       payload: InferenceCostRequestSchema,
     }),
-    Schema.Struct({ as_of: UtcInstantSchema, kind: Schema.Literal(SnapshotRowKind.Quote), payload: Schema.Unknown }),
+    Schema.Struct({
+      as_of: UtcInstantSchema,
+      request_count: Schema.Int,
+      quote_count: Schema.Int,
+      kind: Schema.Literal(SnapshotRowKind.Quote),
+      payload: Schema.Unknown,
+    }),
   ]),
 )
 
@@ -42,7 +57,7 @@ export const readInferenceExpenseSnapshot = (
   sessionDate: string,
   writerFence?: WriterFenceService,
 ): Effect.Effect<
-  { readonly evidence: InferenceCostEvidence; readonly quotes: readonly InferenceExpenseRecord[] },
+  { readonly evidence: DecodedInferenceCostEvidence; readonly quotes: readonly InferenceExpenseRecord[] },
   InferenceCostError
 > =>
   Effect.gen(function* () {
@@ -63,26 +78,44 @@ export const readInferenceExpenseSnapshot = (
           yield* sql`
             DECLARE ${cursor} NO SCROLL CURSOR WITHOUT HOLD FOR
             WITH cut AS (
-              SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS as_of
+              SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS as_of,
+                (SELECT count(*)::integer FROM (
+                  SELECT 1 FROM jev_evaluation_requests AS request
+                  JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
+                  WHERE cycle.account_id = ${scope.accountId}
+                    AND cycle.execution_session_date = ${scope.sessionDate}::date
+                  LIMIT ${maximumRequests + 1}
+                ) AS requests) AS request_count,
+                (SELECT count(*)::integer FROM (
+                  SELECT 1 FROM inference_expense_quotes
+                  WHERE account_id = ${scope.accountId} AND session_date = ${scope.sessionDate}::date
+                  LIMIT ${maximumRequests + 1}
+                ) AS quotes) AS quote_count
             )
-            SELECT cut.as_of, 'CUT'::text AS kind, NULL::jsonb AS payload FROM cut
+            SELECT cut.as_of, cut.request_count, cut.quote_count, 'CUT'::text AS kind, NULL::jsonb AS payload FROM cut
             UNION ALL
-            SELECT cut.as_of, 'REQUEST', to_jsonb(item)
+            SELECT cut.as_of, cut.request_count, cut.quote_count, 'REQUEST', (to_jsonb(item) - 'chartCheckpoint') ||
+              CASE WHEN item."chartCheckpoint" IS NULL THEN '{}'::jsonb
+                ELSE jsonb_build_object('chartCheckpoint', item."chartCheckpoint") END
               FROM cut CROSS JOIN (
                 SELECT request.request_id AS "requestId", request.cycle_id AS "cycleId",
                   request.authority_generation_hash AS "authorityGenerationHash",
-                  request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution, handoff.payload AS handoff
+                  request.payload AS request, receipt.payload AS receipt, resolution.payload AS resolution, handoff.payload AS handoff,
+                  CASE WHEN chart_claim.request_id IS NULL THEN NULL ELSE
+                    jsonb_build_object('claim', chart_claim.payload, 'terminal', chart_terminal.payload) END AS "chartCheckpoint"
                 FROM jev_evaluation_requests AS request
                 JOIN autonomous_cycles AS cycle ON cycle.cycle_id = request.cycle_id
                 LEFT JOIN jev_evaluation_receipts AS receipt ON receipt.request_id = request.request_id
                 LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
                 LEFT JOIN jev_inference_handoffs AS handoff ON handoff.request_id = request.request_id
+                LEFT JOIN jev_chart_dispatch_claims AS chart_claim ON chart_claim.request_id = request.request_id
+                LEFT JOIN jev_chart_terminal_receipts AS chart_terminal ON chart_terminal.request_id = request.request_id
                 WHERE cycle.account_id = ${scope.accountId}
                   AND cycle.execution_session_date = ${scope.sessionDate}::date
                 LIMIT ${maximumRequests + 1}
               ) AS item
             UNION ALL
-            SELECT cut.as_of, 'QUOTE', to_jsonb(item)
+            SELECT cut.as_of, cut.request_count, cut.quote_count, 'QUOTE', to_jsonb(item)
               FROM cut CROSS JOIN (
                 SELECT quote_hash AS "quoteHash", payload,
                   to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "verifiedAt"
@@ -92,33 +125,55 @@ export const readInferenceExpenseSnapshot = (
               ) AS item
           `
           const rows: Array<(typeof SnapshotSchema.Type)[number]> = []
+          const requests: DecodedInferenceCostRequest[] = []
           while (true) {
             // A single source row bounds FETCH's utility-result spool as well as each statement's work.
             const batch = yield* sql<Record<string, unknown>>`FETCH NEXT FROM ${cursor}`.pipe(
               Effect.flatMap(Schema.decodeUnknownEffect(SnapshotSchema)),
             )
             if (batch.length === 0) break
+            for (const row of batch) {
+              if (row.request_count > maximumRequests || row.quote_count > maximumRequests)
+                return yield* new InferenceCostError({
+                  message: 'Inference cost read exceeded its complete-report limit',
+                })
+              if (row.kind === SnapshotRowKind.Request) {
+                if (requests.length === maximumRequests)
+                  return yield* new InferenceCostError({
+                    message: 'Inference cost read exceeded its complete-report limit',
+                  })
+                requests.push(yield* Effect.fromResult(decodeInferenceCostRequest(row.payload, row.as_of)))
+              }
+            }
             rows.push(...batch)
           }
           yield* sql`CLOSE ${cursor}`
           const cuts = rows.filter((row) => row.kind === SnapshotRowKind.Cut)
           const cut = cuts[0]
-          if (cuts.length !== 1 || cut === undefined || rows.some((row) => row.as_of !== cut.as_of))
+          if (
+            cuts.length !== 1 ||
+            cut === undefined ||
+            rows.some(
+              (row) =>
+                row.as_of !== cut.as_of ||
+                row.request_count !== cut.request_count ||
+                row.quote_count !== cut.quote_count,
+            )
+          )
             return yield* new InferenceCostError({ message: 'Inference cost snapshot time is unavailable' })
-          const requests = rows.flatMap((row) => (row.kind === SnapshotRowKind.Request ? [row.payload] : []))
-          if (requests.length > maximumRequests)
-            return yield* new InferenceCostError({ message: 'Inference cost read exceeded its complete-report limit' })
-          const evidence = yield* Schema.decodeUnknownEffect(InferenceCostEvidenceSchema)({
-            schemaVersion: 'bayn.inference-cost-evidence.v2',
+          const quoteRows = rows.flatMap((row) => (row.kind === SnapshotRowKind.Quote ? [row.payload] : []))
+          if (requests.length !== cut.request_count || quoteRows.length !== cut.quote_count)
+            return yield* new InferenceCostError({ message: 'Inference cost snapshot row coverage differs' })
+          const evidence: DecodedInferenceCostEvidence = {
+            schemaVersion: requests.some((row) => row.chartCheckpoint !== undefined)
+              ? 'bayn.inference-cost-evidence.v3'
+              : 'bayn.inference-cost-evidence.v2',
             accountBindingHash,
             sessionDate: scope.sessionDate,
             asOf: cut.as_of,
             requests,
-          })
-          const quotes = yield* decodeInferenceExpenseSessionRows(
-            rows.flatMap((row) => (row.kind === SnapshotRowKind.Quote ? [row.payload] : [])),
-            scope.sessionDate,
-          )
+          }
+          const quotes = yield* decodeInferenceExpenseSessionRows(quoteRows, scope.sessionDate)
           return {
             evidence: {
               ...evidence,

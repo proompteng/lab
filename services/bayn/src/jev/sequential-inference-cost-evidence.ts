@@ -4,6 +4,14 @@ import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
 import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from './chart-evidence'
 import { JevContractError, JevFailure } from './contract'
+import { makeChartDecisionsRequest } from './chart-questions'
+import { makeEntryJudgmentRequest, entryJudgmentPolicy } from './entry-questions'
+import {
+  RetainedConditionalChartAssessmentsSchema,
+  makeRetainedConditionalChartDecisionsRequest,
+  retainedConditionalChartAssessmentsFromResponse,
+  retainedConditionalChartQuestionPolicy,
+} from './retained-conditional-chart-questions'
 import {
   decodeEntryHandoff,
   decodeEntryHandoffForChart,
@@ -11,7 +19,14 @@ import {
   makeEntryInferenceCompletionSchema,
   verifyEntryCompletion,
 } from './entry-inference-evidence'
-import { EntryInferenceInputSchema, verifyEntryInferenceSource } from './entry-inference-input'
+import {
+  EntryInferenceInputSchema,
+  verifyEntryInferenceSource,
+  type EntryInferenceMaterial,
+} from './entry-inference-input'
+import type { EntryHandoffMaterial } from './entry-inference'
+import { jevEntryEconomics } from './entry-economics'
+import { mayHaveRetainedFundableSourceProposal } from './entry-proposals'
 import {
   decodeJevEvaluationReceipt,
   decodeJevEvaluationRequest,
@@ -32,26 +47,68 @@ import { makeRetainedEntryJudgmentRequest, retainedEntryJudgmentPolicy } from '.
 export const retainedSequentialQuestionPolicyHash = Result.getOrThrow(
   canonicalHashV1Result({ chart: retainedChartQuestionPolicy, jev: retainedEntryJudgmentPolicy }),
 )
+export const retainedConditionalQuestionPolicyHash = Result.getOrThrow(
+  canonicalHashV1Result({ chart: retainedConditionalChartQuestionPolicy, jev: entryJudgmentPolicy }),
+)
 const RetainedInput = Schema.Struct({
   ...EntryInferenceInputSchema.fields,
   schemaVersion: Schema.Literals(['bayn.entry-inference-input.v1', 'bayn.entry-inference-input.v2']),
-  protocol: jevProtocolSchemaForQuestionPolicy(retainedSequentialQuestionPolicyHash),
+  protocol: jevProtocolSchemaForQuestionPolicy(retainedSequentialQuestionPolicyHash, 'bayn.jev.protocol.v24'),
 })
 const RetainedRequest = Schema.Struct({ ...JevEvaluationRequestSchema.fields, request: RetainedInput })
-const RetainedHandoff = makeEntryHandoffSchema('bayn.entry-handoff.v1', RetainedChartAssessmentsSchema)
-const RetainedReceipt = Schema.Struct({
-  ...JevEvaluationReceiptSchema.fields,
-  outcome: Schema.Union([
-    Schema.Struct({
-      status: Schema.Literal(JevOutcome.Completed),
-      completion: makeEntryInferenceCompletionSchema(RetainedHandoff),
-    }),
-    Schema.Struct({ status: Schema.Literal(JevOutcome.Failed), failure: Schema.Enum(JevFailure) }),
-  ]),
+const RetainedConditionalInput = Schema.Struct({
+  ...EntryInferenceInputSchema.fields,
+  schemaVersion: Schema.Literal('bayn.entry-inference-input.v3'),
+  protocol: jevProtocolSchemaForQuestionPolicy(retainedConditionalQuestionPolicyHash, 'bayn.jev.protocol.v24'),
 })
+const RetainedConditionalRequest = Schema.Struct({
+  ...JevEvaluationRequestSchema.fields,
+  request: RetainedConditionalInput,
+})
+const RetainedHandoff = makeEntryHandoffSchema('bayn.entry-handoff.v1', RetainedChartAssessmentsSchema)
+const RetainedConditionalHandoff = makeEntryHandoffSchema(
+  'bayn.entry-handoff.v2',
+  RetainedConditionalChartAssessmentsSchema,
+)
+const makeRetainedReceiptSchema = <S extends Schema.Top>(handoff: S) =>
+  Schema.Struct({
+    ...JevEvaluationReceiptSchema.fields,
+    outcome: Schema.Union([
+      Schema.Struct({
+        status: Schema.Literal(JevOutcome.Completed),
+        completion: makeEntryInferenceCompletionSchema(handoff),
+      }),
+      Schema.Struct({ status: Schema.Literal(JevOutcome.Failed), failure: Schema.Enum(JevFailure) }),
+    ]),
+  })
+const RetainedReceipt = makeRetainedReceiptSchema(RetainedHandoff)
+const RetainedConditionalReceipt = makeRetainedReceiptSchema(RetainedConditionalHandoff)
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
 
-// Financial projection only. The executable entry codec accepts only v3 inputs.
+const retainedSourceFeasible = (
+  input: Pick<EntryInferenceMaterial, 'protocol' | 'funding'>,
+  chart: Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>,
+) =>
+  Result.gen(function* () {
+    const economics = yield* jevEntryEconomics({
+      protocol: input.protocol,
+      symbol: chart.symbol,
+      bidMicros: BigInt(input.funding.bidMicros),
+      askMicros: BigInt(input.funding.askMicros),
+      capitalMicros: input.funding.capitalMicros,
+      cryptoFeeTier: input.funding.cryptoFeeTier,
+    })
+    return economics === null
+      ? false
+      : yield* mayHaveRetainedFundableSourceProposal({
+          chart,
+          economics,
+          protocol: input.protocol,
+          bidMicros: BigInt(input.funding.bidMicros),
+        })
+  })
+
+// Financial projection only. The executable entry codec accepts only v4 inputs.
 export const readSequentialInferenceCostEvidence = (row: {
   readonly request: unknown
   readonly receipt: unknown
@@ -66,12 +123,19 @@ export const readSequentialInferenceCostEvidence = (row: {
             'bayn.entry-inference-input.v1',
             'bayn.entry-inference-input.v2',
             'bayn.entry-inference-input.v3',
+            'bayn.entry-inference-input.v4',
           ]),
         }),
       }),
     )(row.request)
-    if (version.request.schemaVersion === 'bayn.entry-inference-input.v3') {
+    if (version.request.schemaVersion === 'bayn.entry-inference-input.v4') {
       const request = yield* decodeJevEvaluationRequest(row.request)
+      const chart = yield* makeNativeChartEvidence(request.request.chartSource)
+      const chartRequest = yield* makeChartDecisionsRequest({
+        chart,
+        protocol: request.request.protocol,
+        funding: request.request.funding,
+      })
       const receipt = row.receipt === null ? null : yield* decodeJevEvaluationReceipt(request, row.receipt)
       const resolution = row.resolution === null ? null : yield* decodeJevResolution(request, receipt, row.resolution)
       const handoff =
@@ -86,10 +150,13 @@ export const readSequentialInferenceCostEvidence = (row: {
               },
               row.handoff,
             )
-      return { request, receipt, resolution, handoff }
+      return { request, receipt, resolution, handoff, chartRequest }
     }
 
-    const request = yield* Schema.decodeUnknownResult(RetainedRequest, strictParseOptions)(row.request)
+    const conditional = version.request.schemaVersion === 'bayn.entry-inference-input.v3'
+    const request = yield* conditional
+      ? Schema.decodeUnknownResult(RetainedConditionalRequest, strictParseOptions)(row.request)
+      : Schema.decodeUnknownResult(RetainedRequest, strictParseOptions)(row.request)
     const { requestId, ...material } = request
     const prepared = yield* verifyEntryInferenceSource(request.request)
     if (
@@ -104,21 +171,32 @@ export const readSequentialInferenceCostEvidence = (row: {
       ? makeRetainedChartEvidenceV1(request.request.chartSource)
       : makeNativeChartEvidence(request.request.chartSource)
     const source = { requestId, input: request.request, observedAt: request.observedAt, expiresAt: request.expiresAt }
+    const chartRequest = yield* conditional
+      ? makeRetainedConditionalChartDecisionsRequest(chart)
+      : makeRetainedChartDecisionsRequest(chart)
     const handoff =
       row.handoff === null
         ? null
-        : yield* decodeEntryHandoffForChart({
+        : yield* decodeEntryHandoffForChart<EntryHandoffMaterial>({
             source,
             input: row.handoff,
             inputHash: prepared.requestHash,
             chart,
-            handoffSchema: RetainedHandoff,
-            prepareVisual: makeRetainedChartDecisionsRequest,
-            assessVisual: retainedChartAssessments,
-            prepareJudgments: makeRetainedEntryJudgmentRequest,
+            handoffSchema: conditional ? RetainedConditionalHandoff : RetainedHandoff,
+            sourceFeasible:
+              request.request.schemaVersion === 'bayn.entry-inference-input.v1'
+                ? null
+                : yield* retainedSourceFeasible(request.request, chart),
+            prepareVisual: () => Result.succeed(chartRequest),
+            assessVisual: conditional ? retainedConditionalChartAssessmentsFromResponse : retainedChartAssessments,
+            prepareJudgments: conditional ? makeEntryJudgmentRequest : makeRetainedEntryJudgmentRequest,
           })
     const receipt =
-      row.receipt === null ? null : yield* Schema.decodeUnknownResult(RetainedReceipt, strictParseOptions)(row.receipt)
+      row.receipt === null
+        ? null
+        : yield* conditional
+            ? Schema.decodeUnknownResult(RetainedConditionalReceipt, strictParseOptions)(row.receipt)
+            : Schema.decodeUnknownResult(RetainedReceipt, strictParseOptions)(row.receipt)
     if (receipt !== null) {
       const { receiptHash, ...receiptMaterial } = receipt
       if (
@@ -153,5 +231,5 @@ export const readSequentialInferenceCostEvidence = (row: {
         return yield* invalid('Retained undispatched chart receipt does not prove its original deadline expiry')
     }
     const resolution = row.resolution === null ? null : yield* decodeJevResolution(request, receipt, row.resolution)
-    return { request, receipt, resolution, handoff }
+    return { request, receipt, resolution, handoff, chartRequest }
   })

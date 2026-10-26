@@ -18,6 +18,8 @@ import {
   type JevEvaluationRequest,
 } from '../jev/evidence'
 import { EntryInferenceJournal } from '../jev/entry-inference'
+import { JevFailure } from '../jev/contract'
+import { decodeChartCheckpoint, verifyChartCheckpointHandoff } from '../jev/chart-checkpoint'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
 import { makeChartDecisionsRequest } from '../jev/chart-questions'
 import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
@@ -164,6 +166,12 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             const request = yield* Effect.fromResult(decodeJevEvaluationRequest(rawRequest))
             const receipt = yield* Effect.fromResult(decodeJevEvaluationReceipt(request, rawReceipt))
             const saved = yield* requireEvaluation(request)
+            if (
+              receipt.outcome.status === JevOutcome.Failed &&
+              receipt.outcome.failure === JevFailure.NotDispatched &&
+              (yield* read('chart-claim', request.requestId)) !== null
+            )
+              return yield* failure('Undispatched receipt cannot omit a committed chart claim')
             if (receipt.outcome.status === JevOutcome.Completed) {
               const handoff = yield* Effect.fromResult(
                 decodeEntryHandoff(
@@ -363,6 +371,52 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
       record: (observation) => atomic(recordObservation(observation)),
     }
     const handoffs: EntryInferenceJournal['Service'] = {
+      recordChartClaim: (input) =>
+        atomic(
+          Effect.gen(function* () {
+            const request = yield* Effect.fromResult(
+              decodeJevEvaluationRequest(yield* read('request', input.requestId)),
+            )
+            yield* Effect.fromResult(decodeChartCheckpoint(request, { claim: input, terminal: null }))
+            const existing = yield* read('chart-claim', input.requestId)
+            if (existing !== null) {
+              if (
+                (yield* Effect.fromResult(canonicalHashV1Result(existing))) !==
+                (yield* Effect.fromResult(canonicalHashV1Result(input)))
+              )
+                return yield* failure('Chart admission conflicts with committed evidence')
+              return { dispatchAllowed: false }
+            }
+            const saved = yield* requireEvaluation(request)
+            const now = yield* Clock.currentTimeMillis
+            if (
+              saved.resolution !== null ||
+              now >= Date.parse(request.expiresAt) ||
+              now < Date.parse(input.claimedAt) ||
+              (yield* read('handoff', input.requestId)) !== null
+            )
+              return { dispatchAllowed: false }
+            yield* write('chart-claim', input.requestId, input)
+            return { dispatchAllowed: true }
+          }),
+        ),
+      recordChartTerminal: (input) =>
+        atomic(
+          Effect.gen(function* () {
+            const request = yield* Effect.fromResult(
+              decodeJevEvaluationRequest(yield* read('request', input.requestId)),
+            )
+            const claim = yield* read('chart-claim', input.requestId)
+            yield* Effect.fromResult(decodeChartCheckpoint(request, { claim, terminal: input }))
+            const existing = yield* read('chart-terminal', input.requestId)
+            if (existing === null) yield* write('chart-terminal', input.requestId, input)
+            else if (
+              (yield* Effect.fromResult(canonicalHashV1Result(existing))) !==
+              (yield* Effect.fromResult(canonicalHashV1Result(input)))
+            )
+              return yield* failure('Chart terminal evidence is immutable')
+          }),
+        ),
       recordHandoff: (input) =>
         atomic(
           Effect.gen(function* () {
@@ -380,6 +434,16 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
               ),
             )
             const existing = yield* read('handoff', request.requestId)
+            const chartClaim = yield* read('chart-claim', request.requestId)
+            if (chartClaim !== null) {
+              const checkpoint = yield* Effect.fromResult(
+                decodeChartCheckpoint(request, {
+                  claim: chartClaim,
+                  terminal: yield* read('chart-terminal', request.requestId),
+                }),
+              )
+              yield* Effect.fromResult(verifyChartCheckpointHandoff(checkpoint, handoff))
+            }
             if (existing !== null) {
               if (
                 (yield* Effect.fromResult(canonicalHashV1Result(existing))) !==
@@ -443,7 +507,13 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
                 continue
               if (call.stage === 'CHART') {
                 const chart = yield* Effect.fromResult(makeNativeChartEvidence(request.request.chartSource))
-                const expected = yield* Effect.fromResult(makeChartDecisionsRequest(chart))
+                const expected = yield* Effect.fromResult(
+                  makeChartDecisionsRequest({
+                    chart,
+                    protocol: request.request.protocol,
+                    funding: request.request.funding,
+                  }),
+                )
                 if (expected.requestHash !== call.requestHash) continue
               } else {
                 const raw = yield* read('handoff', request.requestId)

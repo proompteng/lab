@@ -8,11 +8,14 @@ import sequentialEntryInference from '../../migrations/0147_sequential_entry_inf
 import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
 import conditionalBaseAnchors from '../../migrations/0149_conditional_base_anchors'
 import inferenceRequestVersion from '../../migrations/0150_inference_request_version'
+import chartDispatchCheckpoints from '../../migrations/0151_chart_dispatch_checkpoints'
+import fundedSourceAnchors from '../../migrations/0152_funded_source_anchors'
 
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { chartInferenceFixture, entryCompletionFixture } from '../jev/entry-inference.test-support'
+import { makeChartDispatchClaim, makeChartTerminalReceipt } from '../jev/chart-checkpoint'
 import { DecisionsClient } from '../jev/decisions'
 import { JevClient } from '../jev/client'
 import { prepareJevRequest } from '../jev/contract'
@@ -23,6 +26,11 @@ import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevPurpose } from '../jev/portfolio'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
 import { makeChartDecisionsRequest } from '../jev/chart-questions'
+import { defaultJevProtocolDocument } from '../jev/protocol'
+import {
+  retainedConditionalQuestionPolicyHash,
+  retainedSequentialQuestionPolicyHash,
+} from '../jev/sequential-inference-cost-evidence'
 import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { JevResolutionStatus } from '../jev/resolution'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
@@ -48,7 +56,11 @@ import { readInferenceExpenseLedger } from '../inference-expense-journal'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 const url = baynTestPostgresUrl ?? 'postgresql://localhost/bayn_sequential_entry_0391_test'
-const fixture = nativeJevFixture()
+const fixture = nativeJevFixture(
+  undefined,
+  undefined,
+  `entry-inference-${defaultJevProtocolDocument.entryQuestionPolicyHash}`,
+)
 const batch = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
@@ -82,6 +94,45 @@ const runtimeLayer = Layer.mergeAll(
   Layer.provideMerge(NodeServices.layer),
 )
 const makeRuntime = () => ManagedRuntime.make(runtimeLayer)
+const replaySourceHash = 'e'.repeat(64)
+const replayAccountId = `replay-${replaySourceHash}`
+const replayFixture = nativeJevFixture(undefined, undefined, replayAccountId)
+const replayBatch = Result.getOrThrow(
+  makeJevTradingSignalBatch({
+    observation: replayFixture.observation.payload,
+    expiresAt: new Date(
+      Date.parse(replayFixture.observation.payload.observedAt) + replayFixture.protocol.inferenceValidityMs,
+    ).toISOString(),
+    planVersion: JevBatchPlanVersion.V7,
+  }),
+)
+const retainReplayRequest = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  // Native fixtures intentionally reuse synthetic reconciliation identities; keep the replay graph isolated.
+  yield* sql`DROP SCHEMA public CASCADE`
+  yield* sql`CREATE SCHEMA public`
+  yield* postgresMigrations
+  const selected = replayBatch.candidates.find((value) => value.status === JevCandidatePlanStatus.Requested)
+  if (selected?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing replay entry request')
+  const current = selected.request
+  yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
+    VALUES (${replayAccountId},${replaySourceHash},${current.observedAt})`
+  yield* (yield* CycleStore).acquire(replayFixture.draft, current.observedAt)
+  yield* sql`INSERT INTO authority_generations (generation_hash,schema_version,maximum,authority_version,activated_at)
+    VALUES (${current.authorityGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,${current.observedAt})
+    ON CONFLICT (generation_hash) DO NOTHING`
+  const r = replayFixture.portfolio.brokerState.reconciliation
+  yield* sql`INSERT INTO reconciliations (reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+    VALUES (${r.reconciliationId},${r.schemaVersion},${r.accountId},${r.expectedHash},${r.observedHash},${r.contentHash},${r.status},'[]'::jsonb,${r.reconciledAt})`
+  yield* (yield* CandidateObservationStore).record(replayFixture.observation)
+  yield* TestClock.setTime(Date.parse(current.observedAt)).pipe(
+    Effect.andThen(
+      Effect.flatMap(JevBatchStore, (store) => store.begin(replayBatch, replayFixture.observation.payload)),
+    ),
+    Effect.provide(TestClock.layer()),
+  )
+  return current
+})
 
 integration('committed sequential provider handoff', () => {
   let runtime: ReturnType<typeof makeRuntime>
@@ -104,6 +155,10 @@ integration('committed sequential provider handoff', () => {
             loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 150))),
             table: 'schema_migrations',
           })
+        if (!withRequestVersion) {
+          yield* chartDispatchCheckpoints
+          yield* sql.withTransaction(fundedSourceAnchors)
+        }
         yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
       VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${request.observedAt})`
@@ -118,6 +173,143 @@ integration('committed sequential provider handoff', () => {
       }),
     )
   beforeEach(() => resetDatabase())
+
+  test(
+    'one chart admission survives a crash and later metering upgrades discovery without double charging',
+    async () =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const journal = yield* EntryInferenceJournal
+          const expiredVisual = chartInferenceFixture(request.request, request.observedAt)
+          const expiredClaim = Result.getOrThrow(
+            makeChartDispatchClaim({
+              schemaVersion: 'bayn.chart-dispatch-claim.v1',
+              stage: 'CHART',
+              requestId: request.requestId,
+              providerRequestHash: expiredVisual.requestHash,
+              claimedAt: request.observedAt,
+              expiresAt: request.expiresAt,
+            }),
+          )
+          expect(yield* journal.recordChartClaim(expiredClaim)).toEqual({ dispatchAllowed: false })
+          expect(
+            Result.isFailure(
+              yield* sql`INSERT INTO jev_chart_dispatch_claims (request_id,claim_hash,payload)
+            VALUES (${request.requestId},${expiredClaim.claimHash},${sql.json(expiredClaim)})`.pipe(Effect.result),
+            ),
+          ).toBe(true)
+          const current = yield* retainReplayRequest
+          const visual = chartInferenceFixture(current.request, current.observedAt)
+          const claim = Result.getOrThrow(
+            makeChartDispatchClaim({
+              schemaVersion: 'bayn.chart-dispatch-claim.v1',
+              stage: 'CHART',
+              requestId: current.requestId,
+              providerRequestHash: visual.requestHash,
+              claimedAt: current.observedAt,
+              expiresAt: current.expiresAt,
+            }),
+          )
+          const admissions = yield* Effect.all([journal.recordChartClaim(claim), journal.recordChartClaim(claim)], {
+            concurrency: 2,
+          })
+          expect(admissions.filter((value) => value.dispatchAllowed)).toHaveLength(1)
+          expect(
+            Result.isFailure(yield* sql.withTransaction(journal.recordChartClaim(claim)).pipe(Effect.result)),
+          ).toBe(true)
+          const store = makeInferenceExpenseStore(sql, replayAccountId, '1970-01-01')
+          // A synthetic tariff prices this September fixture only; never backdate the production rate card.
+          const fixtureRateCard = {
+            ...inferenceExpenseRateCard,
+            rates: inferenceExpenseRateCard.rates.map((rate) => ({
+              ...rate,
+              source: 'Synthetic checkpoint lifecycle fixture tariff, not provider pricing evidence.',
+              effectiveFrom: '1970-01-01T00:00:00.000Z',
+            })),
+          }
+          const find = (rows: readonly { readonly requestId: string }[]) =>
+            rows.some((row) => row.requestId === current.requestId)
+          const initialSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
+          if (initialSource === undefined) throw new Error('Missing unresolved checkpoint expense')
+          const initial = Result.getOrThrow(makeInferenceExpenseQuotes(initialSource, fixtureRateCard))
+          expect(initial).toHaveLength(1)
+          expect(initial.every((quote) => quote.line.usageStatus === 'UNKNOWN_USAGE')).toBe(true)
+          yield* store.freeze(initial)
+          expect(find(yield* store.newSources)).toBe(false)
+          // Advance only this explicit replay account's durable clock beyond the original deadline.
+          const lateAt = new Date(Date.parse(current.expiresAt) + 20).toISOString()
+          yield* sql`UPDATE simulated_execution_clocks SET observed_at=${lateAt} WHERE account_id=${replayAccountId}`
+          yield* (yield* JevEvaluationStore).abandon(current, lateAt)
+          const abandonedSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
+          if (abandonedSource === undefined) throw new Error('Missing first resolved Jev expense')
+          const abandoned = Result.getOrThrow(makeInferenceExpenseQuotes(abandonedSource, fixtureRateCard))
+          yield* store.freeze(abandoned)
+          expect(find(yield* store.newSources)).toBe(false)
+          const terminal = Result.getOrThrow(
+            makeChartTerminalReceipt({
+              schemaVersion: 'bayn.chart-terminal-receipt.v1',
+              requestId: current.requestId,
+              claimHash: claim.claimHash,
+              recordedAt: lateAt,
+              outcome: { status: 'RECEIVED', inference: visual },
+            }),
+          )
+          yield* journal.recordChartTerminal(terminal)
+          yield* journal.recordChartTerminal(terminal)
+          const lateSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
+          if (lateSource === undefined) throw new Error('Late chart metering was not rediscovered')
+          const historicalRates = Result.getOrThrow(makeInferenceExpenseQuotes(lateSource, inferenceExpenseRateCard))
+          expect(
+            historicalRates.find((quote) => 'stage' in quote.line && quote.line.stage === InferenceStage.Chart)?.line
+              .estimatedCostPicoUsd,
+          ).toBeNull()
+          expect(Result.getOrThrow(buildInferenceExpensePlan(historicalRates)).transfers).toHaveLength(0)
+          const late = Result.getOrThrow(makeInferenceExpenseQuotes(lateSource, fixtureRateCard))
+          yield* store.freeze(late)
+          expect(find(yield* store.newSources)).toBe(false)
+          const saved = yield* sql`SELECT payload FROM inference_expense_quotes WHERE request_id=${current.requestId}`
+          expect(saved).toHaveLength(3)
+          expect((yield* store.pending).filter((quote) => quote.line.requestId === current.requestId)).toHaveLength(3)
+          expect(Result.getOrThrow(buildInferenceExpensePlan([...initial, ...late])).transfers).toHaveLength(1)
+          const { terminalHash: __, ...terminalMaterial } = terminal
+          const conflict = Result.getOrThrow(
+            makeChartTerminalReceipt({ ...terminalMaterial, recordedAt: current.expiresAt }),
+          )
+          expect(Result.isFailure(yield* journal.recordChartTerminal(conflict).pipe(Effect.result))).toBe(true)
+          expect(
+            Result.isFailure(
+              yield* sql`UPDATE jev_chart_dispatch_claims SET payload=payload WHERE request_id=${current.requestId}`.pipe(
+                Effect.result,
+              ),
+            ),
+          ).toBe(true)
+          expect(
+            Result.isFailure(
+              yield* sql`DELETE FROM jev_chart_terminal_receipts WHERE request_id=${current.requestId}`.pipe(
+                Effect.result,
+              ),
+            ),
+          ).toBe(true)
+          const notDispatched = Result.getOrThrow(
+            makeJevEvaluationReceipt(current, {
+              schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+              requestId: current.requestId,
+              startedAt: current.observedAt,
+              completedAt: current.expiresAt,
+              outcome: { status: JevOutcome.Failed, failure: JevFailure.NotDispatched },
+            }),
+          )
+          expect(
+            Result.isFailure(
+              yield* sql`INSERT INTO jev_evaluation_receipts (request_id,receipt_hash,payload)
+        VALUES (${current.requestId},${notDispatched.receiptHash},${sql.json(notDispatched)})`.pipe(Effect.result),
+            ),
+          ).toBe(true)
+        }),
+      ),
+    30_000,
+  )
 
   test('backfills a completed current request without changing provider evidence or expense discovery', async () => {
     await resetDatabase(false)
@@ -180,6 +372,7 @@ integration('committed sequential provider handoff', () => {
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
+        const request = yield* retainReplayRequest
         const events: string[] = []
         const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen(evaluateClaimedJevOnce({ request, claimedAt: request.observedAt })),
@@ -265,9 +458,11 @@ integration('committed sequential provider handoff', () => {
           Effect.provide(TestClock.layer()),
         )
         const chart = yield* Effect.fromResult(makeNativeChartEvidence(source.request.chartSource))
-        const visual = yield* Effect.fromResult(makeChartDecisionsRequest(chart))
+        const visual = yield* Effect.fromResult(
+          makeChartDecisionsRequest({ chart, protocol: source.request.protocol, funding: source.request.funding }),
+        )
         const material = {
-          schemaVersion: 'bayn.entry-handoff.v2',
+          schemaVersion: 'bayn.entry-handoff.v3',
           requestId: source.requestId,
           inputHash: source.requestHash,
           visualRequestHash: visual.requestHash,
@@ -304,7 +499,7 @@ integration('committed sequential provider handoff', () => {
         expect(
           yield* sql`SELECT payload->>'schemaVersion' AS version,payload#>>'{disposition,status}' AS status
           FROM jev_inference_handoffs WHERE request_id=${source.requestId}`,
-        ).toEqual([{ version: 'bayn.entry-handoff.v2', status: 'SOURCE_INFEASIBLE' }])
+        ).toEqual([{ version: 'bayn.entry-handoff.v3', status: 'SOURCE_INFEASIBLE' }])
       }),
     ))
 
@@ -537,6 +732,7 @@ integration('committed sequential provider handoff', () => {
   test.each([
     ['image', 148, 'bayn.entry-inference-input.v1', relativeChartVolume],
     ['question', 149, 'bayn.entry-inference-input.v2', conditionalBaseAnchors],
+    ['funded-source', 152, 'bayn.entry-inference-input.v3', fundedSourceAnchors],
   ] as const)(
     'retains original chart requests and rejects retired %s contract writes',
     async (_name, migrationId, retiredVersion, migration) =>
@@ -553,7 +749,16 @@ integration('committed sequential provider handoff', () => {
           yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
           VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${request.observedAt})`
           const { requestId: _, ...original } = request
-          const oldInput = { ...request.request, schemaVersion: retiredVersion }
+          const oldInput = {
+            ...request.request,
+            schemaVersion: retiredVersion,
+            protocol: {
+              ...request.request.protocol,
+              schemaVersion: 'bayn.jev.protocol.v24',
+              entryQuestionPolicyHash:
+                migrationId === 152 ? retainedConditionalQuestionPolicyHash : retainedSequentialQuestionPolicyHash,
+            },
+          }
           const oldMaterial = {
             ...original,
             request: oldInput,
@@ -592,6 +797,43 @@ integration('committed sequential provider handoff', () => {
               constraint: Schema.Literal('jev_evaluation_requests_check'),
             }),
           )(rejected.failure.reason.cause)
+          if (migrationId === 152) {
+            const claim = Result.getOrThrow(
+              makeChartDispatchClaim({
+                schemaVersion: 'bayn.chart-dispatch-claim.v1',
+                stage: 'CHART',
+                requestId: historical.requestId,
+                providerRequestHash: 'c'.repeat(64),
+                claimedAt: historical.observedAt,
+                expiresAt: historical.expiresAt,
+              }),
+            )
+            const rejectedClaim = yield* sql`INSERT INTO jev_chart_dispatch_claims (request_id,claim_hash,payload)
+              VALUES (${claim.requestId},${claim.claimHash},${sql.json(claim)})`.pipe(Effect.result)
+            expect(Result.isFailure(rejectedClaim)).toBe(true)
+            const lateMaterial = {
+              schemaVersion: 'bayn.entry-handoff.v2',
+              requestId: historical.requestId,
+              inputHash: historical.requestHash,
+              visualRequestHash: 'c'.repeat(64),
+              recordedAt: historical.observedAt,
+              disposition: {
+                status: 'VISUAL_FAILED',
+                failure: {
+                  category: 'TRANSPORT',
+                  httpStatus: null,
+                  responseHash: null,
+                  usage: null,
+                },
+              },
+            }
+            const handoff = { ...lateMaterial, handoffHash: Result.getOrThrow(canonicalHashV1Result(lateMaterial)) }
+            yield* sql`INSERT INTO jev_inference_handoffs (request_id,handoff_hash,payload)
+              VALUES (${historical.requestId},${handoff.handoffHash},${sql.json(handoff)})`
+            expect(
+              yield* sql`SELECT payload FROM jev_inference_handoffs WHERE request_id=${historical.requestId}`,
+            ).toEqual([{ payload: handoff }])
+          }
         }),
       ),
   )
@@ -599,6 +841,7 @@ integration('committed sequential provider handoff', () => {
   test.each([
     ['relative-chart-volume', relativeChartVolume],
     ['conditional-base-anchor', conditionalBaseAnchors],
+    ['funded-source-anchor', fundedSourceAnchors],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -634,20 +877,25 @@ integration('committed sequential provider handoff', () => {
             UPDATE autonomous_cycles SET state='BLOCKED', terminal_reason='BLOCKED_AUTHORITY',
               state_version=state_version+1, updated_at=terminal.at, terminal_at=terminal.at
               FROM terminal WHERE cycle_id=${request.cycleId}`
-            yield* sql`CREATE TEMP TABLE authority_generations (generation_hash text, account_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE authority_generations
+              (LIKE public.authority_generations INCLUDING CONSTRAINTS) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE authority_state (
               generation_hash text,maximum text,effective text,kill_state text,reason text,version bigint,updated_at timestamptz
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE reconciliations (
               account_id text,status text,reconciled_at timestamptz,reconciliation_id text
             ) ON COMMIT DROP`
-            yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover')`
+            yield* sql`INSERT INTO authority_generations
+              (generation_hash,schema_version,maximum,authority_version,activated_at,account_id,
+                broker_identity_schema_version,broker_identity_hash,broker_provider,broker_environment)
+              VALUES (${'a'.repeat(64)},'bayn.authority-generation-history.v1','OBSERVE',1,clock_timestamp(),'paper-cutover',
+                'bayn.broker-identity.v2',${'b'.repeat(64)},'alpaca','sandbox')`
             yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER',${state.effective},
               ${state.kill},${state.reason},1,clock_timestamp())`
             yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover','EXACT',clock_timestamp(),${'b'.repeat(64)})`
             const before =
               yield* sql`SELECT generation_hash,maximum,effective,kill_state,reason,version::text AS version FROM authority_state`
-            yield* conditionalBaseAnchors
+            yield* fundedSourceAnchors
             expect(
               yield* sql`SELECT generation_hash,maximum,effective,kill_state,reason,version::text AS version FROM authority_state`,
             ).toEqual(

@@ -66,10 +66,12 @@ setDefaultTimeout(30_000)
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_jev_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const premiums = Object.fromEntries(equityMarketProfile.candidateSymbols.map((symbol) => [symbol, 0.02]))
+const replaySourceHash = 'd'.repeat(64)
+const replayAccountId = `replay-${replaySourceHash}`
 const fixture = nativeJevFixture(
   JevPurpose.Entry,
   undefined,
-  'jev-native-test',
+  replayAccountId,
   defaultJevProtocolDocument,
   'a'.repeat(64),
   premiums,
@@ -112,7 +114,7 @@ const requested = plan.candidates.filter((candidate) => candidate.status === Jev
 const excludedBase = nativeJevFixture(
   JevPurpose.Entry,
   undefined,
-  'jev-native-test',
+  replayAccountId,
   defaultJevProtocolDocument,
   'a'.repeat(64),
   Object.fromEntries(equityMarketProfile.candidateSymbols.map((symbol) => [symbol, -0.02])),
@@ -220,6 +222,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
+        yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
+          VALUES (${replayAccountId},${replaySourceHash},${fixture.snapshot.manifest.observedAt})`
         yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
         VALUES (${plan.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${plan.observedAt})`
@@ -1259,6 +1263,10 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           const batches = yield* JevBatchStore
           const sql = yield* PgClient.PgClient
           const admission = yield* batches.begin(plan, fixture.observation.payload)
+          const unresolved = admission.dispatches[0]
+          if (unresolved === undefined) throw new Error('Finalization race requires an unresolved claim')
+          // Pause recovery for the final claim only, so peer inference cannot exhaust its idle connection deadline.
+          yield* Effect.forEach(admission.dispatches.slice(1), evaluateClaimedJevOnce, { concurrency: 'unbounded' })
           const paused = yield* Deferred.make<void>()
           const resume = yield* Deferred.make<void>()
           const inserting = yield* Deferred.make<void>()
@@ -1279,7 +1287,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             .finish(plan.batchId)
             .pipe(Effect.forkScoped({ startImmediately: true }))
           yield* Deferred.await(paused)
-          yield* Effect.forEach(admission.dispatches, evaluateClaimedJevOnce, { concurrency: 'unbounded' })
+          yield* evaluateClaimedJevOnce(unresolved)
           const monitored = new Proxy(sql, {
             apply(target, receiver, argumentsList) {
               const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)

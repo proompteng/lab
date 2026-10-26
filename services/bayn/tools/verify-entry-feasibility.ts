@@ -4,6 +4,7 @@ import { TestClock } from 'effect/testing'
 import { gunzipSync } from 'node:zlib'
 
 import { canonicalHashV1Result } from '../src/hash'
+import { makeChartDecisionsRequest } from '../src/jev/chart-questions'
 import { IsoDateSchema } from '../src/schemas'
 import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from '../src/jev/chart-evidence'
 import { JevClient } from '../src/jev/client'
@@ -14,7 +15,6 @@ import {
   deriveEntryDispositionForChart,
   EntryInferenceJournal,
   evaluateClaimedEntryInference,
-  hasFeasibleEntrySource,
 } from '../src/jev/entry-inference'
 import { makeJevEvaluationReceipt, makeJevEvaluationRequest, JevOutcome } from '../src/jev/evidence'
 import { readSequentialInferenceCostEvidence } from '../src/jev/sequential-inference-cost-evidence'
@@ -54,7 +54,6 @@ const verify = Effect.gen(function* () {
         ? makeRetainedChartEvidenceV1(input.chartSource)
         : makeNativeChartEvidence(input.chartSource),
     )
-    const feasible = yield* Effect.fromResult(hasFeasibleEntrySource(input, chart))
     const saved = original.handoff?.disposition
     if (saved?.status !== 'READY' && saved?.status !== 'NO_FUNDED_PROPOSALS')
       return yield* fail('The preservation cohort must contain completed recorded chart evaluations')
@@ -64,7 +63,8 @@ const verify = Effect.gen(function* () {
         saved.visual,
         chart,
         saved.assessments,
-        input.schemaVersion === 'bayn.entry-inference-input.v3'
+        input.schemaVersion === 'bayn.entry-inference-input.v3' ||
+          input.schemaVersion === 'bayn.entry-inference-input.v4'
           ? makeEntryJudgmentRequest
           : makeRetainedEntryJudgmentRequest,
       ),
@@ -72,19 +72,26 @@ const verify = Effect.gen(function* () {
     const expectedHash = yield* Effect.fromResult(canonicalHashV1Result(saved.evaluation))
     const actualHash = yield* Effect.fromResult(canonicalHashV1Result(reproduced.evaluation))
     if (expectedHash !== actualHash) return yield* fail('The final native proposal evaluation changed')
-    if (saved.evaluation.proposals.length > 0) {
-      if (!feasible) return yield* fail('Feasibility gate drops an originally funded proposal')
-      fundedRequests++
-    }
-
     // Original model responses retain their contracts; only the offline dispatch probe uses current questions.
     const current = yield* Effect.fromResult(
       prepareEntryInferenceInput({
         ...input,
-        schemaVersion: 'bayn.entry-inference-input.v3',
-        protocol: { ...input.protocol, entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash },
+        schemaVersion: 'bayn.entry-inference-input.v4',
+        protocol: {
+          ...input.protocol,
+          schemaVersion: 'bayn.jev.protocol.v25',
+          entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash,
+        },
       }),
     )
+    const visualSource = yield* Effect.fromResult(
+      makeChartDecisionsRequest({ chart, protocol: current.input.protocol, funding: current.input.funding }),
+    )
+    const feasible = visualSource.sourceFeasible
+    if (saved.evaluation.proposals.length > 0) {
+      if (!feasible) return yield* fail('Feasibility gate drops an originally funded proposal')
+      fundedRequests++
+    }
     const { requestId: _originalId, ...material } = original.request
     const request = yield* Effect.fromResult(
       makeJevEvaluationRequest({ ...material, request: current.input, requestHash: current.requestHash }),
@@ -103,6 +110,8 @@ const verify = Effect.gen(function* () {
         }),
       ),
       Effect.provideService(EntryInferenceJournal, {
+        recordChartClaim: () => Effect.succeed({ dispatchAllowed: true }),
+        recordChartTerminal: () => Effect.void,
         recordHandoff: () =>
           Effect.sync(() => {
             committedHandoffs++
@@ -201,7 +210,7 @@ const verify = Effect.gen(function* () {
     unchangedFundedRequests: fundedRequests,
     actualProviderCalls: 0,
     inputProjection:
-      'Same source, prices, funding and economic protocol. Retained v1/v2 inputs use v3 and its question policy only for the offline dispatch probe; original model responses retain their original contracts.',
+      'Same source, prices, funding and economic protocol. Retained v1/v2/v3 inputs use v4 and its question policy only for the offline dispatch probe; original model responses retain their original contracts.',
     results,
   }
   yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })

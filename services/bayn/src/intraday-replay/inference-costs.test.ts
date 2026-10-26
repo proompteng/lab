@@ -149,7 +149,11 @@ test('retained HTTP failure usage is included while status failure remains unusa
 const chartCall = (): ChartCall => {
   const request = entryEvaluationRequestFixture()
   const prepared = Result.getOrThrow(
-    makeChartDecisionsRequest(Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))),
+    makeChartDecisionsRequest({
+      chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+      protocol: request.request.protocol,
+      funding: request.request.funding,
+    }),
   )
   const inference = chartInferenceFixture(request.request, request.observedAt)
   return {

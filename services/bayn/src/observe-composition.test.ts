@@ -241,7 +241,11 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
     }),
     Effect.provideService(JevClient, { evaluate: () => unexpected }),
     Effect.provideService(DecisionsClient, { evaluate: () => unexpected }),
-    Effect.provideService(EntryInferenceJournal, { recordHandoff: () => unexpected }),
+    Effect.provideService(EntryInferenceJournal, {
+      recordChartClaim: () => unexpected,
+      recordChartTerminal: () => unexpected,
+      recordHandoff: () => unexpected,
+    }),
     Effect.provideService(JevPositionStore, {
       read: () => unexpected,
     }),

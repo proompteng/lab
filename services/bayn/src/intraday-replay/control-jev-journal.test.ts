@@ -223,7 +223,11 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       if (disposition.status !== 'READY' || completion.jev.status !== 'RECEIVED')
         throw Error('Fixture requires both provider stages')
       const visual = Result.getOrThrow(
-        makeChartDecisionsRequest(Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))),
+        makeChartDecisionsRequest({
+          chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+          protocol: request.request.protocol,
+          funding: request.request.funding,
+        }),
       )
       const common = {
         schemaVersion: 'bayn.replay-inference-call.v2' as const,

@@ -53,25 +53,27 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The replacement source uses `jev` protocol v24, entry state v22, batch v7 and entry target v7. It retains the
+The replacement source uses `jev` protocol v25, entry state v22, batch v7 and entry target v7. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
 
-Entry input v3 scales the volume histogram to the largest observed bar, including fractional crypto quantities.
-An all-zero window has no positive volume height. Base starts are conditional on the identified end: one request asks
-the end and a separate start question for every eligible end, and code consumes only the selected end's start answer.
-Each start choice covers all earlier source bars and an explicit no-base option. Ends must leave at least two base bars
-and one newer completed bar. An unused branch's refusal cannot veto a supported proposal.
-Migration 149 requires input v3 and handoff v2 for new execution; current inference rejects input v1 and v2.
-Late handoffs for original expired requests retain their original financial evidence contract and cannot restart inference.
-Read-only financial projection
-reproduces the original independent questions for both retained versions, with the original whole-unit volume scale
-for v1 and relative scale for v2. Original provider usage, partial costs and immutable receipt hashes remain verifiable.
-The migration requires terminal cycles, flat inventory, settled orders, complete accounting, fresh exact reconciliation
-and no unexpired inference claims. It restricts prior PAPER authority for native OBSERVE recovery and a reviewed
-same-account mandate bound to the new question policy. Operator holds, capital, loss and turnover history remain intact.
+Entry input v4 binds the completed chart, current bid and ask, bounded entry and fee break-even objective.
+Code offers only source anchors and contiguous base intervals that satisfy the same complete-plan funding arithmetic
+used after inference. Support and resistance choices include explicit no-match answers, even for a single eligible bar.
+All source bars and the full image remain visible, including closer obstructions outside the offered objectives.
+An eligible price is not evidence of a defended support or consolidation; independent visual and Jev judgments remain
+required. Base starts are conditional on the selected end, and an unused branch's refusal cannot veto another setup.
+The volume histogram scales to the largest observed bar, including fractional crypto quantities.
+
+Migration 152 requires input v4, protocol v25, assessments v3 and handoff v3 for current execution. It preserves the
+chart-dispatch and terminal-cost checkpoints introduced by migration 151. Retired input v1/v2/v3 and their original
+images, questions, receipts and costs remain reproducible only through financial audit readers. Late terminal receipts
+and original-version handoffs cannot restart inference. The migration requires terminal cycles, flat inventory,
+settled orders, complete accounting, fresh exact reconciliation and no unexpired inference claims. It restricts prior
+PAPER authority for native OBSERVE recovery and a reviewed same-account mandate bound to the new question policy.
+Operator holds, capital, loss and turnover history remain intact.
 
 Jev answers separate Nouls about each proposal's observed setup, stop invalidation and overhead obstruction. Code selects
 supported proposals and binds their prices and funded quantity to protected execution. An unrelated unsupported setup
@@ -234,9 +236,9 @@ inference-bound ceiling is rejected before decision construction and again at th
 before a completed-minute boundary remains usable only within its original quote-age limit. Neither provider calls,
 persistence nor a new minute renew the original ten-second inference lifetime.
 
-Protocol v24, entry state v22 and entry input v3 define the current executable contracts. Migration 147 requires flat settled inventory,
+Protocol v25, entry state v22 and entry input v4 define the current executable contracts. Migration 147 requires flat settled inventory,
 terminal mutation cycles, fresh exact reconciliation, complete accounting and no unexpired provider claims before
-restricting new authority to v24. Activation uses the same account, preserved financial history and native PAPER
+restricting new authority to the current protocol. Activation uses the same account, preserved financial history and native PAPER
 mandate against the verified image delivered through Kargo and GitOps. Historical financial evidence remains immutable.
 Held positions use their sealed code-owned stop, profit target and maximum hold. See
 [strategy protection](../../docs/bayn/strategy-protection.md) for broker protection, failure behavior and evidence.
@@ -1189,9 +1191,11 @@ The projection owns separate scoped PostgreSQL and TigerBeetle clients. Closing 
 Both execution replicas may safely recover the same pending quotes. To inspect a complete private session cut:
 
 Expense reports capture requests and frozen quotes through one transaction-scoped PostgreSQL cursor. Each fetch
-reads one source row under the cursor's original snapshot, including inside a READ COMMITTED execution writer
+reads and reproduces one source row under the cursor's original snapshot, including inside a READ COMMITTED execution writer
 transaction. Successful captures close it explicitly; its owning transaction also releases it when the transaction ends.
-The complete-session limits and operation deadlines remain unchanged. The reader pins a native TigerBeetle timestamp and verifies every session transfer and the
+Pricing and frozen-quote coverage reuse the decoded usage facts; a charge bound to an earlier pending source prefix is
+validated against that prefix. This keeps source reconstruction from holding an inactive database connection during
+coverage verification. The complete-session limits and operation deadlines remain unchanged. The reader pins a native TigerBeetle timestamp and verifies every session transfer and the
 history-enabled account balances at that cut. A subsequent quote read identifies legitimate charges committed
 while the report runs; unknown transfers and mismatched balances still fail. Only the original captured quotes
 contribute to the report subtotal. Trading and expense posting continue throughout the read.
