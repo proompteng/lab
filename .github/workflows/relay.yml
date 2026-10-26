@@ -59,6 +59,7 @@ jobs:
           cargo fmt --manifest-path services/relay/Cargo.toml --check
           cargo clippy --manifest-path services/relay/Cargo.toml --locked --all-targets -- -D warnings
           cargo test --manifest-path services/relay/Cargo.toml --locked --all-targets
+          cargo test --manifest-path services/relay/Cargo.toml --locked -p platform-client
       - name: Qualify native policy package
         run: bash services/ofz/qualify-platform.sh
       - name: Execute both platform clients through Ofz and Relay

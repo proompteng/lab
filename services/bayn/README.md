@@ -59,6 +59,13 @@ candlestick image from verified completed bars, asks OpenAI Decisions API for ty
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
 
+Entry input v2 scales the volume histogram to the largest observed bar, including fractional crypto quantities.
+An all-zero window has no positive volume height. Migration 148 requires v2 for new requests; current inference rejects
+v1. Read-only financial projection reproduces retained v1 images with their original whole-unit scale so original
+provider usage, partial costs and immutable receipt hashes remain verifiable.
+The migration requires terminal cycles, flat inventory, settled orders, complete accounting, fresh exact reconciliation
+and no unexpired inference claims. It preserves the active authority generation, capital, loss and turnover history.
+
 Jev answers separate Nouls about each proposal's observed setup, stop invalidation and overhead obstruction. Code selects
 supported proposals and binds their prices and funded quantity to protected execution. An unrelated unsupported setup
 does not veto a supported proposal. Missing, refused, malformed, stale or uncertain evidence cannot authorize entry.

@@ -1,5 +1,5 @@
 use super::{
-    authorization, catalog,
+    authorization, catalog, executions,
     mutations::{self, Command},
     onboarding,
 };
@@ -85,7 +85,20 @@ impl PlatformAuthorizationService for Service {
             .try_acquire()
             .map_err(|_| Status::resource_exhausted("platform audit service is busy"))?;
         Ok(Response::new(
-            authorization::record_execution(&self.database, &peer, request.into_inner()).await?,
+            executions::record(&self.database, &peer, request.into_inner()).await?,
+        ))
+    }
+    async fn get_platform_execution(
+        &self,
+        request: Request<proto::GetPlatformExecutionRequest>,
+    ) -> Result<Response<proto::GetPlatformExecutionResponse>, Status> {
+        let peer = transport::peer(&request)?;
+        let _permit = self
+            .capacity
+            .try_acquire()
+            .map_err(|_| Status::resource_exhausted("platform audit service is busy"))?;
+        Ok(Response::new(
+            executions::get(&self.database, &self.native, &peer, request.into_inner()).await?,
         ))
     }
     async fn write_policy_relationships(
