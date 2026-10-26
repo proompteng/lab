@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { SymbolSchema } from '../schemas'
 import type { NativeChartEvidence } from './chart-evidence'
-import type { ChartAssessments } from './chart-questions'
+import type { ChartAssessmentsMaterial } from './chart-questions'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest, type JevResponse } from './contract'
 import { EntrySetup, type EntryProposal } from './entry-proposals'
 import { jevInstructions } from './instructions'
@@ -68,7 +68,7 @@ export const entryJudgmentPolicy = {
 export const makeEntryJudgmentRequest = (input: {
   readonly numericalState: Readonly<Record<string, Schema.Json>>
   readonly chart: NativeChartEvidence
-  readonly assessments: ChartAssessments
+  readonly assessments: ChartAssessmentsMaterial
   readonly proposals: readonly EntryProposal[]
 }) =>
   Result.gen(function* () {
