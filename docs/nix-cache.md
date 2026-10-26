@@ -204,6 +204,13 @@ through the existing `image_build_timeout` input. Archive uploads have a
 30-minute deadline. The shared workflow records upload success or failure for
 every image size.
 
+Attic chunks large NARs at a 1 MiB average, with 256 KiB minimum and 4 MiB
+maximum chunks. The former 64 KiB average produced about 32,768 chunk references
+for a 2 GiB archive and saturated PostgreSQL WAL sync during concurrent CI
+uploads. The larger chunks reduce that metadata work by about sixteenfold.
+Changing the chunk boundaries temporarily reduces deduplication against older
+uploads; existing cached NARs retain their recorded chunks.
+
 The helper refuses to run without a token:
 
 ```bash
