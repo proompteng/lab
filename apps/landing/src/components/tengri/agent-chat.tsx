@@ -287,7 +287,6 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const responsePending = Boolean(activeTurnId || (submittingHere && !submittedTurnCompleted) || runPending)
   const readingImages = images.some((image) => image.input === null)
   const canChangeConversation = !readingImages
-
   useEffect(() => {
     if (!archivedThread || readingImages) return
     if (threadIdRef.current === archivedThread) newConversation()
