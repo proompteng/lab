@@ -84,7 +84,7 @@ export const selectJevEntryCandidates = (
       if (quote === undefined || candidate === undefined)
         return yield* unavailable('Entry inference has no verified quote or sealed source request')
       const disposition = inference.handoff.disposition
-      if (disposition.status === 'NO_FUNDED_PROPOSALS') {
+      if (disposition.status === 'SOURCE_INFEASIBLE' || disposition.status === 'NO_FUNDED_PROPOSALS') {
         entryPlanRejections[symbol] = 'NO_FUNDED_CANDIDATES'
         continue
       }

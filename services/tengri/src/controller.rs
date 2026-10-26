@@ -283,6 +283,16 @@ pub async fn converge(
         .await?;
         return api.get(&microvm.name_any()).await.map_err(Into::into);
     }
+    if crate::activity::has_idle_sleep_claim(&microvm)
+        && authority.runtime_epoch == microvm.spec.runtime_epoch
+        && authority.running
+    {
+        leadership.fence()?;
+        authorization.stop_runtime(&microvm).await?;
+        return api.get(&microvm.name_any()).await.map_err(Into::into);
+    }
+    let authorization_paused =
+        authority.running && authority.state == "active" && !authority.runtime_allowed;
     let desired = if authority.runtime_allowed {
         MicroVMDesiredState::Running
     } else {
@@ -349,16 +359,6 @@ pub async fn converge(
     )?;
     let allocation = allocation_for(&microvm)?;
     supervisor.install_fence(leadership.fence()?).await?;
-    // A persisted reservation must survive controller replacement even after
-    // the runtime has started saving. New reservations require a fresh guest
-    // idle check and use resourceVersion to exclude concurrent durable run pins.
-    if crate::activity::has_idle_sleep_claim(&microvm)
-        && microvm.spec.desired_state != MicroVMDesiredState::Sleeping
-    {
-        leadership.fence()?;
-        authorization.stop_runtime(&microvm).await?;
-        return api.get(&microvm.name_any()).await.map_err(Into::into);
-    }
     let status = supervisor.status().await?;
     ensure!(
         matches!(status.state, SlotState::Vacant { .. })
@@ -434,7 +434,10 @@ pub async fn converge(
             }
         }
     };
-    if microvm.spec.desired_state == MicroVMDesiredState::Sleeping && authority.running {
+    if microvm.spec.desired_state == MicroVMDesiredState::Sleeping
+        && authority.running
+        && !authorization_paused
+    {
         leadership.fence()?;
         authorization.stop_runtime(&microvm).await?;
     }
@@ -452,7 +455,7 @@ pub async fn converge(
             current.metadata.deletion_timestamp.is_none(),
             "agent is terminating"
         );
-        let status = status_for(&current, &pod, &state.state);
+        let status = status_for(&current, &pod, &state.state, authorization_paused);
         match patch_status(
             client,
             namespace,
@@ -490,7 +493,12 @@ pub async fn converge(
     anyhow::bail!("agent status changed concurrently; retry the request")
 }
 
-fn status_for(microvm: &MicroVM, pod: &Pod, state: &SlotState) -> MicroVMStatus {
+fn status_for(
+    microvm: &MicroVM,
+    pod: &Pod,
+    state: &SlotState,
+    authorization_paused: bool,
+) -> MicroVMStatus {
     let now = Utc::now();
     let phase = match state {
         SlotState::Awake { .. } => MicroVMPhase::Ready,
@@ -503,6 +511,14 @@ fn status_for(microvm: &MicroVM, pod: &Pod, state: &SlotState) -> MicroVMStatus 
     };
     let ready = phase == MicroVMPhase::Ready;
     let (reason, message) = match state {
+        SlotState::Sleeping { .. } | SlotState::Vacant { .. }
+            if authorization_paused && phase == MicroVMPhase::Sleeping =>
+        {
+            (
+                "AuthorizationPaused",
+                "Authorization is temporarily unavailable; the saved workspace will resume automatically.",
+            )
+        }
         SlotState::Awake { .. } => (
             "SnapshotRestored",
             "Files, terminal, and initialized Codex passed the guest resume hook",
@@ -1751,7 +1767,7 @@ mod tests {
             snapshot: crate::slot::Snapshot { generation: 1 },
         };
         assert_eq!(
-            status_for(&microvm, &pod, &state).phase,
+            status_for(&microvm, &pod, &state, false).phase,
             MicroVMPhase::Sleeping
         );
         assert!(state.claim().is_none());
@@ -2000,55 +2016,209 @@ mod tests {
 
     #[tokio::test]
     async fn idle_sleep_reservation_survives_reconciliation_without_reprobing_or_restoring() {
-        use axum::{Router, routing::post};
-        let mut microvm = agent();
-        microvm.status = Some(MicroVMStatus {
-            pod_uid: Some("original-pod".into()),
-            ..Default::default()
-        });
-        microvm.spec.idle_deadline = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-        microvm.metadata.annotations.get_or_insert_default().insert(
-            crate::activity::ACTIVE_RUN_ANNOTATION.into(),
-            format!("idle-sleep/{}", microvm.spec.runtime_epoch),
-        );
-        let claim = claim_for(&microvm).unwrap();
-        // Only fencing is reachable. Once sleep has been reserved, replacement
-        // controllers must finish it without requiring status, restore or guest RPCs.
-        let router =
-            Router::new().route("/slot/fence", post(|| async { axum::http::StatusCode::OK }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let lease = json!({"apiVersion":"coordination.k8s.io/v1","kind":"Lease",
-            "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod",HOME_UID_ANNOTATION:"original-pvc",HOME_NAME_ANNOTATION:"original-home"}},
-            "spec":{"holderIdentity":serde_json::to_string(&claim.allocation()).unwrap()}});
-        let (client, pending) = mock(vec![
-            get(
-                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
-                lease.clone(),
-            ),
-            get(
-                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
-                lease,
-            ),
-            get(
-                "/api/v1/namespaces/tengri/pods/slot-test",
-                json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"slot-test","uid":"original-pod"},"status":{"podIP":"127.0.0.1"}}),
-            ),
-            get(
-                "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
-                json!(microvm),
-            ),
-        ]);
-        let mut context = context(client);
-        context.identity = WorkloadIdentity::Fixture(port);
-        context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(Arc::new(
-            std::sync::atomic::AtomicU8::new(6),
-        ));
-        let result = converge(&context, &microvm, context.leader().unwrap()).await;
-        server.abort();
-        assert!(crate::activity::has_idle_sleep_claim(&result.unwrap()));
-        assert!(pending.lock().unwrap().is_empty());
+        for (mode, desired) in [
+            (6, MicroVMDesiredState::Running),
+            (6, MicroVMDesiredState::Sleeping),
+            (10, MicroVMDesiredState::Running),
+            (10, MicroVMDesiredState::Sleeping),
+        ] {
+            let mut microvm = agent();
+            microvm.spec.desired_state = desired;
+            microvm.status = Some(MicroVMStatus {
+                pod_uid: Some("original-pod".into()),
+                ..Default::default()
+            });
+            microvm.spec.idle_deadline = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+            microvm.metadata.annotations.get_or_insert_default().insert(
+                crate::activity::ACTIVE_RUN_ANNOTATION.into(),
+                format!("idle-sleep/{}", microvm.spec.runtime_epoch),
+            );
+            let allocation = claim_for(&microvm).unwrap().allocation();
+            let lease = json!({"apiVersion":"coordination.k8s.io/v1","kind":"Lease",
+                "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod",HOME_UID_ANNOTATION:"original-pvc",HOME_NAME_ANNOTATION:"original-home"}},
+                "spec":{"holderIdentity":serde_json::to_string(&allocation).unwrap()}});
+            let (client, pending) = mock(vec![
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    lease,
+                ),
+                get(
+                    "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                    json!(microvm),
+                ),
+            ]);
+            let mut context = context(client);
+            let authority = Arc::new(std::sync::atomic::AtomicU8::new(mode));
+            context.authorization =
+                crate::authz::WorkspaceAuthorization::ControlledFixture(authority.clone());
+            let result = converge(&context, &microvm, context.leader().unwrap()).await;
+            assert!(crate::activity::has_idle_sleep_claim(&result.unwrap()));
+            assert!(pending.lock().unwrap().is_empty());
+            assert_eq!(
+                authority.load(std::sync::atomic::Ordering::SeqCst),
+                11,
+                "committed idle sleep must clear the run intent even during an authorization pause"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_authorization_pause_preserves_run_intent_but_quarantine_still_stops_it()
+     {
+        use crate::slot::runner::SlotStatus;
+        use axum::{
+            Json, Router,
+            routing::{get as route_get, post},
+        };
+        use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+
+        for (mode, expected) in [(10, 10), (12, 11)] {
+            let authority = Arc::new(AtomicU8::new(mode));
+            let sleeps = Arc::new(AtomicUsize::new(0));
+            let mut microvm = agent();
+            microvm.spec.desired_state = MicroVMDesiredState::Sleeping;
+            microvm.status = Some(MicroVMStatus {
+                pod_uid: Some("original-pod".into()),
+                ..Default::default()
+            });
+            let claim = claim_for(&microvm).unwrap();
+            let awake = SlotStatus {
+                identity: crate::slot::SlotIdentity {
+                    pod_uid: "original-pod".into(),
+                    pvc_uid: "original-pvc".into(),
+                    image: "guest-image".into(),
+                    kernel_sha256: "fixture-kernel".into(),
+                    firecracker_version: crate::slot::FIRECRACKER_VERSION.into(),
+                    cpu: "fixture-cpu".into(),
+                },
+                state: SlotState::Awake {
+                    claim: claim.clone(),
+                },
+            };
+            let mut stopped = awake.clone();
+            stopped.state = SlotState::Sleeping {
+                claim: claim.clone(),
+                snapshot: crate::slot::Snapshot { generation: 1 },
+            };
+            let calls = sleeps.clone();
+            let router = Router::new()
+                .route("/slot/fence", post(|| async { axum::http::StatusCode::OK }))
+                .route(
+                    "/slot/status",
+                    route_get(move || {
+                        let status = awake.clone();
+                        async move { Json(status) }
+                    }),
+                )
+                .route(
+                    "/slot/sleep",
+                    post(move |Json(requested): Json<Claim>| {
+                        assert_eq!(requested, claim);
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        let status = stopped.clone();
+                        async move { Json(status) }
+                    }),
+                );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let allocation = claim_for(&microvm).unwrap().allocation();
+            let lease = json!({"apiVersion":"coordination.k8s.io/v1","kind":"Lease",
+                "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod",HOME_UID_ANNOTATION:"original-pvc",HOME_NAME_ANNOTATION:"original-home"}},
+                "spec":{"holderIdentity":serde_json::to_string(&allocation).unwrap()}});
+            let (client, pending) = mock(vec![
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    lease.clone(),
+                ),
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    lease,
+                ),
+                get(
+                    "/api/v1/namespaces/tengri/pods/slot-test",
+                    json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"slot-test","uid":"original-pod"},"status":{"podIP":"127.0.0.1"}}),
+                ),
+                get(
+                    "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                    json!(microvm),
+                ),
+                Exchange {
+                    method: Method::PATCH,
+                    path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test/status",
+                    code: 200,
+                    response: json!(microvm),
+                    body: None,
+                },
+            ]);
+            let mut context = shared_context(client).await;
+            context.identity = WorkloadIdentity::Fixture(port);
+            context.authorization =
+                crate::authz::WorkspaceAuthorization::ControlledFixture(authority.clone());
+            converge(&context, &microvm, context.leader().unwrap())
+                .await
+                .unwrap();
+            server.abort();
+            assert_eq!(
+                sleeps.load(Ordering::SeqCst),
+                1,
+                "denied execution must be stopped"
+            );
+            assert_eq!(
+                authority.load(Ordering::SeqCst),
+                expected,
+                "temporary denial must preserve running intent; quarantine must clear it"
+            );
+            assert!(pending.lock().unwrap().is_empty());
+            if mode == 10 {
+                let mut paused = microvm.clone();
+                let stopped = SlotState::Sleeping {
+                    claim: claim_for(&paused).unwrap(),
+                    snapshot: crate::slot::Snapshot { generation: 1 },
+                };
+                let status = status_for(&paused, &Pod::default(), &stopped, true);
+                assert_eq!(status.phase, MicroVMPhase::Sleeping);
+                assert_eq!(status.conditions[0].reason, "AuthorizationPaused");
+                paused.status = Some(status);
+                authority.store(6, Ordering::SeqCst);
+                let mut resuming = paused.clone();
+                resuming.spec.desired_state = MicroVMDesiredState::Running;
+                let lease = json!({"apiVersion":"coordination.k8s.io/v1","kind":"Lease",
+                    "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod",HOME_UID_ANNOTATION:"original-pvc",HOME_NAME_ANNOTATION:"original-home"}},
+                    "spec":{"holderIdentity":serde_json::to_string(&allocation).unwrap()}});
+                let (client, pending) = mock(vec![
+                    get(
+                        "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                        lease,
+                    ),
+                    Exchange {
+                        method: Method::PATCH,
+                        path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                        code: 200,
+                        response: json!(resuming),
+                        body: None,
+                    },
+                    get(
+                        "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                        json!(resuming),
+                    ),
+                ]);
+                let mut recovered_context = self::context(client);
+                recovered_context.authorization =
+                    crate::authz::WorkspaceAuthorization::ControlledFixture(authority);
+                let recovered = converge(
+                    &recovered_context,
+                    &paused,
+                    recovered_context.leader().unwrap(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(recovered.spec.desired_state, MicroVMDesiredState::Running);
+                assert_eq!(recovered.spec.runtime_epoch, paused.spec.runtime_epoch);
+                assert!(pending.lock().unwrap().is_empty());
+            }
+        }
     }
 
     #[tokio::test]
@@ -2731,9 +2901,9 @@ mod tests {
         let state = SlotState::Awake {
             claim: claim_for(&microvm).unwrap(),
         };
-        let status = status_for(&microvm, &Pod::default(), &state);
+        let status = status_for(&microvm, &Pod::default(), &state, false);
         microvm.status = Some(status.clone());
-        assert_eq!(status_for(&microvm, &Pod::default(), &state), status);
+        assert_eq!(status_for(&microvm, &Pod::default(), &state, false), status);
         let (client, pending) = mock(vec![]);
         assert_eq!(
             patch_status(
@@ -2758,7 +2928,7 @@ mod tests {
         let state = SlotState::Awake {
             claim: claim_for(&microvm).unwrap(),
         };
-        microvm.status = Some(status_for(&microvm, &Pod::default(), &state));
+        microvm.status = Some(status_for(&microvm, &Pod::default(), &state, false));
         let mut unknown = failure_status(
             &microvm,
             &anyhow::Error::from(tonic::Status::unavailable("dependency unavailable")),
@@ -2770,7 +2940,7 @@ mod tests {
             &anyhow::Error::from(tonic::Status::unavailable("dependency unavailable")),
         );
         assert_eq!(repeated, unknown);
-        let recovered = status_for(&microvm, &Pod::default(), &state);
+        let recovered = status_for(&microvm, &Pod::default(), &state, false);
         assert_eq!(recovered.conditions[0].status, "True");
         assert_eq!(recovered.conditions[0].reason, "SnapshotRestored");
         assert_ne!(
@@ -2778,7 +2948,10 @@ mod tests {
             unknown.conditions[0].last_transition_at
         );
         microvm.status = Some(recovered.clone());
-        assert_eq!(status_for(&microvm, &Pod::default(), &state), recovered);
+        assert_eq!(
+            status_for(&microvm, &Pod::default(), &state, false),
+            recovered
+        );
     }
 
     #[tokio::test]
@@ -2808,7 +2981,8 @@ mod tests {
     fn preparing_and_failed_slots_cannot_claim_that_ram_was_released() {
         let microvm = agent();
         assert_eq!(
-            status_for(&microvm, &Pod::default(), &SlotState::Preparing).conditions[0].reason,
+            status_for(&microvm, &Pod::default(), &SlotState::Preparing, false).conditions[0]
+                .reason,
             "SnapshotLifecycleInProgress"
         );
         let failed = status_for(
@@ -2818,6 +2992,7 @@ mod tests {
                 claim: Some(claim_for(&microvm).unwrap()),
                 message: "disk flush failed".into(),
             },
+            false,
         );
         assert_eq!(failed.message.as_deref(), Some("disk flush failed"));
         assert_eq!(failed.conditions[0].message, "disk flush failed");
