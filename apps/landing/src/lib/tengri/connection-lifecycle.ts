@@ -93,7 +93,8 @@ async function reconcile(context: Authority) {
   const renew = snapshot.connections.filter(
     (connection) =>
       connection.enabled &&
-      (!credentialMatchesRuntime(connection, context.binding.generation, snapshot.recoveryGeneration, Date.now()) ||
+      (!connection.credentialActive ||
+        !credentialMatchesRuntime(connection, context.binding.generation, snapshot.recoveryGeneration, Date.now()) ||
         !installationMatches(connection, guest)),
   )
   const catalog = renew.length
@@ -105,10 +106,7 @@ async function reconcile(context: Authority) {
       await removeGuest(context, connection, snapshot.recoveryGeneration)
       continue
     }
-    if (!renew.includes(connection)) {
-      if (!connection.credentialActive) await activate(context, connection.delegationId, guest.proofKeyThumbprint)
-      continue
-    }
+    if (!renew.includes(connection)) continue
     if (!catalog) throw new OfzError(503)
     let selection: ReturnType<typeof savedConnectionOperations>
     try {

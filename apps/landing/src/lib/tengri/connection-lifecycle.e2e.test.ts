@@ -43,11 +43,13 @@ let runtime = firstRuntime
 let ready = true
 let permitted = true
 let wrongAcknowledgement = false
+let removalUnavailable = false
 let duringConfigure: (() => Promise<unknown>) | undefined
 let installed: RelayIdentity['connections'] = []
 const events: { name: string; body: Record<string, unknown> }[] = []
 const completed = new Set<string>()
 const revocations = new Map<string, bigint>()
+const revokedDelegations = new Set<string>()
 const decision = () =>
   create(PlatformDecisionSchema, { allowed: true, auditReceiptId: randomUUID(), recoveryGeneration: BigInt(3) })
 
@@ -101,6 +103,7 @@ void mock.module('./ofz', () => ({
         binding: { service: 'tengri', id: workspace, generation: runtime },
         proofKeyThumbprint: 'a'.repeat(43),
       })
+      if (connection.delegationId) revokedDelegations.add(connection.delegationId)
       connection.delegationId = randomUUID()
       connection.credentialGeneration = ++generation
       connection.credentialBinding = create(PlatformConnectionSchema, {
@@ -117,7 +120,12 @@ void mock.module('./ofz', () => ({
       }
     }
     if (method.name === 'ActivatePlatformDelegation') {
-      if (!connection.enabled || body.delegationId !== connection.delegationId) throw new OfzError(403)
+      if (
+        !connection.enabled ||
+        body.delegationId !== connection.delegationId ||
+        revokedDelegations.has(String(body.delegationId))
+      )
+        throw new OfzError(403)
       expect(installed.some((entry) => entry.configured && entry.delegationId === body.delegationId)).toBe(true)
       connection.credentialActive = true
       generation += BigInt(1)
@@ -136,6 +144,7 @@ void mock.module('./ofz', () => ({
       return { connectionId, credentialGeneration: generation, decision: decision() }
     }
     if (method.name === 'RevokePlatformDelegation') {
+      revokedDelegations.add(z.uuid().parse(body.delegationId))
       if (body.delegationId === connection.delegationId) connection.credentialActive = false
       generation += BigInt(1)
       return { decision: decision() }
@@ -176,6 +185,7 @@ void mock.module('./grpc', () => ({
       return { ...entry, configured: true, proofKeyThumbprint: (wrongAcknowledgement ? 'x' : 'a').repeat(43) }
     }
     if (action === 'remove') {
+      if (removalUnavailable) throw new Error('Fixture guest disconnected')
       installed = installed.filter(
         (entry) =>
           entry.connectionId !== body.connectionId || (body.delegationId && entry.delegationId !== body.delegationId),
@@ -209,11 +219,13 @@ beforeEach(() => {
   ready = true
   permitted = true
   wrongAcknowledgement = false
+  removalUnavailable = false
   duringConfigure = undefined
   installed = []
   events.length = 0
   completed.clear()
   revocations.clear()
+  revokedDelegations.clear()
   process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
 })
 
@@ -263,18 +275,16 @@ test('credential issuance cannot outlive the current human idle deadline', async
   )
 })
 
-test('recovers a completed guest installation after a gateway interruption without resending the credential', async () => {
+test('replaces an inactive installation after gateway interruption with a freshly acknowledged credential', async () => {
   await saveConnection(identity, save())
   if (!connection) throw new Error('Missing fixture connection')
+  const inactive = connection.delegationId
   connection.credentialActive = false
   events.length = 0
   await reconcileConnections(identity, 'microvm-fixture')
-  expect(events.map((event) => event.name)).toEqual([
-    'ListPlatformConnections',
-    'identity',
-    'ActivatePlatformDelegation',
-    'ListPlatformConnections',
-  ])
+  expect(events.map((event) => event.name)).toContain('CreatePlatformDelegation')
+  expect(events.map((event) => event.name)).toContain('configure')
+  expect(connection.delegationId).not.toBe(inactive)
   expect(connection.credentialActive).toBe(true)
 })
 
@@ -329,6 +339,27 @@ test('renewal needs fresh authority and offline revocation never needs the guest
   ready = true
   await reconcileConnections(identity, 'microvm-fixture')
   expect(installed).toEqual([])
+})
+
+test('replaces a revoked installed credential after failed guest cleanup', async () => {
+  wrongAcknowledgement = true
+  removalUnavailable = true
+  await expect(saveConnection(identity, save())).rejects.toThrow()
+  if (!connection) throw new Error('Missing fixture connection')
+  const revoked = connection.delegationId
+  expect(revokedDelegations.has(revoked)).toBe(true)
+  expect(installed[0]?.delegationId).toBe(revoked)
+  wrongAcknowledgement = false
+  removalUnavailable = false
+  events.length = 0
+  await reconcileConnections(identity, 'microvm-fixture')
+  expect(connection.delegationId).not.toBe(revoked)
+  expect(connection.credentialActive).toBe(true)
+  expect(
+    events
+      .filter((event) => event.name === 'ActivatePlatformDelegation')
+      .every((event) => event.body.delegationId !== revoked),
+  ).toBe(true)
 })
 
 test('a replayed disconnect receipt cannot claim current revocation after an explicit reconnect', async () => {

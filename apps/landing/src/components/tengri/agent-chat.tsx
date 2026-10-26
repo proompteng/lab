@@ -292,7 +292,12 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const responsePending = Boolean(activeTurnId || (submittingHere && !submittedTurnCompleted) || runPending)
   const readingImages = images.some((image) => image.input === null)
   const canChangeConversation = !readingImages
-  const renewConnections = runPending && (run?.state.phase === 'running' || run?.state.phase === 'recovering')
+  const renewConnections = [run, workspaceRun].some(
+    (candidate) =>
+      candidate?.agentId === agentId &&
+      (candidate.state.phase === 'running' || candidate.state.phase === 'recovering') &&
+      !completedTurns.current.has(candidate.state.turnId),
+  )
   useEffect(() => {
     if (!renewConnections) return
     const controller = new AbortController()

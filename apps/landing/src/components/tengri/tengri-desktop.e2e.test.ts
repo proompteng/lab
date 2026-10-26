@@ -10227,8 +10227,9 @@ test('administers catalog-defined service policies and preserves the exact pendi
   expect(accessibility.violations).toEqual([])
 })
 
-for (const activeRun of [false, true]) {
-  test(`renews connections during active work without an idle renewal loop: ${activeRun}`, async ({ page }) => {
+for (const mode of ['idle', 'current', 'other'] as const) {
+  test(`renews connections during active work without an idle renewal loop: ${mode}`, async ({ page }) => {
+    const activeRun = mode !== 'idle'
     await page.clock.install({ time: new Date('2026-08-26T12:34:00.000Z') })
     await mockTengri(
       page,
@@ -10261,6 +10262,11 @@ for (const activeRun of [false, true]) {
     await page.goto('/')
     await expect.poll(() => reconciliations).toBeGreaterThan(0)
     if (activeRun) await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeVisible()
+    if (mode === 'other') {
+      const chat = page.getByRole('region', { name: 'Tengri window', exact: true })
+      await chat.getByRole('button', { name: 'New conversation', exact: true }).click()
+      await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+    }
     await page.clock.runFor(1_000)
     const baseline = reconciliations
     await page.clock.fastForward(61_000)
