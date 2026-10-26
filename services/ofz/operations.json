@@ -1175,6 +1175,12 @@
   },
   {
     "surface": "ofz_platform",
+    "operation": "GetPlatformExecution",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
+  },
+  {
+    "surface": "ofz_platform",
     "operation": "WritePolicyRelationships",
     "action": "ACTION_POLICY_COMMAND",
     "dispatch": "Registered service, scoped platform policy, current authority and durable audit"
@@ -1206,6 +1212,12 @@
   {
     "surface": "relay",
     "operation": "Execute",
+    "action": "ACTION_POLICY_CHECK",
+    "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
+  },
+  {
+    "surface": "relay",
+    "operation": "GetExecution",
     "action": "ACTION_POLICY_CHECK",
     "dispatch": "Registered client; Execute normalizes adapter resources and obtains fresh Ofz platform authorization"
   },

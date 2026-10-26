@@ -82,7 +82,7 @@ const digits = [
   '111101111001111',
 ]
 
-export const renderNativeCandlesPng = (bars: readonly VisualBar[]): Buffer => {
+const renderCandlesPng = (bars: readonly VisualBar[], minimumVolume: number): Buffer => {
   const first = bars[0]
   const last = bars.at(-1)
   if (first === undefined || last === undefined) throw new RangeError('Cannot render empty OHLCV')
@@ -117,7 +117,7 @@ export const renderNativeCandlesPng = (bars: readonly VisualBar[]): Buffer => {
   const range = maximum - minimum || maximum * 0.001
   const timeRange = first.minuteBeforeWindowEnd - last.minuteBeforeWindowEnd || 1
   const yFor = (price: number) => 16 + Math.round(((maximum - price) / range) * 236)
-  const volumeMax = Math.max(1, ...bars.map((bar) => bar.volume))
+  const volumeMax = Math.max(minimumVolume, ...bars.map((bar) => bar.volume)) || 1
   const ink: readonly [number, number, number] = [83, 94, 103]
   const up: readonly [number, number, number] = [22, 136, 109]
   const down: readonly [number, number, number] = [190, 64, 69]
@@ -151,21 +151,29 @@ export const renderNativeCandlesPng = (bars: readonly VisualBar[]): Buffer => {
   ])
 }
 
+export const renderNativeCandlesPng = (bars: readonly VisualBar[]): Buffer => renderCandlesPng(bars, 0)
+
+enum VolumeScale {
+  Relative = 'RELATIVE',
+  RetainedWholeUnit = 'RETAINED_WHOLE_UNIT',
+}
+
 const chartImages = new Map<string, { readonly pngHash: string; readonly image: string }>()
-const chartImage = (barsHash: string, bars: readonly VisualBar[]) => {
-  const existing = chartImages.get(barsHash)
+const chartImage = (barsHash: string, bars: readonly VisualBar[], volumeScale: VolumeScale) => {
+  const key = `${volumeScale}:${barsHash}`
+  const existing = chartImages.get(key)
   if (existing !== undefined) return existing
-  const png = renderNativeCandlesPng(bars)
+  const png = renderCandlesPng(bars, volumeScale === VolumeScale.RetainedWholeUnit ? 1 : 0)
   const rendered = { pngHash: sha256(png), image: `data:image/png;base64,${png.toString('base64')}` }
   if (chartImages.size >= 64) {
     const oldest = chartImages.keys().next()
     if (oldest.done === false) chartImages.delete(oldest.value)
   }
-  chartImages.set(barsHash, rendered)
+  chartImages.set(key, rendered)
   return rendered
 }
 
-export const makeNativeChartEvidence = (input: unknown) =>
+const makeChartEvidence = (input: unknown, volumeScale: VolumeScale) =>
   decodeChartSource(input).pipe(
     Result.flatMap((source) =>
       Result.gen(function* () {
@@ -183,11 +191,16 @@ export const makeNativeChartEvidence = (input: unknown) =>
           bars: identifiedBars,
           barCount: bars.length,
           barsHash,
-          ...chartImage(barsHash, bars),
+          ...chartImage(barsHash, bars, volumeScale),
           provenance: 'DERIVED_FROM_SAME_NATIVE_OHLCV' as const,
         }
       }),
     ),
   )
+
+export const makeNativeChartEvidence = (input: unknown) => makeChartEvidence(input, VolumeScale.Relative)
+
+// Financial readers must reproduce the exact image used by retained v1 input receipts.
+export const makeRetainedChartEvidenceV1 = (input: unknown) => makeChartEvidence(input, VolumeScale.RetainedWholeUnit)
 
 export type NativeChartEvidence = Result.Result.Success<ReturnType<typeof makeNativeChartEvidence>>
