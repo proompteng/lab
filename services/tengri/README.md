@@ -233,10 +233,11 @@ legacy guest SPIRE attestation, the `nanoagent` ServiceAccount, token/registrati
 publication, and the old guest network path after the final old guest and its storage writer are fenced. Slots use only
 the host supervisor registration and private vsock credential.
 
-The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
-is exactly `true`. Keep it false until the authorized cutover has removed the old workspaces and homes and the new
-authority dependencies are ready for the immutable image pair. The owner chose fresh workspaces for this cutover;
-no retained-data import or migration rehearsal is required. Kargo's existing automatic promotion policy remains in place.
+The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases unless the repository variable
+`TENGRI_PREPARED_SLOT_GUEST_API_VERSION` matches the qualified source's `GUEST_API_PROTOCOL_VERSION`. Keep it unset
+while old writers are fenced and retained homes are enrolled in the approved guest image. A prior protocol's
+enrollment cannot release a new protocol. Follow the [retained-home replacement procedure](../../docs/tengri/operations.md#replacing-a-claimed-guest-while-retaining-its-home)
+for incompatible guest upgrades. Kargo's existing automatic promotion policy remains in place.
 Proompteng's resume API uses the streaming controller contract, so its BFF must join the same approved maintenance
 cutover. Restore lifecycle traffic only after both applications run the reviewed source and conversation recovery passes.
 
@@ -275,6 +276,11 @@ id-less requests instead of generating a compatibility identity or negotiating w
 
 Pending Codex device logins are guest-owned. A reconnecting desktop reads the active attempt from Nanoagent and keeps
 the same verification code and original expiry instead of silently starting and invalidating another attempt.
+
+Claimed slots retain their guest image when the controller and supervisor roll. An incompatible guest API returns
+`FAILED_PRECONDITION` with `x-tengri-error-code: runtime_upgrade_required`; the BFF and browser preserve this as HTTP
+412 and `runtime_upgrade_required`. Complete the [retained-home runtime replacement](../../docs/tengri/operations.md#replacing-a-claimed-guest-while-retaining-its-home)
+before releasing an incompatible image cohort. Retrying or resuming the old snapshot does not upgrade its guest image.
 
 Workspace file reads return bounded protobuf bytes and a required strong SHA-256 revision. Tengri verifies that the
 revision matches the content and rejects missing, malformed, or mismatched revisions. Writes require a lowercase
@@ -408,7 +414,7 @@ supervisor SQL restrictions and protected cleanup. `bash services/ofz/test-contr
 reservation/runtime reads and the two-stage removal contract. The container-based KVM acceptance fixture has been
 removed. Source checks do not establish production authority or fleet acceptance.
 
-These source contracts are held behind `TENGRI_PREPARED_SLOT_CUTOVER_READY=false` until the coordinated release.
+These source contracts remain held until `TENGRI_PREPARED_SLOT_GUEST_API_VERSION` records the enrolled source protocol.
 See [implementation status](../../docs/tengri/ofz-implementation-status.md) for the remaining production gates.
 
 ## Lifecycle settings and delivery
@@ -520,6 +526,12 @@ a newly signed attempt can use the same operation UUID. Accepted workflows use p
 records the exact run binding, so subsequent key rotation does not strand accepted work. A changed payload under an existing run ID fails. Each
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
+
+Durable runs retain the admitted actor, session, grant, immutable workspace UID and recovery generation. Each worker
+RPC refreshes its deadline and lets workspace authorization bind the current runtime epoch before obtaining fresh
+Ofz authority. Snapshot sleep and resume can therefore change the runtime epoch without stranding completion
+observation. A replaced workspace, expired session or grant, revocation or changed recovery generation still denies
+access. Uncertain dispatch is reconciled through its exact native operation receipt and never resends the turn.
 
 Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
 transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection

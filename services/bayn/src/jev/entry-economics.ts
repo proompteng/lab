@@ -9,9 +9,8 @@ import { quantityScale } from '../quantity'
 import { calculateSessionFees, receivedCryptoFee } from '../strategy/execution-model/fees'
 import { JevContractError } from './contract'
 import { maximumAllocatedBuyQuantities } from './entry-sizing'
-import { jevBreakEvenExitBid, jevBreakEvenExitLimitPrice, jevExitLimitValue } from './liquidation-economics'
+import { jevBreakEvenExitBid, jevBreakEvenExitLimitPrice } from './liquidation-economics'
 import type { JevProtocol } from './protocol'
-import type { JevFundedExitPlan, JevStrategyExitPlan } from './strategy-exit-plan'
 
 export const jevMaximumEntryAskMicros = (protocol: JevProtocol, observedAsk: bigint): bigint =>
   (observedAsk * BigInt(10_000 + protocol.maximumEntryQuoteDriftBps)) / 10_000n
@@ -98,31 +97,3 @@ export const jevEntryEconomics = (input: {
   )
 
 export type JevEntryEconomics = NonNullable<Result.Result.Success<ReturnType<typeof jevEntryEconomics>>>
-
-export const fundJevTradePlan = (input: {
-  readonly protocol: JevProtocol
-  readonly economics: JevEntryEconomics
-  readonly levels: JevStrategyExitPlan
-}) =>
-  Result.gen(function* () {
-    const { protocol, economics, levels } = input
-    const liquidation = { protocol, symbol: levels.symbol, quantityAtoms: BigInt(economics.receivedQuantityAtoms) }
-    const stop = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: BigInt(levels.stopLimitPriceMicros) })
-    const target = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: BigInt(levels.profitLimitPriceMicros) })
-    const acquisition = BigInt(economics.acquisitionCostMicros)
-    if (
-      stop.conservativeNetMicros <= 0n ||
-      stop.conservativeNetMicros >= acquisition ||
-      target.conservativeNetMicros <= acquisition
-    )
-      return null
-    const exitPlan: JevFundedExitPlan = {
-      schemaVersion: 'bayn.jev-funded-exit-plan.v3',
-      levels,
-      maximumQuantityAtoms: economics.maximumQuantityAtoms,
-      acquisitionCostMicros: economics.acquisitionCostMicros,
-      estimatedStopNetMicros: stop.conservativeNetMicros.toString(),
-      estimatedTargetNetMicros: target.conservativeNetMicros.toString(),
-    }
-    return { maximumTargetWeight: economics.maximumTargetWeight, exitPlan }
-  })

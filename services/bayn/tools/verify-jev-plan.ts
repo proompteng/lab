@@ -3,7 +3,8 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../src/hash'
 import { JevEntryTargetSchema } from '../src/jev/decision'
-import { selectedJevTradePlan } from '../src/jev/trade-plan-choices'
+import { selectSupportedEntryProposal } from '../src/jev/entry-questions'
+import { entryProposalExitPlan } from '../src/jev/strategy-exit-plan'
 import { JevCandidatePlanStatus, JevCandidateResultStatus } from '../src/jev/batch'
 import { JevOutcome } from '../src/jev/evidence'
 import { Sha256Schema } from '../src/schemas'
@@ -26,19 +27,27 @@ export const verifyJevPlan = (input: unknown) => {
     if (
       request?.status !== JevCandidatePlanStatus.Requested ||
       result?.status !== JevCandidateResultStatus.Resolved ||
-      result.receipt?.outcome.status !== JevOutcome.Received
+      result.receipt?.outcome.status !== JevOutcome.Completed
     )
-      throw new Error('Selected entry lacks the sealed request and received model answer')
+      throw new Error('Selected entry lacks the sealed source request and completed provider evidence')
+    const completion = result.receipt.outcome.completion
+    const disposition = completion.handoff.disposition
+    if (disposition.status !== 'READY' || completion.jev.status !== 'RECEIVED')
+      throw new Error('Selected entry has no complete sequential provider handoff')
     const selected = Result.getOrThrow(
-      selectedJevTradePlan(request.request.request, result.receipt.outcome.inference.response),
-    )
+      selectSupportedEntryProposal({
+        proposals: disposition.evaluation.proposals,
+        response: completion.jev.inference.response,
+      }),
+    ).selected
     const bound = target.exitPolicy.plans[symbol]
     if (
       selected === null ||
       bound === undefined ||
-      Result.getOrThrow(canonicalHashV1Result(selected)) !== Result.getOrThrow(canonicalHashV1Result(bound))
+      Result.getOrThrow(canonicalHashV1Result(entryProposalExitPlan(selected.proposal))) !==
+        Result.getOrThrow(canonicalHashV1Result(bound))
     )
-      throw new Error('Bound protection differs from the complete model-selected plan')
+      throw new Error('Bound protection differs from the source-anchored proposal selected by code')
   }
 
   return {
@@ -54,9 +63,14 @@ export const verifyJevPlan = (input: unknown) => {
   }
 }
 
+const usage = 'Usage: node dist/research/verify-jev-plan.js <private-decision.json> | --help'
+
 if (import.meta.main) {
-  const path = process.argv[2]
-  if (path === undefined) throw new Error('Usage: bun tools/verify-jev-plan.ts <private-decision.json>')
-  const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
-  console.log(JSON.stringify(verifyJevPlan(raw)))
+  if (process.argv.length === 3 && process.argv[2] === '--help') process.stdout.write(`${usage}\n`)
+  else {
+    const path = process.argv[2]
+    if (path === undefined) throw new Error(usage)
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    console.log(JSON.stringify(verifyJevPlan(raw)))
+  }
 }

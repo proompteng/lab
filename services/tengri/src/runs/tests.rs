@@ -1175,3 +1175,94 @@ async fn a_dispatch_retry_cannot_report_no_effects_from_unavailable_authority() 
         State::NeedsReconciliation { .. }
     ));
 }
+
+#[tokio::test]
+async fn snapshot_resume_rebinds_the_run_pin_to_current_authority() {
+    let service = fixture();
+    let input = input();
+    let mut admitted = principal();
+    admitted.context.runtime_epoch = "55555555-5555-4555-8555-555555555555".into();
+
+    service.pin_run(&admitted, &input, true).await.unwrap();
+
+    let agents: kube::Api<crate::crd::MicroVM> =
+        kube::Api::namespaced(service.client.clone(), "tengri");
+    let agent = agents.get(&input.agent_id).await.unwrap();
+    assert_eq!(
+        agent
+            .annotations()
+            .get(crate::activity::ACTIVE_RUN_ANNOTATION),
+        Some(&input.id)
+    );
+    assert_ne!(agent.spec.runtime_epoch, admitted.context.runtime_epoch);
+}
+
+#[tokio::test]
+async fn snapshot_resume_rechecks_authority_without_losing_the_accepted_turn() {
+    for replaced_workspace in [false, true] {
+        let service = fixture();
+        let mut admitted = principal();
+        admitted.context.runtime_epoch = "55555555-5555-4555-8555-555555555555".into();
+        if replaced_workspace {
+            admitted.context.workspace_uid = "66666666-6666-4666-8666-666666666666".into();
+        }
+        let observed = service
+            .observe_durable_run(
+                &admitted,
+                &input(),
+                &State::Running {
+                    turn_id: "preserved-turn".into(),
+                },
+            )
+            .await;
+        if replaced_workspace {
+            assert!(matches!(observed, State::NeedsReconciliation { .. }));
+        } else {
+            assert_eq!(
+                observed,
+                State::Recovering {
+                    turn_id: "preserved-turn".into(),
+                    reason: "waiting for the authorized guest".into(),
+                }
+            );
+        }
+        assert_eq!(
+            admitted.context.runtime_epoch,
+            "55555555-5555-4555-8555-555555555555"
+        );
+    }
+}
+
+#[tokio::test]
+async fn refreshed_run_context_still_requires_current_ofz_authority() {
+    let mut admitted = principal();
+    admitted.context.grant_id = Uuid::new_v4().to_string();
+    let original = admitted.clone();
+    admitted.refresh_run_context().unwrap();
+    assert_eq!(admitted.context.actor, original.context.actor);
+    assert_eq!(admitted.context.session_id, original.context.session_id);
+    assert_eq!(admitted.context.grant_id, original.context.grant_id);
+    assert_eq!(
+        admitted.context.workspace_uid,
+        original.context.workspace_uid
+    );
+    assert_eq!(admitted.recovery_generation, original.recovery_generation);
+
+    let authorization = crate::authz::tests::OfzFixture::new().await;
+    authorization
+        .mode
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let access = authorization
+        .authorization
+        .access(
+            &admitted,
+            &admitted.context.workspace_uid,
+            "55555555-5555-4555-8555-555555555555",
+            "accepted-run",
+        )
+        .unwrap();
+    assert_eq!(
+        access.require().await.unwrap_err().code(),
+        tonic::Code::PermissionDenied
+    );
+}

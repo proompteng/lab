@@ -14,8 +14,9 @@ import {
 } from './intraday-replay/control-study'
 import { prepareBacktest } from './intraday-replay/backtest'
 import { JevClient, JevClientLive } from './jev/client'
+import { DecisionsClient, DecisionsClientLive } from './jev/decisions'
 import { JevHttpClientLive } from './jev/http'
-import { makeBoundedReplayJevProvider } from './intraday-replay/jev-timing'
+import { makeReplayInferenceBudget } from './intraday-replay/inference-timing'
 import { validateBacktestSourceReceipt } from './intraday-replay/source'
 
 const usage =
@@ -122,18 +123,20 @@ export const runControlStudyCommand = (rawArgs: readonly string[]) =>
       const prepared = yield* Effect.fromResult(prepareBacktest(input.backtest, receipt))
       const providerClock = yield* Clock.clockWith(Effect.succeed)
       const providerContext = yield* Layer.build(
-        JevClientLive(yield* Config.Redacted('BAYN_JEV_API_KEY'), prepared.protocol.inferenceValidityMs).pipe(
-          Layer.provide(JevHttpClientLive(yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY'))),
-        ),
+        Layer.mergeAll(
+          JevClientLive(yield* Config.Redacted('BAYN_JEV_API_KEY'), prepared.protocol.inferenceValidityMs),
+          DecisionsClientLive(yield* Config.Redacted('BAYN_OPENAI_API_KEY'), prepared.protocol.inferenceValidityMs),
+        ).pipe(Layer.provide(JevHttpClientLive(yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY')))),
       )
       management = {
         mode: input.management,
         evidenceDirectory,
         providerClock,
-        provider: makeBoundedReplayJevProvider(
-          Context.get(providerContext, JevClient),
-          prepared.input.inference.maximumCalls,
-        ).provider,
+        providers: {
+          jev: Context.get(providerContext, JevClient),
+          chart: Context.get(providerContext, DecisionsClient),
+        },
+        budget: makeReplayInferenceBudget(prepared.input.inference.maximumCalls),
       }
     } else {
       if (evidenceDirectory !== undefined)
