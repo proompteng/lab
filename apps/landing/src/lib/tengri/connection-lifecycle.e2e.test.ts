@@ -95,6 +95,7 @@ void mock.module('./ofz', () => ({
     }
     if (!connection) throw new OfzError(404)
     if (method.name === 'CreatePlatformDelegation') {
+      if (precedingConnections.some((entry) => entry.id === body.connectionId)) throw new OfzError(403)
       if (!permitted || !connection.enabled || body.expectedConnectionVersion !== connection.version)
         throw new OfzError(403)
       expect(body).toMatchObject({
@@ -327,6 +328,35 @@ test('replaces an inactive installation after gateway interruption with a freshl
   expect(connection.credentialActive).toBe(true)
 })
 
+test('denied connection permissions do not prevent a later authorized renewal', async () => {
+  await saveConnection(identity, save())
+  if (!connection) throw new Error('Missing fixture connection')
+  connection.expiresAtUnixMs = BigInt(Date.now() - 1)
+  connection.credentialActive = false
+  const denied = clone(PlatformConnectionSchema, connection)
+  denied.id = randomUUID()
+  denied.clientReference = workspace + '/denied'
+  precedingConnections = [denied]
+  const deniedOperation = clone(ConnectorOperationSchema, operation)
+  deniedOperation.connectorId = 'denied'
+  catalog.push(deniedOperation)
+  events.length = 0
+  let failure: unknown
+  try {
+    await reconcileConnections(identity, 'microvm-fixture')
+  } catch (error) {
+    failure = error
+  }
+  expect(connection.credentialActive).toBe(true)
+  expect(denied.credentialActive).toBe(false)
+  expect(events.filter((event) => event.name === 'configure').map((event) => event.body.connectionId)).toEqual([
+    connectionId,
+  ])
+  expect(failure).toMatchObject({ status: 403 })
+  if (!(failure instanceof Error)) throw new Error('Missing permission denial')
+  expect(failure.message).toContain(denied.id)
+})
+
 test('disconnect wins against a delayed installation and a replayed original save', async () => {
   const request = save()
   duringConfigure = disconnect
@@ -339,6 +369,29 @@ test('disconnect wins against a delayed installation and a replayed original sav
   expect(replayed.connections[0]?.enabled).toBe(false)
   expect(events.some((event) => event.name === 'CreatePlatformDelegation')).toBe(false)
   expect(events.some((event) => event.name === 'configure')).toBe(false)
+})
+
+test('failed cleanup of a disconnected connection does not stop another renewal or expose private errors', async () => {
+  await saveConnection(identity, save())
+  if (!connection) throw new Error('Missing fixture connection')
+  connection.expiresAtUnixMs = BigInt(Date.now() - 1)
+  connection.credentialActive = false
+  const disconnected = clone(PlatformConnectionSchema, connection)
+  disconnected.id = randomUUID()
+  disconnected.enabled = false
+  precedingConnections = [disconnected]
+  removalUnavailable = true
+  let failure: unknown
+  try {
+    await reconcileConnections(identity, 'microvm-fixture')
+  } catch (error) {
+    failure = error
+  }
+  expect(connection.credentialActive).toBe(true)
+  expect(failure).toMatchObject({ status: 502 })
+  if (!(failure instanceof Error)) throw new Error('Missing cleanup failure')
+  expect(failure.message).toContain(disconnected.id)
+  expect(failure.message).not.toContain('Fixture guest disconnected')
 })
 
 test('mismatched acknowledgement revokes the child and cleans only its original generation', async () => {

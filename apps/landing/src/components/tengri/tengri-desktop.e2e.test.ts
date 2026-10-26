@@ -10346,7 +10346,7 @@ test('administers catalog-defined service policies and preserves the exact pendi
   expect(accessibility.violations).toEqual([])
 })
 
-for (const mode of ['idle', 'current', 'other'] as const) {
+for (const mode of ['idle', 'current', 'other', 'closed'] as const) {
   test(`renews connections during active work without an idle renewal loop: ${mode}`, async ({ page }) => {
     const activeRun = mode !== 'idle'
     await page.clock.install({ time: new Date('2026-08-26T12:34:00.000Z') })
@@ -10385,6 +10385,10 @@ for (const mode of ['idle', 'current', 'other'] as const) {
       const chat = page.getByRole('region', { name: 'Tengri window', exact: true })
       await chat.getByRole('button', { name: 'New conversation', exact: true }).click()
       await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+    }
+    if (mode === 'closed') {
+      await page.getByRole('button', { name: 'Close Tengri', exact: true }).click()
+      await expect(page.getByRole('region', { name: 'Tengri window', exact: true })).toHaveCount(0)
     }
     await page.clock.runFor(1_000)
     const baseline = reconciliations

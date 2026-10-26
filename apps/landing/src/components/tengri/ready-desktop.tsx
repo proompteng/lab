@@ -15,6 +15,8 @@ import {
 } from 'react'
 
 import { signOutTengri } from '@/lib/tengri/auth-client'
+import { reportBrowserFailure } from '@/lib/observability/client'
+import type { TengriCodexRun } from '@/lib/tengri/codex-run'
 import { renewWorkspaceConnections } from '@/lib/tengri/connection-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
 import {
@@ -259,8 +261,33 @@ export function ReadyDesktop({
   useEffect(() => {
     if (busyAction !== null) return
     const controller = new AbortController()
-    void renewWorkspaceConnections(agent.id, controller.signal)
-    return () => controller.abort()
+    let pending = true
+    void renewWorkspaceConnections(agent.id, controller.signal).finally(() => {
+      pending = false
+    })
+    const renewActive = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const active = await runTengriAction<TengriCodexRun | null>(
+          { action: 'active-codex-run', agentId: agent.id },
+          controller.signal,
+        )
+        if (controller.signal.aborted) return
+        if (active && active.agentId !== agent.id) throw new Error('Active run belongs to another workspace')
+        if (active && (active.state.phase === 'running' || active.state.phase === 'recovering'))
+          await renewWorkspaceConnections(agent.id, controller.signal)
+      } catch {
+        if (!controller.signal.aborted) reportBrowserFailure('tengri.connection-renewal')
+      } finally {
+        pending = false
+      }
+    }
+    const timer = window.setInterval(() => void renewActive(), 60_000)
+    return () => {
+      controller.abort()
+      window.clearInterval(timer)
+    }
   }, [agent.id, agent.runtimeEpoch, busyAction])
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)

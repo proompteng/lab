@@ -12,9 +12,10 @@ import {
   savedConnectionOperations,
   selectConnectionScope,
   type SaveConnection,
+  type RelayIdentity,
 } from './connections'
 import { PlatformAuthorizationService, type PlatformConnection } from './generated/proompteng/authz/v1/platform_pb'
-import { RelayService } from './generated/proompteng/relay/v1/relay_pb'
+import { RelayService, type ConnectorOperation } from './generated/proompteng/relay/v1/relay_pb'
 import { connectorAgent, getAgent, TengriUnavailableError } from './grpc'
 import { ofzCall, OfzError } from './ofz'
 import { relayCall } from '../platform/relay'
@@ -100,102 +101,123 @@ async function reconcile(context: Authority) {
   const catalog = renew.length
     ? await relayCall(RelayService.method.listOperations, { clientService: 'tengri-web' }, context.signal)
     : undefined
-  const unavailable: string[] = []
+  const failures: { connectionId: string; error: unknown }[] = []
   for (const connection of snapshot.connections) {
     context.signal?.throwIfAborted()
-    if (!connection.enabled) {
-      await removeGuest(context, connection, snapshot.recoveryGeneration)
-      continue
-    }
-    if (!renew.includes(connection)) continue
-    if (!catalog) throw new OfzError(503)
-    let selection: ReturnType<typeof savedConnectionOperations>
     try {
-      selection = savedConnectionOperations(catalog.operations, connection, context.agent.uid)
-    } catch {
-      unavailable.push(connection.id)
-      continue
-    }
-    const expiresAtUnixMs = [
-      context.identity.session.expiresAtUnixMs,
-      context.identity.session.idleDeadlineUnixMs,
-      BigInt(Date.now() + 900_000),
-    ].reduce((earlier, limit) => (earlier < limit ? earlier : limit))
-    const issued = await ofzCall(
-      PlatformAuthorizationService.method.createPlatformDelegation,
-      {
-        operationId: randomUUID(),
-        issuer: context.issuer,
-        clientService: 'tengri-web',
-        agentId: guest.agentId,
-        connectionId: connection.id,
-        expectedConnectionVersion: connection.version,
-        actions: connection.actions,
-        resources: connection.resources,
-        proofKeyThumbprint: guest.proofKeyThumbprint,
-        expiresAtUnixMs,
-        binding: context.binding,
-      },
-      context.signal,
-    )
-    try {
-      if (!issued.credential || !issued.decision || !issued.credentialGeneration) throw new OfzError(409)
-      const recoveryGeneration = String(issued.decision.recoveryGeneration)
-      const credentialGeneration = String(issued.credentialGeneration)
-      const acknowledgement = relayAcknowledgementSchema.safeParse(
-        await connectorAgent(context.identity, context.agent.id, 'configure', {
-          connectionId: connection.id,
-          recoveryGeneration,
-          credentialGeneration,
-          delegationId: issued.delegationId,
-          connectorId: selection.connectorId,
-          clientService: 'tengri-web',
-          binding: context.binding,
-          endpoint: context.endpoint,
-          credential: issued.credential,
-          operations: selection.operations.map((operation) => ({
-            name: operation.name,
-            description: operation.description,
-            inputSchema: JSON.parse(new TextDecoder().decode(operation.inputSchemaJson)),
-            readOnly: true,
-          })),
-        }),
-      )
-      if (!acknowledgement.success)
-        throw new TengriUnavailableError('The workspace did not confirm the connection.', 502)
-      const acknowledged = acknowledgement.data
-      if (
-        acknowledged.connectionId !== connection.id ||
-        acknowledged.delegationId !== issued.delegationId ||
-        acknowledged.proofKeyThumbprint !== guest.proofKeyThumbprint ||
-        acknowledged.recoveryGeneration !== recoveryGeneration ||
-        acknowledged.credentialGeneration !== credentialGeneration
-      )
-        throw new OfzError(409)
-      await activate(context, issued.delegationId, guest.proofKeyThumbprint)
+      if (!connection.enabled) await removeGuest(context, connection, snapshot.recoveryGeneration)
+      else if (renew.includes(connection)) {
+        if (!catalog) throw new OfzError(503)
+        await renewConnection(context, connection, guest, catalog.operations)
+      }
     } catch (error) {
-      // Cleanup uses this issuance's generation so it cannot fence out a later successful install.
-      await ofzCall(PlatformAuthorizationService.method.revokePlatformDelegation, {
-        operationId: randomUUID(),
-        issuer: context.issuer,
-        delegationId: issued.delegationId,
-      })
-      if (issued.decision && issued.credentialGeneration)
-        await connectorAgent(context.identity, context.agent.id, 'remove', {
-          connectionId: connection.id,
-          delegationId: issued.delegationId,
-          recoveryGeneration: String(issued.decision.recoveryGeneration),
-          credentialGeneration: String(issued.credentialGeneration),
-        })
-      throw error
+      context.signal?.throwIfAborted()
+      failures.push({ connectionId: connection.id, error })
     }
   }
-  if (unavailable.length)
-    throw new TengriUnavailableError(
-      `Saved scopes are unavailable for connections ${unavailable.join(', ')}. Review these connections before changing them.`,
-      409,
-    )
+  const [first] = failures
+  if (first) {
+    const message = failures
+      .map(
+        ({ connectionId, error }) =>
+          `${connectionId}: ${error instanceof OfzError || error instanceof TengriUnavailableError ? error.message : 'Connection renewal could not be confirmed.'}`,
+      )
+      .join(' ')
+    if (first.error instanceof OfzError || first.error instanceof TengriUnavailableError) {
+      first.error.message = message
+      throw first.error
+    }
+    const error = new TengriUnavailableError(message, 502)
+    error.cause = first.error
+    throw error
+  }
   return list(context)
+}
+
+async function renewConnection(
+  context: Authority,
+  connection: PlatformConnection,
+  guest: RelayIdentity,
+  operations: ConnectorOperation[],
+) {
+  let selection: ReturnType<typeof savedConnectionOperations>
+  try {
+    selection = savedConnectionOperations(operations, connection, context.agent.uid)
+  } catch (error) {
+    throw new TengriUnavailableError(error instanceof Error ? error.message : 'Saved connection unavailable', 409)
+  }
+  const expiresAtUnixMs = [
+    context.identity.session.expiresAtUnixMs,
+    context.identity.session.idleDeadlineUnixMs,
+    BigInt(Date.now() + 900_000),
+  ].reduce((earlier, limit) => (earlier < limit ? earlier : limit))
+  const issued = await ofzCall(
+    PlatformAuthorizationService.method.createPlatformDelegation,
+    {
+      operationId: randomUUID(),
+      issuer: context.issuer,
+      clientService: 'tengri-web',
+      agentId: guest.agentId,
+      connectionId: connection.id,
+      expectedConnectionVersion: connection.version,
+      actions: connection.actions,
+      resources: connection.resources,
+      proofKeyThumbprint: guest.proofKeyThumbprint,
+      expiresAtUnixMs,
+      binding: context.binding,
+    },
+    context.signal,
+  )
+  try {
+    if (!issued.credential || !issued.decision || !issued.credentialGeneration) throw new OfzError(409)
+    const recoveryGeneration = String(issued.decision.recoveryGeneration)
+    const credentialGeneration = String(issued.credentialGeneration)
+    const acknowledgement = relayAcknowledgementSchema.safeParse(
+      await connectorAgent(context.identity, context.agent.id, 'configure', {
+        connectionId: connection.id,
+        recoveryGeneration,
+        credentialGeneration,
+        delegationId: issued.delegationId,
+        connectorId: selection.connectorId,
+        clientService: 'tengri-web',
+        binding: context.binding,
+        endpoint: context.endpoint,
+        credential: issued.credential,
+        operations: selection.operations.map((operation) => ({
+          name: operation.name,
+          description: operation.description,
+          inputSchema: JSON.parse(new TextDecoder().decode(operation.inputSchemaJson)),
+          readOnly: true,
+        })),
+      }),
+    )
+    if (!acknowledgement.success) throw new TengriUnavailableError('The workspace did not confirm the connection.', 502)
+    const acknowledged = acknowledgement.data
+    if (
+      acknowledged.connectionId !== connection.id ||
+      acknowledged.delegationId !== issued.delegationId ||
+      acknowledged.proofKeyThumbprint !== guest.proofKeyThumbprint ||
+      acknowledged.recoveryGeneration !== recoveryGeneration ||
+      acknowledged.credentialGeneration !== credentialGeneration
+    )
+      throw new OfzError(409)
+    await activate(context, issued.delegationId, guest.proofKeyThumbprint)
+  } catch (error) {
+    // Cleanup uses this issuance's generation so it cannot fence out a later successful install.
+    await ofzCall(PlatformAuthorizationService.method.revokePlatformDelegation, {
+      operationId: randomUUID(),
+      issuer: context.issuer,
+      delegationId: issued.delegationId,
+    })
+    if (issued.decision && issued.credentialGeneration)
+      await connectorAgent(context.identity, context.agent.id, 'remove', {
+        connectionId: connection.id,
+        delegationId: issued.delegationId,
+        recoveryGeneration: String(issued.decision.recoveryGeneration),
+        credentialGeneration: String(issued.credentialGeneration),
+      })
+    throw error
+  }
 }
 
 function activate(context: Authority, delegationId: string, proofKeyThumbprint: string) {
