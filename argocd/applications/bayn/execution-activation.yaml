@@ -42,7 +42,7 @@ spec:
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              value: "fc26748c845ca68e404cbfe0911811f14158db1fc694a5eda24bd3fe3c690f10"
+              value: "e8734d05203ee5f189d0dac99c655ac2aca90adf99b2c2cf57c692a06b2adae1"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_GLITCHTIP_DSN
