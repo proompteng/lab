@@ -6,7 +6,7 @@ import { Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema } from 'e
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { canonicalJsonV1Result, sha256 } from '../hash'
-import { IsoDateSchema } from '../schemas'
+import { IsoDateSchema, UtcInstantSchema } from '../schemas'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import {
   registrationFixture,
@@ -26,12 +26,16 @@ const history = {
   auditedAt: '2026-10-01T00:00:00.000Z',
   attempts: [],
 }
-const registration = () => ({
-  ...registrationFixture(),
-  registeredAt: new Date(Date.now() - 1000).toISOString(),
-  priorAttemptHash: testHash(history),
+const databaseNow = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ now: UtcInstantSchema })))(
+    yield* sql`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS now`,
+  )
+  const row = rows[0]
+  if (row === undefined) throw new Error('Database clock is missing')
+  return row.now
 })
-const registerFixture = (value: ReturnType<typeof registration>) =>
+const registerFixture = (value: ReturnType<typeof registrationFixture>) =>
   registerSystemQualification(value, new Set(value.costAllocationPlans.map((plan) => plan.basisSourceHash)))
 
 const makeRuntime = (url: string) =>
@@ -44,6 +48,14 @@ const makeRuntime = (url: string) =>
 
 postgres('PostgreSQL prospective system qualification', () => {
   let runtime: ReturnType<typeof makeRuntime>
+  let databaseObservedAt: string | undefined
+  const registration = () => {
+    if (databaseObservedAt === undefined) throw new Error('Database clock must precede fixture construction')
+    return {
+      ...registrationFixture(new Date(Date.parse(databaseObservedAt) - 1000).toISOString()),
+      priorAttemptHash: testHash(history),
+    }
+  }
   beforeAll(() => {
     const url = baynTestPostgresUrl ?? ''
     const parsed = new URL(url)
@@ -64,6 +76,7 @@ postgres('PostgreSQL prospective system qualification', () => {
         yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA public TO bayn_assessment_test_app`
         yield* sql`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO bayn_assessment_test_app`
         yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
+        databaseObservedAt = yield* databaseNow
       }),
     )
   }, 30000)
@@ -320,7 +333,7 @@ postgres('PostgreSQL prospective system qualification', () => {
 
   test('an underpriced registered tariff is rejected before any prospective row is written', async () => {
     const input = registration()
-    const inferenceRateCard = replayRateCardFixture({
+    const tariff = replayRateCardFixture({
       jev: { inputMicrosPerMillionTokens: '41999', outputMicrosPerMillionTokens: '0' },
       chart: {
         inputMicrosPerMillionTokens: '1',
@@ -329,6 +342,32 @@ postgres('PostgreSQL prospective system qualification', () => {
         cacheWriteInputMicrosPerMillionTokens: '0',
       },
     })
+    const lastClose = input.calendar.sessions.at(-1)?.closeAt
+    if (lastClose === undefined) throw new Error('Missing last session')
+    const inferenceRateCard = {
+      ...tariff,
+      rates: tariff.rates.map((rate) => ({
+        ...rate,
+        effectiveFrom: input.registeredAt,
+        effectiveUntil: new Date(Date.parse(lastClose) + 1).toISOString(),
+      })),
+    }
+    expect(
+      Result.isSuccess(
+        validateSystemRegistration({
+          ...input,
+          policies: input.policies.map((policy) => ({
+            ...policy,
+            inferenceRateCard: {
+              ...inferenceRateCard,
+              rates: inferenceRateCard.rates.map((rate) =>
+                rate.provider === 'typesafe' ? { ...rate, inputMicrosPerMillionTokens: '42000' } : rate,
+              ),
+            },
+          })),
+        }),
+      ),
+    ).toBe(true)
     expect(
       Exit.isFailure(
         await runtime.runPromiseExit(
@@ -383,8 +422,9 @@ postgres('PostgreSQL prospective system qualification', () => {
 
   test('the deferred deadline rejects a transaction that crosses the first market open', async () => {
     const first = registration()
-    const openAt = new Date(Date.now() + 2000).toISOString()
-    const closeAt = new Date(Date.now() + 3000).toISOString()
+    const now = Date.parse(await runtime.runPromise(databaseNow))
+    const openAt = new Date(now + 2000).toISOString()
+    const closeAt = new Date(now + 3000).toISOString()
     const input = {
       ...first,
       calendar: {

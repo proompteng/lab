@@ -213,8 +213,30 @@ export const withRegistrationCommitments = (registration: SystemRegistration): S
   }
 }
 
-export const registrationFixture = (): SystemRegistration => {
-  const registration = baseRegistrationFixture()
+export const registrationFixture = (registeredAt?: string): SystemRegistration => {
+  let registration = baseRegistrationFixture()
+  if (registeredAt !== undefined) {
+    const firstMonday = new Date(registeredAt)
+    firstMonday.setUTCDate(firstMonday.getUTCDate() + ((8 - firstMonday.getUTCDay()) % 7 || 7))
+    firstMonday.setUTCHours(0, 0, 0, 0)
+    registration = {
+      ...registration,
+      registeredAt,
+      calendar: {
+        ...registration.calendar,
+        sessions: registration.calendar.sessions.map((session, index) => {
+          const sessionDate = Schema.decodeUnknownSync(IsoDateSchema)(
+            new Date(firstMonday.getTime() + (index + Math.floor(index / 5) * 2) * 86400000).toISOString().slice(0, 10),
+          )
+          return {
+            sessionDate,
+            openAt: sessionDate + session.openAt.slice(10),
+            closeAt: sessionDate + session.closeAt.slice(10),
+          }
+        }),
+      },
+    }
+  }
   return withRegistrationCommitments({
     ...registration,
     calendar: { ...registration.calendar, sourceHash: testHash(calendarFixture(registration)) },
