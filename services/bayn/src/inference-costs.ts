@@ -185,7 +185,8 @@ type Stage = {
   readonly provider: 'openai' | 'typesafe'
   readonly model: string
   readonly usage: Usage | null
-  readonly startedAt: string | undefined
+  readonly tariffAt: string | undefined
+  readonly recordedStartedAt: string | undefined
   readonly purpose: InferencePurpose
   readonly handoffHash: string | null
   readonly receiptHash: string | null
@@ -221,7 +222,8 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
         provider: 'openai',
         model: decisionsModel,
         purpose: InferencePurpose.Entry,
-        startedAt: stage.startedAt,
+        tariffAt: stage.tariffAt,
+        recordedStartedAt: stage.recordedStartedAt,
         usage:
           stage.outcome === 'NOT_DISPATCHED'
             ? notDispatched()
@@ -246,11 +248,13 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
       const skipped = handoff !== null && handoff.disposition.status !== 'READY'
       let jevUsage: Usage | null = zero || skipped ? notDispatched() : null
       let startedAt: string | undefined
+      let recordedStartedAt: string | undefined
       if (receipt?.outcome.status === JevOutcome.Completed) {
         const result = receipt.outcome.completion.jev
         if (result.status === 'RECEIVED') {
           jevUsage = usage(result.inference.response.usage, InferenceUsageStatus.Received)
           startedAt = result.inference.startedAt
+          recordedStartedAt = result.inference.startedAt
         } else if (result.status === 'FAILED') {
           jevUsage = result.usage === null ? null : usage(result.usage, InferenceUsageStatus.Rejected)
           startedAt = handoff?.recordedAt
@@ -264,7 +268,8 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
           model: jevModel,
           purpose: InferencePurpose.Entry,
           usage: jevUsage,
-          startedAt,
+          tariffAt: startedAt,
+          recordedStartedAt,
           handoffHash: handoff?.handoffHash ?? null,
           receiptHash: skipped ? null : (receipt?.receiptHash ?? null),
           resolutionHash: skipped ? null : (resolution?.resolutionHash ?? null),
@@ -302,6 +307,8 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
               )
             : null
       const purpose = Schema.decodeUnknownResult(PurposeState)(request.request.state)
+      const startedAt =
+        receipt?.outcome.status === 'RECEIVED' ? receipt.outcome.inference.startedAt : receipt?.startedAt
       return {
         request,
         receipt,
@@ -313,8 +320,8 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
             provider: 'typesafe',
             model: request.request.model,
             usage: counted,
-            startedAt:
-              receipt?.outcome.status === 'RECEIVED' ? receipt.outcome.inference.startedAt : receipt?.startedAt,
+            tariffAt: startedAt,
+            recordedStartedAt: receipt?.outcome.status === 'RECEIVED' ? receipt.outcome.inference.startedAt : undefined,
             purpose: Result.isSuccess(purpose) ? purpose.success.task.decisionPurpose : InferencePurpose.Other,
             handoffHash: null,
             receiptHash: receipt?.receiptHash ?? null,
@@ -340,6 +347,7 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
     if (zero && handoff !== null) return yield* failure('Undispatched cost evidence omits a committed chart call')
     let chartUsage: Usage | null = zero ? notDispatched() : null
     let chartStartedAt: string | undefined = receipt?.startedAt
+    let chartRecordedStartedAt: string | undefined
     if (handoff !== null) {
       const disposition = handoff.disposition
       if (disposition.status === 'SOURCE_INFEASIBLE') {
@@ -353,6 +361,7 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
               ? disposition.visual.response.usage
               : null
         chartStartedAt = disposition.status === 'VISUAL_FAILED' ? request.observedAt : disposition.visual.startedAt
+        chartRecordedStartedAt = disposition.status === 'VISUAL_FAILED' ? undefined : disposition.visual.startedAt
         if (metering !== null)
           chartUsage = {
             ...usage(
@@ -386,16 +395,21 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
               cachedInputTokens: BigInt(metering.input_tokens_details.cached_tokens),
               cacheWriteInputTokens: BigInt(metering.input_tokens_details.cache_write_tokens),
             }
-      if (terminal?.outcome.status === 'RECEIVED') chartStartedAt = terminal.outcome.inference.startedAt
+      if (terminal?.outcome.status === 'RECEIVED') {
+        chartStartedAt = terminal.outcome.inference.startedAt
+        chartRecordedStartedAt = terminal.outcome.inference.startedAt
+      }
     }
     let jevUsage: Usage | null =
       zero || (handoff !== null && handoff.disposition.status !== 'READY') ? notDispatched() : null
     let jevStartedAt: string | undefined = undefined
+    let jevRecordedStartedAt: string | undefined
     if (receipt?.outcome.status === JevOutcome.Completed) {
       const result = receipt.outcome.completion.jev
       if (result.status === 'RECEIVED') {
         jevUsage = usage(result.inference.response.usage, InferenceUsageStatus.Received)
         jevStartedAt = result.inference.startedAt
+        jevRecordedStartedAt = result.inference.startedAt
       } else if (result.status === 'FAILED') {
         jevUsage = result.usage === null ? null : usage(result.usage, InferenceUsageStatus.Rejected)
         jevStartedAt = handoff?.recordedAt
@@ -423,7 +437,8 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
         provider: 'openai',
         model: decisionsModel,
         usage: chartUsage,
-        startedAt: chartStartedAt,
+        tariffAt: chartStartedAt,
+        recordedStartedAt: chartRecordedStartedAt,
         purpose: InferencePurpose.Entry,
       },
       {
@@ -431,7 +446,8 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
         provider: 'typesafe',
         model: jevModel,
         usage: jevUsage,
-        startedAt: jevStartedAt,
+        tariffAt: jevStartedAt,
+        recordedStartedAt: jevRecordedStartedAt,
         purpose: InferencePurpose.Entry,
         handoffHash: handoff?.handoffHash ?? null,
         receiptHash: jevSkipped ? null : (receipt?.receiptHash ?? null),
@@ -475,7 +491,7 @@ export const priceInferenceUsage = (
 }
 
 export interface InferenceCostReport {
-  readonly schemaVersion: 'bayn.inference-cost-report.v2'
+  readonly schemaVersion: 'bayn.inference-cost-report.v3'
   readonly accountBindingHash: string
   readonly sessionDate: string
   readonly asOf: string
@@ -496,6 +512,11 @@ export interface InferenceCostReport {
   readonly knownEstimatedCostMicros: string
   readonly estimatedTotalCostMicros: string | null
   readonly requests: readonly InferenceCostLine[]
+  readonly requestTimings: readonly {
+    readonly requestKey: string
+    readonly startedAt: string | null
+    readonly estimatedCostPicoUsd: string | null
+  }[]
   readonly reportHash: string
 }
 
@@ -598,11 +619,7 @@ export const decodeInferenceCostEvidence = (input: unknown) =>
     ),
   )
 
-/** Operating-expense evidence only; broker cash and trading authority are separate ledgers. */
-export const makeInferenceCostReport = (
-  evidence: DecodedInferenceCostEvidence,
-  rateCardInput: unknown,
-): Result.Result<InferenceCostReport, InferenceCostError> =>
+export const prepareInferenceRateCard = (rateCardInput: unknown) =>
   Result.gen(function* () {
     const rateCard = yield* Schema.decodeUnknownResult(InferenceRateCardSchema, strictParseOptions)(rateCardInput)
     for (const [index, rate] of rateCard.rates.entries()) {
@@ -627,8 +644,19 @@ export const makeInferenceCostReport = (
       schemaVersion: rateCard.schemaVersion,
       rates: [...rates].sort((a, b) => a.rateHash.localeCompare(b.rateHash)).map((value) => value.rate),
     })
+    return { rates, rateCardHash }
+  })
+
+/** Operating-expense evidence only; broker cash and trading authority are separate ledgers. */
+export const makeInferenceCostReport = (
+  evidence: DecodedInferenceCostEvidence,
+  rateCardInput: unknown,
+): Result.Result<InferenceCostReport, InferenceCostError> =>
+  Result.gen(function* () {
+    const { rates, rateCardHash } = yield* prepareInferenceRateCard(rateCardInput)
     const fingerprints = new Map<string, string>()
     const lines: InferenceCostLine[] = []
+    const timings: InferenceCostReport['requestTimings'][number][] = []
     let inputTokens = 0n,
       outputTokens = 0n,
       totalPicoUsd = 0n,
@@ -645,7 +673,7 @@ export const makeInferenceCostReport = (
       fingerprints.set(row.requestId, row.sourceFingerprint)
       for (const stage of row.stages) {
         const measured = stage.usage
-        const startedAt = stage.startedAt
+        const startedAt = stage.tariffAt
         const priced =
           measured === null || measured.status === InferenceUsageStatus.NotDispatched || startedAt === undefined
             ? undefined
@@ -702,6 +730,14 @@ export const makeInferenceCostReport = (
               : { chartClaimHash: stage.chartClaimHash, chartTerminalHash: stage.chartTerminalHash ?? null }),
           })
         }
+        timings.push({
+          requestKey: inferenceStageKey({
+            requestId: row.requestId,
+            ...(stage.stage === null ? {} : { stage: stage.stage }),
+          }),
+          startedAt: stage.recordedStartedAt ?? null,
+          estimatedCostPicoUsd: cost?.toString() ?? null,
+        })
         if (measured === null) unknownUsageCount++
         else {
           inputTokens += measured.inputTokens
@@ -740,7 +776,7 @@ export const makeInferenceCostReport = (
     const complete = unknownUsageCount === 0 && unpricedUsageCount === 0
     const knownEstimatedCostMicros = ((totalPicoUsd + 999_999n) / 1_000_000n).toString()
     const material = {
-      schemaVersion: 'bayn.inference-cost-report.v2' as const,
+      schemaVersion: 'bayn.inference-cost-report.v3' as const,
       accountBindingHash: evidence.accountBindingHash,
       sessionDate: evidence.sessionDate,
       asOf: evidence.asOf,
@@ -761,6 +797,7 @@ export const makeInferenceCostReport = (
       knownEstimatedCostMicros,
       estimatedTotalCostMicros: complete ? knownEstimatedCostMicros : null,
       requests,
+      requestTimings: timings.sort((a, b) => a.requestKey.localeCompare(b.requestKey)),
     }
     return { ...material, reportHash: yield* canonicalHashV1Result(material) }
   }).pipe(

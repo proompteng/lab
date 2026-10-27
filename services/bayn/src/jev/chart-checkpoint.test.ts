@@ -136,6 +136,37 @@ test('claim-only crash remains unknown; late terminal creates immutable metered 
   expect(request.expiresAt).toBe('2026-10-25T07:00:42.000Z')
 })
 
+test('a chart checkpoint reports its provider start before handoff creation', () => {
+  const startedAt = '2026-10-25T07:00:33.000Z'
+  const received = Result.getOrThrow(
+    makeChartTerminalReceipt({
+      schemaVersion: 'bayn.chart-terminal-receipt.v1',
+      requestId: request.requestId,
+      claimHash: claim.claimHash,
+      recordedAt: source.asOf,
+      outcome: { status: 'RECEIVED', inference: { ...inference, startedAt, completedAt: source.asOf } },
+    }),
+  )
+  const before = Result.getOrThrow(makeInferenceCostReport(decodedEvidence(source), inferenceExpenseRateCard))
+  const after = Result.getOrThrow(
+    makeInferenceCostReport(
+      decodedEvidence({ ...source, chartCheckpoint: { claim, terminal: received } }),
+      inferenceExpenseRateCard,
+    ),
+  )
+  const key = `${request.requestId}:CHART`
+  expect(before.requestTimings.find((item) => item.requestKey === key)).toEqual({
+    requestKey: key,
+    startedAt: null,
+    estimatedCostPicoUsd: null,
+  })
+  expect(after.requestTimings.find((item) => item.requestKey === key)).toEqual({
+    requestKey: key,
+    startedAt,
+    estimatedCostPicoUsd: '10000000',
+  })
+})
+
 test('committing the same handoff preserves chart quote identity and rejects substituted provider evidence', () => {
   const completion = entryCompletionFixture(request)
   const disposition = completion.handoff.disposition
