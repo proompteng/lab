@@ -1,4 +1,4 @@
-import { controlExitDefinition } from './control-portfolio'
+import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
 import { jevMarketForFeed } from '../jev/markets'
 import { isContinuousMarket, observationSession, continuousExecutionPolicy, type MarketHours } from '../market-hours'
@@ -471,8 +471,8 @@ export const runMatchedEntryStudy = (
       const protocol = batch.observation.protocol
       if (
         protocol.maximumHoldingMinutes !== 15 ||
-        controlExitDefinition.protectiveStopBps !== 50 ||
-        controlExitDefinition.profitTargetNetBps !== 100 ||
+        momentumExitDefinition.protectiveStopBps !== 50 ||
+        momentumExitDefinition.profitTargetNetBps !== 100 ||
         protocol.flattenBeforeCloseMinutes !== 5
       )
         return yield* new SignalStudyFailure({ message: 'Matched lifecycle requires the frozen protective protocol' })

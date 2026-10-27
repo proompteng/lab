@@ -1,6 +1,6 @@
-# System assessment calculations
+# System assessment
 
-These pure modules define the arithmetic and evidence predicates used by the system-assessment integration. They do
+These modules define the arithmetic, evidence predicates, and prospective registration used by the system-assessment integration. They do
 not issue an account qualification, admit orders, or grant capital authority. A complete assessment must bind their
 inputs to a prospective registration and verified source records.
 
@@ -42,12 +42,40 @@ The caller supplies the expected decisions and fills and a set of verified sourc
 bind those identities to the registered policy, account, generation, and window. `SUPPORTED` here does not establish
 complete costs, statistical edge, or a combined qualification verdict.
 
+## Prospective registration
+
+`validateSystemRegistration` binds the twenty-session calendar, candidate and three controls, source/image/prompt
+identities, operating-cost weights, inference tariffs, risk policy, original deadlines, and statistical assumptions.
+The deployed control retains its frozen identity. The ablation and momentum definitions derive from their native
+runtime policies. Expanded risk limits, substituted control identities, overlapping calendars, and reduced Jev tariffs
+cannot become valid registrations.
+
+The candidate requires continuous Jev and OpenAI model tariff coverage from the first open through the final close.
+The chart ablation requires OpenAI coverage. The frozen deterministic deployed control and repeated momentum do not
+require inference tariffs. Missing models, expired rates, and gaps reject registration before its terms become immutable.
+
+`registeredSchedule` derives decision and reconciliation obligations from the locked calendar and configuration.
+Polling frequency cannot remove scheduled work from the denominator. Cost allocation uses positive, canonically
+ordered weights and cumulative integer rounding, preserving the exact invoice total and all outside-window shares.
+The Node regression exercises all 468,000 reconciliation obligations at a one-second cadence across twenty full sessions.
+
+`initializeQualificationHistory`, `registerSystemQualification`, and `readSystemRegistration` retain canonical,
+content-addressed documents. Migration 156 makes history and registrations append-only, serializes admissions on the
+program row, and requires the next attempt index and predecessor hash. Both insertion and deferred transaction
+completion must precede the first open. Retries return the same registration; failures and candidate changes cannot
+reset the attempt history. These functions require verified audit and allocation-source hashes from their caller.
+
+Registration does not issue an assessment or claim profitability. Source capture, assessment receipts, reporting,
+and Lean conformance remain subsequent integration requirements.
+
 ## Validation
 
 From the service directory:
 
 ```sh
-bun test src/system-assessment/economics.test.ts src/system-assessment/reliability.test.ts src/system-assessment/realism.test.ts
+bun test src/system-assessment
+# Actual PostgreSQL contracts require an isolated local database whose name ends in _test.
+BAYN_TEST_POSTGRES_URL=postgresql://localhost/bayn_registration_test bun test src/system-assessment/postgres.integration.test.ts
 ```
 
 The tests include arithmetic properties, positive trading profit consumed by costs, zero-trade operating losses,

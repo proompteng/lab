@@ -1,6 +1,7 @@
+import { JevBatchPlanVersion } from '../jev/batch'
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { selectSupportedEntryProposal } from '../jev/entry-questions'
-import { momentumControlCandidates } from './momentum-control'
+import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
@@ -21,7 +22,7 @@ import {
   JevBatchPlanSchema,
   JevBatchResultSchema,
   JevCandidateResultStatus,
-  usableJevBatchInferences,
+  usableEntryBatchInferences,
 } from '../jev/batch'
 import { JevOutcome } from '../jev/evidence'
 import { JevObservationSchema } from '../jev/observation-contract'
@@ -120,7 +121,9 @@ export const prepareSignalStudyBatch = (input: unknown) =>
         ? null
         : decideJevEntry({ ...batch, decidedAt })
     const usable =
-      batch.batchResult === null ? null : usableJevBatchInferences(plan, batch.batchResult, Date.parse(decidedAt))
+      batch.batchResult === null
+        ? null
+        : usableEntryBatchInferences(plan, batch.batchResult, Date.parse(decidedAt), JevBatchPlanVersion.V7)
     const inferences = usable !== null && Result.isSuccess(usable) ? usable.success : []
     const snapshot = observation.snapshot
     const signals = []

@@ -1,3 +1,9 @@
+import { reproduceJevCandidateObservation } from '../jev/observation'
+import { makeRepeatedMomentumPolicy, repeatedMomentumStrategyIdentity } from '../strategy/repeated-momentum/policy'
+import { RepeatedMomentumTargetSchema } from '../strategy/repeated-momentum/decision'
+import { makeJevTradingSignalBatch } from '../jev/trading-signals'
+import { JevBatchPlanVersion } from '../jev/batch'
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { DecisionsClient } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
@@ -46,7 +52,8 @@ import { Journal, JournalLive } from '../ledger'
 import { canonicalHashV1Result } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
-import { makeActiveStrategyRuntime } from '../strategy'
+import { makeActiveStrategyRuntime, makeEntryAblationRuntime, makeRepeatedMomentumRuntime } from '../strategy'
+import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
 import { JevClient, JevError } from '../jev/client'
 import { nativeJevInference } from '../jev/native.test-support'
 import { JevFailure, prepareJevRequest } from '../jev/contract'
@@ -110,6 +117,9 @@ durableTest.each(
       'entry-lease-expires-during-bind',
       'entry-lease-expires-at-commit',
       'fill',
+      'ablation-fill',
+      'momentum-fill',
+      'momentum-partial-exit-reentry',
       'fallback',
       'missing-benchmark',
       'no-trade',
@@ -141,7 +151,14 @@ durableTest.each(
   })),
 )(
   '$label: $scenario',
-  async ({ scenario }) => {
+  async ({ scenario: mode }) => {
+    const ablation = mode === 'ablation-fill'
+    const momentum = mode.startsWith('momentum-')
+    const chartProvider: DecisionsClient['Service'] = momentum
+      ? { evaluate: () => Effect.die('Momentum must not dispatch chart provider requests') }
+      : chartProviderFixture
+    const scenario =
+      mode === 'momentum-partial-exit-reentry' ? 'partial-exit-reentry' : ablation || momentum ? 'fill' : mode
     const untouchedExpiry = scenario.startsWith('approved-expiry-')
     const admissionRace = scenario.startsWith('entry-lease-')
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
@@ -287,19 +304,35 @@ durableTest.each(
         return arrivals
       })
       .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
-    const strategyRuntime = makeActiveStrategyRuntime(protocol, {
+    const candidateRuntime = makeActiveStrategyRuntime(protocol, {
       ...fixtureRuntime.provenance,
       strategy: {
         ...fixtureRuntime.provenance.strategy,
         parameterHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
       },
     })
+    const ablationParameters = makeEntryAblationPolicy(protocol)
+    const ablationIdentity = Result.getOrThrow(entryAblationStrategyIdentity(ablationParameters))
+    const momentumParameters = makeRepeatedMomentumPolicy(protocol)
+    const momentumIdentity = Result.getOrThrow(repeatedMomentumStrategyIdentity(momentumParameters))
+    const strategyRuntime = momentum
+      ? makeRepeatedMomentumRuntime(momentumParameters, {
+          ...fixtureRuntime.provenance,
+          strategy: momentumIdentity.strategy,
+        })
+      : ablation
+        ? makeEntryAblationRuntime(ablationParameters, {
+            ...fixtureRuntime.provenance,
+            strategy: ablationIdentity.strategy,
+          })
+        : candidateRuntime
     const closeAtMs =
       scenario === 'fill' || scenario === 'fallback'
         ? Date.parse('2026-09-04T20:00:00Z') - protocol.flattenBeforeCloseMinutes * 60_000 + 2_000
         : Date.parse('2026-09-04T19:59:02Z')
     const closeQuery = {
       ...fixture.query,
+      ...(ablation || momentum ? { symbols: [...equityMarketProfile.universe] } : {}),
       purpose: IntradaySnapshotPurpose.Liquidation,
       rangeStartAt: utcInstantFromEpochMillis(closeAtMs - 62_000),
       rangeEndAt: utcInstantFromEpochMillis(closeAtMs - 2_000),
@@ -335,7 +368,11 @@ durableTest.each(
     const accountId = `replay-${runId}`
     const config: RuntimeConfig = {
       ...baseConfig,
-      build: { ...baseConfig.build, strategyParameterHash: strategyRuntime.provenance.strategy.parameterHash },
+      build: {
+        ...baseConfig.build,
+        strategyParameterHash: strategyRuntime.provenance.strategy.parameterHash,
+        strategyBehaviorHash: strategyRuntime.provenance.strategy.behaviorHash,
+      },
       operationTimeoutMs:
         scenario === 'measured-entry-expired' || scenario === 'measured-submit-expired-reentry' ? 20_000 : 10_000,
       execution: {
@@ -370,7 +407,7 @@ durableTest.each(
     )
     const stores = Layer.mergeAll(
       EntryInferenceJournalLive,
-      Layer.succeed(DecisionsClient, chartProviderFixture),
+      Layer.succeed(DecisionsClient, chartProvider),
       CandidateObservationStoreLive,
       JevBatchStoreLive,
       JevPositionStoreLive,
@@ -686,7 +723,7 @@ durableTest.each(
         const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
           Effect.provideService(MutationStore, untouchedExpiry ? expiryMutations : mutations),
           Effect.provideService(JevClient, timing?.clients.jev ?? provider),
-          Effect.provideService(DecisionsClient, timing?.clients.chart ?? chartProviderFixture),
+          Effect.provideService(DecisionsClient, timing?.clients.chart ?? chartProvider),
           (operation) => (timing === undefined ? operation : timing.run(operation)),
           Effect.map((engine) => ({
             ...engine,
@@ -1794,12 +1831,73 @@ durableTest.each(
       (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,
       (SELECT count(*)::int FROM fills WHERE account_id = ${accountId}) AS fills,
       (SELECT count(*)::int FROM accounting_transactions WHERE account_id = ${accountId}) AS transactions`
+        if (momentum) {
+          expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+          expect(yield* sql`SELECT batch_id FROM jev_batch_plans`).toEqual([])
+          const targets = yield* sql<{
+            schema: string
+            policy: string
+          }>`SELECT document #>> '{strategyDecision,schemaVersion}' AS schema,
+            document #>> '{strategyDecision,policy,schemaVersion}' AS policy
+            FROM autonomous_cycle_shadow_decisions WHERE document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1'`
+          expect(targets.length).toBeGreaterThan(0)
+          expect(targets.every((target) => target.policy === 'bayn.repeated-momentum-policy.v1')).toBe(true)
+          const [retained] = yield* sql<{ target: unknown }>`SELECT document->'strategyDecision' AS target
+            FROM autonomous_cycle_shadow_decisions WHERE document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1' LIMIT 1`
+          const target = yield* Schema.decodeUnknownEffect(RepeatedMomentumTargetSchema)(retained?.target)
+          const reproduced = yield* Effect.fromResult(reproduceJevCandidateObservation(target.evidence.observation))
+          const { contentHash, snapshot, ...payload } = reproduced
+          const source = { contentHash, payload: { ...payload, manifest: snapshot.manifest } }
+          const observationStore = yield* CandidateObservationStore
+          yield* Effect.all(
+            [observationStore.record(source, target.policy), observationStore.record(source, target.policy)],
+            { concurrency: 2 },
+          )
+          const duplicates = yield* sql<{
+            count: number
+          }>`SELECT count(*)::int AS count FROM intraday_candidate_observations WHERE content_hash = ${source.contentHash}`
+          expect(duplicates).toEqual([{ count: 1 }])
+          expect(yield* observationStore.record(source).pipe(Effect.result, Effect.map(Result.isFailure))).toBe(true)
+          const forbidden = yield* Effect.fromResult(
+            makeJevTradingSignalBatch({
+              observation: source.payload,
+              expiresAt: utcInstantFromEpochMillis(
+                Date.parse(source.payload.observedAt) + protocol.inferenceValidityMs,
+              ),
+              planVersion: JevBatchPlanVersion.V7,
+            }),
+          )
+          const inserted =
+            yield* sql`INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
+            VALUES (${forbidden.batchId}, ${forbidden.cycleId}, ${forbidden.authorityGenerationHash}, ${forbidden.observationHash}, ${sql.json(forbidden)})`.pipe(
+              Effect.result,
+            )
+          expect(Result.isFailure(inserted)).toBe(true)
+          if (Result.isFailure(inserted))
+            expect(inserted.failure).toMatchObject({
+              reason: {
+                _tag: 'ConstraintError',
+                cause: { code: '23514', where: expect.stringContaining('enforce_entry_policy_identity') },
+              },
+            })
+        }
+        if (ablation) {
+          const receipts = yield* sql<{ count: number }>`SELECT count(*)::int AS count FROM jev_evaluation_receipts
+            WHERE payload #>> '{outcome,completion,jev,status}' = 'OMITTED_BY_POLICY'`
+          expect(receipts[0]?.count).toBeGreaterThan(0)
+          expect(
+            yield* sql`SELECT request_id FROM jev_evaluation_receipts
+            WHERE payload #>> '{outcome,completion,jev,status}' = 'RECEIVED'`,
+          ).toEqual([])
+        }
         return { _tag: 'Fill' as const, brokerState, reconciliation, rows, passes: yield* Ref.get(passes) }
       }).pipe(
         Effect.scoped,
         Effect.provideService(JevClient, {
           evaluate: (raw) =>
             Effect.gen(function* () {
+              if (ablation || momentum)
+                return yield* Effect.die('This control must not dispatch a Jev provider request')
               const started = yield* Clock.currentTimeMillis
               const { request, requestHash } = Result.getOrThrow(prepareJevRequest(raw))
               const { candidate } = yield* Schema.decodeUnknownEffect(

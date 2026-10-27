@@ -11,7 +11,7 @@ import {
   verifyEntryCompletion,
 } from './entry-inference-evidence'
 import {
-  EntryInferenceInputSchema,
+  CandidateEntryInferenceInputSchema,
   verifyEntryInferenceSource,
   type EntryInferenceMaterial,
 } from './entry-inference-input'
@@ -48,7 +48,7 @@ export const retainedSequentialQuestionPolicyHash = Result.getOrThrow(
   canonicalHashV1Result({ chart: retainedChartQuestionPolicy, jev: retainedEntryJudgmentPolicy }),
 )
 const OldInput = Schema.Struct({
-  ...EntryInferenceInputSchema.fields,
+  ...CandidateEntryInferenceInputSchema.fields,
   schemaVersion: Schema.Literals(['bayn.entry-inference-input.v1', 'bayn.entry-inference-input.v2']),
   protocol: jevProtocolSchemaForQuestionPolicy(retainedSequentialQuestionPolicyHash, 'bayn.jev.protocol.v24'),
 })
@@ -56,7 +56,7 @@ export const retainedConditionalQuestionPolicyHash = Result.getOrThrow(
   canonicalHashV1Result({ chart: chartQuestionPolicy, jev: entryJudgmentPolicy }),
 )
 const ConditionalInput = Schema.Struct({
-  ...EntryInferenceInputSchema.fields,
+  ...CandidateEntryInferenceInputSchema.fields,
   schemaVersion: Schema.Literal('bayn.entry-inference-input.v3'),
   protocol: jevProtocolSchemaForQuestionPolicy(retainedConditionalQuestionPolicyHash, 'bayn.jev.protocol.v24'),
 })
@@ -64,7 +64,7 @@ export const retainedFundedQuestionPolicyHash = Result.getOrThrow(
   canonicalHashV1Result({ chart: fundedChartQuestionPolicy, jev: entryJudgmentPolicy }),
 )
 const FundedInput = Schema.Struct({
-  ...EntryInferenceInputSchema.fields,
+  ...CandidateEntryInferenceInputSchema.fields,
   schemaVersion: Schema.Literal('bayn.entry-inference-input.v4'),
   protocol: jevProtocolSchemaForQuestionPolicy(retainedFundedQuestionPolicyHash, 'bayn.jev.protocol.v25'),
 })

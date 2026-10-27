@@ -39,6 +39,7 @@ import type { CycleRunnerError } from '../cycle/runner/model'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { operationalError } from '../errors'
+import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
 import {
   awaitNativeExecutionRuntimeDriver,
   captureRecoveryFirstCycleDriver,
@@ -248,12 +249,14 @@ describe('native execution runtime', () => {
       payload: { schemaVersion: 'bayn.jev-observation.v1' },
     } as CandidateObservation
     const batch = { plan: { observationHash: recoveredHash }, result: null } as JevBatchEvidence
+    const momentum = makeRepeatedMomentumPolicy(fixtureRuntime.definition.parameters)
+    const retainedPolicies: Array<typeof momentum | undefined> = []
     let advances = 0
     const currentDriver = {
       ...driver,
       advance: Effect.gen(function* () {
         if (++advances === 1) {
-          yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.orDie)
+          yield* (yield* CandidateObservationStore).record(candidate, momentum).pipe(Effect.orDie)
           yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.orDie)
           yield* (yield* JevBatchStore).finish(hash('c')).pipe(Effect.orDie)
         }
@@ -261,7 +264,10 @@ describe('native execution runtime', () => {
       }),
     }
     const context = Context.make(CandidateObservationStore, {
-      record: () => Effect.void,
+      record: (_source, policy) =>
+        Effect.sync(() => {
+          retainedPolicies.push(policy)
+        }),
       latestJevWindowEnd: () => Effect.succeed(Option.none()),
     }).pipe(
       Context.add(JevBatchStore, {
@@ -296,6 +302,7 @@ describe('native execution runtime', () => {
       ...windowClosedObservation,
       jevObservationReferences: { hashes: [], complete: true },
     })
+    expect(retainedPolicies).toEqual([momentum, undefined])
   })
 
   test.each([false, true])(

@@ -1,3 +1,4 @@
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { EntryInferenceJournal, type EntryHandoff } from '../jev/entry-inference'
 import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
 import { EntryInferenceJournalLive } from './entry-inference-postgres'
@@ -41,7 +42,7 @@ import {
   JevCandidateResultStatus,
   JevEntryExclusion,
   makeJevBatchPlan,
-  usableJevBatchInferences,
+  usableEntryBatchInferences,
 } from '../jev/batch'
 import { decideJevEntry, makeJevDefinition } from '../jev/decision'
 import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
@@ -71,7 +72,6 @@ import { CandidateObservationStore } from '../observe-composition/candidate-obse
 import { makeJevObservation } from '../jev/observation'
 import {
   buildMutationShadowCycleDecision,
-  loadExecutionRiskPolicy,
   prepareClosingExecutionCycleDecision,
 } from '../observe-composition/decision-builder'
 import type { ReconciliationPassResult } from '../reconciler'
@@ -198,10 +198,13 @@ const seedManagedPosition = (
         exitPolicy: {
           ...portfolio.exitPolicy,
           plans: Object.fromEntries(
-            Object.values(portfolio.exitPolicy.plans).map((plan) => [
-              options.symbol ?? plan.levels.symbol,
-              { ...plan, levels: { ...plan.levels, symbol: options.symbol ?? plan.levels.symbol } },
-            ]),
+            Object.values(portfolio.exitPolicy.plans).map((plan) => {
+              if (plan.schemaVersion !== 'bayn.jev-funded-exit-plan.v4') throw new Error('Expected chart fixture')
+              return [
+                options.symbol ?? plan.levels.symbol,
+                { ...plan, levels: { ...plan.levels, symbol: options.symbol ?? plan.levels.symbol } },
+              ]
+            }),
           ),
         },
       }
@@ -221,19 +224,22 @@ const seedManagedPosition = (
       exitPolicy: {
         ...portfolio.exitPolicy,
         plans: Object.fromEntries(
-          Object.entries(portfolio.exitPolicy.plans).map(([symbol, plan]) => [
-            symbol,
-            {
-              ...plan,
-              levels: {
-                ...plan.levels,
-                sourceEndAt: new Date(Math.floor(firstFillMs / 60_000) * 60_000).toISOString(),
-                sourceStartAt: new Date(
-                  Math.floor(firstFillMs / 60_000) * 60_000 - plan.levels.maximumHoldingMinutes * 60_000,
-                ).toISOString(),
+          Object.entries(portfolio.exitPolicy.plans).map(([symbol, plan]) => {
+            if (plan.schemaVersion !== 'bayn.jev-funded-exit-plan.v4') throw new Error('Expected chart fixture')
+            return [
+              symbol,
+              {
+                ...plan,
+                levels: {
+                  ...plan.levels,
+                  sourceEndAt: new Date(Math.floor(firstFillMs / 60_000) * 60_000).toISOString(),
+                  sourceStartAt: new Date(
+                    Math.floor(firstFillMs / 60_000) * 60_000 - plan.levels.maximumHoldingMinutes * 60_000,
+                  ).toISOString(),
+                },
               },
-            },
-          ]),
+            ]
+          }),
         ),
       },
     }
@@ -810,7 +816,9 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* requests.record(request, receipt)
         const saved = yield* (yield* JevBatchStore).read(plan.batchId)
         if (saved === null || saved.result === null) throw new Error('Failed inference batch did not commit')
-        expect(Result.isFailure(usableJevBatchInferences(plan, saved.result, observed))).toBe(true)
+        expect(Result.isFailure(usableEntryBatchInferences(plan, saved.result, observed, JevBatchPlanVersion.V7))).toBe(
+          true,
+        )
         expect((yield* requests.read(request.requestId))?.resolution?.status).toBe(JevResolutionStatus.Recorded)
       }).pipe(atObservation),
     )
@@ -859,7 +867,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(Result.isFailure(result)).toBe(true)
         const saved = yield* (yield* JevBatchStore).finish(plan.batchId)
         if (saved.result === null) throw new Error('Atomic single-request batch did not commit')
-        expect(Result.isFailure(usableJevBatchInferences(plan, saved.result, Date.parse(plan.expiresAt)))).toBe(true)
+        expect(
+          Result.isFailure(
+            usableEntryBatchInferences(plan, saved.result, Date.parse(plan.expiresAt), JevBatchPlanVersion.V7),
+          ),
+        ).toBe(true)
         expect((yield* requests.read(request.requestId))?.resolution?.status).toBe(JevResolutionStatus.Recorded)
         expect(calls).toBe(1)
       }).pipe(atObservation),
@@ -1035,7 +1047,9 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           expect(monitored.transactionCount()).toBe(2)
           expect(monitored.queries).toHaveLength(18)
           if (saved.result === null) throw new Error('Multi-request batch did not finalize')
-          expect(Result.getOrThrow(usableJevBatchInferences(plan, saved.result, observed))).toHaveLength(2)
+          expect(
+            Result.getOrThrow(usableEntryBatchInferences(plan, saved.result, observed, JevBatchPlanVersion.V7)),
+          ).toHaveLength(2)
         }),
       ).pipe(atObservation, Effect.timeout('10 seconds')),
     )
@@ -1152,7 +1166,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         ).toBe(true)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v26' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v27' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
@@ -2022,7 +2036,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           authorityGenerationHash: nativeInput.authorityGenerationHash,
           cycle: active.cycle,
           executionModel: fixture.protocol.executionModel,
-          policy: yield* loadExecutionRiskPolicy(state.account.accountId, fixture.protocol.universe),
+          policy: yield* Effect.fromResult(makeExecutionRiskPolicy(state.account.accountId, fixture.protocol.universe)),
           strategy: retainedRuntime,
           reconcile: Effect.sync(() => {
             reconciliations += 1
@@ -2103,6 +2117,41 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           const intentId = document.orderedIntentIds[0]
           if (intentId === undefined) throw new Error('Expected the sealed entry intent')
           expect(yield* verifyBrokerStateVersion(sql, replayAccountId, version, intentId, true)).toBe(18)
+          // Isolate the final fee lookup from the immutable decision writer: these
+          // rows exercise its accepted identities and account/protocol rejection.
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions ON COMMIT DROP
+              AS SELECT * FROM public.autonomous_cycle_shadow_decisions`
+              for (const [targetVersion, policyVersion] of [
+                ['bayn.entry-ablation-target.v1', 'bayn.entry-ablation-policy.v1'],
+                ['bayn.repeated-momentum-target.v1', 'bayn.repeated-momentum-policy.v1'],
+              ]) {
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document =
+                jsonb_set(jsonb_set(document, '{strategyDecision,schemaVersion}', ${JSON.stringify(targetVersion)}::jsonb),
+                  '{strategyDecision,policy}', ${sql.json({ schemaVersion: policyVersion, sharedProtocol: fixture.protocol })})`
+                expect(yield* verifyBrokerStateVersion(sql, replayAccountId, version, intentId, true)).toBe(18)
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document =
+                jsonb_set(document, '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}', '"foreign-account"'::jsonb)`
+                expect(
+                  Exit.isFailure(
+                    yield* verifyBrokerStateVersion(sql, replayAccountId, version, intentId, true).pipe(Effect.exit),
+                  ),
+                ).toBe(true)
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document =
+                jsonb_set(document, '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}', ${JSON.stringify(replayAccountId)}::jsonb)`
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document =
+                jsonb_set(document, '{strategyDecision,evidence,observation,protocol,schemaVersion}', '"unsupported"'::jsonb)`
+                expect(
+                  Exit.isFailure(
+                    yield* verifyBrokerStateVersion(sql, replayAccountId, version, intentId, true).pipe(Effect.exit),
+                  ),
+                ).toBe(true)
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document =
+                jsonb_set(document, '{strategyDecision,evidence,observation,protocol,schemaVersion}', ${JSON.stringify(fixture.protocol.schemaVersion)}::jsonb)`
+              }
+            }),
+          )
           const missing = yield* verifyBrokerStateVersion(sql, replayAccountId, version, '0'.repeat(64), true).pipe(
             Effect.exit,
           )
@@ -2171,7 +2220,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             executionPolicy: cycle.identity.executionPolicy,
             strategyProtocolHash: cycle.identity.strategyProtocolHash,
           },
-          policy: yield* loadExecutionRiskPolicy(state.account.accountId, fixture.protocol.universe),
+          policy: yield* Effect.fromResult(makeExecutionRiskPolicy(state.account.accountId, fixture.protocol.universe)),
           cycle,
           entryDocument: document,
           reconcile: Effect.succeed(closeFacts),

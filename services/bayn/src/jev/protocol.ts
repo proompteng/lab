@@ -23,7 +23,8 @@ const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
 export const jevProtocolSchemaForQuestionPolicy = <
-  V extends 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25' | 'bayn.jev.protocol.v26' = 'bayn.jev.protocol.v24',
+  V extends 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25' | 'bayn.jev.protocol.v26' | 'bayn.jev.protocol.v27' =
+    'bayn.jev.protocol.v24',
 >(
   entryQuestionPolicyHash: string,
   version: V = 'bayn.jev.protocol.v24' as V,
@@ -99,15 +100,19 @@ export const jevProtocolSchemaForQuestionPolicy = <
     }),
   )
 
-export const JevProtocolSchema = jevProtocolSchemaForQuestionPolicy(entryQuestionPolicyHash, 'bayn.jev.protocol.v26')
+export const JevProtocolSchema = jevProtocolSchemaForQuestionPolicy(entryQuestionPolicyHash, 'bayn.jev.protocol.v27')
 
 export type JevProtocol = typeof JevProtocolSchema.Type
 export type JevProtocolMaterial = Omit<JevProtocol, 'schemaVersion'> & {
-  readonly schemaVersion: 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25' | 'bayn.jev.protocol.v26'
+  readonly schemaVersion:
+    | 'bayn.jev.protocol.v24'
+    | 'bayn.jev.protocol.v25'
+    | 'bayn.jev.protocol.v26'
+    | 'bayn.jev.protocol.v27'
 }
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v26',
+  schemaVersion: 'bayn.jev.protocol.v27',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
   entrySelectionPolicy: 'source-anchored-proposal-judgments',

@@ -143,7 +143,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
       yield* checkWindow
       const dispatches = yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* recordReproducedJevObservation(sql, reproduced.observation)
+          yield* recordReproducedJevObservation(sql, reproduced.observation, reproduced.plan.schemaVersion)
           const checkedAt = yield* checkWindow
           yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
           if (plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)) {

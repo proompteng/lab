@@ -8,7 +8,7 @@ import type { Statement } from 'effect/sql/Statement'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevBatchPlanVersion, JevCandidatePlanStatus, usableJevBatchInferences } from '../jev/batch'
+import { JevBatchPlanVersion, JevCandidatePlanStatus, usableEntryBatchInferences } from '../jev/batch'
 import { evaluateJevBatch, JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
@@ -105,7 +105,12 @@ test.each([
             if (finalized.success.result === null) throw new Error('Committed receipts must produce a complete result')
             expect(
               Result.isSuccess(
-                usableJevBatchInferences(plan, finalized.success.result, yield* Clock.currentTimeMillis),
+                usableEntryBatchInferences(
+                  plan,
+                  finalized.success.result,
+                  yield* Clock.currentTimeMillis,
+                  JevBatchPlanVersion.V7,
+                ),
               ),
             ).toBe(scenario.usable)
           } else expect(persisted).toBeNull()

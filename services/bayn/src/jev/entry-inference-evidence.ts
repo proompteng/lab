@@ -109,6 +109,7 @@ export const makeEntryInferenceCompletionSchema = <S extends Schema.Top>(handoff
       }),
       Schema.Struct({ status: Schema.Literal('NOT_REQUESTED') }),
       Schema.Struct({ status: Schema.Literal('NOT_DISPATCHED') }),
+      Schema.Struct({ status: Schema.Literal('OMITTED_BY_POLICY') }),
     ]),
   })
 export const EntryInferenceCompletionSchema = makeEntryInferenceCompletionSchema(EntryHandoffSchema)
@@ -133,7 +134,7 @@ export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
   })
 
 export const decodeStagedEntryHandoff = (
-  source: EntrySource,
+  source: Omit<EntrySource, 'input'> & { readonly input: EntryInferenceMaterial },
   input: unknown,
   inputHash: string,
   prepareJudgments: typeof makeEntryJudgmentRequest,
@@ -355,7 +356,9 @@ export const decodeEntryInferenceCompletion = (source: EntrySource, input: unkno
   )
 
 export const verifyEntryCompletion = <H extends EntryHandoffMaterial>(
-  source: Pick<EntrySource, 'expiresAt'>,
+  source: Pick<EntrySource, 'expiresAt'> & {
+    readonly input: Pick<EntryInferenceMaterial, 'schemaVersion'>
+  },
   completion: Omit<typeof EntryInferenceCompletionSchema.Type, 'handoff'>,
   handoff: H,
 ) =>
@@ -369,6 +372,13 @@ export const verifyEntryCompletion = <H extends EntryHandoffMaterial>(
         return yield* invalid('Jev cannot be dispatched without a prepared funded proposal')
       return verified
     }
+    if (source.input.schemaVersion === 'bayn.entry-ablation-input.v1') {
+      if (outcome.status !== 'OMITTED_BY_POLICY')
+        return yield* invalid('An ablation request must omit Jev under its source selection policy')
+      return verified
+    }
+    if (outcome.status === 'OMITTED_BY_POLICY')
+      return yield* invalid('Only an explicit ablation request may omit Jev policy evidence')
     if (outcome.status === 'NOT_REQUESTED')
       return yield* invalid('A prepared Jev request must retain its dispatch disposition')
     if (outcome.status === 'NOT_DISPATCHED') {

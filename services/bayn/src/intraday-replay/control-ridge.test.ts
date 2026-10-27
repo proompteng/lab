@@ -15,7 +15,7 @@ import { sha256, canonicalHashV1Result } from '../hash'
 import { jevModel } from '../jev/contract'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { observedQuoteAt } from '../market-data/streaming/projection'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { config } from '../testing/runtime-fixtures'
 import { utcInstantFromEpochMillis as iso } from '../time'
 import {
@@ -74,7 +74,7 @@ const fixture = (
   } = {},
 ) =>
   Effect.gen(function* () {
-    const risk = yield* loadExecutionRiskPolicy('ridge-control-test', equityMarketProfile.universe)
+    const risk = yield* Effect.fromResult(makeExecutionRiskPolicy('ridge-control-test', equityMarketProfile.universe))
     const pollIntervalMs = options.pollIntervalMs ?? 30_000
     const firstDecisionMs = sixBarOpenMs + Math.ceil(1_802_000 / pollIntervalMs) * pollIntervalMs
     const baseInputs: SixBarFixtureInput[] = sixBarFixtureInputs()

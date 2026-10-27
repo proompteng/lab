@@ -28,6 +28,12 @@ enter cycle execution. Timeouts after that boundary retain fail-closed mutation 
 [October 17 runtime and crypto entry investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) for the
 reproduction, cost evidence and research limitations; this recovery does not establish profitable trading.
 
+Reconciliation requires the account, position and valuation observations to cover the current New York trading day
+before persistence and before publishing the result. A pass crossing midnight invalidates its cached broker snapshot
+and makes one fresh read within the original pass deadline. A still-stale refresh retains the normal authority
+restriction. The new day's risk baseline comes from its first actual valuation; prior valuations and the lifetime
+equity peak remain intact.
+
 Live market-data reference verification retains a bounded fingerprint of each fully verified captured snapshot.
 An exact match across the manifest, bars, quotes, trades and latest quotes reuses that capture's source proof without
 reconstructing it again after entry pricing. Changed data still requires full replay verification; unobserved cuts
@@ -53,11 +59,30 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The replacement source uses `jev` protocol v26, entry state v22, batch v7 and entry target v7. It retains the
+The replacement source uses `jev` protocol v27, entry state v22, batch v7 and entry target v7. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
+Crypto v27 funds its buy at the original inference ask and submits a LIMIT/IOC at the refreshed ask only when it is
+no higher than that original cap, rounded to instrument precision. It does not chase a higher quote or add the risk
+policy's adverse-price allowance to the buy limit. Equity pricing keeps its existing bounded allowance. Crypto entry
+coin fees, maximum future sell fees, stop/exit slippage and every risk limit remain unchanged. A tighter buy limit may
+remain unfilled; it cannot justify a cheaper funding estimate while submitting a higher-priced order.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
+
+Native comparison runtimes also support the chart-entry ablation and repeated-momentum control. Each has a distinct
+behavior hash, complete policy hash, authority generation, and decision document. The ablation keeps chart inference
+and funded proposals, selects the lowest modeled loss with a stable source-identity tie-breaker, and records Jev as
+`OMITTED_BY_POLICY`. Its chart usage remains chargeable. Momentum uses positive benchmark-relative returns from a
+common observed minute and makes no model calls. Its selected signal must fund the frozen stop and fee-inclusive
+profit target; otherwise it abstains without selecting another symbol.
+
+All three runtimes use the same order sizing, broker risk limits, original decision deadline, native protection,
+settlement, and reconciliation. Migration 155 binds each control's requests, batches, provider outcomes, and protection
+plans to its policy identity. A candidate cannot claim the ablation's omitted provider stage, and momentum cannot
+admit chart or Jev inference. Concurrent momentum source admission retains one immutable observation per window.
+The application still selects its existing candidate at the composition root. These comparison capabilities and their
+synthetic execution tests do not establish a prospective economic qualification.
 
 Entry input v5 retains relative volume, including fractional crypto quantities and an empty histogram for all-zero windows.
 Chart transport first asks presence, support/resistance anchors and the base end. Only an authenticated selected end
@@ -65,9 +90,9 @@ can produce a second OpenAI request containing its single conditional base-start
 `BASE_START` stage shares the original ten-second deadline with CHART and Jev; no timeout or transport cap is raised.
 Each start choice covers all earlier source bars and an explicit no-base option. Ends must leave at least two base bars
 and one newer completed bar. An unused branch's refusal cannot veto a supported proposal.
-Migration 154 admits only outer request v3, input v5, handoff v4 and the exact market-specific v26 question policy
-for new execution. It preserves the staged transport installed by migration 153. Retired v1–v4 inputs and the earlier
-v26 question policy remain available only to financial readers. Migration 151 and its historical checkpoint identities remain unchanged.
+Migration 157 admits only protocol v27 for new execution, retaining outer request v3, input v5, handoff v4 and the
+market-specific question policy. It preserves the staged transport installed by migration 153. Retired protocols,
+v1–v4 inputs and earlier question policies remain available only to financial readers. Migration 151 and its historical checkpoint identities remain unchanged.
 Each visual stage has one immutable dispatch admission and a separately durable terminal receipt. A duplicate admission
 cannot redispatch an uncertain call. Late terminal evidence can settle costs but cannot authorize a successor or renew expiry.
 An explicit authenticated BASE_START skip proves non-dispatch; absent or incomplete stage evidence remains unknown.
@@ -1487,6 +1512,8 @@ The write command acquires the execution writer fence before reading report evid
 append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
 The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.
 Read-only diagnostics retain their independent repeatable-read, read-only transaction and do not acquire that fence.
+Opening and closing balance queries resolve their time cuts before looking up account snapshots through the existing
+account-event index. They retain the full financial history and original reconciliation and generation boundaries.
 Persistence is append-only and idempotent for unchanged evidence; the creation timestamp comes from the fixed
 evidence cut, not invocation time. A conflicting receipt for the same authority generation fails closed.
 

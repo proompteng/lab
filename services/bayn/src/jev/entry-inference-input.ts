@@ -6,10 +6,10 @@ import { canonicalHashV1Result, canonicalJsonWithHashV1Result } from '../hash'
 import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { ChartSourceSchema, decodeChartSource } from './chart-evidence'
 import { JevContractError } from './contract'
-import { JevProtocolSchema } from './protocol'
+import { JevProtocolSchema, type JevProtocolMaterial } from './protocol'
 
 const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
-export const EntryInferenceInputSchema = Schema.Struct({
+export const CandidateEntryInferenceInputSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.entry-inference-input.v5'),
   numericalState: Schema.Record(Schema.String, Schema.Json),
   chartSource: ChartSourceSchema,
@@ -21,16 +21,33 @@ export const EntryInferenceInputSchema = Schema.Struct({
     cryptoFeeTier: Schema.NullOr(CryptoFeeTierSchema),
   }),
 })
-export type EntryInferenceInput = typeof EntryInferenceInputSchema.Type
-export type EntryInferenceMaterial = Omit<EntryInferenceInput, 'schemaVersion' | 'protocol'> & {
-  readonly protocol: import('./protocol').JevProtocolMaterial
-  readonly schemaVersion:
-    | 'bayn.entry-inference-input.v1'
-    | 'bayn.entry-inference-input.v2'
-    | 'bayn.entry-inference-input.v3'
-    | 'bayn.entry-inference-input.v4'
-    | 'bayn.entry-inference-input.v5'
+export enum EntryAblationSelection {
+  LowestModeledLoss = 'LOWEST_MODELED_LOSS_THEN_SOURCE_ID',
 }
+export const AblationEntryInferenceInputSchema = Schema.Struct({
+  ...CandidateEntryInferenceInputSchema.fields,
+  schemaVersion: Schema.Literal('bayn.entry-ablation-input.v1'),
+  selectionPolicy: Schema.Enum(EntryAblationSelection),
+})
+export const EntryInferenceInputSchema = Schema.Union([
+  CandidateEntryInferenceInputSchema,
+  AblationEntryInferenceInputSchema,
+])
+export type EntryInferenceInput = typeof EntryInferenceInputSchema.Type
+export type EntryInferenceMaterial =
+  | EntryInferenceInput
+  | (Omit<typeof CandidateEntryInferenceInputSchema.Type, 'schemaVersion' | 'protocol'> & {
+      readonly schemaVersion:
+        | 'bayn.entry-inference-input.v1'
+        | 'bayn.entry-inference-input.v2'
+        | 'bayn.entry-inference-input.v3'
+        | 'bayn.entry-inference-input.v4'
+        | 'bayn.entry-inference-input.v5'
+      readonly protocol: JevProtocolMaterial
+    })
+  | (Omit<typeof AblationEntryInferenceInputSchema.Type, 'protocol'> & {
+      readonly protocol: JevProtocolMaterial
+    })
 
 export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
   Result.gen(function* () {

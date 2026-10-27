@@ -8,7 +8,7 @@ import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { canonicalHashV1Result } from '../hash'
 import { observedQuoteAt } from '../market-data/streaming/projection'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import {
   PositiveMicrosSchema,
   Sha256Schema,
@@ -134,7 +134,9 @@ export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceip
 export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: BacktestSourceReceipt) =>
   Effect.gen(function* () {
     const { input, prepared, calendar, dataCostMicros } = yield* Effect.fromResult(prepareRidgeTraining(raw, receipt))
-    const risk = yield* loadExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
+    const risk = yield* Effect.fromResult(
+      makeExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe),
+    )
     const executionLabelDefinition = ridgeExecutionLabelDefinition(
       {
         protocol: prepared.protocol,
