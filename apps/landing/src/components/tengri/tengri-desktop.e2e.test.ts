@@ -10377,6 +10377,7 @@ test('saves scoped platform connections, retries the exact change, and retains d
   let connections: Record<string, unknown>[] = []
   let lostResponse = true
   let lostDisconnect = true
+  let targetId = 'galactic/immutable-namespace-uid'
   await page.route('**/api/platform/connectors', (route) =>
     route.fulfill({
       json: {
@@ -10390,7 +10391,7 @@ test('saves scoped platform connections, retries the exact change, and retains d
             targets: [
               {
                 name: 'production',
-                resource: { kind: 'kubernetes.namespace', id: 'galactic/immutable-namespace-uid' },
+                resource: { kind: 'kubernetes.namespace', id: targetId },
               },
             ],
           },
@@ -10471,9 +10472,15 @@ test('saves scoped platform connections, retries the exact change, and retains d
   await expect(panel.getByText('pod_exec', { exact: true })).toHaveCount(0)
   await panel.getByRole('button', { name: 'Save connection', exact: true }).click()
   await expect(panel.getByRole('alert')).toContainText(['Select at least one operation', 'Select at least one target'])
-  await panel.getByRole('checkbox', { name: 'pod_status Read pod status' }).check()
+  await expect(panel.getByRole('checkbox', { name: 'pod_status', exact: true })).toHaveAccessibleDescription(
+    'Read pod status Select at least one operation',
+  )
+  await panel.getByRole('checkbox', { name: 'pod_status', exact: true }).check()
   await panel.getByRole('checkbox', { name: 'production', exact: true }).check()
   await panel.getByRole('button', { name: 'Save connection', exact: true }).click()
+  await expect(panel.getByRole('alert')).toContainText('Guest acknowledgement is unavailable')
+  await openSettingsPane(settings, 'General')
+  await openSettingsPane(settings, 'Connections')
   await expect(panel.getByRole('alert')).toContainText('Guest acknowledgement is unavailable')
   await panel.getByRole('button', { name: 'Retry connection', exact: true }).click()
   await expect(panel.getByRole('status')).toHaveText('Connection is ready.')
@@ -10491,14 +10498,28 @@ test('saves scoped platform connections, retries the exact change, and retains d
   expect(disconnections[1]).toEqual(disconnections[0])
   await expect(panel.getByRole('status')).toContainText('access is revoked')
   await expect(panel.getByText('Disconnected', { exact: true })).toBeVisible()
+  targetId = 'galactic/recreated-namespace-uid'
   await page.reload()
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   const restored = page.getByRole('region', { name: 'Settings window', exact: true })
   await openSettingsPane(restored, 'Connections')
   await expect(restored.getByText('Disconnected', { exact: true })).toBeVisible()
+  const unavailable = restored.getByRole('checkbox', { name: 'Unavailable saved target.', exact: false })
+  await expect(unavailable).toBeChecked()
+  await expect(restored.getByRole('checkbox', { name: 'production', exact: true })).not.toBeChecked()
+  await unavailable.focus()
+  await unavailable.press('Space')
+  await expect(unavailable).toHaveCount(0)
   expect(saves).toHaveLength(2)
   const accessibility = await new AxeBuilder({ page }).include('[aria-label="Connections"]').analyze()
   expect(accessibility.violations).toEqual([])
+  await restored.screenshot({ path: test.info().outputPath('connections-desktop.png') })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect
+    .poll(() => restored.locator('form').evaluate((form) => form.scrollWidth - form.clientWidth))
+    .toBeLessThanOrEqual(1)
+  await expect(restored.getByRole('checkbox', { name: 'production', exact: true })).not.toBeChecked()
+  await restored.screenshot({ path: test.info().outputPath('connections-narrow.png') })
 })
 
 test('administers catalog-defined service policies and preserves the exact pending command', async ({ page }) => {
@@ -10557,6 +10578,18 @@ test('administers catalog-defined service policies and preserves the exact pendi
   await openSettingsPane(settings, 'Privacy & Security')
   await settings.getByRole('tab', { name: 'Service policies', exact: true }).click()
   const policies = settings.getByRole('region', { name: 'Service policies', exact: true })
+  await expect(policies.getByLabel('Policy', { exact: true })).toBeVisible()
+  const controlHeights = await policies
+    .locator('select, input:not([type="checkbox"]):not([type="hidden"])')
+    .evaluateAll((controls) => controls.map((control) => control.getBoundingClientRect().height))
+  expect(controlHeights).toHaveLength(6)
+  expect(Math.max(...controlHeights) - Math.min(...controlHeights)).toBeLessThanOrEqual(1)
+  await policies.getByRole('button', { name: 'Apply policy', exact: true }).click()
+  await expect(policies.getByLabel('Resource identity', { exact: true })).toHaveAttribute('aria-invalid', 'true')
+  await expect(policies.getByLabel('Resource identity', { exact: true })).toHaveAccessibleDescription(
+    'Choose a target or enter its exact resource ID. Choose a resource',
+  )
+  expect(writes).toHaveLength(0)
   await policies.getByLabel('Policy', { exact: true }).selectOption('fixture.service')
   await policies.getByLabel('Resource identity', { exact: true }).fill('fixture/tenant-a')
   await policies.getByLabel('Permission', { exact: true }).selectOption('can_inspect')
@@ -10584,13 +10617,24 @@ test('administers catalog-defined service policies and preserves the exact pendi
       },
     ],
   })
-  await policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' }).uncheck()
+  await policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' }).focus()
+  await policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' }).press('Space')
+  await expect(policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' })).not.toBeChecked()
   await policies.getByRole('button', { name: 'Apply policy', exact: true }).click()
   await expect.poll(() => writes.length).toBe(3)
   expect(writes[2]).toMatchObject({ expectedPolicyVersion: '21', relationships: [{ enabled: false }] })
   await expect(policies.getByRole('button', { name: 'Apply policy', exact: true })).toBeEnabled()
   const accessibility = await new AxeBuilder({ page }).include('[aria-label="Service policies"]').analyze()
   expect(accessibility.violations).toEqual([])
+  await settings.getByRole('button', { name: 'Maximize Settings', exact: true }).click()
+  await settings.screenshot({ path: test.info().outputPath('service-policies-desktop.png') })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect
+    .poll(() => policies.locator('form').evaluate((form) => form.scrollWidth - form.clientWidth))
+    .toBeLessThanOrEqual(1)
+  await expect(policies.getByLabel('Registered service identity', { exact: true })).toHaveValue(workload)
+  await policies.getByLabel('Reason', { exact: true }).scrollIntoViewIfNeeded()
+  await settings.screenshot({ path: test.info().outputPath('service-policies-narrow.png') })
 })
 
 for (const mode of ['idle', 'current', 'other', 'closed'] as const) {

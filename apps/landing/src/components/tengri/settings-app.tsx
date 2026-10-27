@@ -166,7 +166,7 @@ export function SettingsApp({
   const headingId = `${instanceId}-settings-heading`
 
   return (
-    <div className="@container/settings relative flex h-full min-h-0 bg-[#252527] text-[13px] text-zinc-100">
+    <div className="@container/settings relative flex h-full min-h-0 bg-[#252527] text-[13px] text-zinc-100 [--primary:var(--color-blue-600)] [--primary-foreground:var(--color-white)] [--ring:var(--color-blue-400)]">
       <div
         data-window-drag-region
         className="absolute top-0 left-0 h-[52px] w-[218px] touch-none select-none @max-[560px]/settings:hidden"

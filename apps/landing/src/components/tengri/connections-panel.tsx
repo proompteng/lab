@@ -2,9 +2,24 @@
 
 import { fromJson } from '@bufbuild/protobuf'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Button } from '@proompteng/design/ui'
+import {
+  Button,
+  Card,
+  CardContent,
+  CardFooter,
+  Checkbox,
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+  NativeSelect,
+} from '@proompteng/design/ui'
 import { useCallback, useEffect, useId, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { connectorCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
 import { connectionReference, credentialMatchesRuntime, type SaveConnection } from '@/lib/tengri/connections'
@@ -101,7 +116,6 @@ export function ConnectionsPanel({
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
-    setError('')
     void load(controller.signal).catch((cause: unknown) => {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Connections are unavailable')
     })
@@ -248,12 +262,21 @@ export function ConnectionsPanel({
   const unavailableTargets = selectedTargets.filter(
     (key) => !targets.some((entry) => resourceKey(entry.resource) === key),
   )
+  const targetOptions = [
+    ...targets.map((entry) => ({ key: resourceKey(entry.resource), label: entry.name, unavailable: false })),
+    ...unavailableTargets.map((key) => ({
+      key,
+      label: 'Unavailable saved target. Remove it before choosing a replacement.',
+      unavailable: true,
+    })),
+  ]
   const blocked = disabled || busy || Boolean(pending) || Boolean(pendingDisconnect)
+  const { errors } = form.formState
   return (
-    <section aria-label="Connections" className="space-y-4 text-zinc-200">
-      <p className="text-sm text-zinc-400">
+    <section aria-label="Connections" className="@container/connections space-y-4 text-zinc-200">
+      <FieldDescription>
         Give this workspace selected platform tools. Each call uses your current permissions.
-      </p>
+      </FieldDescription>
       {error ? (
         <p role="alert" className="text-sm text-red-300">
           {error}
@@ -265,9 +288,9 @@ export function ConnectionsPanel({
         </p>
       ) : null}
       {snapshot?.connections.map((connection) => (
-        <div key={connection.id} className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
+        <Card key={connection.id} size="sm">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 flex-1 break-words">
               <p className="text-sm font-medium">{connection.clientReference.slice((agent.uid + '/').length)}</p>
               <p className="mt-1 text-xs text-zinc-400">
                 {!connection.enabled
@@ -316,123 +339,165 @@ export function ConnectionsPanel({
                 {pendingDisconnect?.connectionId === connection.id ? 'Retry disconnect' : 'Disconnect'}
               </Button>
             </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       ))}
       {!catalog ? (
         <p role="status" className="text-sm text-zinc-400">
           Loading connections…
         </p>
       ) : (
-        <form onSubmit={submit} className="space-y-4 rounded-lg border border-zinc-700 bg-zinc-900/50 p-3">
-          <div className="space-y-1">
-            <label htmlFor={formId + '-connector'} className="text-sm">
-              Connector
-            </label>
-            <select
-              id={formId + '-connector'}
-              className="block w-full rounded-md border border-zinc-700 bg-zinc-950 p-2 text-sm"
-              value={connectorId}
-              disabled={blocked}
-              onChange={(event) => changeConnector(event.target.value)}
-            >
-              <option value="">Choose a connector</option>
-              {[
-                ...new Set(
-                  catalog.operations
-                    .filter((operation) => operation.readOnly)
-                    .map((operation) => operation.connectorId),
-                ),
-              ].map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
-            {form.formState.errors.connectorId ? (
-              <p role="alert" className="text-xs text-red-300">
-                {form.formState.errors.connectorId.message}
-              </p>
-            ) : null}
-          </div>
-          <fieldset disabled={blocked} className="space-y-2">
-            <legend className="mb-2 text-sm">Operations</legend>
-            {operations.map((operation) => (
-              <label key={operation.name} className="flex items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  value={operation.name}
-                  {...form.register('operations')}
-                  className="mt-1 accent-blue-500"
-                />
-                <span>
-                  {operation.name}
-                  <span className="mt-1 block text-xs text-zinc-400">{operation.description}</span>
-                </span>
-              </label>
-            ))}
-            {form.formState.errors.operations ? (
-              <p role="alert" className="text-xs text-red-300">
-                {form.formState.errors.operations.message}
-              </p>
-            ) : null}
-          </fieldset>
-          <fieldset disabled={blocked} className="space-y-2">
-            <legend className="mb-2 text-sm">Targets</legend>
-            {targets.map((entry) => (
-              <label key={resourceKey(entry.resource)} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  value={resourceKey(entry.resource)}
-                  {...form.register('targets')}
-                  className="accent-blue-500"
-                />
-                {entry.name}
-              </label>
-            ))}
-            {unavailableTargets.map((key) => (
-              <label key={key} className="flex items-center gap-2 text-xs text-amber-300">
-                <input type="checkbox" value={key} {...form.register('targets')} />
-                Unavailable saved target. Remove it before choosing a replacement.
-              </label>
-            ))}
-            {form.formState.errors.targets ? (
-              <p role="alert" className="text-xs text-red-300">
-                {form.formState.errors.targets.message}
-              </p>
-            ) : null}
-          </fieldset>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="submit"
-              size="sm"
-              className="bg-blue-700 text-white hover:bg-blue-600"
-              disabled={disabled || busy || Boolean(pendingDisconnect)}
-            >
-              {busy
-                ? 'Saving…'
-                : pending
-                  ? 'Retry connection'
-                  : selectedConnection && !selectedConnection.enabled
-                    ? 'Reconnect'
-                    : 'Save connection'}
-            </Button>
-            <Button type="button" size="sm" variant="ghost" disabled={disabled || busy} onClick={() => void refresh()}>
-              Refresh
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={disabled || busy}
-              onClick={() =>
-                void startTengriSignIn('step-up').catch(() => setError('Passkey verification could not start'))
-              }
-            >
-              Verify passkey
-            </Button>
-          </div>
-        </form>
+        <Card size="sm">
+          <form noValidate onSubmit={submit} className="space-y-4">
+            <CardContent>
+              <FieldGroup>
+                <Field data-invalid={Boolean(errors.connectorId)}>
+                  <FieldLabel htmlFor={formId + '-connector'}>Connector</FieldLabel>
+                  <NativeSelect
+                    id={formId + '-connector'}
+                    className="w-full"
+                    aria-invalid={Boolean(errors.connectorId)}
+                    aria-describedby={formId + '-connector-error'}
+                    value={connectorId}
+                    disabled={blocked}
+                    onChange={(event) => changeConnector(event.target.value)}
+                  >
+                    <option value="">Choose a connector</option>
+                    {[
+                      ...new Set(
+                        catalog.operations
+                          .filter((operation) => operation.readOnly)
+                          .map((operation) => operation.connectorId),
+                      ),
+                    ].map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                  <FieldError id={formId + '-connector-error'} errors={[errors.connectorId]} />
+                </Field>
+                <div className="grid gap-4 @min-[420px]/connections:grid-cols-2">
+                  <FieldSet disabled={blocked} aria-describedby={formId + '-operations-error'}>
+                    <FieldLegend>Operations</FieldLegend>
+                    <Controller
+                      name="operations"
+                      control={form.control}
+                      render={({ field }) => (
+                        <FieldGroup className="gap-3">
+                          {operations.map((operation, index) => (
+                            <Field
+                              key={operation.name}
+                              orientation="horizontal"
+                              data-invalid={Boolean(errors.operations)}
+                            >
+                              <Checkbox
+                                id={formId + '-operation-' + index}
+                                name={field.name}
+                                ref={index === 0 ? field.ref : undefined}
+                                checked={field.value.includes(operation.name)}
+                                disabled={blocked}
+                                onBlur={field.onBlur}
+                                onCheckedChange={(checked) =>
+                                  field.onChange(
+                                    checked
+                                      ? [...field.value, operation.name]
+                                      : field.value.filter((name) => name !== operation.name),
+                                  )
+                                }
+                                aria-invalid={Boolean(errors.operations)}
+                                aria-describedby={
+                                  formId + '-operation-description-' + index + ' ' + formId + '-operations-error'
+                                }
+                              />
+                              <FieldContent>
+                                <FieldLabel htmlFor={formId + '-operation-' + index}>{operation.name}</FieldLabel>
+                                <FieldDescription id={formId + '-operation-description-' + index}>
+                                  {operation.description}
+                                </FieldDescription>
+                              </FieldContent>
+                            </Field>
+                          ))}
+                        </FieldGroup>
+                      )}
+                    />
+                    <FieldError id={formId + '-operations-error'} errors={[errors.operations]} />
+                  </FieldSet>
+                  <FieldSet disabled={blocked} aria-describedby={formId + '-targets-error'}>
+                    <FieldLegend>Targets</FieldLegend>
+                    <Controller
+                      name="targets"
+                      control={form.control}
+                      render={({ field }) => (
+                        <FieldGroup className="gap-3">
+                          {targetOptions.map((option, index) => (
+                            <Field key={option.key} orientation="horizontal" data-invalid={Boolean(errors.targets)}>
+                              <Checkbox
+                                id={formId + '-target-' + index}
+                                name={field.name}
+                                ref={index === 0 ? field.ref : undefined}
+                                checked={field.value.includes(option.key)}
+                                disabled={blocked}
+                                onBlur={field.onBlur}
+                                onCheckedChange={(checked) =>
+                                  field.onChange(
+                                    checked
+                                      ? [...field.value, option.key]
+                                      : field.value.filter((key) => key !== option.key),
+                                  )
+                                }
+                                aria-invalid={Boolean(errors.targets)}
+                                aria-describedby={formId + '-targets-error'}
+                              />
+                              <FieldLabel
+                                htmlFor={formId + '-target-' + index}
+                                className={option.unavailable ? 'text-amber-300' : undefined}
+                              >
+                                {option.label}
+                              </FieldLabel>
+                            </Field>
+                          ))}
+                        </FieldGroup>
+                      )}
+                    />
+                    <FieldError id={formId + '-targets-error'} errors={[errors.targets]} />
+                  </FieldSet>
+                </div>
+              </FieldGroup>
+            </CardContent>
+            <CardFooter className="flex-wrap gap-2">
+              <Button type="submit" size="sm" disabled={disabled || busy || Boolean(pendingDisconnect)}>
+                {busy
+                  ? 'Saving…'
+                  : pending
+                    ? 'Retry connection'
+                    : selectedConnection && !selectedConnection.enabled
+                      ? 'Reconnect'
+                      : 'Save connection'}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={disabled || busy}
+                onClick={() => void refresh()}
+              >
+                Refresh
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={disabled || busy}
+                onClick={() =>
+                  void startTengriSignIn('step-up').catch(() => setError('Passkey verification could not start'))
+                }
+              >
+                Verify passkey
+              </Button>
+            </CardFooter>
+          </form>
+        </Card>
       )}
     </section>
   )
