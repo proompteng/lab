@@ -597,12 +597,10 @@ test('diagnostics retain atomic judgments and source identities without inventin
   if (candidate === undefined || !('judgments' in candidate) || candidate.judgments === null)
     throw Error('Missing atomic judgments')
   expect(Object.keys(candidate.judgments)).toEqual([
-    'support_recovery_confirmed',
-    'support_recovery_stop_invalidates',
-    'support_recovery_target_obstructed',
-    'base_breakout_confirmed',
-    'base_breakout_stop_invalidates',
-    'base_breakout_target_obstructed',
+    'equity_support_recovery_confirmed',
+    'equity_support_recovery_stop_invalidates',
+    'equity_base_breakout_confirmed',
+    'equity_base_breakout_stop_invalidates',
   ])
   expect(Object.values(candidate.judgments).every((judgment) => judgment.type === 'noul')).toBe(true)
   expect(candidate.plans.every((plan) => /^[a-f0-9]{64}$/.test(plan.proposalId))).toBe(true)

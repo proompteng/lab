@@ -226,6 +226,13 @@ Migration 153 retains the flat/settled/accounting/fresh-reconciliation gates and
 OBSERVE with the kill switch active; it does not rearm or create a new mandate. Publication and OBSERVE verification
 do not prove restored PAPER execution, fills, or fully loaded profitability.
 
+Migration 154 replaces the entry-question policy within the same v26 wire contracts. Equities require setup and stop
+invalidation; crypto also requires an unobstructed fee-funded target. Current dispatch and request writes require the
+new policy hash. Original v26 claims, receipts, questions and expenses remain financial-only; they cannot restart
+inference. The cutover retains flat inventory, settled orders, exact reconciliation and complete accounting checks,
+then restricts prior PAPER authority for the new same-account mandate. Monetary risk, holding and inference limits
+are unchanged.
+
 The source phase removes the prior sealed capital request and its three runtime lineages. After the exact published
 image and native OBSERVE recovery are verified, a reviewed same-account PAPER request must bind the new strategy and
 image, preserving monetary limits, risk policy, broker identity and the 15-minute holding limit. Natural funded-plan
