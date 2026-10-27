@@ -19,6 +19,7 @@ import type { VerifiedEntryTiming } from './entry-timing'
 import type { VerifiedLatencyStress } from './latency-report'
 import { bindExecutionEvidence } from './execution-evidence'
 import { accountProtectionWork, decisionDocumentWork, entryAbstentionWork, positionHoldWork } from './decision-work'
+import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation-witnesses'
 import { systemQualificationPolicy } from './policy'
 import { assessSession } from './session'
 import { costAttributionRule } from './cost-attribution'
@@ -33,11 +34,14 @@ export const mutationObligations = (
     if (lastClose === undefined)
       return yield* Result.fail(new SystemAssessmentError({ message: 'Missing registered window' }))
     const schedule = []
-    for (const mutationId of new Set(cut.mutations.map((m) => m.event.mutationId))) {
-      const events = cut.mutations
-        .map((m) => m.event)
-        .filter((e) => e.mutationId === mutationId)
-        .toSorted((a, b) => a.sequence - b.sequence)
+    const grouped = new Map<string, SystemSourceCut['mutations'][number]['event'][]>()
+    for (const { event } of cut.mutations) {
+      const events = grouped.get(event.mutationId)
+      if (events === undefined) grouped.set(event.mutationId, [event])
+      else events.push(event)
+    }
+    for (const [mutationId, retained] of grouped) {
+      const events = retained.toSorted((a, b) => a.sequence - b.sequence)
       const start = events.find(
         (e) => e.eventType === MutationEventType.SubmitStarted || e.eventType === MutationEventType.CancelStarted,
       )
@@ -293,6 +297,7 @@ export const bindSystemSourceCut = (
       }
       policies.push({ ...policy, sessions })
     }
+    const earliestWitnesses = earliestDurableWitnesses(cut)
     const decisions = [...data.realism.decisions]
     const unsupportedAssumptions = [...data.realism.unsupportedAssumptions]
     for (const stress of latencyStress.filter((receipt) => receipt.executionReceiptHash === null))
@@ -333,12 +338,7 @@ export const bindSystemSourceCut = (
         sources.add(yield* canonicalHashV1Result(timing.timing))
       } else if (isChartEntryTarget(document.strategyDecision))
         unsupportedAssumptions.push(`MISSING_NATIVE_ENTRY_TIMING:${document.contentHash}`)
-      const visibility = cut.durableObservations
-        .filter(
-          (w) =>
-            w.kind === 'DECISION' && w.sourceHash === document.contentHash && w.correct && w.witnessedAt <= cut.asOf,
-        )
-        .toSorted((a, b) => a.witnessedAt.localeCompare(b.witnessedAt))[0]
+      const visibility = earliestWitnesses.get(`DECISION:${document.contentHash}`)
       if (visibility === undefined && timing === undefined)
         unsupportedAssumptions.push(`MISSING_DURABLE_DECISION_VISIBILITY:${document.contentHash}`)
       const index = decisions.findIndex((d) => d.decisionId === document.contentHash)
@@ -362,16 +362,7 @@ export const bindSystemSourceCut = (
     const completions: (typeof ObligationCompletionSchema.Type)[] = []
     const controllerWork = new Map<string, { sourceAt: string; completedAt: string; correct: boolean }>()
     for (const pass of cut.controllerPasses) {
-      const witness = cut.durableObservations
-        .filter(
-          (w) =>
-            w.kind === 'CONTROLLER' &&
-            w.sourceHash === pass.receiptHash &&
-            w.sourceAt === pass.completedAt &&
-            w.correct &&
-            w.witnessedAt <= cut.asOf,
-        )
-        .toSorted((a, b) => a.witnessedAt.localeCompare(b.witnessedAt))[0]
+      const witness = earliestWitnesses.get(`CONTROLLER:${pass.receiptHash}:${pass.completedAt}`)
       if (witness === undefined) continue
       const work =
         (yield* positionHoldWork(pass, data.registration, cut.decisions, witness.witnessedAt)) ??
@@ -382,59 +373,15 @@ export const bindSystemSourceCut = (
     const documentWork = new Map(
       cut.decisions.map(({ document }) => [document.contentHash, decisionDocumentWork(document, data.registration)]),
     )
+    const indexedWitnesses = yield* indexObligationWitnesses(
+      cut,
+      data.registration,
+      schedule,
+      controllerWork,
+      documentWork,
+    )
     for (const obligation of schedule) {
-      const witnesses = []
-      for (const witness of cut.durableObservations) {
-        const work = witness.kind === 'CONTROLLER' ? controllerWork.get(witness.sourceHash) : undefined
-        const decision = witness.kind === 'DECISION' ? documentWork.get(witness.sourceHash) : undefined
-        const sourceAt = work?.sourceAt ?? decision?.sourceAt ?? witness.sourceAt
-        if (witness.witnessedAt > cut.asOf || sourceAt < obligation.dueAt) continue
-        let correct = witness.correct
-        if (obligation.class === ObligationClass.Decision || obligation.class === ObligationClass.Reconciliation) {
-          const interval =
-            obligation.class === ObligationClass.Decision
-              ? data.registration.obligations.decisionIntervalMs
-              : data.registration.obligations.reconciliationIntervalMs
-          if (
-            (witness.kind !== obligation.class &&
-              !(obligation.class === ObligationClass.Decision && work !== undefined)) ||
-            Date.parse(sourceAt) >= Date.parse(obligation.dueAt) + interval
-          )
-            continue
-          if (obligation.class === ObligationClass.Decision) {
-            if (work !== undefined) {
-              correct = correct && work.correct && work.completedAt === witness.sourceAt
-              witnesses.push({ witness, correct })
-              continue
-            }
-            if (decision === undefined) continue
-            correct = correct && decision.correct
-          }
-        } else {
-          if (witness.kind !== 'MUTATION') continue
-          const event = cut.mutations.find((m) => m.event.eventId === witness.sourceHash)?.event
-          if (
-            event === undefined ||
-            (yield* canonicalHashV1Result({
-              registrationHash: cut.registrationHash,
-              mutationId: event.mutationId,
-              class: obligation.class,
-            })) !== obligation.obligationId
-          )
-            continue
-          const final = [
-            MutationEventType.SubmitAccepted,
-            MutationEventType.SubmitRejected,
-            MutationEventType.SubmitDenied,
-            MutationEventType.CancelAccepted,
-            MutationEventType.RecoveryFound,
-            MutationEventType.RecoveryNotFound,
-          ].includes(event.eventType)
-          const uncertain = [MutationEventType.SubmitUnknown, MutationEventType.CancelUnknown].includes(event.eventType)
-          if (!final && !(obligation.class === ObligationClass.Mutation && uncertain)) continue
-        }
-        witnesses.push({ witness, correct })
-      }
+      const witnesses = indexedWitnesses.get(obligation.obligationId) ?? []
       const selected =
         witnesses.find((w) => w.correct && w.witness.witnessedAt <= obligation.deadlineAt) ?? witnesses[0]
       if (selected === undefined) continue
