@@ -24,7 +24,7 @@ export default Effect.gen(function* () {
       AND payload->>'authorityGenerationHash' IS NOT DISTINCT FROM authority_generation_hash
       AND (payload #>> '{request,schemaVersion}' IN ('bayn.entry-inference-input.v5', 'bayn.entry-ablation-input.v1')) IS TRUE
       AND payload #>> '{request,protocol,schemaVersion}' IS NOT DISTINCT FROM 'bayn.jev.protocol.v26'
-      AND payload #>> '{request,protocol,entryQuestionPolicyHash}' IS NOT DISTINCT FROM '05b4cc847d516888abecf982abd8ca6207f62f8f642bd2381c44a9051717a305'
+      AND payload #>> '{request,protocol,entryQuestionPolicyHash}' IS NOT DISTINCT FROM 'abf1e97da2d6a9bdef380aa224cde4245aa332c2686976bb9d755ad9a1a60910'
     ) NOT VALID`
   yield* sql`ALTER TABLE jev_batch_plans DROP CONSTRAINT jev_batch_plans_check,
     ADD CONSTRAINT jev_batch_plans_check CHECK (
