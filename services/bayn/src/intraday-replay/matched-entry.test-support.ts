@@ -1,4 +1,5 @@
-import { equityMarketProfile } from '../jev/markets'
+import { instrumentMarket } from '../instruments'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { Effect, Schema, Result } from 'effect'
 import { CycleState } from '../cycle/model'
 import { makeInitialCycle } from '../cycle/store/decisions'
@@ -19,7 +20,7 @@ import {
 } from '../target-planner/index'
 
 export const matchedCommittedDecisionFixture = (
-  native: Omit<ReturnType<typeof nativeJevFixture>, 'snapshot'> & {
+  native: Pick<ReturnType<typeof nativeJevFixture>, 'protocol' | 'portfolio' | 'observation' | 'draft'> & {
     readonly snapshot: import('../market-data/streaming/snapshot').StreamingVerifiedMarketSnapshot
   },
   evidence: ReturnType<typeof nativeJevDecisionEvidence>,
@@ -37,7 +38,7 @@ export const matchedCommittedDecisionFixture = (
       schemaVersion: 'bayn.execution-risk-policy.v4',
       accountId: broker.account.accountId,
       brokerMode: BrokerMode.Execution,
-      allowedSymbols: equityMarketProfile.candidateSymbols,
+      allowedSymbols: native.protocol.candidateSymbols,
       allowedOrderTypes: [OrderType.Limit],
       allowedTimeInForce: [TimeInForce.Day, TimeInForce.ImmediateOrCancel],
       maxOrderNotionalMicros: '100000000000',
@@ -81,7 +82,7 @@ export const matchedCommittedDecisionFixture = (
       allocationCapitalMicros,
       executionTerms: {
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.Day,
+        timeInForce: cashSpotLimitTimeInForce(instrumentMarket(decision.selectedSymbols[0] ?? 'AAPL')),
         priceReference: 'verified-adverse-quote-boundary' as const,
         snapshotId: market.snapshotId,
         snapshotContentHash: market.contentHash,

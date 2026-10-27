@@ -200,7 +200,13 @@ export default Effect.gen(function* () {
         UNION ALL
         SELECT document->'document', xmin::text FROM autonomous_cycle_paper_close_replans WHERE cycle_id = target.cycle_id
       ) source
-      WHERE source.document->'orderedIntentIds' ? NEW.intent_id
+      WHERE (source.document->'orderedIntentIds' ? NEW.intent_id OR (
+          target.protection->>'_tag' IN ('Oco','StopLimit')
+          AND target.protection->>'entryDecisionHash' = source.document->>'contentHash'
+          AND EXISTS(SELECT 1 FROM risk_decisions risk WHERE risk.intent_id=target.intent_id
+            AND risk.decision_id=target.risk_decision_id AND risk.outcome='APPROVED'
+            AND risk.decided_at<=NEW.occurred_at AND risk.expires_at>=NEW.occurred_at
+            AND system_evidence_source_committed(risk.xmin))))
         AND source.document #>> '{bindings,accountId}' = target.account_id
         AND source.document #>> '{bindings,authorityGenerationHash}' = target.authority_generation_hash
         AND source.document #>> '{bindings,strategyDecisionHash}' = target.decision_hash

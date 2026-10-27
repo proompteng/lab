@@ -1,3 +1,5 @@
+import { executionOrderPlans } from './execution-plans'
+import { readSystemExecutionOrders } from './execution-capture'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
@@ -26,7 +28,6 @@ import {
   readSystemControllerPasses,
   readSystemDurableObservations,
   readSystemDecisionAdmissions,
-  readSystemExecutionOrders,
 } from './capture'
 import { makePersistenceDocumentFixture } from './decision-persistence.test-support'
 import { OrderStatus } from '../execution/contracts'
@@ -705,7 +706,14 @@ postgres('PostgreSQL prospective system qualification', () => {
       }),
     )
     expect(rows.map((row) => row.order.brokerOrderId)).toEqual(['native-parent', 'native-profit', 'native-stop'])
-    const captured = Result.getOrThrow(captureExecutionOrders(f.cut.decisions, rows, account, scope.generationHash))
+    const captured = Result.getOrThrow(
+      captureExecutionOrders(
+        Result.getOrThrow(executionOrderPlans(f.cut.decisions, f.cut.protectionIntents)),
+        rows,
+        account,
+        scope.generationHash,
+      ),
+    )
     expect(captured).toEqual(f.cut.orders)
     expect(
       Result.getOrThrow(bindExecutionEvidence(f.supplied, { ...f.cut, orders: captured }, scope.generationHash))
@@ -737,6 +745,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       const asOf = new Date().toISOString()
       const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
         schemaVersion: 'bayn.system-source-cut.v4',
+        protectionIntents: [],
         decisionAdmissions: [],
         orders: [],
         registrationHash: registered.registrationHash,
@@ -855,6 +864,7 @@ postgres('PostgreSQL prospective system qualification', () => {
             const asOf = new Date().toISOString()
             const cut = yield* persistSystemSourceCut({
               schemaVersion: 'bayn.system-source-cut.v4',
+              protectionIntents: [],
               decisionAdmissions: [],
               orders: [],
               registrationHash: registered.registrationHash,

@@ -17,6 +17,7 @@ import { cashFlowsSupported, cashFlowTotals, cashFlowsMatchSession } from './cas
 import { requiredInferenceInputs } from './decision-inputs'
 import type { VerifiedEntryTiming } from './entry-timing'
 import type { VerifiedLatencyStress } from './latency-report'
+import { executionOrderPlans } from './execution-plans'
 import { bindExecutionEvidence } from './execution-evidence'
 import { accountProtectionWork, decisionDocumentWork, entryAbstentionWork, positionHoldWork } from './decision-work'
 import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation-witnesses'
@@ -302,7 +303,9 @@ export const bindSystemSourceCut = (
       policies.push({ ...policy, sessions })
     }
     const earliestWitnesses = earliestDurableWitnesses(witnessedCut)
-    const decisions = [...data.realism.decisions]
+    const orderPlans = yield* executionOrderPlans(cut.decisions, cut.protectionIntents)
+    const protectionIds = new Set(cut.protectionIntents.map((row) => row.intentId))
+    const decisions = data.realism.decisions.filter((row) => !protectionIds.has(row.decisionId))
     const unsupportedAssumptions = [...data.realism.unsupportedAssumptions]
     for (const stress of latencyStress.filter((receipt) => receipt.executionReceiptHash === null))
       unsupportedAssumptions.push(
@@ -359,6 +362,30 @@ export const bindSystemSourceCut = (
     const execution = yield* bindExecutionEvidence(data.realism.fills, cut, candidate.authorityGenerationHash)
     for (const hash of execution.sources) sources.add(hash)
     unsupportedAssumptions.push(...execution.missing)
+    for (const plan of orderPlans.values()) {
+      const protection = plan.protectionIntent
+      if (protection === null) continue
+      if (plan.createdAt > cut.asOf || protection.plan.createdAt > cut.asOf)
+        return yield* fail('Protection intent or risk approval is later than the source cut')
+      const witness = earliestWitnesses.get(`DECISION:${plan.decisionId}`)
+      if (witness === undefined) unsupportedAssumptions.push(`MISSING_PROTECTION_INTENT_PERSISTENCE:${plan.intentId}`)
+      sources.add(protection.sourceHash)
+      sources.add(plan.document.contentHash)
+      sources.add(protection.reconciliation.contentHash)
+      decisions.push({
+        decisionId: plan.decisionId,
+        policyDefinitionHash: definitionHash,
+        authorityGenerationHash: candidate.authorityGenerationHash,
+        snapshotHash: protection.sourceHash,
+        decisionAt: plan.createdAt,
+        persistedAt: witness?.witnessedAt ?? cut.asOf,
+        inputs: [
+          { contentHash: plan.document.contentHash, availableAt: plan.document.createdAt },
+          { contentHash: protection.reconciliation.contentHash, availableAt: protection.reconciliation.reconciledAt },
+          { contentHash: protection.sourceHash, availableAt: protection.riskDecision.decidedAt },
+        ],
+      })
+    }
     const dynamic = yield* mutationObligations(cut, data.registration)
     for (const row of dynamic) sources.add(row.scheduleEvidenceHash)
     const schedule = [...(yield* registeredSchedule(data.registration)), ...dynamic]
@@ -404,7 +431,20 @@ export const bindSystemSourceCut = (
       input: {
         ...data,
         policies,
-        realism: { ...data.realism, decisions, fills: execution.fills, unsupportedAssumptions },
+        realism: {
+          ...data.realism,
+          decisions,
+          fills: execution.fills,
+          unsupportedAssumptions,
+          expectedDecisionIds: [
+            ...new Set([
+              ...data.realism.expectedDecisionIds,
+              ...cut.decisions.map(({ document }) => document.contentHash),
+              ...cut.protectionIntents.map((row) => row.intentId),
+            ]),
+          ],
+          expectedFillIds: [...new Set([...data.realism.expectedFillIds, ...cut.fills.map((fill) => fill.fillId)])],
+        },
         obligationCoverageHash,
         reliability: { asOf: cut.asOf, schedule, completions },
       },

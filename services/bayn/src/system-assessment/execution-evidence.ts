@@ -2,12 +2,18 @@ import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { OrderSchema, OrderSide, OrderStatus, TimeInForce } from '../execution/contracts'
-import { isSnapshotExecutionMarketDataBinding, reconstructBoundIntradaySnapshot } from '../shadow-decision-contract'
+import {
+  isSnapshotExecutionMarketDataBinding,
+  reconstructBoundIntradaySnapshot,
+  reconciledPositionLiquidationBindingSchemaVersion,
+} from '../shadow-decision-contract'
 import { SystemAssessmentError } from './economics'
 import { SystemSourceCutSchema, type SystemSourceCut } from './source-cut'
 import { ExecutionEvidenceKind, type FillRealismSchema } from './realism'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema } from '../schemas'
+import { executionOrderPlans, type ExecutionOrderPlan } from './execution-plans'
+import type { ObservedExecutionFillSchema } from './execution-capture'
 import { resolveExecutionOrderTerms } from './execution-order-terms'
 
 export const ObservedExecutionOrderSchema = Schema.Struct({
@@ -17,34 +23,23 @@ export const ObservedExecutionOrderSchema = Schema.Struct({
 })
 
 export const captureExecutionOrders = (
-  decisions: SystemSourceCut['decisions'],
+  plans: ReadonlyMap<string, ExecutionOrderPlan>,
   observations: readonly (typeof ObservedExecutionOrderSchema.Type)[],
   accountId: string,
   authorityGenerationHash: string,
 ) =>
   Result.gen(function* () {
-    const owners = new Map<string, { document: SystemSourceCut['decisions'][number]['document']; symbol: string }>()
-    for (const { document } of decisions) {
-      for (const [index, intentId] of document.orderedIntentIds.entries()) {
-        const target = document.targetPlan.intentTargets[index]
-        if (target === undefined || owners.has(intentId))
-          return yield* Result.fail(
-            new SystemAssessmentError({ message: 'Captured order has ambiguous decision ownership' }),
-          )
-        owners.set(intentId, { document, symbol: target.symbol })
-      }
-    }
     const orders = []
     const seen = new Set<string>()
     for (const observation of observations) {
       const order = observation.order
-      const owner = order.intentId === undefined ? undefined : owners.get(order.intentId)
+      const owner = order.intentId === undefined ? undefined : plans.get(order.intentId)
       if (
         owner === undefined ||
         owner.document.bindings.accountId !== accountId ||
         owner.document.bindings.authorityGenerationHash !== authorityGenerationHash ||
         order.accountId !== accountId ||
-        order.symbol !== owner.symbol ||
+        order.symbol !== owner.target.symbol ||
         seen.has(order.brokerOrderId)
       )
         return yield* Result.fail(
@@ -53,13 +48,50 @@ export const captureExecutionOrders = (
       seen.add(order.brokerOrderId)
       orders.push({
         intentId: order.intentId,
-        decisionId: owner.document.contentHash,
+        decisionId: owner.decisionId,
         authorityGenerationHash,
         sourceHash: yield* canonicalHashV1Result(observation),
         ...observation,
       })
     }
     return yield* Schema.decodeUnknownResult(SystemSourceCutSchema.fields.orders)(orders)
+  })
+
+export const captureExecutionFills = (
+  plans: ReadonlyMap<string, ExecutionOrderPlan>,
+  observations: readonly (typeof ObservedExecutionFillSchema.Type)[],
+  accountId: string,
+  authorityGenerationHash: string,
+) =>
+  Result.gen(function* () {
+    const fills = []
+    for (const observation of observations) {
+      const { fill } = observation
+      const plan = fill.intentId === undefined ? undefined : plans.get(fill.intentId)
+      if (
+        plan === undefined ||
+        fill.accountId !== accountId ||
+        plan.document.bindings.accountId !== accountId ||
+        plan.document.bindings.authorityGenerationHash !== authorityGenerationHash ||
+        plan.target.symbol !== fill.symbol
+      )
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Actual fill lacks its exact owned execution plan' }),
+        )
+      fills.push({
+        fillId: observation.eventId,
+        sourceSequence: observation.sourceSequence,
+        brokerOrderId: fill.brokerOrderId,
+        intentId: plan.intentId,
+        decisionId: plan.decisionId,
+        sourceHash: yield* canonicalHashV1Result(observation),
+        side: fill.side,
+        quantityAtoms: fill.quantityAtoms,
+        priceAtoms: fill.priceAtoms,
+        occurredAt: fill.occurredAt,
+      })
+    }
+    return fills
   })
 
 /** Replace candidate order facts with the exact durable plan and measured broker routing. */
@@ -69,6 +101,7 @@ export const bindExecutionEvidence = (
   authorityGenerationHash: string,
 ) =>
   Result.gen(function* () {
+    const plans = yield* executionOrderPlans(cut.decisions, cut.protectionIntents)
     const missing: string[] = []
     const sources = new Set<string>()
     const fills = suppliedFills.filter((f) => !cut.fills.some((actual) => actual.fillId === f.fillId))
@@ -79,6 +112,13 @@ export const bindExecutionEvidence = (
     const orders = new Map(cut.orders.map((row) => [row.order.brokerOrderId, row]))
     if (orders.size !== cut.orders.length)
       return yield* Result.fail(new SystemAssessmentError({ message: 'Duplicate retained broker order' }))
+    for (const row of cut.orders) {
+      if (
+        row.order.observedAt <= cut.asOf &&
+        BigInt(row.order.filledQuantityAtoms) > (totals.get(row.order.brokerOrderId) ?? 0n)
+      )
+        missing.push(`MISSING_RETAINED_ORDER_FILLS:${row.order.brokerOrderId}`)
+    }
     const children = new Map<string, SystemSourceCut['orders'][number][]>()
     for (const row of cut.orders) {
       if (
@@ -95,14 +135,33 @@ export const bindExecutionEvidence = (
         else group.push(row)
       }
     }
-    const disposed = new Map<string, bigint>()
+    const inventory = new Map<string, bigint>()
     for (const actual of cut.fills.toSorted(
-      (a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.fillId.localeCompare(b.fillId),
+      (a, b) =>
+        a.occurredAt.localeCompare(b.occurredAt) ||
+        (BigInt(a.sourceSequence) < BigInt(b.sourceSequence)
+          ? -1
+          : BigInt(a.sourceSequence) > BigInt(b.sourceSequence)
+            ? 1
+            : a.fillId.localeCompare(b.fillId)),
     )) {
       const quantity = (cumulative.get(actual.brokerOrderId) ?? 0n) + BigInt(actual.quantityAtoms)
       cumulative.set(actual.brokerOrderId, quantity)
+      const ownedPlan = plans.get(actual.intentId)
+      if (ownedPlan !== undefined) {
+        const owned = inventory.get(ownedPlan.positionOwnerDecisionId) ?? 0n
+        const balance = owned + (actual.side === OrderSide.Buy ? 1n : -1n) * BigInt(actual.quantityAtoms)
+        if (balance < 0n)
+          return yield* Result.fail(
+            new SystemAssessmentError({ message: 'Execution fills exceed the owned chronological inventory' }),
+          )
+        inventory.set(ownedPlan.positionOwnerDecisionId, balance)
+      }
       const supplied = suppliedFills.find((f) => f.fillId === actual.fillId)
-      if (supplied === undefined) continue
+      if (supplied === undefined) {
+        missing.push(`MISSING_ACTUAL_FILL:${actual.fillId}`)
+        continue
+      }
       if (
         supplied.kind !== ExecutionEvidenceKind.Broker ||
         supplied.intentId !== actual.intentId ||
@@ -119,16 +178,26 @@ export const bindExecutionEvidence = (
           new SystemAssessmentError({ message: 'Candidate fill differs from its actual broker receipt' }),
         )
       sources.add(actual.sourceHash)
-      const document = cut.decisions.find((d) => d.document.contentHash === actual.decisionId)?.document
-      const index = document?.orderedIntentIds.indexOf(actual.intentId) ?? -1
-      const target = document?.targetPlan.intentTargets[index]
-      const risk = document?.deltaRisk[index]
+      const plan = ownedPlan
+      const document = plan?.document
+      const target = plan?.target
+      const risk = plan?.risk
       const planner = document?.plannerInput
-      if (document === undefined || target === undefined || risk === undefined || planner === undefined) {
+      if (
+        plan === undefined ||
+        document === undefined ||
+        target === undefined ||
+        risk === undefined ||
+        planner === undefined
+      ) {
         missing.push(`MISSING_DURABLE_ORDER_TERMS:${actual.fillId}`)
         fills.push(supplied)
         continue
       }
+      if (actual.decisionId !== plan.decisionId)
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Actual fill differs from its owned execution decision' }),
+        )
       if (!document.dispatchable || document.bindings.authorityGenerationHash !== authorityGenerationHash)
         return yield* Result.fail(
           new SystemAssessmentError({ message: 'Filled order differs from the admitted decision or generation' }),
@@ -147,7 +216,7 @@ export const bindExecutionEvidence = (
         fills.push(supplied)
         continue
       }
-      const terms = yield* resolveExecutionOrderTerms(actual.brokerOrderId, root, group, document, index)
+      const terms = yield* resolveExecutionOrderTerms(actual.brokerOrderId, root, group, plan)
       if (terms._tag === 'Missing') {
         missing.push(`${terms.reason}:${actual.fillId}`)
         fills.push(supplied)
@@ -170,23 +239,14 @@ export const bindExecutionEvidence = (
         return yield* Result.fail(
           new SystemAssessmentError({ message: 'Terminal broker order differs from its captured fills' }),
         )
-      if (terms.protection !== null && actual.side === OrderSide.Sell) {
-        const sold = (disposed.get(root.order.brokerOrderId) ?? 0n) + BigInt(actual.quantityAtoms)
-        const available =
-          terms.protection === 'Bracket'
-            ? (cumulative.get(root.order.brokerOrderId) ?? 0n)
-            : BigInt(target.quantityAtoms)
-        if (sold > available)
-          return yield* Result.fail(
-            new SystemAssessmentError({
-              message: 'Protective disposals exceed the owned entry fills or sealed position',
-            }),
-          )
-        disposed.set(root.order.brokerOrderId, sold)
-      }
+      if (quantity > BigInt(terms.quantityAtoms))
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Execution fills exceed the sealed order quantity' }),
+        )
+      if (plan.protectionIntent !== null) sources.add(plan.protectionIntent.sourceHash)
       for (const row of [root, ...group]) sources.add(row.sourceHash)
       const binding = document.bindings.executionMarketData
-      const rows = document.executionMarketDataRows
+      const rows = document.executionMarketDataRows ?? document.decisionMarketDataRows
       const snapshot =
         binding !== undefined && rows !== undefined && isSnapshotExecutionMarketDataBinding(binding)
           ? reconstructBoundIntradaySnapshot(binding, rows)
@@ -219,9 +279,7 @@ export const bindExecutionEvidence = (
         quantityStepAtoms: planner.precision.quantityIncrementAtoms,
         limitPriceAtoms: (BigInt(terms.limitPriceMicros) * 1000n).toString(),
         priceTickAtoms: (BigInt(planner.precision.priceIncrementMicros) * 1000n).toString(),
-        submissionDeadlineAt:
-          [document.submissionCutoffAt, document.expiresAt, risk.evaluation.decision.expiresAt].toSorted()[0] ??
-          document.submissionCutoffAt,
+        submissionDeadlineAt: plan.submissionDeadlineAt,
         supportedCapacityAtoms: null,
         capacitySourceHash: null,
       }
@@ -243,7 +301,24 @@ export const bindExecutionEvidence = (
       if (routing === undefined || routing.requestDispatchedAt === null)
         missing.push(`MISSING_BROKER_ROUTING:${actual.fillId}`)
       else fill = { ...fill, routingStartedAt: routing.startedAt, requestDispatchedAt: routing.requestDispatchedAt }
-      if (
+      if (plan.protectionIntent !== null) {
+        fill = {
+          ...fill,
+          pricing: {
+            _tag: 'NativeProtection',
+            sourceHash: plan.protectionIntent.sourceHash,
+            availableAt: plan.protectionIntent.riskDecision.decidedAt,
+          },
+        }
+      } else if (binding?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion) {
+        if (actual.side !== OrderSide.Sell || document.targetPlan.executionTerms?.executionPurpose === undefined)
+          return yield* Result.fail(
+            new SystemAssessmentError({ message: 'Reconciled liquidation cannot price an entry' }),
+          )
+        const sourceHash = yield* canonicalHashV1Result(binding)
+        sources.add(sourceHash)
+        fill = { ...fill, pricing: { _tag: 'ReconciledLiquidation', sourceHash, availableAt: binding.observedAt } }
+      } else if (
         quote === undefined ||
         quoteSource === undefined ||
         bid === undefined ||
@@ -256,17 +331,22 @@ export const bindExecutionEvidence = (
         sources.add(quoteSource.contentHash)
         fill = {
           ...fill,
-          bidPriceAtoms: (BigInt(bid) * 1000n).toString(),
-          askPriceAtoms: (BigInt(ask) * 1000n).toString(),
-          quoteHash: quoteSource.contentHash,
-          quoteAvailableAt: new Date(quoteSource.availableAtMs).toISOString(),
-          quoteFreshUntil: new Date(
-            Date.parse(quote.eventAt) +
-              Math.min(
-                binding.maximumQuoteAgeMs,
-                risk.facts?.state.entryQuote?.maximumAgeMs ?? binding.maximumQuoteAgeMs,
-              ),
-          ).toISOString(),
+          pricing: {
+            _tag: 'SpotQuote',
+            bidPriceAtoms: (BigInt(bid) * 1000n).toString(),
+            askPriceAtoms: (BigInt(ask) * 1000n).toString(),
+            sourceHash: quoteSource.contentHash,
+            availableAt: new Date(quoteSource.availableAtMs).toISOString(),
+            freshUntil: new Date(
+              Date.parse(quote.eventAt) +
+                Math.min(
+                  binding.maximumQuoteAgeMs,
+                  document.deltaRisk[
+                    document.targetPlan.intentTargets.findIndex((target) => target.symbol === plan.target.symbol)
+                  ]?.facts?.state.entryQuote?.maximumAgeMs ?? binding.maximumQuoteAgeMs,
+                ),
+            ).toISOString(),
+          },
         }
       }
       fills.push(fill)

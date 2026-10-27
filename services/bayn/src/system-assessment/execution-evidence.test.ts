@@ -1,3 +1,4 @@
+import { executionOrderPlans } from './execution-plans'
 import { persistenceDocumentFixture } from './decision-persistence.test-support'
 import { beforeAll, describe, expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
@@ -39,6 +40,7 @@ const fixture = () => {
     decisionId: document.contentHash,
     sourceHash: testHash({ receipt: ms }),
     side: target.side,
+    sourceSequence: '1',
     quantityAtoms: '1',
     priceAtoms: (BigInt(risk.limitPriceMicros) * 1000n).toString(),
     occurredAt: at(ms),
@@ -110,6 +112,7 @@ const fixture = () => {
   ]
   const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
     schemaVersion: 'bayn.system-source-cut.v4',
+    protectionIntents: [],
     decisionAdmissions: [],
     orders: nativeOrders.map((order) =>
       rehashOrder({
@@ -354,7 +357,12 @@ describe('durable execution realism bindings', () => {
     const generation = document.bindings.authorityGenerationHash
     const account = document.bindings.accountId
     const capture = (observations = [observation], accountId = account, generationHash = generation) =>
-      captureExecutionOrders(f.cut.decisions, observations, accountId, generationHash)
+      captureExecutionOrders(
+        Result.getOrThrow(executionOrderPlans(f.cut.decisions, f.cut.protectionIntents)),
+        observations,
+        accountId,
+        generationHash,
+      )
     const captured = Result.getOrThrow(capture())
     expect(captured).toHaveLength(1)
     expect(captured[0]).toMatchObject({

@@ -21,6 +21,7 @@ const evidence = () => {
   const bytes = fixture.input()
   const cut: SystemSourceCut = {
     schemaVersion: 'bayn.system-source-cut.v4',
+    protectionIntents: [],
     decisionAdmissions: [],
     orders: [],
     registrationHash: testHash(input.registration),

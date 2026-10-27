@@ -51,7 +51,8 @@ export const systemQualificationPolicy = {
   maximumMarkGapMs: 60_000,
   inferenceQualificationRule: 'MAX_INVOICE_TARIFF',
   decisionPersistenceRule: 'COMMITTED_SOURCE_AT_INDEPENDENT_MUTATION_ADMISSION_BEFORE_ROUTING',
-  executionOrderRule: 'SEALED_NATIVE_ORDER_GROUP_WITH_PER_ORDER_FILLS_AND_SHARED_DISPOSAL_LIMIT',
+  executionOrderRule:
+    'SEALED_ENTRY_AND_INDEPENDENT_APPROVED_PROTECTION_WITH_PER_ORDER_FILLS_AND_SHARED_ENTRY_INVENTORY',
   sourceCutVersion: 'bayn.system-source-cut.v4',
   cashYieldIsTradingEdge: false,
   costAttributionRule,

@@ -16,6 +16,17 @@ const decision = {
   persistedAt: at('200000000'),
   inputs: [{ contentHash: id(2), availableAt: at('100000000') }],
 }
+const spot = (
+  override: Partial<Extract<(typeof FillRealismSchema.Type)['pricing'], { readonly _tag: 'SpotQuote' }>> = {},
+) => ({
+  _tag: 'SpotQuote' as const,
+  bidPriceAtoms: '1000000',
+  askPriceAtoms: '1010000',
+  sourceHash: id(4),
+  availableAt: at('200000000'),
+  freshUntil: at('900000000'),
+  ...override,
+})
 const fill = (override: Partial<typeof FillRealismSchema.Type> = {}): typeof FillRealismSchema.Type => ({
   fillId: id(30),
   intentId: id(40),
@@ -32,11 +43,7 @@ const fill = (override: Partial<typeof FillRealismSchema.Type> = {}): typeof Fil
   fillPriceAtoms: '1010000',
   priceTickAtoms: '10000',
   limitPriceAtoms: '1020000',
-  bidPriceAtoms: '1000000',
-  askPriceAtoms: '1010000',
-  quoteHash: id(4),
-  quoteAvailableAt: at('200000000'),
-  quoteFreshUntil: at('900000000'),
+  pricing: spot(),
   supportedCapacityAtoms: '50',
   capacitySourceHash: id(5),
   routingStartedAt: at('300000000'),
@@ -74,8 +81,7 @@ describe('execution realism', () => {
     const expires = '2026-10-01T14:00:03Z'
     const input = evidence([
       fill({
-        quoteAvailableAt: start,
-        quoteFreshUntil: expires,
+        pricing: spot({ availableAt: start, freshUntil: expires }),
         routingStartedAt: dispatched,
         requestDispatchedAt: dispatched,
         submissionDeadlineAt: expires,
@@ -181,6 +187,34 @@ describe('execution realism', () => {
     const result = Result.getOrThrow(measureRealism(evidence([fill(), second]), sources))
     expect(result.violations).toContain(`INTENT_IDENTITY_DRIFT:${id(31)}`)
     expect(result.violations).toContain(`INVALID_EXECUTION_TIMING:${id(31)}`)
+  })
+
+  test('only verified broker protection or mandatory liquidation can use non-quote pricing', () => {
+    for (const kind of ['NativeProtection', 'ReconciledLiquidation'] as const) {
+      const protectedFill = fill({
+        kind: ExecutionEvidenceKind.Broker,
+        side: OrderSide.Sell,
+        limitPriceAtoms: '1000000',
+        pricing: { _tag: kind, sourceHash: id(5), availableAt: at('200') },
+      })
+      expect(Result.getOrThrow(measureRealism(evidence([protectedFill]), sources)).status).toBe(RealismStatus.Supported)
+      const modeled = Result.getOrThrow(
+        measureRealism(evidence([{ ...protectedFill, kind: ExecutionEvidenceKind.Model }]), sources),
+      )
+      expect(modeled.violations).toContain(`UNSUPPORTED_EXECUTION_PRICING:${protectedFill.fillId}`)
+      expect(
+        Result.getOrThrow(
+          measureRealism(
+            evidence([{ ...protectedFill, pricing: { ...protectedFill.pricing, sourceHash: id(99) } }]),
+            sources,
+          ),
+        ).status,
+      ).toBe(RealismStatus.Incomplete)
+      const violated = Result.getOrThrow(
+        measureRealism(evidence([{ ...protectedFill, fillPriceAtoms: '1000' }]), sources),
+      )
+      expect(violated.violations).toContain(`LIMIT_VIOLATION:${protectedFill.fillId}`)
+    }
   })
 
   test('omitted decisions and fills remain missing even when supplied records are valid', () => {

@@ -28,44 +28,9 @@ import { measureFullBatchLatency } from './full-batch-latency'
 import { sourceFitsRegisteredSession } from './decision-work'
 import { prepareValuationInventory, requiredValuationTimes } from './valuation'
 import { executableBid, readValuationQuotes } from './valuation-quotes'
-import { captureExecutionOrders, ObservedExecutionOrderSchema } from './execution-evidence'
-
-export const readSystemExecutionOrders = (scope: {
-  readonly accountId: string
-  readonly generationHash: string
-  readonly firstSession: string
-  readonly lastSession: string
-  readonly asOf: string
-}) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    return yield* Schema.decodeUnknownEffect(Schema.Array(ObservedExecutionOrderSchema))(
-      yield* sql`
-      SELECT DISTINCT ON (observed.broker_order_id)
-        event.event_id AS "eventId",
-        to_char(event.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "occurredAt",
-        jsonb_strip_nulls(jsonb_build_object(
-          'schemaVersion', observed.schema_version, 'accountId', observed.account_id,
-          'brokerOrderId', observed.broker_order_id, 'parentBrokerOrderId', observed.parent_broker_order_id,
-          'clientOrderId', observed.client_order_id, 'intentId', observed.intent_id,
-          'symbol', observed.symbol, 'side', observed.side, 'orderType', observed.order_type,
-          'timeInForce', observed.time_in_force, 'quantityAtoms', observed.quantity_atoms::text,
-          'notionalMicros', observed.notional_micros::text, 'filledQuantityAtoms', observed.filled_quantity_atoms::text,
-          'limitPriceMicros', observed.limit_price_micros::text, 'stopPriceMicros', observed.stop_price_micros::text,
-          'status', observed.status,
-          'observedAt', to_char(event.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-        )) AS "order"
-      FROM orders observed JOIN broker_events event ON event.event_id = observed.event_id
-        JOIN intents intent ON intent.intent_id = observed.intent_id
-        JOIN autonomous_cycles cycle ON cycle.cycle_id = intent.cycle_id
-      WHERE observed.account_id = ${scope.accountId} AND intent.account_id = ${scope.accountId}
-        AND cycle.account_id = ${scope.accountId}
-        AND intent.authority_generation_hash = ${scope.generationHash}
-        AND cycle.execution_session_date BETWEEN ${scope.firstSession}::date AND ${scope.lastSession}::date
-        AND event.observed_at <= ${scope.asOf}::timestamptz
-      ORDER BY observed.broker_order_id, event.source_sequence DESC, event.event_id COLLATE "C" DESC`,
-    )
-  })
+import { captureExecutionOrders, captureExecutionFills } from './execution-evidence'
+import { readSystemExecutionOrders, readSystemExecutionFills, readSystemProtectionIntents } from './execution-capture'
+import { executionOrderPlans } from './execution-plans'
 
 export const readSystemCashObservations = (
   accountId: string,
@@ -467,7 +432,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             return yield* new SystemAssessmentError({
               message: 'Registered candidate authority generation is unavailable',
             })
-          const { forward, decisions } = candidateAccount
+          const { decisions } = candidateAccount
           const mutations = yield* readSystemMutationEvidence(
             identity.accountId,
             candidate.authorityGenerationHash,
@@ -493,36 +458,30 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             openAt: first.openAt,
             asOf,
           })
-          const fills = yield* Effect.forEach(
-            (forward.executionEvidence ?? []).flatMap((execution) =>
-              execution.fills
-                .filter((fill) => fill.occurredAt >= first.openAt && fill.occurredAt <= last.closeAt)
-                .map((fill) => ({ execution, fill })),
-            ),
-            ({ execution, fill }) =>
-              Effect.gen(function* () {
-                return {
-                  fillId: fill.brokerEventId,
-                  brokerOrderId: fill.brokerOrderId,
-                  intentId: fill.intentId,
-                  decisionId: execution.decisionDocumentHash,
-                  sourceHash: yield* Effect.fromResult(canonicalHashV1Result(fill)),
-                  side: fill.side,
-                  quantityAtoms: fill.quantityAtoms,
-                  priceAtoms: fill.priceAtoms,
-                  occurredAt: fill.occurredAt,
-                }
-              }),
-          )
-          const observedOrders = yield* readSystemExecutionOrders({
+          const scope = {
             accountId: identity.accountId,
             generationHash: candidate.authorityGenerationHash,
             firstSession: first.sessionDate,
             lastSession: last.sessionDate,
             asOf,
-          })
+          }
+          const protectionIntents = yield* readSystemProtectionIntents(scope, candidate.riskPolicy.maxBrokerStateAgeMs)
+          const plans = yield* Effect.fromResult(executionOrderPlans(decisions, protectionIntents))
+          const fills = yield* Effect.fromResult(
+            captureExecutionFills(
+              plans,
+              yield* readSystemExecutionFills(scope, first.openAt, last.closeAt),
+              identity.accountId,
+              candidate.authorityGenerationHash,
+            ),
+          )
           const orders = yield* Effect.fromResult(
-            captureExecutionOrders(decisions, observedOrders, identity.accountId, candidate.authorityGenerationHash),
+            captureExecutionOrders(
+              plans,
+              yield* readSystemExecutionOrders(scope),
+              identity.accountId,
+              candidate.authorityGenerationHash,
+            ),
           )
           const sourceMaterial = {
             runtimeConfiguration,
@@ -531,6 +490,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             batches,
             mutations,
             orders,
+            protectionIntents,
             accountMarks: accounts.flatMap((account) => account.accountMarks),
             controllerPasses,
             durableObservations,
@@ -557,6 +517,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             mutations,
             fills,
             orders,
+            protectionIntents,
             accountMarks: accounts.flatMap((account) => account.accountMarks),
             controllerPasses,
             durableObservations,

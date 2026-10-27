@@ -38,6 +38,18 @@ export const DecisionRealismSchema = Schema.Struct({
   ),
 })
 
+export const ExecutionPricingSchema = Schema.TaggedUnion({
+  SpotQuote: {
+    bidPriceAtoms: UnsignedMicrosSchema,
+    askPriceAtoms: UnsignedMicrosSchema,
+    sourceHash: Sha256Schema,
+    availableAt: UtcSourceTimestampSchema,
+    freshUntil: UtcSourceTimestampSchema,
+  },
+  NativeProtection: { sourceHash: Sha256Schema, availableAt: UtcSourceTimestampSchema },
+  ReconciledLiquidation: { sourceHash: Sha256Schema, availableAt: UtcSourceTimestampSchema },
+})
+
 export const FillRealismSchema = Schema.Struct({
   fillId: Sha256Schema,
   intentId: Sha256Schema,
@@ -54,11 +66,7 @@ export const FillRealismSchema = Schema.Struct({
   fillPriceAtoms: UnsignedMicrosSchema,
   priceTickAtoms: UnsignedMicrosSchema,
   limitPriceAtoms: UnsignedMicrosSchema,
-  bidPriceAtoms: UnsignedMicrosSchema,
-  askPriceAtoms: UnsignedMicrosSchema,
-  quoteHash: Sha256Schema,
-  quoteAvailableAt: UtcSourceTimestampSchema,
-  quoteFreshUntil: UtcSourceTimestampSchema,
+  pricing: ExecutionPricingSchema,
   supportedCapacityAtoms: Schema.NullOr(UnsignedMicrosSchema),
   capacitySourceHash: Schema.NullOr(Sha256Schema),
   routingStartedAt: UtcSourceTimestampSchema,
@@ -124,7 +132,12 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
         const capacityBounds = new Map<string, bigint>()
         for (const fill of data.fills) {
           requireSource(fill.sourceHash)
-          requireSource(fill.quoteHash)
+          requireSource(fill.pricing.sourceHash)
+          if (
+            fill.pricing._tag !== 'SpotQuote' &&
+            (fill.kind !== ExecutionEvidenceKind.Broker || fill.side !== OrderSide.Sell)
+          )
+            violations.push(`UNSUPPORTED_EXECUTION_PRICING:${fill.fillId}`)
           const decision = decisions.get(fill.decisionId)
           if (decision === undefined) missing.push(`MISSING_DECISION:${fill.decisionId}`)
           else if (decision.authorityGenerationHash !== fill.positionOwnerGenerationHash)
@@ -136,13 +149,16 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
           const price = BigInt(fill.fillPriceAtoms)
           const tick = BigInt(fill.priceTickAtoms)
           const limit = BigInt(fill.limitPriceAtoms)
-          const bid = BigInt(fill.bidPriceAtoms)
-          const ask = BigInt(fill.askPriceAtoms)
+          const quote = fill.pricing._tag === 'SpotQuote' ? fill.pricing : null
+          const bid = quote === null ? null : BigInt(quote.bidPriceAtoms)
+          const ask = quote === null ? null : BigInt(quote.askPriceAtoms)
           const previousQuantity = lastQuantity.get(fill.orderId) ?? 0n
           const prior = orderTerms.get(fill.orderId)
           if (
             prior !== undefined &&
-            (prior.intentId !== fill.intentId ||
+            (prior.pricing._tag !== fill.pricing._tag ||
+              (prior.pricing._tag !== 'SpotQuote' && prior.pricing.sourceHash !== fill.pricing.sourceHash) ||
+              prior.intentId !== fill.intentId ||
               prior.decisionId !== fill.decisionId ||
               prior.side !== fill.side ||
               prior.requestedQuantityAtoms !== fill.requestedQuantityAtoms ||
@@ -162,7 +178,8 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
             (fill.kind === ExecutionEvidenceKind.Model && (quantity % step !== 0n || price % tick !== 0n))
           )
             violations.push(`INVALID_PRECISION:${fill.fillId}`)
-          if (price <= 0n || limit <= 0n || bid <= 0n || ask < bid) violations.push(`INVALID_PRICE:${fill.fillId}`)
+          if (price <= 0n || limit <= 0n || (bid !== null && ask !== null && (bid <= 0n || ask < bid)))
+            violations.push(`INVALID_PRICE:${fill.fillId}`)
           if ((fill.side === OrderSide.Buy && price > limit) || (fill.side === OrderSide.Sell && price < limit))
             violations.push(`LIMIT_VIOLATION:${fill.fillId}`)
           const routingStarted = intradayInstantNanos(fill.routingStartedAt)
@@ -171,8 +188,8 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
           if (decision !== undefined && intradayInstantNanos(decision.persistedAt) > routingStarted)
             missing.push(`MISSING_PRE_ROUTING_PERSISTENCE:${fill.fillId}`)
           if (
-            intradayInstantNanos(fill.quoteAvailableAt) > transmitted ||
-            intradayInstantNanos(fill.quoteFreshUntil) < transmitted ||
+            intradayInstantNanos(fill.pricing.availableAt) > transmitted ||
+            (quote !== null && intradayInstantNanos(quote.freshUntil) < transmitted) ||
             routingStarted > transmitted ||
             transmitted >= intradayInstantNanos(fill.submissionDeadlineAt) ||
             filled < transmitted ||
@@ -193,7 +210,11 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
               usedCapacity.set(fill.capacitySourceHash, consumed)
               capacityBounds.set(fill.capacitySourceHash, capacity)
             }
-            if ((fill.side === OrderSide.Buy && price < ask) || (fill.side === OrderSide.Sell && price > bid))
+            if (
+              ask !== null &&
+              bid !== null &&
+              ((fill.side === OrderSide.Buy && price < ask) || (fill.side === OrderSide.Sell && price > bid))
+            )
               violations.push(`UNSUPPORTED_PRICE_IMPROVEMENT:${fill.fillId}`)
           }
           lastQuantity.set(fill.orderId, cumulative)

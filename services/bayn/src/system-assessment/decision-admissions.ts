@@ -3,6 +3,7 @@ import { Result } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { MutationEventType } from '../execution/mutations/model'
 import { SystemAssessmentError } from './economics'
+import { executionOrderPlans } from './execution-plans'
 import type { SystemSourceCut } from './source-cut'
 
 export const decisionPersistenceAssumptions = [
@@ -14,6 +15,7 @@ export const decisionPersistenceAssumptions = [
 /** A committed admission followed by routing supplies an upper bound, not an invented commit timestamp. */
 export const decisionAdmissionWitnesses = (cut: SystemSourceCut, generationHash: string) =>
   Result.gen(function* () {
+    const plans = yield* executionOrderPlans(cut.decisions, cut.protectionIntents)
     const sources = new Set<string>()
     const witnesses: SystemSourceCut['durableObservations'][number][] = []
     const documents = new Map(cut.decisions.map(({ document }) => [document.contentHash, document]))
@@ -35,6 +37,7 @@ export const decisionAdmissionWitnesses = (cut: SystemSourceCut, generationHash:
       const key = `${receipt.eventId}:${receipt.decisionId}`
       const document = documents.get(receipt.decisionId)
       const admitted = events.get(receipt.eventId)
+      const plan = admitted === undefined ? undefined : plans.get(admitted.event.intentId)
       if (
         retained.has(key) ||
         sourceHash !== (yield* canonicalHashV1Result(material)) ||
@@ -46,7 +49,10 @@ export const decisionAdmissionWitnesses = (cut: SystemSourceCut, generationHash:
         admitted.authorityGenerationHash !== generationHash ||
         document.bindings.authorityGenerationHash !== generationHash ||
         admitted.strategyDecisionHash !== document.bindings.strategyDecisionHash ||
-        !document.orderedIntentIds.includes(admitted.event.intentId) ||
+        plan === undefined ||
+        plan.document.contentHash !== document.contentHash ||
+        (plan.protectionIntent !== null && plan.createdAt > admitted.event.occurredAt) ||
+        (plan.protectionIntent !== null && admitted.event.occurredAt > plan.submissionDeadlineAt) ||
         admitted.event.occurredAt < document.createdAt
       )
         return yield* Result.fail(
@@ -71,6 +77,14 @@ export const decisionAdmissionWitnesses = (cut: SystemSourceCut, generationHash:
         return yield* Result.fail(
           new SystemAssessmentError({ message: 'Decision admission does not precede its routed mutation' }),
         )
+      if (plan.protectionIntent !== null)
+        witnesses.push({
+          kind: 'DECISION',
+          sourceHash: plan.decisionId,
+          sourceAt: plan.createdAt,
+          witnessedAt: route.startedAt,
+          correct: true,
+        })
       witnesses.push({
         kind: 'DECISION',
         sourceHash: document.contentHash,

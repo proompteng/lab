@@ -17,6 +17,7 @@ import { OrderSchema } from '../execution/contracts'
 import { MutationEventSchema } from '../execution/mutations/model'
 import { CapturedFinancialEvidenceSchema } from './forward-evidence'
 import { SystemAssessmentError } from './economics'
+import { ProtectionIntentEvidenceSchema } from './execution-plans'
 import { ControllerPassEvidenceSchema } from './decision-work'
 import { JevBatchPlanSchema, JevBatchResultSchema } from '../jev/batch'
 import { JevObservationSchema } from '../jev/observation-contract'
@@ -29,6 +30,7 @@ export const SystemSourceCutSchema = Schema.Struct({
   financial: Schema.Array(CapturedFinancialEvidenceSchema).check(Schema.isMaxLength(4)),
   inference: Schema.Array(InferenceCostEvidenceSchema),
   inferenceLedgerEvidenceHash: Sha256Schema,
+  protectionIntents: Schema.Array(ProtectionIntentEvidenceSchema),
   decisions: Schema.Array(Schema.Struct({ sessionDate: IsoDateSchema, document: ExecutionDecisionDocumentSchema })),
   batches: Schema.Array(
     Schema.Struct({
@@ -56,6 +58,7 @@ export const SystemSourceCutSchema = Schema.Struct({
     Schema.Struct({
       fillId: Sha256Schema,
       brokerOrderId: StrictNonEmptyStringSchema,
+      sourceSequence: UnsignedMicrosSchema,
       intentId: Sha256Schema,
       decisionId: Sha256Schema,
       sourceHash: Sha256Schema,

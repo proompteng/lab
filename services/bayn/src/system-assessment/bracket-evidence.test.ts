@@ -1,3 +1,4 @@
+import { executionOrderPlans } from './execution-plans'
 import { beforeAll, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { OrderSide, OrderType, TimeInForce, type Order } from '../execution/contracts'
@@ -83,7 +84,7 @@ test('capture retains every broker child under the same owned intent without col
   const f = fixture()
   const captured = Result.getOrThrow(
     captureExecutionOrders(
-      f.cut.decisions,
+      Result.getOrThrow(executionOrderPlans(f.cut.decisions, f.cut.protectionIntents)),
       f.cut.orders.map(({ eventId, occurredAt, order }) => ({ eventId, occurredAt, order })),
       document.bindings.accountId,
       document.bindings.authorityGenerationHash,
@@ -238,6 +239,22 @@ test('protective disposals cannot consume entry fills that have not occurred or 
       Result.isFailure(bindExecutionEvidence(supplied, { ...f.cut, fills }, document.bindings.authorityGenerationHash)),
     ).toBe(true)
   }
+})
+
+test('equal fill timestamps retain broker source sequence instead of sorting economic effects by hash', () => {
+  const f = fixture()
+  const fills = f.cut.fills.map((fill) => ({ ...fill, occurredAt: f.at(10) }))
+  const supplied = f.supplied.map((fill) => ({ ...fill, filledAt: f.at(10) }))
+  expect(
+    Result.getOrThrow(bindExecutionEvidence(supplied, { ...f.cut, fills }, document.bindings.authorityGenerationHash))
+      .missing,
+  ).toEqual([])
+  const reversed = fills.map((fill) => (fill.side === OrderSide.Sell ? { ...fill, sourceSequence: '0' } : fill))
+  expect(
+    Result.isFailure(
+      bindExecutionEvidence(supplied, { ...f.cut, fills: reversed }, document.bindings.authorityGenerationHash),
+    ),
+  ).toBe(true)
 })
 
 test('duplicate broker identities, forged receipts and a non-dispatchable decision cannot bind real fills', () => {

@@ -10,6 +10,7 @@ export const emptySourceCutFixture = () => {
   if (candidate === undefined || policy === undefined) throw new Error('Missing candidate fixture')
   const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
     schemaVersion: 'bayn.system-source-cut.v4',
+    protectionIntents: [],
     decisionAdmissions: [],
     orders: [],
     registrationHash: testHash(input.registration),

@@ -90,10 +90,18 @@ entry fills already observed in time order. Broker-adjusted residual quantities 
 bracket parent must retain its whole-share quantity. Missing parents, siblings, routing or observations remain
 incomplete. The result exposes the broker observation and normalization assumptions explicitly.
 
-Separately armed replacement OCO and standalone-stop intents require their own retained intent, risk approval,
-ownership and timing binding. They are not members of the entry decision's original intent list. Capture rejects
-unbound order owners; the compiled producer probe exposed this remaining integration boundary. A valid bracket
-comparison does not establish replacement-protection coverage.
+Separately armed replacement OCO and standalone-stop intents bind their own immutable intent, approved risk decision,
+exact fresh reconciliation, and independently committed submission admission. The binder reproduces their IDs and
+sealed exit prices from the original entry, retains the approval's submission deadline, and shares chronological
+entry inventory across original protection, replacement groups, and explicit closes. Equity OCO uses whole shares
+and DAY; standalone stops preserve native DAY or crypto GTC terms and fractional quantities. Missing admissions or
+omitted actual fills remain incomplete. Source sequence determines the order of fills with equal timestamps.
+
+Fill pricing distinguishes reproduced spot quotes, actual native protection, and actual mandatory liquidation under
+the existing reconciled-position binding. Conditional broker receipts do not invent a quote at the later fill time.
+Model fills still require a fresh quote and supported liquidity. The result exposes the authenticity assumptions for
+broker normalization, retained risk approvals, reconciliations, and conditional execution. Content hashes alone do
+not authenticate an approval. Supplied protection decisions are replaced by the captured evidence before evaluation.
 
 `bindSystemSourceCut` constructs session economics and operational obligations from that cut. Cash and inventory
 reconcile against fills, cost basis, funding, passive yield, and paid operating expenses. Opening, closing, minute,

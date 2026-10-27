@@ -1,3 +1,5 @@
+import { readSystemMutationEvidence, readSystemDecisionAdmissions } from '../system-assessment/capture'
+import { decisionAdmissionWitnesses } from '../system-assessment/decision-admissions'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
@@ -21,13 +23,31 @@ import {
   latencyCalibrationDecisionFixture,
   nativeLatencyBacktestFixture,
 } from '../system-assessment/latency.test-support'
-import { testHash, withRegistrationCommitments } from '../system-assessment/fixtures.test-support'
+import {
+  supportedAssessmentFixture,
+  testHash,
+  withRegistrationCommitments,
+} from '../system-assessment/fixtures.test-support'
 import { bindLatencyStressSources } from '../system-assessment/latency-report'
 import { reproduceReplaySessionEconomics } from '../system-assessment/latency-economics'
 import { backtestBrokerEvidenceConfig, prepareBacktest } from './backtest'
 import { ReplayBrokerCheckpointSchema } from './broker-checkpoint'
 import { ReplayInferenceCallSchema } from './inference-timing'
 import { NativeReplayPolicySchema } from './native-policy'
+import { executionDecisionRows } from '../db/execution-decision-query'
+import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
+import {
+  readSystemExecutionOrders,
+  readSystemProtectionIntents,
+  readSystemExecutionFills,
+} from '../system-assessment/execution-capture'
+import { executionOrderPlans } from '../system-assessment/execution-plans'
+import {
+  bindExecutionEvidence,
+  captureExecutionOrders,
+  captureExecutionFills,
+} from '../system-assessment/execution-evidence'
+import { resolveExecutionOrderTerms } from '../system-assessment/execution-order-terms'
 
 // Compression is part of each chart request hash, so retained receipts use the release runtime throughout.
 const main = Effect.gen(function* () {
@@ -182,6 +202,139 @@ const main = Effect.gen(function* () {
     )
     if (trading) {
       assert.deepEqual(report.brokerCheckpoint.state.ledger.positions, [])
+      const identities = yield* Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ accountId: Schema.String, generationHash: Schema.String })),
+      )(
+        yield* sql`SELECT DISTINCT intents.account_id AS "accountId", intents.authority_generation_hash AS "generationHash"
+        FROM autonomous_cycles JOIN intents USING (cycle_id)`,
+      )
+      assert.ok(identities.length > 0)
+      const firstSession = registration.calendar.sessions[0]
+      const lastSession = registration.calendar.sessions.at(-1)
+      assert.ok(firstSession !== undefined && lastSession !== undefined)
+      const documents = yield* Effect.forEach(
+        yield* sql`SELECT document FROM (${executionDecisionRows(sql)}) decisions`,
+        (row) => Effect.fromResult(decodeExecutionDecisionDocument(row['document'])),
+      )
+      const orders = yield* Effect.forEach(identities, (identity) =>
+        Effect.gen(function* () {
+          const scope = {
+            ...identity,
+            firstSession: firstSession.sessionDate,
+            lastSession: lastSession.sessionDate,
+            asOf: lastSession.closeAt,
+          }
+          const protection = yield* readSystemProtectionIntents(scope, definition.riskPolicy.maxBrokerStateAgeMs)
+          const plans = yield* Effect.fromResult(
+            executionOrderPlans(
+              documents
+                .filter(
+                  (document) =>
+                    document.bindings.accountId === identity.accountId &&
+                    document.bindings.authorityGenerationHash === identity.generationHash,
+                )
+                .map((document) => ({ document })),
+              protection,
+            ),
+          )
+          const orders = yield* Effect.fromResult(
+            captureExecutionOrders(
+              plans,
+              yield* readSystemExecutionOrders(scope),
+              identity.accountId,
+              identity.generationHash,
+            ),
+          )
+          const fills = yield* Effect.fromResult(
+            captureExecutionFills(
+              plans,
+              yield* readSystemExecutionFills(scope, firstSession.openAt, lastSession.closeAt),
+              identity.accountId,
+              identity.generationHash,
+            ),
+          )
+          const mutations = yield* readSystemMutationEvidence(
+            identity.accountId,
+            identity.generationHash,
+            firstSession.openAt,
+          )
+          const decisionAdmissions = yield* readSystemDecisionAdmissions({
+            ...identity,
+            openAt: firstSession.openAt,
+            asOf: scope.asOf,
+          })
+          const executionCut = {
+            ...cut,
+            asOf: scope.asOf,
+            protectionIntents: protection,
+            orders,
+            fills,
+            mutations,
+            decisionAdmissions,
+            decisions: documents
+              .filter(
+                (document) =>
+                  document.bindings.authorityGenerationHash === identity.generationHash &&
+                  document.bindings.accountId === identity.accountId,
+              )
+              .map((document) => {
+                assert.ok(document.executionSession !== undefined)
+                return { sessionDate: document.executionSession.executionSession.date, document }
+              }),
+          }
+          const template = supportedAssessmentFixture().input.realism.fills[0]
+          assert.ok(template !== undefined)
+          const supplied = fills.map((fill) => ({
+            ...template,
+            fillId: fill.fillId,
+            intentId: fill.intentId,
+            decisionId: fill.decisionId,
+            orderId: fill.brokerOrderId,
+            sourceHash: fill.sourceHash,
+            positionOwnerGenerationHash: identity.generationHash,
+            side: fill.side,
+            fillQuantityAtoms: fill.quantityAtoms,
+            fillPriceAtoms: fill.priceAtoms,
+            filledAt: fill.occurredAt,
+          }))
+          const bound = yield* Effect.fromResult(bindExecutionEvidence(supplied, executionCut, identity.generationHash))
+          assert.deepEqual(bound.missing, [])
+          const admissions = yield* Effect.fromResult(decisionAdmissionWitnesses(executionCut, identity.generationHash))
+          for (const evidence of protection)
+            assert.ok(
+              admissions.witnesses.some((row) => row.sourceHash === evidence.intentId),
+              'Missing replacement admission',
+            )
+          for (const fill of fills) assert.ok(plans.has(fill.intentId))
+          return { orders, plans, fills, protection }
+        }),
+      )
+      const plans = new Map(orders.flatMap((group) => [...group.plans]))
+      assert.ok(
+        orders.some((group) => group.protection.length > 0),
+        'Expected separately armed native protection',
+      )
+      assert.equal(orders.flatMap((group) => group.fills).length, report.brokerCheckpoint.state.ledger.fills.length)
+      const receipts = orders.flatMap((group) => group.orders)
+      const byBrokerId = new Map(receipts.map((row) => [row.order.brokerOrderId, row]))
+      for (const brokerId of new Set(report.brokerCheckpoint.state.ledger.fills.map((fill) => fill.brokerOrderId))) {
+        const receipt = byBrokerId.get(brokerId)
+        assert.ok(receipt !== undefined, `Missing captured native broker order ${brokerId}`)
+        const root =
+          receipt.order.parentBrokerOrderId === undefined ? receipt : byBrokerId.get(receipt.order.parentBrokerOrderId)
+        assert.ok(root !== undefined)
+        const plan = plans.get(root.intentId)
+        assert.ok(plan !== undefined)
+        const terms = yield* Effect.fromResult(
+          resolveExecutionOrderTerms(
+            brokerId,
+            root,
+            receipts.filter((row) => row.order.parentBrokerOrderId === root.order.brokerOrderId),
+            plan,
+          ),
+        )
+        assert.equal(terms._tag, 'Bound')
+      }
       for (const session of registration.calendar.sessions) {
         const fills = report.brokerCheckpoint.state.ledger.fills.filter(
           (fill) => fill.observedAt >= session.openAt && fill.observedAt <= session.closeAt,
