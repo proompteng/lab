@@ -1,4 +1,4 @@
-import { controlExitDefinition } from './control-portfolio'
+import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
 import { equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
@@ -24,7 +24,7 @@ import {
   type StrategyMarketSnapshot,
   type VerifiedStrategyMarketSnapshot,
 } from '../market-data/streaming/snapshot'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import type { Policy } from '../risk'
 import { IsoDateSchema, NonNegativeIntegerSchema, PositiveIntegerSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
@@ -914,7 +914,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       falsification &&
       (prepared.input.cadence.pollIntervalMs !== residualShockDefinition.pollIntervalMs ||
         equityMarketProfile.maximumEntrySpreadBps !== residualShockDefinition.maximumSpreadBps ||
-        controlExitDefinition.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
+        momentumExitDefinition.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
         prepared.protocol.maximumHoldingMinutes !== 15 ||
         prepared.protocol.flattenBeforeCloseMinutes !== residualShockDefinition.flattenMinutesBeforeClose)
     )
@@ -969,7 +969,9 @@ export const runControlStudy = (
       return yield* new ControlStudyFailure({
         message: 'Native Jev entry requires exactly one measured provider binding',
       })
-    const risk = yield* loadExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
+    const risk = yield* Effect.fromResult(
+      makeExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe),
+    )
     const firstDate = prepared.brokerSessions[0]?.date
     const lastDate = prepared.input.calendar.at(-1)?.date
     if (firstDate === undefined || lastDate === undefined)

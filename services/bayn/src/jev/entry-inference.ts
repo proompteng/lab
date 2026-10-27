@@ -127,6 +127,7 @@ export type EntryInferenceCompletion = {
       }
     | { readonly status: 'NOT_REQUESTED' }
     | { readonly status: 'NOT_DISPATCHED' }
+    | { readonly status: 'OMITTED_BY_POLICY' }
 }
 
 const rejectedJevUsage = (error: JevError, expectedRequestHash: string) => {
@@ -242,7 +243,7 @@ export const deriveEntryDispositionForChart = <A extends ChartAssessmentsMateria
         } as const)
   })
 
-export const evaluateClaimedEntryInference = (claim: {
+export const evaluateClaimedEntryHandoff = (claim: {
   readonly requestId: string
   readonly input: EntryInferenceInput
   readonly observedAt: string
@@ -250,14 +251,15 @@ export const evaluateClaimedEntryInference = (claim: {
   readonly claimedAt: string
 }) =>
   Effect.gen(function* () {
-    const prepared = yield* Effect.fromResult(prepareEntryInferenceInput(claim.input)).pipe(
+    const { requestId, input, observedAt, expiresAt, claimedAt } = claim
+    const prepared = yield* Effect.fromResult(prepareEntryInferenceInput(input)).pipe(
       Effect.mapError(
         (cause) => new EntryInferenceError({ category: 'INPUT', message: 'Entry inference claim is malformed', cause }),
       ),
     )
-    const observed = Date.parse(claim.observedAt)
-    const expires = Date.parse(claim.expiresAt)
-    const started = Date.parse(claim.claimedAt)
+    const observed = Date.parse(observedAt)
+    const expires = Date.parse(expiresAt)
+    const started = Date.parse(claimedAt)
     const now = yield* Clock.currentTimeMillis
     if (
       !Number.isFinite(observed) ||
@@ -297,12 +299,12 @@ export const evaluateClaimedEntryInference = (claim: {
           makeStagedDispatchClaim({
             schemaVersion: 'bayn.staged-dispatch-claim.v1',
             stage,
-            requestId: claim.requestId,
+            requestId: requestId,
             providerRequestHash: providerRequest.requestHash,
             predecessorHash: predecessor?.terminalHash ?? null,
             selectedEnd,
             claimedAt: utcInstantFromEpochMillis(admittedAt),
-            expiresAt: claim.expiresAt,
+            expiresAt: expiresAt,
           }),
         )
         const admitted = yield* journal.recordVisualClaim(dispatchClaim)
@@ -368,7 +370,7 @@ export const evaluateClaimedEntryInference = (claim: {
           makeStagedTerminalReceipt({
             schemaVersion: 'bayn.staged-terminal-receipt.v1',
             stage,
-            requestId: claim.requestId,
+            requestId: requestId,
             claimHash: dispatchClaim.claimHash,
             recordedAt: utcInstantFromEpochMillis(returnedAt),
             outcome,
@@ -384,7 +386,7 @@ export const evaluateClaimedEntryInference = (claim: {
           makeStagedSkipReceipt({
             schemaVersion: 'bayn.staged-skip-receipt.v1',
             stage: 'BASE_START',
-            requestId: claim.requestId,
+            requestId: requestId,
             reason,
             predecessorHash: predecessor?.terminalHash ?? null,
             recordedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
@@ -433,7 +435,7 @@ export const evaluateClaimedEntryInference = (claim: {
     }
     const material = {
       schemaVersion: 'bayn.entry-handoff.v4' as const,
-      requestId: claim.requestId,
+      requestId: requestId,
       inputHash: prepared.requestHash,
       visualRequestHash: visualRequest.requestHash,
       recordedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
@@ -450,6 +452,15 @@ export const evaluateClaimedEntryInference = (claim: {
         category: 'EXISTING_HANDOFF',
         message: 'This provider handoff is already claimed; repeated dispatch is forbidden',
       })
+    return handoff
+  })
+
+export const evaluateClaimedEntryInference = (claim: Parameters<typeof evaluateClaimedEntryHandoff>[0]) =>
+  Effect.gen(function* () {
+    const expires = Date.parse(claim.expiresAt)
+    const omitJev = claim.input.schemaVersion === 'bayn.entry-ablation-input.v1'
+    const handoff = yield* evaluateClaimedEntryHandoff(claim)
+    const disposition = handoff.disposition
     const completed = (jev: EntryInferenceCompletion['jev']) =>
       Effect.map(
         Clock.currentTimeMillis,
@@ -462,6 +473,7 @@ export const evaluateClaimedEntryInference = (claim: {
         category: 'DEADLINE',
         message: 'Entry inference clock regressed after the committed provider handoff',
       })
+    if (omitJev) return yield* completed({ status: 'OMITTED_BY_POLICY' })
     if (jevNow >= expires) return yield* completed({ status: 'NOT_DISPATCHED' })
     const client = yield* JevClient
     const inference = yield* client.evaluate(disposition.jevRequest, expires - jevNow).pipe(

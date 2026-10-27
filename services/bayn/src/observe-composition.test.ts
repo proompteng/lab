@@ -1,3 +1,6 @@
+import { makeEntryAblationRuntime, type StrategyRuntime } from './strategy'
+import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from './jev/entry-ablation-policy'
+import { ExecutionDecisionDocumentSchema } from './shadow-decision-contract'
 import { makeIntradayMomentumDefinition } from './strategy/intraday-momentum/test-support'
 import {
   decodeIntradayMomentumProtocol,
@@ -24,7 +27,8 @@ import { JevEvaluationStore } from './jev/evaluation'
 import { JevClient } from './jev/client'
 import { DecisionsClient } from './jev/decisions'
 import { EntryInferenceJournal } from './jev/entry-inference'
-import { buildObserveCycleDecision, loadExecutionRiskPolicy } from './observe-composition/decision-builder'
+import { buildObserveCycleDecision } from './observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from './execution/risk-policy'
 import { JevPositionStore } from './jev/portfolio'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
@@ -1138,7 +1142,27 @@ const sandboxExecutionProgram = (
   }
 }
 
-const executionLifecycleFixture = async (transformPolicy: (policy: Policy) => Policy = (policy) => policy) => {
+const executionLifecycleFixture = async (
+  transformPolicy: (policy: Policy) => Policy = (policy) => policy,
+  strategy: StrategyRuntime = currentIntradayRuntime,
+) => {
+  const selectedIdentity = Result.getOrThrow(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 1,
+      strategyName: strategy.definition.name,
+      qualificationRunId: generationHash,
+      strategyProtocolHash: makeStrategyProtocolHash(strategy.provenance.strategy),
+      accountId,
+      executionSessionDate: executionDate,
+      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: executionCalendar.executionCalendarSource,
+      executionCalendarHash: executionCalendar.executionCalendarHash,
+      executionPolicy,
+    }),
+  )
+  const selectedCycle = { ...cycle, identity: selectedIdentity }
+
   const snapshotRequests: IntradaySnapshotRequest[] = []
   const intradayMarketData: IntradayMarketDataService = {
     check: Effect.void,
@@ -1163,24 +1187,22 @@ const executionLifecycleFixture = async (transformPolicy: (policy: Policy) => Po
     pollIntervalMs: 30_000,
     reconciliationIntervalMs: 30_000,
     reconciliationPassTimeoutMs: 30_000,
-    strategy: currentIntradayRuntime,
+    strategy,
     intradayMarketData,
     executionProgram: sandboxExecutionProgram(),
   } as const
   const preparation = Result.getOrThrow(prepareObserveStartup(input))
-  const policy = transformPolicy(
-    await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, currentIntradayRuntime)),
-  )
+  const policy = transformPolicy(await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, strategy)))
   const document = await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(evaluatedAt))
       return yield* buildMutationShadowCycleDecision({
         authorityGenerationHash: generationHash,
-        cycle,
+        cycle: selectedCycle,
         executionModel: currentIntradayProtocol.executionModel,
         policy,
         reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Execution)),
-        strategy: currentIntradayRuntime,
+        strategy,
         intradayMarketData,
       })
     }).pipe((program) => provideDecisionServices(program, calendarRead([])), Effect.provide(TestClock.layer())),
@@ -1190,7 +1212,7 @@ const executionLifecycleFixture = async (transformPolicy: (policy: Policy) => Po
       AutonomousCycleSchema,
       strictParseOptions,
     )({
-      ...cycle,
+      ...selectedCycle,
       bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
       stateVersion: cycle.stateVersion + 1,
       updatedAt: document.createdAt,
@@ -4602,7 +4624,7 @@ describe('OBSERVE runtime composition', () => {
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
       strategy: {
-        definition: definition as unknown as import('./strategy').StrategyRuntime['definition'],
+        definition: definition as unknown as typeof fixtureRuntime.definition,
         provenance: {
           ...fixtureRuntime.provenance,
           strategy: {
@@ -5308,7 +5330,9 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('decodes a versioned quote-bound LIMIT/IOC policy for intraday execution', async () => {
-    const policy = await Effect.runPromise(loadExecutionRiskPolicy(accountId, [...fixtureProtocol.universe].reverse()))
+    const policy = await Effect.runPromise(
+      Effect.fromResult(makeExecutionRiskPolicy(accountId, [...fixtureProtocol.universe].reverse())),
+    )
 
     expect(policy).toMatchObject({
       schemaVersion: 'bayn.execution-risk-policy.v4',
@@ -7267,7 +7291,9 @@ test.each([
 test('account drawdown does not suppress read-only strategy observations', async () => {
   const fixture = await executionLifecycleFixture()
   const original = reconciliationResult(generationHash, Authority.Observe)
-  const policy = await Effect.runPromise(loadExecutionRiskPolicy(accountId, fixtureProtocol.universe))
+  const policy = await Effect.runPromise(
+    Effect.fromResult(makeExecutionRiskPolicy(accountId, fixtureProtocol.universe)),
+  )
   let snapshots = 0
   const result = await Effect.runPromise(
     Effect.gen(function* () {
@@ -7870,3 +7896,48 @@ test.each(['known', 'unknown', 'filled', 'unaccounted'] as const)(
     }
   },
 )
+
+test('ablation uses native risk, entry protection and exact policy-bound execution evidence', async () => {
+  const policy = makeEntryAblationPolicy(fixtureProtocol)
+  const identity = Result.getOrThrow(entryAblationStrategyIdentity(policy))
+  const strategy = makeEntryAblationRuntime(policy, { ...fixtureRuntime.provenance, strategy: identity.strategy })
+  const result = await executionLifecycleFixture(undefined, strategy)
+  expect(result.preparation.strategyProtocolHash).toBe(identity.protocolHash)
+  expect(result.document.strategyDecision?.schemaVersion).toBe('bayn.entry-ablation-target.v1')
+  expect(result.document.targetPlan.intentTargets.length).toBeGreaterThan(0)
+  expect(result.intent.protection?._tag).toBe('Bracket')
+  expect(result.document.bindings.strategyProtocolHash).toBe(identity.protocolHash)
+  expect(Result.isSuccess(Schema.decodeUnknownResult(ExecutionDecisionDocumentSchema)(result.document))).toBe(true)
+  const { contentHash: _, ...material } = result.document
+  const relabeled = {
+    ...material,
+    bindings: {
+      ...material.bindings,
+      strategyProtocolHash: makeStrategyProtocolHash(fixtureRuntime.provenance.strategy),
+    },
+  }
+  expect(
+    Result.isFailure(
+      Schema.decodeUnknownResult(ExecutionDecisionDocumentSchema)({
+        ...relabeled,
+        contentHash: Result.getOrThrow(canonicalHashV1Result(relabeled)),
+      }),
+    ),
+  ).toBe(true)
+  for (const strategyIdentity of [
+    fixtureRuntime.provenance.strategy,
+    {
+      ...identity.strategy,
+      behaviorHash: fixtureRuntime.provenance.strategy.behaviorHash,
+    },
+  ]) {
+    expect(
+      Result.isFailure(
+        prepareObserveStartup({
+          ...result.input,
+          strategy: { ...strategy, provenance: { ...strategy.provenance, strategy: strategyIdentity } },
+        }),
+      ),
+    ).toBe(true)
+  }
+})

@@ -3,7 +3,11 @@ import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevFailure } from './contract'
-import { EntryInferenceInputSchema, prepareEntryInferenceInput } from './entry-inference-input'
+import {
+  EntryInferenceInputSchema,
+  prepareEntryInferenceInput,
+  type EntryInferenceInput,
+} from './entry-inference-input'
 import { EntryInferenceCompletionSchema, decodeEntryInferenceCompletion } from './entry-inference-evidence'
 
 const RequestMaterialSchema = Schema.Struct({
@@ -121,7 +125,14 @@ export const decodeJevEvaluationReceipt = (request: JevEvaluationRequest, input:
     Result.mapError(() => new JevEvidenceError({ message: 'Stored entry receipt is malformed or does not reproduce' })),
   )
 
-export const jevInferenceAvailableAt = (request: JevEvaluationRequest, receipt: JevEvaluationReceipt, now: number) => {
+export const entryInferenceAvailableAt = (
+  request: JevEvaluationRequest,
+  receipt: JevEvaluationReceipt,
+  now: number,
+  expectedInputVersion: EntryInferenceInput['schemaVersion'],
+) => {
+  if (request.request.schemaVersion !== expectedInputVersion)
+    return invalid('Entry inference belongs to a different selection policy')
   if (!Number.isSafeInteger(now) || now < Date.parse(receipt.completedAt) || now >= Date.parse(request.expiresAt))
     return invalid('Entry receipt is unavailable or outside its original validity window')
   if (receipt.outcome.status !== JevOutcome.Completed)
@@ -131,7 +142,8 @@ export const jevInferenceAvailableAt = (request: JevEvaluationRequest, receipt: 
     completion.handoff.disposition.status === 'VISUAL_FAILED' ||
     completion.handoff.disposition.status === 'PREPARATION_FAILED' ||
     completion.jev.status === 'FAILED' ||
-    completion.jev.status === 'NOT_DISPATCHED'
+    completion.jev.status === 'NOT_DISPATCHED' ||
+    (completion.jev.status === 'OMITTED_BY_POLICY' && expectedInputVersion !== 'bayn.entry-ablation-input.v1')
   )
     return invalid('Entry inference failed and cannot authorize an order')
   return Result.succeed(completion)

@@ -468,6 +468,12 @@ export const verifyBrokerStateVersion = (
               AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' = 'bayn.jev.protocol.v23')
             OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v7'
               AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' IN ('bayn.jev.protocol.v24', 'bayn.jev.protocol.v25', 'bayn.jev.protocol.v26'))
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.entry-ablation-target.v1'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.entry-ablation-policy.v1'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' = 'bayn.jev.protocol.v26')
+            OR (d.document #>> '{strategyDecision,schemaVersion}' = 'bayn.repeated-momentum-target.v1'
+              AND d.document #>> '{strategyDecision,policy,schemaVersion}' = 'bayn.repeated-momentum-policy.v1'
+              AND d.document #>> '{strategyDecision,evidence,observation,protocol,schemaVersion}' = 'bayn.jev.protocol.v26')
           )
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,schemaVersion}' = 'bayn.paper-account-snapshot.v2'
           AND d.document #>> '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}' = ${accountId}

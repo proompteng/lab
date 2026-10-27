@@ -17,10 +17,14 @@ import { utcInstantFromEpochMillis } from '../time'
 import { EntryInferenceJournal, deriveEntryHandoffDisposition, type EntryInferenceCompletion } from './entry-inference'
 import type { EntryInferenceInput } from './entry-inference-input'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
-import { prepareEntryInferenceInput } from './entry-inference-input'
+import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { defaultJevProtocolDocument } from './protocol'
 
-export const entryEvaluationRequestFixture = (observedAt = '2026-10-25T07:00:32.000Z', symbol = 'AAPL') => {
+export const entryEvaluationRequestFixture = (
+  observedAt = '2026-10-25T07:00:32.000Z',
+  symbol = 'AAPL',
+  selectionPolicy?: EntryAblationSelection,
+) => {
   const windowEndAt = new Date(Math.floor(Date.parse(observedAt) / 60_000) * 60_000).toISOString()
   const bars = [
     { minuteBeforeWindowEnd: 4, open: 100, high: 103, low: 97, close: 101, volume: 100 },
@@ -30,7 +34,9 @@ export const entryEvaluationRequestFixture = (observedAt = '2026-10-25T07:00:32.
   ]
   const prepared = Result.getOrThrow(
     prepareEntryInferenceInput({
-      schemaVersion: 'bayn.entry-inference-input.v5',
+      ...(selectionPolicy === undefined
+        ? { schemaVersion: 'bayn.entry-inference-input.v5' }
+        : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
       numericalState: {
         schemaVersion: 'bayn.jev-entry-state.v22',
         task: { decisionPurpose: 'ENTRY' },
@@ -193,6 +199,8 @@ export const entryCompletionFixture = (
 
   const handoff = { ...material, handoffHash: Result.getOrThrow(canonicalHashV1Result(material)) }
   if (disposition.status !== 'READY') return { handoff, completedAt: at, jev: { status: 'NOT_REQUESTED' } }
+  if (request.request.schemaVersion === 'bayn.entry-ablation-input.v1')
+    return { handoff, completedAt: at, jev: { status: 'OMITTED_BY_POLICY' } }
   const prepared = Result.getOrThrow(prepareJevRequest(disposition.jevRequest))
   const response = Result.getOrThrow(
     decodeJevResponse(prepared.request, {
