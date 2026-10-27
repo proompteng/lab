@@ -120,7 +120,22 @@ const baseRegistrationFixture = (): SystemRegistration => ({
     promptsHash: sha256(`${policy}:prompts`),
     continuationAndExitsHash: sha256(`${policy}:exit`),
     costAllocationRuleHash: testHash(costAttributionRule),
-    inferenceRateCard: { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
+    inferenceRateCard: {
+      schemaVersion: 'bayn.inference-rate-card.v1',
+      rates: replayRateCardFixture({
+        jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+        chart: {
+          inputMicrosPerMillionTokens: '1',
+          outputMicrosPerMillionTokens: '0',
+          cachedInputMicrosPerMillionTokens: '0',
+          cacheWriteInputMicrosPerMillionTokens: '0',
+        },
+      }).rates.filter(
+        (rate) =>
+          policy === JevResearchPolicy.Candidate ||
+          (policy === JevResearchPolicy.Ablation && rate.provider === 'openai'),
+      ),
+    },
     executionModelHash: sha256(`${policy}:execution`),
     ...(policy === JevResearchPolicy.Momentum
       ? {
@@ -236,6 +251,22 @@ export const registrationFixture = (registeredAt?: string): SystemRegistration =
         }),
       },
     }
+  }
+  const finalSession = registration.calendar.sessions.at(-1)
+  if (finalSession === undefined) throw new Error('Missing fixture session')
+  registration = {
+    ...registration,
+    policies: registration.policies.map((policy) => ({
+      ...policy,
+      inferenceRateCard: {
+        ...policy.inferenceRateCard,
+        rates: policy.inferenceRateCard.rates.map((rate) => ({
+          ...rate,
+          effectiveFrom: registration.registeredAt,
+          effectiveUntil: new Date(Date.parse(finalSession.closeAt) + 86400000).toISOString(),
+        })),
+      },
+    })),
   }
   return withRegistrationCommitments({
     ...registration,

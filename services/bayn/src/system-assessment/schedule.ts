@@ -55,7 +55,7 @@ export const registeredSchedule = (registration: SystemRegistration) =>
         schemaVersion: 'bayn.scheduled-work.v1',
         obligations: schedule,
       })
-      obligations.push(...schedule.map((obligation) => ({ ...obligation, scheduleEvidenceHash })))
+      for (const obligation of schedule) obligations.push({ ...obligation, scheduleEvidenceHash })
     }
     return obligations
   })

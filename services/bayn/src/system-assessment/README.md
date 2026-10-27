@@ -50,9 +50,14 @@ The deployed control retains its frozen identity. The ablation and momentum defi
 runtime policies. Expanded risk limits, substituted control identities, overlapping calendars, and reduced Jev tariffs
 cannot become valid registrations.
 
+The candidate requires continuous Jev and OpenAI model tariff coverage from the first open through the final close.
+The chart ablation requires OpenAI coverage. The frozen deterministic deployed control and repeated momentum do not
+require inference tariffs. Missing models, expired rates, and gaps reject registration before its terms become immutable.
+
 `registeredSchedule` derives decision and reconciliation obligations from the locked calendar and configuration.
 Polling frequency cannot remove scheduled work from the denominator. Cost allocation uses positive, canonically
 ordered weights and cumulative integer rounding, preserving the exact invoice total and all outside-window shares.
+The Node regression exercises all 468,000 reconciliation obligations at a one-second cadence across twenty full sessions.
 
 `initializeQualificationHistory`, `registerSystemQualification`, and `readSystemRegistration` retain canonical,
 content-addressed documents. Migration 156 makes history and registrations append-only, serializes admissions on the

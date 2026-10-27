@@ -12,6 +12,8 @@ import {
 
 import { canonicalHashV1Result } from '../hash'
 import { BrokerEnvironment } from '../broker/identity'
+import { jevModel } from '../jev/contract'
+import { decisionsModel } from '../jev/decisions'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { PolicySchema } from '../risk'
 import { InferenceRateCardSchema, prepareInferenceRateCard } from '../inference-costs'
@@ -219,6 +221,32 @@ export const validateSystemRegistration = (input: unknown) =>
       if (policy.costAllocationRuleHash !== (yield* canonicalHashV1Result(costAttributionRule)))
         return yield* invalid('Registration must freeze the executable service-period cost attribution rule')
       const { rates } = yield* prepareInferenceRateCard(policy.inferenceRateCard)
+      const requiredModels =
+        policy.policy === JevResearchPolicy.Candidate
+          ? [
+              ['typesafe', jevModel],
+              ['openai', decisionsModel],
+            ]
+          : policy.policy === JevResearchPolicy.Ablation
+            ? [['openai', decisionsModel]]
+            : []
+      const firstSession = registration.calendar.sessions[0]
+      const lastSession = registration.calendar.sessions.at(-1)
+      if (firstSession === undefined || lastSession === undefined)
+        return yield* invalid('Registration requires an evaluation calendar')
+      for (const [provider, model] of requiredModels) {
+        let coveredUntil = firstSession.openAt
+        for (const { rate } of rates
+          .filter(({ rate }) => rate.provider === provider && rate.model === model)
+          .sort((a, b) => a.rate.effectiveFrom.localeCompare(b.rate.effectiveFrom))) {
+          if (rate.effectiveFrom > coveredUntil) break
+          if (rate.effectiveUntil > coveredUntil) coveredUntil = rate.effectiveUntil
+        }
+        if (coveredUntil <= lastSession.closeAt)
+          return yield* invalid(
+            `Registered ${policy.policy} tariff must continuously cover ${provider}/${model} through the final close`,
+          )
+      }
       for (const { rate } of rates)
         if (
           rate.provider === 'typesafe' &&
