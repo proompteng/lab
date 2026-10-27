@@ -32,7 +32,6 @@ describe('all used model responses retain their actual availability', () => {
         Effect.provideService(EntryInferenceJournal, {
           recordVisualClaim: () => Effect.die('Infeasible source cannot claim visual dispatch'),
           recordVisualTerminal: () => Effect.die('Infeasible source cannot receive visual evidence'),
-          recordBaseStartSkip: () => Effect.void,
           recordHandoff: () => Effect.succeed({ dispatchAllowed: true }),
         }),
         Effect.provideService(DecisionsClient, {

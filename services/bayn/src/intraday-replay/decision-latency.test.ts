@@ -45,11 +45,12 @@ const fixture = () => {
     pending: () => Effect.succeed([]),
     begin: () => Effect.succeed({ ...stored, dispatches: [] }),
     finish: () => Effect.succeed(stored),
+    complete: () => Effect.succeed(stored),
   }
   return { evidence, stored, store, start: Date.parse(evidence.batchPlan.observedAt) }
 }
 
-test.each(['already-complete', 'completed-after-inference'] as const)(
+test.each(['already-complete', 'completed-after-inference', 'completed-atomically'] as const)(
   'latency floor covers %s admission without changing the original batch or expiry',
   async (path) => {
     const { evidence, stored, store, start } = fixture()
@@ -74,7 +75,11 @@ test.each(['already-complete', 'completed-after-inference'] as const)(
         const result = yield* latency.runPass(
           Effect.gen(function* () {
             const saved = yield* wrapped.begin(evidence.batchPlan, evidence.observation)
-            return saved.result === null ? yield* wrapped.finish(stored.plan.batchId) : saved
+            return saved.result !== null
+              ? saved
+              : path === 'completed-atomically'
+                ? yield* wrapped.complete(stored.plan, evidence.observation, stored.result)
+                : yield* wrapped.finish(stored.plan.batchId)
           }),
         )
         expect(result.result).toEqual(stored.result)

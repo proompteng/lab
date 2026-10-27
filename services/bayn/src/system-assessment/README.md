@@ -117,7 +117,7 @@ requires that exact scratch destination and rejects other temporary paths, extra
 runtime settings. Database targets remain the only other permitted environment additions. A latency replay uses
 its prospectively registered operation timeout; the CLI does not replace it with the ordinary replay default.
 
-Migration 157 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
+Migration 159 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
 durable evidence witnesses as append-only records. A later settlement or newly captured source produces a new
 assessment receipt. Reading a saved assessment recomputes its result and verifies its hash. Broker mutation routing
 retains the original admission, dispatch, and completion times, including explicit non-dispatch.

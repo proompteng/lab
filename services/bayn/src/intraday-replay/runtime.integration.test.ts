@@ -302,7 +302,8 @@ durableTest.each(
           quotes: original.quotes.map((row) => ({
             ...shiftOffset(row),
             askSize:
-              latencyStress || !restingDayLifecycle ||
+              latencyStress ||
+              !restingDayLifecycle ||
               at <= initialAtMs + (measured ? 2000 : 200) ||
               at === reentryAtMs ||
               (slippedExit && at === reentryAtMs + 1000)

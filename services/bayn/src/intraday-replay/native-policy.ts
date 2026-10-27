@@ -4,9 +4,17 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { JevBatchPlanVersion } from '../jev/batch'
-import { entryAblationStrategyIdentity, makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
-import { jevBehaviorHash, type JevProtocol } from '../jev/protocol'
-import { makeRepeatedMomentumPolicy, repeatedMomentumStrategyIdentity } from '../strategy/repeated-momentum/policy'
+import {
+  EntryAblationPolicySchema,
+  entryAblationStrategyIdentity,
+  makeEntryAblationPolicy,
+} from '../jev/entry-ablation-policy'
+import { JevProtocolSchema, jevBehaviorHash, type JevProtocol } from '../jev/protocol'
+import {
+  RepeatedMomentumPolicySchema,
+  makeRepeatedMomentumPolicy,
+  repeatedMomentumStrategyIdentity,
+} from '../strategy/repeated-momentum/policy'
 import { Sha256Schema } from '../schemas'
 
 export const NativeReplayPolicySchema = Schema.Literals([
@@ -22,10 +30,10 @@ export const NativeReplayIdentitySchema = Schema.Struct({
     name: Schema.Literal('jev'),
     behaviorHash: Sha256Schema,
     parameterHash: Sha256Schema,
-    parameterSchemaVersion: Schema.Literals([
-      'bayn.jev.protocol.v26',
-      'bayn.entry-ablation-policy.v1',
-      'bayn.repeated-momentum-policy.v1',
+    parameterSchemaVersion: Schema.Union([
+      JevProtocolSchema.fields.schemaVersion,
+      EntryAblationPolicySchema.fields.schemaVersion,
+      RepeatedMomentumPolicySchema.fields.schemaVersion,
     ]),
   }),
   protocolHash: Sha256Schema,

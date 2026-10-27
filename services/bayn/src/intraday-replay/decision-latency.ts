@@ -183,6 +183,8 @@ export const makeReplayDecisionLatency = (
               return yield* release(evidence)
             }),
           finish: (batchId) => store.finish(batchId).pipe(Effect.flatMap(release)),
+          complete: (plan, observation, result) =>
+            store.complete(plan, observation, result).pipe(Effect.flatMap(release)),
         }
 
   return {

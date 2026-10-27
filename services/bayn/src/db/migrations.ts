@@ -1,6 +1,6 @@
 import equityEntryAskCap from '../../migrations/0158_equity_entry_ask_cap'
 import cryptoEntryAskCap from '../../migrations/0157_crypto_entry_ask_cap'
-import systemAssessment from '../../migrations/0157_system_assessment'
+import systemAssessment from '../../migrations/0159_system_assessment'
 import systemRegistration from '../../migrations/0156_system_registration'
 import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
 import stagedChartTransport from '../../migrations/0153_staged_chart_transport'
@@ -167,7 +167,7 @@ export const migrationLoader = PgMigrator.fromRecord({
   '153_staged_chart_transport': stagedChartTransport,
   '155_native_controls': nativeControls,
   '156_system_registration': systemRegistration,
-  '157_system_assessment': systemAssessment,
+  '159_system_assessment': systemAssessment,
   '152_funded_source_anchors': fundedSourceAnchors,
   '151_chart_dispatch_checkpoints': chartDispatchCheckpoints,
   '150_inference_request_version': inferenceRequestVersion,

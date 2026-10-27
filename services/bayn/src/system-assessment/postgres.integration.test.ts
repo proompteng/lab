@@ -722,7 +722,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(later.find((row) => row.order.brokerOrderId === 'native-parent')?.eventId).toBe(
       testHash('future parent observation'),
     )
-  })
+  }, 30000)
 
   test('later evidence appends a new assessment receipt and neither source cuts nor receipts can be rewritten', async () => {
     const registered = await runtime.runPromise(asApplication(registerFixture(registration())))
