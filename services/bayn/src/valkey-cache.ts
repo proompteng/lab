@@ -134,8 +134,12 @@ export const makeValkeyCache = Effect.gen(function* () {
       return yield* commands
         .withPermit(
           Effect.gen(function* () {
-            admitted = true
-            yield* recordQueue('acquired')
+            yield* Effect.uninterruptible(
+              Effect.gen(function* () {
+                admitted = true
+                yield* recordQueue('acquired')
+              }),
+            )
             if (!client.isOpen)
               yield* invoke(operation, () => client.connect()).pipe(
                 withObservedStage('bayn.valkey.connect', { dependency: 'valkey', operation, slowAfterMs: 250 }),
