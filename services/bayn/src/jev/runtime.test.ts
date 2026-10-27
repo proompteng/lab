@@ -60,7 +60,8 @@ const scenario = (
   const hash = Result.getOrThrow(reconciledStateHash(material))
   const symbol = options.symbol ?? 'AAPL'
   const planned = original.exitPolicy.plans['AAPL']
-  if (planned === undefined) throw new Error('Expected an immutable entry plan')
+  if (planned === undefined || planned.schemaVersion !== 'bayn.jev-funded-exit-plan.v4')
+    throw new Error('Expected an immutable chart entry plan')
   const firstFillAt = options.firstFillAt ?? original.entryFills[0]?.occurredAt
   if (firstFillAt === undefined) throw new Error('Expected first entry fill')
   const sourceEnd = Math.floor(Date.parse(firstFillAt) / 60_000) * 60_000

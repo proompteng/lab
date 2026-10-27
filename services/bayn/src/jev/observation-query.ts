@@ -6,6 +6,17 @@ import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { utcInstantFromEpochMillis } from '../time'
 import type { JevProtocol } from './protocol'
 
+export const jevSignalIntervalMs = 60_000
+
+export const jevSignalWindowEndMs = (observedAtMs: number, protocol: Pick<JevProtocol, 'decisionDelaySeconds'>) =>
+  Math.floor((observedAtMs - protocol.decisionDelaySeconds * 1000) / jevSignalIntervalMs) * jevSignalIntervalMs
+
+export const jevSignalDueAtMs = (windowEndMs: number, protocol: Pick<JevProtocol, 'decisionDelaySeconds'>) =>
+  windowEndMs + protocol.decisionDelaySeconds * 1000
+
+export const jevFirstSignalDueMs = (openMs: number, protocol: Pick<JevProtocol, 'decisionDelaySeconds'>) =>
+  jevSignalDueAtMs((Math.floor(openMs / jevSignalIntervalMs) + 1) * jevSignalIntervalMs, protocol)
+
 export const jevHistoryStartMs = (
   calendar: MarketHours,
   sessionDate: string,
@@ -29,7 +40,7 @@ export const makeJevEntryQuery = (input: {
 }): IntradaySnapshotQuery => {
   const { protocol, candidates } = input
   const market = jevMarketForSymbol(candidates[0] ?? 'SPY')
-  const rangeEndMs = Math.floor((input.observedAtMs - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
+  const rangeEndMs = jevSignalWindowEndMs(input.observedAtMs, protocol)
   return {
     sessionDate: input.sessionDate,
     calendar: input.calendar,

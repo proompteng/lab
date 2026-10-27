@@ -1,4 +1,5 @@
-import { ControlPolicy, controlExitDefinition } from './control-portfolio'
+import { ControlPolicy } from './control-portfolio'
+import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
 import { equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { brokerCalendarResponseHash } from '../market-hours'
@@ -83,7 +84,7 @@ export const ridgeExecutionLabelDefinition = (context: RidgeExecutionContext, al
   },
   exits: {
     maximumHoldingMinutes: context.protocol.maximumHoldingMinutes,
-    protectiveStopBps: controlExitDefinition.protectiveStopBps,
+    protectiveStopBps: momentumExitDefinition.protectiveStopBps,
     sessionCloseMinutesBeforeClose: context.protocol.entryCutoffMinutesBeforeClose,
     lifecycle: 'One position, persistent partial-exit retries, consumed quote liquidity, and serial current cash.',
   },

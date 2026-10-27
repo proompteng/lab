@@ -149,6 +149,7 @@ describe('Jev entry execution quote eligibility', () => {
         calls.snapshots += 1
         return fixture.snapshot
       }),
+      JevBatchPlanVersion.V7,
     ).pipe(
       Effect.flatMap(({ snapshot, evidence }) =>
         Effect.fromResult(decideJevEntry(evidence)).pipe(
