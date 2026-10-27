@@ -2117,6 +2117,41 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           const intentId = document.orderedIntentIds[0]
           if (intentId === undefined) throw new Error('Expected the sealed entry intent')
           expect(yield* verifyBrokerStateVersion(sql, replayAccountId, version, intentId, true)).toBe(18)
+          // Isolate the final fee lookup from the immutable decision writer: these
+          // rows exercise its accepted identities and account/protocol rejection.
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions ON COMMIT DROP
+              AS SELECT * FROM public.autonomous_cycle_shadow_decisions`
+              for (const [targetVersion, policyVersion] of [
+                ['bayn.entry-ablation-target.v1', 'bayn.entry-ablation-policy.v1'],
+                ['bayn.repeated-momentum-target.v1', 'bayn.repeated-momentum-policy.v1'],
+              ]) {
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document =
+                jsonb_set(jsonb_set(document, '{strategyDecision,schemaVersion}', ${JSON.stringify(targetVersion)}::jsonb),
+                  '{strategyDecision,policy}', ${sql.json({ schemaVersion: policyVersion, sharedProtocol: fixture.protocol })})`
+                expect(yield* verifyBrokerStateVersion(sql, replayAccountId, version, intentId, true)).toBe(18)
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document =
+                jsonb_set(document, '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}', '"foreign-account"'::jsonb)`
+                expect(
+                  Exit.isFailure(
+                    yield* verifyBrokerStateVersion(sql, replayAccountId, version, intentId, true).pipe(Effect.exit),
+                  ),
+                ).toBe(true)
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document =
+                jsonb_set(document, '{strategyDecision,evidence,observation,portfolio,brokerState,account,accountId}', ${JSON.stringify(replayAccountId)}::jsonb)`
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document =
+                jsonb_set(document, '{strategyDecision,evidence,observation,protocol,schemaVersion}', '"unsupported"'::jsonb)`
+                expect(
+                  Exit.isFailure(
+                    yield* verifyBrokerStateVersion(sql, replayAccountId, version, intentId, true).pipe(Effect.exit),
+                  ),
+                ).toBe(true)
+                yield* sql`UPDATE autonomous_cycle_shadow_decisions SET document =
+                jsonb_set(document, '{strategyDecision,evidence,observation,protocol,schemaVersion}', ${JSON.stringify(fixture.protocol.schemaVersion)}::jsonb)`
+              }
+            }),
+          )
           const missing = yield* verifyBrokerStateVersion(sql, replayAccountId, version, '0'.repeat(64), true).pipe(
             Effect.exit,
           )

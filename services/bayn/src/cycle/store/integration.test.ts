@@ -40,7 +40,12 @@ import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
 import { databaseUtcInstant } from '../../db/clock'
 import { decideJevEntry } from '../../jev/decision'
-import { nativeJevDecisionEvidence } from '../../jev/native.test-support'
+import { nativeJevDecisionEvidence, nativeJevFixture, nativeJevBatchResult } from '../../jev/native.test-support'
+import { decideEntryAblation } from '../../jev/entry-ablation'
+import { JevBatchPlanVersion } from '../../jev/batch'
+import { makeJevTradingSignalBatch } from '../../jev/trading-signals'
+import { decideRepeatedMomentumEntry } from '../../strategy/repeated-momentum/decision'
+import { makeRepeatedMomentumPolicy } from '../../strategy/repeated-momentum/policy'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -779,6 +784,40 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           ...document,
           strategyDecision: Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence())),
         })
+        const source = nativeJevFixture()
+        const observation = source.observation.payload
+        const decidedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
+        const ablationPlan = Result.getOrThrow(
+          makeJevTradingSignalBatch({
+            observation,
+            expiresAt: new Date(Date.parse(observation.observedAt) + source.protocol.inferenceValidityMs).toISOString(),
+            planVersion: JevBatchPlanVersion.Ablation,
+          }),
+        )
+        const missingAblation = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          strategyDecision: Result.getOrThrow(
+            decideEntryAblation({
+              observation,
+              batchPlan: ablationPlan,
+              batchResult: nativeJevBatchResult(ablationPlan, decidedAt),
+              decidedAt,
+            }),
+          ),
+        })
+        const missingMomentum = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          strategyDecision: Result.getOrThrow(
+            decideRepeatedMomentumEntry(
+              {
+                schemaVersion: 'bayn.repeated-momentum-evidence.v1',
+                observation,
+                decidedAt,
+              },
+              makeRepeatedMomentumPolicy(source.protocol),
+            ),
+          ),
+        })
         const unverifiedStreamReference = yield* queries.decisionEvidenceMismatch({
           ...document,
           bindings: {
@@ -832,6 +871,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           prematureDecision,
           missingPricing,
           missingJev,
+          missingAblation,
+          missingMomentum,
           unverifiedStreamReference,
           forgedAuthority,
           forgedEquity,
@@ -851,6 +892,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       prematureDecision: DecisionEvidenceMismatch.Reconciliation,
       missingPricing: DecisionEvidenceMismatch.ExecutionMarketData,
       missingJev: DecisionEvidenceMismatch.Jev,
+      missingAblation: DecisionEvidenceMismatch.Jev,
+      missingMomentum: DecisionEvidenceMismatch.Jev,
       unverifiedStreamReference: DecisionEvidenceMismatch.DecisionMarketData,
       forgedAuthority: DecisionEvidenceMismatch.RiskContext,
       forgedEquity: DecisionEvidenceMismatch.RiskContext,
