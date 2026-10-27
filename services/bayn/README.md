@@ -28,6 +28,12 @@ enter cycle execution. Timeouts after that boundary retain fail-closed mutation 
 [October 17 runtime and crypto entry investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) for the
 reproduction, cost evidence and research limitations; this recovery does not establish profitable trading.
 
+Reconciliation requires the account, position and valuation observations to cover the current New York trading day
+before persistence and before publishing the result. A pass crossing midnight invalidates its cached broker snapshot
+and makes one fresh read within the original pass deadline. A still-stale refresh retains the normal authority
+restriction. The new day's risk baseline comes from its first actual valuation; prior valuations and the lifetime
+equity peak remain intact.
+
 Live market-data reference verification retains a bounded fingerprint of each fully verified captured snapshot.
 An exact match across the manifest, bars, quotes, trades and latest quotes reuses that capture's source proof without
 reconstructing it again after entry pricing. Changed data still requires full replay verification; unobserved cuts
