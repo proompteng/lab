@@ -29,7 +29,7 @@ const fixture = () => {
     claimedAt: utcInstantFromEpochMillis(at),
     expiresAt: utcInstantFromEpochMillis(at + 10_000),
     input: {
-      schemaVersion: 'bayn.entry-inference-input.v4' as const,
+      schemaVersion: 'bayn.entry-inference-input.v5' as const,
       numericalState: {
         schemaVersion: 'bayn.jev-entry-state.v22',
         task: { decisionPurpose: 'ENTRY' },
@@ -58,6 +58,10 @@ const providers = (
     readonly chartClaimDelay?: number
     readonly chartTerminalFails?: boolean
     readonly chartTerminalDelay?: number
+    readonly baseFailure?: boolean
+    readonly baseDelay?: number
+    readonly baseClaimDenied?: boolean
+    readonly baseTerminalFails?: boolean
   } = {},
 ) => {
   const events: string[] = []
@@ -71,7 +75,8 @@ const providers = (
           checkpointEvents.push('visual')
           const started = yield* Clock.currentTimeMillis
           const prepared = Result.getOrThrow(prepareDecisionsRequest(input))
-          if (options.visualFailure)
+          const isBase = prepared.request.questions.length === 1
+          if (options.visualFailure || (isBase && options.baseFailure))
             return yield* new DecisionsError({
               category: 'STATUS',
               message: 'Limited',
@@ -85,10 +90,12 @@ const providers = (
                 total_tokens: 100,
               },
             })
-          if (options.visualDelay !== undefined) yield* Effect.sleep(options.visualDelay)
+          if (options.visualDelay !== undefined && prepared.request.questions.length > 1)
+            yield* Effect.sleep(options.visualDelay)
+          if (isBase && options.baseDelay !== undefined) yield* Effect.sleep(options.baseDelay)
           const anchors: Readonly<Record<string, number>> = {
             support_anchor: 0,
-            resistance_anchor: 2,
+            resistance_anchor: 0,
             base_last_bar: 0,
           }
           const response = Result.getOrThrow(
@@ -127,23 +134,27 @@ const providers = (
         }),
     }),
     Layer.succeed(EntryInferenceJournal, {
-      recordChartClaim: () =>
+      recordVisualClaim: (claim) =>
         Effect.gen(function* () {
           checkpointEvents.push('claim')
           if (options.chartClaimDelay !== undefined) yield* Effect.sleep(options.chartClaimDelay)
-          return { dispatchAllowed: options.chartClaimDenied !== true }
+          return {
+            dispatchAllowed:
+              options.chartClaimDenied !== true && !(claim.stage === 'BASE_START' && options.baseClaimDenied),
+          }
         }),
-      recordChartTerminal: () =>
+      recordVisualTerminal: (terminal) =>
         Effect.gen(function* () {
           checkpointEvents.push('terminal')
           if (options.chartTerminalDelay !== undefined) yield* Effect.sleep(options.chartTerminalDelay)
-          if (options.chartTerminalFails)
+          if (options.chartTerminalFails || (terminal.stage === 'BASE_START' && options.baseTerminalFails))
             return yield* operationalError({
               component: 'journal',
               operation: 'test chart terminal commit',
               message: 'Unavailable',
             })
         }),
+      recordBaseStartSkip: () => Effect.void,
       recordHandoff: (handoff) =>
         Effect.gen(function* () {
           events.push('handoff')
@@ -210,10 +221,95 @@ const run = (
   )
 
 describe('claimed sequential entry inference', () => {
+  test('BASE_START duplicate admission or terminal crash cannot dispatch Jev', async () => {
+    const duplicate = providers({ baseClaimDenied: true })
+    expect(Result.isFailure(await run(fixture(), duplicate))).toBe(true)
+    expect(duplicate.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'claim'])
+    const crash = providers({ baseTerminalFails: true })
+    expect(Result.isFailure(await run(fixture(), crash))).toBe(true)
+    expect(crash.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'claim', 'visual', 'terminal'])
+    expect(crash.handoffs).toHaveLength(0)
+  })
+
+  test('BASE_START metered failure or timeout never authorizes Jev or renews expiry', async () => {
+    for (const options of [{ baseFailure: true }, { visualDelay: 8_000, baseDelay: 3_000 }]) {
+      const setup = providers(options)
+      const claim = fixture()
+      const result = Result.getOrThrow(await run(claim, setup, 'baseDelay' in options ? 11_000 : 0))
+      expect(setup.events).toEqual(['visual', 'visual', 'handoff'])
+      expect(result.handoff.baseStart.status).toBe('FAILED')
+      expect(result.handoff.disposition.status).toBe('PREPARATION_FAILED')
+      expect(result.jev.status).toBe('NOT_REQUESTED')
+      expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, result))).toBe(true)
+    }
+  })
+
+  test('6, 30 and 120 source bars complete through bounded selected-end transport', async () => {
+    for (const count of [6, 30, 120]) {
+      const original = fixture()
+      const bars = Array.from({ length: count }, (_, index) => ({
+        minuteBeforeWindowEnd: count - index,
+        open: 100,
+        high: index === count - 1 ? 108 : 102,
+        low: 97,
+        close: index === count - 1 ? 104 : 101,
+        volume: 100,
+      }))
+      const input = {
+        ...original.input,
+        chartSource: { ...original.input.chartSource, bars },
+        numericalState: { ...original.input.numericalState, candidate: { symbol: 'AAPL', bars1m: bars } },
+      }
+      const claim = { ...original, input }
+      const setup = providers()
+      const result = Result.getOrThrow(await run(claim, setup))
+      expect(setup.events.slice(0, 3)).toEqual(['visual', 'visual', 'handoff'])
+      expect(result.handoff.baseStart.status).toBe('RECEIVED')
+      expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, result))).toBe(true)
+    }
+  })
+
+  test('authenticated no-eligible-base skip preserves independently funded recovery without a second visual call', async () => {
+    const original = fixture()
+    const bars = Array.from({ length: 6 }, (_, index) => ({
+      minuteBeforeWindowEnd: 6 - index,
+      open: 100,
+      high: 108,
+      low: 97,
+      close: 104,
+      volume: 100,
+    }))
+    const claim = {
+      ...original,
+      input: {
+        ...original.input,
+        chartSource: { ...original.input.chartSource, bars },
+        numericalState: { ...original.input.numericalState, candidate: { symbol: 'AAPL', bars1m: bars } },
+      },
+    }
+    const setup = providers()
+    const result = Result.getOrThrow(await run(claim, setup))
+    expect(setup.events).toEqual(['visual', 'handoff', 'jev'])
+    expect(result.handoff.baseStart.status).toBe('NOT_REQUESTED')
+    if (result.handoff.baseStart.status === 'NOT_REQUESTED')
+      expect(result.handoff.baseStart.skip.reason).toBe('NO_ELIGIBLE_BASE')
+    expect(result.handoff.disposition.status).toBe('READY')
+    expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, result))).toBe(true)
+  })
+
   test('commits one chart admission and its terminal evidence before handoff or dependent dispatch', async () => {
     const setup = providers()
     Result.getOrThrow(await run(fixture(), setup))
-    expect(setup.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'handoff', 'jev'])
+    expect(setup.checkpointEvents).toEqual([
+      'claim',
+      'visual',
+      'terminal',
+      'claim',
+      'visual',
+      'terminal',
+      'handoff',
+      'jev',
+    ])
   })
 
   test('an existing chart claim cannot be replayed into another provider call', async () => {
@@ -237,10 +333,9 @@ describe('claimed sequential entry inference', () => {
 
   test('late terminal persistence retains chart evidence but never grants a fresh Jev window', async () => {
     const setup = providers({ chartTerminalDelay: 10_000 })
-    const result = Result.getOrThrow(await run(fixture(), setup, 10_000))
-    expect(setup.checkpointEvents).toEqual(['claim', 'visual', 'terminal', 'handoff'])
-    expect(result.jev.status).toBe('NOT_DISPATCHED')
-    expect(result.handoff.recordedAt).toBe(fixture().expiresAt)
+    expect(Result.isFailure(await run(fixture(), setup, 10_000))).toBe(true)
+    expect(setup.checkpointEvents).toEqual(['claim', 'visual', 'terminal'])
+    expect(setup.handoffs).toHaveLength(0)
   })
 
   test('commits a source-infeasible result before either provider is dispatched', async () => {
@@ -290,7 +385,7 @@ describe('claimed sequential entry inference', () => {
     expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, result))).toBe(true)
     const receipt = Result.getOrThrow(
       makeJevEvaluationReceipt(request, {
-        schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+        schemaVersion: 'bayn.jev-evaluation-receipt.v3',
         requestId: request.requestId,
         startedAt: request.observedAt,
         completedAt: result.completedAt,
@@ -341,7 +436,7 @@ describe('claimed sequential entry inference', () => {
     const claim = fixture()
     const result = Result.getOrThrow(await run(claim, setup))
     expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, result))).toBe(true)
-    expect(setup.events).toEqual(['visual', 'handoff', 'jev'])
+    expect(setup.events).toEqual(['visual', 'visual', 'handoff', 'jev'])
     expect(result.handoff.disposition.status).toBe('READY')
     expect(result.jev.status).toBe('RECEIVED')
     if (result.handoff.disposition.status === 'READY' && result.jev.status === 'RECEIVED')
@@ -413,14 +508,14 @@ describe('claimed sequential entry inference', () => {
   test('does not renew the deadline after chart inference or handoff persistence', async () => {
     const setup = providers({ visualDelay: 2_000, commitDelay: 8_001 })
     const result = Result.getOrThrow(await run(fixture(), setup, 10_001))
-    expect(setup.events).toEqual(['visual', 'handoff'])
+    expect(setup.events).toEqual(['visual', 'visual', 'handoff'])
     expect(result.jev.status).toBe('NOT_DISPATCHED')
   })
 
   test('bounds the second provider by the remainder of the original evidence window', async () => {
     const setup = providers({ visualDelay: 8_000, jevDelay: 3_000 })
     const result = Result.getOrThrow(await run(fixture(), setup, 11_000))
-    expect(setup.events).toEqual(['visual', 'handoff', 'jev'])
+    expect(setup.events).toEqual(['visual', 'visual', 'handoff', 'jev'])
     expect(result.jev).toMatchObject({ status: 'FAILED', failure: JevFailure.Timeout, usage: null })
   })
 
@@ -428,7 +523,7 @@ describe('claimed sequential entry inference', () => {
     const setup = providers({ existingHandoff: true })
     const result = await run(fixture(), setup)
     expect(Result.isFailure(result)).toBe(true)
-    expect(setup.events).toEqual(['visual', 'handoff'])
+    expect(setup.events).toEqual(['visual', 'visual', 'handoff'])
   })
 
   test('detaches numerical and chart evidence before yielding to either provider', async () => {

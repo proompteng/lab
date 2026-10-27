@@ -5,9 +5,14 @@ import { canonicalHashV1Result } from '../hash'
 import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
 import { calculateReplayInferenceCosts } from './inference-costs'
 import type { ReplayInferenceCall } from './inference-timing'
-import { entryEvaluationRequestFixture, chartInferenceFixture } from '../jev/entry-inference.test-support'
+import {
+  entryEvaluationRequestFixture,
+  chartInferenceFixture,
+  nativeChartInference,
+} from '../jev/entry-inference.test-support'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
-import { makeChartDecisionsRequest } from '../jev/chart-questions'
+import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
+import { stageResponseIdentity } from '../jev/staged-checkpoint'
 
 const costs = {
   jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
@@ -149,7 +154,7 @@ test('retained HTTP failure usage is included while status failure remains unusa
 const chartCall = (): ChartCall => {
   const request = entryEvaluationRequestFixture()
   const prepared = Result.getOrThrow(
-    makeChartDecisionsRequest({
+    makeInitialChartStageRequest({
       chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
       protocol: request.request.protocol,
       funding: request.request.funding,
@@ -177,6 +182,46 @@ test('the same evaluation retains separate chart and Jev charges', () => {
     unresolvedCallCount: 0,
     inputTokens: '300',
     knownCostMicros: '19',
+  })
+})
+
+test('selected base calls retain a distinct identity and the visual tariff without changing old summary bytes', () => {
+  const chart = chartCall()
+  if (chart.outcome.status !== 'RECEIVED') throw Error('Expected fixture chart response')
+  const request = entryEvaluationRequestFixture()
+  const prepared = Result.getOrThrow(
+    makeSelectedBaseStartStageRequest(
+      {
+        chart: Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource)),
+        protocol: request.request.protocol,
+        funding: request.request.funding,
+      },
+      stageResponseIdentity(chart.outcome.inference),
+    ),
+  )
+  if (prepared.status !== 'PREPARED') throw Error('Expected fixture selected base request')
+  const base: Extract<ReplayInferenceCall, { stage: 'BASE_START' }> = {
+    ...chart,
+    schemaVersion: 'bayn.replay-inference-call.v3',
+    stage: 'BASE_START',
+    request: prepared.request,
+    requestHash: prepared.requestHash,
+    outcome: { status: 'RECEIVED', inference: nativeChartInference(prepared.request, request.observedAt) },
+  }
+  expect(base.requestHash).not.toBe(chart.requestHash)
+  expect(calculateReplayInferenceCosts([chart, base, call(200)], costs)).toMatchObject({
+    callCount: 3,
+    chartCallCount: 1,
+    baseStartCallCount: 1,
+    jevCallCount: 1,
+    knownCostMicros: '29',
+    unresolvedCallCount: 0,
+  })
+  expect(calculateReplayInferenceCosts([chart, call(200)], costs)).not.toHaveProperty('baseStartCallCount')
+  expect(calculateReplayInferenceCosts([{ ...base, outcome: { status: 'INTERRUPTED' } }], costs)).toMatchObject({
+    baseStartCallCount: 1,
+    knownCostMicros: '0',
+    unresolvedCallCount: 1,
   })
 })
 

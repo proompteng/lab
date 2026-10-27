@@ -11,7 +11,7 @@ describe('shared intraday market contract', () => {
     const momentum = Result.getOrThrow(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
 
     expect(Result.getOrThrow(canonicalHashV1Result(jev))).toBe(
-      'dc46124202169b662a36176880c79582a693254caaa92be597780a28cc93064a',
+      'd73c46b54912ba18f404b00f3009cce4256853a1e0141fbc8ea04508d63b7703',
     )
     expect(Result.getOrThrow(canonicalHashV1Result(momentum))).toBe(
       '0dccbe2abe3a380a987bcb2bbf6af299ff317d94df0198a35de3f89cbd28a775',
