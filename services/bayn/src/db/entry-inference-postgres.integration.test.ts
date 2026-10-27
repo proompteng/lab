@@ -166,7 +166,6 @@ const retainCheckpoint = (current: typeof request) =>
       const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
       if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
     }
-    for (const skip of checkpoint.skips) yield* journal.recordBaseStartSkip(skip)
   })
 const retainReplayRequest = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -695,7 +694,18 @@ integration('committed sequential provider handoff', () => {
               recordedAt: request.observedAt,
             }),
           )
-          expect(Result.isFailure(yield* journal.recordBaseStartSkip(skip).pipe(Effect.result))).toBe(true)
+          const { handoffHash: _priorHandoffHash, ...originalHandoff } = completion.handoff
+          const skippedHandoff = { ...originalHandoff, baseStart: { status: 'NOT_REQUESTED' as const, skip } }
+          expect(
+            Result.isFailure(
+              yield* journal
+                .recordHandoff({
+                  ...skippedHandoff,
+                  handoffHash: Result.getOrThrow(canonicalHashV1Result(skippedHandoff)),
+                })
+                .pipe(Effect.result),
+            ),
+          ).toBe(true)
           expect(
             Result.isFailure(
               yield* sql`INSERT INTO jev_staged_skip_receipts (request_id,stage,skip_hash,payload)
@@ -805,7 +815,7 @@ integration('committed sequential provider handoff', () => {
       }),
     ))
 
-  test('commits the current source-infeasible handoff and receipt without provider evidence', async () =>
+  test('atomically commits the source-infeasible skip, handoff and receipt without provider evidence', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sourceFixture = nativeJevFixture(
@@ -872,8 +882,26 @@ integration('committed sequential provider handoff', () => {
           ),
         )
         const sql = yield* PgClient.PgClient
-        yield* (yield* EntryInferenceJournal).recordBaseStartSkip(skip)
+        yield* sql`CREATE FUNCTION reject_test_handoff() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'simulated handoff write failure'; END
+        $$`
+        yield* sql`CREATE TRIGGER reject_test_handoff BEFORE INSERT ON jev_inference_handoffs
+          FOR EACH ROW EXECUTE FUNCTION reject_test_handoff()`
+        expect(Result.isFailure(yield* (yield* EntryInferenceJournal).recordHandoff(handoff).pipe(Effect.result))).toBe(
+          true,
+        )
+        expect(yield* sql`SELECT skip_hash FROM jev_staged_skip_receipts WHERE request_id=${source.requestId}`).toEqual(
+          [],
+        )
+        expect(
+          yield* sql`SELECT handoff_hash FROM jev_inference_handoffs WHERE request_id=${source.requestId}`,
+        ).toEqual([])
+        yield* sql`DROP TRIGGER reject_test_handoff ON jev_inference_handoffs`
+        yield* sql`DROP FUNCTION reject_test_handoff()`
         yield* (yield* EntryInferenceJournal).recordHandoff(handoff)
+        expect(yield* sql`SELECT skip_hash FROM jev_staged_skip_receipts WHERE request_id=${source.requestId}`).toEqual(
+          [{ skip_hash: skip.skipHash }],
+        )
         const receipt = yield* Effect.fromResult(
           makeJevEvaluationReceipt(source, {
             schemaVersion: 'bayn.jev-evaluation-receipt.v3',

@@ -100,7 +100,6 @@ export class EntryInferenceJournal extends Context.Service<
       claim: StagedDispatchClaim,
     ) => Effect.Effect<{ readonly dispatchAllowed: boolean }, OperationalError>
     readonly recordVisualTerminal: (receipt: StagedTerminalReceipt) => Effect.Effect<void, OperationalError>
-    readonly recordBaseStartSkip: (receipt: StagedSkipReceipt) => Effect.Effect<void, OperationalError>
     readonly recordHandoff: (
       handoff: EntryHandoff,
     ) => Effect.Effect<{ readonly dispatchAllowed: boolean }, OperationalError>
@@ -392,7 +391,6 @@ export const evaluateClaimedEntryHandoff = (claim: {
             recordedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
           }),
         )
-        yield* journal.recordBaseStartSkip(skip)
         return { status: 'NOT_REQUESTED' as const, skip }
       })
     let disposition: HandoffDisposition
