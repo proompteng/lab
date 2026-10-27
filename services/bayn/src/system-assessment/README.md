@@ -103,6 +103,11 @@ Model fills still require a fresh quote and supported liquidity. The result expo
 broker normalization, retained risk approvals, reconciliations, and conditional execution. Content hashes alone do
 not authenticate an approval. Supplied protection decisions are replaced by the captured evidence before evaluation.
 
+The replay mutation store advances its owned clock to a committed admission timestamp before returning that admission
+to the coordinator. Standard and recovery drivers use this same store. Routing snapshots read the clock passively;
+the existing submission synchronization determines dispatch time once. This preserves causal admission evidence and
+the original market-arrival sequence while retaining complete routing receipts.
+
 `bindSystemSourceCut` constructs session economics and operational obligations from that cut. Cash and inventory
 reconcile against fills, cost basis, funding, passive yield, and paid operating expenses. Opening, closing, minute,
 and observed intraminute marks retain losses across sessions. Unknown valuations or request clocks prevent a

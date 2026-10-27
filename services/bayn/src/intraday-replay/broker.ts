@@ -1048,16 +1048,15 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const recordRouting = <A extends { readonly evidence: { readonly observedAt: string } }>(
       operation: MutationOperation,
       request: (
-        mark: Effect.Effect<void, ReplayBrokerFailure>,
+        mark: (at: string) => Effect.Effect<void>,
       ) => Effect.Effect<A, BrokerMutationError | ReplayBrokerFailure>,
     ) =>
       Effect.gen(function* () {
-        const clock = config.submissionTime ?? now
-        const startedAt = yield* clock
+        const startedAt = yield* now
         const dispatched = yield* Ref.make<string | null>(null)
-        const mark = clock.pipe(Effect.flatMap((at) => Ref.set(dispatched, at)))
+        const mark = (at: string) => Ref.set(dispatched, at)
         const result = yield* request(mark).pipe(Effect.result)
-        const completedAt = yield* clock
+        const completedAt = yield* now
         const routing = { startedAt, requestDispatchedAt: yield* Ref.get(dispatched), completedAt }
         if (Result.isFailure(result)) {
           const error = result.failure
@@ -1102,8 +1101,8 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                 MutationOperation.Submit,
                 'Replay account configuration disables fractional trading',
               )
-            yield* mark
             const observedAt = yield* config.submissionTime ?? now
+            yield* mark(observedAt)
             const metadata = asset(intent.symbol)
             if (metadata === undefined || !metadata.tradable)
               return yield* mutationFailure(MutationOperation.Submit, 'Captured asset is not tradable')
@@ -1283,7 +1282,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             const prepared = yield* Effect.fromResult(prepareCancel(brokerOrderId))
             const observedAt = yield* now
             yield* read.orderById(brokerOrderId)
-            yield* mark
+            yield* mark(yield* now)
             const target = (yield* readState).orders.find((entry) => entry.order.brokerOrderId === brokerOrderId)?.order
             const groupId = target?.parentBrokerOrderId ?? brokerOrderId
             yield* updateCommittedState(observedAt, (current) => ({

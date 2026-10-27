@@ -144,6 +144,24 @@ test('simulated mutation receipts retain the original dispatch and completion cl
   )
 })
 
+test('routing observation does not resynchronize the market or add submission clock reads', async () => {
+  await run(
+    Effect.gen(function* () {
+      let reads = 0
+      const broker = yield* setup({
+        submissionTime: Effect.sync(() => {
+          reads += 1
+          return observedAt
+        }),
+      })
+      const receipt = yield* submit(broker, intent())
+      expect(reads).toBe(1)
+      yield* broker.mutation.cancel(receipt.order.brokerOrderId)
+      expect(reads).toBe(1)
+    }),
+  )
+})
+
 test.each([false, true])(
   'broker snapshot retry advances the owned replay timeline or reports failure: %s',
   async (advanceFails) => {

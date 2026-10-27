@@ -1293,7 +1293,7 @@ durableTest.each(
           const store = runtime.store
           const fence = yield* WriterFence
           const intents = yield* IntentStore
-          const mutations = yield* MutationStore
+          const mutations = runtime.mutations
           const blockedIntents = yield* BlockedCycleIntentStore
           const closures = yield* ExecutionCycleClosureStore
           const grants = yield* PersistedCapitalGrantStore
@@ -1535,11 +1535,32 @@ durableTest.each(
           const counts = yield* sql<
             Record<string, unknown>
           >`SELECT (SELECT count(*)::int FROM intents WHERE account_id=${accountId}) AS intents, (SELECT count(*)::int FROM fills WHERE account_id=${accountId}) AS fills, (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
-          expect(counts).toEqual([
+          const retainedIntents =
+            yield* sql`SELECT i.symbol,i.side,i.state,i.terminal_outcome,i.protection->>'_tag' AS protection,
+            r.outcome,r.reason_codes FROM intents i LEFT JOIN risk_decisions r ON r.decision_id=i.risk_decision_id
+            WHERE i.account_id=${accountId} ORDER BY i.created_at,i.intent_id`
+          expect(counts, JSON.stringify(retainedIntents)).toEqual([
             scenario === 'recovery-filled'
-              ? { intents: 2, fills: 2, transactions: 2 }
+              ? { intents: 3, fills: 2, transactions: 2 }
               : { intents: 1, fills: 0, transactions: 0 },
           ])
+          expect(
+            retainedIntents.map((row) => [
+              row['side'],
+              row['state'],
+              row['terminal_outcome'],
+              row['protection'],
+              row['outcome'],
+            ]),
+          ).toEqual(
+            scenario === 'recovery-filled'
+              ? [
+                  ['BUY', 'TERMINAL', 'CANCELED', 'Bracket', 'APPROVED'],
+                  ['SELL', 'TERMINAL', 'CANCELED', 'Oco', 'APPROVED'],
+                  ['SELL', 'TERMINAL', 'FILLED', null, 'APPROVED'],
+                ]
+              : [['BUY', 'TERMINAL', 'CANCELED', 'Bracket', 'APPROVED']],
+          )
           expect(
             yield* sql`SELECT count(*)::int AS denied FROM mutation_events e JOIN intents i USING(intent_id)
             WHERE i.account_id=${accountId} AND e.event_type='SUBMIT_DENIED'`,

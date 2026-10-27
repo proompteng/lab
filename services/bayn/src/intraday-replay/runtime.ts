@@ -11,7 +11,8 @@ import { JevEvaluationStore } from '../jev/evaluation'
 import { JevPositionStore } from '../jev/portfolio'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { PgClient } from '@effect/sql-pg'
-import { Context, Effect, Semaphore } from 'effect'
+import { Clock, Context, Effect, Semaphore } from 'effect'
+import { TestClock } from 'effect/testing'
 import { operationTimeoutOrElse } from '../operation-timeout'
 
 import { BrokerRead } from '../broker/alpaca/model'
@@ -46,7 +47,7 @@ import { executionGenerationNeedsRecovery, makeGenerationCycleDriver } from '../
 import { refreshResearchCapitalActivationReconciliation } from '../composition/capital-activation'
 import { BlockedCycleIntentStore } from '../execution/intents/blocked-cycle'
 import { IntentStore } from '../execution/intents/domain'
-import { MutationStore } from '../execution/mutations/model'
+import { MutationStore, MutationStoreError, type StartReceipt } from '../execution/mutations/model'
 import { makeTradingEngine } from '../composition/trading-engine'
 import { WriterFence } from '../execution/writer-fence'
 import type { ExecutionProgramDependencies } from '../execution/runtime-program'
@@ -62,7 +63,7 @@ import { runReconciliation } from '../simulation-reconciliation/broker-reconcile
 import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
 import { ReconciliationClock } from '../reconciler'
 import { CapitalActivationReconciliationNotExact, operationalError, OperationalError } from '../errors'
-import { currentUtcInstant } from '../time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure, type makeReplayBroker } from './broker'
 import { makeReplayDecisionLatency } from './decision-latency'
 
@@ -123,7 +124,34 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const sql = yield* PgClient.PgClient
     const fence = yield* WriterFence
     const intentStore = yield* IntentStore
-    const mutationStore = yield* MutationStore
+    const originalMutations = yield* MutationStore
+    const admissionClock = yield* Semaphore.make(1)
+    const alignAdmission = (operation: 'begin-submit' | 'begin-cancel') => (receipt: StartReceipt) =>
+      admissionClock.withPermit(
+        Effect.gen(function* () {
+          const current = yield* Clock.currentTimeMillis
+          const admitted = Date.parse(receipt.event.occurredAt)
+          if (admitted <= current) return
+          // The coordinator's ordered admission may be ahead of the replay clock. Observe it before any broker effect.
+          yield* input.clock.advanceTo(utcInstantFromEpochMillis(admitted)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new MutationStoreError({
+                  operation,
+                  failure: 'query',
+                  message: 'Replay clock could not observe committed mutation admission',
+                  cause,
+                }),
+            ),
+          )
+          yield* TestClock.setTime(Math.max(admitted, yield* Clock.currentTimeMillis))
+        }),
+      )
+    const mutationStore: MutationStore['Service'] = {
+      ...originalMutations,
+      beginSubmit: (...args) => originalMutations.beginSubmit(...args).pipe(Effect.tap(alignAdmission('begin-submit'))),
+      beginCancel: (...args) => originalMutations.beginCancel(...args).pipe(Effect.tap(alignAdmission('begin-cancel'))),
+    }
     const blockedCycleIntentStore = yield* BlockedCycleIntentStore
     const closures = yield* ExecutionCycleClosureStore
     const persistedCapitalGrants = yield* PersistedCapitalGrantStore
@@ -343,6 +371,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     return {
       authorityGenerationHash: activated.generationHash,
       cycleStore,
+      mutations: mutationStore,
       store,
       marketData,
       advance,
