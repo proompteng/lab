@@ -98,6 +98,15 @@ spec:
               value: "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab"
             - name: BAYN_BROKER_ACCESS
               value: read-only
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"3a90e09a910771071fbd9d17a2abb8a24468835b36704316839ecfd67f55fdc4","authoredActivation":{"sourceRevision":"0d09965a22d9cd8e8e26a80f903134f14497ac1f","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:58366c3a562d91a0e311557ae5b9e522e0f148cd68f775e735d8bada0ba8730c"},"activation":{"sourceRevision":"0d09965a22d9cd8e8e26a80f903134f14497ac1f","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:58366c3a562d91a0e311557ae5b9e522e0f148cd68f775e735d8bada0ba8730c"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             # sha256("bayn/authority-generation/autonomous-observe-v15")
