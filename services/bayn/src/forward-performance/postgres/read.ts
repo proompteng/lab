@@ -252,12 +252,10 @@ export const readForwardPerformancePostgres = (
           SELECT snapshot.equity_micros::text AS starting_capital_micros
           FROM account_snapshots AS snapshot
           JOIN broker_events AS event ON event.event_id = snapshot.event_id
-          CROSS JOIN latest_reconciliation
-          CROSS JOIN first_cycle
+            AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
           WHERE snapshot.account_id = ${accountId}
             AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
             AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-            AND event.observed_at <= latest_reconciliation.reconciled_at
           ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
           LIMIT 1
         `.pipe(Effect.flatMap(decodeStartingCapital))
@@ -286,13 +284,11 @@ export const readForwardPerformancePostgres = (
               reporting.quantum_micros::text AS cash_reporting_quantum_micros
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
+              AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
             LEFT JOIN account_cash_reporting reporting ON reporting.account_event_id = snapshot.event_id
-            CROSS JOIN latest_reconciliation
-            CROSS JOIN first_cycle
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
               AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-              AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           ), baseline_snapshot AS (
@@ -320,8 +316,8 @@ export const readForwardPerformancePostgres = (
               reporting.quantum_micros::text AS cash_reporting_quantum_micros
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
+              AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
             LEFT JOIN account_cash_reporting reporting ON reporting.account_event_id = snapshot.event_id
-            CROSS JOIN latest_reconciliation
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
               AND event.observed_at <= ${closingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
@@ -650,12 +646,10 @@ export const readForwardPerformancePostgres = (
             SELECT event.observed_at
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
-            CROSS JOIN latest_reconciliation
-            CROSS JOIN first_cycle
+              AND event.account_id = snapshot.account_id AND event.event_kind = 'ACCOUNT'
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
               AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
-              AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           )
