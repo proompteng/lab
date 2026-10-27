@@ -355,8 +355,11 @@ tests:
         stage: bayn.valkey.put
       exp_annotations:
         summary: Bayn cache latency is consuming its command budget
-        description: Successful get/put p99 exceeds 250ms, one quarter of the one-second command deadline, with at least twenty
-          samples. Compare SET, replica acknowledgement and queue time.
+        description: >-
+          Successful bayn.valkey.put p99 is 0.993 seconds (threshold 0.250 seconds),
+          with at least twenty samples in five minutes. Compare command-permit queue, connection, SET and
+          replica acknowledgement timings; acquired queue samples do not imply successful commands.
+          Component percentiles cannot be subtracted or summed. The one-second command deadline is unchanged.
         runbook_url: docs/runbooks/bayn-cache-observability.md
 - name: sustained generation statement p95 after twenty samples
   interval: 15s

@@ -1,12 +1,31 @@
 import { isNativeError } from 'node:util/types'
 import { NodeRedis, NodeServices } from '@effect/platform-node'
-import { Config, Context, Data, Effect, FileSystem, Layer, Metric, Option, Redacted, Schema, Semaphore } from 'effect'
+import {
+  Cause,
+  Config,
+  Context,
+  Data,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Metric,
+  Option,
+  Redacted,
+  Schema,
+  Semaphore,
+} from 'effect'
 import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
 import { withObservedStage } from './telemetry'
+import { operationCurrentTimeMillis } from './operation-timeout'
 
 const reads = Metric.counter('bayn_valkey_reads_total', { incremental: true })
 const failures = Metric.counter('bayn_valkey_failures_total', { incremental: true })
 const replicaWaits = Metric.counter('bayn_valkey_unacknowledged_waits_total', { incremental: true })
+const queueDuration = Metric.histogram('bayn_valkey_queue_duration_seconds', {
+  description: 'Time waiting for the single command permit; acquired does not imply command success.',
+  boundaries: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+})
 type CacheOperation = 'get' | 'put' | 'remove'
 
 export enum ValkeyFailureCategory {
@@ -100,47 +119,71 @@ export const makeValkeyCache = Effect.gen(function* () {
     run: Effect.Effect<A, ValkeyCacheError>,
     deadlineCause?: () => Error | undefined,
   ) =>
-    commands
-      .withPermit(
-        invoke(operation, async () => {
-          if (!client.isOpen) await client.connect()
-        }).pipe(
-          Effect.andThen(run),
-          Effect.onInterrupt(() => destroy),
-          Effect.tapError(() => destroy),
-        ),
-      )
-      .pipe(
-        Effect.timeoutOrElse({
-          duration: '1 second',
-          orElse: () => {
-            const cause = deadlineCause?.()
-            return Effect.fail(
-              new ValkeyCacheError({
-                operation,
-                category: ValkeyFailureCategory.OperationDeadline,
-                ...(cause === undefined ? {} : { causeCategory: commandFailureCategory(cause) }),
-                message: 'Valkey command exceeded its deadline',
-                cause,
-              }),
-            )
-          },
-        }),
-        Effect.tapError((error) =>
-          Metric.update(
-            failures.pipe(
-              Metric.withAttributes({
-                namespace: 'bayn',
-                operation,
-                category: error.category ?? ValkeyFailureCategory.CommandFailed,
-                cause_category: error.causeCategory ?? error.category ?? ValkeyFailureCategory.CommandFailed,
-              }),
+    Effect.gen(function* () {
+      const queuedAt = yield* operationCurrentTimeMillis
+      let admitted = false
+      const recordQueue = (outcome: 'acquired' | 'interrupted' | 'failed') =>
+        operationCurrentTimeMillis.pipe(
+          Effect.flatMap((finishedAt) =>
+            Metric.update(
+              queueDuration.pipe(Metric.withAttributes({ namespace: 'bayn', operation, outcome })),
+              Math.max(0, finishedAt - queuedAt) / 1000,
             ),
-            1,
           ),
+        )
+      return yield* commands
+        .withPermit(
+          Effect.gen(function* () {
+            admitted = true
+            yield* recordQueue('acquired')
+            if (!client.isOpen)
+              yield* invoke(operation, () => client.connect()).pipe(
+                withObservedStage('bayn.valkey.connect', { dependency: 'valkey', operation, slowAfterMs: 250 }),
+              )
+          }).pipe(
+            Effect.andThen(run),
+            Effect.onInterrupt(() => destroy),
+            Effect.tapError(() => destroy),
+          ),
+        )
+        .pipe(
+          Effect.onExit((exit) =>
+            admitted
+              ? Effect.void
+              : recordQueue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause) ? 'interrupted' : 'failed'),
+          ),
+        )
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: '1 second',
+        orElse: () => {
+          const cause = deadlineCause?.()
+          return Effect.fail(
+            new ValkeyCacheError({
+              operation,
+              category: ValkeyFailureCategory.OperationDeadline,
+              ...(cause === undefined ? {} : { causeCategory: commandFailureCategory(cause) }),
+              message: 'Valkey command exceeded its deadline',
+              cause,
+            }),
+          )
+        },
+      }),
+      Effect.tapError((error) =>
+        Metric.update(
+          failures.pipe(
+            Metric.withAttributes({
+              namespace: 'bayn',
+              operation,
+              category: error.category ?? ValkeyFailureCategory.CommandFailed,
+              cause_category: error.causeCategory ?? error.category ?? ValkeyFailureCategory.CommandFailed,
+            }),
+          ),
+          1,
         ),
-        withObservedStage(`bayn.valkey.${operation}`, { dependency: 'valkey', slowAfterMs: 250 }),
-      )
+      ),
+      withObservedStage(`bayn.valkey.${operation}`, { dependency: 'valkey', slowAfterMs: 250 }),
+    )
 
   const key = (operation: string, input: string) =>
     Schema.decodeUnknownEffect(ValkeyKey)(input).pipe(
