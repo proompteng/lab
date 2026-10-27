@@ -112,16 +112,52 @@ const resetDatabase = Effect.gen(function* () {
   yield* postgresMigrations
 })
 
+const sourceTargetsFixture = () => {
+  const source = nativeJevFixture()
+  const observation = source.observation.payload
+  const decidedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
+  const batchPlan = Result.getOrThrow(
+    makeJevTradingSignalBatch({
+      observation,
+      expiresAt: new Date(Date.parse(observation.observedAt) + source.protocol.inferenceValidityMs).toISOString(),
+      planVersion: JevBatchPlanVersion.Ablation,
+    }),
+  )
+  return {
+    candidate: Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence())),
+    ablation: Result.getOrThrow(
+      decideEntryAblation({
+        observation,
+        batchPlan,
+        batchResult: nativeJevBatchResult(batchPlan, decidedAt),
+        decidedAt,
+      }),
+    ),
+    momentum: Result.getOrThrow(
+      decideRepeatedMomentumEntry(
+        {
+          schemaVersion: 'bayn.repeated-momentum-evidence.v1',
+          observation,
+          decidedAt,
+        },
+        makeRepeatedMomentumPolicy(source.protocol),
+      ),
+    ),
+  }
+}
+
 describePostgres('PostgreSQL intraday cycle store', () => {
   let runtime: ReturnType<typeof makeRuntime>
+  let sourceTargets: ReturnType<typeof sourceTargetsFixture>
 
   beforeAll(() => {
     const parsed = new URL(testUrl)
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) {
       throw new Error('BAYN_TEST_POSTGRES_URL must target a local database whose name ends in _test')
     }
+    sourceTargets = sourceTargetsFixture()
     runtime = makeRuntime()
-  })
+  }, 30_000)
 
   beforeEach(async () => {
     await runtime.runPromise(resetDatabase)
@@ -782,41 +818,15 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         })
         const missingJev = yield* queries.decisionEvidenceMismatch({
           ...document,
-          strategyDecision: Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence())),
+          strategyDecision: sourceTargets.candidate,
         })
-        const source = nativeJevFixture()
-        const observation = source.observation.payload
-        const decidedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
-        const ablationPlan = Result.getOrThrow(
-          makeJevTradingSignalBatch({
-            observation,
-            expiresAt: new Date(Date.parse(observation.observedAt) + source.protocol.inferenceValidityMs).toISOString(),
-            planVersion: JevBatchPlanVersion.Ablation,
-          }),
-        )
         const missingAblation = yield* queries.decisionEvidenceMismatch({
           ...document,
-          strategyDecision: Result.getOrThrow(
-            decideEntryAblation({
-              observation,
-              batchPlan: ablationPlan,
-              batchResult: nativeJevBatchResult(ablationPlan, decidedAt),
-              decidedAt,
-            }),
-          ),
+          strategyDecision: sourceTargets.ablation,
         })
         const missingMomentum = yield* queries.decisionEvidenceMismatch({
           ...document,
-          strategyDecision: Result.getOrThrow(
-            decideRepeatedMomentumEntry(
-              {
-                schemaVersion: 'bayn.repeated-momentum-evidence.v1',
-                observation,
-                decidedAt,
-              },
-              makeRepeatedMomentumPolicy(source.protocol),
-            ),
-          ),
+          strategyDecision: sourceTargets.momentum,
         })
         const unverifiedStreamReference = yield* queries.decisionEvidenceMismatch({
           ...document,
