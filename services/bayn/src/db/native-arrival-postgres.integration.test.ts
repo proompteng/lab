@@ -58,35 +58,57 @@ describePostgres('PostgreSQL native arrival retention', () => {
     await runtime?.dispose()
   })
 
-  test('archive startup connects only to its own database and installs only the recorder schema', async () => {
-    const archiveRuntime = ManagedRuntime.make(
-      NativeArrivalArchiveLive({
-        operationTimeoutMs: 5000,
-        postgres: { url: Redacted.make('postgresql://unused@127.0.0.1:1/financial'), tls: false, caPath: '/unused' },
-        nativeArrivalPostgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
-      }).pipe(Layer.provideMerge(NodeServices.layer)),
+  test('concurrent cold archive startup installs only its recorder schema and releases both clients', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+      }),
+    )
+    const archiveRuntimes = Array.from({ length: 2 }, () =>
+      ManagedRuntime.make(
+        NativeArrivalArchiveLive({
+          operationTimeoutMs: 5000,
+          postgres: { url: Redacted.make('postgresql://unused@127.0.0.1:1/financial'), tls: false, caPath: '/unused' },
+          nativeArrivalPostgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
+        }).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
     )
     try {
-      await archiveRuntime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          yield* nativeArrivalArchiveMigrations
-          expect(yield* sql`SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename`).toEqual([
-            { tablename: 'native_arrival_chunks' },
-            { tablename: 'native_arrival_ends' },
-            { tablename: 'native_arrival_epochs' },
-            { tablename: 'native_arrival_schema_migrations' },
-          ])
-          const store = makeNativeArrivalStore(sql)
-          const first = chunk(0, null)
-          yield* store.begin(epoch)
-          yield* store.append([first])
-          expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first])
-        }),
+      const results = await Promise.allSettled(
+        archiveRuntimes.map((archiveRuntime) =>
+          archiveRuntime.runPromise(
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              expect(yield* sql`SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename`).toEqual([
+                { tablename: 'native_arrival_chunks' },
+                { tablename: 'native_arrival_ends' },
+                { tablename: 'native_arrival_epochs' },
+                { tablename: 'native_arrival_schema_migrations' },
+              ])
+              const store = makeNativeArrivalStore(sql)
+              const first = chunk(0, null)
+              yield* store.begin(epoch)
+              yield* store.append([first])
+              expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first])
+            }),
+          ),
+        ),
       )
+      expect(results.filter((result) => result.status === 'rejected')).toEqual([])
     } finally {
-      await archiveRuntime.dispose()
+      await Promise.all(archiveRuntimes.map((archiveRuntime) => archiveRuntime.dispose()))
     }
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        expect(
+          yield* sql`SELECT count(*)::int AS count FROM pg_stat_activity
+            WHERE application_name='bayn-native-arrival' AND datname=current_database()`,
+        ).toEqual([{ count: 0 }])
+      }),
+    )
   })
 
   test('misrouting the archive to a financial database fails before migration or mutation', async () => {

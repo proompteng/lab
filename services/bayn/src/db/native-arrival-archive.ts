@@ -62,17 +62,28 @@ const archiveMigrations = PgMigrator.fromRecord({
 
 export const nativeArrivalArchiveMigrations = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
-  const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ tablename: Schema.String })))(
-    yield* sql`SELECT tablename FROM pg_tables WHERE schemaname='public'
-      AND tablename NOT IN ('native_arrival_epochs','native_arrival_chunks','native_arrival_ends','native_arrival_schema_migrations')`,
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      // PgMigrator probes a missing tracker before locking it. Create it under the same startup lock.
+      yield* sql`SELECT pg_advisory_xact_lock(49181, 0)`
+      const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ tablename: Schema.String })))(
+        yield* sql`SELECT tablename FROM pg_tables WHERE schemaname='public'
+          AND tablename NOT IN ('native_arrival_epochs','native_arrival_chunks','native_arrival_ends','native_arrival_schema_migrations')`,
+      )
+      if (rows.length > 0)
+        return yield* databaseError({
+          failure: 'invariant',
+          operation: 'migrate',
+          message: 'Native arrival archive contains tables from another database role',
+        })
+      yield* sql`CREATE TABLE IF NOT EXISTS native_arrival_schema_migrations (
+        migration_id integer PRIMARY KEY,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        name text NOT NULL
+      )`
+      yield* PgMigrator.run({ loader: archiveMigrations, table: 'native_arrival_schema_migrations' })
+    }),
   )
-  if (rows.length > 0)
-    return yield* databaseError({
-      failure: 'invariant',
-      operation: 'migrate',
-      message: 'Native arrival archive contains tables from another database role',
-    })
-  yield* PgMigrator.run({ loader: archiveMigrations, table: 'native_arrival_schema_migrations' })
 }).pipe(
   Effect.mapError((cause) =>
     cause instanceof DatabaseError
