@@ -6328,7 +6328,8 @@ test('settles the committed close after native protection observes a flat accoun
 
 test('persists the pricing quote event and its full freshness deadline for every entry target', async () => {
   const fixture = await executionLifecycleFixture()
-  expect(fixture.document.entryLimitSlippageBps).toBe(10)
+  expect(fixture.document.entryLimitSlippageBps).toBe(0)
+  expect(fixture.policy.maxAdverseSlippageBps).toBe(10)
   expect(Result.isSuccess(decodeExecutionDecisionDocument(fixture.document))).toBeTrue()
   expect(fixture.document.deltaRisk.length).toBeGreaterThan(0)
   for (const risk of fixture.document.deltaRisk) {
@@ -6339,14 +6340,14 @@ test('persists the pricing quote event and its full freshness deadline for every
     if (facts === undefined) throw new Error('entry is missing durable risk facts')
     const reference = BigInt(facts.state.referencePriceMicros)
     const limit = BigInt(facts.state.expectedExecutionPriceMicros)
-    expect(limit).toBeGreaterThan(reference)
-    expect((limit - reference) * 10_000n).toBeLessThanOrEqual(reference * 10n)
+    expect(limit).toBe(reference)
   }
   const { contentHash: _contentHash, ...material } = fixture.document
-  expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, entryLimitSlippageBps: 11 }))).toBeTrue()
+  expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, entryLimitSlippageBps: 1 }))).toBeTrue()
   expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, closeLimitSlippageBps: 10 }))).toBeTrue()
   const { entryLimitSlippageBps: _allowance, ...withoutAllowance } = material
-  expect(Result.isFailure(makeExecutionDecisionDocument(withoutAllowance))).toBeTrue()
+  const unpadded = Result.getOrThrow(makeExecutionDecisionDocument(withoutAllowance))
+  expect(unpadded.deltaRisk).toEqual(fixture.document.deltaRisk)
 })
 
 test('decision construction crossing the admission lease cannot bind its completed decision', async () => {

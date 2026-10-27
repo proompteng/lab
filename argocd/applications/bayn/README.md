@@ -1,11 +1,16 @@
 # Exception tracking
 
-## Crypto inference-ask cap
+## Funded inference-ask cap
 
-Protocol v27 caps crypto entries at the inference ask. The source cutover requires migration 157 and fresh native
-OBSERVE recovery, followed by a reviewed same-account PAPER mandate bound to the published image and new protocol.
-The retired v26 mandate is removed from active configuration and retained in immutable history. Broker credentials, risk limits,
-15-minute hold, fees, capital and loss history remain unchanged. Deployment and native authority must be verified
+Protocol v28 funds equity and crypto buys at the original inference ask rounded to a valid broker tick. Funding,
+refreshed quote checks and native order construction enforce the same ceiling. Equities retain DAY limits and crypto
+retains IOC limits. The five-basis-point equity spread limit, crypto fees, stop and exit allowances, fifteen-minute hold,
+loss, exposure, freshness and inference deadline remain unchanged.
+
+The source cutover removes the prior v27 sealed mandate and requires migration 158, settled cycles, flat inventory,
+complete accounting, fresh exact reconciliation and native OBSERVE recovery. A separately reviewed same-account PAPER
+mandate must bind the verified immutable v28 image. Retired protocols remain readable as immutable financial history.
+Broker credentials, capital and loss history remain unchanged. Deployment and native authority must be verified
 separately from natural funded selections and fee-reconciled round trips.
 
 Bayn's main API, native Restate execution controller and activation job, and
