@@ -6,6 +6,7 @@ import type { NativeChartEvidence } from './chart-evidence'
 import { JevContractError } from './contract'
 import { jevEntryEconomics } from './entry-economics'
 import type { EntryInferenceInput } from './entry-inference-input'
+import type { JevProtocolMaterial } from './protocol'
 import { makeEntrySourceCandidates } from './entry-proposals'
 import type { RetainedConditionalChartAssessmentsMaterial } from './retained-conditional-chart-questions'
 import {
@@ -75,7 +76,7 @@ export const chartQuestionPolicy = {
 
 export type ChartDecisionSource = {
   readonly chart: NativeChartEvidence
-  readonly protocol: EntryInferenceInput['protocol']
+  readonly protocol: JevProtocolMaterial
   readonly funding: EntryInferenceInput['funding']
 }
 

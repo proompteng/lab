@@ -14,7 +14,11 @@ import {
 import { decodeJevResolution } from './resolution'
 import { decodeStagedCheckpointForRequest, type StagedCheckpoint } from './staged-checkpoint'
 import type { DecisionsUsageSchema } from './decisions'
-import { CandidateEntryInferenceInputSchema, verifyEntryInferenceSource } from './entry-inference-input'
+import {
+  AblationEntryInferenceInputSchema,
+  CandidateEntryInferenceInputSchema,
+  verifyEntryInferenceSource,
+} from './entry-inference-input'
 import { jevProtocolSchemaForQuestionPolicy } from './protocol'
 import { stagedChartQuestionPolicy } from './staged-chart-questions'
 import {
@@ -22,16 +26,28 @@ import {
   makeRetainedFundedEntryJudgmentRequest,
 } from './retained-funded-entry-questions'
 import { strictParseOptions } from '../schemas'
+import { makeEntryJudgmentRequest } from './entry-questions'
 
 export const retainedStagedQuestionPolicyHash = Result.getOrThrow(
   canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: retainedFundedEntryJudgmentPolicy }),
 )
+export const retainedMarketQuestionPolicyHash = 'abf1e97da2d6a9bdef380aa224cde4245aa332c2686976bb9d755ad9a1a60910'
+const RetainedMarketProtocol = jevProtocolSchemaForQuestionPolicy(
+  retainedMarketQuestionPolicyHash,
+  'bayn.jev.protocol.v26',
+)
 const RetainedRequest = Schema.Struct({
   ...JevEvaluationRequestSchema.fields,
-  request: Schema.Struct({
-    ...CandidateEntryInferenceInputSchema.fields,
-    protocol: jevProtocolSchemaForQuestionPolicy(retainedStagedQuestionPolicyHash, 'bayn.jev.protocol.v26'),
-  }),
+  request: Schema.Union([
+    Schema.Struct({
+      ...CandidateEntryInferenceInputSchema.fields,
+      protocol: Schema.Union([
+        jevProtocolSchemaForQuestionPolicy(retainedStagedQuestionPolicyHash, 'bayn.jev.protocol.v26'),
+        RetainedMarketProtocol,
+      ]),
+    }),
+    Schema.Struct({ ...AblationEntryInferenceInputSchema.fields, protocol: RetainedMarketProtocol }),
+  ]),
 })
 const decodeRetainedRequest = (input: unknown) =>
   Result.gen(function* () {
@@ -111,11 +127,20 @@ export const readStagedInferenceCostEvidence = (row: {
   Result.gen(function* () {
     const identity = yield* Schema.decodeUnknownResult(
       Schema.Struct({
-        request: Schema.Struct({ protocol: Schema.Struct({ entryQuestionPolicyHash: Schema.String }) }),
+        request: Schema.Struct({
+          protocol: Schema.Struct({ schemaVersion: Schema.String, entryQuestionPolicyHash: Schema.String }),
+        }),
       }),
     )(row.request)
-    const retained = identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
-    const request = yield* retained ? decodeRetainedRequest(row.request) : decodeJevEvaluationRequest(row.request)
+    const retained = identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v26'
+    const retainedQuestions =
+      identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
+        ? makeRetainedFundedEntryJudgmentRequest
+        : makeEntryJudgmentRequest
+    const decoded = retained
+      ? { _tag: 'Retained' as const, request: yield* decodeRetainedRequest(row.request) }
+      : { _tag: 'Current' as const, request: yield* decodeJevEvaluationRequest(row.request) }
+    const request = decoded.request
     const checkpoint = yield* decodeStagedCheckpointForRequest(request, row.stagedCheckpoint)
     const source = {
       requestId: request.requestId,
@@ -126,15 +151,15 @@ export const readStagedInferenceCostEvidence = (row: {
     const handoff =
       row.handoff === null
         ? null
-        : yield* retained
-            ? decodeStagedEntryHandoff(source, row.handoff, request.requestHash, makeRetainedFundedEntryJudgmentRequest)
-            : decodeEntryHandoff(source, row.handoff)
+        : yield* decoded._tag === 'Retained'
+            ? decodeStagedEntryHandoff(source, row.handoff, request.requestHash, retainedQuestions)
+            : decodeEntryHandoff({ ...source, input: decoded.request.request }, row.handoff)
     const receipt =
       row.receipt === null
         ? null
-        : yield* retained
+        : yield* decoded._tag === 'Retained'
             ? Schema.decodeUnknownResult(JevEvaluationReceiptSchema, strictParseOptions)(row.receipt)
-            : decodeJevEvaluationReceipt(request, row.receipt)
+            : decodeJevEvaluationReceipt(decoded.request, row.receipt)
     if (retained && receipt !== null) {
       const { receiptHash, ...material } = receipt
       if (
