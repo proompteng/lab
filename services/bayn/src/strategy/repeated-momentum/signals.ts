@@ -1,15 +1,15 @@
 import { Result } from 'effect'
-import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
-import { IntradayBenchmarkEvidencePolicy } from '../market-data/intraday/model'
-import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
-import { jevBenchmarkSymbol } from '../jev/markets'
-import { JevContractError } from '../jev/contract'
+import type { StrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
+import { IntradayBenchmarkEvidencePolicy } from '../../market-data/intraday/model'
+import { deriveIntradayMomentumSignalMetrics } from '../intraday-momentum/decision-core'
+import { jevBenchmarkSymbol } from '../../jev/markets'
+import { JevContractError } from '../../jev/contract'
 import {
   jevSignalFor,
   jevBenchmarkSignalFor,
   commonMomentumPrices,
   jevEntryQuoteExclusion,
-} from '../jev/trading-signals'
+} from '../../jev/trading-signals'
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
 /** Candidate and benchmark returns use the same actual observed reference minute. */
@@ -44,6 +44,6 @@ export const momentumControlCandidates = (snapshot: StrategyMarketSnapshot) =>
     return signals.sort((a, b) => {
       const difference =
         a.excessReturn.numerator * b.excessReturn.denominator - b.excessReturn.numerator * a.excessReturn.denominator
-      return difference === 0n ? a.symbol.localeCompare(b.symbol) : difference > 0n ? -1 : 1
+      return difference === 0n ? (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0) : difference > 0n ? -1 : 1
     })
   })

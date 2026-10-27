@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { prepareEntryInferenceInput } from './entry-inference-input'
+import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { defaultJevProtocolDocument } from './protocol'
 
 const bars = [
@@ -24,6 +24,22 @@ const input = {
 }
 
 describe('sequential entry inference input', () => {
+  test('binds ablation selection to a distinct request and rejects absent or substituted policies', () => {
+    const ablation = {
+      ...input,
+      schemaVersion: 'bayn.entry-ablation-input.v1',
+      selectionPolicy: EntryAblationSelection.LowestModeledLoss,
+    }
+    const prepared = Result.getOrThrow(prepareEntryInferenceInput(ablation))
+    expect(prepared.requestHash).not.toBe(Result.getOrThrow(prepareEntryInferenceInput(input)).requestHash)
+    for (const changed of [
+      { ...input, schemaVersion: ablation.schemaVersion },
+      { ...ablation, selectionPolicy: 'BEST_OBSERVED_PROFIT' },
+      { ...ablation, schemaVersion: input.schemaVersion },
+    ])
+      expect(Result.isFailure(prepareEntryInferenceInput(changed))).toBe(true)
+  })
+
   test('rejects all retired chart-question input contracts for execution', () => {
     for (const schemaVersion of [
       'bayn.entry-inference-input.v1',

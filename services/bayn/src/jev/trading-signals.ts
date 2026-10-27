@@ -23,7 +23,7 @@ import {
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError } from './contract'
-import { prepareEntryInferenceInput } from './entry-inference-input'
+import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { instrumentMarket, MarketKind } from '../instruments'
 import {
   decodeJevBatchPlan,
@@ -289,6 +289,7 @@ const requestFromSnapshot = (
   symbol: string,
   benchmarkSymbol: string,
   native: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
+  selectionPolicy: EntryAblationSelection | null,
 ) =>
   Result.gen(function* () {
     if (native.portfolio.purpose !== JevPurpose.Entry)
@@ -329,7 +330,9 @@ const requestFromSnapshot = (
       capitalMicros: native.portfolio.brokerState.account.equityMicros,
     })
     return yield* prepareEntryInferenceInput({
-      schemaVersion: 'bayn.entry-inference-input.v5',
+      ...(selectionPolicy === null
+        ? { schemaVersion: 'bayn.entry-inference-input.v5' }
+        : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
       protocol: native.protocol,
       chartSource: {
         symbol,
@@ -431,7 +434,7 @@ const requestFromSnapshot = (
 export const makeJevTradingSignalRequest = (input: unknown, symbol: string) =>
   reproduceJevCandidateObservation(input).pipe(
     Result.flatMap((observation) =>
-      requestFromSnapshot(observation.snapshot, symbol, jevBenchmarkSymbol(symbol), observation),
+      requestFromSnapshot(observation.snapshot, symbol, jevBenchmarkSymbol(symbol), observation, null),
     ),
   )
 
@@ -458,6 +461,7 @@ export const reproduceJevRequestFromVerifiedObservation = (
       request.symbol,
       jevBenchmarkSymbol(request.symbol),
       observation,
+      request.request.schemaVersion === 'bayn.entry-ablation-input.v1' ? request.request.selectionPolicy : null,
     )
     if (prepared.requestHash !== request.requestHash)
       return yield* unavailable('Jev request payload differs from the reproduced trading signals and questions')
@@ -472,8 +476,6 @@ const batchFromObservation = (
   Result.gen(function* () {
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
-    if (planVersion !== JevBatchPlanVersion.V7)
-      return yield* unavailable('The current trading protocol requires batch v6')
     if (Date.parse(expiresAt) !== Date.parse(observation.observedAt) + protocol.inferenceValidityMs)
       return yield* unavailable('Jev batch deadline must equal its source-controlled validity interval')
     if (manifest.candidateSymbols === undefined || manifest.candidateSymbols.length === 0)
@@ -501,7 +503,13 @@ const batchFromObservation = (
         })
         continue
       }
-      const prepared = yield* requestFromSnapshot(snapshot, symbol, jevBenchmarkSymbol(symbol), observation)
+      const prepared = yield* requestFromSnapshot(
+        snapshot,
+        symbol,
+        jevBenchmarkSymbol(symbol),
+        observation,
+        planVersion === JevBatchPlanVersion.Ablation ? EntryAblationSelection.LowestModeledLoss : null,
+      )
       if (observation.portfolio.purpose === JevPurpose.Entry) {
         const quote = snapshot.latestQuotes[symbol]
         if (quote !== undefined) {

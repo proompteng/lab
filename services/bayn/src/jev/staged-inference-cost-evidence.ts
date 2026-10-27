@@ -14,7 +14,7 @@ import {
 import { decodeJevResolution } from './resolution'
 import { decodeStagedCheckpointForRequest, type StagedCheckpoint } from './staged-checkpoint'
 import type { DecisionsUsageSchema } from './decisions'
-import { EntryInferenceInputSchema, verifyEntryInferenceSource } from './entry-inference-input'
+import { CandidateEntryInferenceInputSchema, verifyEntryInferenceSource } from './entry-inference-input'
 import { jevProtocolSchemaForQuestionPolicy } from './protocol'
 import { stagedChartQuestionPolicy } from './staged-chart-questions'
 import {
@@ -29,7 +29,7 @@ export const retainedStagedQuestionPolicyHash = Result.getOrThrow(
 const RetainedRequest = Schema.Struct({
   ...JevEvaluationRequestSchema.fields,
   request: Schema.Struct({
-    ...EntryInferenceInputSchema.fields,
+    ...CandidateEntryInferenceInputSchema.fields,
     protocol: jevProtocolSchemaForQuestionPolicy(retainedStagedQuestionPolicyHash, 'bayn.jev.protocol.v26'),
   }),
 })

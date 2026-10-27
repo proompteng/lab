@@ -59,6 +59,20 @@ candlestick image from verified completed bars, asks OpenAI Decisions API for ty
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
 
+Native comparison runtimes also support the chart-entry ablation and repeated-momentum control. Each has a distinct
+behavior hash, complete policy hash, authority generation, and decision document. The ablation keeps chart inference
+and funded proposals, selects the lowest modeled loss with a stable source-identity tie-breaker, and records Jev as
+`OMITTED_BY_POLICY`. Its chart usage remains chargeable. Momentum uses positive benchmark-relative returns from a
+common observed minute and makes no model calls. Its selected signal must fund the frozen stop and fee-inclusive
+profit target; otherwise it abstains without selecting another symbol.
+
+All three runtimes use the same order sizing, broker risk limits, original decision deadline, native protection,
+settlement, and reconciliation. Migration 155 binds each control's requests, batches, provider outcomes, and protection
+plans to its policy identity. A candidate cannot claim the ablation's omitted provider stage, and momentum cannot
+admit chart or Jev inference. Concurrent momentum source admission retains one immutable observation per window.
+The application still selects its existing candidate at the composition root. These comparison capabilities and their
+synthetic execution tests do not establish a prospective economic qualification.
+
 Entry input v5 retains relative volume, including fractional crypto quantities and an empty histogram for all-zero windows.
 Chart transport first asks presence, support/resistance anchors and the base end. Only an authenticated selected end
 can produce a second OpenAI request containing its single conditional base-start question. This extra billable

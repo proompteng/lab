@@ -9,7 +9,7 @@ import {
   JevEvidenceError,
   JevOutcome,
   makeJevEvaluationReceipt,
-  jevInferenceAvailableAt,
+  entryInferenceAvailableAt,
   type JevEvaluationReceipt,
   type JevEvaluationRequest,
 } from './evidence'
@@ -95,7 +95,7 @@ export const evaluateClaimedJevOnce = (dispatch: JevDispatch) =>
         message: 'Jev evidence arrived after permanent abandonment; entry is forbidden',
       })
     const inference = yield* Effect.fromResult(
-      jevInferenceAvailableAt(request, receipt, yield* Clock.currentTimeMillis),
+      entryInferenceAvailableAt(request, receipt, yield* Clock.currentTimeMillis, request.request.schemaVersion),
     )
     return { request, receipt, resolution, inference }
   })

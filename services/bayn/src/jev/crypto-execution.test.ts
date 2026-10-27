@@ -13,7 +13,7 @@ import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
 import { makeInitialCycle } from '../cycle/store/decisions'
 import { continuousMarketHours, continuousExecutionPolicy, tradingWindow } from '../market-hours'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { adverseQuotePrices, executionMarketDataBinding } from '../observe-composition/intraday-market-data'
 import {
   planTargets,
@@ -43,7 +43,9 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
       const { protocol, portfolio, observedAt } = native
       const broker = portfolio.brokerState
-      const policy = await Effect.runPromise(loadExecutionRiskPolicy(broker.account.accountId, protocol.universe))
+      const policy = await Effect.runPromise(
+        Effect.fromResult(makeExecutionRiskPolicy(broker.account.accountId, protocol.universe)),
+      )
       const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(protocol.executionModel))
       if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
         throw new Error('Expected current policy')

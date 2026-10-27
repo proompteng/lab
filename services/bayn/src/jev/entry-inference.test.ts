@@ -8,11 +8,16 @@ import { utcInstantFromEpochMillis } from '../time'
 import { JevClient, JevError } from './client'
 import { decodeJevResponse, JevFailure, prepareJevRequest } from './contract'
 import { DecisionsClient, DecisionsError, decodeDecisionsResponse, prepareDecisionsRequest } from './decisions'
-import { EntryInferenceJournal, evaluateClaimedEntryInference, type EntryHandoff } from './entry-inference'
+import {
+  EntryInferenceJournal,
+  evaluateClaimedEntryHandoff,
+  evaluateClaimedEntryInference,
+  type EntryHandoff,
+} from './entry-inference'
 import { decodeEntryHandoff, decodeEntryInferenceCompletion } from './entry-inference-evidence'
-import { prepareEntryInferenceInput } from './entry-inference-input'
+import { EntryAblationSelection, prepareEntryInferenceInput, type EntryInferenceInput } from './entry-inference-input'
 import { entryEvaluationRequestFixture } from './entry-inference.test-support'
-import { JevOutcome, makeJevEvaluationRequest, makeJevEvaluationReceipt, jevInferenceAvailableAt } from './evidence'
+import { JevOutcome, makeJevEvaluationRequest, makeJevEvaluationReceipt, entryInferenceAvailableAt } from './evidence'
 import { defaultJevProtocolDocument } from './protocol'
 
 const at = Date.parse('2026-10-25T07:00:32.000Z')
@@ -338,6 +343,118 @@ describe('claimed sequential entry inference', () => {
     expect(setup.handoffs).toHaveLength(0)
   })
 
+  test('caller mutation during chart inference cannot replace the original provider policy', async () => {
+    for (const ablation of [false, true]) {
+      const base = fixture()
+      const ablationInput: EntryInferenceInput = {
+        ...base.input,
+        schemaVersion: 'bayn.entry-ablation-input.v1',
+        selectionPolicy: EntryAblationSelection.LowestModeledLoss,
+      }
+      const claim = { ...base, input: ablation ? ablationInput : base.input }
+      const original = { ...claim }
+      const setup = providers({
+        afterVisual: () => {
+          claim.input = ablation ? base.input : ablationInput
+        },
+      })
+      const completion = Result.getOrThrow(await run(claim, setup))
+      expect(completion.jev.status).toBe(ablation ? 'OMITTED_BY_POLICY' : 'RECEIVED')
+      expect(Result.isSuccess(decodeEntryInferenceCompletion(original, completion))).toBe(true)
+    }
+  })
+
+  test('caller mutation cannot rebind the durable handoff to another parent request', async () => {
+    const claim = fixture()
+    const original = { ...claim }
+    const setup = providers({
+      afterVisual: () => {
+        claim.requestId = 'f'.repeat(64)
+      },
+    })
+    const completion = Result.getOrThrow(await run(claim, setup))
+    expect(completion.handoff.requestId).toBe(original.requestId)
+    expect(Result.isSuccess(decodeEntryInferenceCompletion(original, completion))).toBe(true)
+  })
+
+  test('ablation commits its actual chart expense and omits Jev without authorizing candidate evidence', async () => {
+    const request = entryEvaluationRequestFixture(undefined, undefined, EntryAblationSelection.LowestModeledLoss)
+    const claim = {
+      requestId: request.requestId,
+      input: request.request,
+      observedAt: request.observedAt,
+      expiresAt: request.expiresAt,
+      claimedAt: request.observedAt,
+    }
+    const setup = providers({ jevFailure: true })
+    const completion = Result.getOrThrow(await run(claim, setup))
+    expect(setup.events).toEqual(['visual', 'visual', 'handoff'])
+    expect(completion.handoff.disposition.status).toBe('READY')
+    expect(completion.jev).toEqual({ status: 'OMITTED_BY_POLICY' })
+    expect(Result.isSuccess(decodeEntryInferenceCompletion(claim, completion))).toBe(true)
+    const receipt = Result.getOrThrow(
+      makeJevEvaluationReceipt(request, {
+        schemaVersion: 'bayn.jev-evaluation-receipt.v3',
+        requestId: request.requestId,
+        startedAt: request.observedAt,
+        completedAt: completion.completedAt,
+        outcome: { status: JevOutcome.Completed, completion },
+      }),
+    )
+    expect(Result.isFailure(entryInferenceAvailableAt(request, receipt, at, 'bayn.entry-inference-input.v5'))).toBe(
+      true,
+    )
+    for (const jev of [{ status: 'NOT_REQUESTED' }, { status: 'NOT_DISPATCHED' }])
+      expect(Result.isFailure(decodeEntryInferenceCompletion(claim, { ...completion, jev }))).toBe(true)
+  })
+
+  test('a candidate cannot convert a missing Jev response into policy omission', async () => {
+    const claim = fixture()
+    const completion = Result.getOrThrow(await run(claim, providers()))
+    expect(
+      Result.isFailure(
+        decodeEntryInferenceCompletion(claim, {
+          ...completion,
+          jev: { status: 'OMITTED_BY_POLICY' },
+        }),
+      ),
+    ).toBe(true)
+  })
+
+  test('mutating the caller deadline during chart work cannot renew the committed inference window', async () => {
+    const claim = fixture()
+    const original = { ...claim }
+    const setup = providers({
+      commitDelay: 10_001,
+      afterVisual: () => {
+        claim.expiresAt = utcInstantFromEpochMillis(at + 60_000)
+      },
+    })
+    const result = Result.getOrThrow(await run(claim, setup, 10_001))
+    expect(result.jev.status).toBe('NOT_DISPATCHED')
+    expect(setup.events).toEqual(['visual', 'visual', 'handoff'])
+    expect(Result.isSuccess(decodeEntryInferenceCompletion(original, result))).toBe(true)
+  })
+
+  test('the chart stage retains real provider evidence and committed proposals without dispatching Jev', async () => {
+    const claim = fixture()
+    const setup = providers({ jevFailure: true })
+    const handoff = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(at)
+        return yield* evaluateClaimedEntryHandoff(claim)
+      }).pipe(Effect.provide(setup.layer), Effect.provide(TestClock.layer())),
+    )
+    expect(setup.events).toEqual(['visual', 'visual', 'handoff'])
+    expect(setup.handoffs).toEqual([handoff])
+    expect(Result.isSuccess(decodeEntryHandoff(claim, handoff))).toBe(true)
+    expect(handoff.disposition.status).toBe('READY')
+    if (handoff.disposition.status === 'READY') {
+      expect(handoff.disposition.visual.response.usage.input_tokens).toBe(100)
+      expect(handoff.disposition.evaluation.proposals.length).toBeGreaterThan(0)
+    }
+  })
+
   test('commits a source-infeasible result before either provider is dispatched', async () => {
     const claim = fixture()
     const input = {
@@ -392,7 +509,9 @@ describe('claimed sequential entry inference', () => {
         outcome: { status: JevOutcome.Completed, completion: result },
       }),
     )
-    expect(Result.isFailure(jevInferenceAvailableAt(request, receipt, at + 10_001))).toBe(true)
+    expect(
+      Result.isFailure(entryInferenceAvailableAt(request, receipt, at + 10_001, 'bayn.entry-inference-input.v5')),
+    ).toBe(true)
   })
 
   test('does not dispatch providers or replace an existing source-infeasible handoff', async () => {

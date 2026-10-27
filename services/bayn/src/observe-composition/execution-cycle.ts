@@ -36,8 +36,8 @@ import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner/index'
-import { strategyDefinition } from '../strategy'
-import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
+import { loadStrategyTradingProtocol, strategyDefinition } from '../strategy'
+import { defaultJevProtocolDocument } from '../jev/protocol'
 import type { JevExitTarget } from '../jev/exit'
 import { canonicalHashV1Result } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -771,7 +771,7 @@ const executeBoundExecutionCycle = (
         failure: 'contract',
       })
     }
-    const protocol = yield* Effect.fromResult(decodeJevProtocol(strategyDefinition(input.strategy).parameters)).pipe(
+    const protocol = yield* Effect.fromResult(loadStrategyTradingProtocol(input.strategy)).pipe(
       Effect.mapError((cause) =>
         mutationRunnerError({
           message: 'intraday close window protocol is invalid',
