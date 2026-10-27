@@ -15,7 +15,7 @@ import { decodeJevResponse, prepareJevRequest } from './contract'
 import { DecisionsClient, decodeDecisionsResponse, prepareDecisionsRequest } from './decisions'
 import { utcInstantFromEpochMillis } from '../time'
 import { EntryInferenceJournal, deriveEntryHandoffDisposition, type EntryInferenceCompletion } from './entry-inference'
-import type { EntryInferenceInput } from './entry-inference-input'
+import type { EntryInferenceInput, EntryInferenceMaterial } from './entry-inference-input'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { defaultJevProtocolDocument } from './protocol'
@@ -230,7 +230,12 @@ export const entryCompletionFixture = (
   }
 }
 
-export const stagedCheckpointFixture = (request: JevEvaluationRequest, at = request.observedAt): StagedCheckpoint => {
+export const stagedCheckpointFixture = (
+  request: Pick<JevEvaluationRequest, 'requestId' | 'observedAt' | 'expiresAt'> & {
+    readonly request: EntryInferenceMaterial
+  },
+  at = request.observedAt,
+): StagedCheckpoint => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(request.request.chartSource))
   const initial = Result.getOrThrow(
     makeInitialChartStageRequest({ chart, protocol: request.request.protocol, funding: request.request.funding }),

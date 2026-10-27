@@ -88,43 +88,50 @@ const cryptoEntryFixture = () => {
   return { snapshot, decision }
 }
 
-test('a crypto entry enforces its inference-ask cap through the submitted IOC limit', () => {
-  const { snapshot, decision } = cryptoEntryFixture()
-  const compiled = Result.getOrThrow(compileJevEntry(decision, snapshot, snapshot))
-  const plan = decision.exitPolicy.plans['BTC/USD']
-  const quantity = compiled.maximumBuyQuantityAtoms['BTC/USD']
-  const ask = compiled.askPriceMicros['BTC/USD']
-  if (plan === undefined || quantity === undefined || ask === undefined) throw new Error('Missing funded crypto terms')
-  const pricing = Result.getOrThrow(
-    deriveExecutionIntentPricing({
-      symbol: 'BTC/USD',
-      side: OrderSide.Buy,
-      orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
-      quantityAtoms: BigInt(quantity),
-      referencePriceMicros: BigInt(ask),
-      limitSlippageBps: BigInt(
-        jevEntryPriceAllowances(decision.evidence.observation.protocol, 'BTC/USD').limitSlippageBps,
-      ),
-    }),
-  )
-  const body = Result.getOrThrow(
-    orderRequestBody({
-      symbol: 'BTC/USD',
-      side: OrderSide.Buy,
-      orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
-      clientOrderId: 'b1_' + 'A'.repeat(43),
-      quantityAtoms: quantity,
-      limitPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
-      notionalLimitMicros: pricing.notionalLimitMicros.toString(),
-    }),
-  )
-  expect(pricing.expectedExecutionPriceMicros.toString()).toBe(plan.levels.maximumEntryPriceMicros)
-  expect(Number(body.limit_price)).toBe(Number(plan.levels.maximumEntryPriceMicros) / 1_000_000)
-  expect(body.time_in_force).toBe(AlpacaTimeInForce.ImmediateOrCancel)
-  expect(body.type).toBe(AlpacaOrderType.Limit)
-})
+test.each(['AAPL', 'BTC/USD'])(
+  '%s entry enforces its inference-ask cap through the submitted native limit',
+  (symbol) => {
+    const entry = symbol === 'BTC/USD' ? cryptoEntryFixture() : pricingFixture(100, 100.02)
+    const { decision } = entry
+    const snapshot = 'snapshot' in entry ? entry.snapshot : entry.fixture.snapshot
+    const timeInForce = symbol === 'BTC/USD' ? TimeInForce.ImmediateOrCancel : TimeInForce.Day
+    const compiled = Result.getOrThrow(compileJevEntry(decision, snapshot, snapshot))
+    const plan = decision.exitPolicy.plans[symbol]
+    const quantity = compiled.maximumBuyQuantityAtoms[symbol]
+    const ask = compiled.askPriceMicros[symbol]
+    if (plan === undefined || quantity === undefined || ask === undefined)
+      throw new Error('Missing funded crypto terms')
+    const pricing = Result.getOrThrow(
+      deriveExecutionIntentPricing({
+        symbol,
+        side: OrderSide.Buy,
+        orderType: OrderType.Limit,
+        timeInForce,
+        quantityAtoms: BigInt(quantity),
+        referencePriceMicros: BigInt(ask),
+        limitSlippageBps: BigInt(
+          jevEntryPriceAllowances(decision.evidence.observation.protocol, symbol).limitSlippageBps,
+        ),
+      }),
+    )
+    const body = Result.getOrThrow(
+      orderRequestBody({
+        symbol,
+        side: OrderSide.Buy,
+        orderType: OrderType.Limit,
+        timeInForce,
+        clientOrderId: 'b1_' + 'A'.repeat(43),
+        quantityAtoms: quantity,
+        limitPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
+        notionalLimitMicros: pricing.notionalLimitMicros.toString(),
+      }),
+    )
+    expect(pricing.expectedExecutionPriceMicros.toString()).toBe(plan.levels.maximumEntryPriceMicros)
+    expect(Number(body.limit_price)).toBe(Number(plan.levels.maximumEntryPriceMicros) / 1_000_000)
+    expect(body.time_in_force).toBe(symbol === 'BTC/USD' ? AlpacaTimeInForce.ImmediateOrCancel : AlpacaTimeInForce.Day)
+    expect(body.type).toBe(AlpacaOrderType.Limit)
+  },
+)
 
 test('crypto entry does not chase a fresh narrow quote above the inference ask', () => {
   const { snapshot, decision } = cryptoEntryFixture()
@@ -135,6 +142,17 @@ test('crypto entry does not chase a fresh narrow quote above the inference ask',
     expect(compiled.failure).toBeInstanceOf(JevAwaitingEvidence)
     expect(compiled.failure).toMatchObject({ message: expect.stringContaining('entry cost price ceiling') })
   }
+})
+
+test('equity entry does not chase a fresh narrow quote above its funded inference ask', () => {
+  const original = pricingFixture(100, 100.02).fixture.snapshot.latestQuotes['AAPL']
+  if (original === undefined) throw new Error('Missing inference quote')
+  const ask = original.askPrice + 0.01
+  const { fixture, decision, pricing } = pricingFixture(ask - 0.02, ask)
+  const compiled = compileJevEntry(decision, fixture.snapshot, pricing)
+  expect(Result.isFailure(compiled)).toBe(true)
+  if (Result.isFailure(compiled))
+    expect(compiled.failure).toMatchObject({ message: expect.stringContaining('entry cost price ceiling') })
 })
 
 describe('Jev entry execution quote eligibility', () => {
@@ -184,7 +202,7 @@ describe('Jev entry execution quote eligibility', () => {
   })
 
   test('the existing exact spread boundary remains eligible', () => {
-    const { fixture, decision, pricing } = pricingFixture(99.975, 100.025)
+    const { fixture, decision, pricing } = pricingFixture(99.93501, 99.98499)
     expect(Result.isSuccess(compileJevEntry(decision, fixture.snapshot, pricing))).toBe(true)
   })
 
