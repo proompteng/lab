@@ -2,6 +2,7 @@ import { ReplayImagePlatform } from './replay-image-platform'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { expect, test } from 'bun:test'
 import { gzipSync } from 'node:zlib'
+import { pathToFileURL } from 'node:url'
 import { NodeServices } from '@effect/platform-node'
 import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Result, Schema } from 'effect'
 
@@ -21,6 +22,107 @@ import { observeReplayExecution } from './replay-execution'
 import { runReplayEvidenceCommand } from './replay-image'
 
 const nativeTest = process.env['BAYN_TEST_REPLAY_EXECUTION'] === '1' ? test : test.skip
+
+nativeTest(
+  'native source preflight needs result-directory scratch under the observed read-only container contract',
+  async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: 'bayn-source-snapshot-test-' })
+        const evidence = `${root}/evidence`
+        const result = `${root}/result`
+        yield* fs.makeDirectory(evidence)
+        yield* fs.makeDirectory(result)
+        const compiled = yield* Effect.promise(() =>
+          Bun.build({
+            entrypoints: [`${import.meta.dir}/../intraday-replay/source-snapshot.test-support.ts`],
+            target: 'node',
+          }),
+        )
+        expect(compiled.success).toBe(true)
+        const output = compiled.outputs[0]
+        if (output === undefined || compiled.outputs.length !== 1) throw new Error('Missing source-preflight probe')
+        yield* fs.makeDirectory(`${evidence}/bin`)
+        yield* fs.makeDirectory(`${evidence}/dist`)
+        yield* fs.writeFile(
+          `${evidence}/bin/source-snapshot.js`,
+          new Uint8Array(yield* Effect.promise(() => output.arrayBuffer())),
+        )
+        const wasmEntry = Bun.resolveSync(
+          '@platformatic/wasm-utils',
+          Bun.resolveSync('@platformatic/kafka', import.meta.dir),
+        )
+        yield* fs.copyFile(
+          new URL('../dist/native.wasm', pathToFileURL(wasmEntry)).pathname,
+          `${evidence}/dist/native.wasm`,
+        )
+        const data = retainedReplayFixture()
+        const receipt = JSON.stringify(data.capture.value)
+        yield* fs.writeFileString(`${evidence}/receipt.json`, receipt)
+        yield* fs.writeFileString(
+          `${evidence}/source.json`,
+          JSON.stringify({ manifest: data.manifest, runId: data.input.source.runId }),
+        )
+        yield* fs.writeFile(`${evidence}/arrivals.ndjson.gz`, gzipSync(data.body))
+        const uid = process.getuid?.()
+        const gid = process.getgid?.()
+        if (uid === undefined || gid === undefined) throw new Error('Source-preflight probe requires POSIX ownership')
+        const command = (args: readonly string[]) => runReplayEvidenceCommand('docker', args)
+        const execute = (scratch: boolean) =>
+          Effect.gen(function* () {
+            const bytes = yield* Effect.acquireRelease(
+              command([
+                'create',
+                '--read-only',
+                '--cap-drop',
+                'ALL',
+                '--security-opt',
+                'no-new-privileges=true',
+                '--network',
+                'none',
+                '--user',
+                `${uid}:${gid}`,
+                '--entrypoint',
+                'node',
+                '-v',
+                `${evidence}:/evidence:ro`,
+                '-v',
+                `${result}:/result:rw`,
+                ...(scratch ? ['-e', 'TMPDIR=/result'] : []),
+                process.env['BAYN_TEST_REPLAY_RUNTIME_IMAGE'] ?? 'node:24.11.1-slim',
+                '/evidence/bin/source-snapshot.js',
+                sha256(receipt),
+              ]),
+              (id) => command(['rm', '-f', new TextDecoder().decode(id).trim()]).pipe(Effect.ignore),
+            )
+            const id = new TextDecoder().decode(bytes).trim()
+            return yield* command(['start', '-a', id]).pipe(
+              Effect.tapError(() =>
+                scratch
+                  ? command(['logs', id]).pipe(
+                      Effect.flatMap((logs) => Effect.logError(new TextDecoder().decode(logs))),
+                    )
+                  : Effect.void,
+              ),
+              Effect.result,
+            )
+          })
+        expect(Result.isFailure(yield* execute(false))).toBe(true)
+        expect(yield* fs.readDirectory(result)).toEqual([])
+        const supported = yield* execute(true)
+        if (Result.isFailure(supported)) return yield* supported.failure
+        expect(Result.isSuccess(supported)).toBe(true)
+        const opened = yield* fs
+          .readFileString(`${result}/source-opened.json`)
+          .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))))
+        expect(opened).toEqual({ processedRecords: data.events.length, sourceManifestHash: testHash(data.manifest) })
+        expect(yield* fs.readDirectory(result)).toEqual(['source-opened.json'])
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    )
+  },
+  120000,
+)
 
 nativeTest.each([JevResearchPolicy.Candidate, JevResearchPolicy.Ablation, JevResearchPolicy.Momentum])(
   'a real stopped %s container binds its image, command and retained files to an observer receipt',
@@ -143,6 +245,8 @@ nativeTest.each([JevResearchPolicy.Candidate, JevResearchPolicy.Ablation, JevRes
           `${output}:/result:rw`,
           '--entrypoint',
           'node',
+          '-e',
+          'TMPDIR=/result',
           '-e',
           'BAYN_BACKTEST_POSTGRES_URL=postgresql://test:test@127.0.0.1/bayn_replay',
           '-e',

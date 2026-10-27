@@ -207,6 +207,7 @@ export const verifyReplayContainer = (
     const base = yield* environment(image.Config.Env)
     const actual = yield* environment(container.Config.Env)
     const allowed = [
+      'TMPDIR',
       'BAYN_BACKTEST_POSTGRES_URL',
       'BAYN_BACKTEST_TIGERBEETLE_ADDRESS',
       'BAYN_BACKTEST_TIGERBEETLE_CLUSTER_ID',
@@ -215,10 +216,11 @@ export const verifyReplayContainer = (
     if (
       allowed.some((name) => base.has(name)) ||
       actual.size !== base.size + allowed.length ||
+      actual.get('TMPDIR') !== '/result' ||
       [...base].some(([key, value]) => actual.get(key) !== value) ||
       allowed.some((key) => !actual.has(key))
     )
-      return yield* fail('Replay environment overrides more than its isolated database targets')
+      return yield* fail('Replay environment differs from its isolated database targets and result-directory scratch')
     return {
       postgresUrl: actual.get('BAYN_BACKTEST_POSTGRES_URL') ?? '',
       tigerBeetleAddress: actual.get('BAYN_BACKTEST_TIGERBEETLE_ADDRESS') ?? '',

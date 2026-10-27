@@ -97,6 +97,12 @@ manifest, executable, dependency receipt, and native policy identity. A separate
 the executed command and retained input/output files. The receipt states this trust assumption; image membership
 alone does not prove that an execution occurred.
 
+Observed native replay containers retain a read-only root, read-only `/evidence`, and writable `/result`.
+Set `TMPDIR=/result` so source preflight can create its scoped, unlinked private snapshot there. The observer
+requires that exact scratch destination and rejects other temporary paths, extra mounts, tmpfs mounts, or injected
+runtime settings. Database targets remain the only other permitted environment additions. A latency replay uses
+its prospectively registered operation timeout; the CLI does not replace it with the ordinary replay default.
+
 Migration 157 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
 durable evidence witnesses as append-only records. A later settlement or newly captured source produces a new
 assessment receipt. Reading a saved assessment recomputes its result and verifies its hash. Broker mutation routing

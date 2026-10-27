@@ -21,7 +21,7 @@ import {
   latencyCalibrationDecisionFixture,
   nativeLatencyBacktestFixture,
 } from '../system-assessment/latency.test-support'
-import { testHash } from '../system-assessment/fixtures.test-support'
+import { testHash, withRegistrationCommitments } from '../system-assessment/fixtures.test-support'
 import { bindLatencyStressSources } from '../system-assessment/latency-report'
 import { reproduceReplaySessionEconomics } from '../system-assessment/latency-economics'
 import { backtestBrokerEvidenceConfig, prepareBacktest } from './backtest'
@@ -80,13 +80,21 @@ const main = Effect.gen(function* () {
       openAt: s.regularOpenAt,
       closeAt: s.regularCloseAt,
     }))
+    const calibration = fullBatchLatencyFixture(document, native, sessions)
+    const configuredRegistration = withRegistrationCommitments({
+      ...calibration.registration,
+      obligations: {
+        ...calibration.registration.obligations,
+        configuration: { ...calibration.registration.obligations.configuration, operationTimeoutMs: 120000 },
+      },
+    })
     const {
       input: registeredInput,
       registration,
       cut,
       capture,
     } = nativeLatencyBacktestFixture(
-      fullBatchLatencyFixture(document, native, sessions),
+      { ...calibration, registration: configuredRegistration },
       undefined,
       policy,
       source.manifest,

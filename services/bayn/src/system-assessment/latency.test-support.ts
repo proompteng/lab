@@ -368,7 +368,11 @@ export const nativeLatencyBacktestFixture = (
           },
     ),
   })
-  const cut = { ...f.cut, registrationHash: testHash(registration) }
+  const cut = {
+    ...f.cut,
+    registrationHash: testHash(registration),
+    runtimeConfigurationHash: registration.obligations.runtimeConfigurationHash,
+  }
   const configuration = registration.obligations.configuration
   const input = Schema.decodeUnknownSync(BacktestInputSchema)({
     schemaVersion: 'bayn.backtest.v10',

@@ -154,7 +154,7 @@ const main = Effect.scoped(
       tigerBeetleLedger: Config.Int('BAYN_BACKTEST_TIGERBEETLE_LEDGER'),
     })
     const databases: ReplayDatabaseConfig = {
-      operationTimeoutMs: 30_000,
+      operationTimeoutMs: prepared.latencyStress?.registration.obligations.configuration.operationTimeoutMs ?? 30_000,
       postgres: { url: databaseInput.postgresUrl, tls: false, caPath: '/unused' },
       tigerBeetle: {
         clusterId: BigInt(databaseInput.tigerBeetleCluster),

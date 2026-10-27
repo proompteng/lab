@@ -55,6 +55,7 @@ const fixture = () => {
       ],
       Env: [
         ...image.Config.Env,
+        'TMPDIR=/result',
         'BAYN_BACKTEST_POSTGRES_URL=postgresql://test:test@127.0.0.1/bayn_replay',
         'BAYN_BACKTEST_TIGERBEETLE_ADDRESS=127.0.0.1:3000',
         'BAYN_BACKTEST_TIGERBEETLE_CLUSTER_ID=42',
@@ -77,7 +78,7 @@ const fixture = () => {
   return { expected, image, container }
 }
 
-test('a completed exact-image command exposes only its isolated database targets for validation', () => {
+test('a completed exact-image command uses result-directory scratch and isolated database targets', () => {
   const f = fixture()
   expect(Result.getOrThrow(verifyReplayContainer(f.container, f.image, f.expected))).toEqual({
     postgresUrl: 'postgresql://test:test@127.0.0.1/bayn_replay',
@@ -135,6 +136,8 @@ test('foreign images, changed commands, incomplete exits, writable code and inje
       { Env: [...(c.Config.Env ?? []), 'NODE_OPTIONS=--require=/evidence/inject.js'] },
       { Env: [...(c.Config.Env ?? []), 'BAYN_JEV_API_KEY=not-allowed'] },
       { Env: [...(c.Config.Env ?? []), 'PATH=/evidence'] },
+      { Env: (c.Config.Env ?? []).filter((entry) => !entry.startsWith('TMPDIR=')) },
+      { Env: (c.Config.Env ?? []).map((entry) => (entry.startsWith('TMPDIR=') ? 'TMPDIR=/evidence' : entry)) },
       { Env: (c.Config.Env ?? []).filter((entry) => !entry.startsWith('BAYN_BACKTEST_TIGERBEETLE_LEDGER=')) },
     ].map((change) => ({ ...c, Config: { ...c.Config, ...change } })),
     { ...c, Mounts: [...c.Mounts, { Type: 'bind', Destination: '/app', RW: false }] },
