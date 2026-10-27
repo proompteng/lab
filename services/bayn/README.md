@@ -59,10 +59,15 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The replacement source uses `jev` protocol v26, entry state v22, batch v7 and entry target v7. It retains the
+The replacement source uses `jev` protocol v27, entry state v22, batch v7 and entry target v7. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
+Crypto v27 funds its buy at the original inference ask and submits a LIMIT/IOC at the refreshed ask only when it is
+no higher than that original cap, rounded to instrument precision. It does not chase a higher quote or add the risk
+policy's adverse-price allowance to the buy limit. Equity pricing keeps its existing bounded allowance. Crypto entry
+coin fees, maximum future sell fees, stop/exit slippage and every risk limit remain unchanged. A tighter buy limit may
+remain unfilled; it cannot justify a cheaper funding estimate while submitting a higher-priced order.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
 
 Native comparison runtimes also support the chart-entry ablation and repeated-momentum control. Each has a distinct
@@ -85,9 +90,9 @@ can produce a second OpenAI request containing its single conditional base-start
 `BASE_START` stage shares the original ten-second deadline with CHART and Jev; no timeout or transport cap is raised.
 Each start choice covers all earlier source bars and an explicit no-base option. Ends must leave at least two base bars
 and one newer completed bar. An unused branch's refusal cannot veto a supported proposal.
-Migration 154 admits only outer request v3, input v5, handoff v4 and the exact market-specific v26 question policy
-for new execution. It preserves the staged transport installed by migration 153. Retired v1–v4 inputs and the earlier
-v26 question policy remain available only to financial readers. Migration 151 and its historical checkpoint identities remain unchanged.
+Migration 157 admits only protocol v27 for new execution, retaining outer request v3, input v5, handoff v4 and the
+market-specific question policy. It preserves the staged transport installed by migration 153. Retired protocols,
+v1–v4 inputs and earlier question policies remain available only to financial readers. Migration 151 and its historical checkpoint identities remain unchanged.
 Each visual stage has one immutable dispatch admission and a separately durable terminal receipt. A duplicate admission
 cannot redispatch an uncertain call. Late terminal evidence can settle costs but cannot authorize a successor or renew expiry.
 An explicit authenticated BASE_START skip proves non-dispatch; absent or incomplete stage evidence remains unknown.

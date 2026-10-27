@@ -4,6 +4,7 @@ import { TestClock } from 'effect/testing'
 import { gunzipSync } from 'node:zlib'
 
 import { canonicalHashV1Result } from '../src/hash'
+import { instrumentMarket, MarketKind } from '../src/instruments'
 import { makeChartDecisionsRequest } from '../src/jev/chart-questions'
 import { IsoDateSchema } from '../src/schemas'
 import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from '../src/jev/chart-evidence'
@@ -17,10 +18,13 @@ import {
   evaluateClaimedEntryInference,
 } from '../src/jev/entry-inference'
 import { makeJevEvaluationReceipt, makeJevEvaluationRequest, JevOutcome } from '../src/jev/evidence'
+import { JevResolutionStatus, makeJevResolution } from '../src/jev/resolution'
 import { readSequentialInferenceCostEvidence } from '../src/jev/sequential-inference-cost-evidence'
 import { makeRetainedFundedEntryJudgmentRequest as makeEntryJudgmentRequest } from '../src/jev/retained-funded-entry-questions'
 import { makeRetainedEntryJudgmentRequest } from '../src/jev/retained-entry-questions'
 import { defaultJevProtocolDocument } from '../src/jev/protocol'
+import { jevEntryEconomics } from '../src/jev/entry-economics'
+import type { StagedCheckpoint } from '../src/jev/staged-checkpoint'
 import { InferenceUsageStatus } from '../src/inference-costs'
 import { makeInferenceExpenseQuotes } from '../src/inference-expense'
 
@@ -72,16 +76,34 @@ const verify = Effect.gen(function* () {
     const expectedHash = yield* Effect.fromResult(canonicalHashV1Result(saved.evaluation))
     const actualHash = yield* Effect.fromResult(canonicalHashV1Result(reproduced.evaluation))
     if (expectedHash !== actualHash) return yield* fail('The final native proposal evaluation changed')
-    // Original model responses retain their contracts; only the offline dispatch probe uses current questions.
+    // Original model responses retain their contracts; the dispatch probe never calls either provider.
+    const protocol = {
+      ...input.protocol,
+      schemaVersion: 'bayn.jev.protocol.v27' as const,
+      entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash,
+    }
+    const funding = {
+      ...input.funding,
+      cryptoFeeTier:
+        instrumentMarket(input.chartSource.symbol) === MarketKind.Equity ? null : input.funding.cryptoFeeTier,
+    }
+    const economics = yield* Effect.fromResult(
+      jevEntryEconomics({
+        protocol,
+        symbol: input.chartSource.symbol,
+        bidMicros: BigInt(funding.bidMicros),
+        askMicros: BigInt(funding.askMicros),
+        capitalMicros: funding.capitalMicros,
+        cryptoFeeTier: funding.cryptoFeeTier,
+      }),
+    )
     const current = yield* Effect.fromResult(
       prepareEntryInferenceInput({
         ...input,
         schemaVersion: 'bayn.entry-inference-input.v5',
-        protocol: {
-          ...input.protocol,
-          schemaVersion: 'bayn.jev.protocol.v26',
-          entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash,
-        },
+        protocol,
+        funding,
+        numericalState: { ...input.numericalState, entryEconomics: economics },
       }),
     )
     const visualSource = yield* Effect.fromResult(
@@ -94,11 +116,21 @@ const verify = Effect.gen(function* () {
     }
     const { requestId: _originalId, ...material } = original.request
     const request = yield* Effect.fromResult(
-      makeJevEvaluationRequest({ ...material, request: current.input, requestHash: current.requestHash }),
+      makeJevEvaluationRequest({
+        ...material,
+        schemaVersion: 'bayn.jev-evaluation-request.v3',
+        request: current.input,
+        requestHash: current.requestHash,
+      }),
     )
     let attemptedChartBranches = 0
     let attemptedJevBranches = 0
     let committedHandoffs = 0
+    const checkpoint: {
+      claims: StagedCheckpoint['claims'][number][]
+      terminals: StagedCheckpoint['terminals'][number][]
+      skips: StagedCheckpoint['skips'][number][]
+    } = { claims: [], terminals: [], skips: [] }
     const branch = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
       Effect.andThen(
         evaluateClaimedEntryInference({
@@ -110,9 +142,19 @@ const verify = Effect.gen(function* () {
         }),
       ),
       Effect.provideService(EntryInferenceJournal, {
-        recordVisualClaim: () => Effect.succeed({ dispatchAllowed: true }),
-        recordVisualTerminal: () => Effect.void,
-        recordBaseStartSkip: () => Effect.void,
+        recordVisualClaim: (claim) =>
+          Effect.sync(() => {
+            checkpoint.claims.push(claim)
+            return { dispatchAllowed: true }
+          }),
+        recordVisualTerminal: (terminal) =>
+          Effect.sync(() => {
+            checkpoint.terminals.push(terminal)
+          }),
+        recordBaseStartSkip: (skip) =>
+          Effect.sync(() => {
+            checkpoint.skips.push(skip)
+          }),
         recordHandoff: () =>
           Effect.sync(() => {
             committedHandoffs++
@@ -154,11 +196,19 @@ const verify = Effect.gen(function* () {
         return yield* fail('The skip result fabricates a provider outcome')
       const receipt = yield* Effect.fromResult(
         makeJevEvaluationReceipt(request, {
-          schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+          schemaVersion: 'bayn.jev-evaluation-receipt.v3',
           requestId: request.requestId,
           startedAt: request.observedAt,
           completedAt: completion.completedAt,
           outcome: { status: JevOutcome.Completed, completion },
+        }),
+      )
+      const resolution = yield* Effect.fromResult(
+        makeJevResolution(request, receipt, {
+          schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+          requestId: request.requestId,
+          status: JevResolutionStatus.Recorded,
+          receiptHash: receipt.receiptHash,
         }),
       )
       const quotes = yield* Effect.fromResult(
@@ -167,7 +217,8 @@ const verify = Effect.gen(function* () {
             request,
             receipt,
             handoff: completion.handoff,
-            resolution: null,
+            stagedCheckpoint: checkpoint,
+            resolution,
             requestId: request.requestId,
             cycleId: request.cycleId,
             authorityGenerationHash: request.authorityGenerationHash,
@@ -179,12 +230,20 @@ const verify = Effect.gen(function* () {
         ),
       )
       if (
-        quotes.length !== 2 ||
+        quotes.length !== 3 ||
         quotes.some(
           (q) => q.line.usageStatus !== InferenceUsageStatus.NotDispatched || q.line.estimatedCostPicoUsd !== '0',
         )
       )
-        return yield* fail('An undispatched provider stage is not priced as zero')
+        return yield* fail(
+          `An undispatched provider stage is not priced as zero: ${JSON.stringify(
+            quotes.map(({ line }) => ({
+              stage: 'stage' in line ? line.stage : null,
+              usageStatus: line.usageStatus,
+              estimatedCostPicoUsd: line.estimatedCostPicoUsd,
+            })),
+          )}`,
+        )
       skips++
     } else {
       if (!Exit.isFailure(branch) || attemptedChartBranches !== 1 || committedHandoffs !== 0)
@@ -197,21 +256,22 @@ const verify = Effect.gen(function* () {
       projectedCurrentRequestId: request.requestId,
       feasible,
       originalEvaluationHash: expectedHash,
-      unchangedEvaluationHash: actualHash,
+      reproducedRetainedEvaluationHash: actualHash,
+      projectedEntryPriceCeilingMicros: economics?.maximumEntryPriceMicros ?? null,
       originalFundedProposalIds: saved.evaluation.proposals.map((p) => p.proposalId),
       offlineChartSentinelBranches: attemptedChartBranches,
       actualProviderCalls: 0,
     })
   }
   const report = {
-    schemaVersion: 'bayn.entry-feasibility-verification.v1',
+    schemaVersion: 'bayn.entry-feasibility-verification.v2',
     requests: results.length,
     sourceInfeasibleSkips: skips,
     possibleChartBranches: chartBranches,
-    unchangedFundedRequests: fundedRequests,
+    retainedFundedSourcesStillFeasible: fundedRequests,
     actualProviderCalls: 0,
     inputProjection:
-      'Same source, prices, funding and economic protocol. Retained v1/v2/v3/v4 inputs use v5 and its question policy only for the offline dispatch probe; original model responses retain their original contracts.',
+      'Same source, observed quotes, capital and fees. The offline dispatch probe recomputes v27 entry economics and its crypto inference-ask cap. Historical model responses and proposal evaluations retain their original contracts and are never used as current judgments.',
     results,
   }
   yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })

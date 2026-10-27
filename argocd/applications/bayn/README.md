@@ -1,5 +1,13 @@
 # Exception tracking
 
+## Crypto inference-ask cap
+
+Protocol v27 caps crypto entries at the inference ask. The source cutover requires migration 157 and fresh native
+OBSERVE recovery, followed by a reviewed same-account PAPER mandate bound to the published image and new protocol.
+The retired v26 mandate is removed from active configuration and retained in immutable history. Broker credentials, risk limits,
+15-minute hold, fees, capital and loss history remain unchanged. Deployment and native authority must be verified
+separately from natural funded selections and fee-reconciled round trips.
+
 Bayn's main API, native Restate execution controller and activation job, and
 independent research worker send **errors only** to dedicated GlitchTip projects
 (`proompteng/bayn`, `proompteng/bayn-execution`, and `proompteng/bayn-research`).

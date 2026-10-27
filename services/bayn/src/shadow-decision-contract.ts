@@ -28,7 +28,7 @@ import { quantityFromNumber } from './quantity'
 import { makeStrategyProtocolHashResult } from './contracts'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
 import { maximumFundedBuyQuantities } from './jev/entry-sizing'
-import { jevMaximumEntryAskMicros } from './jev/entry-economics'
+import { jevEntryPriceAllowances, jevMaximumEntryAskMicros } from './jev/entry-economics'
 import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
 import {
   SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
@@ -1272,7 +1272,7 @@ const jevEntryEvidenceIssues = (
       if (
         Result.isFailure(originalAsk) ||
         pricedAsk === undefined ||
-        BigInt(pricedAsk) > jevMaximumEntryAskMicros(observation.protocol, originalAsk.success)
+        BigInt(pricedAsk) > jevMaximumEntryAskMicros(observation.protocol, symbol, originalAsk.success)
       )
         issues.push({
           path: ['plannerInput', 'referencePrices'],
@@ -1280,7 +1280,12 @@ const jevEntryEvidenceIssues = (
         })
     }
   }
-  if ((document.entryLimitSlippageBps ?? 0) > observation.protocol.maximumEntryLimitSlippageBps)
+  if (
+    target.selectedSymbols.some(
+      (symbol) =>
+        (document.entryLimitSlippageBps ?? 0) > jevEntryPriceAllowances(observation.protocol, symbol).limitSlippageBps,
+    )
+  )
     issues.push({
       path: ['entryLimitSlippageBps'],
       issue: 'entry limit allowance exceeds the inference-bound cost ceiling',
