@@ -196,12 +196,14 @@ export const readSystemDurableObservations = (registrationHash: string) =>
 export const readSystemDecisionAdmissions = ({
   accountId,
   generationHash,
-  openAt,
+  firstSession,
+  lastSession,
   asOf,
 }: {
   readonly accountId: string
   readonly generationHash: string
-  readonly openAt: string
+  readonly firstSession: string
+  readonly lastSession: string
   readonly asOf: string
 }) =>
   Effect.gen(function* () {
@@ -223,8 +225,9 @@ export const readSystemDecisionAdmissions = ({
           'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"
       FROM execution_decision_admissions receipt JOIN mutation_events event USING(event_id)
         JOIN intents intent USING(intent_id)
+        JOIN autonomous_cycles cycle ON cycle.cycle_id = intent.cycle_id
       WHERE intent.account_id = ${accountId} AND intent.authority_generation_hash = ${generationHash}
-        AND event.occurred_at >= ${openAt}::timestamptz
+        AND cycle.execution_session_date BETWEEN ${firstSession}::date AND ${lastSession}::date
         AND receipt.observed_at <= ${asOf}::timestamptz
       ORDER BY receipt.event_id, receipt.decision_id`,
     )
@@ -494,7 +497,8 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           const decisionAdmissions = yield* readSystemDecisionAdmissions({
             accountId: identity.accountId,
             generationHash: candidate.authorityGenerationHash,
-            openAt: first.openAt,
+            firstSession: first.sessionDate,
+            lastSession: last.sessionDate,
             asOf,
           })
           const scope = {

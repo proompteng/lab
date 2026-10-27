@@ -260,7 +260,8 @@ const main = Effect.gen(function* () {
           )
           const decisionAdmissions = yield* readSystemDecisionAdmissions({
             ...identity,
-            openAt: firstSession.openAt,
+            firstSession: firstSession.sessionDate,
+            lastSession: lastSession.sessionDate,
             asOf: scope.asOf,
           })
           const executionCut = {

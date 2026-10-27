@@ -1229,7 +1229,7 @@ postgres('PostgreSQL prospective system qualification', () => {
   }, 15_000)
 
   test('submission evidence certifies only previously committed owned decisions and rolls back with admission', async () => {
-    const { account, definition, opens } = await activeEvaluation()
+    const { account, definition } = await activeEvaluation()
     const native = nativeJevFixture(JevPurpose.Entry, undefined, account)
     const cycleId = native.draft.identity.cycleId
     const observedAt = native.portfolio.brokerState.reconciliation.reconciledAt
@@ -1299,14 +1299,28 @@ postgres('PostgreSQL prospective system qualification', () => {
       asApplication(source('owned close', ['committed-admission', 'rolled-back-admission'])),
     )
     await runtime.runPromise(asApplication(admit('committed-admission')))
-    const captured = await runtime.runPromise(
-      readSystemDecisionAdmissions({
-        accountId: account,
-        generationHash: definition.authorityGenerationHash,
-        openAt: new Date(opens).toISOString(),
-        asOf: new Date(Date.now() + 1000).toISOString(),
+    const sessionDate = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const rows =
+          yield* sql`SELECT execution_session_date::text AS date FROM autonomous_cycles WHERE cycle_id = ${cycleId}`
+        return yield* Schema.decodeUnknownEffect(IsoDateSchema)(rows[0]?.['date'])
       }),
     )
+    const scope = {
+      accountId: account,
+      generationHash: definition.authorityGenerationHash,
+      firstSession: sessionDate,
+      lastSession: sessionDate,
+      asOf: new Date(Date.now() + 1000).toISOString(),
+    }
+    const captured = await runtime.runPromise(readSystemDecisionAdmissions(scope))
+    const previousDate = new Date(Date.parse(`${sessionDate}T00:00:00.000Z`) - 86_400_000).toISOString().slice(0, 10)
+    expect(
+      await runtime.runPromise(
+        readSystemDecisionAdmissions({ ...scope, firstSession: previousDate, lastSession: previousDate }),
+      ),
+    ).toEqual([])
     expect(captured).toHaveLength(1)
     expect(captured[0]).toMatchObject({ eventId: sha256('committed-admission'), decisionId })
     await runtime.runPromise(

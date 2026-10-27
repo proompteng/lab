@@ -601,19 +601,87 @@ describe('registered financial capture', () => {
     }
   })
 
-  test('a prior closed position and its fees do not invalidate or charge a later registered window', () => {
-    const policy = JevResearchPolicy.Candidate
-    const { registration, forward } = fixture(policy)
-    const { fills, accrual } = coinRoundTrip(0, forward.account.accountId)
+  test.each(['2026-09-18', '2026-11-30'])(
+    'closed activity and fees on %s do not invalidate another registered window',
+    (sourceDate) => {
+      const policy = JevResearchPolicy.Candidate
+      const { registration, forward } = fixture(policy)
+      const { fills, accrual } = coinRoundTrip(0, forward.account.accountId, testHash('out-of-window cycle'), {
+        sourceDate,
+      })
+      const captured = Result.getOrThrow(
+        captureForwardFinancialEvidence(
+          registration,
+          policy,
+          {
+            ...forward,
+            ...(sourceDate > (registration.calendar.sessions.at(-1)?.sessionDate ?? '')
+              ? {
+                  reconciliation: { ...forward.reconciliation!, reconciledAt: `${sourceDate}T23:59:59.000Z` },
+                  accountPositionCounts: {
+                    postgres: 0,
+                    ledger: 0,
+                    exact: true,
+                    reconciledAt: `${sourceDate}T23:59:59.000Z`,
+                  },
+                }
+              : {}),
+            accountTransactions: fills,
+            accountCashSettlements: cashSettlements(fills),
+            transactions: fills.map((fill) => ({ ...fill, cycleId: testHash('cycle') })),
+            accountFeeAccruals: [accrual],
+            brokerFeeAccruals: [
+              {
+                accrualId: accrual.accrual_id,
+                accountId: forward.account.accountId,
+                expenseMicros: accrual.expense_micros,
+                settled: true,
+              },
+            ],
+            brokerFees: [
+              ...(forward.brokerFees ?? []),
+              {
+                accountId: forward.account.accountId,
+                activityId: 'historical-charge',
+                date: accrual.data.date,
+                netAmountMicros: '-9000000',
+              },
+            ],
+          },
+          [],
+        ),
+      )
+      expect(captured.sessions).toHaveLength(20)
+      expect(captured.sessions.every((session) => session.facts !== null)).toBe(true)
+      expect(captured.sessions[0]?.facts).toMatchObject({
+        grossRealizedPnlMicros: '0',
+        executionCostMicros: '3000000',
+        openingPositionCount: 0,
+        closingPositionCount: 0,
+        completedEpisodes: 0,
+      })
+      expect(captured.sessions.slice(1).every((session) => session.facts?.executionCostMicros === '0')).toBe(true)
+    },
+  )
+
+  test('a post-window accrual attributable to a registered fill keeps financial evidence incomplete', () => {
+    const { registration, forward } = fixture(JevResearchPolicy.Candidate)
+    const first = registration.calendar.sessions[0]!
+    const { fills, accrual } = coinRoundTrip(0, forward.account.accountId, testHash('late fee cycle'), {
+      sourceDate: first.sessionDate,
+      observedDate: '2026-11-30',
+    })
     const captured = Result.getOrThrow(
       captureForwardFinancialEvidence(
         registration,
-        policy,
+        JevResearchPolicy.Candidate,
         {
           ...forward,
+          reconciliation: { ...forward.reconciliation!, reconciledAt: '2026-11-30T23:59:59.000Z' },
+          accountPositionCounts: { postgres: 0, ledger: 0, exact: true, reconciledAt: '2026-11-30T23:59:59.000Z' },
           accountTransactions: fills,
           accountCashSettlements: cashSettlements(fills),
-          transactions: fills.map((fill) => ({ ...fill, cycleId: testHash('cycle') })),
+          transactions: fills.map((fill) => ({ ...fill, cycleId: testHash('late fee cycle') })),
           accountFeeAccruals: [accrual],
           brokerFeeAccruals: [
             {
@@ -623,34 +691,16 @@ describe('registered financial capture', () => {
               settled: true,
             },
           ],
-          brokerFees: [
-            ...(forward.brokerFees ?? []),
-            {
-              accountId: forward.account.accountId,
-              activityId: 'historical-charge',
-              date: accrual.data.date,
-              netAmountMicros: '-9000000',
-            },
-          ],
         },
         [],
       ),
     )
-    expect(captured.sessions).toHaveLength(20)
-    expect(captured.sessions.every((session) => session.facts !== null)).toBe(true)
-    expect(captured.sessions[0]?.facts).toMatchObject({
-      grossRealizedPnlMicros: '0',
-      executionCostMicros: '3000000',
-      openingPositionCount: 0,
-      closingPositionCount: 0,
-      completedEpisodes: 0,
-    })
-    expect(captured.sessions.slice(1).every((session) => session.facts?.executionCostMicros === '0')).toBe(true)
+    expect(captured.sessions.every((session) => session.facts === null)).toBe(true)
   })
 
-  test('a charge without registered session attribution cannot disappear between sessions or after the window', () => {
+  test('a charge inside the evaluation window cannot disappear between registered sessions', () => {
     const { registration, forward } = fixture(JevResearchPolicy.Candidate)
-    for (const date of ['2026-11-07', '2026-11-30'] as const) {
+    for (const date of ['2026-11-07', '2026-11-14'] as const) {
       expect(registration.calendar.sessions.some((session) => session.sessionDate === date)).toBe(false)
       const captured = Result.getOrThrow(
         captureForwardFinancialEvidence(

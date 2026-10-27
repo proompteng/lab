@@ -160,15 +160,13 @@ export const captureForwardFinancialEvidence = (
             (s) => transaction.occurredAt >= s.openAt && transaction.occurredAt <= s.closeAt,
           ),
       ) ||
-      (forward.brokerFees?.some((fee) => fee.date >= first.sessionDate && !dates.has(fee.date)) ?? false) ||
+      (forward.brokerFees?.some(
+        (fee) => fee.date >= first.sessionDate && fee.date <= last.sessionDate && !dates.has(fee.date),
+      ) ??
+        false) ||
       (forward.accountFeeAccruals?.some(
         (a) =>
-          !dates.has(a.data.date) &&
-          a.data.sourceTrades.some((trade) =>
-            a.data.date < first.sessionDate
-              ? windowTransactionIds.has(trade.transactionId)
-              : selectedTransactionIds.has(trade.transactionId),
-          ),
+          !dates.has(a.data.date) && a.data.sourceTrades.some((trade) => windowTransactionIds.has(trade.transactionId)),
       ) ??
         false)
     const sessions = []
