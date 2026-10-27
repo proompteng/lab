@@ -113,7 +113,7 @@ import { bindSystemSourceCut } from './bind-source'
 import { assessSession } from './session'
 import { makeOperatingCostReport, OperatingCostCategory } from '../operating-costs'
 import { operatingCostFixture } from '../operating-costs.test-support'
-import { proportionalCost, recognizeOperatingCosts } from './cost-attribution'
+import { proportionalCost, indexOperatingCosts } from './cost-attribution'
 import {
   expenseRateFixture,
   expenseSourceFixture,
@@ -1469,7 +1469,8 @@ formal('pinned Lean executable conformance', () => {
         ),
       )
       const costs = Result.getOrThrow(makeOperatingCostReport(inference, raw.evidence, raw.verifiedSources))
-      for (const time of [999, 1000, 1001, 2500, 5000, 8999, 9000, 9001]) {
+      const costsAt = indexOperatingCosts(costs, inference, { openAt: instant(1000), closeAt: instant(9000) })
+      for (const time of [999, 1000, 1001, 2500, 5000, 8999, 9000, 9001, 5000, 1000, 9000]) {
         inputs.push({
           operation: 'recognizedOperatingCosts',
           fixed: sample.fixed.toString(),
@@ -1486,9 +1487,7 @@ formal('pinned Lean executable conformance', () => {
             }
           }),
         })
-        expected.push(
-          recognizeOperatingCosts(costs, inference, { openAt: instant(1000), closeAt: instant(9000) }, instant(time)),
-        )
+        expected.push(costsAt?.(instant(time)) ?? null)
       }
     }
     expect(model(inputs)).toEqual(expected)

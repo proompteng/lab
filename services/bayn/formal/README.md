@@ -294,7 +294,7 @@ binding tests reconstruct both endpoints across all eighty policy sessions and a
 forward-performance reader test retains the actual verified settlement records used to build the movement history.
 Completeness, source authentication, fee timing and cash-flow classifications remain explicit evidence obligations.
 
-`CostAttribution.lean` maps to `proportionalCost` and `recognizeOperatingCosts` in
+`CostAttribution.lean` maps to `proportionalCost` and `indexOperatingCosts` in
 `src/system-assessment/cost-attribution.ts`. Theorems establish the nonnegative allocation domain, zero and complete
 weights, bounded and monotone floor rounding, request recognition within the registered session, no early recognition
 of an in-session request, bounded and monotone accumulated weights, and full recognition of every allocated cost at
