@@ -12,22 +12,24 @@ import {
   intradayDecisionDelaySeconds,
 } from '../strategy/intraday-market'
 import { JevContractError, jevModel } from './contract'
-import { chartQuestionPolicy } from './chart-questions'
+import { stagedChartQuestionPolicy } from './staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
 
 const entryQuestionPolicyHash = Result.getOrThrow(
-  canonicalHashV1Result({ chart: chartQuestionPolicy, jev: entryJudgmentPolicy }),
+  canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: entryJudgmentPolicy }),
 )
 
 const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
-export const jevProtocolSchemaForQuestionPolicy = <V extends 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25'>(
+export const jevProtocolSchemaForQuestionPolicy = <
+  V extends 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25' | 'bayn.jev.protocol.v26' = 'bayn.jev.protocol.v24',
+>(
   entryQuestionPolicyHash: string,
-  schemaVersion: V,
+  version: V = 'bayn.jev.protocol.v24' as V,
 ) =>
   Schema.Struct({
-    schemaVersion: Schema.Literal(schemaVersion),
+    schemaVersion: Schema.Literal(version),
     entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
     entryFeePolicy: Schema.Literal('broker-tier-buy-and-maximum-sell'),
     entrySelectionPolicy: Schema.Literal('source-anchored-proposal-judgments'),
@@ -97,15 +99,15 @@ export const jevProtocolSchemaForQuestionPolicy = <V extends 'bayn.jev.protocol.
     }),
   )
 
-export const JevProtocolSchema = jevProtocolSchemaForQuestionPolicy(entryQuestionPolicyHash, 'bayn.jev.protocol.v25')
+export const JevProtocolSchema = jevProtocolSchemaForQuestionPolicy(entryQuestionPolicyHash, 'bayn.jev.protocol.v26')
 
 export type JevProtocol = typeof JevProtocolSchema.Type
 export type JevProtocolMaterial = Omit<JevProtocol, 'schemaVersion'> & {
-  readonly schemaVersion: 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25'
+  readonly schemaVersion: 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25' | 'bayn.jev.protocol.v26'
 }
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v25',
+  schemaVersion: 'bayn.jev.protocol.v26',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
   entrySelectionPolicy: 'source-anchored-proposal-judgments',

@@ -6,7 +6,7 @@ import { inferenceExpenseRateCard, makeInferenceExpenseQuotes } from '../inferen
 import { InferenceStage, InferenceUsageStatus } from '../inference-costs'
 import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from './chart-evidence'
 import { deriveEntryDispositionForChart } from './entry-inference'
-import { entryEvaluationRequestFixture } from './entry-inference.test-support'
+import { entryEvaluationRequestFixture } from './conditional-entry.test-support'
 import { decodeJevEvaluationRequest, JevOutcome } from './evidence'
 import {
   readSequentialInferenceCostEvidence,

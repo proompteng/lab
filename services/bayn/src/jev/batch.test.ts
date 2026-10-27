@@ -17,7 +17,11 @@ import {
   type JevBatchPlan,
 } from './batch'
 import { JevFailure } from './contract'
-import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
+import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from './evidence'
+import { prepareEntryInferenceInput } from './entry-inference-input'
+import { makeNativeChartEvidence } from './chart-evidence'
+import { makeInitialChartStageRequest, stagedChartQuestionPolicy } from './staged-chart-questions'
+import { entryJudgmentPolicy } from './entry-questions'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { evaluationRequestFixture } from './test-support'
 import { entryEvaluationRequestFixture, entryCompletionFixture } from './entry-inference.test-support'
@@ -51,6 +55,73 @@ const planMaterial = {
   ],
 }
 const plan = Result.getOrThrow(makeJevBatchPlan(planMaterial))
+test('120-bar funded batch admission binds bounded CHART and complete selected-start policy', () => {
+  const original = entryEvaluationRequestFixture()
+  const bars = Array.from({ length: 120 }, (_, index) => ({
+    minuteBeforeWindowEnd: 120 - index,
+    open: 100,
+    high: index === 119 ? 108 : 102,
+    low: 97,
+    close: index === 119 ? 104 : 101,
+    volume: 100,
+  }))
+  const prepared = Result.getOrThrow(
+    prepareEntryInferenceInput({
+      ...original.request,
+      chartSource: { ...original.request.chartSource, bars },
+      numericalState: { ...original.request.numericalState, candidate: { symbol: original.symbol, bars1m: bars } },
+    }),
+  )
+  const { requestId: _requestId, ...material } = original
+  const current = Result.getOrThrow(
+    makeJevEvaluationRequest({ ...material, request: prepared.input, requestHash: prepared.requestHash }),
+  )
+  const candidates = [{ symbol: current.symbol, status: JevCandidatePlanStatus.Requested, request: current }]
+  const questionSetHash = Result.getOrThrow(jevBatchQuestionSetHash(candidates))
+  const chart = Result.getOrThrow(makeNativeChartEvidence(prepared.input.chartSource))
+  const visual = Result.getOrThrow(
+    makeInitialChartStageRequest({ chart, protocol: prepared.input.protocol, funding: prepared.input.funding }),
+  )
+  expect(questionSetHash).toBe(
+    Result.getOrThrow(
+      canonicalHashV1Result([
+        {
+          symbol: current.symbol,
+          visual: { model: visual.request.model, questions: visual.request.questions },
+          staged: { policy: stagedChartQuestionPolicy, inputHash: prepared.requestHash },
+          jev: entryJudgmentPolicy,
+        },
+      ]),
+    ),
+  )
+  const batch = Result.getOrThrow(
+    makeJevBatchPlan({
+      ...planMaterial,
+      cycleId: current.cycleId,
+      authorityGenerationHash: current.authorityGenerationHash,
+      snapshotId: current.snapshotId,
+      observedAt: current.observedAt,
+      expiresAt: current.expiresAt,
+      candidates,
+      questionSetHash,
+    }),
+  )
+  expect(Result.isSuccess(decodeJevBatchPlan(batch))).toBe(true)
+  const { batchId: _batchId, ...batchMaterial } = batch
+  const forged = {
+    ...batchMaterial,
+    questionSetHash: Result.getOrThrow(
+      canonicalHashV1Result([
+        {
+          symbol: current.symbol,
+          visual: { model: visual.request.model, questions: visual.request.questions },
+          jev: entryJudgmentPolicy,
+        },
+      ]),
+    ),
+  }
+  expect(Result.isFailure(makeJevBatchPlan(forged))).toBe(true)
+})
 const at = (ms: number) => new Date(ms).toISOString()
 const resultMaterial = (
   batch: JevBatchPlan = plan,
@@ -66,7 +137,7 @@ const resultMaterial = (
       return { symbol: candidate.symbol, status: JevCandidateResultStatus.Excluded }
     const receipt = Result.getOrThrow(
       makeJevEvaluationReceipt(candidate.request, {
-        schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+        schemaVersion: 'bayn.jev-evaluation-receipt.v3',
         requestId: candidate.request.requestId,
         startedAt: at(0),
         completedAt: at((index + 1) * 100),
@@ -254,7 +325,7 @@ describe('complete Jev batch evidence', () => {
   test('a failed candidate remains explicit and prevents using only the successful candidate', () => {
     const failedReceipt = Result.getOrThrow(
       makeJevEvaluationReceipt(second, {
-        schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+        schemaVersion: 'bayn.jev-evaluation-receipt.v3',
         requestId: second.requestId,
         startedAt: at(0),
         completedAt: at(300),

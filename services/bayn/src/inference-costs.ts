@@ -19,6 +19,8 @@ import {
   decodeChartCheckpointForSource,
   verifyChartCheckpointHandoff,
 } from './jev/chart-checkpoint'
+import { StagedCheckpointSchema } from './jev/staged-checkpoint'
+import { readStagedInferenceCostEvidence } from './jev/staged-inference-cost-evidence'
 
 export class InferenceCostError extends Data.TaggedError('InferenceCostError')<{
   readonly message: string
@@ -41,6 +43,7 @@ export enum InferencePurpose {
 }
 export enum InferenceStage {
   Chart = 'CHART',
+  BaseStart = 'BASE_START',
   Jev = 'JEV',
 }
 
@@ -76,9 +79,14 @@ export const InferenceCostRequestSchema = Schema.Struct({
   resolution: Schema.NullOr(Schema.Unknown),
   handoff: Schema.NullOr(Schema.Unknown),
   chartCheckpoint: Schema.optionalKey(ChartCheckpointSchema),
+  stagedCheckpoint: Schema.optionalKey(StagedCheckpointSchema),
 })
 export const InferenceCostEvidenceSchema = Schema.Struct({
-  schemaVersion: Schema.Literals(['bayn.inference-cost-evidence.v2', 'bayn.inference-cost-evidence.v3']),
+  schemaVersion: Schema.Literals([
+    'bayn.inference-cost-evidence.v2',
+    'bayn.inference-cost-evidence.v3',
+    'bayn.inference-cost-evidence.v4',
+  ]),
   accountBindingHash: Sha256Schema,
   sessionDate: IsoDateSchema,
   asOf: UtcInstantSchema,
@@ -122,7 +130,7 @@ const LineCommon = {
 export const HistoricalInferenceCostLineSchema = Schema.Struct(LineCommon)
 export const StagedInferenceCostLineSchema = Schema.Struct({
   ...LineCommon,
-  stage: Schema.Enum(InferenceStage),
+  stage: Schema.Literals([InferenceStage.Chart, InferenceStage.Jev]),
   handoffHash: Schema.NullOr(Sha256Schema),
   cachedInputTokens: Schema.NullOr(UnsignedMicrosSchema),
   cacheWriteInputTokens: Schema.NullOr(UnsignedMicrosSchema),
@@ -133,14 +141,26 @@ export const CheckpointInferenceCostLineSchema = Schema.Struct({
   chartClaimHash: Sha256Schema,
   chartTerminalHash: Schema.NullOr(Sha256Schema),
 })
+export const ThreeStageInferenceCostLineSchema = Schema.Struct({
+  ...StagedInferenceCostLineSchema.fields,
+  stage: Schema.Enum(InferenceStage),
+  stageClaimHash: Schema.NullOr(Sha256Schema),
+  stageTerminalHash: Schema.NullOr(Sha256Schema),
+  stageSkipHash: Schema.NullOr(Sha256Schema),
+})
 export const InferenceCostLineSchema = Schema.Union([
+  ThreeStageInferenceCostLineSchema,
   CheckpointInferenceCostLineSchema,
   StagedInferenceCostLineSchema,
   HistoricalInferenceCostLineSchema,
 ])
 export type InferenceCostLine = typeof InferenceCostLineSchema.Type
 export const inferenceStageKey = (line: Pick<InferenceCostLine, 'requestId'> & { readonly stage?: InferenceStage }) =>
-  line.stage === InferenceStage.Chart ? `${line.requestId}:CHART` : line.requestId
+  line.stage === InferenceStage.Chart
+    ? `${line.requestId}:CHART`
+    : line.stage === InferenceStage.BaseStart
+      ? `${line.requestId}:BASE_START`
+      : line.requestId
 
 interface Usage {
   readonly inputTokens: bigint
@@ -172,6 +192,9 @@ type Stage = {
   readonly resolutionHash: string | null
   readonly chartClaimHash?: string
   readonly chartTerminalHash?: string | null
+  readonly stageClaimHash?: string | null
+  readonly stageTerminalHash?: string | null
+  readonly stageSkipHash?: string | null
 }
 const failure = (message: string) => Result.fail(new InferenceCostError({ message }))
 
@@ -179,9 +202,80 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
   Result.gen(function* () {
     const version = yield* Schema.decodeUnknownResult(
       Schema.Struct({
-        schemaVersion: Schema.Literals(['bayn.jev-evaluation-request.v1', 'bayn.jev-evaluation-request.v2']),
+        schemaVersion: Schema.Literals([
+          'bayn.jev-evaluation-request.v1',
+          'bayn.jev-evaluation-request.v2',
+          'bayn.jev-evaluation-request.v3',
+        ]),
       }),
     )(row.request)
+    if (version.schemaVersion === 'bayn.jev-evaluation-request.v3') {
+      if (row.chartCheckpoint !== undefined || row.stagedCheckpoint === undefined)
+        return yield* failure('Staged requests require their explicit journal, not a historical chart checkpoint')
+      const { request, receipt, resolution, handoff, visualStages } = yield* readStagedInferenceCostEvidence({
+        ...row,
+        stagedCheckpoint: row.stagedCheckpoint,
+      })
+      const visual: Stage[] = visualStages.map((stage) => ({
+        stage: stage.stage === 'CHART' ? InferenceStage.Chart : InferenceStage.BaseStart,
+        provider: 'openai',
+        model: decisionsModel,
+        purpose: InferencePurpose.Entry,
+        startedAt: stage.startedAt,
+        usage:
+          stage.outcome === 'NOT_DISPATCHED'
+            ? notDispatched()
+            : stage.usage === null
+              ? null
+              : {
+                  ...usage(
+                    stage.usage,
+                    stage.outcome === 'RECEIVED' ? InferenceUsageStatus.Received : InferenceUsageStatus.Rejected,
+                  ),
+                  cachedInputTokens: BigInt(stage.usage.input_tokens_details.cached_tokens),
+                  cacheWriteInputTokens: BigInt(stage.usage.input_tokens_details.cache_write_tokens),
+                },
+        stageClaimHash: stage.claimHash,
+        stageTerminalHash: stage.terminalHash,
+        stageSkipHash: stage.skipHash,
+        handoffHash: stage.handoffHash,
+        receiptHash: stage.receiptHash,
+        resolutionHash: stage.resolutionHash,
+      }))
+      const zero = receipt?.outcome.status === JevOutcome.Failed && receipt.outcome.failure === JevFailure.NotDispatched
+      const skipped = handoff !== null && handoff.disposition.status !== 'READY'
+      let jevUsage: Usage | null = zero || skipped ? notDispatched() : null
+      let startedAt: string | undefined
+      if (receipt?.outcome.status === JevOutcome.Completed) {
+        const result = receipt.outcome.completion.jev
+        if (result.status === 'RECEIVED') {
+          jevUsage = usage(result.inference.response.usage, InferenceUsageStatus.Received)
+          startedAt = result.inference.startedAt
+        } else if (result.status === 'FAILED') {
+          jevUsage = result.usage === null ? null : usage(result.usage, InferenceUsageStatus.Rejected)
+          startedAt = handoff?.recordedAt
+        } else jevUsage = notDispatched()
+      }
+      const stages: readonly Stage[] = [
+        ...visual,
+        {
+          stage: InferenceStage.Jev,
+          provider: 'typesafe',
+          model: jevModel,
+          purpose: InferencePurpose.Entry,
+          usage: jevUsage,
+          startedAt,
+          handoffHash: handoff?.handoffHash ?? null,
+          receiptHash: skipped ? null : (receipt?.receiptHash ?? null),
+          resolutionHash: skipped ? null : (resolution?.resolutionHash ?? null),
+          stageClaimHash: null,
+          stageTerminalHash: null,
+          stageSkipHash: null,
+        },
+      ]
+      return { request, receipt, resolution, handoffAt: handoff?.recordedAt ?? null, stages }
+    }
+    if (row.stagedCheckpoint !== undefined) return yield* failure('Historical requests cannot carry staged checkpoints')
     if (version.schemaVersion === 'bayn.jev-evaluation-request.v1') {
       if (row.chartCheckpoint !== undefined) return yield* failure('Historical requests cannot carry chart checkpoints')
       if (row.handoff !== null)
@@ -406,7 +500,10 @@ export interface InferenceCostReport {
 }
 
 export type DecodedInferenceCostRequest = typeof InferenceCostRequestSchema.Type & {
-  readonly requestSchemaVersion: 'bayn.jev-evaluation-request.v1' | 'bayn.jev-evaluation-request.v2'
+  readonly requestSchemaVersion:
+    | 'bayn.jev-evaluation-request.v1'
+    | 'bayn.jev-evaluation-request.v2'
+    | 'bayn.jev-evaluation-request.v3'
   readonly sourceFingerprint: string
   readonly stages: readonly Stage[]
 }
@@ -415,6 +512,7 @@ export type DecodedInferenceCostEvidence = Omit<InferenceCostEvidence, 'schemaVe
     | 'bayn.inference-cost-evidence.v1'
     | 'bayn.inference-cost-evidence.v2'
     | 'bayn.inference-cost-evidence.v3'
+    | 'bayn.inference-cost-evidence.v4'
   readonly requests: readonly DecodedInferenceCostRequest[]
 }
 
@@ -428,6 +526,13 @@ export const decodeInferenceCostRequest = (input: unknown, asOf: string) =>
         (row.chartCheckpoint.terminal !== null && row.chartCheckpoint.terminal.recordedAt > asOf))
     )
       return yield* failure('Chart checkpoint exceeds the financial snapshot cut')
+    if (
+      row.stagedCheckpoint !== undefined &&
+      (row.stagedCheckpoint.claims.some((claim) => claim.claimedAt > asOf) ||
+        row.stagedCheckpoint.terminals.some((terminal) => terminal.recordedAt > asOf) ||
+        row.stagedCheckpoint.skips.some((skip) => skip.recordedAt > asOf))
+    )
+      return yield* failure('Staged checkpoint exceeds the financial snapshot cut')
     const graph = yield* costStages(row)
     const { request, receipt, resolution } = graph
     if (
@@ -470,9 +575,15 @@ export const decodeInferenceCostEvidence = (input: unknown) =>
     const requests = yield* Result.all(sourceRows.map((row) => decodeInferenceCostRequest(row, evidence.asOf)))
     if (
       evidence.schemaVersion !== 'bayn.inference-cost-evidence.v3' &&
+      evidence.schemaVersion !== 'bayn.inference-cost-evidence.v4' &&
       requests.some((row) => row.chartCheckpoint !== undefined)
     )
       return yield* failure('Chart checkpoints require versioned financial evidence')
+    if (
+      evidence.schemaVersion !== 'bayn.inference-cost-evidence.v4' &&
+      requests.some((row) => row.stagedCheckpoint !== undefined)
+    )
+      return yield* failure('Three-stage requests require versioned financial evidence')
     if (
       evidence.schemaVersion === 'bayn.inference-cost-evidence.v1' &&
       requests.some((row) => row.requestSchemaVersion !== 'bayn.jev-evaluation-request.v1')
@@ -564,20 +675,33 @@ export const makeInferenceCostReport = (
           rateHash: priced?.rateHash ?? null,
           estimatedCostPicoUsd: cost?.toString() ?? null,
         }
-        lines.push(
-          stage.stage === null
-            ? common
-            : {
-                ...common,
-                stage: stage.stage,
-                ...(stage.chartClaimHash === undefined
-                  ? {}
-                  : { chartClaimHash: stage.chartClaimHash, chartTerminalHash: stage.chartTerminalHash ?? null }),
-                handoffHash: stage.handoffHash,
-                cachedInputTokens: measured?.cachedInputTokens.toString() ?? null,
-                cacheWriteInputTokens: measured?.cacheWriteInputTokens.toString() ?? null,
-              },
-        )
+        const metering = {
+          handoffHash: stage.handoffHash,
+          cachedInputTokens: measured?.cachedInputTokens.toString() ?? null,
+          cacheWriteInputTokens: measured?.cacheWriteInputTokens.toString() ?? null,
+        }
+        if (stage.stage === null) lines.push(common)
+        else if (stage.stageClaimHash !== undefined)
+          lines.push({
+            ...common,
+            ...metering,
+            stage: stage.stage,
+            stageClaimHash: stage.stageClaimHash,
+            stageTerminalHash: stage.stageTerminalHash ?? null,
+            stageSkipHash: stage.stageSkipHash ?? null,
+          })
+        else {
+          if (stage.stage === InferenceStage.BaseStart)
+            return yield* failure('Base start expense requires a versioned stage identity')
+          lines.push({
+            ...common,
+            ...metering,
+            stage: stage.stage,
+            ...(stage.chartClaimHash === undefined
+              ? {}
+              : { chartClaimHash: stage.chartClaimHash, chartTerminalHash: stage.chartTerminalHash ?? null }),
+          })
+        }
         if (measured === null) unknownUsageCount++
         else {
           inputTokens += measured.inputTokens
@@ -603,6 +727,13 @@ export const makeInferenceCostReport = (
         resolutionHash: line.resolutionHash,
         ...('chartClaimHash' in line
           ? { chartClaimHash: line.chartClaimHash, chartTerminalHash: line.chartTerminalHash }
+          : {}),
+        ...('stageClaimHash' in line
+          ? {
+              stageClaimHash: line.stageClaimHash,
+              stageTerminalHash: line.stageTerminalHash,
+              stageSkipHash: line.stageSkipHash,
+            }
           : {}),
       })),
     })

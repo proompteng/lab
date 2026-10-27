@@ -7,11 +7,12 @@ import { EntryInferenceJournal, type EntryHandoff } from '../jev/entry-inference
 import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { strictParseOptions } from '../schemas'
 import {
-  decodeChartCheckpoint,
-  verifyChartCheckpointHandoff,
-  type ChartDispatchClaim,
-  type ChartTerminalReceipt,
-} from '../jev/chart-checkpoint'
+  decodeStagedCheckpoint,
+  type StagedDispatchClaim,
+  type StagedTerminalReceipt,
+  type StagedSkipReceipt,
+} from '../jev/staged-checkpoint'
+import { verifyStagedCheckpointHandoff } from '../jev/staged-inference-cost-evidence'
 
 export const makeEntryInferenceJournal = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -22,29 +23,55 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
       message: 'Provider handoff could not be durably verified',
       cause,
     })
+  const load = (requestId: string) =>
+    Effect.gen(function* () {
+      const [row] = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]))(
+        yield* sql`SELECT payload FROM jev_evaluation_requests WHERE request_id=${requestId} FOR UPDATE`,
+      )
+      const rows = (values: unknown) =>
+        Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ payload: Schema.Unknown })))(values)
+      const claims = yield* rows(
+        yield* sql`SELECT payload FROM jev_staged_dispatch_claims WHERE request_id=${requestId} ORDER BY stage`,
+      )
+      const terminals = yield* rows(
+        yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${requestId} ORDER BY stage`,
+      )
+      const skips = yield* rows(
+        yield* sql`SELECT payload FROM jev_staged_skip_receipts WHERE request_id=${requestId} ORDER BY stage`,
+      )
+      const checkpoint = yield* Effect.fromResult(
+        decodeStagedCheckpoint(row.payload, {
+          claims: claims.map((row) => row.payload),
+          terminals: terminals.map((row) => row.payload),
+          skips: skips.map((row) => row.payload),
+        }),
+      )
+      return { request: row.payload, checkpoint }
+    })
   return {
-    recordChartClaim: (input: ChartDispatchClaim) =>
+    recordVisualClaim: (input: StagedDispatchClaim) =>
       Effect.gen(function* () {
         if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
-          return yield* failed('Chart admission must commit independently before provider I/O')
+          return yield* failed('Visual admission must commit independently before provider I/O')
         return yield* sql.withTransaction(
           Effect.gen(function* () {
-            const [row] = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]))(
-              yield* sql`SELECT payload FROM jev_evaluation_requests WHERE request_id=${input.requestId} FOR UPDATE`,
+            const { request, checkpoint } = yield* load(input.requestId)
+            const existing = checkpoint.claims.find((row) => row.stage === input.stage)
+            yield* Effect.fromResult(
+              decodeStagedCheckpoint(request, {
+                ...checkpoint,
+                claims: [...checkpoint.claims.filter((row) => row.stage !== input.stage), input],
+              }),
             )
-            const request = yield* Effect.fromResult(decodeJevEvaluationRequest(row.payload))
-            yield* Effect.fromResult(decodeChartCheckpoint(request, { claim: input, terminal: null }))
-            const existing =
-              yield* sql`SELECT payload FROM jev_chart_dispatch_claims WHERE request_id=${input.requestId}`
-            if (existing.length > 0) {
+            if (existing !== undefined) {
               yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
-                yield* sql`SELECT payload=${sql.json(input)} AS matches FROM jev_chart_dispatch_claims WHERE request_id=${input.requestId}`,
+                yield* sql`SELECT payload=${sql.json(input)} AS matches FROM jev_staged_dispatch_claims WHERE request_id=${input.requestId} AND stage=${input.stage}`,
               )
               return { dispatchAllowed: false }
             }
-            const rows = yield* sql`INSERT INTO jev_chart_dispatch_claims (request_id, claim_hash, payload)
-          SELECT ${input.requestId}, ${input.claimHash}, ${sql.json(input)}
-          FROM jev_evaluation_requests AS request JOIN autonomous_cycles AS cycle USING (cycle_id)
+            const rows = yield* sql`INSERT INTO jev_staged_dispatch_claims (request_id, stage, claim_hash, payload)
+          SELECT ${input.requestId}, ${input.stage}, ${input.claimHash}, ${sql.json(input)}
+          FROM jev_evaluation_requests request JOIN autonomous_cycles cycle USING(cycle_id)
           WHERE request.request_id=${input.requestId}
             AND execution_account_commit_now(cycle.account_id) < ${input.expiresAt}::timestamptz
             AND NOT EXISTS (SELECT 1 FROM jev_evaluation_resolutions WHERE request_id=${input.requestId})
@@ -54,26 +81,41 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
           }),
         )
       }).pipe(Effect.mapError(failed)),
-    recordChartTerminal: (input: ChartTerminalReceipt) =>
+    recordVisualTerminal: (input: StagedTerminalReceipt) =>
       Effect.gen(function* () {
         if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
-          return yield* failed('Chart terminal evidence must commit independently before the handoff')
+          return yield* failed('Visual terminal evidence must commit independently before its successor')
         yield* sql.withTransaction(
           Effect.gen(function* () {
-            const [row] = yield* Schema.decodeUnknownEffect(
-              Schema.Tuple([Schema.Struct({ request: Schema.Unknown, claim: Schema.Unknown })]),
-            )(
-              yield* sql`SELECT request.payload AS request, claim.payload AS claim
-            FROM jev_evaluation_requests request JOIN jev_chart_dispatch_claims claim USING (request_id)
-            WHERE request.request_id=${input.requestId} FOR UPDATE OF request`,
+            const { request, checkpoint } = yield* load(input.requestId)
+            yield* Effect.fromResult(
+              decodeStagedCheckpoint(request, {
+                ...checkpoint,
+                terminals: [...checkpoint.terminals.filter((row) => row.stage !== input.stage), input],
+              }),
             )
-            const request = yield* Effect.fromResult(decodeJevEvaluationRequest(row.request))
-            yield* Effect.fromResult(decodeChartCheckpoint(request, { claim: row.claim, terminal: input }))
-            yield* sql`INSERT INTO jev_chart_terminal_receipts (request_id, claim_hash, terminal_hash, payload)
-          VALUES (${input.requestId},${input.claimHash},${input.terminalHash},${sql.json(input)})
-          ON CONFLICT (request_id) DO NOTHING`
+            yield* sql`INSERT INTO jev_staged_terminal_receipts (request_id,stage,claim_hash,terminal_hash,payload)
+          VALUES (${input.requestId},${input.stage},${input.claimHash},${input.terminalHash},${sql.json(input)})
+          ON CONFLICT(request_id,stage) DO NOTHING`
             yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
-              yield* sql`SELECT payload=${sql.json(input)} AS matches FROM jev_chart_terminal_receipts WHERE request_id=${input.requestId}`,
+              yield* sql`SELECT payload=${sql.json(input)} AS matches FROM jev_staged_terminal_receipts WHERE request_id=${input.requestId} AND stage=${input.stage}`,
+            )
+          }),
+        )
+      }).pipe(Effect.mapError(failed)),
+    recordBaseStartSkip: (input: StagedSkipReceipt) =>
+      Effect.gen(function* () {
+        if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
+          return yield* failed('Visual skip evidence must commit independently before its successor')
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const { request, checkpoint } = yield* load(input.requestId)
+            yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [input] }))
+            yield* sql`INSERT INTO jev_staged_skip_receipts (request_id,stage,skip_hash,payload)
+          VALUES (${input.requestId},${input.stage},${input.skipHash},${sql.json(input)})
+          ON CONFLICT(request_id,stage) DO NOTHING`
+            yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
+              yield* sql`SELECT payload=${sql.json(input)} AS matches FROM jev_staged_skip_receipts WHERE request_id=${input.requestId} AND stage=${input.stage}`,
             )
           }),
         )
@@ -100,17 +142,8 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
                 input,
               ),
             )
-            const checkpoints = yield* Schema.decodeUnknownEffect(
-              Schema.Array(Schema.Struct({ claim: Schema.Unknown, terminal: Schema.NullOr(Schema.Unknown) })),
-            )(
-              yield* sql`SELECT claim.payload AS claim, terminal.payload AS terminal
-                FROM jev_chart_dispatch_claims claim LEFT JOIN jev_chart_terminal_receipts terminal USING (request_id)
-                WHERE claim.request_id=${request.requestId}`,
-            )
-            for (const checkpoint of checkpoints) {
-              const verified = yield* Effect.fromResult(decodeChartCheckpoint(request, checkpoint))
-              yield* Effect.fromResult(verifyChartCheckpointHandoff(verified, handoff))
-            }
+            const { checkpoint } = yield* load(request.requestId)
+            yield* Effect.fromResult(verifyStagedCheckpointHandoff(checkpoint, handoff))
             const inserted = yield* Schema.decodeUnknownEffect(
               Schema.Array(Schema.Struct({ handoff_hash: Schema.String })),
               strictParseOptions,
