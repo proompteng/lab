@@ -1323,6 +1323,14 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       const observedAt = yield* now
       return yield* Effect.fromResult(makeReplayBrokerCheckpoint(config, yield* readState, observedAt))
     })
+    const advanceToArrival = config.advanceToArrival
+    const waitForSnapshotRetry = (milliseconds: number) =>
+      advanceToArrival === undefined
+        ? Effect.sleep(milliseconds)
+        : Clock.currentTimeMillis.pipe(
+            Effect.flatMap((at) => advanceToArrival(at + milliseconds)),
+            Effect.mapError((cause) => readFailure('preflight', 'Replay snapshot retry could not advance', cause)),
+          )
     return {
       accountId,
       sourceManifestHash: config.sourceManifestHash,
@@ -1332,7 +1340,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           fresh: read,
           invalidate: Effect.void,
           withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-          snapshot: readStableBrokerSnapshot(read, now).pipe(
+          snapshot: readStableBrokerSnapshot(read, now, waitForSnapshotRetry).pipe(
             Effect.mapError((cause) => readFailure('preflight', 'Replay broker snapshot failed', cause)),
           ),
           submissionSnapshot: () =>
