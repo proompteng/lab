@@ -407,7 +407,7 @@ the model with production behavior over explicit boundaries, exhaustive finite c
 They do not constitute a universal proof of the TypeScript compiler, PostgreSQL, broker or ledger implementation.
 
 Completion of the full execution scope requires the complete implementation mappings, reachable cases and database and
-distributed-system conformance checks specified in [the system assessment contract](../../../docs/bayn/system-assessment.md).
+distributed-system conformance checks described in [system assessment](../src/system-assessment/README.md).
 The mapped handoff, resolution, ordering and expense coverage checks above do not establish that the full integration,
 matched controls or native prospective evidence collection are complete.
 
