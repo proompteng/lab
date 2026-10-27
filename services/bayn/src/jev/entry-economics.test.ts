@@ -15,7 +15,7 @@ import { JevPurpose } from './portfolio'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import { checkProperty } from '../testing/property-test-support'
 import { maximumAllocatedBuyQuantities, maximumFundedBuyQuantities } from './entry-sizing'
-import { jevEntryEconomics } from './entry-economics'
+import { jevEntryEconomics, jevMaximumEntryAskMicros } from './entry-economics'
 import { defaultJevProtocolDocument } from './protocol'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
@@ -45,6 +45,24 @@ test('crypto funding binds the inference ask instead of spending the adverse-pri
   expect(defaultJevProtocolDocument.maximumEntryQuoteDriftBps).toBe(10)
   expect(defaultJevProtocolDocument.maximumEntryLimitSlippageBps).toBe(10)
   expect(defaultJevProtocolDocument.maximumHoldingMinutes).toBe(15)
+})
+
+test('the equity inference-ask ceiling uses the same broker tick as its funded buy limit', () => {
+  const economics = Result.getOrThrow(
+    jevEntryEconomics({
+      protocol: defaultJevProtocolDocument,
+      symbol: 'NVDA',
+      bidMicros: 10_199_000n,
+      askMicros: 10_201_000n,
+      capitalMicros: '100000000000',
+      cryptoFeeTier: null,
+    }),
+  )
+  if (economics === null) throw new Error('Expected a sized equity order')
+  expect(economics.maximumEntryPriceMicros).toBe('10210000')
+  expect(jevMaximumEntryAskMicros(defaultJevProtocolDocument, 'NVDA', 10_201_000n).toString()).toBe(
+    economics.maximumEntryPriceMicros,
+  )
 })
 
 test('retained v26 funding reproduces its original entry allowance and broker fee tier', () => {
@@ -98,6 +116,38 @@ test('the capped crypto order funds a source target that the former buy allowanc
     candidates({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v26' }).resistanceBarIds,
   ).toEqual([])
   expect(candidates(defaultJevProtocolDocument).resistanceBarIds).toEqual(['bar_2026-10-23T14:28:00.000Z'])
+})
+
+test('an equity buy capped at its inference ask funds the observed target without spending price allowances', () => {
+  const chart = Result.getOrThrow(
+    makeNativeChartEvidence({
+      symbol: 'AAPL',
+      windowEndAt: '2026-10-23T14:30:00.000Z',
+      bars: [
+        { minuteBeforeWindowEnd: 3, open: 100, high: 100.03, low: 99.8, close: 100, volume: 100 },
+        { minuteBeforeWindowEnd: 2, open: 100, high: 100.1, low: 99.9, close: 100.01, volume: 100 },
+        { minuteBeforeWindowEnd: 1, open: 100.01, high: 100.04, low: 99.99, close: 100, volume: 100 },
+      ],
+    }),
+  )
+  const candidates = (protocol: Parameters<typeof jevEntryEconomics>[0]['protocol']) => {
+    const economics = Result.getOrThrow(
+      jevEntryEconomics({
+        protocol,
+        symbol: chart.symbol,
+        bidMicros: 99_990_000n,
+        askMicros: 100_000_000n,
+        capitalMicros: '100000000000',
+        cryptoFeeTier: null,
+      }),
+    )
+    if (economics === null) throw new Error('Expected a sized equity order')
+    return Result.getOrThrow(makeEntrySourceCandidates({ chart, economics, protocol, bidMicros: 99_990_000n }))
+  }
+  expect(
+    candidates({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v27' }).resistanceBarIds,
+  ).toEqual([])
+  expect(candidates(defaultJevProtocolDocument).resistanceBarIds).toContain('bar_2026-10-23T14:28:00.000Z')
 })
 
 test('the sealed model state uses the account tier for entry and the maximum future exit fee', () => {
