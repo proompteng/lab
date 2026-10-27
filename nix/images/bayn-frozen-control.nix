@@ -6,7 +6,7 @@
 }:
 let
   # An immutable build input, independently authenticated by the original service Git tree in the compiler.
-  source = /. + (builtins.fetchGit {
+  source = /. + builtins.unsafeDiscardStringContext (builtins.fetchGit {
     url = "https://github.com/proompteng/lab.git";
     rev = "ef6a069fc121cbe54d148027fe091e3e7f58da9b";
     shallow = true;

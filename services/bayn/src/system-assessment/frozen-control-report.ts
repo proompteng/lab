@@ -1,5 +1,5 @@
 import { Result, Schema } from 'effect'
-import { OrderStatus } from '../broker/alpaca/model'
+import { OrderStatus, OrderType, TimeInForce } from '../broker/alpaca/model'
 import { canonicalHashV1Result } from '../hash'
 import { createReplayLedger, applyReplayFill, type EconomicReplayFill } from '../intraday-replay/ledger'
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
@@ -44,12 +44,12 @@ const Order = Schema.Struct({
   status: Schema.Enum(OrderStatus),
   quantityMicros: PositiveMicrosSchema,
   filledQuantityMicros: UnsignedMicrosSchema,
-  limitPriceMicros: PositiveMicrosSchema,
+  limitPriceMicros: Schema.optionalKey(PositiveMicrosSchema),
   submittedAt: UtcInstantSchema,
   updatedAt: UtcInstantSchema,
   orderClass: Schema.Literal('simple'),
-  orderType: Schema.Literal('limit'),
-  timeInForce: Schema.Literal('ioc'),
+  orderType: Schema.Literals([OrderType.Limit, OrderType.Market]),
+  timeInForce: Schema.Literals([TimeInForce.ImmediateOrCancel, TimeInForce.Day]),
   extendedHours: Schema.Literal(false),
 })
 const Ledger = Schema.Struct({
@@ -360,14 +360,20 @@ export const reproduceFrozenControlReport = (
       return yield* fail('Frozen broker activities omit or duplicate actual fills')
     for (const { order, execution } of orders.values()) {
       const instrument = input.executionInstruments[order.symbol]
+      if (instrument === undefined) return yield* fail('Frozen order has no registered instrument')
       const quantity = frozenQuantityAtoms(BigInt(order.quantityMicros))
-      const priceAtoms = BigInt(order.limitPriceMicros) * 1000n
+      const limit = order.limitPriceMicros
+      const validTerms =
+        order.orderType === OrderType.Limit
+          ? order.timeInForce === TimeInForce.ImmediateOrCancel &&
+            limit !== undefined &&
+            (BigInt(limit) * 1000n) % BigInt(instrument.priceIncrementAtoms) === 0n
+          : order.timeInForce === TimeInForce.Day && order.side === 'sell' && limit === undefined
       // The old model's declared precision may be finer; its actual terms must still obey the registered instrument.
       if (
-        instrument === undefined ||
+        !validTerms ||
         order.accountId !== report.brokerState.accountId ||
         quantity % BigInt(instrument.quantityIncrementAtoms) !== 0n ||
-        priceAtoms % BigInt(instrument.priceIncrementAtoms) !== 0n ||
         (order.side === 'buy' && quantity < BigInt(instrument.minimumQuantityAtoms)) ||
         ![...documents.values()].some(
           ({ document, release }) =>
@@ -409,6 +415,7 @@ export const reproduceFrozenControlReport = (
       const fills = report.brokerState.ledger.fills.filter((fill) => fill.brokerOrderId === order.brokerOrderId)
       if (
         fills.length > 1 ||
+        (fills.length > 0 && arrival.outcome.status !== 'filled') ||
         fills.reduce((total, fill) => total + BigInt(fill.quantityMicros), 0n) !== BigInt(order.filledQuantityMicros)
       )
         return yield* fail('Frozen fills exceed or disagree with their retained order')
@@ -458,9 +465,8 @@ export const reproduceFrozenControlReport = (
           frozenQuantityAtoms(BigInt(fill.quantityMicros)) % BigInt(instrument.quantityIncrementAtoms) !== 0n ||
           price !== expectedPrice ||
           (price * 1000n) % BigInt(instrument.priceIncrementAtoms) !== 0n ||
-          (order.side === 'buy'
-            ? price < top || price > BigInt(order.limitPriceMicros)
-            : price > top || price < BigInt(order.limitPriceMicros))
+          (order.side === 'buy' ? price < top : price > top) ||
+          (limit !== undefined && (order.side === 'buy' ? price > BigInt(limit) : price < BigInt(limit)))
         )
           return yield* fail('Frozen fill invents liquidity, price improvement or execution before source availability')
       }
