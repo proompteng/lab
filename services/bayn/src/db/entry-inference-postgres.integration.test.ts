@@ -1,3 +1,4 @@
+import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -27,6 +28,7 @@ import {
 } from '../jev/entry-inference.test-support'
 import { makeStagedDispatchClaim, makeStagedTerminalReceipt, makeStagedSkipReceipt } from '../jev/staged-checkpoint'
 import stagedChartTransport from '../../migrations/0153_staged_chart_transport'
+import { retainedStagedQuestionPolicyHash } from '../jev/staged-inference-cost-evidence'
 import { DecisionsClient } from '../jev/decisions'
 import { JevClient } from '../jev/client'
 import { prepareJevRequest } from '../jev/contract'
@@ -241,6 +243,74 @@ integration('committed sequential provider handoff', () => {
       }),
     )
   beforeEach(() => resetDatabase())
+
+  test('market policy cutover preserves original staged claims and rejects retired-policy requests and dispatch', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 154))),
+          table: 'schema_migrations',
+        })
+        yield* sql`INSERT INTO simulated_execution_clocks(account_id,source_manifest_hash,observed_at)
+        VALUES (${replayAccountId},${replaySourceHash},${request.observedAt})`
+        yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
+        yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
+        VALUES (${request.authorityGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,${request.observedAt})`
+        const { requestId: _, ...current } = request
+        const input = {
+          ...request.request,
+          protocol: { ...request.request.protocol, entryQuestionPolicyHash: retainedStagedQuestionPolicyHash },
+        }
+        const material = { ...current, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
+        const original = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }
+        yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+        VALUES (${original.requestId},${original.cycleId},${original.authorityGenerationHash},${sql.json(original)})`
+        const checkpoint = stagedCheckpointFixture(request)
+        const first = checkpoint.claims[0]
+        const completed = checkpoint.terminals[0]
+        if (first === undefined || completed === undefined) throw new Error('Expected a staged chart fixture')
+        const { claimHash: _claimHash, ...claimMaterial } = first
+        const claim = Result.getOrThrow(makeStagedDispatchClaim({ ...claimMaterial, requestId: original.requestId }))
+        yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+        VALUES (${original.requestId},'CHART',${claim.claimHash},${sql.json(claim)})`
+        yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+        UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
+          updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${original.cycleId}`
+        const before =
+          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${original.requestId}`
+        yield* sql.withTransaction(marketEntryQuestions)
+        expect(
+          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${original.requestId}`,
+        ).toEqual(before)
+        expect(
+          yield* sql`SELECT payload FROM jev_staged_dispatch_claims WHERE request_id=${original.requestId}`,
+        ).toEqual([{ payload: claim }])
+        const rejectedRequest =
+          yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+        VALUES (${'d'.repeat(64)},${original.cycleId},${original.authorityGenerationHash},${sql.json({ ...original, requestId: 'd'.repeat(64) })})`.pipe(
+            Effect.result,
+          )
+        expect(Result.isFailure(rejectedRequest)).toBe(true)
+        const rejectedClaim = yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+        VALUES (${original.requestId},'CHART',${claim.claimHash},${sql.json(claim)})`.pipe(Effect.result)
+        if (Result.isSuccess(rejectedClaim)) throw new Error('Retired staged policy was allowed to dispatch')
+        yield* Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.Literal('23514') }))(
+          rejectedClaim.failure.reason.cause,
+        )
+        const { terminalHash: _terminalHash, ...terminalMaterial } = completed
+        const terminal = Result.getOrThrow(
+          makeStagedTerminalReceipt({ ...terminalMaterial, requestId: original.requestId, claimHash: claim.claimHash }),
+        )
+        yield* sql`INSERT INTO jev_staged_terminal_receipts(request_id,stage,claim_hash,terminal_hash,payload)
+        VALUES (${original.requestId},'CHART',${claim.claimHash},${terminal.terminalHash},${sql.json(terminal)})`
+        expect(
+          yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${original.requestId}`,
+        ).toEqual([{ payload: terminal }])
+      }),
+    ))
 
   test('one chart admission survives a crash and later metering upgrades discovery without double charging', async () => {
     await resetDatabase(true, expiredFixture, expiredRequest, expiredBatch)
@@ -1017,6 +1087,7 @@ integration('committed sequential provider handoff', () => {
           const before =
             yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${historical.requestId}`
           yield* sql.withTransaction(stagedChartTransport)
+          yield* sql.withTransaction(marketEntryQuestions)
           expect(
             yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${historical.requestId}`,
           ).toEqual(before)
@@ -1147,6 +1218,7 @@ integration('committed sequential provider handoff', () => {
   test.each([
     ['relative-chart-volume', relativeChartVolume],
     ['staged-chart-transport', stagedChartTransport],
+    ['market-entry-question', marketEntryQuestions],
     ['conditional-base-anchor', conditionalBaseAnchors],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(

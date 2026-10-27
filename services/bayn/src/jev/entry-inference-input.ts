@@ -1,6 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { CryptoFeeTierSchema } from '../broker/crypto-fees'
+import { instrumentMarket, MarketKind } from '../instruments'
 import { canonicalHashV1Result, canonicalJsonWithHashV1Result } from '../hash'
 import { SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { ChartSourceSchema, decodeChartSource } from './chart-evidence'
@@ -71,6 +72,8 @@ export const verifyEntryInferenceSource = (value: EntryInferenceMaterial) =>
 export const prepareEntryInferenceInput = (input: unknown) =>
   Result.gen(function* () {
     const value = yield* Schema.decodeUnknownResult(EntryInferenceInputSchema, strictParseOptions)(input)
+    if (instrumentMarket(value.chartSource.symbol) === MarketKind.Equity && value.funding.cryptoFeeTier !== null)
+      return yield* Result.fail(new JevContractError({ message: 'Equity funding cannot carry a crypto fee tier' }))
     const prepared = yield* verifyEntryInferenceSource(value)
     const detached = yield* Schema.decodeUnknownResult(Schema.fromJsonString(EntryInferenceInputSchema))(prepared.body)
     return { input: detached, ...prepared }

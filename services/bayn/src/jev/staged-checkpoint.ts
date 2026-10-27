@@ -10,7 +10,7 @@ import {
   decodeDecisionsResponse,
   validDecisionsUsage,
 } from './decisions'
-import { decodeJevEvaluationRequest } from './evidence'
+import { decodeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from './staged-chart-questions'
 import { hasFeasibleEntrySource } from './entry-inference'
 
@@ -103,8 +103,12 @@ export const stageResponseIdentity = (inference: typeof DecisionsInferenceSchema
 // Decode the whole journal, including every row, before deriving expense cuts.
 // A missing claim or terminal is uncertainty, never evidence of non-dispatch.
 export const decodeStagedCheckpoint = (requestInput: unknown, input: unknown) =>
+  decodeJevEvaluationRequest(requestInput).pipe(
+    Result.flatMap((request) => decodeStagedCheckpointForRequest(request, input)),
+  )
+
+export const decodeStagedCheckpointForRequest = (request: JevEvaluationRequest, input: unknown) =>
   Result.gen(function* () {
-    const request = yield* decodeJevEvaluationRequest(requestInput)
     const checkpoint = yield* Schema.decodeUnknownResult(StagedCheckpointSchema, strictParseOptions)(input)
     for (const rows of [checkpoint.claims, checkpoint.terminals, checkpoint.skips])
       if (new Set(rows.map((row) => row.stage)).size !== rows.length)

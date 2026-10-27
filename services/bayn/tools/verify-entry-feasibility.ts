@@ -18,7 +18,7 @@ import {
 } from '../src/jev/entry-inference'
 import { makeJevEvaluationReceipt, makeJevEvaluationRequest, JevOutcome } from '../src/jev/evidence'
 import { readSequentialInferenceCostEvidence } from '../src/jev/sequential-inference-cost-evidence'
-import { makeEntryJudgmentRequest } from '../src/jev/entry-questions'
+import { makeRetainedFundedEntryJudgmentRequest as makeEntryJudgmentRequest } from '../src/jev/retained-funded-entry-questions'
 import { makeRetainedEntryJudgmentRequest } from '../src/jev/retained-entry-questions'
 import { defaultJevProtocolDocument } from '../src/jev/protocol'
 import { InferenceUsageStatus } from '../src/inference-costs'
