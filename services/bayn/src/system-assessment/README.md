@@ -115,6 +115,9 @@ The replay mutation store advances its owned clock to a committed admission time
 to the coordinator. Standard and recovery drivers use this same store. Routing snapshots read the clock passively;
 the existing submission synchronization determines dispatch time once. This preserves causal admission evidence and
 the original market-arrival sequence while retaining complete routing receipts.
+Concurrent recovery may invalidate a cached reconciliation before submission. The guard retains a durable denial
+before dispatch; recovery must reconcile again before closing. The runtime regression binds every additional rejected
+close to that exact observed conflict and verifies no broker order, duplicate fill, or accounting effect.
 
 `bindSystemSourceCut` constructs session economics and operational obligations from that cut. Cash and inventory
 reconcile against fills, cost basis, funding, passive yield, and paid operating expenses. Opening, closing, minute,

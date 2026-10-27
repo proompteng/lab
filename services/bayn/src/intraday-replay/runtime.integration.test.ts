@@ -1359,6 +1359,7 @@ durableTest.each(
                   ),
             ),
           )
+          const reconciliationConflicts = new Set<string>()
           let lostResponses = 0
           const submitResponseLost = yield* Deferred.make<void>()
           const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
@@ -1413,7 +1414,17 @@ durableTest.each(
                   writerFence: fence,
                   persistedCapitalGrants: grants,
                   verifyBrokerStateVersion: (version, intentId, requireCryptoEntryFeeBound) =>
-                    verifyBrokerStateVersion(sql, accountId, version, intentId, requireCryptoEntryFeeBound),
+                    verifyBrokerStateVersion(sql, accountId, version, intentId, requireCryptoEntryFeeBound).pipe(
+                      Effect.tapError((cause) =>
+                        Effect.sync(() => {
+                          if (
+                            cause._tag === 'ReconciliationStoreError' &&
+                            cause.message === 'cached broker reconciliation version changed before submit'
+                          )
+                            reconciliationConflicts.add(intentId)
+                        }),
+                      ),
+                    ),
                   readFinalExecutionRiskContext: (at) => readFinalExecutionRiskContext(sql, accountId, at),
                 },
               })
@@ -1536,22 +1547,37 @@ durableTest.each(
             Record<string, unknown>
           >`SELECT (SELECT count(*)::int FROM intents WHERE account_id=${accountId}) AS intents, (SELECT count(*)::int FROM fills WHERE account_id=${accountId}) AS fills, (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
           const retainedIntents =
-            yield* sql`SELECT i.symbol,i.side,i.state,i.terminal_outcome,i.protection->>'_tag' AS protection,
-            r.outcome,r.reason_codes FROM intents i LEFT JOIN risk_decisions r ON r.decision_id=i.risk_decision_id
+            yield* sql`SELECT i.intent_id,i.client_order_id,i.symbol,i.side,i.state,i.terminal_outcome,i.protection->>'_tag' AS protection,
+            r.outcome,r.reason_codes,
+            (SELECT jsonb_agg(jsonb_build_object('type',e.event_type,'denial',e.denial_reason,'routing',e.routing)
+              ORDER BY e.sequence) FROM mutation_events e WHERE e.intent_id=i.intent_id) AS events
+            FROM intents i LEFT JOIN risk_decisions r ON r.decision_id=i.risk_decision_id
             WHERE i.account_id=${accountId} ORDER BY i.created_at,i.intent_id`
+          const rejected = retainedIntents.filter((row) => row['terminal_outcome'] === 'REJECTED')
+          expect(new Set(rejected.map((row) => row['intent_id']))).toEqual(reconciliationConflicts)
+          const brokerState = yield* broker.snapshot
+          for (const row of rejected) {
+            expect(row).toMatchObject({
+              side: 'SELL',
+              state: 'TERMINAL',
+              protection: null,
+              outcome: 'APPROVED',
+            })
+            expect(row['events']).toEqual([
+              { type: 'SUBMIT_STARTED', denial: null, routing: null },
+              { type: 'SUBMIT_DENIED', denial: SubmissionDenialReason.ReconciliationStoreError, routing: null },
+            ])
+            expect(brokerState.orders.some((order) => order.order.clientOrderId === row['client_order_id'])).toBe(false)
+          }
           expect(counts, JSON.stringify(retainedIntents)).toEqual([
             scenario === 'recovery-filled'
-              ? { intents: 3, fills: 2, transactions: 2 }
+              ? { intents: 3 + rejected.length, fills: 2, transactions: 2 }
               : { intents: 1, fills: 0, transactions: 0 },
           ])
           expect(
-            retainedIntents.map((row) => [
-              row['side'],
-              row['state'],
-              row['terminal_outcome'],
-              row['protection'],
-              row['outcome'],
-            ]),
+            retainedIntents
+              .filter((row) => row['terminal_outcome'] !== 'REJECTED')
+              .map((row) => [row['side'], row['state'], row['terminal_outcome'], row['protection'], row['outcome']]),
           ).toEqual(
             scenario === 'recovery-filled'
               ? [
@@ -1564,7 +1590,7 @@ durableTest.each(
           expect(
             yield* sql`SELECT count(*)::int AS denied FROM mutation_events e JOIN intents i USING(intent_id)
             WHERE i.account_id=${accountId} AND e.event_type='SUBMIT_DENIED'`,
-          ).toEqual([{ denied: 0 }])
+          ).toEqual([{ denied: rejected.length }])
           expect(final.brokerState.account.cashMicros).toBe((yield* broker.snapshot).ledger.cashMicros)
           return { _tag: 'Recovery' as const }
         }
