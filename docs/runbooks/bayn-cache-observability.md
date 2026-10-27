@@ -54,9 +54,15 @@ Fixed stage, operation, dependency, outcome, service, namespace and source-revis
 The OTLP resource identifies the pod. Cache keys, content hashes, account/order/cycle identifiers and raw errors
 are excluded from metric labels.
 
-- `bayn.valkey.put` includes queueing, SET and the complete required replica acknowledgement. Its child
+- `bayn.valkey.put` includes queueing, connection establishment, SET and the complete required replica acknowledgement. Its child
   `bayn.valkey.set` and `bayn.valkey.replica-ack` spans/histograms separate those components. The original single
   one-second command deadline, cancellation and one-replica requirement remain in force.
+- `bayn_valkey_queue_duration_seconds` measures only the wait for the single command permit, labeled by the
+  bounded operation and `acquired`, `interrupted` or `failed` outcome. `acquired` does not mean the command succeeded.
+  `bayn.valkey.connect` measures actual connection attempts only, not already-open connections; its operation
+  label identifies get/put/remove and its outcome distinguishes success, failure and interruption. All queueing
+  and connection work consumes the existing parent deadline. Component percentiles cannot be subtracted or summed;
+  compare distributions or inspect the same operation's trace rather than attributing a parent p99 to one component.
 - `bayn_valkey_reads_total` counts successful GET results as `hit` or `miss`. A required materialization miss still
   fails closed. Transport failures are counted separately in `bayn_valkey_failures_total` by bounded category.
 - `bayn_valkey_unacknowledged_waits_total` counts WAIT replies below one acknowledgement, including eventual

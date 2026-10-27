@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { NodeRedis } from '@effect/platform-node'
-import { ConfigProvider, Effect, Fiber, Layer, Metric, Option, Result } from 'effect'
+import { Clock, ConfigProvider, Effect, Fiber, Layer, Metric, Option, Result } from 'effect'
 import { PrometheusMetrics } from 'effect/observability'
+import { TestClock } from 'effect/testing'
 import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
+import { OperationDeadlineClock } from './operation-timeout'
 
 import {
   makeValkeyCache,
@@ -157,6 +159,222 @@ const runTransport = async <A, E>(
 }
 
 const operation = <A, E>(f: (cache: ValkeyCache['Service']) => Effect.Effect<A, E>) => Effect.flatMap(ValkeyCache, f)
+
+const observedClientFixture = (initiallyOpen: boolean) => {
+  let open = initiallyOpen
+  let reads = 0
+  let destroys = 0
+  let connections = 0
+  const readStarted = Promise.withResolvers<void>()
+  const readReply = Promise.withResolvers<null>()
+  const connectStarted = Promise.withResolvers<void>()
+  const connectReply = Promise.withResolvers<void>()
+  const client = {
+    get isOpen() {
+      return open
+    },
+    connect: async () => {
+      connections++
+      open = true
+      connectStarted.resolve()
+      await connectReply.promise
+    },
+    destroy: () => {
+      destroys++
+      open = false
+    },
+    withAbortSignal: () => ({
+      get: async () => {
+        reads++
+        readStarted.resolve()
+        return readReply.promise
+      },
+    }),
+  } as unknown as NodeRedis.NodeRedis['Service']['client']
+  return {
+    readStarted: readStarted.promise,
+    connectStarted: connectStarted.promise,
+    releaseRead: () => readReply.resolve(null),
+    releaseConnect: () => connectReply.resolve(),
+    disconnect: () => {
+      open = false
+    },
+    counts: () => ({ reads, destroys, connections }),
+    layer: Layer.effect(ValkeyCache, makeValkeyCache).pipe(
+      Layer.provide(Layer.succeed(NodeRedis.NodeRedis, { client, use: () => Effect.die('unused') })),
+    ),
+  }
+}
+
+const observedClientRun = <A, E>(
+  fixture: ReturnType<typeof observedClientFixture>,
+  effect: Effect.Effect<A, E, ValkeyCache>,
+) =>
+  effect.pipe(
+    Effect.provide(fixture.layer),
+    Effect.provideService(Metric.MetricRegistry, new Map()),
+    Effect.provide(TestClock.layer()),
+    Effect.runPromise,
+  )
+
+const metricSample = (text: string, metric: string, labels: Readonly<Record<string, string>>) => {
+  const rows = text
+    .split('\n')
+    .filter(
+      (line) =>
+        line.startsWith(`${metric}{`) &&
+        Object.entries(labels).every(([key, value]) => line.includes(`${key}="${value}"`)),
+    )
+  expect(rows).toHaveLength(1)
+  return Number(rows[0]?.split(' ').at(-1))
+}
+
+describe('Valkey queue and connection component observations', () => {
+  test('interruption during admitted queue recording preserves one sample and releases the permit', async () => {
+    const fixture = observedClientFixture(true)
+    const recording = Promise.withResolvers<void>()
+    const releaseClock = Promise.withResolvers<number>()
+    let clockReads = 0
+    await observedClientRun(
+      fixture,
+      Effect.gen(function* () {
+        const clock = yield* Clock.clockWith(Effect.succeed)
+        const controlledClock = {
+          ...clock,
+          currentTimeMillis: Effect.suspend(() => {
+            clockReads++
+            // Total stage start, queue start, then the admitted queue observation.
+            if (clockReads !== 3) return clock.currentTimeMillis
+            recording.resolve()
+            return Effect.promise(() => releaseClock.promise)
+          }),
+        }
+        const cache = yield* ValkeyCache
+        const interrupted = yield* cache
+          .get('bayn:private-recording')
+          .pipe(Effect.provideService(OperationDeadlineClock, controlledClock), Effect.forkChild)
+        yield* Effect.promise(() => recording.promise)
+        expect(clockReads).toBe(3)
+        // Signal synchronously while the clock read is suspended, before releasing it.
+        interrupted.interruptUnsafe()
+        releaseClock.resolve(0)
+        yield* Fiber.interrupt(interrupted)
+        expect(fixture.counts().reads).toBe(0)
+        expect(fixture.counts().connections).toBe(0)
+        const metrics = yield* PrometheusMetrics.format()
+        expect(
+          metricSample(metrics, 'bayn_valkey_queue_duration_seconds_count', { operation: 'get', outcome: 'acquired' }),
+        ).toBe(1)
+        expect(
+          metrics.split('\n').filter((line) => line.startsWith('bayn_valkey_queue_duration_seconds_count{')),
+        ).toHaveLength(1)
+        expect(metrics).not.toContain('bayn:private-')
+        // A second operation completes only if cancellation released the semaphore.
+        fixture.releaseConnect()
+        fixture.releaseRead()
+        expect(yield* cache.get('bayn:private-after-recording')).toEqual(Option.none())
+        expect(fixture.counts().reads).toBe(1)
+      }),
+    )
+  })
+
+  test('queued cancellation records only queue time and leaves the active socket alone', async () => {
+    const fixture = observedClientFixture(true)
+    const metrics = await observedClientRun(
+      fixture,
+      operation((cache) =>
+        Effect.gen(function* () {
+          const active = yield* cache.get('bayn:private-active').pipe(Effect.forkChild)
+          yield* Effect.promise(() => fixture.readStarted)
+          const queued = yield* cache.get('bayn:private-queued').pipe(Effect.forkChild)
+          yield* TestClock.adjust(200)
+          yield* Fiber.interrupt(queued)
+          expect(fixture.counts()).toEqual({ reads: 1, destroys: 0, connections: 0 })
+          fixture.releaseRead()
+          expect(Option.isNone(yield* Fiber.join(active))).toBe(true)
+          return yield* PrometheusMetrics.format()
+        }),
+      ),
+    )
+    expect(
+      metricSample(metrics, 'bayn_valkey_queue_duration_seconds_count', { operation: 'get', outcome: 'interrupted' }),
+    ).toBe(1)
+    expect(
+      metricSample(metrics, 'bayn_valkey_queue_duration_seconds_sum', { operation: 'get', outcome: 'interrupted' }),
+    ).toBeCloseTo(0.2)
+    expect(metrics).not.toContain('stage="bayn.valkey.connect"')
+    expect(
+      metricSample(metrics, 'bayn_valkey_queue_duration_seconds_count', { operation: 'get', outcome: 'acquired' }),
+    ).toBe(1)
+    expect(metrics).not.toContain('bayn:private-')
+  })
+
+  test('a delayed connection has one bounded component sample and is not repeated for an open client', async () => {
+    const fixture = observedClientFixture(false)
+    const metrics = await observedClientRun(
+      fixture,
+      operation((cache) =>
+        Effect.gen(function* () {
+          const pending = yield* cache.get('bayn:private-connect').pipe(Effect.forkChild)
+          yield* Effect.promise(() => fixture.connectStarted)
+          yield* TestClock.adjust(400)
+          expect(fixture.counts().reads).toBe(0)
+          fixture.releaseConnect()
+          yield* Effect.promise(() => fixture.readStarted)
+          fixture.releaseRead()
+          expect(Option.isNone(yield* Fiber.join(pending))).toBe(true)
+          expect(Option.isNone(yield* cache.get('bayn:private-open'))).toBe(true)
+          expect(fixture.counts()).toEqual({ reads: 2, destroys: 0, connections: 1 })
+          return yield* PrometheusMetrics.format()
+        }),
+      ),
+    )
+    const labels = { stage: 'bayn.valkey.connect', operation: 'get', outcome: 'succeeded' }
+    expect(metricSample(metrics, 'bayn_operation_duration_seconds_count', labels)).toBe(1)
+    expect(metricSample(metrics, 'bayn_operation_duration_seconds_sum', labels)).toBeCloseTo(0.4)
+    expect(
+      metricSample(metrics, 'bayn_valkey_queue_duration_seconds_count', { operation: 'get', outcome: 'acquired' }),
+    ).toBe(2)
+    expect(metrics).not.toContain('bayn:private-')
+  })
+
+  test('queue and connect consume one original deadline and abort only the admitted connection', async () => {
+    const fixture = observedClientFixture(true)
+    const metrics = await observedClientRun(
+      fixture,
+      operation((cache) =>
+        Effect.gen(function* () {
+          const active = yield* cache.get('bayn:private-active').pipe(Effect.forkChild)
+          yield* Effect.promise(() => fixture.readStarted)
+          yield* TestClock.adjust(100)
+          const queued = yield* cache.get('bayn:private-queued').pipe(Effect.result, Effect.forkChild)
+          yield* TestClock.adjust(400)
+          fixture.disconnect()
+          fixture.releaseRead()
+          yield* Fiber.join(active)
+          yield* Effect.promise(() => fixture.connectStarted)
+          yield* TestClock.adjust(600)
+          const result = yield* Fiber.join(queued)
+          expect(Result.isFailure(result)).toBe(true)
+          if (Result.isFailure(result))
+            expect(result.failure).toMatchObject({ category: ValkeyFailureCategory.OperationDeadline })
+          expect(fixture.counts()).toEqual({ reads: 1, destroys: 1, connections: 1 })
+          return yield* PrometheusMetrics.format()
+        }),
+      ),
+    )
+    expect(
+      metricSample(metrics, 'bayn_valkey_queue_duration_seconds_sum', { operation: 'get', outcome: 'acquired' }),
+    ).toBeCloseTo(0.4)
+    const labels = { stage: 'bayn.valkey.connect', operation: 'get', outcome: 'interrupted' }
+    expect(metricSample(metrics, 'bayn_operation_duration_seconds_count', labels)).toBe(1)
+    expect(metricSample(metrics, 'bayn_operation_duration_seconds_sum', labels)).toBeCloseTo(0.6)
+    expect(
+      metricSample(metrics, 'bayn_valkey_queue_duration_seconds_count', { operation: 'get', outcome: 'acquired' }),
+    ).toBe(2)
+    expect(metrics).not.toContain('bayn:private-')
+  })
+})
 
 describe('required native Effect Valkey binding', () => {
   test('missing configuration fails startup without an operation', async () => {
