@@ -64,7 +64,8 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
           cycle_id text PRIMARY KEY, account_id text NOT NULL, execution_session_date date NOT NULL, state text NOT NULL
         )`
         yield* sql`CREATE TABLE IF NOT EXISTS jev_evaluation_requests (
-          request_id text PRIMARY KEY, cycle_id text NOT NULL, authority_generation_hash text NOT NULL, payload jsonb NOT NULL
+          request_id text PRIMARY KEY, cycle_id text NOT NULL, authority_generation_hash text NOT NULL, payload jsonb NOT NULL,
+          schema_version text GENERATED ALWAYS AS (payload->>'schemaVersion') STORED
         )`
         yield* sql`CREATE TABLE IF NOT EXISTS inference_expense_quotes (
           quote_hash text PRIMARY KEY, account_id text NOT NULL, session_date date NOT NULL,
@@ -75,6 +76,9 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
         yield* sql`CREATE TABLE IF NOT EXISTS jev_inference_handoffs (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
         yield* sql`CREATE TABLE IF NOT EXISTS jev_chart_dispatch_claims (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
         yield* sql`CREATE TABLE IF NOT EXISTS jev_chart_terminal_receipts (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_staged_dispatch_claims (request_id text NOT NULL, stage text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_staged_terminal_receipts (request_id text NOT NULL, stage text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_staged_skip_receipts (request_id text NOT NULL, stage text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
       }),
     )
   })
@@ -82,7 +86,7 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        yield* sql`TRUNCATE inference_expense_quotes, autonomous_cycles, jev_evaluation_requests, jev_evaluation_receipts, jev_evaluation_resolutions`
+        yield* sql`TRUNCATE inference_expense_quotes, autonomous_cycles, jev_evaluation_requests, jev_evaluation_receipts, jev_evaluation_resolutions, jev_staged_dispatch_claims, jev_staged_terminal_receipts, jev_staged_skip_receipts`
         yield* sql`INSERT INTO autonomous_cycles VALUES
           (${'a'.repeat(64)}, 'fixture-account', '1970-01-01', 'BLOCKED'),
           (${'b'.repeat(64)}, 'other-account', '1970-01-01', 'COMPLETED'),
@@ -156,8 +160,10 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     const report = Result.getOrThrow(
       makeInferenceCostReport(result.evidence, { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] }),
     )
-    expect(report.unknownUsageCount).toBe(2)
+    expect(request.schemaVersion).toBe('bayn.jev-evaluation-request.v3')
+    expect(report.unknownUsageCount).toBe(3)
     expect(report.requests.flatMap((line) => ('stage' in line ? [line.stage] : [])).sort()).toEqual([
+      InferenceStage.BaseStart,
       InferenceStage.Chart,
       InferenceStage.Jev,
     ])

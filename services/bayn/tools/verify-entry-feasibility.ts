@@ -76,10 +76,10 @@ const verify = Effect.gen(function* () {
     const current = yield* Effect.fromResult(
       prepareEntryInferenceInput({
         ...input,
-        schemaVersion: 'bayn.entry-inference-input.v4',
+        schemaVersion: 'bayn.entry-inference-input.v5',
         protocol: {
           ...input.protocol,
-          schemaVersion: 'bayn.jev.protocol.v25',
+          schemaVersion: 'bayn.jev.protocol.v26',
           entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash,
         },
       }),
@@ -110,8 +110,9 @@ const verify = Effect.gen(function* () {
         }),
       ),
       Effect.provideService(EntryInferenceJournal, {
-        recordChartClaim: () => Effect.succeed({ dispatchAllowed: true }),
-        recordChartTerminal: () => Effect.void,
+        recordVisualClaim: () => Effect.succeed({ dispatchAllowed: true }),
+        recordVisualTerminal: () => Effect.void,
+        recordBaseStartSkip: () => Effect.void,
         recordHandoff: () =>
           Effect.sync(() => {
             committedHandoffs++
@@ -210,7 +211,7 @@ const verify = Effect.gen(function* () {
     unchangedFundedRequests: fundedRequests,
     actualProviderCalls: 0,
     inputProjection:
-      'Same source, prices, funding and economic protocol. Retained v1/v2/v3 inputs use v4 and its question policy only for the offline dispatch probe; original model responses retain their original contracts.',
+      'Same source, prices, funding and economic protocol. Retained v1/v2/v3/v4 inputs use v5 and its question policy only for the offline dispatch probe; original model responses retain their original contracts.',
     results,
   }
   yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })

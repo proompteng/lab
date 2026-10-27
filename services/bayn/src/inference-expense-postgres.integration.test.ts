@@ -56,9 +56,15 @@ describePostgres('immutable inference expense PostgreSQL queue', () => {
           ADD COLUMN provider_stage text GENERATED ALWAYS AS (COALESCE(payload #>> '{line,stage}', 'JEV')) STORED,
           ADD COLUMN handoff_hash text GENERATED ALWAYS AS (payload #>> '{line,handoffHash}') STORED,
           ADD COLUMN chart_claim_hash text GENERATED ALWAYS AS (payload #>> '{line,chartClaimHash}') STORED,
-          ADD COLUMN chart_terminal_hash text GENERATED ALWAYS AS (payload #>> '{line,chartTerminalHash}') STORED`
+          ADD COLUMN chart_terminal_hash text GENERATED ALWAYS AS (payload #>> '{line,chartTerminalHash}') STORED,
+          ADD COLUMN stage_claim_hash text GENERATED ALWAYS AS (payload #>> '{line,stageClaimHash}') STORED,
+          ADD COLUMN stage_terminal_hash text GENERATED ALWAYS AS (payload #>> '{line,stageTerminalHash}') STORED,
+          ADD COLUMN stage_skip_hash text GENERATED ALWAYS AS (payload #>> '{line,stageSkipHash}') STORED`
         yield* sql`CREATE TABLE jev_chart_dispatch_claims (request_id text PRIMARY KEY, claim_hash text NOT NULL, payload jsonb NOT NULL)`
         yield* sql`CREATE TABLE jev_chart_terminal_receipts (request_id text PRIMARY KEY, terminal_hash text NOT NULL, payload jsonb NOT NULL)`
+        yield* sql`CREATE TABLE jev_staged_dispatch_claims (request_id text NOT NULL, stage text NOT NULL, claim_hash text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
+        yield* sql`CREATE TABLE jev_staged_terminal_receipts (request_id text NOT NULL, stage text NOT NULL, terminal_hash text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
+        yield* sql`CREATE TABLE jev_staged_skip_receipts (request_id text NOT NULL, stage text NOT NULL, skip_hash text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
       }),
     )
   }

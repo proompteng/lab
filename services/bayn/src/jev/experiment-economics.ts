@@ -185,7 +185,7 @@ export const jevBacktestOutcome = (input: {
       return yield* invalid('Native replay inference expense does not reproduce')
     for (const call of report.inference.calls) {
       const request =
-        call.stage === 'CHART' ? yield* prepareDecisionsRequest(call.request) : yield* prepareJevRequest(call.request)
+        call.stage !== 'JEV' ? yield* prepareDecisionsRequest(call.request) : yield* prepareJevRequest(call.request)
       if (request.requestHash !== call.requestHash || call.providerCompletedAt < call.providerStartedAt)
         return yield* invalid('Replay request differs from its measured provider call')
       if (call.stage === 'JEV')
@@ -196,7 +196,7 @@ export const jevBacktestOutcome = (input: {
         }
       if (call.outcome.status === 'RECEIVED') {
         const inference = call.outcome.inference
-        if (call.stage === 'CHART' && call.outcome.status === 'RECEIVED')
+        if (call.stage !== 'JEV' && call.outcome.status === 'RECEIVED')
           yield* decodeDecisionsResponse(call.request, call.outcome.inference.response)
         else if (call.stage === 'JEV' && call.outcome.status === 'RECEIVED')
           yield* decodeJevResponse(call.request, call.outcome.inference.response)
