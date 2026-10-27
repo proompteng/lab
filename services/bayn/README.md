@@ -1979,7 +1979,10 @@ The release gate requires every shard and integration job to pass.
 
 With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 `BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run
-`bun run --filter @proompteng/bayn test:ledger`. CI uses the same command. It covers native Jev entry,
+`bun run --filter @proompteng/bayn test:ledger`. CI runs its `runtime`, `backtest`, `restart`, and `inference`
+groups in separate jobs, each with its own disposable PostgreSQL and TigerBeetle. Append a group name to run it
+locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
+The release gate requires every group to pass. The suite covers native Jev entry,
 zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
 expenses. The seven durable-broker cases alone do not cover the native production lifecycle.
 Measured entry/exit replays supply improving arrival quotes under the frozen inference-ask ceiling, including

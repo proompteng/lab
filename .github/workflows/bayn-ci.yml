@@ -320,6 +320,10 @@ jobs:
     if: needs.changes.outputs.bayn == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [runtime, backtest, restart, inference]
     services:
       postgres:
         image: postgres:18-alpine
@@ -370,7 +374,7 @@ jobs:
           docker logs bayn-replay-tigerbeetle
           exit 1
       - name: Verify replay accounting with PostgreSQL and TigerBeetle
-        run: bun run --cwd services/bayn test:ledger
+        run: bun run --cwd services/bayn test:ledger ${{ matrix.group }}
       - name: Stop isolated replay TigerBeetle
         if: always()
         run: docker rm -f bayn-replay-tigerbeetle || true

@@ -14,7 +14,7 @@ import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs
 import { IsoDateSchema } from '../schemas'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { registeredTradeReplayFixture } from '../testing/registered-replay-fixture'
-import { retainedReplayFixture } from '../testing/retained-replay-fixture'
+import { retainReplayArrivals, retainedReplayFixture } from '../testing/retained-replay-fixture'
 import {
   calibrateNativeLatencyFixture,
   fullBatchLatencyFixture,
@@ -50,6 +50,17 @@ const main = Effect.gen(function* () {
   }
   yield* Effect.gen(function* () {
     const market = trading ? registeredTradeReplayFixture() : null
+    const retained = retainedReplayFixture()
+    // Missing decision inputs must remain missing at every measured replay time, including on slower CI hosts.
+    const source =
+      market ??
+      retainReplayArrivals(
+        retained.events.filter((event) =>
+          retained.manifest.marketSources.some((source) => source.topics.quotes === event.record.topic),
+        ),
+        retained.manifest.marketSources,
+        retained.manifest.deliveryModel,
+      )
     const first = market?.sessions[0]
     const { native, document } = yield* market !== null && first !== undefined
       ? calibrateNativeLatencyFixture(
@@ -78,7 +89,7 @@ const main = Effect.gen(function* () {
       fullBatchLatencyFixture(document, native, sessions),
       undefined,
       policy,
-      market?.manifest,
+      source.manifest,
     )
     const input = { ...registeredInput, replicate: randomUUID() }
     const prepared = Result.getOrThrow(prepareBacktest(input, capture))
@@ -89,7 +100,7 @@ const main = Effect.gen(function* () {
     const inputPath = `${directory}/input.json`
     const capturePath = `${directory}/capture.json`
     const outputPath = `${directory}/output`
-    yield* fs.writeFile(arrivalsPath, gzipSync(market?.body ?? retainedReplayFixture().body))
+    yield* fs.writeFile(arrivalsPath, gzipSync(source.body))
     yield* fs.writeFileString(inputPath, JSON.stringify(input))
     yield* fs.writeFileString(capturePath, JSON.stringify(capture.value))
     const sql = yield* PgClient.PgClient
