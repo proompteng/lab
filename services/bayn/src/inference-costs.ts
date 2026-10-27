@@ -321,7 +321,7 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
             model: request.request.model,
             usage: counted,
             tariffAt: startedAt,
-            recordedStartedAt: startedAt,
+            recordedStartedAt: receipt?.outcome.status === 'RECEIVED' ? receipt.outcome.inference.startedAt : undefined,
             purpose: Result.isSuccess(purpose) ? purpose.success.task.decisionPurpose : InferencePurpose.Other,
             handoffHash: null,
             receiptHash: receipt?.receiptHash ?? null,
@@ -395,7 +395,10 @@ const costStages = (row: typeof InferenceCostRequestSchema.Type) =>
               cachedInputTokens: BigInt(metering.input_tokens_details.cached_tokens),
               cacheWriteInputTokens: BigInt(metering.input_tokens_details.cache_write_tokens),
             }
-      if (terminal?.outcome.status === 'RECEIVED') chartStartedAt = terminal.outcome.inference.startedAt
+      if (terminal?.outcome.status === 'RECEIVED') {
+        chartStartedAt = terminal.outcome.inference.startedAt
+        chartRecordedStartedAt = terminal.outcome.inference.startedAt
+      }
     }
     let jevUsage: Usage | null =
       zero || (handoff !== null && handoff.disposition.status !== 'READY') ? notDispatched() : null
