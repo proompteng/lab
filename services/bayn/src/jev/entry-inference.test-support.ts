@@ -3,7 +3,12 @@ import { Clock, Effect, Layer, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { operationalError } from '../errors'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from './staged-chart-questions'
+import {
+  makeInitialChartStageRequest,
+  makeSelectedBaseStartStageRequest,
+  stagedChartAssessments,
+} from './staged-chart-questions'
+import type { ChartDecisionSource } from './chart-questions'
 import {
   makeStagedDispatchClaim,
   makeStagedTerminalReceipt,
@@ -128,6 +133,20 @@ export const nativeChartInference = (raw: unknown, at: string) => {
     completedAt: at,
     response,
   }
+}
+
+export const chartAssessmentsFixture = (source: ChartDecisionSource, at = source.chart.windowEndAt) => {
+  const initial = Result.getOrThrow(makeInitialChartStageRequest(source))
+  const chart = nativeChartInference(initial.request, at)
+  const next = Result.getOrThrow(makeSelectedBaseStartStageRequest(source, stageResponseIdentity(chart)))
+  const baseStart = next.status === 'PREPARED' ? nativeChartInference(next.request, at) : null
+  return Result.getOrThrow(
+    stagedChartAssessments(
+      source,
+      stageResponseIdentity(chart),
+      baseStart === null ? null : stageResponseIdentity(baseStart),
+    ),
+  )
 }
 
 export const chartProviderFixture: DecisionsClient['Service'] = {

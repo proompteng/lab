@@ -2,10 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { makeNativeChartEvidence } from './chart-evidence'
-import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
 import { decodeJevResponse } from './contract'
 import { jevEntryEconomics } from './entry-economics'
-import { nativeChartInference } from './entry-inference.test-support'
+import { chartAssessmentsFixture } from './entry-inference.test-support'
 import { EntrySetup, makeEntryProposals } from './entry-proposals'
 import { makeEntryJudgmentRequest, selectSupportedEntryProposal } from './entry-questions'
 import { defaultJevProtocolDocument } from './protocol'
@@ -33,10 +32,7 @@ const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL') => {
       cryptoFeeTier: null,
     },
   }
-  const visual = Result.getOrThrow(makeChartDecisionsRequest(chartSource)).request
-  const assessments = Result.getOrThrow(
-    chartAssessments(chartSource, nativeChartInference(visual, chart.windowEndAt).response),
-  )
+  const assessments = chartAssessmentsFixture(chartSource)
   const economics = Result.getOrThrow(
     jevEntryEconomics({
       protocol: defaultJevProtocolDocument,
