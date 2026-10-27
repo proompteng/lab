@@ -54,23 +54,43 @@ export async function saveConnection(identity: TengriIdentity, request: SaveConn
   try {
     scope = selectConnectionScope(catalog.operations, request)
   } catch (error) {
-    throw new TengriUnavailableError(error instanceof Error ? error.message : 'Invalid connection scope', 400)
+    throw new TengriUnavailableError(
+      error instanceof Error ? error.message : 'The available access changed. Review your selection.',
+      409,
+      'connection_scope_changed',
+    )
   }
-  await ofzCall(
-    PlatformAuthorizationService.method.putPlatformConnection,
-    {
-      operationId: request.operationId,
-      issuer: context.issuer,
-      clientService: 'tengri-web',
-      connectionId: request.connectionId,
-      expectedVersion: BigInt(request.expectedVersion),
-      clientReference: connectionReference(context.agent.uid, request.connectorId),
-      actions: scope.actions,
-      resources: scope.resources,
-      binding: context.binding,
-    },
-    signal,
-  )
+  try {
+    await ofzCall(
+      PlatformAuthorizationService.method.putPlatformConnection,
+      {
+        operationId: request.operationId,
+        issuer: context.issuer,
+        clientService: 'tengri-web',
+        connectionId: request.connectionId,
+        expectedVersion: BigInt(request.expectedVersion),
+        clientReference: connectionReference(context.agent.uid, request.connectorId),
+        actions: scope.actions,
+        resources: scope.resources,
+        binding: context.binding,
+      },
+      signal,
+    )
+  } catch (error) {
+    if (error instanceof OfzError && error.status === 403)
+      throw new TengriUnavailableError(
+        'An administrator needs to allow the selected resources before you can connect.',
+        403,
+        'connection_access_denied',
+      )
+    if (error instanceof OfzError && error.status === 409)
+      throw new TengriUnavailableError(
+        'This connection changed. Review its current access and connect again.',
+        409,
+        'connection_scope_changed',
+      )
+    throw error
+  }
   return reconcile(context)
 }
 
@@ -101,7 +121,7 @@ async function reconcile(context: Authority) {
   const catalog = renew.length
     ? await relayCall(RelayService.method.listOperations, { clientService: 'tengri-web' }, context.signal)
     : undefined
-  const failures: { connectionId: string; error: unknown }[] = []
+  const failures: { service: string; error: unknown }[] = []
   for (const connection of snapshot.connections) {
     context.signal?.throwIfAborted()
     try {
@@ -112,15 +132,27 @@ async function reconcile(context: Authority) {
       }
     } catch (error) {
       context.signal?.throwIfAborted()
-      failures.push({ connectionId: connection.id, error })
+      const prefix = context.agent.uid + '/'
+      failures.push({
+        service: connection.clientReference.startsWith(prefix)
+          ? connection.clientReference.slice(prefix.length)
+          : 'Service',
+        error,
+      })
     }
   }
   const [first] = failures
   if (first) {
     const message = failures
       .map(
-        ({ connectionId, error }) =>
-          `${connectionId}: ${error instanceof OfzError || error instanceof TengriUnavailableError ? error.message : 'Connection renewal could not be confirmed.'}`,
+        ({ service, error }) =>
+          `${service}: ${
+            error instanceof OfzError && error.status === 403
+              ? 'Access to the selected resources is no longer allowed.'
+              : error instanceof OfzError || error instanceof TengriUnavailableError
+                ? error.message
+                : 'Connection renewal could not be confirmed.'
+          }`,
       )
       .join(' ')
     if (first.error instanceof OfzError || first.error instanceof TengriUnavailableError) {

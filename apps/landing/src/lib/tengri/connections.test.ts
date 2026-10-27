@@ -2,8 +2,12 @@ import { create } from '@bufbuild/protobuf'
 import { describe, expect, test } from 'bun:test'
 import {
   connectionRequestSchema,
+  completePendingConnection,
   credentialMatchesRuntime,
   installationMatches,
+  pendingConnectionKey,
+  readPendingConnection,
+  retainPendingConnection,
   savedConnectionOperations,
   selectConnectionScope,
   type RelayIdentity,
@@ -11,6 +15,30 @@ import {
 } from './connections'
 import { PlatformConnectionSchema } from './generated/proompteng/authz/v1/platform_pb'
 import { ConnectorOperationSchema } from './generated/proompteng/relay/v1/relay_pb'
+
+function connectionStorage() {
+  const values = new Map<string, string>()
+  return {
+    get length() {
+      return values.size
+    },
+    getItem(key) {
+      return values.get(key) ?? null
+    },
+    setItem(key, value) {
+      values.set(key, value)
+    },
+    removeItem(key) {
+      values.delete(key)
+    },
+    clear() {
+      values.clear()
+    },
+    key(index) {
+      return [...values.keys()][index] ?? null
+    },
+  } satisfies Storage
+}
 
 const workspace = '11111111-1111-4111-8111-111111111111'
 const runtime = '22222222-2222-4222-8222-222222222222'
@@ -40,6 +68,35 @@ const request: SaveConnection = {
   operations: ['pod_status'],
   targets: [{ kind: 'kubernetes.namespace', id: 'galactic/namespace-uid' }],
 }
+
+describe('connection setup across verification', () => {
+  test('keeps the exact scope and operation, isolates accounts, and refuses replacement of an uncertain request', () => {
+    const storage = connectionStorage()
+    const key = pendingConnectionKey('one', workspace)
+    retainPendingConnection(storage, key, request, true)
+    expect(readPendingConnection(storage, key)).toEqual({ request, resumeAfterSignIn: true })
+    expect(readPendingConnection(storage, pendingConnectionKey('two', workspace))).toBeUndefined()
+    expect(readPendingConnection(storage, pendingConnectionKey('one', runtime))).toBeUndefined()
+    expect(() => retainPendingConnection(storage, key, { ...request, operationId: runtime }, false)).toThrow(
+      'Finish the pending connection',
+    )
+    completePendingConnection(storage, key, runtime)
+    expect(readPendingConnection(storage, key)?.request).toEqual(request)
+    completePendingConnection(storage, key, request.operationId)
+    expect(readPendingConnection(storage, key)).toBeUndefined()
+  })
+
+  test('requires a fresh click after the sign-in window and rejects corrupted saved requests', () => {
+    const storage = connectionStorage()
+    const key = pendingConnectionKey('one', workspace)
+    storage.setItem(key, JSON.stringify({ request, resumeAfterSignIn: true, updatedAtMs: Date.now() - 300_001 }))
+    expect(readPendingConnection(storage, key)).toEqual({ request, resumeAfterSignIn: false })
+    storage.setItem(key, JSON.stringify({ request, resumeAfterSignIn: true, updatedAtMs: Date.now() + 600_000 }))
+    expect(readPendingConnection(storage, key)?.resumeAfterSignIn).toBe(false)
+    storage.setItem(key, '{broken')
+    expect(() => readPendingConnection(storage, key)).toThrow()
+  })
+})
 const saved = () =>
   create(PlatformConnectionSchema, {
     id: connectionId,

@@ -294,7 +294,7 @@ export function ServicePolicyPanel({ active }: { active: boolean }) {
                     ) : (
                       <Input
                         id={formId + '-subject'}
-                        placeholder="github:42"
+                        placeholder="Verified Ofz human ID"
                         aria-invalid={Boolean(errors.subjectId)}
                         aria-describedby={formId + '-subject-error'}
                         {...form.register('subjectId')}

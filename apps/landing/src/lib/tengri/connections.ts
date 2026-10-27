@@ -20,6 +20,44 @@ export const connectionRequestSchema = z.discriminatedUnion('kind', [
 export const disconnectRequestSchema = z.strictObject({ ...command, connectionId: z.uuid() })
 export type SaveConnection = Extract<z.infer<typeof connectionRequestSchema>, { kind: 'save' }>
 
+const pendingConnectionSchema = z.strictObject({
+  request: connectionRequestSchema,
+  resumeAfterSignIn: z.boolean(),
+  updatedAtMs: z.number().int().nonnegative(),
+})
+
+export function pendingConnectionKey(principal: string, workspaceUid: string) {
+  return 'tengri-connection:' + JSON.stringify([principal, workspaceUid])
+}
+
+export function readPendingConnection(storage: Storage, key: string) {
+  const encoded = storage.getItem(key)
+  if (!encoded) return undefined
+  const pending = pendingConnectionSchema.parse(JSON.parse(encoded))
+  if (pending.request.kind !== 'save') throw new Error('The pending connection is invalid')
+  return {
+    request: pending.request,
+    resumeAfterSignIn:
+      pending.resumeAfterSignIn && Date.now() >= pending.updatedAtMs && Date.now() - pending.updatedAtMs <= 300_000,
+  }
+}
+
+export function retainPendingConnection(
+  storage: Storage,
+  key: string,
+  request: SaveConnection,
+  resumeAfterSignIn: boolean,
+) {
+  const previous = readPendingConnection(storage, key)
+  if (previous && previous.request.operationId !== request.operationId)
+    throw new Error('Finish the pending connection before starting another change.')
+  storage.setItem(key, JSON.stringify({ request, resumeAfterSignIn, updatedAtMs: Date.now() }))
+}
+
+export function completePendingConnection(storage: Storage, key: string, operationId: string) {
+  if (readPendingConnection(storage, key)?.request.operationId === operationId) storage.removeItem(key)
+}
+
 const installation = z.strictObject({
   connectionId: z.uuid(),
   delegationId: z.uuid().optional(),

@@ -44,6 +44,7 @@ let recoveryGeneration = BigInt(3)
 let runtime = firstRuntime
 let ready = true
 let permitted = true
+let consentFailure: number | undefined
 let wrongAcknowledgement = false
 let removalUnavailable = false
 let duringConfigure: (() => Promise<unknown>) | undefined
@@ -67,6 +68,7 @@ void mock.module('./ofz', () => ({
         recoveryGeneration,
       })
     if (method.name === 'PutPlatformConnection') {
+      if (consentFailure) throw new OfzError(consentFailure)
       const operationId = z.uuid().parse(body.operationId)
       if (!completed.has(operationId)) {
         expect(body).toMatchObject({
@@ -223,6 +225,7 @@ beforeEach(() => {
   runtime = firstRuntime
   ready = true
   permitted = true
+  consentFailure = undefined
   wrongAcknowledgement = false
   removalUnavailable = false
   duringConfigure = undefined
@@ -255,6 +258,19 @@ test('BFF keeps idle workspaces untouched and activates only after exact guest a
     JSON.stringify(result, (_key, value: unknown) => (typeof value === 'bigint' ? String(value) : value)),
   ).not.toContain('b'.repeat(43))
 })
+
+for (const [status, code] of [
+  [403, 'connection_access_denied'],
+  [409, 'connection_scope_changed'],
+] as const) {
+  test(`a rejected consent write has a definite outcome and never installs a credential: ${status}`, async () => {
+    consentFailure = status
+    await expect(saveConnection(identity, save())).rejects.toMatchObject({ status, code })
+    expect(connection).toBeUndefined()
+    expect(events.map((event) => event.name)).toEqual(['catalog', 'PutPlatformConnection'])
+    expect(installed).toEqual([])
+  })
+}
 
 test('expiry and runtime changes renew credentials without writing consent again', async () => {
   await saveConnection(identity, save())
@@ -312,7 +328,10 @@ test('unavailable saved scopes stay denied while later connections renew', async
   ).toEqual([connectionId])
   expect(failure).toMatchObject({ status: 409 })
   if (!(failure instanceof Error)) throw new Error('Missing renewal failure')
-  for (const entry of precedingConnections) expect(failure.message).toContain(entry.id)
+  for (const entry of precedingConnections) {
+    expect(failure.message).toContain(entry.clientReference.slice((workspace + '/').length))
+    expect(failure.message).not.toContain(entry.id)
+  }
 })
 
 test('replaces an inactive installation after gateway interruption with a freshly acknowledged credential', async () => {
@@ -354,7 +373,8 @@ test('denied connection permissions do not prevent a later authorized renewal', 
   ])
   expect(failure).toMatchObject({ status: 403 })
   if (!(failure instanceof Error)) throw new Error('Missing permission denial')
-  expect(failure.message).toContain(denied.id)
+  expect(failure.message).toContain('denied: Access to the selected resources is no longer allowed.')
+  expect(failure.message).not.toContain(denied.id)
 })
 
 test('disconnect wins against a delayed installation and a replayed original save', async () => {
@@ -390,7 +410,8 @@ test('failed cleanup of a disconnected connection does not stop another renewal 
   expect(connection.credentialActive).toBe(true)
   expect(failure).toMatchObject({ status: 502 })
   if (!(failure instanceof Error)) throw new Error('Missing cleanup failure')
-  expect(failure.message).toContain(disconnected.id)
+  expect(failure.message).toContain(disconnected.clientReference.slice((workspace + '/').length))
+  expect(failure.message).not.toContain(disconnected.id)
   expect(failure.message).not.toContain('Fixture guest disconnected')
 })
 

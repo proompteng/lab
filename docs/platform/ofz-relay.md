@@ -80,6 +80,12 @@ not prove connector execution. Production rollout and this acceptance remain out
   actions, immutable target identities and current runtime binding from the registered catalog and controller. It
   activates a new credential only after the guest acknowledges its exact installation. Renewal cannot enable revoked
   consent or substitute a recreated namespace with the same name.
+  An administrator's explicit Connect action can assign the selected catalog-declared resource permissions and save
+  consent atomically through Ofz. Other users need existing permissions. Neither service registration nor renewal
+  grants access. Settings keeps the selected scope and operation through a required verification, then resumes the
+  same request. Automatic continuation is bounded to the five-minute sign-in window and the same account/workspace.
+  The consent operation binds the human, client, workspace and exact scope. A renewed session or runtime does not
+  change that identity, but replay rechecks its current authority before returning the original receipt.
   Saving consent requires fresh passkey verification. Renewal and revocation require a current MFA session; they
   do not require another passkey ceremony every five minutes. Renewal rechecks the saved scope and current native
   permissions, and cannot widen consent.

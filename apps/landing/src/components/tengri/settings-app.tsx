@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import type { TengriAgent, TengriCodexAccount, TengriUser } from '@/lib/tengri/types'
+import { pendingConnectionKey } from '@/lib/tengri/connections'
 
 import { runTengriAction } from './client'
 import { DesktopAppIcon } from './desktop-app-icon'
@@ -83,6 +84,16 @@ export function SettingsApp({
     setSelectedSection(section)
     if (contentRef.current) contentRef.current.scrollTop = 0
   }
+
+  useEffect(() => {
+    try {
+      if (!sessionStorage.getItem(pendingConnectionKey(user.id, agent.uid))) return
+    } catch {
+      return
+    }
+    setVisitedSections((visited) => (visited.includes('connections') ? visited : [...visited, 'connections']))
+    setSelectedSection('connections')
+  }, [agent.uid, user.id])
 
   useEffect(() => {
     setNow(Date.now())
@@ -328,6 +339,7 @@ export function SettingsApp({
               <div hidden={selectedSection !== 'connections'}>
                 <ConnectionsPanel
                   agent={agent}
+                  principalId={user.id}
                   active={active && selectedSection === 'connections'}
                   disabled={lifecycleBusy}
                 />

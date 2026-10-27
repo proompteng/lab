@@ -8,6 +8,12 @@ SpiceDB is the implementation; no separate Zanzibar server is involved.
 permissions and writable relationships. `schema.zed` supplies the corresponding native definitions. New application
 policies use these definitions without adding a Tengri action enum or a branch in the platform evaluator.
 
+An action can declare `grantRelation` to name the reviewed relationship that grants its permission. Qualification
+checks that relationship against the installed native schema. An administrator who explicitly connects a selected
+scope can receive those relationships and save the consent in one durable command. The gateway must also hold
+`platform.administration`; current membership, administrator authority, fresh MFA and execution-binding authority
+remain required. Ordinary users can connect only scopes they already hold. Credential renewal never assigns rights.
+
 The checked package is the approval boundary. Invalid definitions, duplicate identities/actions, unknown fields,
 wildcards and unknown policy actions fail closed. `OFZ_SERVICES_FILE`, `OFZ_POLICY_CATALOG_FILE`,
 `OFZ_POLICY_SCHEMA_FILE` and `OFZ_POLICY_SCHEMA_SHA256_FILE` can select reviewed mounted definitions. All Ofz replicas
@@ -85,6 +91,7 @@ const response = await fetch('/api/platform/policies', {
 Use the registered target's actual resource ID from `GET /api/platform/connectors`; do not use a namespace name as policy
 identity. `log_reader` and `event_reader` are separate assignments. Setting `enabled: false` revokes the relationship.
 Human subjects use their verified canonical Ofz human ID. Platform administration grants no workspace content access.
+The normal Connections flow derives the signed-in human identity on the server; it requires no identity or policy IDs.
 
 Each platform authorization checks the current registered action, resource type, actor, native relationships,
 recovery generation, fence and archive health. Delegated access intersects the grant with the issuer's current

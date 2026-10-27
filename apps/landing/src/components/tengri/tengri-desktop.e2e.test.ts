@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 import { createHash } from 'node:crypto'
-import { connectionRequestSchema } from '@/lib/tengri/connections'
+import { connectionRequestSchema, type SaveConnection } from '@/lib/tengri/connections'
 import { policyWriteSchema } from '@/lib/platform/policies'
 import { codexModelFixtures } from './codex-models.fixture'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
@@ -10393,6 +10393,7 @@ test('saves scoped platform connections, retries the exact change, and retains d
                 name: 'production',
                 resource: { kind: 'kubernetes.namespace', id: targetId },
               },
+              { name: 'staging', resource: { kind: 'kubernetes.namespace', id: 'galactic/staging-uid' } },
             ],
           },
           {
@@ -10468,22 +10469,22 @@ test('saves scoped platform connections, retries the exact change, and retains d
   const settings = page.getByRole('region', { name: 'Settings window', exact: true })
   await openSettingsPane(settings, 'Connections')
   const panel = settings.getByRole('region', { name: 'Connections', exact: true })
-  await expect(panel.getByLabel('Connector', { exact: true })).toHaveValue('galactic')
+  await expect(panel.getByLabel('Service', { exact: true })).toHaveValue('galactic')
   await expect(panel.getByText('pod_exec', { exact: true })).toHaveCount(0)
-  await panel.getByRole('button', { name: 'Save connection', exact: true }).click()
+  await panel.getByRole('button', { name: 'Connect', exact: true }).click()
   await expect(panel.getByRole('alert')).toContainText(['Select at least one operation', 'Select at least one target'])
-  await expect(panel.getByRole('checkbox', { name: 'pod_status', exact: true })).toHaveAccessibleDescription(
-    'Read pod status Select at least one operation',
+  await expect(panel.getByRole('checkbox', { name: 'Read pod status', exact: true })).toHaveAccessibleDescription(
+    'Select at least one operation',
   )
-  await panel.getByRole('checkbox', { name: 'pod_status', exact: true }).check()
+  await panel.getByRole('checkbox', { name: 'Read pod status', exact: true }).check()
   await panel.getByRole('checkbox', { name: 'production', exact: true }).check()
-  await panel.getByRole('button', { name: 'Save connection', exact: true }).click()
+  await panel.getByRole('button', { name: 'Connect', exact: true }).click()
   await expect(panel.getByRole('alert')).toContainText('Guest acknowledgement is unavailable')
   await openSettingsPane(settings, 'General')
   await openSettingsPane(settings, 'Connections')
   await expect(panel.getByRole('alert')).toContainText('Guest acknowledgement is unavailable')
-  await panel.getByRole('button', { name: 'Retry connection', exact: true }).click()
-  await expect(panel.getByRole('status')).toHaveText('Connection is ready.')
+  await panel.getByRole('button', { name: 'Try again', exact: true }).click()
+  await expect(panel.getByRole('status')).toHaveText('Connected. The selected tools are available to your agent.')
   expect(saves).toHaveLength(2)
   expect(saves[1]).toEqual(saves[0])
   expect(saves[0]).toMatchObject({
@@ -10491,6 +10492,10 @@ test('saves scoped platform connections, retries the exact change, and retains d
     operations: ['pod_status'],
     targets: [{ kind: 'kubernetes.namespace', id: 'galactic/immutable-namespace-uid' }],
   })
+  await panel.getByRole('checkbox', { name: 'staging', exact: true }).check()
+  lostResponse = true
+  await panel.getByRole('button', { name: 'Update access', exact: true }).click()
+  await expect(panel.getByRole('alert')).toContainText('Guest acknowledgement is unavailable')
   await panel.getByRole('button', { name: 'Disconnect', exact: true }).click()
   await expect(panel.getByRole('alert')).toHaveText('The disconnection response could not be confirmed.')
   await panel.getByRole('button', { name: 'Retry disconnect', exact: true }).click()
@@ -10503,6 +10508,7 @@ test('saves scoped platform connections, retries the exact change, and retains d
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   const restored = page.getByRole('region', { name: 'Settings window', exact: true })
   await openSettingsPane(restored, 'Connections')
+  await expect(restored.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0)
   await expect(restored.getByText('Disconnected', { exact: true })).toBeVisible()
   const unavailable = restored.getByRole('checkbox', { name: 'Unavailable saved target.', exact: false })
   await expect(unavailable).toBeChecked()
@@ -10510,7 +10516,7 @@ test('saves scoped platform connections, retries the exact change, and retains d
   await unavailable.focus()
   await unavailable.press('Space')
   await expect(unavailable).toHaveCount(0)
-  expect(saves).toHaveLength(2)
+  expect(saves).toHaveLength(3)
   const accessibility = await new AxeBuilder({ page }).include('[aria-label="Connections"]').analyze()
   expect(accessibility.violations).toEqual([])
   await restored.screenshot({ path: test.info().outputPath('connections-desktop.png') })
@@ -10521,6 +10527,156 @@ test('saves scoped platform connections, retries the exact change, and retains d
   await expect(restored.getByRole('checkbox', { name: 'production', exact: true })).not.toBeChecked()
   await restored.screenshot({ path: test.info().outputPath('connections-narrow.png') })
 })
+
+for (const [status, code] of [
+  [403, 'connection_access_denied'],
+  [409, 'connection_scope_changed'],
+] as const) {
+  test(`allows correcting connection scope after a definite rejection: ${status}`, async ({ page }) => {
+    await mockTengri(page)
+    const saves: SaveConnection[] = []
+    await page.route('**/api/platform/connectors', (route) =>
+      route.fulfill({
+        json: {
+          operations: [
+            {
+              connectorId: 'galactic',
+              name: 'status',
+              action: 'kubernetes.status.read',
+              description: 'Read pod status',
+              readOnly: true,
+              targets: ['production', 'staging'].map((name) => ({
+                name,
+                resource: { kind: 'kubernetes.namespace', id: 'galactic/' + name },
+              })),
+            },
+          ],
+        },
+      }),
+    )
+    await page.route('**/api/tengri/connections**', (route) => {
+      if (route.request().method() === 'POST') {
+        const request = connectionRequestSchema.parse(route.request().postDataJSON())
+        if (request.kind === 'save') {
+          saves.push(request)
+          return route.fulfill({ status, json: { error: 'Review the selected access.', code } })
+        }
+      }
+      return route.fulfill({ json: { connections: [], recoveryGeneration: '1' } })
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+    const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+    await openSettingsPane(settings, 'Connections')
+    await settings.getByRole('checkbox', { name: 'Read pod status', exact: true }).check()
+    await settings.getByRole('checkbox', { name: 'production', exact: true }).check()
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    await expect(settings.getByRole('alert')).toHaveText('Review the selected access.')
+    await settings.getByRole('checkbox', { name: 'production', exact: true }).uncheck()
+    await settings.getByRole('checkbox', { name: 'staging', exact: true }).check()
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    await expect.poll(() => saves.length).toBe(2)
+    expect(saves[1]?.operationId).not.toBe(saves[0]?.operationId)
+    expect(saves[1]).toMatchObject({ targets: [{ kind: 'kubernetes.namespace', id: 'galactic/staging' }] })
+  })
+}
+
+for (const { verificationStatus, failedStart } of [
+  { verificationStatus: 401, failedStart: false },
+  { verificationStatus: 428, failedStart: false },
+  { verificationStatus: 428, failedStart: true },
+]) {
+  test(`connects tools after one verification without rebuilding the request: ${verificationStatus}, failed start ${failedStart}`, async ({
+    page,
+  }) => {
+    await mockTengri(page)
+    const saves: SaveConnection[] = []
+    let verifications = 0
+    let signInStarts = 0
+    let connections: Record<string, unknown>[] = []
+    await page.route('**/api/platform/connectors', (route) =>
+      route.fulfill({
+        json: {
+          operations: [
+            {
+              connectorId: 'galactic',
+              name: 'status',
+              action: 'kubernetes.status.read',
+              description: 'Read pod status',
+              readOnly: true,
+              targets: [
+                { name: 'production', resource: { kind: 'kubernetes.namespace', id: 'galactic/immutable-uid' } },
+              ],
+            },
+          ],
+        },
+      }),
+    )
+    await page.route('**/api/auth/' + (verificationStatus === 401 ? 'login' : 'step-up'), (route) => {
+      signInStarts += 1
+      if (failedStart && signInStarts === 1)
+        return route.fulfill({ status: 503, json: { error: 'Verification is temporarily unavailable.' } })
+      verifications += 1
+      return route.fulfill({ json: { url: desktopOrigin + '/?verified=1' } })
+    })
+    await page.route('**/api/tengri/connections**', async (route) => {
+      if (route.request().method() === 'POST') {
+        const request = connectionRequestSchema.parse(route.request().postDataJSON())
+        if (request.kind === 'save') {
+          saves.push(request)
+          if (verifications === 0) {
+            await route.fulfill({ status: verificationStatus, json: { error: 'Verify before connecting.' } })
+            return
+          }
+          connections = [
+            {
+              id: request.connectionId,
+              clientService: 'tengri-web',
+              clientReference: readyAgent.uid + '/galactic',
+              actions: ['kubernetes.status.read'],
+              resources: request.targets,
+              binding: { service: 'tengri', id: readyAgent.uid },
+              enabled: true,
+              version: '1',
+              credentialActive: true,
+              credentialGeneration: '5',
+              recoveryGeneration: '1',
+              delegationId: '33333333-3333-4333-8333-333333333333',
+              proofKeyThumbprint: 'a'.repeat(43),
+              credentialBinding: { service: 'tengri', id: readyAgent.uid, generation: readyAgent.runtimeEpoch },
+              expiresAtUnixMs: String(Date.now() + 900_000),
+            },
+          ]
+        }
+      }
+      await route.fulfill({ json: { connections, recoveryGeneration: '1' } })
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+    const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+    await openSettingsPane(settings, 'Connections')
+    await settings.getByRole('checkbox', { name: 'Read pod status', exact: true }).check()
+    await settings.getByRole('checkbox', { name: 'production', exact: true }).check()
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    if (failedStart) {
+      await expect(settings.getByRole('alert')).toHaveText(
+        'Verification could not start. Select Try again to continue.',
+      )
+      await expect(settings.getByRole('checkbox', { name: 'production', exact: true })).toBeChecked()
+      await settings.getByRole('button', { name: 'Try again', exact: true }).click()
+    }
+    await expect(page).toHaveURL(desktopOrigin + '/?verified=1')
+    await expect(settings.getByRole('status')).toHaveText('Connected. The selected tools are available to your agent.')
+    await expect(settings.getByRole('button', { name: 'Connected', exact: true })).toBeDisabled()
+    expect(verifications).toBe(1)
+    expect(signInStarts).toBe(failedStart ? 2 : 1)
+    expect(saves).toHaveLength(failedStart ? 3 : 2)
+    for (const request of saves) expect(request).toEqual(saves[0])
+    const accessibility = await new AxeBuilder({ page }).include('[aria-label="Connections"]').analyze()
+    expect(accessibility.violations).toEqual([])
+    await settings.screenshot({ path: test.info().outputPath('connected-after-verification.png') })
+  })
+}
 
 test('administers catalog-defined service policies and preserves the exact pending command', async ({ page }) => {
   await mockTengri(page)

@@ -18,11 +18,19 @@ import {
   FieldSet,
   NativeSelect,
 } from '@proompteng/design/ui'
-import { useCallback, useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { connectorCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
-import { connectionReference, credentialMatchesRuntime, type SaveConnection } from '@/lib/tengri/connections'
+import {
+  completePendingConnection,
+  connectionReference,
+  credentialMatchesRuntime,
+  pendingConnectionKey,
+  readPendingConnection,
+  retainPendingConnection,
+  type SaveConnection,
+} from '@/lib/tengri/connections'
 import {
   ListPlatformConnectionsResponseSchema,
   type ListPlatformConnectionsResponse,
@@ -38,21 +46,37 @@ const formSchema = z.object({
 type Form = z.infer<typeof formSchema>
 const resourceKey = (resource: { kind: string; id: string }) => JSON.stringify([resource.kind, resource.id])
 
+class ConnectionRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message)
+  }
+}
+
 async function responseJson(response: Response) {
   const json = z.json().parse(await response.json())
   if (!response.ok) {
-    const error = z.object({ error: z.string() }).safeParse(json)
-    throw new Error(error.success ? error.data.error : 'Connections are unavailable')
+    const error = z.object({ error: z.string(), code: z.string().optional() }).safeParse(json)
+    throw new ConnectionRequestError(
+      response.status,
+      error.success ? error.data.error : 'Connections are unavailable',
+      error.success ? error.data.code : undefined,
+    )
   }
   return json
 }
 
 export function ConnectionsPanel({
   agent,
+  principalId,
   active,
   disabled,
 }: {
   agent: TengriAgent
+  principalId: string
   active: boolean
   disabled: boolean
 }) {
@@ -68,6 +92,8 @@ export function ConnectionsPanel({
     connectionId: string
   }>()
   const formId = useId()
+  const pendingKey = pendingConnectionKey(principalId, agent.uid)
+  const resumed = useRef('')
   const form = useForm<Form>({
     resolver: zodResolver(formSchema),
     defaultValues: { connectorId: '', operations: [], targets: [] },
@@ -95,22 +121,29 @@ export function ConnectionsPanel({
       )
       setCatalog(listed)
       if (!getValues('connectorId')) {
-        const id = listed.operations.find((operation) => operation.readOnly)?.connectorId ?? ''
+        const retained = readPendingConnection(sessionStorage, pendingKey)
+        if (retained && retained.request.agentId !== agent.id)
+          throw new Error('The pending connection belongs to another workspace.')
+        const id =
+          retained?.request.connectorId ?? listed.operations.find((operation) => operation.readOnly)?.connectorId ?? ''
         const saved = next.connections.find(
           (connection) => connection.clientReference === connectionReference(agent.uid, id),
         )
         reset({
           connectorId: id,
-          operations: saved
-            ? listed.operations
-                .filter((operation) => operation.connectorId === id && saved.actions.includes(operation.action))
-                .map((operation) => operation.name)
-            : [],
-          targets: saved?.resources.map(resourceKey) ?? [],
+          operations:
+            retained?.request.operations ??
+            (saved
+              ? listed.operations
+                  .filter((operation) => operation.connectorId === id && saved.actions.includes(operation.action))
+                  .map((operation) => operation.name)
+              : []),
+          targets: retained?.request.targets.map(resourceKey) ?? saved?.resources.map(resourceKey) ?? [],
         })
+        if (retained) setPending(retained.request)
       }
     },
-    [agent.id, agent.uid, getValues, reset],
+    [agent.id, agent.uid, getValues, pendingKey, reset],
   )
 
   useEffect(() => {
@@ -127,7 +160,6 @@ export function ConnectionsPanel({
     setError('')
     try {
       await load()
-      setPending(undefined)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Connections are unavailable')
     } finally {
@@ -148,13 +180,80 @@ export function ConnectionsPanel({
     })
     setNotice('')
   }
+  const save = useCallback(
+    async (request: SaveConnection, afterSignIn = false) => {
+      setPending(request)
+      setBusy(true)
+      setError('')
+      setNotice('')
+      try {
+        retainPendingConnection(sessionStorage, pendingKey, request, false)
+        const response = await fetch('/api/tengri/connections', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        })
+        const next = fromJson(ListPlatformConnectionsResponseSchema, await responseJson(response))
+        const current = next.connections.find((connection) => connection.id === request.connectionId)
+        if (!current) throw new Error('The saved connection could not be confirmed. Refresh before retrying.')
+        setSnapshot(next)
+        completePendingConnection(sessionStorage, pendingKey, request.operationId)
+        setPending(undefined)
+        reset({
+          connectorId: request.connectorId,
+          operations: request.operations,
+          targets: request.targets.map(resourceKey),
+        })
+        setNotice(
+          !current.enabled
+            ? 'Connection is disconnected. Review its settings before reconnecting.'
+            : credentialMatchesRuntime(current, agent.runtimeEpoch ?? '', next.recoveryGeneration, Date.now())
+              ? 'Connected. The selected tools are available to your agent.'
+              : 'Connection is saved. Resume the workspace to finish connecting.',
+        )
+      } catch (cause) {
+        if (cause instanceof ConnectionRequestError) {
+          if ((cause.status === 401 || cause.status === 428) && !afterSignIn) {
+            try {
+              retainPendingConnection(sessionStorage, pendingKey, request, true)
+              await startTengriSignIn(cause.status === 401 ? 'login' : 'step-up')
+            } catch {
+              setError('Verification could not start. Select Try again to continue.')
+            }
+            return
+          }
+          if (cause.code === 'connection_access_denied' || cause.code === 'connection_scope_changed') {
+            completePendingConnection(sessionStorage, pendingKey, request.operationId)
+            setPending(undefined)
+          }
+        }
+        setError(cause instanceof Error ? cause.message : 'Connection could not be confirmed. Retry the same change.')
+        await load().catch(() => {})
+      } finally {
+        setBusy(false)
+      }
+    },
+    [agent.runtimeEpoch, load, pendingKey, reset],
+  )
+
+  useEffect(() => {
+    if (!active || !catalog || !snapshot || resumed.current === pendingKey) return
+    resumed.current = pendingKey
+    try {
+      const retained = readPendingConnection(sessionStorage, pendingKey)
+      if (retained?.resumeAfterSignIn && retained.request.agentId === agent.id) void save(retained.request, true)
+      else if (retained) setNotice('Your access choices are saved. Select Try again to continue.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Connection setup could not be restored.')
+    }
+  }, [active, agent.id, catalog, pendingKey, save, snapshot])
+
   const submit = form.handleSubmit(async (value) => {
     const existing = snapshot?.connections.find(
       (connection) => connection.clientReference === connectionReference(agent.uid, value.connectorId),
     )
-    const request =
-      pending ??
-      ({
+    await save(
+      pending ?? {
         kind: 'save',
         operationId: crypto.randomUUID(),
         agentId: agent.id,
@@ -166,35 +265,8 @@ export function ConnectionsPanel({
           const [kind, id] = z.tuple([z.string(), z.string()]).parse(JSON.parse(key))
           return { kind, id }
         }),
-      } satisfies SaveConnection)
-    setPending(request)
-    setBusy(true)
-    setError('')
-    setNotice('')
-    try {
-      const response = await fetch('/api/tengri/connections', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
-      })
-      const next = fromJson(ListPlatformConnectionsResponseSchema, await responseJson(response))
-      const current = next.connections.find((connection) => connection.id === request.connectionId)
-      if (!current) throw new Error('The saved connection could not be confirmed. Refresh before retrying.')
-      setSnapshot(next)
-      setPending(undefined)
-      setNotice(
-        !current.enabled
-          ? 'Connection is disconnected. Review its settings before reconnecting.'
-          : current.credentialActive
-            ? 'Connection is ready.'
-            : 'Connection is saved. Resume the workspace to finish connecting.',
-      )
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Connection could not be confirmed. Retry the same change.')
-      await load().catch(() => {})
-    } finally {
-      setBusy(false)
-    }
+      },
+    )
   })
   const disconnect = async (connectionId: string) => {
     const request = pendingDisconnect ?? { operationId: crypto.randomUUID(), agentId: agent.id, connectionId }
@@ -212,7 +284,10 @@ export function ConnectionsPanel({
         .object({ revoked: z.literal(true), cleanupPending: z.boolean() })
         .parse(await responseJson(response))
       setPendingDisconnect(undefined)
-      setPending(undefined)
+      if (pending?.connectionId === connectionId) {
+        completePendingConnection(sessionStorage, pendingKey, pending.operationId)
+        setPending(undefined)
+      }
       setNotice(
         result.cleanupPending ? 'Disconnected. Guest tool cleanup is pending; access is revoked.' : 'Disconnected.',
       )
@@ -251,6 +326,17 @@ export function ConnectionsPanel({
     ).values(),
   ]
   const selectedTargets = form.watch('targets')
+  const selectedOperations = form.watch('operations')
+  const operationOptions = [
+    ...operations.map((operation) => ({ ...operation, unavailable: false })),
+    ...selectedOperations
+      .filter((name) => !operations.some((operation) => operation.name === name))
+      .map((name) => ({
+        name,
+        description: 'Unavailable tool. Remove it before choosing a replacement.',
+        unavailable: true,
+      })),
+  ]
   const targetNames = new Map(
     catalog?.operations
       .flatMap((operation) => operation.targets)
@@ -271,12 +357,22 @@ export function ConnectionsPanel({
     })),
   ]
   const blocked = disabled || busy || Boolean(pending) || Boolean(pendingDisconnect)
+  const connected =
+    selectedConnection &&
+    snapshot &&
+    credentialMatchesRuntime(selectedConnection, agent.runtimeEpoch ?? '', snapshot.recoveryGeneration, Date.now())
   const { errors } = form.formState
+  const serviceLabel = (id: string) =>
+    catalog?.operations.some(
+      (operation) =>
+        operation.connectorId === id &&
+        operation.targets.some((target) => target.resource.kind === 'kubernetes.namespace'),
+    )
+      ? `Kubernetes · ${id}`
+      : id
   return (
     <section aria-label="Connections" className="@container/connections space-y-4 text-zinc-200">
-      <FieldDescription>
-        Give this workspace selected platform tools. Each call uses your current permissions.
-      </FieldDescription>
+      <FieldDescription>Connect services to give your agent access to selected resources.</FieldDescription>
       {error ? (
         <p role="alert" className="text-sm text-red-300">
           {error}
@@ -291,7 +387,9 @@ export function ConnectionsPanel({
         <Card key={connection.id} size="sm">
           <CardContent className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 flex-1 break-words">
-              <p className="text-sm font-medium">{connection.clientReference.slice((agent.uid + '/').length)}</p>
+              <p className="text-sm font-medium">
+                {serviceLabel(connection.clientReference.slice((agent.uid + '/').length))}
+              </p>
               <p className="mt-1 text-xs text-zinc-400">
                 {!connection.enabled
                   ? 'Disconnected'
@@ -352,7 +450,7 @@ export function ConnectionsPanel({
             <CardContent>
               <FieldGroup>
                 <Field data-invalid={Boolean(errors.connectorId)}>
-                  <FieldLabel htmlFor={formId + '-connector'}>Connector</FieldLabel>
+                  <FieldLabel htmlFor={formId + '-connector'}>Service</FieldLabel>
                   <NativeSelect
                     id={formId + '-connector'}
                     className="w-full"
@@ -371,7 +469,7 @@ export function ConnectionsPanel({
                       ),
                     ].map((id) => (
                       <option key={id} value={id}>
-                        {id}
+                        {serviceLabel(id)}
                       </option>
                     ))}
                   </NativeSelect>
@@ -379,13 +477,13 @@ export function ConnectionsPanel({
                 </Field>
                 <div className="grid gap-4 @min-[420px]/connections:grid-cols-2">
                   <FieldSet disabled={blocked} aria-describedby={formId + '-operations-error'}>
-                    <FieldLegend>Operations</FieldLegend>
+                    <FieldLegend>Allow your agent to</FieldLegend>
                     <Controller
                       name="operations"
                       control={form.control}
                       render={({ field }) => (
                         <FieldGroup className="gap-3">
-                          {operations.map((operation, index) => (
+                          {operationOptions.map((operation, index) => (
                             <Field
                               key={operation.name}
                               orientation="horizontal"
@@ -406,15 +504,15 @@ export function ConnectionsPanel({
                                   )
                                 }
                                 aria-invalid={Boolean(errors.operations)}
-                                aria-describedby={
-                                  formId + '-operation-description-' + index + ' ' + formId + '-operations-error'
-                                }
+                                aria-describedby={formId + '-operations-error'}
                               />
                               <FieldContent>
-                                <FieldLabel htmlFor={formId + '-operation-' + index}>{operation.name}</FieldLabel>
-                                <FieldDescription id={formId + '-operation-description-' + index}>
+                                <FieldLabel
+                                  htmlFor={formId + '-operation-' + index}
+                                  className={operation.unavailable ? 'text-amber-300' : undefined}
+                                >
                                   {operation.description}
-                                </FieldDescription>
+                                </FieldLabel>
                               </FieldContent>
                             </Field>
                           ))}
@@ -424,7 +522,11 @@ export function ConnectionsPanel({
                     <FieldError id={formId + '-operations-error'} errors={[errors.operations]} />
                   </FieldSet>
                   <FieldSet disabled={blocked} aria-describedby={formId + '-targets-error'}>
-                    <FieldLegend>Targets</FieldLegend>
+                    <FieldLegend>
+                      {targets.every((entry) => entry.resource.kind === 'kubernetes.namespace')
+                        ? 'Namespaces'
+                        : 'Resources'}
+                    </FieldLegend>
                     <Controller
                       name="targets"
                       control={form.control}
@@ -466,14 +568,28 @@ export function ConnectionsPanel({
               </FieldGroup>
             </CardContent>
             <CardFooter className="flex-wrap gap-2">
-              <Button type="submit" size="sm" disabled={disabled || busy || Boolean(pendingDisconnect)}>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={
+                  disabled ||
+                  busy ||
+                  Boolean(pendingDisconnect) ||
+                  agent.phase !== 'ready' ||
+                  Boolean(connected && !form.formState.isDirty && !pending)
+                }
+              >
                 {busy
-                  ? 'Saving…'
+                  ? 'Connecting…'
                   : pending
-                    ? 'Retry connection'
-                    : selectedConnection && !selectedConnection.enabled
-                      ? 'Reconnect'
-                      : 'Save connection'}
+                    ? 'Try again'
+                    : connected && !form.formState.isDirty
+                      ? 'Connected'
+                      : selectedConnection && !selectedConnection.enabled
+                        ? 'Reconnect'
+                        : selectedConnection
+                          ? 'Update access'
+                          : 'Connect'}
               </Button>
               <Button
                 type="button"
@@ -484,18 +600,10 @@ export function ConnectionsPanel({
               >
                 Refresh
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={disabled || busy}
-                onClick={() =>
-                  void startTengriSignIn('step-up').catch(() => setError('Passkey verification could not start'))
-                }
-              >
-                Verify passkey
-              </Button>
             </CardFooter>
+            {agent.phase !== 'ready' ? (
+              <FieldDescription className="px-3">Resume your workspace to connect its tools.</FieldDescription>
+            ) : null}
           </form>
         </Card>
       )}
