@@ -159,7 +159,7 @@ export const makeEntryJudgmentRequest = (input: {
       model: jevModel,
       state: {
         ...input.numericalState,
-        schemaVersion: 'bayn.jev-entry-state.v23',
+        schemaVersion: 'bayn.jev-entry-state.v22',
       },
       questions,
     })

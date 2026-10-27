@@ -188,7 +188,7 @@ const Document = Schema.Struct({
 })
 const NonNegative = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 const State = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-entry-state.v23'),
+  schemaVersion: Schema.Literal('bayn.jev-entry-state.v22'),
   task: Schema.Struct({ horizonMinutes: Schema.Finite }),
   execution: Schema.Struct({
     maximumEntryFeeBps: NonNegative,

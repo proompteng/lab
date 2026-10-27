@@ -12,37 +12,33 @@ import {
   intradayDecisionDelaySeconds,
 } from '../strategy/intraday-market'
 import { JevContractError, jevModel } from './contract'
-import { chartQuestionPolicy } from './chart-questions'
+import { stagedChartQuestionPolicy } from './staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
 
 const entryQuestionPolicyHash = Result.getOrThrow(
-  canonicalHashV1Result({ chart: chartQuestionPolicy, jev: entryJudgmentPolicy }),
+  canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: entryJudgmentPolicy }),
 )
 
 const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
-const protocolSchema = <
-  V extends 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25' | 'bayn.jev.protocol.v26',
-  D extends 'bayn.jev-entry-state.v22' | 'bayn.jev-entry-state.v23',
-  P extends 'source-anchored-proposal-judgments' | 'market-specific-proposal-judgments',
+export const jevProtocolSchemaForQuestionPolicy = <
+  V extends 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25' | 'bayn.jev.protocol.v26' = 'bayn.jev.protocol.v24',
 >(
   entryQuestionPolicyHash: string,
-  schemaVersion: V,
-  inputDefinition: D,
-  entrySelectionPolicy: P,
+  version: V = 'bayn.jev.protocol.v24' as V,
 ) =>
   Schema.Struct({
-    schemaVersion: Schema.Literal(schemaVersion),
+    schemaVersion: Schema.Literal(version),
     entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
     entryFeePolicy: Schema.Literal('broker-tier-buy-and-maximum-sell'),
-    entrySelectionPolicy: Schema.Literal(entrySelectionPolicy),
+    entrySelectionPolicy: Schema.Literal('source-anchored-proposal-judgments'),
     entryQuestionPolicyHash: Schema.Literal(entryQuestionPolicyHash),
     maximumEntryQuoteDriftBps: Schema.Literal(10),
     maximumEntryLimitSlippageBps: Schema.Literal(10),
     entrySignalPolicy: Schema.Literal('openai-decisions-then-jev'),
     model: Schema.Literal(jevModel),
-    inputDefinition: Schema.Literal(inputDefinition),
+    inputDefinition: Schema.Literal('bayn.jev-entry-state.v22'),
     marketProfiles: JevMarketProfilesSchema,
     universe: Schema.Array(SymbolSchema),
     candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(18)),
@@ -103,32 +99,24 @@ const protocolSchema = <
     }),
   )
 
-export const retainedJevProtocolSchema = (
-  questionPolicyHash: string,
-  version: 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25',
-) => protocolSchema(questionPolicyHash, version, 'bayn.jev-entry-state.v22', 'source-anchored-proposal-judgments')
-
-export const JevProtocolSchema = protocolSchema(
-  entryQuestionPolicyHash,
-  'bayn.jev.protocol.v26',
-  'bayn.jev-entry-state.v23',
-  'market-specific-proposal-judgments',
-)
+export const JevProtocolSchema = jevProtocolSchemaForQuestionPolicy(entryQuestionPolicyHash, 'bayn.jev.protocol.v26')
 
 export type JevProtocol = typeof JevProtocolSchema.Type
-export type JevProtocolMaterial = JevProtocol | ReturnType<typeof retainedJevProtocolSchema>['Type']
+export type JevProtocolMaterial = Omit<JevProtocol, 'schemaVersion'> & {
+  readonly schemaVersion: 'bayn.jev.protocol.v24' | 'bayn.jev.protocol.v25' | 'bayn.jev.protocol.v26'
+}
 
 export const defaultJevProtocolDocument = Object.freeze({
   schemaVersion: 'bayn.jev.protocol.v26',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
-  entrySelectionPolicy: 'market-specific-proposal-judgments',
+  entrySelectionPolicy: 'source-anchored-proposal-judgments',
   entryQuestionPolicyHash,
   maximumEntryQuoteDriftBps: 10,
   maximumEntryLimitSlippageBps: 10,
   entrySignalPolicy: 'openai-decisions-then-jev',
   model: jevModel,
-  inputDefinition: 'bayn.jev-entry-state.v23',
+  inputDefinition: 'bayn.jev-entry-state.v22',
   marketProfiles: jevMarketProfiles,
   universe: jevUniverse,
   candidateSymbols: jevCandidateSymbols,

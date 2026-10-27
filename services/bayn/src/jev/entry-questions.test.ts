@@ -95,7 +95,7 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
       'equity_base_breakout_stop_invalidates',
     ])
     expect(prepared.request.state).toMatchObject({
-      schemaVersion: 'bayn.jev-entry-state.v23',
+      schemaVersion: 'bayn.jev-entry-state.v22',
     })
     for (const question of Object.values(prepared.request.questions)) {
       expect(question.type).toBe('noul')

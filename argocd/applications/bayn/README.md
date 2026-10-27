@@ -34,8 +34,8 @@ command is **not** run automatically from the trading service at startup.
 
 # Bayn GitOps rollout notes
 
-The replacement source uses protocol v25 and sequential OpenAI Decisions API chart judgments followed by Jev
-proposal judgments. Migration 152 requires terminal mutation cycles, flat settled inventory, complete accounting,
+The replacement source uses protocol v26 and sequential OpenAI Decisions API CHART and selected BASE_START judgments
+followed by Jev proposal judgments. Migration 153 requires terminal mutation cycles, flat settled inventory, complete accounting,
 fresh exact reconciliation and no unexpired inference claims. It restricts prior PAPER authority for native OBSERVE
 recovery and installs the new request, handoff, receipt and batch write guards. Historical financial rows remain intact.
 
@@ -43,10 +43,10 @@ Both inference secrets sync before the controller rollout. Their controller envi
 independent recovery and code-owned exits can start during a model-secret outage. Missing credentials fail entry
 inference explicitly; they never select a fallback strategy. Research jobs require both credentials.
 
-The v25 source cutover removes the prior mandate from the SealedSecret and all three runtime inputs. Its initial rollout
-uses read-only broker access and no capital authority. After migration 152 and native OBSERVE recovery, a new PAPER
-request restores the same-account mandate bound to the verified published image and strategy identity through the
-existing sealed GitOps path. Loss, peak-equity, turnover and financial history remain intact throughout the rotation.
+The v26 source cutover removes the prior v25 mandate from the SealedSecret and all three runtime inputs. Its initial rollout
+uses read-only broker access and no capital authority. After migration 153 and native OBSERVE recovery, any later PAPER
+request requires separate authorization and must bind the verified published image and strategy identity through the
+existing sealed GitOps path. This rollout does not rearm trading. Loss, peak-equity, turnover and financial history remain intact.
 The prior v23 activation receipt below is historical evidence. Image health does not establish a natural trade or
 completed fee-reconciled round trip.
 
@@ -201,21 +201,37 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The replacement implementation uses `bayn.jev.protocol.v26`, `bayn.chart-first-entry.behavior.v1`, entry state v23,
+The replacement implementation uses `bayn.jev.protocol.v26`, `bayn.chart-first-entry.behavior.v1`, entry state v22,
 batch v7 and pinned `jev-1.13.0`, retaining the 15-minute holding limit. OpenAI Decisions API judgments identify chart
 structure and source anchors. Code funds source-anchored recovery and breakout proposals, commits the exact dependent
-Jev request, and selects from market-specific atomic judgments. Equities require setup and stop invalidation; crypto
-also requires the fee-funded target to be unobstructed. Equity funding carries no crypto fee tier. Both providers share the original inference deadline.
+Jev request, and selects from atomic proposal-specific judgments. Both providers share the original inference deadline.
 Account risk, broker protection, fee accounting and exact reconciliation remain mandatory.
 [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the source contracts and venue capabilities.
 
-The funded source-anchor migration uses entry input v5, assessments v3 and handoff v3. The exact live quote, bounded
+The funded source-anchor migration uses entry input v4, assessments v3 and handoff v3. The exact live quote, bounded
 entry and fee break-even price accompany the complete chart. Code offers only funded source anchors or contiguous
 base intervals, with explicit no-match answers. Jev still independently assesses each resulting proposal.
-Migration 153 retains chart dispatch and terminal-cost checkpoints, requires terminal cycles, flat settled inventory,
+Migration 152 retains chart dispatch and terminal-cost checkpoints, requires terminal cycles, flat settled inventory,
 complete accounting, fresh exact reconciliation and no unexpired claims. It restricts prior PAPER authority for native
-OBSERVE recovery and preserves operator holds and account risk history. New dispatch accepts only v5/v26; financial
-readers preserve original v1/v2/v3/v4 provider bodies, receipt hashes and late costs.
+OBSERVE recovery and preserves operator holds and account risk history. That historical cutover admitted v4/v25; financial
+readers preserve original v1/v2/v3 provider bodies, receipt hashes and late costs.
+
+The staged transport adds migration 153 without rewriting migrations 151 or 152. Current entry input v5,
+assessments v4 and handoff v4 preserve the funded v25 anchor and execution-price rules. CHART asks for the funded
+base end; only the selected end's funded starts are then requested by BASE_START, before dependent Jev inference.
+All three billable stages share the original 10-second expiry and unchanged request/response caps. Durable claims
+precede dispatch; incomplete or missing receipts remain unknown expenses, while authenticated no-base/refusal or
+no-eligible-base outcomes prove non-dispatch. Historical funded v25/input-v4/handoff-v3 evidence remains financial-only.
+Migration 153 retains the flat/settled/accounting/fresh-reconciliation gates and restricts eligible PAPER authority to
+OBSERVE with the kill switch active; it does not rearm or create a new mandate. Publication and OBSERVE verification
+do not prove restored PAPER execution, fills, or fully loaded profitability.
+
+Migration 154 replaces the entry-question policy within the same v26 wire contracts. Equities require setup and stop
+invalidation; crypto also requires an unobstructed fee-funded target. Current dispatch and request writes require the
+new policy hash. Original v26 claims, receipts, questions and expenses remain financial-only; they cannot restart
+inference. The cutover retains flat inventory, settled orders, exact reconciliation and complete accounting checks,
+then restricts prior PAPER authority for the new same-account mandate. Monetary risk, holding and inference limits
+are unchanged.
 
 The source phase removes the prior sealed capital request and its three runtime lineages. After the exact published
 image and native OBSERVE recovery are verified, a reviewed same-account PAPER request must bind the new strategy and

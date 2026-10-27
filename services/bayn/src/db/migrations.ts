@@ -1,4 +1,5 @@
-import marketEntryStrategies from '../../migrations/0153_market_entry_strategies'
+import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
+import stagedChartTransport from '../../migrations/0153_staged_chart_transport'
 import fundedSourceAnchors from '../../migrations/0152_funded_source_anchors'
 import chartDispatchCheckpoints from '../../migrations/0151_chart_dispatch_checkpoints'
 import inferenceRequestVersion from '../../migrations/0150_inference_request_version'
@@ -155,7 +156,8 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
-  '153_market_entry_strategies': marketEntryStrategies,
+  '154_market_entry_questions': marketEntryQuestions,
+  '153_staged_chart_transport': stagedChartTransport,
   '152_funded_source_anchors': fundedSourceAnchors,
   '151_chart_dispatch_checkpoints': chartDispatchCheckpoints,
   '150_inference_request_version': inferenceRequestVersion,

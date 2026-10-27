@@ -3,12 +3,7 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { makeNativeChartEvidence, type NativeChartEvidence } from './chart-evidence'
-import {
-  ChartAssessmentsSchema,
-  chartAssessmentsFromResponse,
-  makeChartDecisionsRequest,
-  type ChartAssessmentsMaterial,
-} from './chart-questions'
+import { ChartAssessmentsSchema, type ChartAssessmentsMaterial } from './chart-questions'
 import {
   decodeJevResponse,
   JevContractError,
@@ -27,7 +22,7 @@ import {
   type DecisionsError,
   type DecisionsResponse,
 } from './decisions'
-import { deriveEntryDispositionForChart, type EntryHandoffMaterial } from './entry-inference'
+import { deriveEntryDispositionForChart, hasFeasibleEntrySource, type EntryHandoffMaterial } from './entry-inference'
 import {
   prepareEntryInferenceInput,
   type EntryInferenceInput,
@@ -35,6 +30,12 @@ import {
 } from './entry-inference-input'
 import { EntryProposalSchema, EntrySetup, ProposalRejection } from './entry-proposals'
 import { makeEntryJudgmentRequest } from './entry-questions'
+import { BaseStartEvidenceSchema, makeStagedSkipReceipt, stageResponseIdentity } from './staged-checkpoint'
+import {
+  makeInitialChartStageRequest,
+  makeSelectedBaseStartStageRequest,
+  stagedChartAssessments,
+} from './staged-chart-questions'
 
 const HttpStatus = Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 })))
 const Evaluation = Schema.Struct({
@@ -56,7 +57,7 @@ const makeDispositionSchema = <S extends Schema.Top>(assessments: S) =>
     Schema.Struct({
       status: Schema.Literal('PREPARATION_FAILED'),
       visual: DecisionsInferenceSchema,
-      reason: Schema.Literals(['VISUAL_RECEIPT_MISMATCH', 'DERIVATION_CONTRACT']),
+      reason: Schema.Literals(['VISUAL_RECEIPT_MISMATCH', 'DERIVATION_CONTRACT', 'BASE_START_FAILED']),
     }),
     Schema.Struct({
       status: Schema.Literal('NO_FUNDED_PROPOSALS'),
@@ -74,7 +75,7 @@ const makeDispositionSchema = <S extends Schema.Top>(assessments: S) =>
     }),
   ])
 export const makeEntryHandoffSchema = <
-  V extends 'bayn.entry-handoff.v1' | 'bayn.entry-handoff.v2' | 'bayn.entry-handoff.v3',
+  V extends 'bayn.entry-handoff.v1' | 'bayn.entry-handoff.v2' | 'bayn.entry-handoff.v3' | 'bayn.entry-handoff.v4',
   S extends Schema.Top,
 >(
   schemaVersion: V,
@@ -89,7 +90,10 @@ export const makeEntryHandoffSchema = <
     disposition: makeDispositionSchema(assessments),
     handoffHash: Sha256Schema,
   })
-export const EntryHandoffSchema = makeEntryHandoffSchema('bayn.entry-handoff.v3', ChartAssessmentsSchema)
+export const EntryHandoffSchema = Schema.Struct({
+  ...makeEntryHandoffSchema('bayn.entry-handoff.v4', ChartAssessmentsSchema).fields,
+  baseStart: Schema.suspend(() => BaseStartEvidenceSchema),
+})
 export const makeEntryInferenceCompletionSchema = <S extends Schema.Top>(handoff: S) =>
   Schema.Struct({
     handoff,
@@ -120,24 +124,132 @@ const invalid = (message: string) => Result.fail(new JevContractError({ message 
 export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
   Result.gen(function* () {
     const prepared = yield* prepareEntryInferenceInput(source.input)
-    const chart = yield* makeNativeChartEvidence(prepared.input.chartSource)
-    const visualRequest = yield* makeChartDecisionsRequest({
-      chart,
-      protocol: prepared.input.protocol,
-      funding: prepared.input.funding,
-    })
-    return yield* decodeEntryHandoffForChart({
-      source,
+    return yield* decodeStagedEntryHandoff(
+      { ...source, input: prepared.input },
       input,
-      inputHash: prepared.requestHash,
+      prepared.requestHash,
+      makeEntryJudgmentRequest,
+    )
+  })
+
+export const decodeStagedEntryHandoff = (
+  source: EntrySource,
+  input: unknown,
+  inputHash: string,
+  prepareJudgments: typeof makeEntryJudgmentRequest,
+) =>
+  Result.gen(function* () {
+    const chart = yield* makeNativeChartEvidence(source.input.chartSource)
+    const handoff = yield* Schema.decodeUnknownResult(EntryHandoffSchema, strictParseOptions)(input)
+    const { handoffHash, ...material } = handoff
+    const initial = yield* makeInitialChartStageRequest({
       chart,
-      handoffSchema: EntryHandoffSchema,
-      sourceFeasible: visualRequest.sourceFeasible,
-      prepareVisual: () => Result.succeed(visualRequest),
-      assessVisual: (sourceChart, response) =>
-        chartAssessmentsFromResponse(sourceChart, response, visualRequest.request),
-      prepareJudgments: makeEntryJudgmentRequest,
+      protocol: source.input.protocol,
+      funding: source.input.funding,
     })
+    if (
+      handoff.requestId !== source.requestId ||
+      handoff.inputHash !== inputHash ||
+      handoff.visualRequestHash !== initial.requestHash ||
+      handoff.recordedAt < source.observedAt ||
+      handoffHash !== (yield* canonicalHashV1Result(material))
+    )
+      return yield* invalid('Staged handoff identity or source does not reproduce')
+    const base = handoff.baseStart
+    if (base.status === 'NOT_REQUESTED') {
+      const { skipHash, ...skipMaterial } = base.skip
+      const expected = yield* makeStagedSkipReceipt(skipMaterial)
+      if (
+        skipHash !== expected.skipHash ||
+        base.skip.requestId !== source.requestId ||
+        base.skip.recordedAt < source.observedAt ||
+        base.skip.recordedAt > handoff.recordedAt
+      )
+        return yield* invalid('Staged handoff has an unbound skip receipt')
+    }
+    const disposition = handoff.disposition
+    if (disposition.status === 'SOURCE_INFEASIBLE') {
+      if (
+        (yield* hasFeasibleEntrySource(source.input, chart)) ||
+        base.status !== 'NOT_REQUESTED' ||
+        base.skip.reason !== 'SOURCE_INFEASIBLE' ||
+        base.skip.predecessorHash !== null
+      )
+        return yield* invalid('Staged source-infeasible handoff contradicts its source or skip')
+      return handoff
+    }
+    if (disposition.status === 'VISUAL_FAILED') {
+      if (
+        (disposition.failure.usage !== null && !validDecisionsUsage(disposition.failure.usage)) ||
+        base.status !== 'NOT_REQUESTED' ||
+        base.skip.reason !== 'CHART_FAILED' ||
+        base.skip.predecessorHash === null
+      )
+        return yield* invalid('Failed staged chart has invalid costs or skip evidence')
+      return handoff
+    }
+    const visual = disposition.visual
+    if (
+      visual.requestHash !== initial.requestHash ||
+      visual.responseHash !== (yield* canonicalHashV1Result(visual.response)) ||
+      visual.startedAt < source.observedAt ||
+      visual.startedAt >= source.expiresAt ||
+      visual.completedAt < visual.startedAt ||
+      visual.completedAt > handoff.recordedAt ||
+      Result.isFailure(decodeDecisionsResponse(initial.request, visual.response))
+    )
+      return yield* invalid('Staged chart response differs from its original source or clocks')
+    const next = yield* makeSelectedBaseStartStageRequest(
+      { chart, protocol: source.input.protocol, funding: source.input.funding },
+      stageResponseIdentity(visual),
+    )
+    if (next.status === 'NOT_REQUESTED') {
+      if (
+        base.status !== 'NOT_REQUESTED' ||
+        base.skip.reason !== next.reason ||
+        base.skip.predecessorHash === null ||
+        base.skip.recordedAt < visual.completedAt
+      )
+        return yield* invalid('Base start skip does not reproduce the selected chart outcome')
+    } else {
+      if (base.status === 'NOT_REQUESTED') return yield* invalid('Selected base start cannot be silently skipped')
+      if (base.status === 'FAILED') {
+        if (base.failure.usage !== null && !validDecisionsUsage(base.failure.usage))
+          return yield* invalid('Failed base start has inconsistent usage')
+        if (disposition.status !== 'PREPARATION_FAILED' || disposition.reason !== 'BASE_START_FAILED')
+          return yield* invalid('Failed base start cannot authorize a dependent proposal')
+        return handoff
+      }
+      const inference = base.inference
+      if (
+        inference.requestHash !== next.requestHash ||
+        inference.responseHash !== (yield* canonicalHashV1Result(inference.response)) ||
+        inference.startedAt < visual.completedAt ||
+        inference.startedAt >= source.expiresAt ||
+        inference.completedAt < inference.startedAt ||
+        inference.completedAt > handoff.recordedAt ||
+        Result.isFailure(decodeDecisionsResponse(next.request, inference.response))
+      )
+        return yield* invalid('Base start response changes its selected predecessor or clocks')
+    }
+    const derive = stagedChartAssessments(
+      { chart, protocol: source.input.protocol, funding: source.input.funding },
+      stageResponseIdentity(visual),
+      base.status === 'RECEIVED' ? stageResponseIdentity(base.inference) : null,
+    ).pipe(
+      Result.flatMap((assessments) =>
+        deriveEntryDispositionForChart(source.input, visual, chart, assessments, prepareJudgments),
+      ),
+    )
+    if (disposition.status === 'PREPARATION_FAILED') {
+      if (disposition.reason !== 'DERIVATION_CONTRACT' || Result.isSuccess(derive))
+        return yield* invalid('Staged preparation failure contradicts reproducible evidence')
+      return handoff
+    }
+    const expected = yield* derive
+    if ((yield* canonicalHashV1Result(expected)) !== (yield* canonicalHashV1Result(disposition)))
+      return yield* invalid('Staged handoff changes assessments, proposals or the dependent Jev request')
+    return handoff
   })
 
 export const decodeEntryHandoffForChart = <H extends EntryHandoffMaterial>({
@@ -209,6 +321,8 @@ export const decodeEntryHandoffForChart = <H extends EntryHandoffMaterial>({
       visual.completedAt <= handoff.recordedAt &&
       Result.isSuccess(decodedVisual)
     if (disposition.status === 'PREPARATION_FAILED') {
+      if (disposition.reason === 'BASE_START_FAILED')
+        return yield* invalid('Historical handoff cannot contain a staged failure')
       if (disposition.reason === 'VISUAL_RECEIPT_MISMATCH' ? visualBound : !visualBound)
         return yield* invalid('Preparation failure contradicts its chart inference receipt')
       if (disposition.reason === 'DERIVATION_CONTRACT' && Result.isSuccess(derive()))

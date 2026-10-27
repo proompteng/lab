@@ -7,7 +7,7 @@ import { EntryInferenceInputSchema, prepareEntryInferenceInput } from './entry-i
 import { EntryInferenceCompletionSchema, decodeEntryInferenceCompletion } from './entry-inference-evidence'
 
 const RequestMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-evaluation-request.v2'),
+  schemaVersion: Schema.Literal('bayn.jev-evaluation-request.v3'),
   cycleId: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
   snapshotId: Sha256Schema,
@@ -25,12 +25,15 @@ export enum JevOutcome {
   Failed = 'FAILED',
 }
 const ReceiptMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-evaluation-receipt.v2'),
+  schemaVersion: Schema.Literal('bayn.jev-evaluation-receipt.v3'),
   requestId: Sha256Schema,
   startedAt: UtcInstantSchema,
   completedAt: UtcInstantSchema,
   outcome: Schema.Union([
-    Schema.Struct({ status: Schema.Literal(JevOutcome.Completed), completion: EntryInferenceCompletionSchema }),
+    Schema.Struct({
+      status: Schema.Literal(JevOutcome.Completed),
+      completion: Schema.suspend(() => EntryInferenceCompletionSchema),
+    }),
     Schema.Struct({ status: Schema.Literal(JevOutcome.Failed), failure: Schema.Enum(JevFailure) }),
   ]),
 })

@@ -12,7 +12,7 @@ const bars = [
 const input = {
   schemaVersion: 'bayn.entry-inference-input.v5',
   numericalState: {
-    schemaVersion: 'bayn.jev-entry-state.v23',
+    schemaVersion: 'bayn.jev-entry-state.v22',
     task: { decisionPurpose: 'ENTRY' },
     candidate: { symbol: 'AAPL', bars1m: bars },
     session: { completedBarWindowEndsAt: '2026-10-25T07:00:00.000Z' },
@@ -39,12 +39,6 @@ describe('sequential entry inference input', () => {
     expect(prepared.requestHash).toBe(Result.getOrThrow(canonicalHashV1Result(prepared.input)))
     expect(JSON.parse(prepared.body)).toEqual(prepared.input)
     expect(prepared.input.chartSource.bars).toEqual(bars)
-  })
-
-  test('equity funding does not carry a crypto fee tier', () => {
-    expect(
-      Result.isFailure(prepareEntryInferenceInput({ ...input, funding: { ...input.funding, cryptoFeeTier: 4 } })),
-    ).toBe(true)
   })
 
   test('rejects mismatched numerical and image source bars', () => {
@@ -93,4 +87,10 @@ describe('sequential entry inference input', () => {
       Result.isFailure(prepareEntryInferenceInput({ ...input, schemaVersion: 'bayn.entry-inference-input.v1' })),
     ).toBe(true)
   })
+})
+
+test('equity funding cannot import a crypto fee tier', () => {
+  expect(
+    Result.isFailure(prepareEntryInferenceInput({ ...input, funding: { ...input.funding, cryptoFeeTier: 4 } })),
+  ).toBe(true)
 })

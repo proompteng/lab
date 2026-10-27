@@ -521,7 +521,7 @@ const batchFromObservation = (
         }
       }
       const request = yield* makeJevEvaluationRequest({
-        schemaVersion: 'bayn.jev-evaluation-request.v2',
+        schemaVersion: 'bayn.jev-evaluation-request.v3',
         cycleId: observation.cycleId,
         authorityGenerationHash: observation.authorityGenerationHash,
         snapshotId: manifest.snapshotId,

@@ -223,7 +223,7 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.numericalState).toMatchObject({
-        schemaVersion: 'bayn.jev-entry-state.v23',
+        schemaVersion: 'bayn.jev-entry-state.v22',
         task: { decisionPurpose: JevPurpose.Entry },
       })
     }

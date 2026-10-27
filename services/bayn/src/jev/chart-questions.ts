@@ -6,7 +6,6 @@ import type { NativeChartEvidence } from './chart-evidence'
 import { JevContractError } from './contract'
 import { jevEntryEconomics } from './entry-economics'
 import type { EntryInferenceInput } from './entry-inference-input'
-import type { JevProtocolMaterial } from './protocol'
 import { makeEntrySourceCandidates } from './entry-proposals'
 import type { RetainedConditionalChartAssessmentsMaterial } from './retained-conditional-chart-questions'
 import {
@@ -76,11 +75,14 @@ export const chartQuestionPolicy = {
 
 export type ChartDecisionSource = {
   readonly chart: NativeChartEvidence
-  readonly protocol: JevProtocolMaterial
+  readonly protocol: EntryInferenceInput['protocol']
   readonly funding: EntryInferenceInput['funding']
 }
 
-const buildChartDecisionsRequest = (source: ChartDecisionSource) =>
+export const buildChartDecisionsRequest = (
+  source: ChartDecisionSource,
+  stage: 'ALL' | 'CHART' | { readonly selectedEnd: string } = 'ALL',
+) =>
   Result.gen(function* () {
     const { chart, protocol, funding } = source
     const economics = yield* jevEntryEconomics({
@@ -125,34 +127,44 @@ const buildChartDecisionsRequest = (source: ChartDecisionSource) =>
       baseEnds.length === 0
         ? []
         : [
-            {
-              type: 'choice',
-              name: 'base_last_bar',
-              instructions: baseEndInstructions,
-              choices: [
-                ...baseEnds.map((bar) => ({
-                  value: bar.id,
-                  description: `Consolidation ends at bar labeled ${bar.chartLabel} minutes before windowEndAt, beginning at ${bar.timestamp}.`,
-                })),
-                noBase,
-              ],
-            },
-            ...baseEnds.map((end) => ({
-              type: 'choice' as const,
-              name: `base_first_bar_ending_${end.chartLabel}`,
-              instructions: `${baseStartInstructions} The specified end is bar labeled ${end.chartLabel} minutes before windowEndAt, beginning at ${end.timestamp}.`,
-              choices: [
-                ...chart.bars
-                  .filter((bar) =>
-                    candidates.baseWindows.some((span) => span.lastBarId === end.id && span.firstBarId === bar.id),
-                  )
-                  .map((bar) => ({
-                    value: bar.id,
-                    description: `Consolidation begins at bar labeled ${bar.chartLabel} minutes before windowEndAt, beginning at ${bar.timestamp}.`,
-                  })),
-                noBase,
-              ],
-            })),
+            ...(typeof stage === 'object'
+              ? []
+              : [
+                  {
+                    type: 'choice' as const,
+                    name: 'base_last_bar',
+                    instructions: baseEndInstructions,
+                    choices: [
+                      ...baseEnds.map((bar) => ({
+                        value: bar.id,
+                        description: `Consolidation ends at bar labeled ${bar.chartLabel} minutes before windowEndAt, beginning at ${bar.timestamp}.`,
+                      })),
+                      noBase,
+                    ],
+                  },
+                ]),
+            ...(stage === 'CHART'
+              ? []
+              : baseEnds
+                  .filter((end) => stage === 'ALL' || end.id === stage.selectedEnd)
+                  .map((end) => ({
+                    type: 'choice' as const,
+                    name: `base_first_bar_ending_${end.chartLabel}`,
+                    instructions: `${baseStartInstructions} The specified end is bar labeled ${end.chartLabel} minutes before windowEndAt, beginning at ${end.timestamp}.`,
+                    choices: [
+                      ...chart.bars
+                        .filter((bar) =>
+                          candidates.baseWindows.some(
+                            (span) => span.lastBarId === end.id && span.firstBarId === bar.id,
+                          ),
+                        )
+                        .map((bar) => ({
+                          value: bar.id,
+                          description: `Consolidation begins at bar labeled ${bar.chartLabel} minutes before windowEndAt, beginning at ${bar.timestamp}.`,
+                        })),
+                      noBase,
+                    ],
+                  }))),
           ]
     const prepared = yield* prepareDecisionsRequest({
       model: decisionsModel,
@@ -188,7 +200,7 @@ const buildChartDecisionsRequest = (source: ChartDecisionSource) =>
           ],
         },
       ],
-      questions: [...presenceQuestions, ...anchors, ...baseQuestions],
+      questions: typeof stage === 'object' ? baseQuestions : [...presenceQuestions, ...anchors, ...baseQuestions],
     })
     return {
       ...prepared,
@@ -253,7 +265,7 @@ const Anchor = Schema.Union([
   Schema.Struct({ status: Schema.Literal('REFUSED') }),
 ])
 export const ChartAssessmentsSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.chart-assessments.v3'),
+  schemaVersion: Schema.Literal('bayn.chart-assessments.v4'),
   symbol: SymbolSchema,
   windowEndAt: UtcInstantSchema,
   barsHash: Sha256Schema,
@@ -263,7 +275,10 @@ export const ChartAssessmentsSchema = Schema.Struct({
   base: Schema.Struct({ presence: Presence, first: Anchor, last: Anchor }),
 })
 export type ChartAssessments = typeof ChartAssessmentsSchema.Type
-export type ChartAssessmentsMaterial = ChartAssessments | RetainedConditionalChartAssessmentsMaterial
+export type ChartAssessmentsMaterial =
+  | ChartAssessments
+  | RetainedConditionalChartAssessmentsMaterial
+  | import('./retained-funded-chart-questions').ChartAssessments
 
 export const chartAssessments = (source: ChartDecisionSource, input: unknown) =>
   Result.gen(function* () {
@@ -318,7 +333,7 @@ export const chartAssessmentsFromResponse = (
       return { presence: presenceEvidence, first, last }
     })
     return {
-      schemaVersion: 'bayn.chart-assessments.v3' as const,
+      schemaVersion: 'bayn.chart-assessments.v4' as const,
       symbol: chart.symbol,
       windowEndAt: chart.windowEndAt,
       barsHash: chart.barsHash,

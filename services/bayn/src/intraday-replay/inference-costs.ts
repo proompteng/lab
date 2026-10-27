@@ -21,6 +21,7 @@ export const ReplayInferenceCostModelSchema = Schema.Struct({
 export const ReplayInferenceCostSummarySchema = Schema.Struct({
   callCount: NonNegativeIntegerSchema,
   chartCallCount: NonNegativeIntegerSchema,
+  baseStartCallCount: Schema.optionalKey(NonNegativeIntegerSchema),
   jevCallCount: NonNegativeIntegerSchema,
   unresolvedCallCount: NonNegativeIntegerSchema,
   inputTokens: UnsignedMicrosSchema,
@@ -37,7 +38,7 @@ const UsageReceiptSchema = Schema.Struct({
 })
 
 const verifiedUsage = (call: ReplayInferenceCall) => {
-  if (call.stage === 'CHART') {
+  if (call.stage !== 'JEV') {
     const outcome = call.outcome
     const usage =
       outcome.status === 'RECEIVED'
@@ -94,11 +95,11 @@ export const calculateReplayInferenceCosts = (
     cachedInputTokens += usage.cached
     cacheWriteInputTokens += usage.written
     outputTokens += usage.output
-    const tariff = model[call.stage === 'CHART' ? 'chart' : 'jev']
+    const tariff = model[call.stage === 'JEV' ? 'jev' : 'chart']
     const charge =
       (usage.input - usage.cached - usage.written) * BigInt(tariff.inputMicrosPerMillionTokens) +
       usage.output * BigInt(tariff.outputMicrosPerMillionTokens) +
-      (call.stage === 'CHART'
+      (call.stage !== 'JEV'
         ? usage.cached * BigInt(model.chart.cachedInputMicrosPerMillionTokens) +
           usage.written * BigInt(model.chart.cacheWriteInputMicrosPerMillionTokens)
         : 0n)
@@ -107,6 +108,9 @@ export const calculateReplayInferenceCosts = (
   return {
     callCount: calls.length,
     chartCallCount: calls.filter((call) => call.stage === 'CHART').length,
+    ...(calls.some((call) => call.stage === 'BASE_START')
+      ? { baseStartCallCount: calls.filter((call) => call.stage === 'BASE_START').length }
+      : {}),
     jevCallCount: calls.filter((call) => call.stage === 'JEV').length,
     unresolvedCallCount,
     inputTokens: inputTokens.toString(),

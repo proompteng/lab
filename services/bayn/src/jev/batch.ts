@@ -1,6 +1,6 @@
 import type { EntryInferenceInput } from './entry-inference-input'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { makeChartDecisionsRequest } from './chart-questions'
+import { makeInitialChartStageRequest, stagedChartQuestionPolicy } from './staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
 import { Result, Schema } from 'effect'
 import { jevBenchmarkSymbol } from './markets'
@@ -241,7 +241,7 @@ export const jevBatchQuestionSetHash = (
     for (const candidate of candidates) {
       if (candidate.request === undefined) continue
       const chart = yield* makeNativeChartEvidence(candidate.request.request.chartSource)
-      const visual = yield* makeChartDecisionsRequest({
+      const visual = yield* makeInitialChartStageRequest({
         chart,
         protocol: candidate.request.request.protocol,
         funding: candidate.request.request.funding,
@@ -249,6 +249,10 @@ export const jevBatchQuestionSetHash = (
       specifications.push({
         symbol: candidate.symbol,
         visual: { model: visual.request.model, questions: visual.request.questions },
+        staged: {
+          policy: stagedChartQuestionPolicy,
+          inputHash: yield* canonicalHashV1Result(candidate.request.request),
+        },
         jev: entryJudgmentPolicy,
       })
     }

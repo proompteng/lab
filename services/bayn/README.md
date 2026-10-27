@@ -53,33 +53,40 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The replacement source uses `jev` protocol v26, entry state v23, batch v7 and entry target v7. It retains the
+The replacement source uses `jev` protocol v26, entry state v22, batch v7 and entry target v7. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
 
-Entry input v5 binds the completed chart, current bid and ask, bounded entry and fee break-even objective.
-Code offers only source anchors and contiguous base intervals that satisfy the same complete-plan funding arithmetic
-used after inference. Support and resistance choices include explicit no-match answers, even for a single eligible bar.
-All source bars and the full image remain visible, including closer obstructions outside the offered objectives.
-An eligible price is not evidence of a defended support or consolidation; independent visual and Jev judgments remain
-required. Base starts are conditional on the selected end, and an unused branch's refusal cannot veto another setup.
-The volume histogram scales to the largest observed bar, including fractional crypto quantities.
+Entry input v5 retains relative volume, including fractional crypto quantities and an empty histogram for all-zero windows.
+Chart transport first asks presence, support/resistance anchors and the base end. Only an authenticated selected end
+can produce a second OpenAI request containing its single conditional base-start question. This extra billable
+`BASE_START` stage shares the original ten-second deadline with CHART and Jev; no timeout or transport cap is raised.
+Each start choice covers all earlier source bars and an explicit no-base option. Ends must leave at least two base bars
+and one newer completed bar. An unused branch's refusal cannot veto a supported proposal.
+Migration 154 admits only outer request v3, input v5, handoff v4 and the exact market-specific v26 question policy
+for new execution. It preserves the staged transport installed by migration 153. Retired v1–v4 inputs and the earlier
+v26 question policy remain available only to financial readers. Migration 151 and its historical checkpoint identities remain unchanged.
+Each visual stage has one immutable dispatch admission and a separately durable terminal receipt. A duplicate admission
+cannot redispatch an uncertain call. Late terminal evidence can settle costs but cannot authorize a successor or renew expiry.
+An explicit authenticated BASE_START skip proves non-dispatch; absent or incomplete stage evidence remains unknown.
+Financial evidence/quotes v4 preserve three separate stage keys and transfer identities, retain unknown-to-metered history,
+validate the complete graph before reproducing old quote prefixes, and never count a stage twice.
+Late handoffs for original expired requests retain their original financial evidence contract and cannot restart inference.
+Read-only financial projection
+reproduces the original independent questions for v1/v2 and conditional all-end questions for v3, with the original
+whole-unit volume scale for v1 and relative scale for v2/v3. Original usage, costs and receipt hashes remain verifiable.
+The migration requires terminal cycles, flat inventory, settled orders, complete accounting, fresh exact reconciliation
+and no unexpired inference claims. It fails closed if any precondition is absent, then restricts effective authority to
+OBSERVE with the kill switch ACTIVE and `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`. It does not grant or rearm PAPER authority.
+A separately approved same-account mandate must bind the new question policy before activation; publishing a build
+or passing tests is not activation evidence. Operator holds, capital, loss and turnover history remain intact.
 
-Migration 153 requires input v5, protocol v26, assessments v3 and handoff v3 for current execution. It preserves the
-chart-dispatch and terminal-cost checkpoints introduced by migration 151. Retired input v1/v2/v3/v4 and their original
-images, questions, receipts and costs remain reproducible only through financial audit readers. Late terminal receipts
-and original-version handoffs cannot restart inference. The migration requires terminal cycles, flat inventory,
-settled orders, complete accounting, fresh exact reconciliation and no unexpired inference claims. It restricts prior
-PAPER authority for native OBSERVE recovery and a reviewed same-account mandate bound to the new question policy.
-Operator holds, capital, loss and turnover history remain intact.
-
-Equity Jev requests ask separate Nouls for the observed setup and its stop invalidation. Equity selection does not
-require a second overhead-obstruction opinion on a code-funded objective. Crypto requests additionally require a clear
-path to the fee-funded target, accounting for coin-denominated acquisition fees and the maximum sell fee. Question
-names identify the market. Equity funding carries no crypto fee tier; equity commission, SEC, TAF and CAT charges
-remain in the funding arithmetic. The affirmative 0.7 and negative 0.3 thresholds are unchanged. Code selects
+Equity Jev requests ask separate Nouls about the observed setup and stop invalidation. Crypto requests additionally
+require an unobstructed fee-funded target. Question names identify the market, and equity funding carries no crypto
+fee tier. Equity cash charges and crypto received-coin/exit fees retain their existing arithmetic. The 0.7 affirmative
+and 0.3 negative thresholds, monetary risk limits, stops, exposure, freshness and holding limit remain unchanged. Code selects
 supported proposals and binds their prices and funded quantity to protected execution. An unrelated unsupported setup
 does not veto a supported proposal. Missing, refused, malformed, stale or uncertain evidence cannot authorize entry.
 There is no arbitrary range grid, compound model action, or compatibility execution path. Account risk, fees, exposure,
@@ -162,7 +169,7 @@ The immutable query records canonical `benchmarkSymbols`, including symbols that
 required benchmark bars or features produce source `not-ready` during snapshot acquisition, before any model request.
 Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
 Migration 124 retires protocol v10 for new authority generations and requires flat positions, settled orders, complete
-accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; the replacement protocol v26 uses entry state v23.
+accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; the replacement protocol v24 uses entry state v22.
 Entry break-even estimates use native close terms, instrument price rounding and session fee calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
 allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
 per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
@@ -228,8 +235,8 @@ Entry inference renders the verified completed bars into a deterministic candles
 typed chart-presence judgments and source-bar anchors, with each base start explicitly conditioned on its end.
 Code constructs at most one support-recovery and
 one base-breakout proposal from those anchors, then retains the exact handoff before Jev receives the proposals and
-numerical market evidence. Jev answers independent questions about setup confirmation, stop invalidation and target
-obstruction. Code selects a supported funded proposal, with every native quote, sizing, funding and order-risk check.
+numerical market evidence. Jev answers independent questions about setup confirmation and stop invalidation, with
+the target-obstruction question required only for crypto. Code selects a supported funded proposal, with every native quote, sizing, funding and order-risk check.
 There is no compound action choice, broad directional veto, generated price grid or parallel model vote.
 
 Funding includes the observed spread, up to 10 bp of refreshed quote drift, the existing 10 bp order limit allowance,
@@ -240,9 +247,9 @@ inference-bound ceiling is rejected before decision construction and again at th
 before a completed-minute boundary remains usable only within its original quote-age limit. Neither provider calls,
 persistence nor a new minute renew the original ten-second inference lifetime.
 
-Protocol v26, entry state v23 and entry input v5 define the current executable contracts. Migration 147 requires flat settled inventory,
+Protocol v24, entry state v22 and entry input v3 define the current executable contracts. Migration 147 requires flat settled inventory,
 terminal mutation cycles, fresh exact reconciliation, complete accounting and no unexpired provider claims before
-restricting new authority to the current protocol. Activation uses the same account, preserved financial history and native PAPER
+restricting new authority to v24. Activation uses the same account, preserved financial history and native PAPER
 mandate against the verified image delivered through Kargo and GitOps. Historical financial evidence remains immutable.
 Held positions use their sealed code-owned stop, profit target and maximum hold. See
 [strategy protection](../../docs/bayn/strategy-protection.md) for broker protection, failure behavior and evidence.
@@ -1273,6 +1280,13 @@ replaces the tariff estimate for economic P&L; it is never added to the same est
 cost comparison separately uses the greater of the applicable tariff or actual inference expense. Missing model
 usage keeps that qualification amount unresolved even when a complete provider invoice is available.
 
+The `economic` result uses `bayn.operating-cost-report.v2`. It reports actual fully costed profit in
+`netEconomicPnlMicros` and conservative qualification profit in `qualificationPnlMicros`. The qualification figure
+subtracts `qualificationPremiumMicros`, the excess of the greater invoice-or-tariff inference cost over the invoice
+amount, from actual profit. This applies the conservative inference rule once. The qualification figure is null if
+any operating-cost category, trading P&L, or required inference usage is unresolved. Zero-trade sessions still retain
+their operating expenses. A positive actual profit can therefore have negative qualification profit.
+
 `netEconomicPnlMicros` and `totalOperatingCostMicros` remain null until all expense categories have complete evidence.
 Partial reports show invoice and tariff subtotals separately and expose unknown/unpriced inference usage. Source
 hashes prove file identity, not issuer authenticity, correct classification or coverage completeness: those remain
@@ -1728,7 +1742,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_OPENAI_API_KEY`, `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. The command requires an
 `inference` object with `mode: "measured-providers"`, `models: {"jev": "jev-1.13.0", "chart": "gpt-6-luna"}`,
-`inputDefinition: "bayn.jev-entry-state.v23"`, and positive `maximumCalls` shared by both providers. The input
+`inputDefinition: "bayn.jev-entry-state.v22"`, and positive `maximumCalls` shared by both providers. The input
 binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
 Its `costs` object contains `jev` and `chart` tariffs, each with
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The chart tariff also requires
