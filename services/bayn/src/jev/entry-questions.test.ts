@@ -10,10 +10,10 @@ import { EntrySetup, makeEntryProposals } from './entry-proposals'
 import { makeEntryJudgmentRequest, selectSupportedEntryProposal } from './entry-questions'
 import { defaultJevProtocolDocument } from './protocol'
 
-const fixture = () => {
+const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL') => {
   const chart = Result.getOrThrow(
     makeNativeChartEvidence({
-      symbol: 'AAPL',
+      symbol,
       windowEndAt: '2026-10-25T07:00:00.000Z',
       bars: [
         { minuteBeforeWindowEnd: 4, open: 100, high: 103, low: 97, close: 101, volume: 100 },
@@ -89,12 +89,10 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
   test('asks one typed judgment per question with the actual proposal in its instructions', () => {
     const { prepared } = fixture()
     expect(Object.keys(prepared.request.questions)).toEqual([
-      'support_recovery_confirmed',
-      'support_recovery_stop_invalidates',
-      'support_recovery_target_obstructed',
-      'base_breakout_confirmed',
-      'base_breakout_stop_invalidates',
-      'base_breakout_target_obstructed',
+      'equity_support_recovery_confirmed',
+      'equity_support_recovery_stop_invalidates',
+      'equity_base_breakout_confirmed',
+      'equity_base_breakout_stop_invalidates',
     ])
     expect(prepared.request.state).toMatchObject({
       schemaVersion: 'bayn.jev-entry-state.v22',
@@ -117,7 +115,10 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
     const result = Result.getOrThrow(
       selectSupportedEntryProposal({
         proposals: input.proposals,
-        response: responseFor({ support_recovery_confirmed: 0.5, support_recovery_stop_invalidates: 0.5 }),
+        response: responseFor({
+          equity_support_recovery_confirmed: 0.5,
+          equity_support_recovery_stop_invalidates: 0.5,
+        }),
       }),
     )
     expect(result.selected?.proposal.source.setup).toBe(EntrySetup.BaseBreakout)
@@ -130,19 +131,30 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
     const result = Result.getOrThrow(
       selectSupportedEntryProposal({
         proposals: input.proposals,
-        response: responseFor({ base_breakout_confirmed: 0.1 }),
+        response: responseFor({ equity_base_breakout_confirmed: 0.1 }),
       }),
     )
     expect(result.selected?.proposal.source.setup).toBe(EntrySetup.SupportRecovery)
     expect(result.rejections[0]?.reason).toBe('SETUP_UNSUPPORTED')
   })
 
-  test('returns no selection when the actual objective is obstructed or invalidation is unsupported', () => {
-    const { input, responseFor } = fixture()
+  test('retains the fee-funded crypto objective check and stop invalidation', () => {
+    const { input, responseFor, prepared } = fixture('ETH/USD')
+    expect(Object.keys(prepared.request.questions)).toEqual([
+      'crypto_support_recovery_confirmed',
+      'crypto_support_recovery_stop_invalidates',
+      'crypto_support_recovery_target_obstructed',
+      'crypto_base_breakout_confirmed',
+      'crypto_base_breakout_stop_invalidates',
+      'crypto_base_breakout_target_obstructed',
+    ])
     const result = Result.getOrThrow(
       selectSupportedEntryProposal({
         proposals: input.proposals,
-        response: responseFor({ support_recovery_target_obstructed: 0.9, base_breakout_stop_invalidates: 0.1 }),
+        response: responseFor({
+          crypto_support_recovery_target_obstructed: 0.9,
+          crypto_base_breakout_stop_invalidates: 0.1,
+        }),
       }),
     )
     expect(result.selected).toBeNull()
@@ -155,12 +167,43 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
   test('does not interpret a missing typed answer as a wait or a positive judgment', () => {
     const { input, responseFor } = fixture()
     const response = responseFor()
-    const { support_recovery_confirmed: _, ...answers } = response.answers
+    const { equity_support_recovery_confirmed: _, ...answers } = response.answers
     expect(
       Result.isFailure(
         selectSupportedEntryProposal({ proposals: input.proposals, response: { ...response, answers } }),
       ),
     ).toBe(true)
+  })
+
+  test('funded equity setups do not require an overhead-resistance probability', () => {
+    const { input, responseFor } = fixture()
+    const result = Result.getOrThrow(
+      selectSupportedEntryProposal({
+        proposals: input.proposals,
+        response: responseFor({
+          equity_support_recovery_confirmed: 0.8,
+          equity_support_recovery_stop_invalidates: 0.75,
+          equity_base_breakout_confirmed: 0.1,
+        }),
+      }),
+    )
+    expect(result.selected?.proposal.source.setup).toBe(EntrySetup.SupportRecovery)
+    expect(result.selected?.judgmentSupport).toBe(0.75)
+  })
+
+  test('rejects equity setups with an unsupported stop despite removing the obstruction veto', () => {
+    const { input, responseFor } = fixture()
+    const result = Result.getOrThrow(
+      selectSupportedEntryProposal({
+        proposals: input.proposals,
+        response: responseFor({
+          equity_support_recovery_stop_invalidates: 0.1,
+          equity_base_breakout_stop_invalidates: 0.1,
+        }),
+      }),
+    )
+    expect(result.selected).toBeNull()
+    expect(result.rejections.every((rejection) => rejection.reason === 'INVALIDATION_UNSUPPORTED')).toBe(true)
   })
 
   test('uses deterministic tie-breaking without treating judgment support as profit probability', () => {

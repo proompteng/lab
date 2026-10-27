@@ -9,7 +9,7 @@ import {
   entryEvaluationRequestFixture as currentRequestFixture,
   nativeChartInference,
 } from './entry-inference.test-support'
-import { makeEntryJudgmentRequest } from './entry-questions'
+import { makeRetainedFundedEntryJudgmentRequest as makeEntryJudgmentRequest } from './retained-funded-entry-questions'
 import {
   decodeFundedEvaluationRequest,
   retainedFundedQuestionPolicyHash,

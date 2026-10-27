@@ -30,7 +30,10 @@ const ReceiptMaterialSchema = Schema.Struct({
   startedAt: UtcInstantSchema,
   completedAt: UtcInstantSchema,
   outcome: Schema.Union([
-    Schema.Struct({ status: Schema.Literal(JevOutcome.Completed), completion: EntryInferenceCompletionSchema }),
+    Schema.Struct({
+      status: Schema.Literal(JevOutcome.Completed),
+      completion: Schema.suspend(() => EntryInferenceCompletionSchema),
+    }),
     Schema.Struct({ status: Schema.Literal(JevOutcome.Failed), failure: Schema.Enum(JevFailure) }),
   ]),
 })

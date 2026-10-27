@@ -88,3 +88,9 @@ describe('sequential entry inference input', () => {
     ).toBe(true)
   })
 })
+
+test('equity funding cannot import a crypto fee tier', () => {
+  expect(
+    Result.isFailure(prepareEntryInferenceInput({ ...input, funding: { ...input.funding, cryptoFeeTier: 4 } })),
+  ).toBe(true)
+})
