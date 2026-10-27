@@ -103,6 +103,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: bayn-native-arrival-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
   labels:
     app.kubernetes.io/name: bayn-native-arrival-db
     app.kubernetes.io/part-of: bayn

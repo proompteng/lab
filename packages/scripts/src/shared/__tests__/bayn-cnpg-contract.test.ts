@@ -72,6 +72,11 @@ test('native market capture has separate WAL without weakening replication or ex
       ),
     ).toBe(false)
   const controllerPolicy = readManifest('argocd/applications/bayn/execution-controller-networkpolicy.yaml')
+  const wave = (resource: Record<string, any>) =>
+    Number(resource.metadata.annotations?.['argocd.argoproj.io/sync-wave'] ?? 0)
+  expect(wave(policy)).toBeLessThan(wave(cluster))
+  expect(wave(cluster)).toBeLessThan(wave(controller))
+  expect(wave(controllerPolicy)).toBeLessThan(wave(controller))
   expect(
     controllerPolicy.spec.egress.find((rule: Record<string, any>) =>
       rule.to.some(
