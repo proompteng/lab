@@ -3,6 +3,22 @@ import { SqlClient } from 'effect/sql'
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* sql`CREATE FUNCTION check_frozen_control_material() RETURNS trigger LANGUAGE plpgsql AS $function$
+  DECLARE matches boolean;
+  BEGIN
+    SELECT bool_and(
+      policy->>'executionModelHash' IS NOT DISTINCT FROM 'b7fed391f5dc25a41a257de470c96c337715477f1032c1d5d802020b35144b68'
+      AND policy->>'promptsHash' IS NOT DISTINCT FROM '2efd63f39ac6d6d16008b63bb5924c9925b1d7eb0b56e3aa6d07c313a5a998e6'
+      AND policy->>'continuationAndExitsHash' IS NOT DISTINCT FROM '861f6179c7ce96d3b7aa8f6f45e34d67612da42c92ae639edcceb2f2ca9e48c3'
+    ) INTO matches FROM jsonb_array_elements(NEW.payload_text::jsonb->'policies') policy
+      WHERE policy->>'policy' = 'DEPLOYED_BAYN';
+    IF matches IS NOT TRUE THEN
+      RAISE EXCEPTION 'deployed control must retain its original execution, prompts and continuation' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+  END $function$`
+  yield* sql`CREATE TRIGGER frozen_control_material BEFORE INSERT ON system_qualification_registrations
+    FOR EACH ROW EXECUTE FUNCTION check_frozen_control_material()`
   yield* sql`ALTER TABLE mutation_events ADD COLUMN routing jsonb,
     ADD CONSTRAINT mutation_routing_contract CHECK (routing IS NULL OR (
       jsonb_typeof(routing) = 'object'

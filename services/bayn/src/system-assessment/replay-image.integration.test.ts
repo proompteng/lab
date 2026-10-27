@@ -12,7 +12,13 @@ import { sha256 } from '../hash'
 import { nativeReplayPolicyManifest } from '../intraday-replay/native-policy'
 import { loadActiveStrategyProtocol } from '../strategy'
 import { testHash } from './fixtures.test-support'
-import { bindReplayImagePolicy, VerifiedReplayImage, verifiedManifestBytes } from './replay-image'
+import {
+  bindReplayImagePolicy,
+  bindFrozenReplayImagePolicy,
+  VerifiedReplayImage,
+  verifiedManifestBytes,
+} from './replay-image'
+import { frozenControlOrigin, frozenDeployedControlIdentity } from './frozen-control-identity'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { JevCompilerDependencyReceiptSchema } from '../jev/instruction-variant'
 import { Schema } from 'effect'
@@ -26,6 +32,44 @@ import { completeLatencyArtifactFixture } from './latency-report.test-support'
 import { bindLatencyStressSources, verifyLatencyStressImages } from './latency-report'
 
 const nativeTest = process.env['BAYN_TEST_REPLAY_IMAGE'] === '1' ? test : test.skip
+
+test('the rebuilt frozen control binds its own compiler, original source tree and all registered policy material', () => {
+  const policy = registrationFixture().policies.find((policy) => policy.policy === JevResearchPolicy.Deployed)!
+  const executableSha256 = testHash('frozen executable')
+  const compiler = {
+    schemaVersion: 'bayn.frozen-control-compiler.v1',
+    sourceRevision: policy.sourceRevision,
+    origin: frozenControlOrigin,
+    strategy: frozenDeployedControlIdentity,
+    bunVersion: '1.4.2',
+    executableSha256,
+    adapterSha256: testHash('adapter'),
+    files: { 'services/bayn/src/backtest-command.ts': testHash('original source') },
+    dependencies: { 'effect@4.0.0-beta.102/package.json': testHash('original dependencies') },
+  }
+  expect(Result.isSuccess(bindFrozenReplayImagePolicy(compiler, policy, executableSha256))).toBe(true)
+  for (const field of [
+    'sourceRevision',
+    'strategyHash',
+    'parametersHash',
+    'protocolHash',
+    'executionModelHash',
+    'promptsHash',
+    'continuationAndExitsHash',
+  ] as const)
+    expect(
+      Result.isFailure(
+        bindFrozenReplayImagePolicy(compiler, { ...policy, [field]: testHash(field) }, executableSha256),
+      ),
+    ).toBe(true)
+  for (const changed of [
+    { ...compiler, origin: { ...compiler.origin, serviceTree: '0'.repeat(40) } },
+    { ...compiler, files: {} },
+    { ...compiler, dependencies: {} },
+    { ...compiler, executableSha256: testHash('other executable') },
+  ])
+    expect(Result.isFailure(bindFrozenReplayImagePolicy(changed, policy, executableSha256))).toBe(true)
+})
 
 test('manifest identity preserves exact bytes and only permits crane newline framing', () => {
   const bytes = new TextEncoder().encode('{"schemaVersion":2}')
@@ -108,6 +152,18 @@ nativeTest(
         }
         yield* fs.writeFileString(`${directory}/executable`, executable)
         yield* fs.writeFileString(`${directory}/dependencies`, JSON.stringify(dependencies))
+        const frozen = {
+          schemaVersion: 'bayn.frozen-control-compiler.v1',
+          sourceRevision: base.sourceRevision,
+          origin: frozenControlOrigin,
+          strategy: frozenDeployedControlIdentity,
+          bunVersion: '1.4.2',
+          executableSha256: sha256(executable),
+          adapterSha256: testHash('adapter'),
+          files: { 'services/bayn/src/backtest-command.ts': testHash('source') },
+          dependencies: { 'effect@4.0.0-beta.102/package.json': testHash('old dependencies') },
+        }
+        yield* fs.writeFileString(`${directory}/frozen`, JSON.stringify(frozen))
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
         const child = yield* spawner.spawn(
           ChildProcess.make(
@@ -118,7 +174,7 @@ nativeTest(
 import io, pathlib, sys, tarfile
 root = pathlib.Path(sys.argv[1])
 with tarfile.open(root / 'layer.tar', 'w') as archive:
-    for source, target in [('executable', 'backtest-command.js'), ('dependencies', 'jev-compiler-dependencies.json')]:
+    for source, target in [('executable', 'backtest-command.js'), ('dependencies', 'jev-compiler-dependencies.json'),('executable','frozen-control-command.js'),('frozen','frozen-control-compiler.json')]:
         data = (root / source).read_bytes()
         path = 'nix/store/test-bayn/app/services/bayn/dist/' + target
         entry = tarfile.TarInfo(path)
@@ -234,6 +290,15 @@ with tarfile.open(root / 'layer.tar', 'w') as archive:
           runnerAuthentication: 'NOT_ESTABLISHED_BY_IMAGE_MEMBERSHIP',
         })
         expect(requested).toContain(`/v2/bayn/blobs/${layer.digest}`)
+        const deployed = initial.registration.policies.find((policy) => policy.policy === JevResearchPolicy.Deployed)
+        if (deployed === undefined) throw Error('Missing frozen policy')
+        const frozenImage = yield* inspect({
+          ...deployed,
+          sourceRevision: policy.sourceRevision,
+          imageDigest: policy.imageDigest,
+        })
+        expect(frozenImage.receipt.manifestDigest).toBe(image.receipt.manifestDigest)
+        expect(frozenImage.receipt.dependencyReceiptSha256).toBe(sha256(JSON.stringify(frozen)))
         for (const control of initial.registration.policies.filter(
           (p) => p.policy === JevResearchPolicy.Ablation || p.policy === JevResearchPolicy.Momentum,
         )) {

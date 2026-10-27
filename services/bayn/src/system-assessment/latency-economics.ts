@@ -7,7 +7,13 @@ import { restoreReplayBrokerCheckpoint, type ReplayBrokerEvidenceConfig } from '
 import { calculateReplayInferenceCosts, registeredReplayInferenceTariff } from '../intraday-replay/inference-costs'
 import { ReplayInferenceCallSchema } from '../intraday-replay/inference-timing'
 import { validateReplayInferenceCalls } from '../intraday-replay/recorded-inference'
-import { applyReplayFill, createReplayLedger } from '../intraday-replay/ledger'
+import {
+  applyReplayFill,
+  createReplayLedger,
+  type EconomicReplayFill,
+  type ReplayLedger,
+} from '../intraday-replay/ledger'
+import type { ExecutionModel } from '../execution-model-contract'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { makeOperatingCostReport, OperatingCostEvidenceSchema } from '../operating-costs'
 import { validateOperatingCostWindow } from '../operating-cost-window'
@@ -25,11 +31,57 @@ export const ReplaySessionCostsSchema = Schema.Struct({
   sessions: Schema.Array(OperatingCostEvidenceSchema).check(Schema.isMinLength(20), Schema.isMaxLength(20)),
 })
 
-/** Reproduces counterfactual accounting. Timing, source authenticity and policy execution require separate bindings. */
+interface ReplayEconomicConfig {
+  readonly openingCashMicros: string
+  readonly feeModel: Pick<ExecutionModel, 'fees'>
+  readonly feeMultiplierPpm: number
+}
+
+export interface ReplayFinancialCheckpoint {
+  readonly checkpointHash: string
+  readonly observedAt: string
+  readonly state: {
+    readonly createdAt: string
+    readonly ledger: ReplayLedger<EconomicReplayFill>
+    readonly orders: readonly {
+      readonly order: { readonly status: OrderStatus; readonly submittedAt: string; readonly updatedAt: string }
+    }[]
+    readonly sessionCloses: readonly {
+      readonly sessionDate: string
+      readonly equityMicros: string
+      readonly valuationQualified: boolean
+    }[]
+  }
+}
+
+/** Native execution validates its complete broker checkpoint before sharing the economic evaluator. */
 export const reproduceReplaySessionEconomics = (
   registration: SystemRegistration,
   config: ReplayBrokerEvidenceConfig,
   checkpoint: unknown,
+  rawCosts: unknown,
+  verifiedSources: ReadonlySet<string>,
+) =>
+  Result.gen(function* () {
+    const retained = yield* restoreReplayBrokerCheckpoint(checkpoint, config)
+    return yield* reproduceSessionEconomics(
+      registration,
+      {
+        openingCashMicros: config.openingCashMicros,
+        feeModel: config.protocol.executionModel,
+        feeMultiplierPpm: config.assumptions.feeMultiplierPpm,
+      },
+      retained,
+      rawCosts,
+      verifiedSources,
+    )
+  })
+
+/** Reproduce every fill, flat close and operating charge after the producer's evidence has been authenticated. */
+export const reproduceSessionEconomics = (
+  registration: SystemRegistration,
+  config: ReplayEconomicConfig,
+  retained: ReplayFinancialCheckpoint,
   rawCosts: unknown,
   verifiedSources: ReadonlySet<string>,
 ) =>
@@ -43,7 +95,6 @@ export const reproduceReplaySessionEconomics = (
         if (!verifiedSources.has(source))
           return yield* fail('Replay cost allocation basis source has not been verified')
     yield* validateReplayInferenceCalls(costs.inferenceCalls)
-    const retained = yield* restoreReplayBrokerCheckpoint(checkpoint, config)
     const definition = registration.policies.find((policy) => policy.policy === costs.policy)
     if (
       definition === undefined ||
@@ -102,13 +153,7 @@ export const reproduceReplaySessionEconomics = (
         if (fill === undefined || fill.observedAt > window.closeAt) break
         if (fill.observedAt < window.openAt)
           return yield* fail('Replay contains execution outside a registered session')
-        ledger = yield* applyReplayFill(
-          ledger,
-          fill,
-          fill.quantityAtoms,
-          config.protocol.executionModel,
-          config.assumptions.feeMultiplierPpm,
-        )
+        ledger = yield* applyReplayFill(ledger, fill, fill.quantityAtoms, config.feeModel, config.feeMultiplierPpm)
         nextFill++
       }
       const close = closes[index]

@@ -19,6 +19,8 @@ import { SystemAssessmentError } from './economics'
 import { ReplayImageReceiptSchema, VerifiedReplayImage, runReplayEvidenceCommand } from './replay-image'
 import type { SystemRegistration } from './policy'
 import type { SystemSourceCut } from './source-cut'
+import { JevResearchPolicy } from '../jev/acceptance'
+import { FrozenControlReplaySchema, prepareFrozenControlReplay } from './frozen-control-replay'
 
 export const CaptureReplayExecutionSchema = Schema.Struct({
   registrationHash: Sha256Schema,
@@ -119,6 +121,7 @@ export const verifyReplayContainer = (
     configDigest: string
     captureFileHash: string
     capturedAt: string
+    policy: JevResearchPolicy
   },
 ) =>
   Result.gen(function* () {
@@ -155,7 +158,9 @@ export const verifyReplayContainer = (
         'Replay container has not exited successfully under the verified image without automatic restarts',
       )
     const command = [
-      '/app/services/bayn/dist/backtest-command.js',
+      expected.policy === JevResearchPolicy.Deployed
+        ? '/app/services/bayn/dist/frozen-control-command.js'
+        : '/app/services/bayn/dist/backtest-command.js',
       '--input',
       '/evidence/input.json',
       '--arrivals',
@@ -281,30 +286,40 @@ export const observeReplayExecution = (
     const inputBytes = yield* fs.readFile(yield* copy('/evidence/input.json', 'input.json'))
     const captureBytes = yield* fs.readFile(yield* copy('/evidence/source-receipt.json', 'source-receipt.json'))
     const reportBytes = yield* fs.readFile(yield* copy('/result/run/report.json', 'report.json'))
-    const input = yield* decode(BacktestInputSchema, inputBytes)
-    const policy = registration.policies.find((p) => p.policy === input.policy)
+    const wire = yield* decode(Schema.Union([BacktestInputSchema, FrozenControlReplaySchema]), inputBytes)
+    const input = wire.schemaVersion === 'bayn.frozen-control-replay.v1' ? wire.backtest : wire
+    const context = wire.latencyStress
+    const policy = registration.policies.find((p) => p.policy === wire.policy)
     if (policy === undefined) return yield* new SystemAssessmentError({ message: 'Missing registered replay policy' })
     if (
-      input.latencyStress === null ||
-      input.inference.mode !== 'retained-responses' ||
-      (yield* Effect.fromResult(canonicalHashV1Result(input.latencyStress.registration))) !==
-        request.registrationHash ||
-      (yield* Effect.fromResult(canonicalHashV1Result(input.latencyStress.sourceCut))) !== request.sourceCutHash
+      context === null ||
+      (wire.schemaVersion !== 'bayn.frozen-control-replay.v1' && wire.inference.mode !== 'retained-responses') ||
+      (yield* Effect.fromResult(canonicalHashV1Result(context.registration))) !== request.registrationHash ||
+      (yield* Effect.fromResult(canonicalHashV1Result(context.sourceCut))) !== request.sourceCutHash
     )
       return yield* new SystemAssessmentError({
         message: 'Captured replay did not execute the exact retained-response stress registration',
       })
-    const capture = yield* Effect.fromResult(
-      validateBacktestSourceReceipt(new TextDecoder().decode(captureBytes), sha256(captureBytes)),
-    )
-    const prepared = yield* Effect.fromResult(prepareBacktest(input, capture))
+    const prepared =
+      wire.schemaVersion === 'bayn.frozen-control-replay.v1'
+        ? yield* Effect.fromResult(
+            prepareFrozenControlReplay(wire, new TextDecoder().decode(captureBytes), sha256(captureBytes)),
+          )
+        : yield* Effect.fromResult(
+            prepareBacktest(
+              wire,
+              yield* Effect.fromResult(
+                validateBacktestSourceReceipt(new TextDecoder().decode(captureBytes), sha256(captureBytes)),
+              ),
+            ),
+          )
     const report = yield* decode(
       Schema.Struct({
-        schemaVersion: Schema.Literal('bayn.backtest-report.v9'),
+        schemaVersion: Schema.Literals(['bayn.backtest-report.v9', 'bayn.frozen-control-latency-report.v1']),
         runId: Sha256Schema,
         reportHash: Sha256Schema,
         executableSha256: Sha256Schema,
-        passLog: Schema.Struct({ file: Schema.Literal('passes.ndjson.gz'), sha256: Sha256Schema }),
+        passLog: Schema.Struct({ file: Schema.Literals(['passes.ndjson.gz', 'passes.ndjson']), sha256: Sha256Schema }),
       }),
       reportBytes,
     )
@@ -312,7 +327,10 @@ export const observeReplayExecution = (
     const { reportHash: _hash, ...body } = raw
     if (
       report.reportHash !== (yield* Effect.fromResult(canonicalHashV1Result(body))) ||
-      report.runId !== prepared.runId
+      report.runId !== prepared.runId ||
+      (wire.policy === JevResearchPolicy.Deployed
+        ? report.schemaVersion !== 'bayn.frozen-control-latency-report.v1' || report.passLog.file !== 'passes.ndjson'
+        : report.schemaVersion !== 'bayn.backtest-report.v9' || report.passLog.file !== 'passes.ndjson.gz')
     )
       return yield* new SystemAssessmentError({ message: 'Captured report hash or run differs from its input' })
     const image = yield* VerifiedReplayImage.inspect(
@@ -340,7 +358,7 @@ export const observeReplayExecution = (
         return hash.digest('hex')
       })
     const arrivalsFileHash = yield* hashFile(yield* copy('/evidence/arrivals.ndjson.gz', 'arrivals.ndjson.gz'))
-    const passLogFileHash = yield* hashFile(yield* copy('/result/run/passes.ndjson.gz', 'passes.ndjson.gz'))
+    const passLogFileHash = yield* hashFile(yield* copy(`/result/run/${report.passLog.file}`, report.passLog.file))
     const after = yield* inspect()
     if (
       (yield* Effect.fromResult(canonicalHashV1Result(before))) !==
@@ -358,6 +376,7 @@ export const observeReplayExecution = (
         containerId: request.containerId,
         captureFileHash: sha256(captureBytes),
         capturedAt,
+        policy: wire.policy,
       }),
     )
     const numbers = yield* Schema.decodeUnknownEffect(

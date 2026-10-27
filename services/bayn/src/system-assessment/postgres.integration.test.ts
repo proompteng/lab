@@ -264,7 +264,14 @@ postgres('PostgreSQL prospective system qualification', () => {
 
   test('application and direct database admission reject substituted or ambiguous deployed controls', async () => {
     const input = registration()
-    for (const field of ['strategyHash', 'parametersHash', 'protocolHash'] as const) {
+    for (const field of [
+      'strategyHash',
+      'parametersHash',
+      'protocolHash',
+      'executionModelHash',
+      'promptsHash',
+      'continuationAndExitsHash',
+    ] as const) {
       const changed = {
         ...input,
         policies: input.policies.map((policy) =>
@@ -274,7 +281,16 @@ postgres('PostgreSQL prospective system qualification', () => {
       expect(Exit.isFailure(await runtime.runPromiseExit(asApplication(registerFixture(changed))))).toBe(true)
     }
     const invalidPolicies = [
-      ...(['strategyHash', 'parametersHash', 'protocolHash'] as const).map((field) =>
+      ...(
+        [
+          'strategyHash',
+          'parametersHash',
+          'protocolHash',
+          'executionModelHash',
+          'promptsHash',
+          'continuationAndExitsHash',
+        ] as const
+      ).map((field) =>
         input.policies.map((policy) =>
           policy.policy === 'DEPLOYED_BAYN' ? { ...policy, [field]: testHash(`direct substituted ${field}`) } : policy,
         ),

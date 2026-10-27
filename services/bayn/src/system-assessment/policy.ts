@@ -31,13 +31,12 @@ import { QualificationRuntimeSchema, qualificationDeadlines } from './configurat
 import { systemLatencyStressProtocolHash } from './latency-protocol'
 import { costAttributionRule } from './cost-attribution'
 import { CostAllocationPlanSchema, validateCostAllocationPlans } from './cost-allocation'
-
-/** Last retained PAPER activation before acceptance v2 froze; see the control identity evidence in the owning contract. */
-export const frozenDeployedControlIdentity = {
-  strategyHash: '3da39b009a0cb2052b007ae9ba51f448c16b69281a37cf5ffe122314f1d801af',
-  parametersHash: 'cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f',
-  protocolHash: 'f38c7d47dc0b8eedb13da1ae7e29faa3da2ce8983fee05f4a2c89dc0ec59eb97',
-} as const
+import {
+  frozenDeployedControlIdentity,
+  frozenControlOrigin,
+  frozenControlPrompts,
+  frozenControlContinuation,
+} from './frozen-control-identity'
 
 export const systemQualificationPolicy = {
   schemaVersion: 'bayn.system-qualification-policy.v1',
@@ -57,6 +56,9 @@ export const systemQualificationPolicy = {
   cashYieldIsTradingEdge: false,
   costAttributionRule,
   frozenDeployedControlIdentity,
+  frozenControlOrigin,
+  frozenControlPrompts,
+  frozenControlContinuation,
 } as const
 
 export const PolicyDefinitionSchema = Schema.Struct({
@@ -197,7 +199,10 @@ export const validateSystemRegistration = (input: unknown) =>
         policy.policy === JevResearchPolicy.Deployed &&
         (policy.strategyHash !== frozenDeployedControlIdentity.strategyHash ||
           policy.parametersHash !== frozenDeployedControlIdentity.parametersHash ||
-          policy.protocolHash !== frozenDeployedControlIdentity.protocolHash)
+          policy.protocolHash !== frozenDeployedControlIdentity.protocolHash ||
+          policy.executionModelHash !== frozenControlOrigin.executionModelHash ||
+          policy.promptsHash !== (yield* canonicalHashV1Result(frozenControlPrompts)) ||
+          policy.continuationAndExitsHash !== (yield* canonicalHashV1Result(frozenControlContinuation)))
       )
         return yield* invalid('Deployed control must preserve the frozen pre-Jev strategy, parameters and protocol')
       if (

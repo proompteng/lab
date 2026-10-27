@@ -1,3 +1,4 @@
+import { JevResearchPolicy } from '../jev/acceptance'
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import { ReplayContainerInspectionSchema, verifyReplayContainer } from './replay-execution'
@@ -13,6 +14,7 @@ const fixture = () => {
     configDigest: `sha256:${testHash('config')}`,
     captureFileHash: testHash('capture'),
     capturedAt: '2026-10-26T12:10:00.000Z',
+    policy: JevResearchPolicy.Candidate,
   }
   const image = {
     Id: expected.manifestDigest,
@@ -95,6 +97,21 @@ test('a completed exact-image command uses result-directory scratch and isolated
       ),
     ),
   ).toBe(true)
+})
+
+test('the frozen control executes only its dedicated immutable offline command', () => {
+  const f = fixture()
+  const expected = { ...f.expected, policy: JevResearchPolicy.Deployed }
+  expect(Result.isFailure(verifyReplayContainer(f.container, f.image, expected))).toBe(true)
+  const frozen = {
+    ...f.container,
+    Config: {
+      ...f.container.Config,
+      Cmd: ['/app/services/bayn/dist/frozen-control-command.js', ...(f.container.Config.Cmd?.slice(1) ?? [])],
+    },
+  }
+  expect(Result.isSuccess(verifyReplayContainer(frozen, f.image, expected))).toBe(true)
+  expect(Result.isFailure(verifyReplayContainer(frozen, f.image, f.expected))).toBe(true)
 })
 
 test('foreign images, changed commands, incomplete exits, writable code and injected environments cannot attest a replay', () => {

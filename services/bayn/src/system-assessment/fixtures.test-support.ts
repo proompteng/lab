@@ -1,3 +1,9 @@
+import {
+  frozenDeployedControlIdentity,
+  frozenControlOrigin,
+  frozenControlPrompts,
+  frozenControlContinuation,
+} from './frozen-control-identity'
 import { prepareInferenceRateCard } from '../inference-costs'
 import { Result, Schema } from 'effect'
 import {
@@ -15,7 +21,7 @@ import { canonicalHashV1Result, sha256 } from '../hash'
 import { jevAcceptanceProtocolHash, JevResearchPolicy } from '../jev/acceptance'
 import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs'
 import { ObligationClass, ObligationOutcome } from './reliability'
-import { frozenDeployedControlIdentity, systemQualificationPolicyHash, type SystemRegistration } from './policy'
+import { systemQualificationPolicyHash, type SystemRegistration } from './policy'
 import type { SessionEvidence } from './session'
 import type { SystemAssessmentInputSchema } from './assessment'
 import { DecisionRealismSchema, ExecutionEvidenceKind, FillRealismSchema } from './realism'
@@ -143,7 +149,14 @@ const baseRegistrationFixture = (): SystemRegistration => ({
           executionModelHash: testHash(defaultJevProtocolDocument.executionModel),
         }
       : {}),
-    ...(policy === JevResearchPolicy.Deployed ? frozenDeployedControlIdentity : {}),
+    ...(policy === JevResearchPolicy.Deployed
+      ? {
+          ...frozenDeployedControlIdentity,
+          executionModelHash: frozenControlOrigin.executionModelHash,
+          promptsHash: testHash(frozenControlPrompts),
+          continuationAndExitsHash: testHash(frozenControlContinuation),
+        }
+      : {}),
   })),
   costAllocationPlans: [],
   obligations: {

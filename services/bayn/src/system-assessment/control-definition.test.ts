@@ -1,10 +1,11 @@
+import { frozenDeployedControlIdentity } from './frozen-control-identity'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { JevResearchPolicy } from '../jev/acceptance'
 import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
 import { registrationFixture, testHash } from './fixtures.test-support'
-import { frozenDeployedControlIdentity, validateSystemRegistration } from './policy'
+import { validateSystemRegistration } from './policy'
 
 test('the registered deployed control retains its original identity when the candidate changes', () => {
   const original = registrationFixture()
@@ -31,6 +32,9 @@ test('a candidate or unrelated strategy cannot be relabeled as the deployed matc
     { strategyHash: candidate.strategyHash },
     { parametersHash: candidate.parametersHash },
     { protocolHash: candidate.protocolHash },
+    { promptsHash: testHash('retuned questions') },
+    { continuationAndExitsHash: testHash('retuned exits') },
+    { executionModelHash: testHash('different execution model') },
     { ...frozenDeployedControlIdentity, strategyHash: testHash('unrelated control') },
   ]) {
     const result = validateSystemRegistration({

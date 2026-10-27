@@ -135,6 +135,33 @@ manifest, executable, dependency receipt, and native policy identity. A separate
 the executed command and retained input/output files. The receipt states this trust assumption; image membership
 alone does not prove that an execution occurred.
 
+The frozen `DEPLOYED_BAYN` control uses `bayn-frozen-control-backtest`. Its original single-position and session-close
+engine is compiled from Git revision `ef6a069fc121cbe54d148027fe091e3e7f58da9b`; the compiler authenticates the complete
+original service tree and records the consumed source, dependency and adapter hashes. A newly registered image can
+carry this executable. The original three policy identities, execution model, empty provider set and exit lifecycle
+remain frozen at both application and PostgreSQL admission. The image verifier reads the dedicated executable and
+compiler receipt, and the execution observer requires that exact offline command.
+
+`bayn.frozen-control-replay.v1` binds the complete original protocol, captured-arrival bytes, all twenty registered
+sessions, common instrument terms and execution assumptions, original operation deadlines, and the measured candidate
+calibration. Its replica derives from this complete scope, preventing a different stress from reusing a broker account.
+The adapter releases each original committed entry or closing document after both its actual completion and the
+registered command-to-decision floor. Source arrivals advance before control returns to the original coordinator;
+the original expiry and post-release risk checks remain effective.
+
+The report verifier retains each original document and reconstructs fills, source-quote capacity, precision, limit
+prices and original release deadlines. Broker activities, exact PostgreSQL numeric tokens, posted charges and ledger
+receipts must reconcile. Six-decimal legacy quantities convert exactly to the current nine-decimal quantity unit;
+prices and cash remain micro-USD. The shared session accounting evaluator then applies all registered operating costs.
+Unknown costs remain unknown, and a missing verified image or independent execution receipt withholds stress economics.
+
+The existing backtest ledger gate runs the complete original twenty-session control against isolated PostgreSQL and
+TigerBeetle. Its fixtures are generated and consumed by the pinned Node runtime, including the retained chart-image
+bytes used by candidate calibration. Each independent fixture has a distinct registered synthetic history, so prior
+TigerBeetle effects cannot be mistaken for a fresh account. Registry tests also exercise the frozen executable's image
+membership, byte tampering and subprocess cancellation. Synthetic spread losses and operating charges must survive
+the full evidence join; these tests establish no prospective profit or qualification.
+
 Observed native replay containers retain a read-only root, read-only `/evidence`, and writable `/result`.
 Set `TMPDIR=/result` so source preflight can create its scoped, unlinked private snapshot there. The observer
 requires that exact scratch destination and rejects other temporary paths, extra mounts, tmpfs mounts, or injected

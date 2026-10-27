@@ -36,4 +36,12 @@ for (const [name, files] of Object.entries(groups)) {
     })
     if (result.exitCode !== 0) process.exit(result.exitCode)
   }
+  if (name === 'backtest') {
+    const result = Bun.spawnSync([process.execPath, 'tools/test-frozen-control.ts'], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
+      stdout: 'inherit',
+      stderr: 'inherit',
+    })
+    if (result.exitCode !== 0) process.exit(result.exitCode)
+  }
 }

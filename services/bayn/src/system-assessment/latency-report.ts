@@ -38,6 +38,8 @@ import type { SystemRegistration } from './policy'
 import type { SystemSourceCut } from './source-cut'
 import { VerifiedReplayImage } from './replay-image'
 import type { ReplayExecutionReceiptSchema } from './replay-execution'
+import { FrozenControlReplaySchema, prepareFrozenControlReplay } from './frozen-control-replay'
+import { FrozenControlReportSchema, reproduceFrozenControlReport } from './frozen-control-report'
 
 // The complete report is hashed first; this projection decodes only fields used by this verifier.
 const LatencyReportSchema = Schema.Struct({
@@ -157,6 +159,72 @@ export const bindLatencyStressSources = (
       return yield* fail('Duplicate latency stress policy evidence')
     const receipts = []
     for (const descriptor of descriptors) {
+      if (descriptor.policy === JevResearchPolicy.Deployed) {
+        const prepared = yield* prepareFrozenControlReplay(
+          yield* Schema.decodeUnknownResult(
+            Schema.fromJsonString(FrozenControlReplaySchema),
+            strictParseOptions,
+          )(yield* source(descriptor.inputFileHash)),
+          yield* source(descriptor.captureFileHash),
+          descriptor.captureFileHash,
+        )
+        if (
+          (yield* canonicalHashV1Result(prepared.stress.registration)) !==
+            (yield* canonicalHashV1Result(registration)) ||
+          (yield* canonicalHashV1Result(prepared.input.latencyStress.sourceCut)) !==
+            (yield* canonicalHashV1Result(cut)) ||
+          !verifiedSources.has(prepared.input.backtest.source.dataSha256)
+        )
+          return yield* fail('Frozen control uses a different registration, calibration cut or arrival artifact')
+        const costs = yield* Schema.decodeUnknownResult(
+          Schema.fromJsonString(ReplaySessionCostsSchema),
+          strictParseOptions,
+        )(yield* source(descriptor.costsFileHash))
+        const raw = yield* Schema.decodeUnknownResult(
+          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+        )(yield* source(descriptor.reportFileHash))
+        const { report, economics } = yield* reproduceFrozenControlReport(prepared, raw, costs, verifiedSources)
+        const image = images.get(descriptor.reportFileHash)?.receipt ?? null
+        const execution =
+          descriptor.executionReceiptHash === null ? null : (executions.get(descriptor.executionReceiptHash) ?? null)
+        if (
+          image !== null &&
+          (image.policyDefinitionHash !== (yield* canonicalHashV1Result(prepared.definition)) ||
+            image.platform !== descriptor.imagePlatform ||
+            image.repository !== prepared.input.backtest.build.imageRepository ||
+            image.executableSha256 !== report.executableSha256)
+        )
+          return yield* fail('Frozen control image membership differs from its registered executable')
+        if (
+          execution !== null &&
+          ((yield* canonicalHashV1Result(execution)) !== descriptor.executionReceiptHash ||
+            execution.inputFileHash !== descriptor.inputFileHash ||
+            execution.captureFileHash !== descriptor.captureFileHash ||
+            execution.reportFileHash !== descriptor.reportFileHash ||
+            execution.reportHash !== report.reportHash ||
+            execution.runId !== prepared.runId ||
+            execution.arrivalsFileHash !== prepared.input.backtest.source.dataSha256 ||
+            execution.registrationHash !== (yield* canonicalHashV1Result(registration)) ||
+            execution.sourceCutHash !== (yield* canonicalHashV1Result(cut)) ||
+            (yield* canonicalHashV1Result(execution.image)) !== (yield* canonicalHashV1Result(image)) ||
+            report.build.sourceAndStrategyVerification !== 'embedded')
+        )
+          return yield* fail('Frozen control execution receipt differs from its registered image or retained evidence')
+        const receipt = {
+          policy: descriptor.policy,
+          protocolHash: prepared.stress.protocolHash,
+          reportFileHash: descriptor.reportFileHash,
+          reportHash: report.reportHash,
+          costsFileHash: descriptor.costsFileHash,
+          registrationHash: yield* canonicalHashV1Result(registration),
+          sourceCutHash: yield* canonicalHashV1Result(cut),
+          image,
+          executionReceiptHash: execution === null ? null : descriptor.executionReceiptHash,
+          economics: image === null || execution === null ? null : economics,
+        }
+        receipts.push({ ...receipt, sourceHash: yield* canonicalHashV1Result(receipt) })
+        continue
+      }
       const input = yield* Schema.decodeUnknownResult(
         Schema.fromJsonString(BacktestInputSchema),
         strictParseOptions,
@@ -541,6 +609,20 @@ export const verifyLatencyStressImages = (
       const definition = registration.policies.find((p) => p.policy === descriptor.policy)
       if (definition === undefined)
         return yield* new SystemAssessmentError({ message: 'Replay image policy is unregistered' })
+      if (descriptor.policy === JevResearchPolicy.Deployed) {
+        const input = yield* read(descriptor.inputFileHash, FrozenControlReplaySchema)
+        const report = yield* read(descriptor.reportFileHash, FrozenControlReportSchema)
+        images.set(
+          descriptor.reportFileHash,
+          yield* VerifiedReplayImage.inspect(
+            definition,
+            input.backtest.build.imageRepository,
+            descriptor.imagePlatform,
+            report.executableSha256,
+          ),
+        )
+        continue
+      }
       const input = yield* read(descriptor.inputFileHash, BacktestInputSchema)
       if (input.policy !== descriptor.policy)
         return yield* new SystemAssessmentError({ message: 'Replay image descriptor differs from its selected policy' })

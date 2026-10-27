@@ -14,6 +14,24 @@ import { SystemAssessmentError } from './economics'
 import type { SystemRegistration } from './policy'
 
 import { ReplayImagePlatform } from './replay-image-platform'
+import {
+  frozenControlOrigin,
+  frozenDeployedControlIdentity,
+  frozenControlPrompts,
+  frozenControlContinuation,
+} from './frozen-control-identity'
+
+const FrozenCompiler = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.frozen-control-compiler.v1'),
+  sourceRevision: GitSourceRevisionSchema,
+  origin: Schema.Unknown,
+  strategy: Schema.Unknown,
+  bunVersion: Schema.Literal('1.4.2'),
+  executableSha256: Sha256Schema,
+  adapterSha256: Sha256Schema,
+  files: Schema.Record(Schema.String, Sha256Schema),
+  dependencies: Schema.Record(Schema.String, Sha256Schema),
+})
 
 const Descriptor = Schema.Struct({
   mediaType: Schema.String,
@@ -65,6 +83,30 @@ export const ReplayImageReceiptSchema = Schema.Struct({
 
 const failure = (message: string, cause?: unknown) => new SystemAssessmentError({ message, cause })
 type Policy = SystemRegistration['policies'][number]
+
+export const bindFrozenReplayImagePolicy = (raw: unknown, policy: Policy, executableSha256: string) =>
+  Result.gen(function* () {
+    const compiler = yield* Schema.decodeUnknownResult(FrozenCompiler)(raw)
+    if (
+      compiler.sourceRevision !== policy.sourceRevision ||
+      compiler.executableSha256 !== executableSha256 ||
+      policy.policy !== JevResearchPolicy.Deployed ||
+      policy.strategyHash !== frozenDeployedControlIdentity.strategyHash ||
+      policy.parametersHash !== frozenDeployedControlIdentity.parametersHash ||
+      policy.protocolHash !== frozenDeployedControlIdentity.protocolHash ||
+      policy.executionModelHash !== frozenControlOrigin.executionModelHash ||
+      policy.promptsHash !== (yield* canonicalHashV1Result(frozenControlPrompts)) ||
+      policy.continuationAndExitsHash !== (yield* canonicalHashV1Result(frozenControlContinuation)) ||
+      (yield* canonicalHashV1Result(compiler.origin)) !== (yield* canonicalHashV1Result(frozenControlOrigin)) ||
+      (yield* canonicalHashV1Result(compiler.strategy)) !==
+        (yield* canonicalHashV1Result(frozenDeployedControlIdentity)) ||
+      Object.keys(compiler.files).length === 0 ||
+      Object.keys(compiler.dependencies).length === 0
+    )
+      return yield* Result.fail(
+        failure('Frozen control compiler differs from its original authenticated source or registered carrier'),
+      )
+  })
 
 /** OCI labels identify the application root; the in-image manifest binds each compiled replay policy. */
 export const bindReplayImagePolicy = (
@@ -190,8 +232,9 @@ with tarfile.open(sys.argv[1], 'r:') as archive:
                 raise ValueError('image member size mismatch')
             return data
         raise ValueError('cyclic or excessive image links')
-    executable = read('app/services/bayn/dist/backtest-command.js', 67108864)
-    receipt = read('app/services/bayn/dist/jev-compiler-dependencies.json', 4194304)
+    frozen = sys.argv[2] == 'DEPLOYED_BAYN'
+    executable = read('app/services/bayn/dist/' + ('frozen-control-command.js' if frozen else 'backtest-command.js'), 67108864)
+    receipt = read('app/services/bayn/dist/' + ('frozen-control-compiler.json' if frozen else 'jev-compiler-dependencies.json'), 4194304)
     print(json.dumps({'executableSha256': hashlib.sha256(executable).hexdigest(),
         'dependencyReceiptSha256': hashlib.sha256(receipt).hexdigest(),
         'dependencies': json.loads(receipt)}))
@@ -252,17 +295,20 @@ export class VerifiedReplayImage {
         Schema.Struct({
           executableSha256: Sha256Schema,
           dependencyReceiptSha256: Sha256Schema,
-          dependencies: JevCompilerDependencyReceiptSchema,
+          dependencies: Schema.Unknown,
         }),
-        yield* runReplayEvidenceCommand('python3', ['-c', readMembers, archive]),
+        yield* runReplayEvidenceCommand('python3', ['-c', readMembers, archive, policy.policy]),
       )
-      if (
-        members.executableSha256 !== executableSha256 ||
-        members.dependencies.sourceRevision !== policy.sourceRevision ||
-        Object.keys(members.dependencies.files).length === 0
-      )
+      if (members.executableSha256 !== executableSha256)
         return yield* failure('Replay executable or compiler dependency receipt differs from the registered image')
-      yield* Effect.fromResult(bindReplayImagePolicy(members.dependencies, labels, policy))
+      if (policy.policy === JevResearchPolicy.Deployed) {
+        yield* Effect.fromResult(bindFrozenReplayImagePolicy(members.dependencies, policy, executableSha256))
+      } else {
+        const dependencies = yield* Schema.decodeUnknownEffect(JevCompilerDependencyReceiptSchema)(members.dependencies)
+        if (dependencies.sourceRevision !== policy.sourceRevision || Object.keys(dependencies.files).length === 0)
+          return yield* failure('Replay compiler differs from its registered source')
+        yield* Effect.fromResult(bindReplayImagePolicy(dependencies, labels, policy))
+      }
       return new VerifiedReplayImage({
         schemaVersion: 'bayn.replay-image-membership.v1',
         repository,
