@@ -1507,6 +1507,8 @@ The write command acquires the execution writer fence before reading report evid
 append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
 The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.
 Read-only diagnostics retain their independent repeatable-read, read-only transaction and do not acquire that fence.
+Opening and closing balance queries resolve their time cuts before looking up account snapshots through the existing
+account-event index. They retain the full financial history and original reconciliation and generation boundaries.
 Persistence is append-only and idempotent for unchanged evidence; the creation timestamp comes from the fixed
 evidence cut, not invocation time. A conflicting receipt for the same authority generation fails closed.
 
