@@ -1,5 +1,6 @@
 import { Result } from 'effect'
 import { cryptoMaximumTakerFeeBps, cryptoTakerFeeBps, type CryptoFeeTier } from '../broker/crypto-fees'
+import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { OrderSide, OrderType } from '../execution/contracts'
@@ -14,15 +15,24 @@ import type { JevProtocolMaterial } from './protocol'
 
 export const jevEntryPriceAllowances = (protocol: JevProtocolMaterial, symbol: string) =>
   // Retired protocols retain their original price arithmetic for immutable financial evidence.
-  protocol.schemaVersion === 'bayn.jev.protocol.v27' && instrumentMarket(symbol) === MarketKind.Crypto
+  protocol.schemaVersion === 'bayn.jev.protocol.v28' ||
+  (protocol.schemaVersion === 'bayn.jev.protocol.v27' && instrumentMarket(symbol) === MarketKind.Crypto)
     ? { quoteDriftBps: 0, limitSlippageBps: 0 }
     : {
         quoteDriftBps: protocol.maximumEntryQuoteDriftBps,
         limitSlippageBps: protocol.maximumEntryLimitSlippageBps,
       }
 
-export const jevMaximumEntryAskMicros = (protocol: JevProtocolMaterial, symbol: string, observedAsk: bigint): bigint =>
-  (observedAsk * BigInt(10_000 + jevEntryPriceAllowances(protocol, symbol).quoteDriftBps)) / 10_000n
+export const jevMaximumEntryAskMicros = (
+  protocol: JevProtocolMaterial,
+  symbol: string,
+  observedAsk: bigint,
+): bigint => {
+  const maximumAsk = (observedAsk * BigInt(10_000 + jevEntryPriceAllowances(protocol, symbol).quoteDriftBps)) / 10_000n
+  return protocol.schemaVersion === 'bayn.jev.protocol.v28'
+    ? quantizeInstrumentPriceMicros(symbol, maximumAsk, 'UP')
+    : maximumAsk
+}
 
 export const jevEntryEconomics = (input: {
   readonly protocol: JevProtocolMaterial

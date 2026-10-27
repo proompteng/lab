@@ -7,95 +7,66 @@ import { join } from 'node:path'
 import { canonicalHashV1Result } from '../hash'
 import { makeNativeChartEvidence } from './chart-evidence'
 import { decodeJevEvaluationRequest, JevOutcome } from './evidence'
-import {
-  entryEvaluationRequestFixture,
-  entryCompletionFixture,
-  stagedCheckpointFixture,
-} from './entry-inference.test-support'
+import { entryEvaluationRequestFixture, stagedCheckpointFixture } from './entry-inference.test-support'
 import { makeRetainedFundedEntryJudgmentRequest } from './retained-funded-entry-questions'
-import {
-  decodeStagedCheckpoint,
-  makeStagedDispatchClaim,
-  makeStagedTerminalReceipt,
-  makeStagedSkipReceipt,
-} from './staged-checkpoint'
+import { decodeStagedCheckpoint, stageResponseIdentity } from './staged-checkpoint'
 import {
   readStagedInferenceCostEvidence,
   retainedStagedQuestionPolicyHash,
   retainedMarketQuestionPolicyHash,
 } from './staged-inference-cost-evidence'
 import { makeEntryJudgmentRequest } from './entry-questions'
+import { deriveEntryDispositionForChart } from './entry-inference'
+import { stagedChartAssessments } from './staged-chart-questions'
 
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
-const fixture = (marketQuestions = false) => {
+const fixture = (
+  marketQuestions = false,
+  schemaVersion: 'bayn.jev.protocol.v26' | 'bayn.jev.protocol.v27' = 'bayn.jev.protocol.v26',
+) => {
   const current = entryEvaluationRequestFixture()
-  const completion = entryCompletionFixture(current)
-  const checkpoint = stagedCheckpointFixture(current)
   const input = {
     ...current.request,
     protocol: {
       ...current.request.protocol,
-      schemaVersion: 'bayn.jev.protocol.v26',
+      schemaVersion,
       entryQuestionPolicyHash: marketQuestions ? retainedMarketQuestionPolicyHash : retainedStagedQuestionPolicyHash,
     },
   }
   const { requestId: _, ...originalRequest } = current
   const requestMaterial = { ...originalRequest, request: input, requestHash: hash(input) }
   const request = { ...requestMaterial, requestId: hash(requestMaterial) }
-  const claims = checkpoint.claims.map(({ claimHash: _, ...material }) =>
-    Result.getOrThrow(makeStagedDispatchClaim({ ...material, requestId: request.requestId })),
-  )
-  const terminalHashes = new Map<string, string>()
-  const terminals = checkpoint.terminals.map(({ terminalHash, ...material }) => {
-    const claim = claims.find((row) => row.stage === material.stage)
-    if (claim === undefined) throw new Error('Missing original stage claim')
-    const terminal = Result.getOrThrow(
-      makeStagedTerminalReceipt({ ...material, requestId: request.requestId, claimHash: claim.claimHash }),
-    )
-    terminalHashes.set(terminalHash, terminal.terminalHash)
-    return terminal
-  })
-  // The selected-base claim binds the chart terminal, whose request identity changed.
-  const boundClaims = claims.map(({ claimHash: _, ...material }) => {
-    if (material.predecessorHash === null) return Result.getOrThrow(makeStagedDispatchClaim(material))
-    const predecessorHash = terminalHashes.get(material.predecessorHash)
-    if (predecessorHash === undefined) throw new Error('Missing original chart predecessor')
-    return Result.getOrThrow(makeStagedDispatchClaim({ ...material, predecessorHash }))
-  })
-  const boundTerminals = terminals.map(({ terminalHash: _, ...material }) => {
-    const claim = boundClaims.find((row) => row.stage === material.stage)
-    if (claim === undefined) throw new Error('Missing bound stage claim')
-    return Result.getOrThrow(makeStagedTerminalReceipt({ ...material, claimHash: claim.claimHash }))
-  })
-  const skips = checkpoint.skips.map(({ skipHash: _, ...material }) =>
-    Result.getOrThrow(
-      makeStagedSkipReceipt({
-        ...material,
-        requestId: request.requestId,
-        predecessorHash:
-          material.predecessorHash === null
-            ? null
-            : (terminalHashes.get(material.predecessorHash) ?? material.predecessorHash),
-      }),
+  const checkpoint = stagedCheckpointFixture(request)
+  const chart = Result.getOrThrow(makeNativeChartEvidence(input.chartSource))
+  const visual = checkpoint.terminals.find((row) => row.stage === 'CHART')
+  const base = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
+  if (visual?.outcome.status !== 'RECEIVED' || base?.outcome.status !== 'RECEIVED')
+    throw new Error('Expected two original provider stages')
+  const assessments = Result.getOrThrow(
+    stagedChartAssessments(
+      { chart, protocol: input.protocol, funding: input.funding },
+      stageResponseIdentity(visual.outcome.inference),
+      stageResponseIdentity(base.outcome.inference),
     ),
   )
-  const disposition = completion.handoff.disposition
-  if (disposition.status !== 'READY') throw new Error('Expected a funded retained setup')
-  const prepared = Result.getOrThrow(
-    (marketQuestions ? makeEntryJudgmentRequest : makeRetainedFundedEntryJudgmentRequest)({
-      numericalState: input.numericalState,
-      chart: Result.getOrThrow(makeNativeChartEvidence(input.chartSource)),
-      assessments: disposition.assessments,
-      proposals: disposition.evaluation.proposals,
-    }),
+  const disposition = Result.getOrThrow(
+    deriveEntryDispositionForChart(
+      input,
+      visual.outcome.inference,
+      chart,
+      assessments,
+      marketQuestions ? makeEntryJudgmentRequest : makeRetainedFundedEntryJudgmentRequest,
+    ),
   )
-  if (prepared === null) throw new Error('Missing original Jev request')
-  const { handoffHash: _handoffHash, ...originalHandoff } = completion.handoff
+  if (disposition.status !== 'READY') throw new Error('Expected a funded retained setup')
   const handoffMaterial = {
-    ...originalHandoff,
+    schemaVersion: 'bayn.entry-handoff.v4' as const,
     requestId: request.requestId,
     inputHash: request.requestHash,
-    disposition: { ...disposition, jevRequest: prepared.request, jevRequestHash: prepared.requestHash },
+    visualRequestHash: visual.outcome.inference.requestHash,
+    recordedAt: request.observedAt,
+    disposition,
+    baseStart: base.outcome,
   }
   const handoff = { ...handoffMaterial, handoffHash: hash(handoffMaterial) }
   const receiptMaterial = {
@@ -109,13 +80,7 @@ const fixture = (marketQuestions = false) => {
     },
   }
   const receipt = { ...receiptMaterial, receiptHash: hash(receiptMaterial) }
-  return {
-    request,
-    receipt,
-    handoff,
-    resolution: null,
-    stagedCheckpoint: { claims: boundClaims, terminals: boundTerminals, skips },
-  }
+  return { request, receipt, handoff, resolution: null, stagedCheckpoint: checkpoint }
 }
 
 test('original staged questions and cost receipts survive the equity policy migration without executable decoding', () => {
@@ -150,16 +115,19 @@ test('retained staged receipts cannot omit their original obstruction question a
   expect(Result.isFailure(readStagedInferenceCostEvidence({ ...row, handoff, receipt }))).toBe(true)
 })
 
-test('the ask-cap migration reads original v26 market questions without admitting v26 execution', () => {
-  const row = fixture(true)
-  const decoded = Result.getOrThrow(readStagedInferenceCostEvidence(row))
-  expect(decoded.request.requestId).toBe(row.request.requestId)
-  expect(decoded.handoff?.handoffHash).toBe(row.handoff.handoffHash)
-  expect(decoded.receipt?.receiptHash).toBe(row.receipt.receiptHash)
-  expect(row.handoff.disposition.jevRequest.questions).toHaveProperty('equity_support_recovery_confirmed')
-  expect(Result.isFailure(decodeJevEvaluationRequest(row.request))).toBe(true)
-  expect(Result.isFailure(decodeStagedCheckpoint(row.request, row.stagedCheckpoint))).toBe(true)
-})
+test.each(['bayn.jev.protocol.v26', 'bayn.jev.protocol.v27'] as const)(
+  'the ask-cap migration reads original %s market questions without admitting retired execution',
+  (version) => {
+    const row = fixture(true, version)
+    const decoded = Result.getOrThrow(readStagedInferenceCostEvidence(row))
+    expect(decoded.request.requestId).toBe(row.request.requestId)
+    expect(decoded.handoff?.handoffHash).toBe(row.handoff.handoffHash)
+    expect(decoded.receipt?.receiptHash).toBe(row.receipt.receiptHash)
+    expect(row.handoff.disposition.jevRequest.questions).toHaveProperty('equity_support_recovery_confirmed')
+    expect(Result.isFailure(decodeJevEvaluationRequest(row.request))).toBe(true)
+    expect(Result.isFailure(decodeStagedCheckpoint(row.request, row.stagedCheckpoint))).toBe(true)
+  },
+)
 
 test('financial reader initializes independently under the production Node module order', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'bayn-financial-reader-'))
