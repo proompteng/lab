@@ -216,6 +216,9 @@ test('normal completion verifies prior unknown prefixes and books all three mete
   const complete = { ...source(checkpoint), receipt, resolution, handoff: completion.handoff }
   const current = quotes(complete)
   expect(current).toHaveLength(3)
+  const report = Result.getOrThrow(makeInferenceCostReport(evidence(complete), inferenceExpenseRateCard))
+  expect(report.requestTimings).toHaveLength(3)
+  expect(report.requestTimings.every((timing) => timing.startedAt === request.observedAt)).toBe(true)
   const frozen = [...old, ...current]
   for (const quote of frozen) expect(Result.isSuccess(verifyInferenceExpenseQuote(complete, quote))).toBe(true)
   expect(Result.getOrThrow(buildInferenceExpensePlan(frozen)).transfers).toHaveLength(3)
@@ -255,6 +258,7 @@ test('an empty staged journal remains three unknown stages, not zero or a dispat
   const report = Result.getOrThrow(makeInferenceCostReport(evidence(value), inferenceExpenseRateCard))
   expect(report.requests).toHaveLength(3)
   expect(report.unknownUsageCount).toBe(3)
+  expect(report.requestTimings.every((timing) => timing.startedAt === null)).toBe(true)
   expect(report.requests.every((line) => line.estimatedCostPicoUsd === null)).toBe(true)
   expect(
     Result.isFailure(
@@ -298,11 +302,17 @@ test('late BASE_START metering preserves both unknown quote histories without ch
       expiresAt: request.expiresAt,
     }),
   )
-  const initialQuotes = quotes(source({ claims: [chartClaim], terminals: [], skips: [] }))
+  const initialSource = source({ claims: [chartClaim], terminals: [], skips: [] })
+  const initialQuotes = quotes(initialSource)
+  const initialReport = Result.getOrThrow(makeInferenceCostReport(evidence(initialSource), inferenceExpenseRateCard))
+  expect(initialReport.requestTimings.every((timing) => timing.startedAt === null)).toBe(true)
   const before = source({ claims: [chartClaim, baseClaim], terminals: [chartTerminal], skips: [] })
   const priorQuotes = quotes(before)
   expect(priorQuotes).toHaveLength(2)
+  const pendingReport = Result.getOrThrow(makeInferenceCostReport(evidence(before), inferenceExpenseRateCard))
+  expect(pendingReport.requestTimings.find((timing) => timing.requestKey.endsWith(':BASE_START'))?.startedAt).toBeNull()
   const response = responseFor(prepared.request)
+  const providerStartedAt = new Date(Date.parse(request.observedAt) + 100).toISOString()
   const terminal = Result.getOrThrow(
     makeStagedTerminalReceipt({
       schemaVersion: 'bayn.staged-terminal-receipt.v1',
@@ -316,7 +326,7 @@ test('late BASE_START metering preserves both unknown quote histories without ch
           requestHash: prepared.requestHash,
           responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
           response,
-          startedAt: request.observedAt,
+          startedAt: providerStartedAt,
           completedAt: before.asOf,
         },
       },
@@ -351,6 +361,10 @@ test('late BASE_START metering preserves both unknown quote histories without ch
   expect(coverage.missingQuoteCount).toBe(0)
   expect(coverage.gapRequestCount).toBe(1)
   expect(coverage.completeMeteredCoverage).toBe(false)
+  const afterReport = Result.getOrThrow(makeInferenceCostReport(evidence(after), inferenceExpenseRateCard))
+  expect(afterReport.requestTimings.find((timing) => timing.requestKey.endsWith(':BASE_START'))?.startedAt).toBe(
+    providerStartedAt,
+  )
   const base = quotes(after).find((quote) => 'stage' in quote.line && quote.line.stage === InferenceStage.BaseStart)
   if (base === undefined) throw new Error('Missing base expense')
   expect(base.schemaVersion).toBe('bayn.inference-expense-quote.v4')
@@ -381,6 +395,12 @@ test('authenticated no_base is a zero BASE_START expense while missing evidence 
   const base = values.find((quote) => 'stage' in quote.line && quote.line.stage === InferenceStage.BaseStart)
   expect(base?.line.usageStatus).toBe(InferenceUsageStatus.NotDispatched)
   expect(base?.line.estimatedCostPicoUsd).toBe('0')
+  const report = Result.getOrThrow(makeInferenceCostReport(evidence(value), inferenceExpenseRateCard))
+  expect(report.requestTimings.find((timing) => timing.requestKey.endsWith(':BASE_START'))).toEqual({
+    requestKey: `${request.requestId}:BASE_START`,
+    startedAt: null,
+    estimatedCostPicoUsd: '0',
+  })
   for (const quote of values) expect(Result.isSuccess(verifyInferenceExpenseQuote(value, quote))).toBe(true)
   expect(Result.getOrThrow(buildInferenceExpensePlan(values)).transfers).toHaveLength(1)
   const absent = source({ claims: [chartClaim], terminals: [terminal], skips: [] })
@@ -388,4 +408,36 @@ test('authenticated no_base is a zero BASE_START expense while missing evidence 
     (line) => 'stage' in line && line.stage === InferenceStage.BaseStart,
   )
   expect(missing?.usageStatus).toBe(InferenceUsageStatus.Unknown)
+})
+
+test('failed staged calls retain metered cost without inventing a provider start from the claim', () => {
+  const terminal = Result.getOrThrow(
+    makeStagedTerminalReceipt({
+      schemaVersion: 'bayn.staged-terminal-receipt.v1',
+      stage: 'CHART',
+      requestId: request.requestId,
+      claimHash: chartClaim.claimHash,
+      recordedAt: request.observedAt,
+      outcome: {
+        status: 'FAILED',
+        failure: {
+          category: 'RESPONSE',
+          httpStatus: 200,
+          responseHash: 'a'.repeat(64),
+          usage: responseFor(initial.request).usage,
+        },
+      },
+    }),
+  )
+  const value = source({ claims: [chartClaim], terminals: [terminal], skips: [] })
+  const report = Result.getOrThrow(makeInferenceCostReport(evidence(value), inferenceExpenseRateCard))
+  const line = report.requests.find((row) => 'stage' in row && row.stage === InferenceStage.Chart)
+  if (line === undefined) throw new Error('Expected failed chart cost')
+  expect(line.usageStatus).toBe(InferenceUsageStatus.Rejected)
+  expect(line.estimatedCostPicoUsd).not.toBeNull()
+  expect(report.requestTimings.find((timing) => timing.requestKey.endsWith(':CHART'))).toEqual({
+    requestKey: `${request.requestId}:CHART`,
+    startedAt: null,
+    estimatedCostPicoUsd: line.estimatedCostPicoUsd,
+  })
 })

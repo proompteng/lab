@@ -1183,7 +1183,7 @@ the projection subtracts them before applying their separate tariffs. The rate c
 these assumptions; it does not establish a provider invoice or guarantee future prices.
 
 Current snapshots use `bayn.inference-cost-evidence.v2`, include the committed handoff, and report both stages in
-`bayn.inference-cost-report.v2`. `requestCount` counts parent claims and `providerRequestCount` counts their stages.
+`bayn.inference-cost-report.v3`. `requestCount` counts parent claims and `providerRequestCount` counts their stages.
 Retained v1 financial evidence and quotes remain auditable through a read-only projection; they cannot enter the
 current executable request codecs. Later reviewed tariffs apply to new quotes. Existing quotes cannot be repriced
 or deleted. A lost TigerBeetle or PostgreSQL acknowledgement replays the same records and verifies all metadata.
@@ -1247,6 +1247,11 @@ decision can still carry billable usage. A claim without retained usage stays un
 the provider received a request or that no charge occurred. Identical repeated evidence is deduplicated by request
 identity; conflicting duplicates fail. Token counts are safe integers. Cost arithmetic retains pico-USD precision
 and rounds the aggregate upward to micro-USD only once. These are metered estimates, not invoice-reconciled costs.
+
+`bayn.inference-cost-report.v3` includes `requestTimings`, keyed by the same request/stage identity as the cost
+lines. Each row retains the provider start time when recorded and the priced amount in pico-USD. A metered failure
+can have a known expense and an unknown start time. Tariff selection may use the existing handoff or observation
+reference when needed; that reference is never reported as an observed provider start time.
 
 `knownEstimatedCostMicros` is the priced, recorded subtotal. `estimatedTotalCostMicros` is null whenever any claimed
 request has unknown usage or any metered request is unpriced. `invoiceReconciled` remains false. The account binding,

@@ -56,6 +56,17 @@ const evidence = (requests: readonly ReturnType<typeof row>[]) => ({
 })
 
 describe('inference operating-cost evidence', () => {
+  test.each([
+    { options: {}, startedAt: '1970-01-01T00:00:00.000Z', cost: '10500000' },
+    { options: { rejected: true }, startedAt: null, cost: '10500000' },
+    { options: { notDispatched: true }, startedAt: null, cost: '0' },
+    { options: { missing: true }, startedAt: null, cost: null },
+  ])('historical timing uses provider evidence without changing costs: %j', ({ options, startedAt, cost }) => {
+    const source = row(options)
+    const result = Result.getOrThrow(costReportFromEvidence(evidence([source]), rateCard))
+    expect(result.requestTimings).toEqual([{ requestKey: source.requestId, startedAt, estimatedCostPicoUsd: cost }])
+  })
+
   test('reads retained v1 financial evidence without accepting a retired request for execution', () => {
     const { handoff: _, ...retained } = row()
     const historical = { ...evidence([]), schemaVersion: 'bayn.inference-cost-evidence.v1', requests: [retained] }
