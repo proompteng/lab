@@ -1281,7 +1281,7 @@ postgres('PostgreSQL prospective system qualification', () => {
         order_type, time_in_force, quantity_atoms, notional_limit_micros, limit_price_micros, state, created_at,
         updated_at, cycle_id, strategy_name, decision_hash, policy_hash, authority_generation_hash)
         VALUES (${intentId}, 'bayn.execution-intent.v5', ${account}, 'preflight-witness-test', 'SPY', 'BUY',
-          'LIMIT', 'DAY', 1000000000, 1000000, 1000000, 'PLANNED', clock_timestamp(), clock_timestamp(),
+          'LIMIT', 'DAY', 1000000000, 1000000, 1000000, 'PLANNED', statement_timestamp(), statement_timestamp(),
           ${native.draft.identity.cycleId}, 'jev', ${sha256('preflight-decision')}, ${sha256('preflight-policy')},
           ${definition.authorityGenerationHash})`
           yield* sql`INSERT INTO mutation_events(event_id, schema_version, mutation_id, intent_id, sequence,
