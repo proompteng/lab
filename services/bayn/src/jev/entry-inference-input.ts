@@ -42,6 +42,10 @@ export type EntryInferenceMaterial =
         | 'bayn.entry-inference-input.v2'
         | 'bayn.entry-inference-input.v3'
         | 'bayn.entry-inference-input.v4'
+        | 'bayn.entry-inference-input.v5'
+      readonly protocol: JevProtocolMaterial
+    })
+  | (Omit<typeof AblationEntryInferenceInputSchema.Type, 'protocol'> & {
       readonly protocol: JevProtocolMaterial
     })
 

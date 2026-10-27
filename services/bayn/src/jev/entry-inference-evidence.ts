@@ -134,7 +134,7 @@ export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
   })
 
 export const decodeStagedEntryHandoff = (
-  source: EntrySource,
+  source: Omit<EntrySource, 'input'> & { readonly input: EntryInferenceMaterial },
   input: unknown,
   inputHash: string,
   prepareJudgments: typeof makeEntryJudgmentRequest,

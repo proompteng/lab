@@ -19,16 +19,25 @@ import {
   makeStagedTerminalReceipt,
   makeStagedSkipReceipt,
 } from './staged-checkpoint'
-import { readStagedInferenceCostEvidence, retainedStagedQuestionPolicyHash } from './staged-inference-cost-evidence'
+import {
+  readStagedInferenceCostEvidence,
+  retainedStagedQuestionPolicyHash,
+  retainedMarketQuestionPolicyHash,
+} from './staged-inference-cost-evidence'
+import { makeEntryJudgmentRequest } from './entry-questions'
 
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
-const fixture = () => {
+const fixture = (marketQuestions = false) => {
   const current = entryEvaluationRequestFixture()
   const completion = entryCompletionFixture(current)
   const checkpoint = stagedCheckpointFixture(current)
   const input = {
     ...current.request,
-    protocol: { ...current.request.protocol, entryQuestionPolicyHash: retainedStagedQuestionPolicyHash },
+    protocol: {
+      ...current.request.protocol,
+      schemaVersion: 'bayn.jev.protocol.v26',
+      entryQuestionPolicyHash: marketQuestions ? retainedMarketQuestionPolicyHash : retainedStagedQuestionPolicyHash,
+    },
   }
   const { requestId: _, ...originalRequest } = current
   const requestMaterial = { ...originalRequest, request: input, requestHash: hash(input) }
@@ -73,7 +82,7 @@ const fixture = () => {
   const disposition = completion.handoff.disposition
   if (disposition.status !== 'READY') throw new Error('Expected a funded retained setup')
   const prepared = Result.getOrThrow(
-    makeRetainedFundedEntryJudgmentRequest({
+    (marketQuestions ? makeEntryJudgmentRequest : makeRetainedFundedEntryJudgmentRequest)({
       numericalState: input.numericalState,
       chart: Result.getOrThrow(makeNativeChartEvidence(input.chartSource)),
       assessments: disposition.assessments,
@@ -139,6 +148,17 @@ test('retained staged receipts cannot omit their original obstruction question a
   }
   const receipt = { ...receiptMaterial, receiptHash: hash(receiptMaterial) }
   expect(Result.isFailure(readStagedInferenceCostEvidence({ ...row, handoff, receipt }))).toBe(true)
+})
+
+test('the ask-cap migration reads original v26 market questions without admitting v26 execution', () => {
+  const row = fixture(true)
+  const decoded = Result.getOrThrow(readStagedInferenceCostEvidence(row))
+  expect(decoded.request.requestId).toBe(row.request.requestId)
+  expect(decoded.handoff?.handoffHash).toBe(row.handoff.handoffHash)
+  expect(decoded.receipt?.receiptHash).toBe(row.receipt.receiptHash)
+  expect(row.handoff.disposition.jevRequest.questions).toHaveProperty('equity_support_recovery_confirmed')
+  expect(Result.isFailure(decodeJevEvaluationRequest(row.request))).toBe(true)
+  expect(Result.isFailure(decodeStagedCheckpoint(row.request, row.stagedCheckpoint))).toBe(true)
 })
 
 test('financial reader initializes independently under the production Node module order', async () => {

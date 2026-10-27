@@ -1,6 +1,11 @@
 import { evaluateRepeatedMomentumFromSnapshot } from '../strategy/repeated-momentum/runtime'
 import { JevBatchPlanVersion } from '../jev/batch'
-import { protectedEntryExpiresAtMs, type ProtectedEntryTarget } from '../strategy/runtime-decision'
+import {
+  isProtectedEntryTarget,
+  protectedEntryExpiresAtMs,
+  type ProtectedEntryTarget,
+} from '../strategy/runtime-decision'
+import { jevEntryPriceAllowances } from '../jev/entry-economics'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
 import { MarketKind, instrumentMarket } from '../instruments'
@@ -1238,6 +1243,7 @@ const reduceRiskInputs = (
 
 const reduceObserveRiskInputs = <R>(
   input: ObserveDecisionInput<R>,
+  entryLimitSlippageBps: number,
   facts: ObserveDecisionFacts,
   authorityObservation: ObserveAuthorityObservation,
   executionSession: ExecutionSessionBinding,
@@ -1251,10 +1257,7 @@ const reduceObserveRiskInputs = <R>(
   entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
-    limitSlippageBps:
-      closeOnlyExpiresAt === undefined && authorityObservation.authority.effective === Authority.Execution
-        ? input.policy.maxAdverseSlippageBps
-        : 0,
+    limitSlippageBps: entryLimitSlippageBps,
     ...(entryQuotes === undefined ? {} : { entryQuotes }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
@@ -1372,9 +1375,23 @@ function buildCycleDecision<R>(
         compositionFailure('cycle-binding', 'decision has no immutable market-data snapshot binding'),
       )
     }
+    const entryDecision = compiled.decision
+    const entryLimitSlippageBps =
+      requirements.documentMode === Authority.Execution
+        ? isProtectedEntryTarget(entryDecision)
+          ? Math.min(
+              input.policy.maxAdverseSlippageBps,
+              ...entryDecision.selectedSymbols.map(
+                (symbol) =>
+                  jevEntryPriceAllowances(entryDecision.evidence.observation.protocol, symbol).limitSlippageBps,
+              ),
+            )
+          : input.policy.maxAdverseSlippageBps
+        : 0
     const riskInputs = yield* Effect.fromResult(
       reduceObserveRiskInputs(
         input,
+        entryLimitSlippageBps,
         facts,
         executionAuthority,
         executionSession,
@@ -1425,7 +1442,7 @@ function buildCycleDecision<R>(
       : yield* buildExecutionDecision({
           ...decisionInput,
           riskContext: executionRiskContext(facts.reconciliation, executionAuthority),
-          entryLimitSlippageBps: input.policy.maxAdverseSlippageBps,
+          entryLimitSlippageBps,
           authorityGenerationHash: input.authorityGenerationHash,
           executionSession,
         })

@@ -1,3 +1,4 @@
+import cryptoEntryAskCap from '../../migrations/0157_crypto_entry_ask_cap'
 import systemRegistration from '../../migrations/0156_system_registration'
 import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
 import stagedChartTransport from '../../migrations/0153_staged_chart_transport'
@@ -158,6 +159,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '157_crypto_entry_ask_cap': cryptoEntryAskCap,
   '154_market_entry_questions': marketEntryQuestions,
   '153_staged_chart_transport': stagedChartTransport,
   '155_native_controls': nativeControls,

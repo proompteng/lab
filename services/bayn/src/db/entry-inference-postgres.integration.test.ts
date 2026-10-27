@@ -1,4 +1,5 @@
 import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
+import cryptoEntryAskCap from '../../migrations/0157_crypto_entry_ask_cap'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -244,6 +245,74 @@ integration('committed sequential provider handoff', () => {
     )
   beforeEach(() => resetDatabase())
 
+  test('the ask-cap cutover preserves v26 bytes and rejects new v26 requests and provider evidence', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 157))),
+          table: 'schema_migrations',
+        })
+        yield* sql`INSERT INTO simulated_execution_clocks(account_id,source_manifest_hash,observed_at)
+          VALUES (${replayAccountId},${replaySourceHash},${request.observedAt})`
+        yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
+        yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
+          VALUES (${request.authorityGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,${request.observedAt})`
+        const { requestId: _, ...current } = request
+        const input = {
+          ...request.request,
+          protocol: { ...request.request.protocol, schemaVersion: 'bayn.jev.protocol.v26' },
+        }
+        const material = { ...current, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
+        const original = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }
+        yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+          VALUES (${original.requestId},${original.cycleId},${original.authorityGenerationHash},${sql.json(original)})`
+        const checkpoint = stagedCheckpointFixture(request)
+        const first = checkpoint.claims[0]
+        const terminal = checkpoint.terminals[0]
+        if (first === undefined || terminal === undefined) throw new Error('Expected original chart evidence')
+        const { claimHash: _claimHash, ...claimMaterial } = first
+        const claim = Result.getOrThrow(makeStagedDispatchClaim({ ...claimMaterial, requestId: original.requestId }))
+        yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+          VALUES (${original.requestId},'CHART',${claim.claimHash},${sql.json(claim)})`
+        yield* sql`WITH terminal AS MATERIALIZED (SELECT clock_timestamp() AS at)
+          UPDATE autonomous_cycles SET state='BLOCKED',terminal_reason='BLOCKED_AUTHORITY',state_version=state_version+1,
+            updated_at=terminal.at,terminal_at=terminal.at FROM terminal WHERE cycle_id=${original.cycleId}`
+        const before =
+          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${original.requestId}`
+        yield* sql.withTransaction(cryptoEntryAskCap)
+        expect(
+          yield* sql`SELECT payload::text FROM jev_evaluation_requests WHERE request_id=${original.requestId}`,
+        ).toEqual(before)
+        expect(
+          yield* sql`SELECT payload FROM jev_staged_dispatch_claims WHERE request_id=${original.requestId}`,
+        ).toEqual([{ payload: claim }])
+        const rejectedRequest =
+          yield* sql`INSERT INTO jev_evaluation_requests(request_id,cycle_id,authority_generation_hash,payload)
+          VALUES (${'d'.repeat(64)},${original.cycleId},${original.authorityGenerationHash},${sql.json({ ...original, requestId: 'd'.repeat(64) })})`.pipe(
+            Effect.result,
+          )
+        if (Result.isSuccess(rejectedRequest)) throw new Error('Retired v26 request was accepted')
+        yield* Schema.decodeUnknownEffect(
+          Schema.Struct({ code: Schema.Literal('23514'), constraint: Schema.Literal('jev_evaluation_requests_check') }),
+        )(rejectedRequest.failure.reason.cause)
+        const { terminalHash: _terminalHash, ...terminalMaterial } = terminal
+        const late = Result.getOrThrow(
+          makeStagedTerminalReceipt({ ...terminalMaterial, requestId: original.requestId, claimHash: claim.claimHash }),
+        )
+        const rejectedTerminal =
+          yield* sql`INSERT INTO jev_staged_terminal_receipts(request_id,stage,terminal_hash,payload)
+          VALUES (${original.requestId},'CHART',${late.terminalHash},${sql.json(late)})`.pipe(Effect.result)
+        if (Result.isSuccess(rejectedTerminal)) throw new Error('Retired v26 provider terminal was accepted')
+        const failure = yield* Schema.decodeUnknownEffect(
+          Schema.Struct({ code: Schema.Literal('23514'), message: Schema.String }),
+        )(rejectedTerminal.failure.reason.cause)
+        expect(failure.message).toContain('retired entry protocol')
+      }),
+    ))
+
   test('market policy cutover preserves original staged claims and rejects retired-policy requests and dispatch', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
@@ -262,7 +331,11 @@ integration('committed sequential provider handoff', () => {
         const { requestId: _, ...current } = request
         const input = {
           ...request.request,
-          protocol: { ...request.request.protocol, entryQuestionPolicyHash: retainedStagedQuestionPolicyHash },
+          protocol: {
+            ...request.request.protocol,
+            schemaVersion: 'bayn.jev.protocol.v26',
+            entryQuestionPolicyHash: retainedStagedQuestionPolicyHash,
+          },
         }
         const material = { ...current, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
         const original = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }
@@ -1219,6 +1292,7 @@ integration('committed sequential provider handoff', () => {
     ['relative-chart-volume', relativeChartVolume],
     ['staged-chart-transport', stagedChartTransport],
     ['market-entry-question', marketEntryQuestions],
+    ['crypto-entry-ask-cap', cryptoEntryAskCap],
     ['conditional-base-anchor', conditionalBaseAnchors],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
