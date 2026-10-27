@@ -58,6 +58,21 @@ numerically possible continue through the existing provider path.
 The cohort is development evidence for a dispatch optimization, not a prospective profitability experiment. Skipping
 an impossible source saves inference work; it does not establish a Jev edge, a broker fill or profitability.
 
+Current input-v5 exports must also include each row's original `stagedCheckpoint`. The verifier uses the owning
+staged financial reader to validate the CHART and conditional BASE_START claims, receipts and skips, and the original
+market-specific Jev questions. Missing stage evidence fails verification. Retained v1–v4 documents continue through
+their financial-only readers with their original question contracts.
+
+The current dispatch probe constructs the same initial CHART stage as execution. It never constructs the retired
+all-end base-start matrix. For current-protocol handoffs, the initial request hash must match the original native
+handoff. Report v3 includes the verified original evaluation hash, original Jev question names and projected initial
+chart request hash. Original source-infeasible handoffs and incomplete provider graphs are validated by their owning
+reader before probing; a failed or absent chart result cannot count as a preserved funded proposal. All probe provider
+branches terminate at local sentinels. The probe cannot dispatch a model request or submit an order.
+
+Run `bun test tools/verify-entry-feasibility.test.ts` from `services/bayn` for current equity and crypto questions,
+missing-checkpoint rejection, authenticated undispatched costs, and retained financial evidence.
+
 ## Rollout and recovery
 
 Use the normal immutable Bayn build and `lab-delivery/bayn` Kargo promotion through `kargo/bayn` and Argo. The gate changes
