@@ -98,6 +98,14 @@ durable evidence witnesses as append-only records. A later settlement or newly c
 assessment receipt. Reading a saved assessment recomputes its result and verifies its hash. Broker mutation routing
 retains the original admission, dispatch, and completion times, including explicit non-dispatch.
 
+Source inserts enqueue pending witnesses in the same PostgreSQL transaction. Controller observations consume only
+committed pending rows for the registered account and plan, preserving the first witness time. Savepoint release
+does not establish durability, and deferred rejection rolls back the source and its pending witness together.
+The queue does not use an ID or timestamp watermark, so transactions that commit out of order remain eligible.
+Consumed rows leave the queue; subsequent controller updates do not rescan historical source tables.
+Reconciliation correctness retains its result at completion. Later submissions do not invalidate a successful
+preflight reconciliation; their freshness and recovery requirements remain separate obligations.
+
 ## Private reporting command
 
 Build the service, then use `dist/forward-performance-command.js` with the existing private reporting configuration.

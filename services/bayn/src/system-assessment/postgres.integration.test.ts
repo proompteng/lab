@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { PgClient } from '@effect/sql-pg'
-import { Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { PgClient, PgMigrator } from '@effect/sql-pg'
+import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
+import { migrationLoader } from '../db/migrations'
 import { canonicalJsonV1Result, sha256 } from '../hash'
 import { IsoDateSchema, UtcInstantSchema } from '../schemas'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -893,7 +894,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     ).toBe(true)
   })
 
-  test('an active evaluation witnesses only committed account evidence and retains the first durable observation', async () => {
+  const activeEvaluation = async () => {
     const base = registration()
     const opens = Date.now() + 1500
     const sessions = base.calendar.sessions.map((_session, index) => {
@@ -926,6 +927,11 @@ postgres('PostgreSQL prospective system qualification', () => {
       }),
     )
     await runtime.runPromise(Effect.sleep(Math.max(0, opens - Date.now() + 10)))
+    return { registered, definition, account, opens }
+  }
+
+  test('an active evaluation witnesses only committed account evidence and retains the first durable observation', async () => {
+    const { registered, definition, account, opens } = await activeEvaluation()
     const source = sha256('committed reconciliation')
     const controllerReceipt = sha256('committed controller pass')
     const batch = await runtime.runPromise(
@@ -1037,6 +1043,31 @@ postgres('PostgreSQL prospective system qualification', () => {
       ),
     )
     expect(repeated).toEqual(observed)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO execution_controller_observations(controller_key, status)
+          SELECT controller_key, to_jsonb(status) FROM execution_controller_status status, generate_series(1, 1000)
+          WHERE controller_key = ${sha256('identity')}`
+        const definitions = yield* Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ definition: Schema.String })),
+        )(yield* sql`SELECT pg_get_functiondef('system_evidence_source_committed(xid)'::regprocedure) AS definition`)
+        const definition = definitions[0]?.definition
+        if (definition === undefined) throw new Error('Missing commit visibility function')
+        yield* sql.unsafe(
+          definition.replace('public.system_evidence_source_committed(', 'public.original_evidence_source_committed('),
+        )
+        yield* sql`CREATE TABLE witness_commit_checks (source_xid xid NOT NULL)`
+        yield* sql`CREATE OR REPLACE FUNCTION system_evidence_source_committed(source_xid xid)
+          RETURNS boolean LANGUAGE plpgsql AS $function$ BEGIN
+          INSERT INTO witness_commit_checks VALUES (source_xid);
+          RETURN original_evidence_source_committed(source_xid);
+          END $function$`
+        yield* sql`UPDATE execution_controller_status SET epoch = 5 WHERE controller_key = ${sha256('identity')}`
+        expect(yield* sql`SELECT count(*)::integer AS count FROM witness_commit_checks`).toEqual([{ count: 0 }])
+        expect(yield* sql`SELECT count(*)::integer AS count FROM system_durable_observations`).toEqual([{ count: 3 }])
+      }),
+    )
     const exactAt = new Date(opens + 50).toISOString()
     const precisionHash = sha256('fractional witness')
     const precision = await runtime.runPromise(
@@ -1055,5 +1086,177 @@ postgres('PostgreSQL prospective system qualification', () => {
       sourceAt: exactAt,
       witnessedAt: new Date(Date.parse(exactAt) + 1).toISOString(),
     })
+  }, 15_000)
+
+  test('a later admitted mutation does not invalidate an exact preflight reconciliation', async () => {
+    const { account, definition, registered } = await activeEvaluation()
+    const reconciliationHash = sha256('exact preflight before routing')
+    const native = nativeJevFixture(JevPurpose.Entry, undefined, account)
+    const observedAt = native.portfolio.brokerState.reconciliation.reconciledAt
+    await runtime.runPromise(
+      asApplication(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`INSERT INTO simulated_execution_clocks(account_id, source_manifest_hash, observed_at)
+            VALUES (${account}, ${sha256('preflight-witness-clock')}, ${observedAt})`
+          yield* (yield* makeCycleStore({ now: sql`${observedAt}::timestamptz` })).acquire(native.draft, observedAt)
+          yield* sql`INSERT INTO reconciliations
+        (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
+        VALUES (${reconciliationHash}, 'bayn.paper-reconciliation.v1', ${account}, ${reconciliationHash},
+          ${reconciliationHash}, ${reconciliationHash}, 'EXACT', '[]'::jsonb, clock_timestamp())`
+        }),
+      ),
+    )
+    const mutationId = sha256('mutation after exact preflight')
+    await runtime.runPromise(
+      asApplication(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const intentId = sha256('intent after exact preflight')
+          yield* sql`INSERT INTO intents(intent_id, schema_version, account_id, client_order_id, symbol, side,
+        order_type, time_in_force, quantity_atoms, notional_limit_micros, limit_price_micros, state, created_at,
+        updated_at, cycle_id, strategy_name, decision_hash, policy_hash, authority_generation_hash)
+        VALUES (${intentId}, 'bayn.execution-intent.v5', ${account}, 'preflight-witness-test', 'SPY', 'BUY',
+          'LIMIT', 'DAY', 1000000000, 1000000, 1000000, 'PLANNED', clock_timestamp(), clock_timestamp(),
+          ${native.draft.identity.cycleId}, 'jev', ${sha256('preflight-decision')}, ${sha256('preflight-policy')},
+          ${definition.authorityGenerationHash})`
+          yield* sql`INSERT INTO mutation_events(event_id, schema_version, mutation_id, intent_id, sequence,
+        operation, event_type, request_hash, consistency_delay_ms, occurred_at)
+        VALUES (${mutationId}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 1,
+          'SUBMIT', 'SUBMIT_STARTED', ${sha256('preflight-request')}, 1000, clock_timestamp())`
+          yield* sql`INSERT INTO execution_controller_status(controller_key, plan_hash, active, epoch, next_sequence)
+        VALUES (${sha256('identity')}, ${sha256('controller plan')}, true, 1, 0)`
+        }),
+      ),
+    )
+    const witnesses = await runtime.runPromise(readSystemDurableObservations(registered.registrationHash))
+    expect(witnesses.find((w) => w.sourceHash === reconciliationHash)).toMatchObject({
+      kind: 'RECONCILIATION',
+      correct: true,
+    })
+    expect(witnesses.some((w) => w.sourceHash === mutationId)).toBe(false)
+  }, 15_000)
+
+  test('migration queues existing active evaluation sources without inventing historical witness times', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= 156))),
+          table: 'schema_migrations',
+        })
+        yield* initializeQualificationHistory(history, new Set([history.historySourceHash]))
+        databaseObservedAt = yield* databaseNow
+      }),
+    )
+    const { account, opens, registered } = await activeEvaluation()
+    const source = sha256('evidence retained before migration 157')
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        for (const [accountId, hash, at] of [
+          [account, source, new Date().toISOString()],
+          [account, sha256('pre-window source'), new Date(opens - 1).toISOString()],
+          ['foreign-account', sha256('foreign source before migration'), new Date().toISOString()],
+        ] as const) {
+          yield* sql`INSERT INTO reconciliations
+          (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
+          VALUES (${hash}, 'bayn.paper-reconciliation.v1', ${accountId}, ${hash}, ${hash}, ${hash}, 'EXACT', '[]'::jsonb, ${at})`
+        }
+        const beforeMigration = yield* databaseNow
+        yield* postgresMigrations
+        expect(yield* sql`SELECT source_hash FROM system_pending_evidence`).toEqual([{ source_hash: source }])
+        expect(yield* sql`SELECT count(*)::integer AS count FROM system_durable_observations`).toEqual([{ count: 0 }])
+        yield* sql`INSERT INTO execution_controller_status(controller_key, plan_hash, active, epoch, next_sequence)
+        VALUES (${sha256('identity')}, ${sha256('controller plan')}, true, 1, 0)`
+        const witnesses = yield* readSystemDurableObservations(registered.registrationHash)
+        expect(witnesses).toHaveLength(1)
+        expect(witnesses[0]?.sourceHash).toBe(source)
+        expect(Date.parse(witnesses[0]?.witnessedAt ?? '')).toBeGreaterThanOrEqual(Date.parse(beforeMigration))
+        expect(yield* sql`SELECT count(*)::integer AS count FROM system_pending_evidence`).toEqual([{ count: 0 }])
+      }),
+    )
+  }, 15_000)
+
+  test('pending witnesses retain out-of-order commits and discard rolled-back or deferred-rejected sources', async () => {
+    const { account } = await activeEvaluation()
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO execution_controller_status(controller_key, plan_hash, active, epoch, next_sequence)
+          VALUES (${sha256('identity')}, ${sha256('controller plan')}, true, 1, 0)`
+        const insertReconciliation = (source: string) => sql`INSERT INTO reconciliations
+          (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
+          VALUES (${source}, 'bayn.paper-reconciliation.v1', ${account}, ${source}, ${source}, ${source}, 'EXACT', '[]'::jsonb, clock_timestamp())`
+        const observe = asApplication(
+          Effect.gen(function* () {
+            yield* sql`UPDATE execution_controller_status SET epoch = epoch + 1 WHERE controller_key = ${sha256('identity')}`
+            return yield* sql`SELECT source_hash FROM system_durable_observations ORDER BY source_hash`
+          }),
+        )
+        const earlier = sha256('transaction that commits second')
+        const later = sha256('transaction that commits first')
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const slowTransaction = yield* asApplication(
+          Effect.gen(function* () {
+            yield* insertReconciliation(earlier)
+            yield* Deferred.succeed(entered, undefined)
+            yield* Deferred.await(release)
+          }),
+        ).pipe(Effect.forkScoped({ startImmediately: true }))
+        yield* Deferred.await(entered).pipe(Effect.timeout('5 seconds'))
+        yield* asApplication(insertReconciliation(later))
+        for (const query of [
+          sql`DELETE FROM system_pending_evidence`,
+          sql`UPDATE system_pending_evidence SET correct = false`,
+        ]) {
+          expect(Exit.isFailure(yield* asApplication(query).pipe(Effect.exit))).toBe(true)
+        }
+        expect(yield* observe).toEqual([{ source_hash: later }])
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(slowTransaction)
+        const both = [earlier, later].sort().map((source_hash) => ({ source_hash }))
+        expect(yield* observe).toEqual(both)
+        expect(yield* sql`SELECT count(*)::integer AS count FROM system_pending_evidence`).toEqual([{ count: 0 }])
+
+        const rolledBack = sha256('rolled-back witness')
+        const rollback = yield* asApplication(
+          Effect.gen(function* () {
+            yield* insertReconciliation(rolledBack)
+            expect(yield* sql`SELECT count(*)::integer AS count FROM system_pending_evidence`).toEqual([{ count: 1 }])
+            return yield* Effect.fail('rollback source and queue together')
+          }),
+        ).pipe(Effect.exit)
+        expect(Exit.isFailure(rollback)).toBe(true)
+        expect(yield* observe).toEqual(both)
+
+        yield* sql`CREATE FUNCTION reject_test_source_at_commit() RETURNS trigger LANGUAGE plpgsql AS $function$
+          BEGIN RAISE EXCEPTION 'deferred source rejection' USING ERRCODE = '23514'; END $function$`
+        yield* sql`CREATE CONSTRAINT TRIGGER reject_test_source_at_commit AFTER INSERT ON reconciliations
+          DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_source_at_commit()`
+        const rejected = yield* asApplication(
+          Effect.gen(function* () {
+            yield* insertReconciliation(sha256('deferred-rejected source'))
+            yield* sql`UPDATE execution_controller_status SET epoch = epoch + 1 WHERE controller_key = ${sha256('identity')}`
+            expect(yield* sql`SELECT count(*)::integer AS count FROM system_pending_evidence`).toEqual([{ count: 1 }])
+            expect(yield* sql`SELECT source_hash FROM system_durable_observations ORDER BY source_hash`).toEqual(both)
+          }),
+        ).pipe(Effect.exit)
+        expect(Exit.isFailure(rejected)).toBe(true)
+        expect(yield* observe).toEqual(both)
+        expect(yield* sql`SELECT count(*)::integer AS count FROM system_pending_evidence`).toEqual([{ count: 0 }])
+
+        for (const query of [
+          sql`INSERT INTO system_pending_evidence SELECT registration_hash, kind, source_hash, source_at, correct
+            FROM system_durable_observations LIMIT 1`,
+          sql`TRUNCATE system_pending_evidence`,
+        ]) {
+          expect(Exit.isFailure(yield* asApplication(query).pipe(Effect.exit))).toBe(true)
+        }
+      }).pipe(Effect.scoped),
+    )
   }, 15_000)
 })

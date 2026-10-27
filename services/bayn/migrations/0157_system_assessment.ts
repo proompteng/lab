@@ -169,8 +169,148 @@ export default Effect.gen(function* () {
     IF full_source < 3 OR snapshot_upper - full_source >= 2147483648 THEN RETURN false; END IF;
     RETURN coalesce(pg_xact_status(full_source::text::xid8) = 'committed', false);
   END $function$`
+  yield* sql`CREATE INDEX system_qualification_registration_window
+    ON system_qualification_registrations(last_close_at, first_open_at)`
+  yield* sql`CREATE TABLE system_pending_evidence (
+    registration_hash text NOT NULL REFERENCES system_qualification_registrations(registration_hash),
+    kind text NOT NULL CHECK (kind IN ('DECISION', 'RECONCILIATION', 'MUTATION', 'CONTROLLER', 'BATCH')),
+    source_hash text NOT NULL CHECK (source_hash ~ '^[0-9a-f]{64}$'),
+    source_at timestamptz NOT NULL,
+    correct boolean NOT NULL,
+    PRIMARY KEY(registration_hash, kind, source_hash)
+  )`
+  yield* sql`CREATE INDEX system_pending_evidence_due ON system_pending_evidence(registration_hash, source_at)`
+  yield* sql`CREATE FUNCTION guard_system_pending_evidence() RETURNS trigger LANGUAGE plpgsql AS $function$
+  BEGIN
+    IF pg_trigger_depth() < 2 OR TG_OP = 'UPDATE' OR TG_OP = 'TRUNCATE' THEN
+      RAISE EXCEPTION 'pending evidence is maintained by source and witness triggers' USING ERRCODE = '55000';
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+  END $function$`
+  yield* sql`CREATE FUNCTION queue_system_evidence(s_kind text, s_hash text, s_at timestamptz,
+    s_window_at timestamptz, s_issued_at timestamptz, s_account text, s_generation text,
+    s_controller text, s_plan text, s_correct boolean) RETURNS void LANGUAGE plpgsql AS $function$
+  DECLARE observed_at timestamptz := clock_timestamp();
+  BEGIN
+    IF s_hash IS NULL OR s_at IS NULL THEN RETURN; END IF;
+    s_window_at := coalesce(s_window_at, s_at);
+    -- The queue row commits with its source and deferred bindings. A later transaction supplies the witness time.
+    INSERT INTO system_pending_evidence(registration_hash, kind, source_hash, source_at, correct)
+      SELECT registration.registration_hash, s_kind, s_hash, s_at, s_correct
+      FROM system_qualification_registrations registration
+      CROSS JOIN LATERAL jsonb_array_elements(registration.payload_text::jsonb->'policies') policy
+      JOIN authority_generations generation ON generation.generation_hash = policy->>'authorityGenerationHash'
+      WHERE policy->>'policy' = 'JEV'
+        AND registration.last_close_at >= observed_at - interval '1 day'
+        AND (s_kind IN ('RECONCILIATION', 'CONTROLLER') OR generation.generation_hash = s_generation)
+        AND (s_kind = 'CONTROLLER' OR generation.account_id = s_account)
+        AND (s_kind <> 'CONTROLLER' OR (generation.broker_identity_hash = s_controller
+          AND registration.payload_text::jsonb #>> '{obligations,configuration,controllerPlanHash}' = s_plan))
+        AND ((s_kind = 'MUTATION' AND s_at >= registration.first_open_at)
+          OR (s_kind = 'BATCH' AND s_window_at >= registration.first_open_at AND s_window_at < registration.last_close_at)
+          OR (s_kind IN ('DECISION', 'RECONCILIATION', 'CONTROLLER')
+            AND (s_window_at BETWEEN registration.first_open_at AND registration.last_close_at
+              OR s_issued_at BETWEEN registration.first_open_at AND registration.last_close_at)))
+        AND NOT EXISTS (SELECT 1 FROM system_durable_observations prior
+          WHERE prior.registration_hash = registration.registration_hash AND prior.kind = s_kind AND prior.source_hash = s_hash)
+      ON CONFLICT DO NOTHING;
+  END $function$`
+  yield* sql`CREATE FUNCTION enqueue_system_evidence() RETURNS trigger LANGUAGE plpgsql AS $function$
+  DECLARE s_kind text; s_hash text; s_at timestamptz; s_window_at timestamptz; s_issued_at timestamptz;
+    s_account text; s_generation text; s_controller text; s_plan text; s_document jsonb; s_correct boolean := true;
+  BEGIN
+    CASE TG_TABLE_NAME
+      WHEN 'execution_controller_observations' THEN
+        s_kind := 'CONTROLLER'; s_hash := NEW.status->>'last_receipt_hash';
+        s_at := (NEW.status->>'completed_at')::timestamptz;
+        s_issued_at := (NEW.status #>> '{last_pass,executionIssuedAt}')::timestamptz;
+        s_controller := NEW.controller_key; s_plan := NEW.status->>'plan_hash';
+        IF jsonb_typeof(NEW.status->'last_pass') IS DISTINCT FROM 'object' THEN RETURN NEW; END IF;
+      WHEN 'jev_batch_results' THEN
+        s_kind := 'BATCH'; s_hash := NEW.result_hash; s_at := (NEW.payload->>'completedAt')::timestamptz;
+        SELECT cycle.account_id, plan.authority_generation_hash, (plan.payload->>'observedAt')::timestamptz
+          INTO STRICT s_account, s_generation, s_window_at
+          FROM jev_batch_plans plan JOIN autonomous_cycles cycle USING(cycle_id) WHERE plan.batch_id = NEW.batch_id;
+      WHEN 'autonomous_cycle_shadow_decisions', 'autonomous_cycle_paper_closures', 'autonomous_cycle_paper_close_replans' THEN
+        s_kind := 'DECISION';
+        s_document := CASE WHEN TG_TABLE_NAME = 'autonomous_cycle_shadow_decisions' THEN NEW.document
+          ELSE NEW.document->'document' END;
+        s_hash := s_document->>'contentHash'; s_at := (s_document->>'createdAt')::timestamptz;
+        s_generation := s_document #>> '{bindings,authorityGenerationHash}';
+        SELECT account_id INTO STRICT s_account FROM autonomous_cycles WHERE cycle_id = NEW.cycle_id;
+      WHEN 'reconciliations' THEN
+        s_kind := 'RECONCILIATION'; s_hash := NEW.content_hash; s_at := NEW.reconciled_at;
+        s_account := NEW.account_id; s_correct := NEW.status = 'EXACT';
+      WHEN 'mutation_events' THEN
+        s_kind := 'MUTATION'; s_hash := NEW.event_id; s_at := NEW.occurred_at;
+        SELECT account_id, authority_generation_hash INTO STRICT s_account, s_generation
+          FROM intents WHERE intent_id = NEW.intent_id;
+      ELSE RAISE EXCEPTION 'unsupported evidence source %', TG_TABLE_NAME;
+    END CASE;
+    PERFORM queue_system_evidence(s_kind, s_hash, s_at, s_window_at, s_issued_at,
+      s_account, s_generation, s_controller, s_plan, s_correct);
+    RETURN NEW;
+  END $function$`
+  for (const table of [
+    'execution_controller_observations',
+    'jev_batch_results',
+    'autonomous_cycle_shadow_decisions',
+    'autonomous_cycle_paper_closures',
+    'autonomous_cycle_paper_close_replans',
+    'reconciliations',
+    'mutation_events',
+  ]) {
+    yield* sql.unsafe(`CREATE TRIGGER ${table}_system_evidence AFTER INSERT ON ${table}
+      FOR EACH ROW EXECUTE FUNCTION enqueue_system_evidence()`)
+  }
+  yield* sql`DO $migration$
+  DECLARE source record; observed_at timestamptz := clock_timestamp();
+  BEGIN
+    -- Migration 156 may already have admitted an active registration. Retain its existing sources once.
+    FOR source IN
+      SELECT * FROM (
+        SELECT 'BATCH' AS kind, result.result_hash AS hash, (result.payload->>'completedAt')::timestamptz AS at,
+          (plan.payload->>'observedAt')::timestamptz AS window_at, cycle.account_id AS account,
+          plan.authority_generation_hash AS generation, true AS correct
+        FROM jev_batch_results result JOIN jev_batch_plans plan USING(batch_id)
+          JOIN autonomous_cycles cycle USING(cycle_id)
+        UNION ALL
+        SELECT 'DECISION', shadow.decision_hash, shadow.created_at, shadow.created_at, cycle.account_id,
+          shadow.document #>> '{bindings,authorityGenerationHash}', true
+        FROM autonomous_cycle_shadow_decisions shadow JOIN autonomous_cycles cycle
+          ON cycle.cycle_id = shadow.cycle_id AND cycle.decision_hash = shadow.decision_hash
+        UNION ALL
+        SELECT 'DECISION', closure.close_decision_hash, (closure.document #>> '{document,createdAt}')::timestamptz,
+          (closure.document #>> '{document,createdAt}')::timestamptz, cycle.account_id,
+          closure.document #>> '{document,bindings,authorityGenerationHash}', true
+        FROM autonomous_cycle_paper_closures closure JOIN autonomous_cycles cycle USING(cycle_id)
+        UNION ALL
+        SELECT 'DECISION', replan.close_decision_hash, (replan.document #>> '{document,createdAt}')::timestamptz,
+          (replan.document #>> '{document,createdAt}')::timestamptz, cycle.account_id,
+          replan.document #>> '{document,bindings,authorityGenerationHash}', true
+        FROM autonomous_cycle_paper_close_replans replan JOIN autonomous_cycles cycle USING(cycle_id)
+        UNION ALL
+        SELECT 'RECONCILIATION', content_hash, reconciled_at, reconciled_at, account_id, NULL, status = 'EXACT'
+        FROM reconciliations
+        UNION ALL
+        SELECT 'MUTATION', event.event_id, event.occurred_at, event.occurred_at,
+          intent.account_id, intent.authority_generation_hash, true
+        FROM mutation_events event JOIN intents intent USING(intent_id)
+      ) candidates WHERE at >= (SELECT min(first_open_at) FROM system_qualification_registrations
+        WHERE last_close_at >= observed_at - interval '1 day')
+    LOOP
+      PERFORM queue_system_evidence(source.kind, source.hash, source.at, source.window_at, NULL,
+        source.account, source.generation, NULL, NULL, source.correct);
+    END LOOP;
+  END $migration$`
+  yield* sql`CREATE TRIGGER system_pending_evidence_guard BEFORE INSERT OR UPDATE OR DELETE ON system_pending_evidence
+    FOR EACH ROW EXECUTE FUNCTION guard_system_pending_evidence()`
+  yield* sql`CREATE TRIGGER system_pending_evidence_no_truncate BEFORE TRUNCATE ON system_pending_evidence
+    FOR EACH STATEMENT EXECUTE FUNCTION guard_system_pending_evidence()`
   yield* sql`CREATE FUNCTION retain_execution_controller_observation() RETURNS trigger LANGUAGE plpgsql AS $function$
   DECLARE registration record; account text; controller_identity text; generation text;
+    observed_at timestamptz := clock_timestamp();
   BEGIN
     IF NEW.last_receipt_hash IS NOT NULL AND jsonb_typeof(NEW.last_pass) = 'object'
       AND (TG_OP = 'INSERT' OR NEW.last_receipt_hash IS DISTINCT FROM OLD.last_receipt_hash
@@ -179,71 +319,22 @@ export default Effect.gen(function* () {
       INSERT INTO execution_controller_observations(controller_key, status) VALUES (NEW.controller_key, to_jsonb(NEW));
     END IF;
     FOR registration IN SELECT * FROM system_qualification_registrations
-      WHERE first_open_at <= clock_timestamp() AND last_close_at + interval '1 day' >= clock_timestamp()
+      WHERE first_open_at <= observed_at AND last_close_at >= observed_at - interval '1 day'
         AND payload_text::jsonb #>> '{obligations,configuration,controllerPlanHash}' = NEW.plan_hash LOOP
       SELECT policy->>'authorityGenerationHash' INTO generation
         FROM jsonb_array_elements(registration.payload_text::jsonb->'policies') policy WHERE policy->>'policy' = 'JEV';
       SELECT account_id, broker_identity_hash INTO account, controller_identity FROM authority_generations WHERE generation_hash = generation;
       IF account IS NULL OR controller_identity IS DISTINCT FROM NEW.controller_key THEN CONTINUE; END IF;
       INSERT INTO system_durable_observations(registration_hash, kind, source_hash, source_at, correct)
-        SELECT registration.registration_hash, 'CONTROLLER', observation.status->>'last_receipt_hash',
-          (observation.status->>'completed_at')::timestamptz, true
-        FROM execution_controller_observations observation
-        WHERE observation.controller_key = NEW.controller_key AND observation.status->>'plan_hash' = NEW.plan_hash
-          AND observation.status->>'last_receipt_hash' IS NOT NULL AND jsonb_typeof(observation.status->'last_pass') = 'object'
-          AND ((observation.status->>'completed_at')::timestamptz BETWEEN registration.first_open_at AND registration.last_close_at
-            OR (observation.status #>> '{last_pass,executionIssuedAt}')::timestamptz BETWEEN registration.first_open_at AND registration.last_close_at)
-          AND (observation.status->>'completed_at')::timestamptz <= clock_timestamp()
-          AND system_evidence_source_committed(observation.xmin)
-        ON CONFLICT DO NOTHING;
-      INSERT INTO system_durable_observations(registration_hash, kind, source_hash, source_at, correct)
-        SELECT registration.registration_hash, 'BATCH', result.payload->>'resultHash',
-          (result.payload->>'completedAt')::timestamptz, true
-        FROM jev_batch_results result JOIN jev_batch_plans plan USING(batch_id)
-          JOIN autonomous_cycles cycle ON cycle.cycle_id = plan.cycle_id
-        WHERE cycle.account_id = account AND plan.authority_generation_hash = generation
-          AND plan.payload->>'observedAt' >= to_char(registration.first_open_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-          AND plan.payload->>'observedAt' < to_char(registration.last_close_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-          AND (result.payload->>'completedAt')::timestamptz <= clock_timestamp()
-          AND NOT EXISTS (SELECT 1 FROM system_durable_observations prior
-            WHERE prior.registration_hash = registration.registration_hash AND prior.kind = 'BATCH'
-              AND prior.source_hash = result.result_hash)
-          AND system_evidence_source_committed(result.xmin) AND system_evidence_source_committed(plan.xmin)
-          AND system_evidence_source_committed(cycle.xmin)
-        ON CONFLICT DO NOTHING;
-      INSERT INTO system_durable_observations(registration_hash, kind, source_hash, source_at, correct)
-        SELECT registration.registration_hash, 'DECISION', decision.decision_hash, (decision.document->>'createdAt')::timestamptz, true
-        FROM (
-          SELECT shadow.cycle_id, shadow.decision_hash, shadow.document, shadow.xmin::text AS source_xid
-            FROM autonomous_cycle_shadow_decisions shadow JOIN autonomous_cycles bound
-              ON bound.cycle_id = shadow.cycle_id AND bound.decision_hash = shadow.decision_hash
-          UNION ALL
-          SELECT cycle_id, document #>> '{document,contentHash}', document->'document', xmin::text
-            FROM autonomous_cycle_paper_closures
-          UNION ALL
-          SELECT cycle_id, document #>> '{document,contentHash}', document->'document', xmin::text
-            FROM autonomous_cycle_paper_close_replans
-        ) decision JOIN autonomous_cycles cycle USING(cycle_id)
-        WHERE cycle.account_id = account AND decision.document #>> '{bindings,authorityGenerationHash}' = generation
-          AND (decision.document->>'createdAt')::timestamptz BETWEEN registration.first_open_at AND registration.last_close_at
-          AND (decision.document->>'createdAt')::timestamptz <= clock_timestamp()
-          AND system_evidence_source_committed(decision.source_xid::xid) AND system_evidence_source_committed(cycle.xmin)
-        ON CONFLICT DO NOTHING;
-      INSERT INTO system_durable_observations(registration_hash, kind, source_hash, source_at, correct)
-        SELECT registration.registration_hash, 'RECONCILIATION', reconciliation.content_hash, reconciliation.reconciled_at,
-          reconciliation.status = 'EXACT' AND NOT EXISTS (
-            SELECT 1 FROM mutation_events event JOIN intents intent USING(intent_id)
-            WHERE intent.account_id = account AND event.occurred_at > reconciliation.reconciled_at)
-        FROM reconciliations reconciliation
-        WHERE reconciliation.account_id = account AND system_evidence_source_committed(reconciliation.xmin)
-          AND reconciliation.reconciled_at BETWEEN registration.first_open_at AND registration.last_close_at
-        ON CONFLICT DO NOTHING;
-      INSERT INTO system_durable_observations(registration_hash, kind, source_hash, source_at, correct)
-        SELECT registration.registration_hash, 'MUTATION', event.event_id, event.occurred_at, true
-        FROM mutation_events event JOIN intents intent USING(intent_id)
-        WHERE intent.account_id = account AND intent.authority_generation_hash = generation
-          AND event.occurred_at >= registration.first_open_at AND system_evidence_source_committed(event.xmin)
-        ON CONFLICT DO NOTHING;
+          SELECT pending.registration_hash, pending.kind, pending.source_hash, pending.source_at, pending.correct
+          FROM system_pending_evidence pending
+          WHERE pending.registration_hash = registration.registration_hash AND pending.source_at <= observed_at
+            AND system_evidence_source_committed(pending.xmin)
+          ON CONFLICT DO NOTHING;
+      DELETE FROM system_pending_evidence pending USING system_durable_observations witnessed
+        WHERE pending.registration_hash = registration.registration_hash
+          AND pending.registration_hash = witnessed.registration_hash AND pending.kind = witnessed.kind
+          AND pending.source_hash = witnessed.source_hash;
     END LOOP;
     RETURN NEW;
   END $function$`
