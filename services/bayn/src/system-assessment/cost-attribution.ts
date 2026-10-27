@@ -16,11 +16,10 @@ export const costAttributionRule = {
 export const proportionalCost = (amount: bigint, weight: bigint, totalWeight: bigint): bigint | null =>
   amount < 0n || weight < 0n || totalWeight <= 0n || weight > totalWeight ? null : (amount * weight) / totalWeight
 
-export const recognizeOperatingCosts = (
+export const indexOperatingCosts = (
   costs: OperatingCostReport,
   inference: InferenceCostReport,
   session: { readonly openAt: string; readonly closeAt: string },
-  at: string,
 ) => {
   if (
     costs.totalOperatingCostMicros === null ||
@@ -30,17 +29,18 @@ export const recognizeOperatingCosts = (
     return null
   const opening = Date.parse(session.openAt)
   const closing = Date.parse(session.closeAt)
-  const time = Date.parse(at)
-  if (![opening, closing, time].every(Number.isSafeInteger) || closing <= opening || time < opening || time > closing)
-    return null
+  if (![opening, closing].every(Number.isSafeInteger) || closing <= opening) return null
   const invoice = costs.categories.find((category) => category.category === OperatingCostCategory.Inference)
   if (invoice === undefined || costs.inferenceReportHash !== inference.reportHash) return null
   const invoiceAmount = BigInt(invoice.knownInvoicedCostMicros)
   const nonInference = BigInt(costs.totalOperatingCostMicros) - invoiceAmount
+  const premiumAmount = BigInt(costs.qualificationPremiumMicros)
+  if (invoiceAmount < 0n || nonInference < 0n || premiumAmount < 0n) return null
   let totalWeight = 0n
-  let recognizedWeight = 0n
+  const points: { readonly at: number; weight: bigint }[] = []
   const lines = new Map(inference.requests.map((line) => [inferenceStageKey(line), line]))
   const seen = new Set<string>()
+  const asOf = Date.parse(inference.asOf)
   for (const timing of inference.requestTimings) {
     const line = lines.get(timing.requestKey)
     if (
@@ -55,18 +55,36 @@ export const recognizeOperatingCosts = (
     if (weight < 0n) return null
     if (weight === 0n) continue
     const startedAt = timing.startedAt === null ? NaN : Date.parse(timing.startedAt)
-    if (!Number.isSafeInteger(startedAt) || startedAt > Date.parse(inference.asOf)) return null
+    if (!Number.isSafeInteger(startedAt) || startedAt > asOf) return null
     totalWeight += weight
-    if (Math.max(opening, Math.min(closing, startedAt)) <= time) recognizedWeight += weight
+    points.push({ at: Math.max(opening, Math.min(closing, startedAt)), weight })
   }
   if (seen.size !== lines.size || totalWeight.toString() !== inference.knownEstimatedCostPicoUsd) return null
-  const elapsed = BigInt(time) - BigInt(opening)
+  points.sort((a, b) => a.at - b.at)
+  let cumulative = 0n
+  for (const point of points) {
+    cumulative += point.weight
+    point.weight = cumulative
+  }
   const duration = BigInt(closing) - BigInt(opening)
-  const weight = totalWeight === 0n ? elapsed : recognizedWeight
   const basis = totalWeight === 0n ? duration : totalWeight
-  const fixed = proportionalCost(nonInference, elapsed, duration)
-  const metered = proportionalCost(invoiceAmount, weight, basis)
-  const premium = proportionalCost(BigInt(costs.qualificationPremiumMicros), weight, basis)
-  if (fixed === null || metered === null || premium === null) return null
-  return { operatingCostMicros: (fixed + metered).toString(), qualificationPremiumMicros: premium.toString() }
+  return (at: string) => {
+    const time = Date.parse(at)
+    if (!Number.isSafeInteger(time) || time < opening || time > closing) return null
+    let lower = 0
+    let upper = points.length
+    while (lower < upper) {
+      const middle = Math.floor((lower + upper) / 2)
+      const point = points[middle]
+      if (point !== undefined && point.at <= time) lower = middle + 1
+      else upper = middle
+    }
+    const elapsed = BigInt(time) - BigInt(opening)
+    const weight = totalWeight === 0n ? elapsed : (points[lower - 1]?.weight ?? 0n)
+    const fixed = proportionalCost(nonInference, elapsed, duration)
+    const metered = proportionalCost(invoiceAmount, weight, basis)
+    const premium = proportionalCost(premiumAmount, weight, basis)
+    if (fixed === null || metered === null || premium === null) return null
+    return { operatingCostMicros: (fixed + metered).toString(), qualificationPremiumMicros: premium.toString() }
+  }
 }

@@ -13,7 +13,7 @@ import {
 } from './economics'
 import { CashFlowEvidenceSchema, cashFlowTotals, cashFlowsSupported, cashFlowsMatchSession } from './cash-flows'
 import type { SystemRegistration } from './policy'
-import { costAttributionRule, recognizeOperatingCosts } from './cost-attribution'
+import { costAttributionRule, indexOperatingCosts } from './cost-attribution'
 import { validateFrozenCostAllocations } from './cost-allocation'
 
 const Count = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }))
@@ -205,7 +205,8 @@ export const assessSession = (
     let maximumMarkGapMs = 0
     const first = session.marks[0]
     const equity: bigint[] = first === undefined ? [] : [BigInt(first.cashFlowAdjustedTradingEquityMicros)]
-    let completeCostPath = costs !== null && inference !== null
+    const costsAt = costs === null || inference === null ? null : indexOperatingCosts(costs, inference, calendar)
+    let completeCostPath = costsAt !== null
     for (const mark of session.marks) {
       requireSource(mark.sourceHash)
       const at = Date.parse(mark.at)
@@ -217,8 +218,7 @@ export const assessSession = (
         violations.push('INVALID_MARK_ORDER')
       if (previousAt !== undefined) maximumMarkGapMs = Math.max(maximumMarkGapMs, at - previousAt)
       previousAt = at
-      const accrued =
-        costs === null || inference === null ? null : recognizeOperatingCosts(costs, inference, calendar, mark.at)
+      const accrued = costsAt?.(mark.at) ?? null
       if (accrued === null) completeCostPath = false
       else
         equity.push(

@@ -5,7 +5,7 @@ import { expenseRateFixture, expenseSourceFixture } from '../inference-expense.t
 import { costReportFromEvidence } from '../inference-expense.test-support'
 import { makeOperatingCostReport } from '../operating-costs'
 import { operatingCostFixture } from '../operating-costs.test-support'
-import { proportionalCost, recognizeOperatingCosts } from './cost-attribution'
+import { proportionalCost, indexOperatingCosts } from './cost-attribution'
 import { registrationFixture, supportedAssessmentFixture, testHash } from './fixtures.test-support'
 import { validateSystemRegistration } from './policy'
 import { evaluateSystemAssessment } from './assessment'
@@ -68,7 +68,9 @@ test('fixed allocations accrue by clock time and invoice plus premium follow mea
     expect.arrayContaining([at(2500), at(7500)]),
   )
   expect(costs.qualificationPnlMicros).toBe('-20800')
-  expect([0, 2500, 5000, 7500, 10000].map((ms) => recognizeOperatingCosts(costs, inference, session, at(ms)))).toEqual([
+  expect(
+    [0, 2500, 5000, 7500, 10000].map((ms) => indexOperatingCosts(costs, inference, session)?.(at(ms)) ?? null),
+  ).toEqual([
     { operatingCostMicros: '0', qualificationPremiumMicros: '0' },
     { operatingCostMicros: '3100', qualificationPremiumMicros: '2100' },
     { operatingCostMicros: '4100', qualificationPremiumMicros: '2100' },
@@ -81,17 +83,17 @@ test('historical rejected usage retains its cost without inventing a provider st
   const { inference, costs } = fixture([request('a', 2500, 100000, false, true)])
   expect(inference.requestTimings[0]?.startedAt).toBeNull()
   expect(costs.netEconomicPnlMicros).toBe('-12400')
-  expect(recognizeOperatingCosts(costs, inference, session, at(10000))).toBeNull()
+  expect(indexOperatingCosts(costs, inference, session)?.(at(10000)) ?? null).toBeNull()
 })
 
 test('no-call sessions retain fixed invoices and all four categories without inventing usage', () => {
   const { inference, costs } = fixture([])
   expect(costs.netEconomicPnlMicros).toBe('-12400')
-  expect(recognizeOperatingCosts(costs, inference, session, at(5000))).toEqual({
+  expect(indexOperatingCosts(costs, inference, session)?.(at(5000)) ?? null).toEqual({
     operatingCostMicros: '6200',
     qualificationPremiumMicros: '0',
   })
-  expect(recognizeOperatingCosts(costs, inference, session, at(10000))).toEqual({
+  expect(indexOperatingCosts(costs, inference, session)?.(at(10000)) ?? null).toEqual({
     operatingCostMicros: '12400',
     qualificationPremiumMicros: '0',
   })
@@ -100,11 +102,11 @@ test('no-call sessions retain fixed invoices and all four categories without inv
 test('the frozen boundary rule retains costs allocated to the session when calls occur outside its hours', () => {
   const { inference, costs } = fixture([request('a', 0, 100000), request('b', 10000, 300000)])
   const window = { openAt: at(2000), closeAt: at(8000) }
-  expect(recognizeOperatingCosts(costs, inference, window, at(2000))).toEqual({
+  expect(indexOperatingCosts(costs, inference, window)?.(at(2000)) ?? null).toEqual({
     operatingCostMicros: '2100',
     qualificationPremiumMicros: '2100',
   })
-  expect(recognizeOperatingCosts(costs, inference, window, at(8000))).toEqual({
+  expect(indexOperatingCosts(costs, inference, window)?.(at(8000)) ?? null).toEqual({
     operatingCostMicros: '12400',
     qualificationPremiumMicros: '8400',
   })
@@ -122,11 +124,11 @@ test('missing, replaced, repeated or unpriced timing cannot produce a cost path'
     inference.requestTimings.map((timing) => ({ ...timing, estimatedCostPicoUsd: '1' })),
     inference.requestTimings.map((timing) => ({ ...timing, startedAt: '1971-01-01T00:00:00.000Z' })),
   ])
-    expect(recognizeOperatingCosts(costs, { ...inference, requestTimings }, session, at(10000))).toBeNull()
+    expect(indexOperatingCosts(costs, { ...inference, requestTimings }, session)?.(at(10000)) ?? null).toBeNull()
   const unknown = fixture([request('a', 2500, 100000, true)])
-  expect(recognizeOperatingCosts(unknown.costs, unknown.inference, session, at(10000))).toBeNull()
-  expect(recognizeOperatingCosts(costs, inference, session, at(-1))).toBeNull()
-  expect(recognizeOperatingCosts(costs, inference, session, at(10001))).toBeNull()
+  expect(indexOperatingCosts(unknown.costs, unknown.inference, session)?.(at(10000)) ?? null).toBeNull()
+  expect(indexOperatingCosts(costs, inference, session)?.(at(-1)) ?? null).toBeNull()
+  expect(indexOperatingCosts(costs, inference, session)?.(at(10001)) ?? null).toBeNull()
 })
 
 test('fractional allocation preserves the terminal microdollar and rejects an impossible weight domain', () => {
@@ -152,12 +154,9 @@ test('fixed accrual preserves integer milliseconds across the full supported dat
   })
   const costs = Result.getOrThrow(makeOperatingCostReport(inference, raw.evidence, raw.verifiedSources))
   expect(
-    recognizeOperatingCosts(
-      costs,
-      inference,
-      { openAt: at(-8640000000000000), closeAt: at(8640000000000000) },
+    indexOperatingCosts(costs, inference, { openAt: at(-8640000000000000), closeAt: at(8640000000000000) })?.(
       at(8639999999999999),
-    ),
+    ) ?? null,
   ).toEqual({ operatingCostMicros: '17279999999999999', qualificationPremiumMicros: '0' })
 })
 
@@ -273,4 +272,22 @@ test('a known metered expense without its request clock retains daily profit but
     expect(result.missing).toEqual(meteredFailure ? ['INCOMPLETE_COST_ATTRIBUTION'] : [])
     expect(result.numerical.status).toBe(meteredFailure ? 'UNRESOLVED' : 'COMPLETE')
   }
+})
+
+test('indexed accrual includes coincident starts and supports repeated and reversed lookups', () => {
+  const { inference, costs } = fixture([
+    request('d', 10000, 400000),
+    request('b', 5000, 200000),
+    request('a', 0, 100000),
+    request('c', 5000, 300000),
+  ])
+  const costsAt = indexOperatingCosts(costs, inference, session)
+  expect(costsAt).not.toBeNull()
+  expect([5000, 0, 10000, 4999, 5000].map((ms) => costsAt?.(at(ms)))).toEqual([
+    { operatingCostMicros: '7040', qualificationPremiumMicros: '20160' },
+    { operatingCostMicros: '840', qualificationPremiumMicros: '3360' },
+    { operatingCostMicros: '12400', qualificationPremiumMicros: '33600' },
+    { operatingCostMicros: '2839', qualificationPremiumMicros: '3360' },
+    { operatingCostMicros: '7040', qualificationPremiumMicros: '20160' },
+  ])
 })
