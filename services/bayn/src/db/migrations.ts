@@ -1,3 +1,4 @@
+import systemRegistration from '../../migrations/0156_system_registration'
 import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
 import stagedChartTransport from '../../migrations/0153_staged_chart_transport'
 import nativeControls from '../../migrations/0155_native_controls'
@@ -160,6 +161,7 @@ export const migrationLoader = PgMigrator.fromRecord({
   '154_market_entry_questions': marketEntryQuestions,
   '153_staged_chart_transport': stagedChartTransport,
   '155_native_controls': nativeControls,
+  '156_system_registration': systemRegistration,
   '152_funded_source_anchors': fundedSourceAnchors,
   '151_chart_dispatch_checkpoints': chartDispatchCheckpoints,
   '150_inference_request_version': inferenceRequestVersion,
