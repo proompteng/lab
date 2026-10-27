@@ -110,16 +110,10 @@ export default Effect.gen(function* () {
       END IF;
       RETURN NEW;
     END $function$`
-  for (const table of [
-    'jev_inference_handoffs',
-    'jev_staged_dispatch_claims',
-    'jev_staged_terminal_receipts',
-    'jev_staged_skip_receipts',
-    'jev_evaluation_receipts',
-    'jev_evaluation_resolutions',
-  ])
-    yield* sql.unsafe(`CREATE TRIGGER ${table}_current_entry_protocol BEFORE INSERT ON ${table}
-      FOR EACH ROW EXECUTE FUNCTION enforce_current_entry_protocol()`)
+  // Outcomes for already dispatched work remain append-only financial evidence. Current request,
+  // dispatch and handoff guards prevent retired evidence from authorizing another entry.
+  yield* sql`CREATE TRIGGER jev_inference_handoffs_current_entry_protocol BEFORE INSERT ON jev_inference_handoffs
+    FOR EACH ROW EXECUTE FUNCTION enforce_current_entry_protocol()`
   yield* sql`DO $cost$ DECLARE definition text; previous text; BEGIN
     definition := pg_get_functiondef('enforce_inference_expense_stage()'::regprocedure);
     previous := 'source #>> ''{request,protocol,schemaVersion}''=''bayn.jev.protocol.v26''';

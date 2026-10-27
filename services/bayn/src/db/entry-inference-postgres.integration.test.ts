@@ -245,7 +245,7 @@ integration('committed sequential provider handoff', () => {
     )
   beforeEach(() => resetDatabase())
 
-  test('the ask-cap cutover preserves v26 bytes and rejects new v26 requests and provider evidence', async () =>
+  test('the ask-cap cutover retires v26 execution while preserving its bytes and late financial evidence', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -298,18 +298,28 @@ integration('committed sequential provider handoff', () => {
         yield* Schema.decodeUnknownEffect(
           Schema.Struct({ code: Schema.Literal('23514'), constraint: Schema.Literal('jev_evaluation_requests_check') }),
         )(rejectedRequest.failure.reason.cause)
+        const rejectedDispatch = yield* sql`INSERT INTO jev_staged_dispatch_claims(request_id,stage,claim_hash,payload)
+          VALUES (${original.requestId},'CHART',${claim.claimHash},${sql.json(claim)})`.pipe(Effect.result)
+        if (Result.isSuccess(rejectedDispatch)) throw new Error('Retired v26 provider dispatch was accepted')
+        yield* Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.Literal('23514') }))(
+          rejectedDispatch.failure.reason.cause,
+        )
         const { terminalHash: _terminalHash, ...terminalMaterial } = terminal
         const late = Result.getOrThrow(
           makeStagedTerminalReceipt({ ...terminalMaterial, requestId: original.requestId, claimHash: claim.claimHash }),
         )
-        const rejectedTerminal =
-          yield* sql`INSERT INTO jev_staged_terminal_receipts(request_id,stage,terminal_hash,payload)
-          VALUES (${original.requestId},'CHART',${late.terminalHash},${sql.json(late)})`.pipe(Effect.result)
-        if (Result.isSuccess(rejectedTerminal)) throw new Error('Retired v26 provider terminal was accepted')
+        const rejectedHandoff = yield* sql`INSERT INTO jev_inference_handoffs(request_id,handoff_hash,payload)
+          VALUES (${original.requestId},${'e'.repeat(64)},'{}'::jsonb)`.pipe(Effect.result)
+        if (Result.isSuccess(rejectedHandoff)) throw new Error('Retired v26 execution handoff was accepted')
         const failure = yield* Schema.decodeUnknownEffect(
           Schema.Struct({ code: Schema.Literal('23514'), message: Schema.String }),
-        )(rejectedTerminal.failure.reason.cause)
+        )(rejectedHandoff.failure.reason.cause)
         expect(failure.message).toContain('retired entry protocol')
+        yield* sql`INSERT INTO jev_staged_terminal_receipts(request_id,stage,claim_hash,terminal_hash,payload)
+          VALUES (${original.requestId},'CHART',${late.claimHash},${late.terminalHash},${sql.json(late)})`
+        expect(
+          yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${original.requestId}`,
+        ).toEqual([{ payload: late }])
       }),
     ))
 
