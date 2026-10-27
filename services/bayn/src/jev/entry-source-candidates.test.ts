@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { makeNativeChartEvidence, type NativeChartEvidence } from './chart-evidence'
-import { makeChartDecisionsRequest } from './chart-questions'
+import { makeInitialChartStageRequest } from './staged-chart-questions'
 import { jevEntryEconomics } from './entry-economics'
 import { makeEntryProposals, makeEntrySourceCandidates } from './entry-proposals'
 import { defaultJevProtocolDocument } from './protocol'
@@ -42,7 +42,7 @@ const context = (chart: NativeChartEvidence, bidMicros = 105_500_000n, askMicros
   return { chart, economics, protocol: defaultJevProtocolDocument, bidMicros, funding }
 }
 const assessments = (chart: NativeChartEvidence) => ({
-  schemaVersion: 'bayn.chart-assessments.v3' as const,
+  schemaVersion: 'bayn.chart-assessments.v4' as const,
   symbol: chart.symbol,
   windowEndAt: chart.windowEndAt,
   barsHash: chart.barsHash,
@@ -76,7 +76,7 @@ test('chart anchor questions expose only executable sources and allow no matchin
   const chart = Result.getOrThrow(makeNativeChartEvidence(source))
   const input = context(chart)
   const candidates = Result.getOrThrow(makeEntrySourceCandidates(input))
-  const prepared = Result.getOrThrow(makeChartDecisionsRequest(input))
+  const prepared = Result.getOrThrow(makeInitialChartStageRequest(input))
   const resistance = prepared.request.questions.find((question) => question.name === 'resistance_anchor')
   if (resistance?.type !== 'choice') throw new Error('Missing resistance question')
   expect(resistance.choices.map((choice) => choice.value)).toEqual([...candidates.resistanceBarIds, 'no_resistance'])

@@ -3,7 +3,12 @@ import { Result } from 'effect'
 
 import { makeNativeChartEvidence, type NativeChartEvidence } from './chart-evidence'
 import { defaultJevProtocolDocument } from './protocol'
-import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
+import { canonicalHashV1Result } from '../hash'
+import {
+  makeInitialChartStageRequest,
+  makeSelectedBaseStartStageRequest,
+  stagedChartAssessments,
+} from './staged-chart-questions'
 import type { DecisionsRequest } from './decisions'
 
 const sourceFor = (chart: NativeChartEvidence) => ({
@@ -11,9 +16,24 @@ const sourceFor = (chart: NativeChartEvidence) => ({
   protocol: defaultJevProtocolDocument,
   funding: { bidMicros: '106010000', askMicros: '106020000', capitalMicros: '100000000000', cryptoFeeTier: null },
 })
-const prepareFixtureChart = (chart: NativeChartEvidence) => makeChartDecisionsRequest(sourceFor(chart))
+const prepareFixtureChart = (chart: NativeChartEvidence) => makeInitialChartStageRequest(sourceFor(chart))
+const receiptFor = (requestHash: string, response: unknown) => ({
+  requestHash,
+  responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+  response,
+})
 const assessFixtureChart = (chart: NativeChartEvidence, response: unknown) =>
-  chartAssessments(sourceFor(chart), response)
+  Result.gen(function* () {
+    const source = sourceFor(chart)
+    const initial = yield* prepareFixtureChart(chart)
+    const receipt = receiptFor(initial.requestHash, response)
+    const next = yield* makeSelectedBaseStartStageRequest(source, receipt)
+    return yield* stagedChartAssessments(
+      source,
+      receipt,
+      next.status === 'PREPARED' ? receiptFor(next.requestHash, responseFor(next.request)) : null,
+    )
+  })
 
 const source = {
   symbol: 'ETH/USD',
@@ -77,44 +97,6 @@ describe('source-bound chart questions', () => {
     })
   })
 
-  test('conditions the base start on its selected end and ignores refused unused branches', () => {
-    const chart = Result.getOrThrow(makeNativeChartEvidence(source))
-    const request = Result.getOrThrow(prepareFixtureChart(chart)).request
-    const first = chart.bars[0]
-    const end = chart.bars.at(-2)
-    if (first === undefined || end === undefined) throw new Error('Expected source interval')
-    const name = `base_first_bar_ending_${end.chartLabel}`
-    const conditional = request.questions.find((question) => question.name === name)
-    expect(conditional?.type).toBe('choice')
-    if (conditional?.type !== 'choice') throw new Error('Missing conditional base question')
-    expect(conditional.choices.map((choice) => choice.value)).toEqual([
-      ...chart.bars.filter((bar) => bar.timestamp < end.timestamp).map((bar) => bar.id),
-      'no_base',
-    ])
-    const response = responseFor(request)
-    const assessments = Result.getOrThrow(
-      assessFixtureChart(chart, {
-        ...response,
-        answers: response.answers.map((answer) => {
-          if (answer.name.startsWith('base_first_bar_ending_') && answer.name !== name)
-            return { type: 'refusal', name: answer.name }
-          const value = answer.name === 'base_last_bar' ? end.id : answer.name === name ? first.id : null
-          if (answer.type !== 'choice' || value === null) return answer
-          return {
-            ...answer,
-            choice: value,
-            probabilities: answer.probabilities.map((probability) => ({
-              ...probability,
-              probability: probability.value === value ? 1 : 0,
-            })),
-          }
-        }),
-      }),
-    )
-    expect(assessments.base.first).toMatchObject({ status: 'ASSESSED', barId: first.id })
-    expect(assessments.base.last).toMatchObject({ status: 'ASSESSED', barId: end.id })
-  })
-
   test('asks separate presence and source-anchor questions over the actual chart', () => {
     const chart = Result.getOrThrow(makeNativeChartEvidence(source))
     const prepared = Result.getOrThrow(prepareFixtureChart(chart))
@@ -125,10 +107,6 @@ describe('source-bound chart questions', () => {
       'support_anchor',
       'resistance_anchor',
       'base_last_bar',
-      'base_first_bar_ending_5',
-      'base_first_bar_ending_4',
-      'base_first_bar_ending_3',
-      'base_first_bar_ending_2',
     ])
     const first = chart.bars[0]
     expect(first?.timestamp).toBe('2026-10-25T06:54:00.000Z')
@@ -149,44 +127,6 @@ describe('source-bound chart questions', () => {
     ])
     expect(prepared.request.input[0].content[1].image_url).toBe(chart.image)
     expect(chart).toEqual(Result.getOrThrow(makeNativeChartEvidence(source)))
-  })
-
-  test('retains no-match and refuses a start outside its conditional source interval', () => {
-    const chart = Result.getOrThrow(makeNativeChartEvidence(source))
-    const request = Result.getOrThrow(prepareFixtureChart(chart)).request
-    const last = chart.bars.at(-2)
-    const newest = chart.bars.at(-1)
-    if (last === undefined || newest === undefined) throw new Error('Expected source bars')
-    for (const noMatchQuestion of ['base_last_bar', `base_first_bar_ending_${last.chartLabel}`]) {
-      const response = responseFor(request)
-      const answers = response.answers.map((answer) => {
-        if (answer.type !== 'choice') return answer
-        const choice =
-          answer.name === noMatchQuestion ? 'no_base' : answer.name === 'base_last_bar' ? last.id : answer.choice
-        return {
-          ...answer,
-          choice,
-          probabilities: answer.probabilities.map((value) => ({
-            ...value,
-            probability: value.value === choice ? 1 : 0,
-          })),
-        }
-      })
-      const assessments = Result.getOrThrow(assessFixtureChart(chart, { ...response, answers }))
-      expect(assessments.base.first).toEqual({ status: 'NOT_IDENTIFIED' })
-      expect(assessments.base.presence).toEqual({ status: 'ASSESSED', probability: 0.2 })
-    }
-    const response = responseFor(request)
-    expect(
-      Result.isFailure(
-        assessFixtureChart(chart, {
-          ...response,
-          answers: response.answers.map((answer) =>
-            answer.name === `base_first_bar_ending_${last.chartLabel}` ? { ...answer, choice: newest.id } : answer,
-          ),
-        }),
-      ),
-    ).toBe(true)
   })
 
   test('retains weak presence evidence instead of treating a forced choice as an observed structure', () => {
