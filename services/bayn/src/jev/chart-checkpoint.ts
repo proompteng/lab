@@ -2,8 +2,6 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { makeNativeChartEvidence } from './chart-evidence'
-import { makeChartDecisionsRequest } from './chart-questions'
 import { JevContractError } from './contract'
 import {
   DecisionsInferenceSchema,
@@ -12,7 +10,7 @@ import {
   validDecisionsUsage,
   type DecisionsRequest,
 } from './decisions'
-import type { JevEvaluationRequest } from './evidence'
+import { readSequentialInferenceCostEvidence } from './sequential-inference-cost-evidence'
 import type { EntryHandoffMaterial } from './entry-inference'
 
 const ClaimMaterial = Schema.Struct({
@@ -67,16 +65,18 @@ export const makeChartTerminalReceipt = (input: typeof ReceiptMaterial.Type) =>
 
 /** Financial evidence only: late terminal receipts never renew dispatch or trading validity. */
 export const decodeChartCheckpointForSource = (
-  source: Pick<JevEvaluationRequest, 'requestId' | 'observedAt' | 'expiresAt'> & {
+  request: {
+    readonly requestId: string
+    readonly observedAt: string
+    readonly expiresAt: string
     readonly chartRequest: { readonly request: DecisionsRequest; readonly requestHash: string }
   },
   input: unknown,
 ) =>
   Result.gen(function* () {
-    const request = source
     const checkpoint = yield* Schema.decodeUnknownResult(ChartCheckpointSchema, strictParseOptions)(input)
     const { claimHash, ...claim } = checkpoint.claim
-    const prepared = source.chartRequest
+    const prepared = request.chartRequest
     if (
       claim.requestId !== request.requestId ||
       claim.providerRequestHash !== prepared.requestHash ||
@@ -114,14 +114,19 @@ export const decodeChartCheckpointForSource = (
     return checkpoint
   })
 
-export const decodeChartCheckpoint = (request: JevEvaluationRequest, input: unknown) =>
+export const decodeChartCheckpoint = (requestInput: unknown, input: unknown) =>
   Result.gen(function* () {
-    const chart = yield* makeNativeChartEvidence(request.request.chartSource)
-    const chartRequest = yield* makeChartDecisionsRequest({
-      chart,
-      protocol: request.request.protocol,
-      funding: request.request.funding,
+    const { request, chartRequest } = yield* readSequentialInferenceCostEvidence({
+      request: requestInput,
+      receipt: null,
+      handoff: null,
+      resolution: null,
     })
+    if (
+      request.request.schemaVersion !== 'bayn.entry-inference-input.v3' &&
+      request.request.schemaVersion !== 'bayn.entry-inference-input.v4'
+    )
+      return yield* invalid('Chart checkpoint requires retained conditional or funded input')
     return yield* decodeChartCheckpointForSource({ ...request, chartRequest }, input)
   })
 

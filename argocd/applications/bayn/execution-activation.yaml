@@ -57,7 +57,7 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "60c3149349abb7bbfb763c7418d4c12065cb56c3554ea9cbbf1667bc720379c5"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "dc46124202169b662a36176880c79582a693254caaa92be597780a28cc93064a"
+              value: "d73c46b54912ba18f404b00f3009cce4256853a1e0141fbc8ea04508d63b7703"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

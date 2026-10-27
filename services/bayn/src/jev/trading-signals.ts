@@ -325,7 +325,7 @@ const requestFromSnapshot = (
       capitalMicros: native.portfolio.brokerState.account.equityMicros,
     })
     return yield* prepareEntryInferenceInput({
-      schemaVersion: 'bayn.entry-inference-input.v4',
+      schemaVersion: 'bayn.entry-inference-input.v5',
       protocol: native.protocol,
       chartSource: {
         symbol,
@@ -517,7 +517,7 @@ const batchFromObservation = (
         }
       }
       const request = yield* makeJevEvaluationRequest({
-        schemaVersion: 'bayn.jev-evaluation-request.v2',
+        schemaVersion: 'bayn.jev-evaluation-request.v3',
         cycleId: observation.cycleId,
         authorityGenerationHash: observation.authorityGenerationHash,
         snapshotId: manifest.snapshotId,
