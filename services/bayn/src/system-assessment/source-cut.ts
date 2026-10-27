@@ -6,6 +6,7 @@ import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { InferenceCostEvidenceSchema } from '../inference-costs'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import { IsoDateSchema, Sha256Schema, UnsignedMicrosSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { OrderStatus } from '../execution/contracts'
 import { MutationEventSchema } from '../execution/mutations/model'
 import { CapturedFinancialEvidenceSchema } from './forward-evidence'
 import { SystemAssessmentError } from './economics'
@@ -46,6 +47,20 @@ export const SystemSourceCutSchema = Schema.Struct({
       quantityAtoms: UnsignedMicrosSchema,
       priceAtoms: UnsignedMicrosSchema,
       occurredAt: UtcInstantSchema,
+    }),
+  ),
+  orders: Schema.Array(
+    Schema.Struct({
+      intentId: Sha256Schema,
+      decisionId: Sha256Schema,
+      authorityGenerationHash: Sha256Schema,
+      sourceHash: Sha256Schema,
+      side: Schema.Literals(['BUY', 'SELL']),
+      quantityAtoms: Schema.NullOr(UnsignedMicrosSchema),
+      filledQuantityAtoms: UnsignedMicrosSchema,
+      status: Schema.Enum(OrderStatus),
+      occurredAt: UtcInstantSchema,
+      observedAt: UtcInstantSchema,
     }),
   ),
   accountMarks: Schema.Array(AccountMarkSchema),

@@ -28,6 +28,7 @@ import { measureFullBatchLatency } from './full-batch-latency'
 import { sourceFitsRegisteredSession } from './decision-work'
 import { prepareValuationInventory, requiredValuationTimes } from './valuation'
 import { executableBid, readValuationQuotes } from './valuation-quotes'
+import { captureExecutionOrders } from './execution-evidence'
 
 export const readSystemCashObservations = (
   accountId: string,
@@ -427,12 +428,20 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
                 }
               }),
           )
+          const orders = yield* Effect.fromResult(
+            captureExecutionOrders(
+              forward.executionEvidence ?? [],
+              identity.accountId,
+              candidate.authorityGenerationHash,
+            ),
+          )
           const sourceMaterial = {
             runtimeConfiguration,
             accounts,
             decisions,
             batches,
             mutations,
+            orders,
             accountMarks: accounts.flatMap((account) => account.accountMarks),
             controllerPasses,
             durableObservations,
@@ -456,6 +465,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             batches,
             mutations,
             fills,
+            orders,
             accountMarks: accounts.flatMap((account) => account.accountMarks),
             controllerPasses,
             durableObservations,

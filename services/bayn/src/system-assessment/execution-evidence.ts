@@ -1,11 +1,49 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
-import { TimeInForce } from '../execution/contracts'
+import { OrderStatus, TimeInForce } from '../execution/contracts'
 import { isSnapshotExecutionMarketDataBinding, reconstructBoundIntradaySnapshot } from '../shadow-decision-contract'
 import { SystemAssessmentError } from './economics'
-import type { SystemSourceCut } from './source-cut'
+import { SystemSourceCutSchema, type SystemSourceCut } from './source-cut'
 import { ExecutionEvidenceKind, type FillRealismSchema } from './realism'
+import type { ForwardPerformanceExecutionEvidence } from '../forward-performance/model'
+import { canonicalHashV1Result } from '../hash'
+
+export const captureExecutionOrders = (
+  executions: readonly ForwardPerformanceExecutionEvidence[],
+  accountId: string,
+  authorityGenerationHash: string,
+) =>
+  Result.gen(function* () {
+    const orders = []
+    for (const execution of executions) {
+      const order = execution.terminalOrder
+      if (order === undefined) continue
+      if (
+        execution.accountId !== accountId ||
+        order.accountId !== accountId ||
+        order.intentId !== execution.intentId ||
+        order.symbol !== execution.symbol ||
+        order.side !== execution.side
+      )
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Captured terminal order identity differs from its execution' }),
+        )
+      orders.push({
+        intentId: order.intentId,
+        decisionId: execution.decisionDocumentHash,
+        authorityGenerationHash,
+        sourceHash: yield* canonicalHashV1Result(order),
+        side: order.side,
+        quantityAtoms: order.quantityAtoms ?? null,
+        filledQuantityAtoms: order.filledQuantityAtoms,
+        status: order.status,
+        occurredAt: order.occurredAt,
+        observedAt: order.observedAt,
+      })
+    }
+    return yield* Schema.decodeUnknownResult(SystemSourceCutSchema.fields.orders)(orders)
+  })
 
 /** Replace candidate order facts with the exact durable plan and measured broker routing. */
 export const bindExecutionEvidence = (
@@ -18,6 +56,12 @@ export const bindExecutionEvidence = (
     const sources = new Set<string>()
     const fills = suppliedFills.filter((f) => !cut.fills.some((actual) => actual.fillId === f.fillId))
     const cumulative = new Map<string, bigint>()
+    const totals = new Map<string, bigint>()
+    for (const fill of cut.fills)
+      totals.set(fill.intentId, (totals.get(fill.intentId) ?? 0n) + BigInt(fill.quantityAtoms))
+    const orders = new Map(cut.orders.map((order) => [order.intentId, order]))
+    if (orders.size !== cut.orders.length)
+      return yield* Result.fail(new SystemAssessmentError({ message: 'Duplicate retained terminal order' }))
     for (const actual of cut.fills.toSorted(
       (a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.fillId.localeCompare(b.fillId),
     )) {
@@ -96,7 +140,33 @@ export const bindExecutionEvidence = (
       }
       if (target.timeInForce === TimeInForce.Day && document.executionSession !== undefined)
         fill = { ...fill, expiresAt: document.executionSession.executionSession.closeAt }
-      else missing.push(`MISSING_ORDER_EXPIRY:${actual.fillId}`)
+      else if (target.timeInForce === TimeInForce.ImmediateOrCancel) {
+        const order = orders.get(actual.intentId)
+        if (
+          order === undefined ||
+          ![OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired].includes(order.status) ||
+          order.observedAt > cut.asOf
+        )
+          missing.push(`MISSING_IOC_TERMINAL_ORDER:${actual.fillId}`)
+        else {
+          if (
+            order.decisionId !== actual.decisionId ||
+            order.authorityGenerationHash !== authorityGenerationHash ||
+            order.side !== target.side ||
+            order.quantityAtoms !== target.quantityAtoms ||
+            BigInt(order.filledQuantityAtoms) !== totals.get(actual.intentId) ||
+            (order.status === OrderStatus.Filled
+              ? order.filledQuantityAtoms !== target.quantityAtoms
+              : BigInt(order.filledQuantityAtoms) >= BigInt(target.quantityAtoms)) ||
+            order.occurredAt > order.observedAt
+          )
+            return yield* Result.fail(
+              new SystemAssessmentError({ message: 'IOC terminal order differs from the admitted order or fills' }),
+            )
+          sources.add(order.sourceHash)
+          fill = { ...fill, expiresAt: order.occurredAt }
+        }
+      } else missing.push(`MISSING_ORDER_EXPIRY:${actual.fillId}`)
       if (routing === undefined || routing.requestDispatchedAt === null)
         missing.push(`MISSING_BROKER_ROUTING:${actual.fillId}`)
       else fill = { ...fill, routingStartedAt: routing.startedAt, requestDispatchedAt: routing.requestDispatchedAt }

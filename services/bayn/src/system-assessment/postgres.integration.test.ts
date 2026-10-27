@@ -624,6 +624,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       const asOf = new Date().toISOString()
       const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
         schemaVersion: 'bayn.system-source-cut.v2',
+        orders: [],
         registrationHash: registered.registrationHash,
         asOf,
         runtimeConfigurationHash: registered.registration.obligations.runtimeConfigurationHash,
@@ -740,6 +741,7 @@ postgres('PostgreSQL prospective system qualification', () => {
             const asOf = new Date().toISOString()
             const cut = yield* persistSystemSourceCut({
               schemaVersion: 'bayn.system-source-cut.v2',
+              orders: [],
               registrationHash: registered.registrationHash,
               asOf,
               runtimeConfigurationHash: registered.registration.obligations.runtimeConfigurationHash,

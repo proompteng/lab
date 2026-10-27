@@ -194,6 +194,7 @@ export const fullBatchLatencyFixture = (
   })
   const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
     schemaVersion: 'bayn.system-source-cut.v2',
+    orders: [],
     registrationHash: testHash(registration),
     asOf: '2026-12-01T00:00:00.000Z',
     runtimeConfigurationHash: registration.obligations.runtimeConfigurationHash,

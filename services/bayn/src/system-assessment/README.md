@@ -72,6 +72,11 @@ source observations, decisions, mutation events, fills, cash observations, and d
 accounts or evidence remain missing; a submitted assessment packet cannot replace captured facts with claimed profit
 or reliability. The capture checks each account's risk, source, image, strategy, and protocol against registration.
 
+IOC fills bind expiry to the retained broker order's filled, canceled, or expired terminal instant. Capture retains
+the order identity, quantities, receipt hash, occurrence time, and observation time. Unknown, still-open, or
+not-yet-observed orders cannot supply expiry; conflicting identities or fill totals reject the binding. DAY orders
+retain the registered session close as expiry.
+
 `bindSystemSourceCut` constructs session economics and operational obligations from that cut. Cash and inventory
 reconcile against fills, cost basis, funding, passive yield, and paid operating expenses. Opening, closing, minute,
 and observed intraminute marks retain losses across sessions. Unknown valuations or request clocks prevent a
