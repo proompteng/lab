@@ -13,6 +13,7 @@ import {
 import { decodeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from './staged-chart-questions'
 import { hasFeasibleEntrySource } from './entry-inference'
+import type { EntryInferenceMaterial } from './entry-inference-input'
 
 export const VisualStageSchema = Schema.Literals(['CHART', 'BASE_START'])
 export const VisualStageFailureSchema = Schema.Struct({
@@ -107,7 +108,10 @@ export const decodeStagedCheckpoint = (requestInput: unknown, input: unknown) =>
     Result.flatMap((request) => decodeStagedCheckpointForRequest(request, input)),
   )
 
-export const decodeStagedCheckpointForRequest = (request: JevEvaluationRequest, input: unknown) =>
+export const decodeStagedCheckpointForRequest = (
+  request: Omit<JevEvaluationRequest, 'request'> & { readonly request: EntryInferenceMaterial },
+  input: unknown,
+) =>
   Result.gen(function* () {
     const checkpoint = yield* Schema.decodeUnknownResult(StagedCheckpointSchema, strictParseOptions)(input)
     for (const rows of [checkpoint.claims, checkpoint.terminals, checkpoint.skips])

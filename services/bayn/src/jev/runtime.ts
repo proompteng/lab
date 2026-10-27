@@ -348,7 +348,7 @@ export const compileJevEntry = (
       const originalAsk = yield* priceNumberToMicros(originalQuote.askPrice, 'ask', 'UP')
       const withinCostBound =
         BigInt(quotePrices.askPriceMicros[symbol] ?? '0') <=
-        jevMaximumEntryAskMicros(decision.evidence.observation.protocol, originalAsk)
+        jevMaximumEntryAskMicros(decision.evidence.observation.protocol, symbol, originalAsk)
       const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
       if (exclusion !== null || !withinCostBound || bid <= BigInt(plan.levels.stopPriceMicros))
         return yield* Result.fail(
