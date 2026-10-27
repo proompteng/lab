@@ -8,6 +8,7 @@ public import Bayn.Reliability
 public import Bayn.Qualification
 public import Bayn.Bootstrap
 public import Bayn.Execution
+public import Bayn.NativeOrders
 public import Bayn.DecisionPersistence
 public import Bayn.NativeArrival
 public import Bayn.InferenceResolution

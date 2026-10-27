@@ -1,3 +1,8 @@
+import { OrderStatus, OrderSchema } from '../execution/contracts'
+import type { SystemSourceCut } from './source-cut'
+import { bracketEvidenceFixture } from './bracket-evidence.test-support'
+import { resolveExecutionOrderTerms } from './execution-order-terms'
+import { bindExecutionEvidence } from './execution-evidence'
 import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
 import { momentumRequiredTargetNet, MomentumFundedExitPlanSchema } from '../strategy/repeated-momentum/exit-plan'
@@ -3093,4 +3098,258 @@ formal('pinned Lean executable conformance', () => {
       )
     }
   })
+})
+
+formal('native protection order conformance', () => {
+  type Receipt = SystemSourceCut['orders'][number]
+  const leanReceipt = (row: Receipt) => ({
+    owner: {
+      intent: row.intentId,
+      decision: row.decisionId,
+      generation: row.authorityGenerationHash,
+      account: row.order.accountId,
+      symbol: row.order.symbol,
+    },
+    orderIntent: row.order.intentId ?? null,
+    brokerId: row.order.brokerOrderId,
+    clientId: row.order.clientOrderId,
+    parentId: row.order.parentBrokerOrderId ?? null,
+    side: row.order.side,
+    orderType: row.order.orderType,
+    timeInForce: row.order.timeInForce,
+    quantity: row.order.quantityAtoms ?? null,
+    notional: row.order.notionalMicros ?? null,
+    limitPrice: row.order.limitPriceMicros ?? null,
+    stopPrice: row.order.stopPriceMicros ?? null,
+  })
+  const leanTarget = (document: ExecutionDecisionDocument) => {
+    const target = document.targetPlan.intentTargets[0]!
+    const risk = document.deltaRisk[0]!
+    const protection = risk.protection
+    return {
+      owner: {
+        intent: document.orderedIntentIds[0],
+        decision: document.contentHash,
+        generation: document.bindings.authorityGenerationHash,
+        account: document.bindings.accountId,
+        symbol: target.symbol,
+      },
+      side: target.side,
+      orderType: target.orderType,
+      timeInForce: target.timeInForce,
+      quantity: target.quantityAtoms,
+      limitPrice: risk.limitPriceMicros,
+      protection:
+        protection === undefined
+          ? { kind: 'NONE' }
+          : protection._tag === 'StopLimit'
+            ? { kind: protection._tag, trigger: protection.stopPriceMicros }
+            : {
+                kind: protection._tag,
+                trigger: protection.stopPriceMicros,
+                limit: protection.stopLimitPriceMicros,
+                profit: protection.profitLimitPriceMicros,
+              },
+    }
+  }
+  test('raw normalized orders reproduce sealed native groups, ownership and fractional residuals', async () => {
+    const document = await Effect.runPromise(persistenceDocumentFixture)
+    const f = bracketEvidenceFixture(document)
+    const root = f.cut.orders[0]!
+    const children = f.cut.orders.slice(1)
+    const cases: { id: string; root: Receipt; children: readonly Receipt[]; document: ExecutionDecisionDocument }[] = []
+    const addGroup = (root: Receipt, children: readonly Receipt[], document: ExecutionDecisionDocument) => {
+      for (const id of [root.order.brokerOrderId, ...children.map((row) => row.order.brokerOrderId), 'absent'])
+        cases.push({ id, root, children, document })
+    }
+    for (const legs of [
+      children,
+      [...children].reverse(),
+      children.slice(0, 1),
+      children.slice(1),
+      [],
+      [...children, children[0]!],
+    ])
+      addGroup(root, legs, document)
+    const orderPatches: readonly { [K in keyof Receipt['order']]?: Receipt['order'][K] | undefined }[] = [
+      { quantityAtoms: '1' },
+      { quantityAtoms: f.parent.quantityAtoms! },
+      { quantityAtoms: '99999999999999999999' },
+      { quantityAtoms: undefined },
+      { limitPriceMicros: '1' },
+      { stopPriceMicros: '1' },
+      { stopPriceMicros: undefined },
+      { accountId: 'foreign' },
+      { symbol: 'AMZN' },
+      { intentId: testHash('foreign') },
+      { intentId: undefined },
+      { parentBrokerOrderId: 'unknown' },
+      { parentBrokerOrderId: undefined },
+      { side: OrderSide.Buy },
+      { side: OrderSide.Sell },
+      { timeInForce: TimeInForce.GoodUntilCanceled },
+      { orderType: OrderType.Limit },
+      { orderType: OrderType.StopLimit },
+      { notionalMicros: '1' },
+      { clientOrderId: children[0]!.order.clientOrderId },
+      { brokerOrderId: root.order.brokerOrderId },
+    ]
+    const rows = [root, ...children]
+    for (let index = 0; index < rows.length; index++) {
+      for (const patch of orderPatches) {
+        const parsed = Schema.decodeUnknownResult(OrderSchema)(
+          Object.fromEntries(
+            Object.entries({ ...rows[index]!.order, ...patch }).filter(([, value]) => value !== undefined),
+          ),
+        )
+        if (Result.isFailure(parsed)) continue
+        const changed = rows.map((row, i) => (i === index ? { ...row, order: parsed.success } : row))
+        addGroup(changed[0]!, changed.slice(1), document)
+      }
+      for (const patch of [
+        { intentId: testHash('foreign') },
+        { decisionId: testHash('foreign') },
+        { authorityGenerationHash: testHash('foreign') },
+      ]) {
+        const changed = rows.map((row, i) => (i === index ? { ...row, ...patch } : row))
+        addGroup(changed[0]!, changed.slice(1), document)
+      }
+    }
+    const risk = document.deltaRisk[0]!
+    const { protection: _protection, ...unprotectedRisk } = risk
+    if (document.targetPlan.status !== 'PLANNED') throw new Error('Expected native target plan')
+    const target = document.targetPlan.intentTargets[0]!
+    for (const kind of ['NONE', 'StopLimit', 'Oco'] as const) {
+      const protection =
+        kind === 'NONE'
+          ? undefined
+          : kind === 'StopLimit'
+            ? { _tag: kind, stopPriceMicros: f.terms.stopPriceMicros, entryDecisionHash: document.contentHash }
+            : { ...f.terms, _tag: kind, entryDecisionHash: document.contentHash }
+      const isStop = kind === 'StopLimit'
+      const limit =
+        kind === 'Oco' ? f.terms.profitLimitPriceMicros : isStop ? f.terms.stopLimitPriceMicros : risk.limitPriceMicros
+      const side = kind === 'NONE' ? target.side : OrderSide.Sell
+      const orderType = isStop ? OrderType.StopLimit : target.orderType
+      const timeInForce = isStop ? TimeInForce.GoodUntilCanceled : target.timeInForce
+      const variant: ExecutionDecisionDocument = {
+        ...document,
+        targetPlan: { ...document.targetPlan, intentTargets: [{ ...target, side, orderType, timeInForce }] },
+        deltaRisk: [
+          { ...unprotectedRisk, limitPriceMicros: limit, ...(protection === undefined ? {} : { protection }) },
+        ],
+      }
+      const parent = {
+        ...root,
+        order: {
+          ...root.order,
+          side,
+          orderType,
+          timeInForce,
+          limitPriceMicros: limit,
+          ...(isStop ? { stopPriceMicros: f.terms.stopPriceMicros } : {}),
+        },
+      }
+      addGroup(parent, kind === 'Oco' ? [children[1]!] : [], variant)
+      addGroup(parent, children, variant)
+    }
+    const output = model(
+      cases.map((row) => ({
+        operation: 'nativeOrderGroup',
+        id: row.id,
+        root: leanReceipt(row.root),
+        children: row.children.map(leanReceipt),
+        target: leanTarget(row.document),
+      })),
+    )
+    const expected = cases.map((row) => {
+      const result = resolveExecutionOrderTerms(row.id, row.root, row.children, row.document, 0)
+      if (Result.isFailure(result)) return { status: 'INVALID' }
+      if (result.success._tag === 'Missing') return { status: 'MISSING' }
+      return {
+        status: 'BOUND',
+        quantity: result.success.quantityAtoms,
+        limitPrice: result.success.limitPriceMicros,
+        protection: result.success.protection,
+      }
+    })
+    expect(output).toEqual(expected)
+    expect(expected.some((row) => row.status === 'BOUND')).toBe(true)
+    expect(expected.some((row) => row.status === 'MISSING')).toBe(true)
+    expect(expected.some((row) => row.status === 'INVALID')).toBe(true)
+  }, 30000)
+
+  test('actual bracket binding follows the chronological shared disposal budget across both legs', async () => {
+    const document = await Effect.runPromise(persistenceDocumentFixture)
+    const f = bracketEvidenceFixture(document)
+    const inputs: { operation: string; available: string; disposed: string; quantity: string }[] = []
+    const cases: { leanStart: number; leanEnd: number; accepted: boolean }[] = []
+    const amounts = [1n, 500000000n, 1000000000n, BigInt(f.parent.quantityAtoms!)]
+    for (const entry of amounts)
+      for (const profit of amounts)
+        for (const stop of amounts)
+          for (const early of [false, true]) {
+            const path = [
+              { order: f.parent, quantity: entry, price: f.parent.limitPriceMicros!, offset: early ? 30 : 10 },
+              { order: f.profit, quantity: profit, price: f.terms.profitLimitPriceMicros, offset: 20 },
+              { order: f.stop, quantity: stop, price: f.terms.stopLimitPriceMicros, offset: 40 },
+            ].sort((a, b) => a.offset - b.offset)
+            let available = 0n
+            let disposed = 0n
+            const leanStart = inputs.length
+            for (const row of path) {
+              if (row.order.side === OrderSide.Buy) available += row.quantity
+              else {
+                inputs.push({
+                  operation: 'protectiveDisposalBudget',
+                  available: available.toString(),
+                  disposed: disposed.toString(),
+                  quantity: row.quantity.toString(),
+                })
+                disposed += row.quantity
+              }
+            }
+            const fills = path.map((row) => ({
+              fillId: testHash(row.offset),
+              brokerOrderId: row.order.brokerOrderId,
+              intentId: f.cut.fills[0]!.intentId,
+              decisionId: document.contentHash,
+              sourceHash: testHash({ ...row, quantity: row.quantity.toString() }),
+              side: row.order.side,
+              quantityAtoms: row.quantity.toString(),
+              priceAtoms: (BigInt(row.price) * 1000n).toString(),
+              occurredAt: f.at(row.offset),
+            }))
+            const supplied = fills.map((fill) => ({
+              ...f.supplied[0]!,
+              fillId: fill.fillId,
+              sourceHash: fill.sourceHash,
+              orderId: fill.brokerOrderId,
+              side: fill.side,
+              fillQuantityAtoms: fill.quantityAtoms,
+              fillPriceAtoms: fill.priceAtoms,
+              filledAt: fill.occurredAt,
+            }))
+            const orders = f.cut.orders.map((row) => {
+              const material = {
+                eventId: row.eventId,
+                occurredAt: row.occurredAt,
+                order: { ...row.order, status: OrderStatus.PartiallyFilled, quantityAtoms: f.parent.quantityAtoms! },
+              }
+              return { ...row, ...material, sourceHash: testHash(material) }
+            })
+            const result = bindExecutionEvidence(
+              supplied,
+              { ...f.cut, fills, orders },
+              document.bindings.authorityGenerationHash,
+            )
+            cases.push({ leanStart, leanEnd: inputs.length, accepted: Result.isSuccess(result) })
+          }
+    const budgets = model(inputs)
+    expect(cases.map((row) => budgets.slice(row.leanStart, row.leanEnd).every((result) => result === true))).toEqual(
+      cases.map((row) => row.accepted),
+    )
+    expect(cases.some((row) => row.accepted)).toBe(true)
+    expect(cases.some((row) => !row.accepted)).toBe(true)
+  }, 30000)
 })

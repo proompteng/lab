@@ -413,6 +413,16 @@ remain separate validation boundaries.
 
 ## Limits of the evidence
 
+`NativeOrders.lean` maps to `resolveExecutionOrderTerms` and `bindExecutionEvidence` in system assessment.
+The resolver receives normalized broker fields and sealed target fields independently. A bound order requires every
+account, generation, decision, intent and symbol to match, and preserves the sealed parent quantity and limit.
+Bracket and OCO theorems connect an actual bound result to both sealed exit prices and admissible leg quantities.
+Missing-sibling and fractional-residual examples are reachable. Chronological disposal theorems prohibit consuming
+future entry fills or spending the same inventory twice. Executable comparisons exercise the production resolver
+and full bracket binder, including changed identities, groups, prices, quantities and early protective sales.
+These proofs assume authentic provider observations and normalized broker child identities. They do not authenticate
+broker responses, establish queue priority or demonstrate separately armed replacement protection collection.
+
 `AccountProtection.lean` maps to `accountLossMicros` and `accountEntryProtectionReasons` in `src/risk.ts`. Its theorems
 prove nonnegative losses, invariance under a common equity translation, equality at the limit, rejection one micro
 above it, and a reachable protected account. Conformance compares both production breach reasons over signed equity

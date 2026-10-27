@@ -239,6 +239,52 @@ def readNativeControlCommitments (json : Json) : Except String NativeControlComm
     executionModelHash := ← json.getObjValAs? String "executionModelHash"
   }
 
+def readNativeOrderOwner (json : Json) : Except String NativeOrderOwner := do
+  return {
+    intent := ← json.getObjValAs? String "intent", decision := ← json.getObjValAs? String "decision",
+    generation := ← json.getObjValAs? String "generation", account := ← json.getObjValAs? String "account",
+    symbol := ← json.getObjValAs? String "symbol" }
+
+def readOptionalInteger (json : Json) (key : String) : Except String (Option Int) :=
+  readOptionalField json key fun value => do
+    let text ← value.getStr?
+    match text.toInt? with
+    | some n => return n
+    | none => throw s!"{key} must be an integer string or null"
+
+def readNativeOrderReceipt (json : Json) : Except String NativeOrderReceipt := do
+  return {
+    owner := ← readNativeOrderOwner (← json.getObjVal? "owner"),
+    orderIntent := ← json.getObjValAs? (Option String) "orderIntent",
+    brokerId := ← json.getObjValAs? String "brokerId", clientId := ← json.getObjValAs? String "clientId",
+    parentId := ← json.getObjValAs? (Option String) "parentId", side := ← json.getObjValAs? String "side",
+    orderType := ← json.getObjValAs? String "orderType", timeInForce := ← json.getObjValAs? String "timeInForce",
+    quantity := ← readOptionalInteger json "quantity", notional := ← readOptionalInteger json "notional",
+    limitPrice := ← readOptionalInteger json "limitPrice", stopPrice := ← readOptionalInteger json "stopPrice" }
+
+def readNativeOrderTarget (json : Json) : Except String NativeOrderTarget := do
+  let p ← json.getObjVal? "protection"
+  let protection : NativeProtectionTerms ← match ← p.getObjValAs? String "kind" with
+    | "NONE" => pure .none
+    | "StopLimit" => pure (.stopLimit (← readInteger p "trigger"))
+    | "Bracket" => pure (.bracket (← readInteger p "trigger") (← readInteger p "limit") (← readInteger p "profit"))
+    | "Oco" => pure (.oco (← readInteger p "trigger") (← readInteger p "limit") (← readInteger p "profit"))
+    | _ => throw "unsupported native protection kind"
+  return {
+    owner := ← readNativeOrderOwner (← json.getObjVal? "owner"),
+    side := ← json.getObjValAs? String "side", orderType := ← json.getObjValAs? String "orderType",
+    timeInForce := ← json.getObjValAs? String "timeInForce", quantity := ← readInteger json "quantity",
+    limitPrice := ← readInteger json "limitPrice", protection }
+
+def nativeOrderBindingJson (binding : NativeOrderBinding) : Json :=
+  match binding with
+  | .invalid => Json.mkObj [("status", toJson "INVALID")]
+  | .missing => Json.mkObj [("status", toJson "MISSING")]
+  | .bound quantity price protection => Json.mkObj [
+      ("status", toJson "BOUND"), ("quantity", toJson (toString quantity)),
+      ("limitPrice", toJson (toString price)),
+      ("protection", if protection == "NONE" then Json.null else toJson protection)]
+
 def evaluate (json : Json) : Except String Json := do
   let op ← json.getObjValAs? String "operation"
   match op with
@@ -631,6 +677,14 @@ def evaluate (json : Json) : Except String Json := do
       expiresAt := ← readInteger json "expiresAt"
     }
     return toJson (decide (supportedExecutionTiming t))
+  | "nativeOrderGroup" =>
+    return nativeOrderBindingJson (resolveNativeOrderGroup (← json.getObjValAs? String "id")
+      (← readNativeOrderReceipt (← json.getObjVal? "root"))
+      (← (← (← json.getObjVal? "children").getArr?).toList.mapM readNativeOrderReceipt)
+      (← readNativeOrderTarget (← json.getObjVal? "target")))
+  | "protectiveDisposalBudget" =>
+    return toJson (protectiveDisposalBudget (← readInteger json "available")
+      (← readInteger json "disposed") (← readInteger json "quantity"))
   | "orderTerms" =>
     return toJson (limitTimeInForce (← json.getObjValAs? Bool "equity"))
   | "sizing" =>
