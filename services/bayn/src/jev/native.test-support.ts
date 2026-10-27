@@ -1,9 +1,8 @@
 import { jevPositionExitPolicy } from './exit-policy'
 import { jevEntryEconomics } from './entry-economics'
-import { entryCompletionFixture, nativeChartInference } from './entry-inference.test-support'
+import { entryCompletionFixture, chartAssessmentsFixture } from './entry-inference.test-support'
 import { EntrySetup, makeEntryProposals } from './entry-proposals'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
 import { entryProposalExitPlan } from './strategy-exit-plan'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
@@ -247,11 +246,10 @@ export const nativeJevFixture = (
                   cryptoFeeTier: null,
                 },
               }
-              const visual = nativeChartInference(Result.getOrThrow(makeChartDecisionsRequest(chartSource)).request, at)
               const { proposals } = Result.getOrThrow(
                 makeEntryProposals({
                   chart,
-                  assessments: Result.getOrThrow(chartAssessments(chartSource, visual.response)),
+                  assessments: chartAssessmentsFixture(chartSource, at),
                   economics,
                   protocol,
                   bidMicros: 102_000_000n,

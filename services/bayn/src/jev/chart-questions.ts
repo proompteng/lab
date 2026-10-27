@@ -1,7 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1Result } from '../hash'
-import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { Sha256Schema, SymbolSchema, UtcInstantSchema } from '../schemas'
 import type { NativeChartEvidence } from './chart-evidence'
 import { JevContractError } from './contract'
 import { jevEntryEconomics } from './entry-economics'
@@ -9,14 +8,7 @@ import type { EntryInferenceInput } from './entry-inference-input'
 import type { JevProtocolMaterial } from './protocol'
 import { makeEntrySourceCandidates } from './entry-proposals'
 import type { RetainedConditionalChartAssessmentsMaterial } from './retained-conditional-chart-questions'
-import {
-  decodeDecisionsResponse,
-  decisionsModel,
-  prepareDecisionsRequest,
-  DecisionsRequestSchema,
-  type DecisionsRequest,
-  type DecisionsResponse,
-} from './decisions'
+import { decisionsModel, prepareDecisionsRequest, type DecisionsRequest, type DecisionsResponse } from './decisions'
 
 const presenceQuestions = [
   {
@@ -82,7 +74,7 @@ export type ChartDecisionSource = {
 
 export const buildChartDecisionsRequest = (
   source: ChartDecisionSource,
-  stage: 'ALL' | 'CHART' | { readonly selectedEnd: string } = 'ALL',
+  stage: 'CHART' | { readonly selectedEnd: string },
 ) =>
   Result.gen(function* () {
     const { chart, protocol, funding } = source
@@ -147,7 +139,7 @@ export const buildChartDecisionsRequest = (
             ...(stage === 'CHART'
               ? []
               : baseEnds
-                  .filter((end) => stage === 'ALL' || end.id === stage.selectedEnd)
+                  .filter((end) => end.id === stage.selectedEnd)
                   .map((end) => ({
                     type: 'choice' as const,
                     name: `base_first_bar_ending_${end.chartLabel}`,
@@ -215,40 +207,6 @@ export const buildChartDecisionsRequest = (
     ),
   )
 
-const preparedChartRequests = new Map<
-  string,
-  { readonly body: string; readonly requestHash: string; readonly sourceFeasible: boolean }
->()
-
-export const makeChartDecisionsRequest = (source: ChartDecisionSource) =>
-  Result.gen(function* () {
-    const { chart, protocol, funding } = source
-    const key = yield* canonicalHashV1Result({ chart, protocol, funding, questionPolicy: chartQuestionPolicy }).pipe(
-      Result.mapError((cause) => new JevContractError({ message: 'Chart request source cannot be hashed', cause })),
-    )
-    const cached = preparedChartRequests.get(key)
-    if (cached !== undefined) {
-      const request = yield* Schema.decodeUnknownResult(
-        Schema.fromJsonString(DecisionsRequestSchema),
-        strictParseOptions,
-      )(cached.body).pipe(
-        Result.mapError((cause) => new JevContractError({ message: 'Cached chart request cannot be decoded', cause })),
-      )
-      return { request, ...cached }
-    }
-    const prepared = yield* buildChartDecisionsRequest(source)
-    preparedChartRequests.set(key, {
-      body: prepared.body,
-      requestHash: prepared.requestHash,
-      sourceFeasible: prepared.sourceFeasible,
-    })
-    if (preparedChartRequests.size > 32) {
-      const oldest = preparedChartRequests.keys().next().value
-      if (oldest !== undefined) preparedChartRequests.delete(oldest)
-    }
-    return prepared
-  })
-
 const Presence = Schema.Union([
   Schema.Struct({
     status: Schema.Literal('ASSESSED'),
@@ -280,13 +238,6 @@ export type ChartAssessmentsMaterial =
   | ChartAssessments
   | RetainedConditionalChartAssessmentsMaterial
   | import('./retained-funded-chart-questions').ChartAssessments
-
-export const chartAssessments = (source: ChartDecisionSource, input: unknown) =>
-  Result.gen(function* () {
-    const prepared = yield* makeChartDecisionsRequest(source)
-    const response = yield* decodeDecisionsResponse(prepared.request, input)
-    return yield* chartAssessmentsFromResponse(source.chart, response, prepared.request)
-  })
 
 export const chartAssessmentsFromResponse = (
   chart: NativeChartEvidence,

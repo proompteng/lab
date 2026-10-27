@@ -1,7 +1,6 @@
 import { EntrySetup, makeEntryProposals, makeEntrySourceCandidates } from './entry-proposals'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
-import { nativeChartInference } from './entry-inference.test-support'
+import { chartAssessmentsFixture } from './entry-inference.test-support'
 import { entryProposalExitPlan } from './strategy-exit-plan'
 import { cryptoMaximumTakerFeeBps } from '../broker/crypto-fees'
 import { expect, test } from 'bun:test'
@@ -215,14 +214,10 @@ test('funding values a native take-profit at its submitted minimum sell price', 
     protocol,
     funding: { bidMicros: '100000000', askMicros: '100000000', capitalMicros: '100000000000', cryptoFeeTier: null },
   }
-  const visual = nativeChartInference(
-    Result.getOrThrow(makeChartDecisionsRequest(chartSource)).request,
-    chart.windowEndAt,
-  )
   const { proposals } = Result.getOrThrow(
     makeEntryProposals({
       chart,
-      assessments: Result.getOrThrow(chartAssessments(chartSource, visual.response)),
+      assessments: chartAssessmentsFixture(chartSource),
       economics,
       protocol,
       bidMicros: 100_000_000n,
