@@ -269,6 +269,7 @@ describe('Jev entry execution quote eligibility', () => {
         Effect.provideService(JevBatchStore, {
           pending: () => Effect.succeed([]),
           read: () => unused,
+          complete: () => unused,
           finish: () => unused,
           begin: (plan, observation) =>
             Effect.gen(function* () {

@@ -151,12 +151,9 @@ const verify = Effect.gen(function* () {
           Effect.sync(() => {
             checkpoint.terminals.push(terminal)
           }),
-        recordBaseStartSkip: (skip) =>
+        recordHandoff: (handoff) =>
           Effect.sync(() => {
-            checkpoint.skips.push(skip)
-          }),
-        recordHandoff: () =>
-          Effect.sync(() => {
+            if (handoff.baseStart?.status === 'NOT_REQUESTED') checkpoint.skips.push(handoff.baseStart.skip)
             committedHandoffs++
             return { dispatchAllowed: true }
           }),

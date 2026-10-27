@@ -159,7 +159,7 @@ const providers = (
               message: 'Unavailable',
             })
         }),
-      recordBaseStartSkip: () => Effect.void,
+
       recordHandoff: (handoff) =>
         Effect.gen(function* () {
           events.push('handoff')

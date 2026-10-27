@@ -106,7 +106,7 @@ const commitStagedHandoff = (request: JevEvaluationRequest, handoff: EntryHandof
       const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
       if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
     }
-    for (const skip of checkpoint.skips) yield* journal.recordBaseStartSkip(skip)
+
     yield* journal.recordHandoff(handoff)
   })
 // Persist and recover retained v1 cycles with their original identity even after active composition changes.
@@ -1630,10 +1630,6 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                 journal
                   .recordVisualTerminal(terminal)
                   .pipe(Effect.tapError(retainFailure('terminal', terminal.stage, terminal.recordedAt, null))),
-              recordBaseStartSkip: (skip) =>
-                journal
-                  .recordBaseStartSkip(skip)
-                  .pipe(Effect.tapError(retainFailure('skip', 'BASE_START', skip.recordedAt, null))),
               recordHandoff: (handoff) =>
                 journal
                   .recordHandoff(handoff)

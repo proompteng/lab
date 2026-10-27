@@ -1,9 +1,18 @@
-import { Context, Data, Effect } from 'effect'
+import { Clock, Context, Data, Effect } from 'effect'
 
 import type { OperationalError } from '../errors'
-import { decodeJevBatchPlan, type JevBatchPlan, type JevBatchResult } from './batch'
+import {
+  decodeJevBatchPlan,
+  JevCandidatePlanStatus,
+  JevCandidateResultStatus,
+  makeJevBatchResult,
+  type JevBatchPlan,
+  type JevBatchResult,
+} from './batch'
 import { evaluateClaimedJevOnce, type JevDispatch } from './evaluation'
+import { JevEvidenceError } from './evidence'
 import type { JevObservation } from './observation'
+import { utcInstantFromEpochMillis } from '../time'
 
 export interface JevBatchEvidence {
   readonly plan: JevBatchPlan
@@ -35,25 +44,58 @@ export class JevBatchStore extends Context.Service<
       observation: JevObservation,
     ) => Effect.Effect<JevBatchAdmission, OperationalError | JevBatchExpired>
     readonly finish: (batchId: string) => Effect.Effect<JevBatchEvidence, OperationalError>
+    readonly complete: (
+      plan: JevBatchPlan,
+      observation: JevObservation,
+      result: JevBatchResult,
+    ) => Effect.Effect<JevBatchEvidence, OperationalError>
   }
 >()('@proompteng/bayn/JevBatchStore') {}
 
 export const evaluateJevBatch = (input: unknown, observation: JevObservation) =>
   Effect.gen(function* () {
+    // Keep the admitted source private while provider I/O yields to other actors.
+    const sourceObservation = structuredClone(observation)
     const plan = yield* Effect.fromResult(decodeJevBatchPlan(input))
     const store = yield* JevBatchStore
-    const saved = yield* store.begin(plan, observation)
+    const saved = yield* store.begin(plan, sourceObservation)
     if (saved.result !== null) return { plan: saved.plan, result: saved.result }
-    yield* Effect.forEach(
+    const evaluations = yield* Effect.forEach(
       saved.dispatches,
       (dispatch) =>
-        evaluateClaimedJevOnce(dispatch).pipe(
-          Effect.asVoid,
-          Effect.catchTag('JevEvidenceError', () => Effect.void),
-        ),
-      { concurrency: Math.max(1, saved.dispatches.length), discard: true },
+        evaluateClaimedJevOnce(dispatch).pipe(Effect.catchTag('JevEvidenceError', () => Effect.succeed(null))),
+      { concurrency: Math.max(1, saved.dispatches.length) },
     )
-    return yield* store.finish(plan.batchId)
+    const completed = evaluations.filter((evaluation) => evaluation !== null)
+    const requested = saved.plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
+    if (completed.length !== requested.length) return yield* store.finish(plan.batchId)
+    const byRequest = new Map(completed.map((evaluation) => [evaluation.request.requestId, evaluation]))
+    const candidates: JevBatchResult['candidates'][number][] = []
+    for (const candidate of saved.plan.candidates) {
+      if (candidate.status === JevCandidatePlanStatus.Excluded) {
+        candidates.push({ symbol: candidate.symbol, status: JevCandidateResultStatus.Excluded })
+        continue
+      }
+      const evaluation = byRequest.get(candidate.request.requestId)
+      if (evaluation === undefined)
+        return yield* new JevEvidenceError({ message: 'Completed evaluations do not cover the admitted batch' })
+      candidates.push({
+        symbol: candidate.symbol,
+        status: JevCandidateResultStatus.Resolved,
+        requestId: candidate.request.requestId,
+        receipt: evaluation.receipt,
+        resolution: evaluation.resolution,
+      })
+    }
+    const result = yield* Effect.fromResult(
+      makeJevBatchResult(saved.plan, {
+        schemaVersion: 'bayn.jev-batch-result.v1',
+        batchId: saved.plan.batchId,
+        completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+        candidates,
+      }),
+    )
+    return yield* store.complete(saved.plan, sourceObservation, result)
   })
 
 export const recoverPendingJevBatches = (cycleId: string, authorityGenerationHash: string) =>
