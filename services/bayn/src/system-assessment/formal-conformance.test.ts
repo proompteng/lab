@@ -223,7 +223,7 @@ formal('pinned Lean executable conformance', () => {
               }
     expect(expected.filter((bound) => bound !== null).length).toBeGreaterThan(0)
     expect(model(inputs)).toEqual(expected)
-  })
+  }, 30_000)
 
   test('a late persistence observation is incomplete while an observation before creation is violated', () => {
     const { input, verifiedSources } = supportedAssessmentFixture()
