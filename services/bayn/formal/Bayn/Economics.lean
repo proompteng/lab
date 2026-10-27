@@ -220,4 +220,30 @@ theorem intraminute_mark_is_reachable :
       { account := "candidate", source := "closing", occurredAt := 120, availableAt := 120 }
     ] := by decide
 
+def frozenQuantityAtoms (quantityMicros : Nat) : Nat := quantityMicros * 1000
+
+def frozenNotionalMicros (quantityMicros priceMicros : Nat) : Nat :=
+  (frozenQuantityAtoms quantityMicros * priceMicros + 500000000) / 1000000000
+
+theorem frozen_quantity_roundtrip (quantityMicros : Nat) :
+    frozenQuantityAtoms quantityMicros / 1000 = quantityMicros := by
+  simp [frozenQuantityAtoms]
+
+theorem frozen_quantity_is_exact (quantityMicros : Nat) :
+    frozenQuantityAtoms quantityMicros % 1000 = 0 := by
+  simp [frozenQuantityAtoms]
+
+theorem frozen_notional_value_is_preserved (quantityMicros priceMicros : Nat) :
+    frozenNotionalMicros quantityMicros priceMicros =
+      (quantityMicros * priceMicros + 500000) / 1000000 := by
+  unfold frozenNotionalMicros
+  have regroup : frozenQuantityAtoms quantityMicros * priceMicros =
+      (quantityMicros * priceMicros) * 1000 := by
+    simp [frozenQuantityAtoms, Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm]
+  rw [regroup]
+  omega
+
+theorem original_notional_conversion_is_reachable :
+    frozenNotionalMicros 98000000 102010000 = 9996980000 := by decide
+
 end Bayn

@@ -70,6 +70,22 @@ episode. It checks executable identity, entry and exit fills, a flat close, exac
 and a positive execution profit made negative by the declared data cost. This exercises the command and accounting
 boundaries; it does not replace the complete twenty-session matched-control stress assessment.
 
+## Frozen deployed control
+
+`Qualification.lean` models all six frozen commitments: strategy, parameters, protocol, execution model, prompts,
+and continuation/exits. `deployed_control_admission_preserves_every_identity` requires every identity to match;
+changing any component rejects admission. Conformance exercises all 64 changed/unchanged combinations through
+`validateSystemRegistration`, including the one admitted unchanged registration.
+
+`Economics.lean` models the original six-decimal share quantity as exactly 1,000 current quantity atoms per unit.
+`frozen_quantity_roundtrip`, `frozen_quantity_is_exact`, and `frozen_notional_value_is_preserved` prove exact conversion
+and preservation of half-up notional rounding. The executable comparison calls production `frozenQuantityAtoms` and
+`notionalMicros`, including zero, rounding boundaries and values above JavaScript's exact integer range.
+
+The frozen engine, full original protocol, observed release times, fills, accounting and complete twenty-session
+synthetic replay retain their required integration checks in the parent implementation. These arithmetic and identity
+proofs do not authenticate an arbitrary report, supply market probabilities or establish prospective qualification.
+
 ## Model and implementation mapping
 
 All theorem names below are in namespace `Bayn`. The conformance tests invoke production functions rather than a second

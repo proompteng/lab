@@ -436,11 +436,21 @@ def evaluate (json : Json) : Except String Json := do
       limits
     }
     return toJson (decide (registeredRiskPreserved binding))
+  | "frozenQuantity" =>
+    let quantity ← readNatural json "quantityMicros"
+    let price ← readNatural json "priceMicros"
+    return Json.mkObj [
+      ("quantityAtoms", toJson (toString (frozenQuantityAtoms quantity))),
+      ("notionalMicros", toJson (toString (frozenNotionalMicros quantity price)))
+    ]
   | "deployedControl" =>
     let actual : ControlIdentity := {
       strategyHash := ← json.getObjValAs? String "strategyHash",
       parametersHash := ← json.getObjValAs? String "parametersHash",
-      protocolHash := ← json.getObjValAs? String "protocolHash"
+      protocolHash := ← json.getObjValAs? String "protocolHash",
+      executionModelHash := ← json.getObjValAs? String "executionModelHash",
+      promptsHash := ← json.getObjValAs? String "promptsHash",
+      continuationAndExitsHash := ← json.getObjValAs? String "continuationAndExitsHash"
     }
     return toJson (decide (deployedControlPreserved actual))
   | "entryCompletionPolicy" =>

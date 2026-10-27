@@ -38,14 +38,15 @@ import { advanceQualificationEquity, binaryTradeEdge, cashInventoryTradingPnl, n
 import { reliabilityFraction } from './reliability'
 import { assessmentFixture, supportedAssessmentFixture, testHash } from './fixtures.test-support'
 import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
-import { frozenDeployedControlIdentity, validateSystemRegistration } from './policy'
+import { validateSystemRegistration } from './policy'
+import { frozenQuantityAtoms } from './frozen-control-report'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { evaluateSystemAssessment, SafetyViolationKind } from './assessment'
 import { indexCashHistory, projectSessionCash } from './cash-history'
 import { CashAdjustmentKind, cashFlowTotals } from './cash-flows'
 import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import { decideExecutionControllerTick } from '../execution/controller'
-import { ceilDiv, desiredQuantityAtoms } from '../strategy/execution-model/fixed-point'
+import { ceilDiv, desiredQuantityAtoms, notionalMicros } from '../strategy/execution-model/fixed-point'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { MarketKind } from '../instruments'
 import { ExecutionEvidenceKind, measureRealism } from './realism'
@@ -615,33 +616,53 @@ formal('pinned Lean executable conformance', () => {
     expect(actual.filter(Boolean)).toHaveLength(4)
     expect(model(inputs)).toEqual(actual)
   })
-  test('a deployed control cannot change any frozen identity component', () => {
+  test('a deployed control cannot change any of its six frozen commitments', () => {
     const registration = registrationFixture()
+    const original = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Deployed)
+    if (original === undefined) throw Error('Missing frozen control')
+    const fields = [
+      'strategyHash',
+      'parametersHash',
+      'protocolHash',
+      'executionModelHash',
+      'promptsHash',
+      'continuationAndExitsHash',
+    ] as const
     const inputs = []
     const actual = []
-    for (const strategyMatches of [false, true])
-      for (const parametersMatch of [false, true])
-        for (const protocolMatches of [false, true]) {
-          const identity = {
-            strategyHash: strategyMatches ? frozenDeployedControlIdentity.strategyHash : testHash('other strategy'),
-            parametersHash: parametersMatch
-              ? frozenDeployedControlIdentity.parametersHash
-              : testHash('other parameters'),
-            protocolHash: protocolMatches ? frozenDeployedControlIdentity.protocolHash : testHash('other protocol'),
-          }
-          inputs.push({ operation: 'deployedControl', ...identity })
-          actual.push(
-            Result.isSuccess(
-              validateSystemRegistration({
-                ...registration,
-                policies: registration.policies.map((policy) =>
-                  policy.policy === JevResearchPolicy.Deployed ? { ...policy, ...identity } : policy,
-                ),
-              }),
+    for (let changed = 0; changed < 64; changed++) {
+      const identity = Object.fromEntries(
+        fields.map((field, index) => [
+          field,
+          (changed & (1 << index)) === 0 ? original[field] : testHash(`other ${field}`),
+        ]),
+      )
+      inputs.push({ operation: 'deployedControl', ...identity })
+      actual.push(
+        Result.isSuccess(
+          validateSystemRegistration({
+            ...registration,
+            policies: registration.policies.map((policy) =>
+              policy.policy === JevResearchPolicy.Deployed ? { ...policy, ...identity } : policy,
             ),
-          )
-        }
+          }),
+        ),
+      )
+    }
     expect(actual.filter(Boolean)).toHaveLength(1)
+    expect(model(inputs)).toEqual(actual)
+  })
+  test('frozen six-decimal quantities preserve exact nine-decimal fill notional', () => {
+    const inputs = []
+    const actual = []
+    for (const quantity of [0n, 1n, 999n, 1000000n, 98000000n, 1n << 80n, ((1n << 128n) - 1n) / 1000n])
+      for (const price of [0n, 1n, 100n, 1000001n, 102010000n]) {
+        const atoms = frozenQuantityAtoms(quantity)
+        const notional = Result.getOrThrow(notionalMicros(atoms, price))
+        expect(notional).toBe((quantity * price + 500000n) / 1000000n)
+        inputs.push({ operation: 'frozenQuantity', quantityMicros: quantity.toString(), priceMicros: price.toString() })
+        actual.push({ quantityAtoms: atoms.toString(), notionalMicros: notional.toString() })
+      }
     expect(model(inputs)).toEqual(actual)
   })
   test('every provider stage needs one current verified priced expense, including failed and late inference', () => {

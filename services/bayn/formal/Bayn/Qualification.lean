@@ -56,12 +56,18 @@ structure ControlIdentity where
   strategyHash : String
   parametersHash : String
   protocolHash : String
+  executionModelHash : String
+  promptsHash : String
+  continuationAndExitsHash : String
   deriving Repr, DecidableEq
 
 def frozenDeployedControlIdentity : ControlIdentity := {
   strategyHash := "3da39b009a0cb2052b007ae9ba51f448c16b69281a37cf5ffe122314f1d801af",
   parametersHash := "cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f",
-  protocolHash := "f38c7d47dc0b8eedb13da1ae7e29faa3da2ce8983fee05f4a2c89dc0ec59eb97"
+  protocolHash := "f38c7d47dc0b8eedb13da1ae7e29faa3da2ce8983fee05f4a2c89dc0ec59eb97",
+  executionModelHash := "b7fed391f5dc25a41a257de470c96c337715477f1032c1d5d802020b35144b68",
+  promptsHash := "2efd63f39ac6d6d16008b63bb5924c9925b1d7eb0b56e3aa6d07c313a5a998e6",
+  continuationAndExitsHash := "861f6179c7ce96d3b7aa8f6f45e34d67612da42c92ae639edcceb2f2ca9e48c3"
 }
 
 def deployedControlPreserved (actual : ControlIdentity) : Prop := actual = frozenDeployedControlIdentity
@@ -73,7 +79,10 @@ theorem deployed_control_admission_preserves_every_identity (actual : ControlIde
     (accepted : deployedControlPreserved actual) :
     actual.strategyHash = frozenDeployedControlIdentity.strategyHash ∧
       actual.parametersHash = frozenDeployedControlIdentity.parametersHash ∧
-      actual.protocolHash = frozenDeployedControlIdentity.protocolHash := by
+      actual.protocolHash = frozenDeployedControlIdentity.protocolHash ∧
+      actual.executionModelHash = frozenDeployedControlIdentity.executionModelHash ∧
+      actual.promptsHash = frozenDeployedControlIdentity.promptsHash ∧
+      actual.continuationAndExitsHash = frozenDeployedControlIdentity.continuationAndExitsHash := by
   cases accepted
   simp
 
@@ -82,6 +91,24 @@ theorem changed_deployed_parameters_are_rejected (actual : ControlIdentity)
     ¬ deployedControlPreserved actual := by
   intro accepted
   exact changed (deployed_control_admission_preserves_every_identity actual accepted).2.1
+
+theorem changed_deployed_execution_model_is_rejected (actual : ControlIdentity)
+    (changed : actual.executionModelHash ≠ frozenDeployedControlIdentity.executionModelHash) :
+    ¬ deployedControlPreserved actual := by
+  intro accepted
+  exact changed (congrArg ControlIdentity.executionModelHash accepted)
+
+theorem changed_deployed_prompts_is_rejected (actual : ControlIdentity)
+    (changed : actual.promptsHash ≠ frozenDeployedControlIdentity.promptsHash) :
+    ¬ deployedControlPreserved actual := by
+  intro accepted
+  exact changed (congrArg ControlIdentity.promptsHash accepted)
+
+theorem changed_deployed_continuation_is_rejected (actual : ControlIdentity)
+    (changed : actual.continuationAndExitsHash ≠ frozenDeployedControlIdentity.continuationAndExitsHash) :
+    ¬ deployedControlPreserved actual := by
+  intro accepted
+  exact changed (congrArg ControlIdentity.continuationAndExitsHash accepted)
 
 theorem original_deployed_control_is_reachable : deployedControlPreserved frozenDeployedControlIdentity := rfl
 
