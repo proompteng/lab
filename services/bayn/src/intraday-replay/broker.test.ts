@@ -124,6 +124,46 @@ test('an equity-only replay account leaves crypto eligibility unknown', async ()
   expect(account.value.nonMarginableBuyingPowerMicros).toBeNull()
 })
 
+test.each([false, true])(
+  'broker snapshot retry advances the owned replay timeline or reports failure: %s',
+  async (advanceFails) => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const advances: number[] = []
+        const broker = yield* setup({
+          advanceToArrival: (at) =>
+            Effect.sync(() => advances.push(at)).pipe(
+              Effect.andThen(
+                advanceFails && at > startMs + 100
+                  ? Effect.fail(new ReplayBrokerFailure({ message: 'Synthetic timeline persistence failure' }))
+                  : TestClock.setTime(at),
+              ),
+            ),
+        })
+        yield* broker.mutation.submit(intent())
+        const projection = broker.read.projection
+        if (projection === undefined) throw new Error('Missing broker projection')
+        const result = yield* Effect.result(projection.snapshot)
+        if (advanceFails) {
+          expect(result).toMatchObject({
+            _tag: 'Failure',
+            failure: { operation: 'preflight', message: 'Replay broker snapshot failed' },
+          })
+        } else {
+          const snapshot = Result.getOrThrow(result)
+          expect(snapshot.history.orders.rows).toHaveLength(1)
+          expect(snapshot.history.fills).toHaveLength(1)
+          expect(snapshot.positions.value).toHaveLength(1)
+        }
+        expect(advances).toEqual([startMs + 100, startMs + 600])
+        expect(yield* Clock.currentTimeMillis).toBe(startMs + (advanceFails ? 100 : 600))
+        expect((yield* broker.checkpoint).state.fills).toHaveLength(1)
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+      { signal: AbortSignal.timeout(2000) },
+    )
+  },
+)
+
 test('same-millisecond round trips preserve fill accounting order across checkpoint restore', async () => {
   await run(
     Effect.gen(function* () {
