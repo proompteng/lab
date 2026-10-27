@@ -65,8 +65,9 @@ export default Effect.gen(function* () {
   BEGIN
     SELECT * INTO STRICT source_cut FROM system_evidence_cuts WHERE source_cut_hash = NEW.source_cut_hash;
     SELECT policy INTO STRICT definition FROM system_qualification_registrations registration,
-      jsonb_array_elements(registration.payload_text::jsonb->'policies') policy
-      WHERE registration.registration_hash = NEW.registration_hash AND policy->>'policy' = 'JEV';
+      json_array_elements(registration.payload_text::json->'policies') policy
+      WHERE registration.registration_hash = NEW.registration_hash
+        AND encode(sha256(convert_to(policy::text, 'UTF8')), 'hex') = NEW.payload_text::jsonb->>'policyDefinitionHash';
     NEW.created_at := clock_timestamp();
     captured := (NEW.payload_text::jsonb->>'capturedAt')::timestamptz;
     started := (NEW.payload_text::jsonb->>'startedAt')::timestamptz;

@@ -1602,7 +1602,7 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   yield* sql`CREATE TABLE mutation_events (
     event_id text PRIMARY KEY, schema_version text, mutation_id text, intent_id text, sequence integer,
     operation text, event_type text, request_hash text, request_body jsonb, consistency_delay_ms integer,
-    broker_order_id text, request_id text, response_status integer, response_content_hash text, occurred_at timestamptz, denial_reason text
+    broker_order_id text, request_id text, response_status integer, response_content_hash text, occurred_at timestamptz, denial_reason text, routing jsonb
   )`
   yield* sql`CREATE TABLE orders (intent_id text)`
   yield* sql`CREATE TABLE fills (intent_id text)`

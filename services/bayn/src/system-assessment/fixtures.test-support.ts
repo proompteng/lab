@@ -25,7 +25,7 @@ import { withProviderSessions } from '../testing/market-calendar-fixture'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
 import { systemLatencyStressProtocolHash } from './latency-protocol'
-import { InferenceRateCardSchema } from '../inference-costs'
+import { InferenceRateCardSchema, prepareInferenceRateCard } from '../inference-costs'
 import type { ReplayInferenceCostModelSchema } from '../intraday-replay/inference-costs'
 import { jevModel } from '../jev/contract'
 import { decisionsModel } from '../jev/decisions'
@@ -279,8 +279,7 @@ export const registrationFixture = (registeredAt?: string): SystemRegistration =
   })
 }
 
-export const assessmentFixture = () => {
-  const registration = registrationFixture()
+export const assessmentFixture = (registration: SystemRegistration = registrationFixture()) => {
   const asOf = '2026-12-01T00:00:00.000Z'
   const verifiedSources = new Set<string>()
   const source = (hash: string) => {
@@ -324,9 +323,9 @@ export const assessmentFixture = () => {
         asOf,
         requests: [],
       }
-      const inferenceRateCard = { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] }
+      const inferenceRateCard = definition.inferenceRateCard
       source(testHash(inferenceEvidence))
-      source(testHash(inferenceRateCard))
+      source(Result.getOrThrow(prepareInferenceRateCard(inferenceRateCard)).rateCardHash)
       const opening = 100_000_000_000n + BigInt(i) * net
       const cashFlows = Schema.decodeUnknownSync(CashFlowEvidenceSchema)({
         schemaVersion: 'bayn.system-cash-flow-evidence.v1',

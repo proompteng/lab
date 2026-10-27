@@ -921,7 +921,7 @@ describe('native execution runtime', () => {
     )
 
     expect(result.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
-    expect(result.observation).toEqual(windowClosedObservation)
+    expect(result.observation).toEqual({ ...windowClosedObservation, executionIssuedAt: command.issuedAt })
     expect(projected).toMatchObject({
       controllerKey: command.controllerKey,
       planHash: controllerPlanHash,
@@ -930,7 +930,7 @@ describe('native execution runtime', () => {
       lastSequence: command.sequence,
       lastOutcome: 'Waiting',
       lastReceiptHash: result.outcome.receiptHash,
-      lastPass: windowClosedObservation,
+      lastPass: { ...windowClosedObservation, executionIssuedAt: command.issuedAt },
     })
     if (projected === undefined || !executionControllerStatusHasCompletion(projected)) {
       throw new Error('completed execution did not project completion evidence')
@@ -1188,7 +1188,7 @@ describe('native execution runtime', () => {
       }
       expect(replay).toEqual({
         completedAt: committed.completedAt,
-        observation: retainedObservation,
+        observation: { ...retainedObservation, executionIssuedAt: command.issuedAt },
         outcome: {
           _tag: committed.lastOutcome,
           receiptHash: committed.lastReceiptHash,

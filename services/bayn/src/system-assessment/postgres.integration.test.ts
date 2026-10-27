@@ -34,6 +34,7 @@ import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { defaultJevProtocolDocument } from '../jev/protocol'
+import { JevResearchPolicy } from '../jev/acceptance'
 import { makeJevObservation } from '../jev/observation'
 import { makeCycleStore } from '../cycle/store/postgres'
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
@@ -611,8 +612,8 @@ postgres('PostgreSQL prospective system qualification', () => {
   })
 
   test('later evidence appends a new assessment receipt and neither source cuts nor receipts can be rewritten', async () => {
-    const { input, verifiedSources } = assessmentFixture()
     const registered = await runtime.runPromise(asApplication(registerFixture(registration())))
+    const { input, verifiedSources } = assessmentFixture(registered.registration)
     const definition = registered.registration.policies.find((p) => p.policy === 'JEV')
     const policy = input.policies.find((p) => p.policy === 'JEV')
     if (definition === undefined || policy === undefined) throw new Error('Missing candidate')
@@ -716,110 +717,128 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect((await runtime.runPromise(readSystemSourceCut(cuts[0] ?? ''))).sourceMaterial).toEqual({ version: 1 })
   })
 
-  test('replay observer receipts bind retained registrations and cuts, reject impossible times and remain append-only', async () => {
-    await runtime.runPromise(
-      asApplication(
-        Effect.gen(function* () {
-          const registered = yield* registerFixture(registration())
-          const definition = registered.registration.policies.find((p) => p.policy === 'JEV')
-          if (definition === undefined) throw new Error('Missing candidate')
-          yield* Effect.sleep('2 millis')
-          const asOf = new Date().toISOString()
-          const cut = yield* persistSystemSourceCut({
-            schemaVersion: 'bayn.system-source-cut.v2',
-            registrationHash: registered.registrationHash,
-            asOf,
-            runtimeConfigurationHash: registered.registration.obligations.runtimeConfigurationHash,
-            financial: [
-              {
-                policy: 'JEV',
-                sourceHash: testHash('financial'),
-                accountBindingHash: definition.accountBindingHash,
-                definitionHash: testHash(definition),
-                cashHistory: null,
-                sessions: [],
-              },
-            ],
-            inference: [],
-            inferenceLedgerEvidenceHash: testHash('inference'),
-            decisions: [],
-            batches: [],
-            mutations: [],
-            fills: [],
-            accountMarks: [],
-            controllerPasses: [],
-            durableObservations: [],
-            sourceMaterial: {},
-            sourceMaterialHash: testHash({}),
-          })
-          yield* Effect.sleep('2 millis')
-          const at = new Date().toISOString()
-          const receipt = yield* Schema.decodeUnknownEffect(ReplayExecutionReceiptSchema)({
-            schemaVersion: 'bayn.replay-execution-receipt.v1',
-            registrationHash: registered.registrationHash,
-            sourceCutHash: cut.sourceCutHash,
-            policyDefinitionHash: testHash(definition),
-            containerId: testHash('container'),
-            daemonIdentityHash: testHash('daemon'),
-            inspectionHash: testHash('inspection'),
-            capturedAt: at,
-            startedAt: at,
-            finishedAt: at,
-            runId: testHash('run'),
-            inputFileHash: testHash('input'),
-            captureFileHash: testHash('capture'),
-            arrivalsFileHash: testHash('arrivals'),
-            reportFileHash: testHash('report bytes'),
-            reportHash: testHash('report'),
-            passLogFileHash: testHash('passes'),
-            image: {
-              schemaVersion: 'bayn.replay-image-membership.v1',
-              repository: 'registry.example.com/bayn',
-              imageDigest: `sha256:${definition.imageDigest}`,
-              platform: 'linux/amd64',
-              manifestDigest: `sha256:${testHash('manifest')}`,
-              configDigest: `sha256:${testHash('config')}`,
-              sourceRevision: definition.sourceRevision,
-              executableSha256: testHash('executable'),
-              dependencyReceiptSha256: testHash('dependencies'),
-              policyDefinitionHash: testHash(definition),
-              assurance: 'REGISTERED_IMAGE_MEMBERSHIP',
-              runnerAuthentication: 'NOT_ESTABLISHED_BY_IMAGE_MEMBERSHIP',
-            },
-            assurance: 'TRUSTED_CONTAINER_DAEMON_OBSERVATION',
-            assumptions: replayExecutionAssumptions,
-          })
-          const sql = yield* PgClient.PgClient
-          const insert = (value: typeof receipt) =>
-            Effect.gen(function* () {
-              const payload = Result.getOrThrow(canonicalJsonV1Result(value))
-              yield* sql`INSERT INTO system_replay_execution_receipts(receipt_hash, registration_hash, source_cut_hash, container_id, report_file_hash, payload_text)
-          VALUES (${testHash(value)}, ${value.registrationHash}, ${value.sourceCutHash}, ${value.containerId}, ${value.reportFileHash}, ${payload})`
+  test.each(Object.values(JevResearchPolicy))(
+    'replay observer receipts for %s bind their registered image, cuts and times and remain append-only',
+    async (selectedPolicy) => {
+      await runtime.runPromise(
+        asApplication(
+          Effect.gen(function* () {
+            const base = registration()
+            const registered = yield* registerFixture(
+              withRegistrationCommitments({
+                ...base,
+                policies: base.policies.map((p) => ({
+                  ...p,
+                  imageDigest: testHash({ image: p.policy }),
+                  sourceRevision: testHash({ source: p.policy }).slice(0, 40),
+                })),
+              }),
+            )
+            const definition = registered.registration.policies.find((p) => p.policy === selectedPolicy)
+            if (definition === undefined) throw new Error('Missing selected policy')
+            yield* Effect.sleep('2 millis')
+            const asOf = new Date().toISOString()
+            const cut = yield* persistSystemSourceCut({
+              schemaVersion: 'bayn.system-source-cut.v2',
+              registrationHash: registered.registrationHash,
+              asOf,
+              runtimeConfigurationHash: registered.registration.obligations.runtimeConfigurationHash,
+              financial: [
+                {
+                  policy: selectedPolicy,
+                  sourceHash: testHash('financial'),
+                  accountBindingHash: definition.accountBindingHash,
+                  definitionHash: testHash(definition),
+                  cashHistory: null,
+                  sessions: [],
+                },
+              ],
+              inference: [],
+              inferenceLedgerEvidenceHash: testHash('inference'),
+              decisions: [],
+              batches: [],
+              mutations: [],
+              fills: [],
+              accountMarks: [],
+              controllerPasses: [],
+              durableObservations: [],
+              sourceMaterial: {},
+              sourceMaterialHash: testHash({}),
             })
-          yield* insert(receipt)
-          expect(yield* readReplayExecutionReceipt(testHash(receipt))).toEqual(receipt)
-          for (const invalid of [
-            { ...receipt, sourceCutHash: testHash('unknown cut') },
-            { ...receipt, registrationHash: testHash('unknown registration') },
-            { ...receipt, startedAt: registered.registration.registeredAt },
-            { ...receipt, finishedAt: registered.registration.registeredAt },
-            { ...receipt, capturedAt: registered.registration.calendar.sessions[0]?.openAt ?? '' },
-            { ...receipt, policyDefinitionHash: testHash('another policy') },
-            { ...receipt, image: { ...receipt.image, imageDigest: `sha256:${testHash('another image')}` } },
-            { ...receipt, image: { ...receipt.image, sourceRevision: 'b'.repeat(40) } },
-          ])
-            expect(Exit.isFailure(yield* Effect.exit(sql.withTransaction(insert(invalid))))).toBe(true)
-          for (const query of [
-            "UPDATE system_replay_execution_receipts SET report_file_hash = repeat('a', 64)",
-            'DELETE FROM system_replay_execution_receipts',
-            'TRUNCATE system_replay_execution_receipts',
-          ])
-            expect(Exit.isFailure(yield* Effect.exit(sql.withTransaction(sql.unsafe(query))))).toBe(true)
-          expect(yield* readReplayExecutionReceipt(testHash(receipt))).toEqual(receipt)
-        }),
-      ),
-    )
-  })
+            yield* Effect.sleep('2 millis')
+            const at = new Date().toISOString()
+            const receipt = yield* Schema.decodeUnknownEffect(ReplayExecutionReceiptSchema)({
+              schemaVersion: 'bayn.replay-execution-receipt.v1',
+              registrationHash: registered.registrationHash,
+              sourceCutHash: cut.sourceCutHash,
+              policyDefinitionHash: testHash(definition),
+              containerId: testHash('container'),
+              daemonIdentityHash: testHash('daemon'),
+              inspectionHash: testHash('inspection'),
+              capturedAt: at,
+              startedAt: at,
+              finishedAt: at,
+              runId: testHash('run'),
+              inputFileHash: testHash('input'),
+              captureFileHash: testHash('capture'),
+              arrivalsFileHash: testHash('arrivals'),
+              reportFileHash: testHash('report bytes'),
+              reportHash: testHash('report'),
+              passLogFileHash: testHash('passes'),
+              image: {
+                schemaVersion: 'bayn.replay-image-membership.v1',
+                repository: 'registry.example.com/bayn',
+                imageDigest: `sha256:${definition.imageDigest}`,
+                platform: 'linux/amd64',
+                manifestDigest: `sha256:${testHash('manifest')}`,
+                configDigest: `sha256:${testHash('config')}`,
+                sourceRevision: definition.sourceRevision,
+                executableSha256: testHash('executable'),
+                dependencyReceiptSha256: testHash('dependencies'),
+                policyDefinitionHash: testHash(definition),
+                assurance: 'REGISTERED_IMAGE_MEMBERSHIP',
+                runnerAuthentication: 'NOT_ESTABLISHED_BY_IMAGE_MEMBERSHIP',
+              },
+              assurance: 'TRUSTED_CONTAINER_DAEMON_OBSERVATION',
+              assumptions: replayExecutionAssumptions,
+            })
+            const sql = yield* PgClient.PgClient
+            const insert = (value: typeof receipt) =>
+              Effect.gen(function* () {
+                const payload = Result.getOrThrow(canonicalJsonV1Result(value))
+                yield* sql`INSERT INTO system_replay_execution_receipts(receipt_hash, registration_hash, source_cut_hash, container_id, report_file_hash, payload_text)
+          VALUES (${testHash(value)}, ${value.registrationHash}, ${value.sourceCutHash}, ${value.containerId}, ${value.reportFileHash}, ${payload})`
+              })
+            yield* insert(receipt)
+            expect(yield* readReplayExecutionReceipt(testHash(receipt))).toEqual(receipt)
+            for (const invalid of [
+              { ...receipt, sourceCutHash: testHash('unknown cut') },
+              { ...receipt, registrationHash: testHash('unknown registration') },
+              { ...receipt, startedAt: registered.registration.registeredAt },
+              { ...receipt, finishedAt: registered.registration.registeredAt },
+              { ...receipt, capturedAt: registered.registration.calendar.sessions[0]?.openAt ?? '' },
+              { ...receipt, policyDefinitionHash: testHash('another policy') },
+              {
+                ...receipt,
+                policyDefinitionHash: testHash('unknown definition'),
+                image: { ...receipt.image, policyDefinitionHash: testHash('unknown definition') },
+              },
+              { ...receipt, image: { ...receipt.image, imageDigest: `sha256:${testHash('another image')}` } },
+              { ...receipt, image: { ...receipt.image, sourceRevision: 'b'.repeat(40) } },
+            ])
+              expect(Exit.isFailure(yield* Effect.exit(sql.withTransaction(insert(invalid))))).toBe(true)
+            for (const query of [
+              "UPDATE system_replay_execution_receipts SET report_file_hash = repeat('a', 64)",
+              'DELETE FROM system_replay_execution_receipts',
+              'TRUNCATE system_replay_execution_receipts',
+            ])
+              expect(Exit.isFailure(yield* Effect.exit(sql.withTransaction(sql.unsafe(query))))).toBe(true)
+            expect(yield* readReplayExecutionReceipt(testHash(receipt))).toEqual(receipt)
+          }),
+        ),
+      )
+    },
+  )
 
   test('controller observations survive projection updates and are immutable', async () => {
     await runtime.runPromise(

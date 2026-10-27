@@ -100,16 +100,27 @@ export const fullBatchLatencyFixture = (
         ...base.calendar.sessions.slice(1),
       ],
     },
-    policies: base.policies.map((p) =>
-      p.policy === 'JEV'
+    policies: base.policies.map((definition) => {
+      const p = {
+        ...definition,
+        inferenceRateCard: {
+          ...definition.inferenceRateCard,
+          rates: definition.inferenceRateCard.rates.map((rate) => ({
+            ...rate,
+            effectiveFrom: '2026-01-01T00:00:00.000Z',
+            effectiveUntil: '2027-01-01T00:00:00.000Z',
+          })),
+        },
+      }
+      return p.policy === 'JEV'
         ? {
             ...p,
             ...registeredRiskFixture(identity.accountId),
             authorityGenerationHash: document.bindings.authorityGenerationHash,
             protocolHash: document.bindings.strategyProtocolHash,
           }
-        : p,
-    ),
+        : p
+    }),
   })
   const at = (ms: number) => new Date(Date.parse(document.createdAt) + ms).toISOString()
   const batchPass = Schema.decodeUnknownSync(ControllerPassEvidenceSchema)({
