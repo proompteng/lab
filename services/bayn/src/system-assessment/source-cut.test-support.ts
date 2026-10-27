@@ -9,7 +9,7 @@ export const emptySourceCutFixture = () => {
   const policy = input.policies.find((p) => p.policy === 'JEV')
   if (candidate === undefined || policy === undefined) throw new Error('Missing candidate fixture')
   const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
-    schemaVersion: 'bayn.system-source-cut.v3',
+    schemaVersion: 'bayn.system-source-cut.v4',
     decisionAdmissions: [],
     orders: [],
     registrationHash: testHash(input.registration),

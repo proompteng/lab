@@ -4,11 +4,10 @@ import { Effect, Result, Schema } from 'effect'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { MutationEventSchema } from '../execution/mutations/model'
 import { bindExecutionEvidence, captureExecutionOrders } from './execution-evidence'
-import { SystemSourceCutSchema } from './source-cut'
+import { SystemSourceCutSchema, type SystemSourceCut } from './source-cut'
 import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
 import { ExecutionEvidenceKind, measureRealism, RealismStatus } from './realism'
-import { OrderStatus, TimeInForce } from '../execution/contracts'
-import { executionQualityFixture } from '../forward-performance/execution-quality.test-support'
+import { OrderSchema, OrderSide, OrderStatus, OrderType, TimeInForce } from '../execution/contracts'
 import { TargetPlanStatus } from '../target-planner'
 import { decisionAdmissionWitnesses } from './decision-admissions'
 import { earliestDurableWitnesses } from './obligation-witnesses'
@@ -18,6 +17,10 @@ import { capturedAccountsFixture } from './source-cut.test-support'
 let document: ExecutionDecisionDocument
 beforeAll(async () => {
   document = await Effect.runPromise(persistenceDocumentFixture)
+})
+const rehashOrder = (receipt: SystemSourceCut['orders'][number]) => ({
+  ...receipt,
+  sourceHash: testHash({ eventId: receipt.eventId, occurredAt: receipt.occurredAt, order: receipt.order }),
 })
 const fixture = () => {
   const { input } = supportedAssessmentFixture()
@@ -31,6 +34,7 @@ const fixture = () => {
   const routing = { startedAt: at(2), requestDispatchedAt: at(3), completedAt: at(5) }
   const fills = [4, 5].map((ms) => ({
     fillId: testHash({ ms }),
+    brokerOrderId: 'parent-order',
     intentId,
     decisionId: document.contentHash,
     sourceHash: testHash({ receipt: ms }),
@@ -58,10 +62,66 @@ const fixture = () => {
       }),
     },
   ]
+  const parent = Schema.decodeUnknownSync(OrderSchema)({
+    schemaVersion: 'bayn.order.v3',
+    accountId: document.bindings.accountId,
+    intentId,
+    brokerOrderId: 'parent-order',
+    clientOrderId: 'parent-client',
+    symbol: target.symbol,
+    side: target.side,
+    orderType: target.orderType,
+    timeInForce: target.timeInForce,
+    quantityAtoms: target.quantityAtoms,
+    filledQuantityAtoms: '2',
+    limitPriceMicros: risk.limitPriceMicros,
+    status: OrderStatus.PartiallyFilled,
+    observedAt: at(7),
+  })
+  const protection = risk.protection
+  const nativeOrders = [
+    parent,
+    ...(protection?._tag === 'Bracket'
+      ? [
+          {
+            ...parent,
+            brokerOrderId: 'profit-order',
+            clientOrderId: 'profit-client',
+            parentBrokerOrderId: parent.brokerOrderId,
+            side: OrderSide.Sell,
+            limitPriceMicros: protection.profitLimitPriceMicros,
+            filledQuantityAtoms: '0',
+            status: OrderStatus.Pending,
+          },
+          {
+            ...parent,
+            brokerOrderId: 'stop-order',
+            clientOrderId: 'stop-client',
+            parentBrokerOrderId: parent.brokerOrderId,
+            side: OrderSide.Sell,
+            orderType: OrderType.StopLimit,
+            limitPriceMicros: protection.stopLimitPriceMicros,
+            stopPriceMicros: protection.stopPriceMicros,
+            filledQuantityAtoms: '0',
+            status: OrderStatus.Pending,
+          },
+        ]
+      : []),
+  ]
   const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
-    schemaVersion: 'bayn.system-source-cut.v3',
+    schemaVersion: 'bayn.system-source-cut.v4',
     decisionAdmissions: [],
-    orders: [],
+    orders: nativeOrders.map((order) =>
+      rehashOrder({
+        intentId,
+        decisionId: document.contentHash,
+        authorityGenerationHash: document.bindings.authorityGenerationHash,
+        eventId: testHash(order.brokerOrderId),
+        sourceHash: testHash('replaced'),
+        occurredAt: at(5),
+        order,
+      }),
+    ),
     registrationHash: testHash('registration'),
     asOf: at(10),
     runtimeConfigurationHash: testHash('config'),
@@ -92,6 +152,7 @@ const fixture = () => {
     kind: ExecutionEvidenceKind.Broker,
     fillId: actual.fillId,
     intentId,
+    orderId: actual.brokerOrderId,
     decisionId: document.contentHash,
     positionOwnerGenerationHash: document.bindings.authorityGenerationHash,
     sourceHash: actual.sourceHash,
@@ -257,6 +318,7 @@ describe('durable execution realism bindings', () => {
     if (plan.status !== TargetPlanStatus.Planned) throw new Error('Expected an admitted order plan')
     const decision: ExecutionDecisionDocument = {
       ...document,
+      deltaRisk: document.deltaRisk.map(({ protection: _protection, ...terms }) => terms),
       targetPlan: {
         ...plan,
         intentTargets: plan.intentTargets.map((target) => ({
@@ -266,18 +328,18 @@ describe('durable execution realism bindings', () => {
         })),
       },
     }
-    const order = {
-      intentId: document.orderedIntentIds[0]!,
-      decisionId: document.contentHash,
-      authorityGenerationHash: document.bindings.authorityGenerationHash,
-      sourceHash: testHash({ terminalOrder: status }),
-      side: value.target.side,
-      quantityAtoms: decision.targetPlan.intentTargets[0]!.quantityAtoms,
-      filledQuantityAtoms: '2',
-      status,
+    const order = rehashOrder({
+      ...value.cut.orders[0]!,
       occurredAt: value.at(6),
-      observedAt: value.at(7),
-    }
+      order: {
+        ...value.cut.orders[0]!.order,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+        quantityAtoms: decision.targetPlan.intentTargets[0]!.quantityAtoms,
+        filledQuantityAtoms: '2',
+        status,
+        observedAt: value.at(7),
+      },
+    })
     return {
       ...value,
       order,
@@ -285,35 +347,33 @@ describe('durable execution realism bindings', () => {
     }
   }
 
-  test('capture binds terminal evidence to the exact forward account, intent, document and retained order hash', () => {
-    const forward = executionQualityFixture(2)
-    const first = forward.executionEvidence[0]!
-    const order = first.terminalOrder!
-    const generation = testHash('captured generation')
-    const captured = Result.getOrThrow(captureExecutionOrders(forward.executionEvidence, first.accountId, generation))
-    expect(captured).toHaveLength(2)
+  test('capture binds complete order evidence to the exact account, intent, document and retained order hash', () => {
+    const f = fixture()
+    const receipt = f.cut.orders[0]!
+    const observation = { eventId: receipt.eventId, occurredAt: receipt.occurredAt, order: receipt.order }
+    const generation = document.bindings.authorityGenerationHash
+    const account = document.bindings.accountId
+    const capture = (observations = [observation], accountId = account, generationHash = generation) =>
+      captureExecutionOrders(f.cut.decisions, observations, accountId, generationHash)
+    const captured = Result.getOrThrow(capture())
+    expect(captured).toHaveLength(1)
     expect(captured[0]).toMatchObject({
-      intentId: first.intentId,
-      decisionId: first.decisionDocumentHash,
+      intentId: receipt.intentId,
+      decisionId: document.contentHash,
       authorityGenerationHash: generation,
-      sourceHash: testHash(order),
-      occurredAt: order.occurredAt,
-      observedAt: order.observedAt,
-      quantityAtoms: order.quantityAtoms,
-      filledQuantityAtoms: order.filledQuantityAtoms,
+      sourceHash: testHash(observation),
+      ...observation,
     })
     for (const changed of [
-      { ...order, accountId: 'another account' },
-      { ...order, intentId: testHash('another intent') },
-      { ...order, symbol: 'another symbol' },
-      { ...order, side: 'BUY' as const },
+      { ...observation.order, accountId: 'another account' },
+      { ...observation.order, intentId: testHash('another intent') },
+      { ...observation.order, symbol: 'another symbol' },
     ])
-      expect(
-        Result.isFailure(captureExecutionOrders([{ ...first, terminalOrder: changed }], first.accountId, generation)),
-      ).toBe(true)
-    expect(Result.isFailure(captureExecutionOrders([first], 'another account', generation))).toBe(true)
-    const { terminalOrder: _order, ...missing } = first
-    expect(Result.getOrThrow(captureExecutionOrders([missing], first.accountId, generation))).toEqual([])
+      expect(Result.isFailure(capture([{ ...observation, order: changed }]))).toBe(true)
+    expect(Result.isFailure(capture([observation, observation]))).toBe(true)
+    expect(Result.isFailure(capture([observation], 'another account'))).toBe(true)
+    expect(Result.isFailure(capture([observation], account, testHash('another generation')))).toBe(true)
+    expect(Result.getOrThrow(capture([]))).toEqual([])
   })
 
   test.each([OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired])(
@@ -330,18 +390,26 @@ describe('durable execution realism bindings', () => {
 
   test('IOC expiry cannot come from a supplied timestamp, open order, unobserved terminal or another intent', () => {
     const { cut, supplied, order, at } = iocFixture()
-    for (const orders of [
-      [],
-      [{ ...order, status: OrderStatus.PartiallyFilled }],
-      [{ ...order, status: OrderStatus.Rejected }],
-      [{ ...order, observedAt: at(11) }],
-      [{ ...order, intentId: testHash('foreign intent') }],
+    for (const { orders, reason } of [
+      { orders: [], reason: 'MISSING_BROKER_ORDER' },
+      {
+        orders: [{ ...order, order: { ...order.order, status: OrderStatus.PartiallyFilled } }],
+        reason: 'MISSING_IOC_TERMINAL_ORDER',
+      },
+      {
+        orders: [{ ...order, order: { ...order.order, status: OrderStatus.Rejected } }],
+        reason: 'MISSING_IOC_TERMINAL_ORDER',
+      },
+      { orders: [{ ...order, order: { ...order.order, observedAt: at(11) } }], reason: 'UNOBSERVED_BROKER_ORDER' },
     ]) {
       const result = Result.getOrThrow(
-        bindExecutionEvidence(supplied, { ...cut, orders }, document.bindings.authorityGenerationHash),
+        bindExecutionEvidence(
+          supplied,
+          { ...cut, orders: orders.map(rehashOrder) },
+          document.bindings.authorityGenerationHash,
+        ),
       )
-      expect(result.missing).toEqual(cut.fills.map((fill) => `MISSING_IOC_TERMINAL_ORDER:${fill.fillId}`))
-      expect(result.sources.has(order.sourceHash)).toBe(false)
+      expect(result.missing).toEqual(cut.fills.map((fill) => `${reason}:${fill.fillId}`))
     }
   })
 
@@ -350,15 +418,23 @@ describe('durable execution realism bindings', () => {
     for (const changed of [
       { ...order, decisionId: testHash('other decision') },
       { ...order, authorityGenerationHash: testHash('stale generation') },
-      { ...order, quantityAtoms: '1' },
-      { ...order, filledQuantityAtoms: '1' },
-      { ...order, side: order.side === 'BUY' ? ('SELL' as const) : ('BUY' as const) },
+      { ...order, intentId: testHash('foreign intent') },
+      { ...order, order: { ...order.order, quantityAtoms: '1' } },
+      { ...order, order: { ...order.order, filledQuantityAtoms: '1' } },
+      {
+        ...order,
+        order: { ...order.order, side: order.order.side === OrderSide.Buy ? OrderSide.Sell : OrderSide.Buy },
+      },
       { ...order, occurredAt: at(8) },
-      { ...order, status: OrderStatus.Filled },
+      { ...order, order: { ...order.order, status: OrderStatus.Filled } },
     ])
       expect(
         Result.isFailure(
-          bindExecutionEvidence(supplied, { ...cut, orders: [changed] }, document.bindings.authorityGenerationHash),
+          bindExecutionEvidence(
+            supplied,
+            { ...cut, orders: [rehashOrder(changed)] },
+            document.bindings.authorityGenerationHash,
+          ),
         ),
       ).toBe(true)
     expect(
@@ -373,7 +449,7 @@ describe('durable execution realism bindings', () => {
     const result = Result.getOrThrow(
       bindExecutionEvidence(
         supplied,
-        { ...cut, orders: [{ ...order, occurredAt: at(3) }] },
+        { ...cut, orders: [rehashOrder({ ...order, occurredAt: at(3) })] },
         document.bindings.authorityGenerationHash,
       ),
     )

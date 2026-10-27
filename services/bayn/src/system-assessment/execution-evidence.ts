@@ -1,45 +1,62 @@
 import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
-import { OrderStatus, TimeInForce } from '../execution/contracts'
+import { OrderSchema, OrderSide, OrderStatus, TimeInForce } from '../execution/contracts'
 import { isSnapshotExecutionMarketDataBinding, reconstructBoundIntradaySnapshot } from '../shadow-decision-contract'
 import { SystemAssessmentError } from './economics'
 import { SystemSourceCutSchema, type SystemSourceCut } from './source-cut'
 import { ExecutionEvidenceKind, type FillRealismSchema } from './realism'
-import type { ForwardPerformanceExecutionEvidence } from '../forward-performance/model'
 import { canonicalHashV1Result } from '../hash'
+import { Sha256Schema, UtcInstantSchema } from '../schemas'
+import { resolveExecutionOrderTerms } from './execution-order-terms'
+
+export const ObservedExecutionOrderSchema = Schema.Struct({
+  eventId: Sha256Schema,
+  occurredAt: UtcInstantSchema,
+  order: OrderSchema,
+})
 
 export const captureExecutionOrders = (
-  executions: readonly ForwardPerformanceExecutionEvidence[],
+  decisions: SystemSourceCut['decisions'],
+  observations: readonly (typeof ObservedExecutionOrderSchema.Type)[],
   accountId: string,
   authorityGenerationHash: string,
 ) =>
   Result.gen(function* () {
+    const owners = new Map<string, { document: SystemSourceCut['decisions'][number]['document']; symbol: string }>()
+    for (const { document } of decisions) {
+      for (const [index, intentId] of document.orderedIntentIds.entries()) {
+        const target = document.targetPlan.intentTargets[index]
+        if (target === undefined || owners.has(intentId))
+          return yield* Result.fail(
+            new SystemAssessmentError({ message: 'Captured order has ambiguous decision ownership' }),
+          )
+        owners.set(intentId, { document, symbol: target.symbol })
+      }
+    }
     const orders = []
-    for (const execution of executions) {
-      const order = execution.terminalOrder
-      if (order === undefined) continue
+    const seen = new Set<string>()
+    for (const observation of observations) {
+      const order = observation.order
+      const owner = order.intentId === undefined ? undefined : owners.get(order.intentId)
       if (
-        execution.accountId !== accountId ||
+        owner === undefined ||
+        owner.document.bindings.accountId !== accountId ||
+        owner.document.bindings.authorityGenerationHash !== authorityGenerationHash ||
         order.accountId !== accountId ||
-        order.intentId !== execution.intentId ||
-        order.symbol !== execution.symbol ||
-        order.side !== execution.side
+        order.symbol !== owner.symbol ||
+        seen.has(order.brokerOrderId)
       )
         return yield* Result.fail(
-          new SystemAssessmentError({ message: 'Captured terminal order identity differs from its execution' }),
+          new SystemAssessmentError({ message: 'Captured order identity differs from its decision or is duplicated' }),
         )
+      seen.add(order.brokerOrderId)
       orders.push({
         intentId: order.intentId,
-        decisionId: execution.decisionDocumentHash,
+        decisionId: owner.document.contentHash,
         authorityGenerationHash,
-        sourceHash: yield* canonicalHashV1Result(order),
-        side: order.side,
-        quantityAtoms: order.quantityAtoms ?? null,
-        filledQuantityAtoms: order.filledQuantityAtoms,
-        status: order.status,
-        occurredAt: order.occurredAt,
-        observedAt: order.observedAt,
+        sourceHash: yield* canonicalHashV1Result(observation),
+        ...observation,
       })
     }
     return yield* Schema.decodeUnknownResult(SystemSourceCutSchema.fields.orders)(orders)
@@ -58,20 +75,38 @@ export const bindExecutionEvidence = (
     const cumulative = new Map<string, bigint>()
     const totals = new Map<string, bigint>()
     for (const fill of cut.fills)
-      totals.set(fill.intentId, (totals.get(fill.intentId) ?? 0n) + BigInt(fill.quantityAtoms))
-    const orders = new Map(cut.orders.map((order) => [order.intentId, order]))
+      totals.set(fill.brokerOrderId, (totals.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityAtoms))
+    const orders = new Map(cut.orders.map((row) => [row.order.brokerOrderId, row]))
     if (orders.size !== cut.orders.length)
-      return yield* Result.fail(new SystemAssessmentError({ message: 'Duplicate retained terminal order' }))
+      return yield* Result.fail(new SystemAssessmentError({ message: 'Duplicate retained broker order' }))
+    const children = new Map<string, SystemSourceCut['orders'][number][]>()
+    for (const row of cut.orders) {
+      if (
+        row.sourceHash !==
+        (yield* canonicalHashV1Result({ eventId: row.eventId, occurredAt: row.occurredAt, order: row.order }))
+      )
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Retained broker order receipt hash differs from its material' }),
+        )
+      const parent = row.order.parentBrokerOrderId
+      if (parent !== undefined) {
+        const group = children.get(parent)
+        if (group === undefined) children.set(parent, [row])
+        else group.push(row)
+      }
+    }
+    const disposed = new Map<string, bigint>()
     for (const actual of cut.fills.toSorted(
       (a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.fillId.localeCompare(b.fillId),
     )) {
-      const quantity = (cumulative.get(actual.intentId) ?? 0n) + BigInt(actual.quantityAtoms)
-      cumulative.set(actual.intentId, quantity)
+      const quantity = (cumulative.get(actual.brokerOrderId) ?? 0n) + BigInt(actual.quantityAtoms)
+      cumulative.set(actual.brokerOrderId, quantity)
       const supplied = suppliedFills.find((f) => f.fillId === actual.fillId)
       if (supplied === undefined) continue
       if (
         supplied.kind !== ExecutionEvidenceKind.Broker ||
         supplied.intentId !== actual.intentId ||
+        supplied.orderId !== actual.brokerOrderId ||
         supplied.decisionId !== actual.decisionId ||
         supplied.fillPriceAtoms !== actual.priceAtoms ||
         supplied.fillQuantityAtoms !== actual.quantityAtoms ||
@@ -94,10 +129,62 @@ export const bindExecutionEvidence = (
         fills.push(supplied)
         continue
       }
-      if (target.side !== actual.side || document.bindings.authorityGenerationHash !== authorityGenerationHash)
+      if (!document.dispatchable || document.bindings.authorityGenerationHash !== authorityGenerationHash)
         return yield* Result.fail(
           new SystemAssessmentError({ message: 'Filled order differs from the admitted decision or generation' }),
         )
+      const receipt = orders.get(actual.brokerOrderId)
+      const root =
+        receipt?.order.parentBrokerOrderId === undefined ? receipt : orders.get(receipt.order.parentBrokerOrderId)
+      if (receipt === undefined || root === undefined) {
+        missing.push(`MISSING_BROKER_ORDER:${actual.fillId}`)
+        fills.push(supplied)
+        continue
+      }
+      const group = children.get(root.order.brokerOrderId) ?? []
+      if ([root, ...group].some((row) => row.order.observedAt > cut.asOf)) {
+        missing.push(`UNOBSERVED_BROKER_ORDER:${actual.fillId}`)
+        fills.push(supplied)
+        continue
+      }
+      const terms = yield* resolveExecutionOrderTerms(actual.brokerOrderId, root, group, document, index)
+      if (terms._tag === 'Missing') {
+        missing.push(`${terms.reason}:${actual.fillId}`)
+        fills.push(supplied)
+        continue
+      }
+      if (terms.order.side !== actual.side)
+        return yield* Result.fail(new SystemAssessmentError({ message: 'Filled side differs from its broker order' }))
+      if ([root, ...group].some((row) => row.occurredAt > row.order.observedAt))
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Broker order occurrence follows its observation' }),
+        )
+      const terminal = [OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired].includes(terms.order.status)
+      if (
+        terminal &&
+        (BigInt(terms.order.filledQuantityAtoms) !== totals.get(actual.brokerOrderId) ||
+          (terms.order.status === OrderStatus.Filled
+            ? terms.order.filledQuantityAtoms !== terms.quantityAtoms
+            : BigInt(terms.order.filledQuantityAtoms) >= BigInt(terms.quantityAtoms)))
+      )
+        return yield* Result.fail(
+          new SystemAssessmentError({ message: 'Terminal broker order differs from its captured fills' }),
+        )
+      if (terms.protection !== null && actual.side === OrderSide.Sell) {
+        const sold = (disposed.get(root.order.brokerOrderId) ?? 0n) + BigInt(actual.quantityAtoms)
+        const available =
+          terms.protection === 'Bracket'
+            ? (cumulative.get(root.order.brokerOrderId) ?? 0n)
+            : BigInt(target.quantityAtoms)
+        if (sold > available)
+          return yield* Result.fail(
+            new SystemAssessmentError({
+              message: 'Protective disposals exceed the owned entry fills or sealed position',
+            }),
+          )
+        disposed.set(root.order.brokerOrderId, sold)
+      }
+      for (const row of [root, ...group]) sources.add(row.sourceHash)
       const binding = document.bindings.executionMarketData
       const rows = document.executionMarketDataRows
       const snapshot =
@@ -127,10 +214,10 @@ export const bindExecutionEvidence = (
         .find((m) => m.event.routing !== undefined)?.event.routing
       let fill = {
         ...supplied,
-        requestedQuantityAtoms: target.quantityAtoms,
+        requestedQuantityAtoms: terms.quantityAtoms,
         cumulativeFilledQuantityAtoms: quantity.toString(),
         quantityStepAtoms: planner.precision.quantityIncrementAtoms,
-        limitPriceAtoms: (BigInt(risk.limitPriceMicros) * 1000n).toString(),
+        limitPriceAtoms: (BigInt(terms.limitPriceMicros) * 1000n).toString(),
         priceTickAtoms: (BigInt(planner.precision.priceIncrementMicros) * 1000n).toString(),
         submissionDeadlineAt:
           [document.submissionCutoffAt, document.expiresAt, risk.evaluation.decision.expiresAt].toSorted()[0] ??
@@ -138,33 +225,19 @@ export const bindExecutionEvidence = (
         supportedCapacityAtoms: null,
         capacitySourceHash: null,
       }
-      if (target.timeInForce === TimeInForce.Day && document.executionSession !== undefined)
-        fill = { ...fill, expiresAt: document.executionSession.executionSession.closeAt }
-      else if (target.timeInForce === TimeInForce.ImmediateOrCancel) {
-        const order = orders.get(actual.intentId)
-        if (
-          order === undefined ||
-          ![OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired].includes(order.status) ||
-          order.observedAt > cut.asOf
-        )
-          missing.push(`MISSING_IOC_TERMINAL_ORDER:${actual.fillId}`)
+      if (terms.order.timeInForce === TimeInForce.Day && document.executionSession !== undefined)
+        fill = {
+          ...fill,
+          expiresAt:
+            [
+              document.executionSession.executionSession.closeAt,
+              ...(terminal ? [receipt.occurredAt] : []),
+            ].toSorted()[0] ?? document.executionSession.executionSession.closeAt,
+        }
+      else if ([TimeInForce.ImmediateOrCancel, TimeInForce.GoodUntilCanceled].includes(terms.order.timeInForce)) {
+        if (!terminal) missing.push(`MISSING_${terms.order.timeInForce}_TERMINAL_ORDER:${actual.fillId}`)
         else {
-          if (
-            order.decisionId !== actual.decisionId ||
-            order.authorityGenerationHash !== authorityGenerationHash ||
-            order.side !== target.side ||
-            order.quantityAtoms !== target.quantityAtoms ||
-            BigInt(order.filledQuantityAtoms) !== totals.get(actual.intentId) ||
-            (order.status === OrderStatus.Filled
-              ? order.filledQuantityAtoms !== target.quantityAtoms
-              : BigInt(order.filledQuantityAtoms) >= BigInt(target.quantityAtoms)) ||
-            order.occurredAt > order.observedAt
-          )
-            return yield* Result.fail(
-              new SystemAssessmentError({ message: 'IOC terminal order differs from the admitted order or fills' }),
-            )
-          sources.add(order.sourceHash)
-          fill = { ...fill, expiresAt: order.occurredAt }
+          fill = { ...fill, expiresAt: receipt.occurredAt }
         }
       } else missing.push(`MISSING_ORDER_EXPIRY:${actual.fillId}`)
       if (routing === undefined || routing.requestDispatchedAt === null)

@@ -2,7 +2,13 @@ import { Result, Schema } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
 import { intradayInstantNanos } from '../market-data/intraday/time'
-import { Sha256Schema, UnsignedMicrosSchema, UtcSourceTimestampSchema, strictParseOptions } from '../schemas'
+import {
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  UnsignedMicrosSchema,
+  UtcSourceTimestampSchema,
+  strictParseOptions,
+} from '../schemas'
 import { SystemAssessmentError } from './economics'
 
 export enum RealismStatus {
@@ -35,6 +41,7 @@ export const DecisionRealismSchema = Schema.Struct({
 export const FillRealismSchema = Schema.Struct({
   fillId: Sha256Schema,
   intentId: Sha256Schema,
+  orderId: StrictNonEmptyStringSchema,
   decisionId: Sha256Schema,
   positionOwnerGenerationHash: Sha256Schema,
   kind: Schema.Enum(ExecutionEvidenceKind),
@@ -112,7 +119,7 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
         }
         const lastQuantity = new Map<string, bigint>()
         const lastTime = new Map<string, bigint>()
-        const intentTerms = new Map<string, typeof FillRealismSchema.Type>()
+        const orderTerms = new Map<string, typeof FillRealismSchema.Type>()
         const usedCapacity = new Map<string, bigint>()
         const capacityBounds = new Map<string, bigint>()
         for (const fill of data.fills) {
@@ -131,11 +138,12 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
           const limit = BigInt(fill.limitPriceAtoms)
           const bid = BigInt(fill.bidPriceAtoms)
           const ask = BigInt(fill.askPriceAtoms)
-          const previousQuantity = lastQuantity.get(fill.intentId) ?? 0n
-          const prior = intentTerms.get(fill.intentId)
+          const previousQuantity = lastQuantity.get(fill.orderId) ?? 0n
+          const prior = orderTerms.get(fill.orderId)
           if (
             prior !== undefined &&
-            (prior.decisionId !== fill.decisionId ||
+            (prior.intentId !== fill.intentId ||
+              prior.decisionId !== fill.decisionId ||
               prior.side !== fill.side ||
               prior.requestedQuantityAtoms !== fill.requestedQuantityAtoms ||
               prior.limitPriceAtoms !== fill.limitPriceAtoms ||
@@ -169,7 +177,7 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
             transmitted >= intradayInstantNanos(fill.submissionDeadlineAt) ||
             filled < transmitted ||
             filled > intradayInstantNanos(fill.expiresAt) ||
-            filled < (lastTime.get(fill.intentId) ?? filled)
+            filled < (lastTime.get(fill.orderId) ?? filled)
           )
             violations.push(`INVALID_EXECUTION_TIMING:${fill.fillId}`)
           if (fill.kind === ExecutionEvidenceKind.Model) {
@@ -188,9 +196,9 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
             if ((fill.side === OrderSide.Buy && price < ask) || (fill.side === OrderSide.Sell && price > bid))
               violations.push(`UNSUPPORTED_PRICE_IMPROVEMENT:${fill.fillId}`)
           }
-          lastQuantity.set(fill.intentId, cumulative)
-          lastTime.set(fill.intentId, filled)
-          intentTerms.set(fill.intentId, fill)
+          lastQuantity.set(fill.orderId, cumulative)
+          lastTime.set(fill.orderId, filled)
+          orderTerms.set(fill.orderId, fill)
         }
         for (const assumption of data.unsupportedAssumptions) missing.push(`UNSUPPORTED_ASSUMPTION:${assumption}`)
         return {

@@ -498,6 +498,7 @@ export const supportedAssessmentFixture = () => {
         fills.push({
           fillId,
           intentId: sha256(`${fillId}:intent`),
+          orderId: sha256(`${fillId}:order`),
           decisionId,
           positionOwnerGenerationHash: definition.authorityGenerationHash,
           kind: ExecutionEvidenceKind.Broker,

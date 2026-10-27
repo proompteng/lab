@@ -26,7 +26,12 @@ import {
   readSystemControllerPasses,
   readSystemDurableObservations,
   readSystemDecisionAdmissions,
+  readSystemExecutionOrders,
 } from './capture'
+import { makePersistenceDocumentFixture } from './decision-persistence.test-support'
+import { OrderStatus } from '../execution/contracts'
+import { bracketEvidenceFixture } from './bracket-evidence.test-support'
+import { bindExecutionEvidence, captureExecutionOrders } from './execution-evidence'
 import { makePostgresMutationStore } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
@@ -610,6 +615,115 @@ postgres('PostgreSQL prospective system qualification', () => {
     expect(later[3]?.cashMicros).toBe('1000000000')
   })
 
+  test('native order capture retains parent and resized protective legs at the exact account, generation and evidence cut', async () => {
+    const account = `replay-${testHash('native-order-capture')}`
+    const document = await Effect.runPromise(makePersistenceDocumentFixture(account))
+    const f = bracketEvidenceFixture(document)
+    const native = nativeJevFixture(JevPurpose.Entry, undefined, account)
+    const intentId = document.orderedIntentIds[0]
+    const sessionDate = document.executionSession?.executionSession.date
+    const risk = document.deltaRisk[0]
+    if (intentId === undefined || sessionDate === undefined || risk === undefined)
+      throw new Error('Missing native order source')
+    const scope = {
+      accountId: account,
+      generationHash: document.bindings.authorityGenerationHash,
+      firstSession: sessionDate,
+      lastSession: sessionDate,
+      asOf: f.cut.asOf,
+    }
+    const rows = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const observedAt = native.portfolio.brokerState.reconciliation.reconciledAt
+        yield* sql`INSERT INTO simulated_execution_clocks(account_id, source_manifest_hash, observed_at)
+        VALUES (${account}, ${testHash('native-order-capture-clock')}, ${observedAt})`
+        yield* sql`INSERT INTO authority_generations(generation_hash, schema_version, maximum, authority_version, activated_at)
+          VALUES (${scope.generationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${observedAt})`
+        const cycles = yield* makeCycleStore({ now: sql`${observedAt}::timestamptz` })
+        yield* cycles.acquire(native.draft, observedAt)
+        yield* cycles.activate(native.draft.identity.cycleId, observedAt)
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${document.createdAt} WHERE account_id = ${account}`
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions(cycle_id, schema_version, document, created_at)
+            VALUES (${document.bindings.cycleId}, ${document.schemaVersion}, ${sql.json(document)}, ${document.createdAt})`
+            yield* sql`UPDATE autonomous_cycles SET snapshot_id = ${document.bindings.snapshotId},
+            decision_hash = ${document.contentHash}, state_version = state_version + 1, updated_at = ${document.createdAt}
+            WHERE cycle_id = ${document.bindings.cycleId}`
+          }),
+        )
+        yield* sql`INSERT INTO intents(intent_id, schema_version, account_id, client_order_id, symbol, side,
+        order_type, time_in_force, quantity_atoms, notional_limit_micros, limit_price_micros, state, created_at,
+        updated_at, cycle_id, strategy_name, decision_hash, policy_hash, authority_generation_hash, protection)
+        VALUES (${intentId}, 'bayn.execution-intent.v5', ${account}, ${f.parent.clientOrderId}, ${f.parent.symbol}, 'BUY',
+          'LIMIT', 'DAY', ${f.parent.quantityAtoms}, ${risk.notionalLimitMicros}, ${risk.limitPriceMicros}, 'PLANNED',
+          ${document.createdAt}, ${document.createdAt}, ${document.bindings.cycleId}, 'jev',
+          ${document.bindings.strategyDecisionHash}, ${document.bindings.policyHash}, ${scope.generationHash}, ${sql.json(f.terms)})`
+        const stop = f.cut.orders[2]
+        const parent = f.cut.orders[0]
+        if (stop === undefined || parent === undefined) throw new Error('Missing native parent/stop observation')
+        const observations = [
+          {
+            ...stop,
+            eventId: testHash('older stop observation'),
+            occurredAt: f.at(500),
+            order: {
+              ...stop.order,
+              quantityAtoms: f.parent.quantityAtoms,
+              filledQuantityAtoms: '0',
+              status: OrderStatus.Pending,
+              observedAt: f.at(600),
+            },
+          },
+          ...f.cut.orders,
+          {
+            ...parent,
+            eventId: testHash('future parent observation'),
+            occurredAt: f.at(11000),
+            order: { ...parent.order, observedAt: f.at(12000) },
+          },
+        ]
+        for (const [sequence, row] of observations.entries()) {
+          const order = row.order
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+          source_event_id,source_sequence,occurred_at,observed_at)
+          VALUES(${row.eventId},'bayn.paper-broker-event.v1',${row.eventId},'ORDER','ALPACA',${account},
+            ${row.eventId},${sequence},${row.occurredAt},${order.observedAt})`
+              yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
+          symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,
+          parent_broker_order_id,status)
+          VALUES(${row.eventId},${account},${order.schemaVersion},${order.brokerOrderId},${order.clientOrderId},${intentId},
+            ${order.symbol},${order.side},${order.orderType},${order.timeInForce},${order.quantityAtoms},${order.filledQuantityAtoms},
+            ${order.limitPriceMicros},${order.stopPriceMicros ?? null},${order.parentBrokerOrderId ?? null},${order.status})`
+            }),
+          )
+        }
+        return yield* readSystemExecutionOrders(scope)
+      }),
+    )
+    expect(rows.map((row) => row.order.brokerOrderId)).toEqual(['native-parent', 'native-profit', 'native-stop'])
+    const captured = Result.getOrThrow(captureExecutionOrders(f.cut.decisions, rows, account, scope.generationHash))
+    expect(captured).toEqual(f.cut.orders)
+    expect(
+      Result.getOrThrow(bindExecutionEvidence(f.supplied, { ...f.cut, orders: captured }, scope.generationHash))
+        .missing,
+    ).toEqual([])
+    for (const changed of [
+      { ...scope, accountId: 'foreign-account' },
+      { ...scope, generationHash: testHash('foreign-generation') },
+      { ...scope, firstSession: '2026-09-08', lastSession: '2026-09-08' },
+      { ...scope, asOf: document.createdAt },
+    ])
+      expect(await runtime.runPromise(readSystemExecutionOrders(changed))).toEqual([])
+    const later = await runtime.runPromise(readSystemExecutionOrders({ ...scope, asOf: f.at(12000) }))
+    expect(later.find((row) => row.order.brokerOrderId === 'native-parent')?.eventId).toBe(
+      testHash('future parent observation'),
+    )
+  })
+
   test('later evidence appends a new assessment receipt and neither source cuts nor receipts can be rewritten', async () => {
     const registered = await runtime.runPromise(asApplication(registerFixture(registration())))
     const { input, verifiedSources } = assessmentFixture(registered.registration)
@@ -622,7 +736,7 @@ postgres('PostgreSQL prospective system qualification', () => {
       await runtime.runPromise(Effect.sleep('10 millis'))
       const asOf = new Date().toISOString()
       const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
-        schemaVersion: 'bayn.system-source-cut.v3',
+        schemaVersion: 'bayn.system-source-cut.v4',
         decisionAdmissions: [],
         orders: [],
         registrationHash: registered.registrationHash,
@@ -740,7 +854,7 @@ postgres('PostgreSQL prospective system qualification', () => {
             yield* Effect.sleep('2 millis')
             const asOf = new Date().toISOString()
             const cut = yield* persistSystemSourceCut({
-              schemaVersion: 'bayn.system-source-cut.v3',
+              schemaVersion: 'bayn.system-source-cut.v4',
               decisionAdmissions: [],
               orders: [],
               registrationHash: registered.registrationHash,

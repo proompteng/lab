@@ -5,8 +5,15 @@ import { Effect, Schema } from 'effect'
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { InferenceCostEvidenceSchema } from '../inference-costs'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
-import { IsoDateSchema, Sha256Schema, UnsignedMicrosSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { OrderStatus } from '../execution/contracts'
+import {
+  IsoDateSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  UnsignedMicrosSchema,
+  UtcInstantSchema,
+  strictParseOptions,
+} from '../schemas'
+import { OrderSchema } from '../execution/contracts'
 import { MutationEventSchema } from '../execution/mutations/model'
 import { CapturedFinancialEvidenceSchema } from './forward-evidence'
 import { SystemAssessmentError } from './economics'
@@ -15,7 +22,7 @@ import { JevBatchPlanSchema, JevBatchResultSchema } from '../jev/batch'
 import { JevObservationSchema } from '../jev/observation-contract'
 
 export const SystemSourceCutSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.system-source-cut.v3'),
+  schemaVersion: Schema.Literal('bayn.system-source-cut.v4'),
   registrationHash: Sha256Schema,
   asOf: UtcInstantSchema,
   runtimeConfigurationHash: Sha256Schema,
@@ -48,6 +55,7 @@ export const SystemSourceCutSchema = Schema.Struct({
   fills: Schema.Array(
     Schema.Struct({
       fillId: Sha256Schema,
+      brokerOrderId: StrictNonEmptyStringSchema,
       intentId: Sha256Schema,
       decisionId: Sha256Schema,
       sourceHash: Sha256Schema,
@@ -63,12 +71,9 @@ export const SystemSourceCutSchema = Schema.Struct({
       decisionId: Sha256Schema,
       authorityGenerationHash: Sha256Schema,
       sourceHash: Sha256Schema,
-      side: Schema.Literals(['BUY', 'SELL']),
-      quantityAtoms: Schema.NullOr(UnsignedMicrosSchema),
-      filledQuantityAtoms: UnsignedMicrosSchema,
-      status: Schema.Enum(OrderStatus),
+      eventId: Sha256Schema,
+      order: OrderSchema,
       occurredAt: UtcInstantSchema,
-      observedAt: UtcInstantSchema,
     }),
   ),
   accountMarks: Schema.Array(AccountMarkSchema),

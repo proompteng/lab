@@ -28,7 +28,44 @@ import { measureFullBatchLatency } from './full-batch-latency'
 import { sourceFitsRegisteredSession } from './decision-work'
 import { prepareValuationInventory, requiredValuationTimes } from './valuation'
 import { executableBid, readValuationQuotes } from './valuation-quotes'
-import { captureExecutionOrders } from './execution-evidence'
+import { captureExecutionOrders, ObservedExecutionOrderSchema } from './execution-evidence'
+
+export const readSystemExecutionOrders = (scope: {
+  readonly accountId: string
+  readonly generationHash: string
+  readonly firstSession: string
+  readonly lastSession: string
+  readonly asOf: string
+}) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    return yield* Schema.decodeUnknownEffect(Schema.Array(ObservedExecutionOrderSchema))(
+      yield* sql`
+      SELECT DISTINCT ON (observed.broker_order_id)
+        event.event_id AS "eventId",
+        to_char(event.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "occurredAt",
+        jsonb_strip_nulls(jsonb_build_object(
+          'schemaVersion', observed.schema_version, 'accountId', observed.account_id,
+          'brokerOrderId', observed.broker_order_id, 'parentBrokerOrderId', observed.parent_broker_order_id,
+          'clientOrderId', observed.client_order_id, 'intentId', observed.intent_id,
+          'symbol', observed.symbol, 'side', observed.side, 'orderType', observed.order_type,
+          'timeInForce', observed.time_in_force, 'quantityAtoms', observed.quantity_atoms::text,
+          'notionalMicros', observed.notional_micros::text, 'filledQuantityAtoms', observed.filled_quantity_atoms::text,
+          'limitPriceMicros', observed.limit_price_micros::text, 'stopPriceMicros', observed.stop_price_micros::text,
+          'status', observed.status,
+          'observedAt', to_char(event.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        )) AS "order"
+      FROM orders observed JOIN broker_events event ON event.event_id = observed.event_id
+        JOIN intents intent ON intent.intent_id = observed.intent_id
+        JOIN autonomous_cycles cycle ON cycle.cycle_id = intent.cycle_id
+      WHERE observed.account_id = ${scope.accountId} AND intent.account_id = ${scope.accountId}
+        AND cycle.account_id = ${scope.accountId}
+        AND intent.authority_generation_hash = ${scope.generationHash}
+        AND cycle.execution_session_date BETWEEN ${scope.firstSession}::date AND ${scope.lastSession}::date
+        AND event.observed_at <= ${scope.asOf}::timestamptz
+      ORDER BY observed.broker_order_id, event.source_sequence DESC, event.event_id COLLATE "C" DESC`,
+    )
+  })
 
 export const readSystemCashObservations = (
   accountId: string,
@@ -466,6 +503,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               Effect.gen(function* () {
                 return {
                   fillId: fill.brokerEventId,
+                  brokerOrderId: fill.brokerOrderId,
                   intentId: fill.intentId,
                   decisionId: execution.decisionDocumentHash,
                   sourceHash: yield* Effect.fromResult(canonicalHashV1Result(fill)),
@@ -476,12 +514,15 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
                 }
               }),
           )
+          const observedOrders = yield* readSystemExecutionOrders({
+            accountId: identity.accountId,
+            generationHash: candidate.authorityGenerationHash,
+            firstSession: first.sessionDate,
+            lastSession: last.sessionDate,
+            asOf,
+          })
           const orders = yield* Effect.fromResult(
-            captureExecutionOrders(
-              forward.executionEvidence ?? [],
-              identity.accountId,
-              candidate.authorityGenerationHash,
-            ),
+            captureExecutionOrders(decisions, observedOrders, identity.accountId, candidate.authorityGenerationHash),
           )
           const sourceMaterial = {
             runtimeConfiguration,
@@ -496,7 +537,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             decisionAdmissions,
           }
           return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema)({
-            schemaVersion: 'bayn.system-source-cut.v3',
+            schemaVersion: 'bayn.system-source-cut.v4',
             decisionAdmissions,
             registrationHash,
             asOf,

@@ -20,7 +20,7 @@ const evidence = () => {
   if (candidate === undefined) throw new Error('Missing candidate')
   const bytes = fixture.input()
   const cut: SystemSourceCut = {
-    schemaVersion: 'bayn.system-source-cut.v3',
+    schemaVersion: 'bayn.system-source-cut.v4',
     decisionAdmissions: [],
     orders: [],
     registrationHash: testHash(input.registration),

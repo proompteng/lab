@@ -19,6 +19,7 @@ import { cashFlowEvidenceAssumptions } from './cash-flows'
 import { costAttributionRule } from './cost-attribution'
 import { validateOperatingCostWindow } from '../operating-cost-window'
 import { decisionPersistenceAssumptions } from './decision-admissions'
+import { nativeOrderEvidenceAssumptions } from './execution-order-terms'
 
 export enum ProfitabilityStatus {
   Profitable = 'PROFITABLE',
@@ -336,6 +337,7 @@ export const evaluateSystemAssessment = (input: unknown, verifiedSources: Readon
       edge: { status: edge, confidence, statisticalAssumptions: registration.statisticalAssumptions },
       cashFlowEvidenceAssumptions,
       decisionPersistenceAssumptions,
+      nativeOrderEvidenceAssumptions,
       costAttributionRule,
       costAllocationPlans: registration.costAllocationPlans,
       executionProvenance: {

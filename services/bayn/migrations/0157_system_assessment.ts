@@ -39,7 +39,7 @@ export default Effect.gen(function* () {
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CHECK (source_cut_hash = encode(sha256(convert_to(payload_text, 'UTF8')), 'hex')),
     CHECK (jsonb_typeof(payload_text::jsonb) = 'object'
-      AND payload_text::jsonb->>'schemaVersion' IS NOT DISTINCT FROM 'bayn.system-source-cut.v3'
+      AND payload_text::jsonb->>'schemaVersion' IS NOT DISTINCT FROM 'bayn.system-source-cut.v4'
       AND payload_text::jsonb->>'registrationHash' IS NOT DISTINCT FROM registration_hash
       AND (payload_text::jsonb->>'asOf')::timestamptz IS NOT DISTINCT FROM as_of)
   )`

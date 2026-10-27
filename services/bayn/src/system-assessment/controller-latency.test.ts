@@ -50,7 +50,7 @@ const fixture = () => {
     })
   })
   const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
-    schemaVersion: 'bayn.system-source-cut.v3',
+    schemaVersion: 'bayn.system-source-cut.v4',
     decisionAdmissions: [],
     orders: [],
     registrationHash: testHash(registration),

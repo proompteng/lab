@@ -79,7 +79,21 @@ or reliability. The capture checks each account's risk, source, image, strategy,
 IOC fills bind expiry to the retained broker order's filled, canceled, or expired terminal instant. Capture retains
 the order identity, quantities, receipt hash, occurrence time, and observation time. Unknown, still-open, or
 not-yet-observed orders cannot supply expiry; conflicting identities or fill totals reject the binding. DAY orders
-retain the registered session close as expiry.
+expire at the earlier of the registered session close and a retained terminal instant. GTC orders require a retained
+terminal instant before their expiry is established.
+
+Source-cut v4 retains the complete normalized broker order and each fill's broker order ID. Native bracket children
+retain the parent intent while keeping separate order identities, limits, requested quantities, and cumulative fills.
+The binder reproduces each profit or stop leg from the sealed native protection plan and the recorded parent/child
+relationship. It rejects changed prices, ownership or leg identities and checks the shared disposal budget against
+entry fills already observed in time order. Broker-adjusted residual quantities can be fractional; the submitted
+bracket parent must retain its whole-share quantity. Missing parents, siblings, routing or observations remain
+incomplete. The result exposes the broker observation and normalization assumptions explicitly.
+
+Separately armed replacement OCO and standalone-stop intents require their own retained intent, risk approval,
+ownership and timing binding. They are not members of the entry decision's original intent list. Capture rejects
+unbound order owners; the compiled producer probe exposed this remaining integration boundary. A valid bracket
+comparison does not establish replacement-protection coverage.
 
 `bindSystemSourceCut` constructs session economics and operational obligations from that cut. Cash and inventory
 reconcile against fills, cost basis, funding, passive yield, and paid operating expenses. Opening, closing, minute,
@@ -116,7 +130,7 @@ Consumed rows leave the queue; subsequent controller updates do not rescan histo
 Reconciliation correctness retains its result at completion. Later submissions do not invalidate a successful
 preflight reconciliation; their freshness and recovery requirements remain separate obligations.
 
-Source-cut v3 also captures immutable decision-admission receipts. A submission trigger records a receipt only when
+The source cut also captures immutable decision-admission receipts. A submission trigger records a receipt only when
 the decision source is already committed and its account, generation, strategy, policy, cycle, and ordered intent
 match the admitted mutation. Mutation admission rejects ambient transactions and commits before broker routing.
 The source binder joins that receipt to the producer's actual routing event to establish an upper bound on decision

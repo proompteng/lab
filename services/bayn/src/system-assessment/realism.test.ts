@@ -26,6 +26,7 @@ const fill = (override: Partial<typeof FillRealismSchema.Type> = {}): typeof Fil
   side: OrderSide.Buy,
   requestedQuantityAtoms: '100',
   cumulativeFilledQuantityAtoms: '40',
+  orderId: id(40),
   fillQuantityAtoms: '40',
   quantityStepAtoms: '1',
   fillPriceAtoms: '1010000',
@@ -140,7 +141,7 @@ describe('execution realism', () => {
     expect(Result.getOrThrow(measureRealism(evidence([fill(), second]), sources)).violations).toContain(
       `UNSUPPORTED_FILL:${id(31)}`,
     )
-    const anotherOrder = { ...second, intentId: id(41), cumulativeFilledQuantityAtoms: '40' }
+    const anotherOrder = { ...second, intentId: id(41), orderId: id(42), cumulativeFilledQuantityAtoms: '40' }
     expect(Result.getOrThrow(measureRealism(evidence([fill(), anotherOrder]), sources)).violations).toContain(
       `UNSUPPORTED_FILL:${id(31)}`,
     )
