@@ -39,7 +39,10 @@ import {
   makeChartDecisionsRequest as makeFundedChartDecisionsRequest,
   chartAssessmentsFromResponse as fundedChartAssessmentsFromResponse,
 } from './retained-funded-chart-questions'
-import { entryJudgmentPolicy, makeEntryJudgmentRequest } from './entry-questions'
+import {
+  retainedFundedEntryJudgmentPolicy as entryJudgmentPolicy,
+  makeRetainedFundedEntryJudgmentRequest as makeEntryJudgmentRequest,
+} from './retained-funded-entry-questions'
 
 export const retainedSequentialQuestionPolicyHash = Result.getOrThrow(
   canonicalHashV1Result({ chart: retainedChartQuestionPolicy, jev: retainedEntryJudgmentPolicy }),

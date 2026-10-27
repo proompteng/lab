@@ -1,13 +1,53 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError, JevFailure } from './contract'
-import { decodeEntryHandoff } from './entry-inference-evidence'
+import { decodeEntryHandoff, decodeStagedEntryHandoff, verifyEntryCompletion } from './entry-inference-evidence'
 import { type EntryHandoff } from './entry-inference'
-import { decodeJevEvaluationRequest, decodeJevEvaluationReceipt, JevOutcome } from './evidence'
+import {
+  decodeJevEvaluationRequest,
+  decodeJevEvaluationReceipt,
+  JevOutcome,
+  JevEvaluationRequestSchema,
+  JevEvaluationReceiptSchema,
+} from './evidence'
 import { decodeJevResolution } from './resolution'
-import { decodeStagedCheckpoint, type StagedCheckpoint } from './staged-checkpoint'
+import { decodeStagedCheckpointForRequest, type StagedCheckpoint } from './staged-checkpoint'
 import type { DecisionsUsageSchema } from './decisions'
+import { EntryInferenceInputSchema, verifyEntryInferenceSource } from './entry-inference-input'
+import { jevProtocolSchemaForQuestionPolicy } from './protocol'
+import { stagedChartQuestionPolicy } from './staged-chart-questions'
+import {
+  retainedFundedEntryJudgmentPolicy,
+  makeRetainedFundedEntryJudgmentRequest,
+} from './retained-funded-entry-questions'
+import { strictParseOptions } from '../schemas'
+
+export const retainedStagedQuestionPolicyHash = Result.getOrThrow(
+  canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: retainedFundedEntryJudgmentPolicy }),
+)
+const RetainedRequest = Schema.Struct({
+  ...JevEvaluationRequestSchema.fields,
+  request: Schema.Struct({
+    ...EntryInferenceInputSchema.fields,
+    protocol: jevProtocolSchemaForQuestionPolicy(retainedStagedQuestionPolicyHash, 'bayn.jev.protocol.v26'),
+  }),
+})
+const decodeRetainedRequest = (input: unknown) =>
+  Result.gen(function* () {
+    const request = yield* Schema.decodeUnknownResult(RetainedRequest, strictParseOptions)(input)
+    const { requestId, ...material } = request
+    const prepared = yield* verifyEntryInferenceSource(request.request)
+    if (
+      requestId !== (yield* canonicalHashV1Result(material)) ||
+      request.requestHash !== prepared.requestHash ||
+      request.symbol !== request.request.chartSource.symbol ||
+      request.request.chartSource.windowEndAt > request.observedAt ||
+      Date.parse(request.expiresAt) - Date.parse(request.observedAt) !== request.request.protocol.inferenceValidityMs
+    )
+      return yield* invalid('Retained staged request identity or original validity interval does not reproduce')
+    return request
+  })
 
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
 export const verifyStagedCheckpointHandoff = (checkpoint: StagedCheckpoint, handoff: EntryHandoff) =>
@@ -50,7 +90,8 @@ export interface VisualCostStage {
   readonly claimHash: string | null
   readonly terminalHash: string | null
   readonly skipHash: string | null
-  readonly startedAt: string | undefined
+  readonly tariffAt: string | undefined
+  readonly recordedStartedAt: string | undefined
   readonly outcome: 'UNKNOWN' | 'NOT_DISPATCHED' | 'RECEIVED' | 'REJECTED'
   readonly usage: typeof DecisionsUsageSchema.Type | null
   readonly handoffHash: string | null
@@ -68,22 +109,64 @@ export const readStagedInferenceCostEvidence = (row: {
   readonly stagedCheckpoint: unknown
 }) =>
   Result.gen(function* () {
-    const request = yield* decodeJevEvaluationRequest(row.request)
-    const checkpoint = yield* decodeStagedCheckpoint(row.request, row.stagedCheckpoint)
-    const receipt = row.receipt === null ? null : yield* decodeJevEvaluationReceipt(request, row.receipt)
-    const resolution = row.resolution === null ? null : yield* decodeJevResolution(request, receipt, row.resolution)
+    const identity = yield* Schema.decodeUnknownResult(
+      Schema.Struct({
+        request: Schema.Struct({ protocol: Schema.Struct({ entryQuestionPolicyHash: Schema.String }) }),
+      }),
+    )(row.request)
+    const retained = identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
+    const request = yield* retained ? decodeRetainedRequest(row.request) : decodeJevEvaluationRequest(row.request)
+    const checkpoint = yield* decodeStagedCheckpointForRequest(request, row.stagedCheckpoint)
+    const source = {
+      requestId: request.requestId,
+      input: request.request,
+      observedAt: request.observedAt,
+      expiresAt: request.expiresAt,
+    }
     const handoff =
       row.handoff === null
         ? null
-        : yield* decodeEntryHandoff(
-            {
-              requestId: request.requestId,
-              input: request.request,
-              observedAt: request.observedAt,
-              expiresAt: request.expiresAt,
-            },
-            row.handoff,
-          )
+        : yield* retained
+            ? decodeStagedEntryHandoff(source, row.handoff, request.requestHash, makeRetainedFundedEntryJudgmentRequest)
+            : decodeEntryHandoff(source, row.handoff)
+    const receipt =
+      row.receipt === null
+        ? null
+        : yield* retained
+            ? Schema.decodeUnknownResult(JevEvaluationReceiptSchema, strictParseOptions)(row.receipt)
+            : decodeJevEvaluationReceipt(request, row.receipt)
+    if (retained && receipt !== null) {
+      const { receiptHash, ...material } = receipt
+      if (
+        receiptHash !== (yield* canonicalHashV1Result(material)) ||
+        receipt.requestId !== request.requestId ||
+        receipt.startedAt < request.observedAt ||
+        receipt.completedAt < receipt.startedAt
+      )
+        return yield* invalid('Retained staged receipt identity or original clocks do not reproduce')
+      if (receipt.outcome.status === JevOutcome.Completed) {
+        const { handoff: completedHandoff, ...completion } = receipt.outcome.completion
+        if (
+          handoff === null ||
+          (yield* canonicalHashV1Result(completedHandoff)) !== (yield* canonicalHashV1Result(handoff))
+        )
+          return yield* invalid('Retained staged completion differs from its committed handoff')
+        yield* verifyEntryCompletion(source, completion, handoff)
+        if (
+          completion.completedAt > receipt.completedAt ||
+          handoff.recordedAt < receipt.startedAt ||
+          (handoff.disposition.status !== 'VISUAL_FAILED' &&
+            handoff.disposition.status !== 'SOURCE_INFEASIBLE' &&
+            handoff.disposition.visual.startedAt < receipt.startedAt)
+        )
+          return yield* invalid('Retained staged receipt precedes its provider evidence')
+      } else if (
+        receipt.outcome.failure === JevFailure.NotDispatched &&
+        (receipt.startedAt >= request.expiresAt || receipt.completedAt < request.expiresAt)
+      )
+        return yield* invalid('Retained staged non-dispatch does not prove original expiry')
+    }
+    const resolution = row.resolution === null ? null : yield* decodeJevResolution(request, receipt, row.resolution)
     if (handoff !== null) yield* verifyStagedCheckpointHandoff(checkpoint, handoff)
     if (
       receipt?.outcome.status === JevOutcome.Completed &&
@@ -106,7 +189,8 @@ export const readStagedInferenceCostEvidence = (row: {
         claimHash: claim?.claimHash ?? null,
         terminalHash: terminal?.terminalHash ?? null,
         skipHash: skip?.skipHash ?? null,
-        startedAt: outcome?.status === 'RECEIVED' ? outcome.inference.startedAt : claim?.claimedAt,
+        tariffAt: outcome?.status === 'RECEIVED' ? outcome.inference.startedAt : claim?.claimedAt,
+        recordedStartedAt: outcome?.status === 'RECEIVED' ? outcome.inference.startedAt : undefined,
         outcome: zero
           ? 'NOT_DISPATCHED'
           : usage === null

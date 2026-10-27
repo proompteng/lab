@@ -122,14 +122,15 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
   expect(factors?.status).toBe('AVAILABLE')
   if (factors?.status !== 'AVAILABLE') throw new Error('Missing native factors')
   expect(Object.keys(factors.answers)).toEqual([
-    'support_recovery_confirmed',
-    'support_recovery_stop_invalidates',
-    'support_recovery_target_obstructed',
-    'base_breakout_confirmed',
-    'base_breakout_stop_invalidates',
-    'base_breakout_target_obstructed',
+    'equity_support_recovery_confirmed',
+    'equity_support_recovery_stop_invalidates',
+    'equity_base_breakout_confirmed',
+    'equity_base_breakout_stop_invalidates',
   ])
-  expect(factors.answers['support_recovery_confirmed']).toMatchObject({ type: 'noul', noul: expect.closeTo(0.1) })
+  expect(factors.answers['equity_support_recovery_confirmed']).toMatchObject({
+    type: 'noul',
+    noul: expect.closeTo(0.1),
+  })
 })
 
 test('factor outcomes retain unselected candidates and unresolved labels in each denominator', () => {
@@ -159,7 +160,7 @@ test('factor outcomes retain unselected candidates and unresolved labels in each
     meanExecutionReturnBpsAmongResolved: null,
   })
   expect(
-    summaries.find((row) => row.dimension === 'symbol' && row.factor === 'support_recovery_confirmed'),
+    summaries.find((row) => row.dimension === 'symbol' && row.factor === 'equity_support_recovery_confirmed'),
   ).toMatchObject({
     value: 'AAPL',
     bin: '0..0.25',

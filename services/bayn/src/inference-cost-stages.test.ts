@@ -148,6 +148,10 @@ test('prices both providers and posts separate deterministic expenses for one pa
   expect(result.providerRequestCount).toBe(2)
   expect(result.knownEstimatedCostPicoUsd).toBe('18400000')
   expect(result.estimatedTotalCostMicros).toBe('19')
+  expect(result.requestTimings).toEqual([
+    { requestKey: request.requestId, startedAt: request.observedAt, estimatedCostPicoUsd: '8400000' },
+    { requestKey: `${request.requestId}:CHART`, startedAt: request.observedAt, estimatedCostPicoUsd: '10000000' },
+  ])
   const quotes = Result.getOrThrow(makeInferenceExpenseQuotes(value, inferenceExpenseRateCard))
   expect(quotes).toHaveLength(2)
   expect(Result.isFailure(makeInferenceExpenseQuote(value, inferenceExpenseRateCard))).toBe(true)
@@ -157,6 +161,30 @@ test('prices both providers and posts separate deterministic expenses for one pa
   expect(new Set(plan.transfers.map((row) => row.id)).size).toBe(2)
   expect(plan.transfers.reduce((sum, row) => sum + row.amount, 0n)).toBe(18_400_000n)
   expect(result.invoiceReconciled).toBe(false)
+})
+
+test('metered failures retain their cost without inventing a provider start time', () => {
+  const value = source({
+    ...completion,
+    jev: {
+      status: 'FAILED',
+      failure: JevFailure.Response,
+      httpStatus: 429,
+      responseHash: null,
+      usage: { input_tokens: 200, output_tokens: 0 },
+    },
+  })
+  const result = report(value)
+  expect(result.estimatedTotalCostMicros).toBe('19')
+  expect(result.requestTimings.find((timing) => timing.requestKey === request.requestId)).toEqual({
+    requestKey: request.requestId,
+    startedAt: null,
+    estimatedCostPicoUsd: '8400000',
+  })
+  const quotes = Result.getOrThrow(makeInferenceExpenseQuotes(value, inferenceExpenseRateCard))
+  expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers.map((row) => row.amount)).toEqual(
+    expect.arrayContaining([10000000n, 8400000n]),
+  )
 })
 
 test('retains known chart charges and explicit unknown Jev usage after a provider failure', () => {

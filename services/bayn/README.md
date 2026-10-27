@@ -53,20 +53,21 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The replacement source uses `jev` protocol v25, entry state v22, batch v7 and entry target v7. It retains the
+The replacement source uses `jev` protocol v26, entry state v22, batch v7 and entry target v7. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
 
-Entry input v4 retains relative volume, including fractional crypto quantities and an empty histogram for all-zero windows.
+Entry input v5 retains relative volume, including fractional crypto quantities and an empty histogram for all-zero windows.
 Chart transport first asks presence, support/resistance anchors and the base end. Only an authenticated selected end
 can produce a second OpenAI request containing its single conditional base-start question. This extra billable
 `BASE_START` stage shares the original ten-second deadline with CHART and Jev; no timeout or transport cap is raised.
 Each start choice covers all earlier source bars and an explicit no-base option. Ends must leave at least two base bars
 and one newer completed bar. An unused branch's refusal cannot veto a supported proposal.
-Migration 152 admits only outer request v3, input v4, handoff v3 and the exact v25 policy for new execution.
-Current inference rejects retained inputs v1–v3. Migration 151 and its historical checkpoint identities remain unchanged.
+Migration 154 admits only outer request v3, input v5, handoff v4 and the exact market-specific v26 question policy
+for new execution. It preserves the staged transport installed by migration 153. Retired v1–v4 inputs and the earlier
+v26 question policy remain available only to financial readers. Migration 151 and its historical checkpoint identities remain unchanged.
 Each visual stage has one immutable dispatch admission and a separately durable terminal receipt. A duplicate admission
 cannot redispatch an uncertain call. Late terminal evidence can settle costs but cannot authorize a successor or renew expiry.
 An explicit authenticated BASE_START skip proves non-dispatch; absent or incomplete stage evidence remains unknown.
@@ -82,7 +83,10 @@ OBSERVE with the kill switch ACTIVE and `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`. It 
 A separately approved same-account mandate must bind the new question policy before activation; publishing a build
 or passing tests is not activation evidence. Operator holds, capital, loss and turnover history remain intact.
 
-Jev answers separate Nouls about each proposal's observed setup, stop invalidation and overhead obstruction. Code selects
+Equity Jev requests ask separate Nouls about the observed setup and stop invalidation. Crypto requests additionally
+require an unobstructed fee-funded target. Question names identify the market, and equity funding carries no crypto
+fee tier. Equity cash charges and crypto received-coin/exit fees retain their existing arithmetic. The 0.7 affirmative
+and 0.3 negative thresholds, monetary risk limits, stops, exposure, freshness and holding limit remain unchanged. Code selects
 supported proposals and binds their prices and funded quantity to protected execution. An unrelated unsupported setup
 does not veto a supported proposal. Missing, refused, malformed, stale or uncertain evidence cannot authorize entry.
 There is no arbitrary range grid, compound model action, or compatibility execution path. Account risk, fees, exposure,
@@ -231,8 +235,8 @@ Entry inference renders the verified completed bars into a deterministic candles
 typed chart-presence judgments and source-bar anchors, with each base start explicitly conditioned on its end.
 Code constructs at most one support-recovery and
 one base-breakout proposal from those anchors, then retains the exact handoff before Jev receives the proposals and
-numerical market evidence. Jev answers independent questions about setup confirmation, stop invalidation and target
-obstruction. Code selects a supported funded proposal, with every native quote, sizing, funding and order-risk check.
+numerical market evidence. Jev answers independent questions about setup confirmation and stop invalidation, with
+the target-obstruction question required only for crypto. Code selects a supported funded proposal, with every native quote, sizing, funding and order-risk check.
 There is no compound action choice, broad directional veto, generated price grid or parallel model vote.
 
 Funding includes the observed spread, up to 10 bp of refreshed quote drift, the existing 10 bp order limit allowance,
@@ -1183,7 +1187,7 @@ the projection subtracts them before applying their separate tariffs. The rate c
 these assumptions; it does not establish a provider invoice or guarantee future prices.
 
 Current snapshots use `bayn.inference-cost-evidence.v2`, include the committed handoff, and report both stages in
-`bayn.inference-cost-report.v2`. `requestCount` counts parent claims and `providerRequestCount` counts their stages.
+`bayn.inference-cost-report.v3`. `requestCount` counts parent claims and `providerRequestCount` counts their stages.
 Retained v1 financial evidence and quotes remain auditable through a read-only projection; they cannot enter the
 current executable request codecs. Later reviewed tariffs apply to new quotes. Existing quotes cannot be repriced
 or deleted. A lost TigerBeetle or PostgreSQL acknowledgement replays the same records and verifies all metadata.
@@ -1247,6 +1251,11 @@ decision can still carry billable usage. A claim without retained usage stays un
 the provider received a request or that no charge occurred. Identical repeated evidence is deduplicated by request
 identity; conflicting duplicates fail. Token counts are safe integers. Cost arithmetic retains pico-USD precision
 and rounds the aggregate upward to micro-USD only once. These are metered estimates, not invoice-reconciled costs.
+
+`bayn.inference-cost-report.v3` includes `requestTimings`, keyed by the same request/stage identity as the cost
+lines. Each row retains the provider start time when recorded and the priced amount in pico-USD. A metered failure
+can have a known expense and an unknown start time. Tariff selection may use the existing handoff or observation
+reference when needed; that reference is never reported as an observed provider start time.
 
 `knownEstimatedCostMicros` is the priced, recorded subtotal. `estimatedTotalCostMicros` is null whenever any claimed
 request has unknown usage or any metered request is unpriced. `invoiceReconciled` remains false. The account binding,

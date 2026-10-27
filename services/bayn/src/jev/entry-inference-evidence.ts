@@ -124,17 +124,32 @@ const invalid = (message: string) => Result.fail(new JevContractError({ message 
 export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
   Result.gen(function* () {
     const prepared = yield* prepareEntryInferenceInput(source.input)
-    const chart = yield* makeNativeChartEvidence(prepared.input.chartSource)
+    return yield* decodeStagedEntryHandoff(
+      { ...source, input: prepared.input },
+      input,
+      prepared.requestHash,
+      makeEntryJudgmentRequest,
+    )
+  })
+
+export const decodeStagedEntryHandoff = (
+  source: EntrySource,
+  input: unknown,
+  inputHash: string,
+  prepareJudgments: typeof makeEntryJudgmentRequest,
+) =>
+  Result.gen(function* () {
+    const chart = yield* makeNativeChartEvidence(source.input.chartSource)
     const handoff = yield* Schema.decodeUnknownResult(EntryHandoffSchema, strictParseOptions)(input)
     const { handoffHash, ...material } = handoff
     const initial = yield* makeInitialChartStageRequest({
       chart,
-      protocol: prepared.input.protocol,
-      funding: prepared.input.funding,
+      protocol: source.input.protocol,
+      funding: source.input.funding,
     })
     if (
       handoff.requestId !== source.requestId ||
-      handoff.inputHash !== prepared.requestHash ||
+      handoff.inputHash !== inputHash ||
       handoff.visualRequestHash !== initial.requestHash ||
       handoff.recordedAt < source.observedAt ||
       handoffHash !== (yield* canonicalHashV1Result(material))
@@ -155,7 +170,7 @@ export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
     const disposition = handoff.disposition
     if (disposition.status === 'SOURCE_INFEASIBLE') {
       if (
-        (yield* hasFeasibleEntrySource(prepared.input, chart)) ||
+        (yield* hasFeasibleEntrySource(source.input, chart)) ||
         base.status !== 'NOT_REQUESTED' ||
         base.skip.reason !== 'SOURCE_INFEASIBLE' ||
         base.skip.predecessorHash !== null
@@ -185,7 +200,7 @@ export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
     )
       return yield* invalid('Staged chart response differs from its original source or clocks')
     const next = yield* makeSelectedBaseStartStageRequest(
-      { chart, protocol: prepared.input.protocol, funding: prepared.input.funding },
+      { chart, protocol: source.input.protocol, funding: source.input.funding },
       stageResponseIdentity(visual),
     )
     if (next.status === 'NOT_REQUESTED') {
@@ -218,12 +233,12 @@ export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
         return yield* invalid('Base start response changes its selected predecessor or clocks')
     }
     const derive = stagedChartAssessments(
-      { chart, protocol: prepared.input.protocol, funding: prepared.input.funding },
+      { chart, protocol: source.input.protocol, funding: source.input.funding },
       stageResponseIdentity(visual),
       base.status === 'RECEIVED' ? stageResponseIdentity(base.inference) : null,
     ).pipe(
       Result.flatMap((assessments) =>
-        deriveEntryDispositionForChart(prepared.input, visual, chart, assessments, makeEntryJudgmentRequest),
+        deriveEntryDispositionForChart(source.input, visual, chart, assessments, prepareJudgments),
       ),
     )
     if (disposition.status === 'PREPARATION_FAILED') {
