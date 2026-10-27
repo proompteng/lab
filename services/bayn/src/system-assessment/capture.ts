@@ -191,6 +191,48 @@ export const readSystemDurableObservations = (registrationHash: string) =>
     )
   })
 
+export const readSystemDecisionAdmissions = ({
+  accountId,
+  generationHash,
+  openAt,
+  asOf,
+}: {
+  readonly accountId: string
+  readonly generationHash: string
+  readonly openAt: string
+  readonly asOf: string
+}) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const rows = yield* Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          eventId: Sha256Schema,
+          decisionId: Sha256Schema,
+          observedAt: UtcInstantSchema,
+        }),
+      ),
+    )(
+      yield* sql`
+      SELECT receipt.event_id AS "eventId", receipt.decision_id AS "decisionId",
+        to_char((date_trunc('milliseconds', receipt.observed_at) +
+          CASE WHEN receipt.observed_at > date_trunc('milliseconds', receipt.observed_at)
+            THEN interval '1 millisecond' ELSE interval '0' END) AT TIME ZONE 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"
+      FROM execution_decision_admissions receipt JOIN mutation_events event USING(event_id)
+        JOIN intents intent USING(intent_id)
+      WHERE intent.account_id = ${accountId} AND intent.authority_generation_hash = ${generationHash}
+        AND event.occurred_at >= ${openAt}::timestamptz
+        AND receipt.observed_at <= ${asOf}::timestamptz
+      ORDER BY receipt.event_id, receipt.decision_id`,
+    )
+    return yield* Effect.forEach(rows, (row) =>
+      Effect.gen(function* () {
+        return { ...row, sourceHash: yield* Effect.fromResult(canonicalHashV1Result(row)) }
+      }),
+    )
+  })
+
 /** Capture one database snapshot. External ledger verification can reject a moving or incomplete cut. */
 export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registrationHash: string) =>
   Effect.scoped(
@@ -408,6 +450,12 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             asOf,
           )
           const durableObservations = yield* readSystemDurableObservations(registrationHash)
+          const decisionAdmissions = yield* readSystemDecisionAdmissions({
+            accountId: identity.accountId,
+            generationHash: candidate.authorityGenerationHash,
+            openAt: first.openAt,
+            asOf,
+          })
           const fills = yield* Effect.forEach(
             (forward.executionEvidence ?? []).flatMap((execution) =>
               execution.fills
@@ -445,9 +493,11 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             accountMarks: accounts.flatMap((account) => account.accountMarks),
             controllerPasses,
             durableObservations,
+            decisionAdmissions,
           }
           return yield* Schema.decodeUnknownEffect(SystemSourceCutSchema)({
-            schemaVersion: 'bayn.system-source-cut.v2',
+            schemaVersion: 'bayn.system-source-cut.v3',
+            decisionAdmissions,
             registrationHash,
             asOf,
             runtimeConfigurationHash,

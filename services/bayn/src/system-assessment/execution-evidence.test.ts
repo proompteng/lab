@@ -1,39 +1,23 @@
+import { persistenceDocumentFixture } from './decision-persistence.test-support'
 import { beforeAll, describe, expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
-import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
-import { matchedCommittedDecisionFixture } from '../intraday-replay/matched-entry.test-support'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { MutationEventSchema } from '../execution/mutations/model'
 import { bindExecutionEvidence, captureExecutionOrders } from './execution-evidence'
 import { SystemSourceCutSchema } from './source-cut'
 import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
 import { ExecutionEvidenceKind, measureRealism, RealismStatus } from './realism'
-import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
-import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
-import { decideJevEntry } from '../jev/decision'
 import { OrderStatus, TimeInForce } from '../execution/contracts'
 import { executionQualityFixture } from '../forward-performance/execution-quality.test-support'
 import { TargetPlanStatus } from '../target-planner'
+import { decisionAdmissionWitnesses } from './decision-admissions'
+import { earliestDurableWitnesses } from './obligation-witnesses'
+import { bindSystemSourceCut } from './bind-source'
+import { capturedAccountsFixture } from './source-cut.test-support'
 
 let document: ExecutionDecisionDocument
 beforeAll(async () => {
-  const native = nativeJevFixture()
-  const evidence = nativeJevDecisionEvidence(native)
-  const target = Result.getOrThrow(decideJevEntry(evidence))
-  const {
-    candidateEvidencePolicy: _candidates,
-    benchmarkEvidencePolicy: _benchmarks,
-    candidateSymbols: _symbols,
-    benchmarkSymbols: _benchmarkSymbols,
-    ...query
-  } = native.query
-  const pricing = streamingFixtureFromRaw(native.snapshot, {
-    ...query,
-    observedAt: target.decidedAt,
-    symbols: target.selectedSymbols,
-    purpose: IntradaySnapshotPurpose.EntryPricing,
-  }).snapshot
-  document = await Effect.runPromise(matchedCommittedDecisionFixture(native, evidence, '100000000000', pricing))
+  document = await Effect.runPromise(persistenceDocumentFixture)
 })
 const fixture = () => {
   const { input } = supportedAssessmentFixture()
@@ -75,7 +59,8 @@ const fixture = () => {
     },
   ]
   const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
-    schemaVersion: 'bayn.system-source-cut.v2',
+    schemaVersion: 'bayn.system-source-cut.v3',
+    decisionAdmissions: [],
     orders: [],
     registrationHash: testHash('registration'),
     asOf: at(10),
@@ -122,6 +107,150 @@ const fixture = () => {
   return { at, cut, supplied, target, risk, routing }
 }
 describe('durable execution realism bindings', () => {
+  const admittedFixture = () => {
+    const value = fixture()
+    const outcome = value.cut.mutations[0]
+    if (outcome === undefined) throw new Error('Missing routed mutation')
+    const { routing: _routing, ...previous } = outcome.event
+    const event = Schema.decodeUnknownSync(MutationEventSchema)({
+      ...previous,
+      eventId: testHash('admitted source'),
+      eventType: 'SUBMIT_STARTED',
+      sequence: 1,
+      occurredAt: value.at(1),
+    })
+    const material = { eventId: event.eventId, decisionId: document.contentHash, observedAt: value.at(9) }
+    const receipt = { ...material, sourceHash: testHash(material) }
+    return {
+      ...value,
+      receipt,
+      cut: {
+        ...value.cut,
+        mutations: [{ ...outcome, event }, ...value.cut.mutations],
+        decisionAdmissions: [receipt],
+        durableObservations: [
+          {
+            kind: 'DECISION' as const,
+            sourceHash: document.contentHash,
+            sourceAt: document.createdAt,
+            witnessedAt: value.at(9),
+            correct: true,
+          },
+        ],
+      },
+    }
+  }
+
+  test('a committed admission bounds decision persistence before routing despite a later controller observation', () => {
+    const f = admittedFixture()
+    const bound = Result.getOrThrow(decisionAdmissionWitnesses(f.cut, document.bindings.authorityGenerationHash))
+    expect(bound.sources.has(f.receipt.sourceHash)).toBe(true)
+    expect(bound.witnesses).toEqual([
+      {
+        kind: 'DECISION',
+        sourceHash: document.contentHash,
+        sourceAt: document.createdAt,
+        witnessedAt: f.routing.startedAt,
+        correct: true,
+      },
+    ])
+    const witnesses = earliestDurableWitnesses({
+      ...f.cut,
+      durableObservations: [...f.cut.durableObservations, ...bound.witnesses],
+    })
+    expect(witnesses.get(`DECISION:${document.contentHash}`)?.witnessedAt).toBe(f.routing.startedAt)
+    const pending = Result.getOrThrow(
+      decisionAdmissionWitnesses(
+        { ...f.cut, mutations: f.cut.mutations.filter((row) => row.event.sequence === 1) },
+        document.bindings.authorityGenerationHash,
+      ),
+    )
+    expect(pending.witnesses).toEqual([])
+  })
+
+  test('source binding consumes the certified routing bound while an uncertified observation stays late', () => {
+    const f = admittedFixture()
+    const { input, cut: financialCut, verifiedSources } = capturedAccountsFixture()
+    const candidate = input.registration.policies.find((policy) => policy.policy === 'JEV')
+    if (candidate === undefined) throw new Error('Missing registered candidate')
+    const definition = { ...candidate, authorityGenerationHash: document.bindings.authorityGenerationHash }
+    const registration = {
+      ...input.registration,
+      policies: input.registration.policies.map((policy) => (policy.policy === 'JEV' ? definition : policy)),
+    }
+    const cut = {
+      ...financialCut,
+      registrationHash: testHash(registration),
+      decisions: f.cut.decisions,
+      mutations: f.cut.mutations,
+      decisionAdmissions: f.cut.decisionAdmissions,
+      durableObservations: f.cut.durableObservations,
+    }
+    const captured = {
+      ...cut,
+      financial: cut.financial.map((account) =>
+        account.policy === 'JEV' ? { ...account, definitionHash: testHash(definition) } : account,
+      ),
+    }
+    const supplied = {
+      ...input,
+      registration,
+      registrationReceiptHash: testHash(registration),
+      sourceCutHash: testHash(captured),
+      realism: {
+        ...input.realism,
+        expectedDecisionIds: [document.contentHash],
+        expectedFillIds: [],
+        fills: [],
+        decisions: [
+          {
+            decisionId: document.contentHash,
+            policyDefinitionHash: testHash(definition),
+            authorityGenerationHash: definition.authorityGenerationHash,
+            snapshotHash: document.bindings.snapshotContentHash,
+            decisionAt: document.createdAt,
+            persistedAt: f.at(9),
+            inputs: [],
+          },
+        ],
+      },
+    }
+    const actual = Result.getOrThrow(bindSystemSourceCut(supplied, captured, verifiedSources))
+    expect(actual.input.realism.decisions[0]?.persistedAt).toBe(f.routing.startedAt)
+    const absent = { ...captured, decisionAdmissions: [] }
+    const unknown = Result.getOrThrow(
+      bindSystemSourceCut({ ...supplied, sourceCutHash: testHash(absent) }, absent, verifiedSources),
+    )
+    expect(unknown.input.realism.decisions[0]?.persistedAt).toBe(f.at(9))
+    expect(actual.verifiedSources.has(f.receipt.sourceHash)).toBe(true)
+  })
+
+  test('admission bounds reject substituted receipts, identities, outcomes, clocks and duplicate claims', () => {
+    const f = admittedFixture()
+    const event = f.cut.mutations[0]
+    const outcome = f.cut.mutations[1]
+    if (event === undefined || outcome === undefined) throw new Error('Missing mutation graph')
+    for (const cut of [
+      { ...f.cut, decisionAdmissions: [f.receipt, f.receipt] },
+      { ...f.cut, decisionAdmissions: [{ ...f.receipt, sourceHash: testHash('substituted receipt') }] },
+      { ...f.cut, decisions: [] },
+      { ...f.cut, mutations: [outcome] },
+      { ...f.cut, mutations: [{ ...event, authorityGenerationHash: testHash('foreign generation') }, outcome] },
+      { ...f.cut, mutations: [{ ...event, event: { ...event.event, intentId: testHash('foreign intent') } }, outcome] },
+      {
+        ...f.cut,
+        mutations: [event, { ...outcome, event: { ...outcome.event, requestHash: testHash('foreign request') } }],
+      },
+      {
+        ...f.cut,
+        mutations: [
+          event,
+          { ...outcome, event: { ...outcome.event, routing: { ...f.routing, startedAt: document.createdAt } } },
+        ],
+      },
+    ])
+      expect(Result.isFailure(decisionAdmissionWitnesses(cut, document.bindings.authorityGenerationHash))).toBe(true)
+  })
   const iocFixture = (status = OrderStatus.Canceled) => {
     const value = fixture()
     const plan = document.targetPlan

@@ -50,6 +50,8 @@ export const systemQualificationPolicy = {
   operatingCostCategories: ['INFERENCE', 'DATA', 'INFRASTRUCTURE', 'RESEARCH'],
   maximumMarkGapMs: 60_000,
   inferenceQualificationRule: 'MAX_INVOICE_TARIFF',
+  decisionPersistenceRule: 'COMMITTED_SOURCE_AT_INDEPENDENT_MUTATION_ADMISSION_BEFORE_ROUTING',
+  sourceCutVersion: 'bayn.system-source-cut.v3',
   cashYieldIsTradingEdge: false,
   costAttributionRule,
   frozenDeployedControlIdentity,

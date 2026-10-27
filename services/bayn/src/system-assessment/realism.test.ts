@@ -54,6 +54,14 @@ const evidence = (fills = [fill()]) => ({
 })
 
 describe('execution realism', () => {
+  test('a late observation of persistence leaves ordering unknown without proving an execution violation', () => {
+    const input = evidence()
+    input.decisions = [{ ...decision, persistedAt: at('500000000') }]
+    const result = Result.getOrThrow(measureRealism(input, sources))
+    expect(result.status).toBe(RealismStatus.Incomplete)
+    expect(result.violations).toEqual([])
+    expect(result.missing).toContain(`MISSING_PRE_ROUTING_PERSISTENCE:${id(30)}`)
+  })
   test('accepts a supported partial fill without inventing the unfilled remainder', () => {
     expect(Result.getOrThrow(measureRealism(evidence(), sources)).status).toBe(RealismStatus.Supported)
   })

@@ -23,6 +23,7 @@ import { earliestDurableWitnesses, indexObligationWitnesses } from './obligation
 import { systemQualificationPolicy } from './policy'
 import { assessSession } from './session'
 import { costAttributionRule } from './cost-attribution'
+import { decisionAdmissionWitnesses } from './decision-admissions'
 
 /** Freeze dynamic denominators at the first admission/uncertainty, never at the most recent retry. */
 export const mutationObligations = (
@@ -121,6 +122,8 @@ export const bindSystemSourceCut = (
       return yield* fail('Assessment must use its immutable registration and source cut exactly')
     const candidate = data.registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
     if (candidate === undefined) return yield* fail('Registered candidate is missing')
+    const admissions = yield* decisionAdmissionWitnesses(cut, candidate.authorityGenerationHash)
+    const witnessedCut = { ...cut, durableObservations: [...cut.durableObservations, ...admissions.witnesses] }
     const controllerReceipts = new Map<string, string>()
     for (const pass of cut.controllerPasses) {
       const hash = yield* canonicalHashV1Result(pass)
@@ -133,6 +136,7 @@ export const bindSystemSourceCut = (
     const financialAccounts = yield* registeredFinancialAccounts(data.registration, cut.financial)
     const sources = new Set([
       ...verifiedSources,
+      ...admissions.sources,
       yield* canonicalHashV1Result(costAttributionRule),
       cutHash,
       cut.registrationHash,
@@ -297,7 +301,7 @@ export const bindSystemSourceCut = (
       }
       policies.push({ ...policy, sessions })
     }
-    const earliestWitnesses = earliestDurableWitnesses(cut)
+    const earliestWitnesses = earliestDurableWitnesses(witnessedCut)
     const decisions = [...data.realism.decisions]
     const unsupportedAssumptions = [...data.realism.unsupportedAssumptions]
     for (const stress of latencyStress.filter((receipt) => receipt.executionReceiptHash === null))
@@ -374,7 +378,7 @@ export const bindSystemSourceCut = (
       cut.decisions.map(({ document }) => [document.contentHash, decisionDocumentWork(document, data.registration)]),
     )
     const indexedWitnesses = yield* indexObligationWitnesses(
-      cut,
+      witnessedCut,
       data.registration,
       schedule,
       controllerWork,

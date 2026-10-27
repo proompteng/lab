@@ -22,6 +22,7 @@ export const DecisionRealismSchema = Schema.Struct({
   authorityGenerationHash: Sha256Schema,
   snapshotHash: Sha256Schema,
   decisionAt: UtcSourceTimestampSchema,
+  // Latest proven bound on commitment, rather than an exact database commit clock.
   persistedAt: UtcSourceTimestampSchema,
   inputs: Schema.Array(
     Schema.Struct({
@@ -159,12 +160,13 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
           const routingStarted = intradayInstantNanos(fill.routingStartedAt)
           const transmitted = intradayInstantNanos(fill.requestDispatchedAt)
           const filled = intradayInstantNanos(fill.filledAt)
+          if (decision !== undefined && intradayInstantNanos(decision.persistedAt) > routingStarted)
+            missing.push(`MISSING_PRE_ROUTING_PERSISTENCE:${fill.fillId}`)
           if (
             intradayInstantNanos(fill.quoteAvailableAt) > transmitted ||
             intradayInstantNanos(fill.quoteFreshUntil) < transmitted ||
             routingStarted > transmitted ||
             transmitted >= intradayInstantNanos(fill.submissionDeadlineAt) ||
-            (decision !== undefined && intradayInstantNanos(decision.persistedAt) > routingStarted) ||
             filled < transmitted ||
             filled > intradayInstantNanos(fill.expiresAt) ||
             filled < (lastTime.get(fill.intentId) ?? filled)

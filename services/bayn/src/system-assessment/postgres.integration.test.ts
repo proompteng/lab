@@ -25,7 +25,10 @@ import {
   readSystemCashObservations,
   readSystemControllerPasses,
   readSystemDurableObservations,
+  readSystemDecisionAdmissions,
 } from './capture'
+import { makePostgresMutationStore } from '../execution/mutations/program'
+import { WriterFenceLive } from '../execution/writer-fence'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
@@ -619,7 +622,8 @@ postgres('PostgreSQL prospective system qualification', () => {
       await runtime.runPromise(Effect.sleep('10 millis'))
       const asOf = new Date().toISOString()
       const cut = Schema.decodeUnknownSync(SystemSourceCutSchema)({
-        schemaVersion: 'bayn.system-source-cut.v2',
+        schemaVersion: 'bayn.system-source-cut.v3',
+        decisionAdmissions: [],
         orders: [],
         registrationHash: registered.registrationHash,
         asOf,
@@ -736,7 +740,8 @@ postgres('PostgreSQL prospective system qualification', () => {
             yield* Effect.sleep('2 millis')
             const asOf = new Date().toISOString()
             const cut = yield* persistSystemSourceCut({
-              schemaVersion: 'bayn.system-source-cut.v2',
+              schemaVersion: 'bayn.system-source-cut.v3',
+              decisionAdmissions: [],
               orders: [],
               registrationHash: registered.registrationHash,
               asOf,
@@ -1082,6 +1087,170 @@ postgres('PostgreSQL prospective system qualification', () => {
       witnessedAt: new Date(Date.parse(exactAt) + 1).toISOString(),
     })
   }, 15_000)
+
+  test('submission evidence certifies only previously committed owned decisions and rolls back with admission', async () => {
+    const { account, definition, opens } = await activeEvaluation()
+    const native = nativeJevFixture(JevPurpose.Entry, undefined, account)
+    const cycleId = native.draft.identity.cycleId
+    const observedAt = native.portfolio.brokerState.reconciliation.reconciledAt
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO simulated_execution_clocks(account_id, source_manifest_hash, observed_at)
+        VALUES (${account}, ${sha256('admission-proof-clock')}, ${observedAt})`
+        yield* (yield* makeCycleStore({ now: sql`${observedAt}::timestamptz` })).acquire(native.draft, observedAt)
+      }),
+    )
+    const targets = new Map<string, { readonly strategyDecisionHash: string; readonly symbol: string }>()
+    const source = (label: string, owners: readonly string[], foreign = false) =>
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const at = yield* databaseNow
+        const expiry = new Date(Date.parse(at) + 60_000).toISOString()
+        const strategyDecisionHash = sha256(`${label}-strategy`)
+        for (const [index, owner] of owners.entries())
+          targets.set(owner, { strategyDecisionHash, symbol: index === 0 ? 'SPY' : 'AAPL' })
+        // Storage visibility is independent of semantic decoding; native document coverage runs in the Jev suite.
+        const document = {
+          contentHash: sha256(label),
+          cycleId,
+          createdAt: at,
+          expiresAt: expiry,
+          schemaVersion: 'bayn.paper-cycle-closure.v1',
+          document: {
+            schemaVersion: 'bayn.paper-cycle-decision.v2',
+            contentHash: sha256(`${label}-decision`),
+            mode: 'PAPER',
+            createdAt: at,
+            expiresAt: expiry,
+            submissionCutoffAt: expiry,
+            orderedIntentIds: owners.map(sha256),
+            bindings: {
+              cycleId,
+              accountId: foreign ? 'foreign-account' : account,
+              authorityGenerationHash: definition.authorityGenerationHash,
+              strategyDecisionHash,
+              policyHash: sha256('admission-policy'),
+            },
+          },
+        }
+        yield* sql`INSERT INTO autonomous_cycle_paper_close_replans(content_hash, cycle_id, document, created_at, expires_at)
+        VALUES (${document.contentHash}, ${cycleId}, ${sql.json(document)}, ${at}, ${expiry})`
+        return document.document.contentHash
+      })
+    const admit = (label: string) =>
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const id = sha256(label)
+        const target = targets.get(label)
+        if (target === undefined) throw new Error('Missing admission strategy fixture')
+        yield* sql`INSERT INTO intents(intent_id, schema_version, account_id, client_order_id, symbol, side,
+        order_type, time_in_force, quantity_atoms, notional_limit_micros, limit_price_micros, state, created_at,
+        updated_at, cycle_id, strategy_name, decision_hash, policy_hash, authority_generation_hash)
+        VALUES (${id}, 'bayn.execution-intent.v5', ${account}, ${label}, ${target.symbol}, 'SELL', 'LIMIT', 'DAY',
+          1000000000, 1000000, 1000000, 'PLANNED', clock_timestamp(), clock_timestamp(), ${cycleId}, 'jev',
+          ${target.strategyDecisionHash}, ${sha256('admission-policy')}, ${definition.authorityGenerationHash})`
+        yield* sql`INSERT INTO mutation_events(event_id, schema_version, mutation_id, intent_id, sequence,
+        operation, event_type, request_hash, consistency_delay_ms, occurred_at)
+        VALUES (${id}, 'bayn.paper-mutation-event.v1', ${id}, ${id}, 1,
+          'SUBMIT', 'SUBMIT_STARTED', ${sha256('admission-request')}, 1000, clock_timestamp())`
+      })
+    const decisionId = await runtime.runPromise(
+      asApplication(source('owned close', ['committed-admission', 'rolled-back-admission'])),
+    )
+    await runtime.runPromise(asApplication(admit('committed-admission')))
+    const captured = await runtime.runPromise(
+      readSystemDecisionAdmissions({
+        accountId: account,
+        generationHash: definition.authorityGenerationHash,
+        openAt: new Date(opens).toISOString(),
+        asOf: new Date(Date.now() + 1000).toISOString(),
+      }),
+    )
+    expect(captured).toHaveLength(1)
+    expect(captured[0]).toMatchObject({ eventId: sha256('committed-admission'), decisionId })
+    await runtime.runPromise(
+      asApplication(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`SAVEPOINT decision_write`
+          yield* source('uncommitted close', ['before-savepoint-release', 'after-savepoint-release'])
+          yield* admit('before-savepoint-release')
+          yield* sql`RELEASE SAVEPOINT decision_write`
+          yield* admit('after-savepoint-release')
+          expect(yield* sql`SELECT count(*)::integer AS count FROM execution_decision_admissions`).toEqual([
+            { count: 1 },
+          ])
+        }),
+      ),
+    )
+    await runtime.runPromise(asApplication(source('foreign close', ['foreign-admission'], true)))
+    await runtime.runPromise(asApplication(admit('foreign-admission')))
+    const rollback = await runtime.runPromiseExit(
+      asApplication(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* admit('rolled-back-admission')
+          expect(yield* sql`SELECT count(*)::integer AS count FROM execution_decision_admissions`).toEqual([
+            { count: 2 },
+          ])
+          return yield* Effect.fail('rollback the admitted mutation and its receipt')
+        }),
+      ),
+    )
+    expect(Exit.isFailure(rollback)).toBe(true)
+    for (const action of [
+      'UPDATE execution_decision_admissions SET observed_at = clock_timestamp()',
+      'DELETE FROM execution_decision_admissions',
+      'TRUNCATE execution_decision_admissions',
+      `INSERT INTO execution_decision_admissions(event_id, decision_id) VALUES ('${sha256('foreign-admission')}', '${sha256('invented decision')}')`,
+    ])
+      expect(
+        Exit.isFailure(
+          await runtime.runPromiseExit(
+            asApplication(
+              Effect.gen(function* () {
+                yield* (yield* PgClient.PgClient).unsafe(action)
+              }),
+            ),
+          ),
+        ),
+      ).toBe(true)
+    expect(
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* PgClient.PgClient)`SELECT count(*)::integer AS count FROM execution_decision_admissions`
+        }),
+      ),
+    ).toEqual([{ count: 1 }])
+  }, 15_000)
+
+  test('mutation admission rejects ambient transactions before any broker-capable state transition', async () => {
+    await runtime.runPromise(
+      asApplication(
+        Effect.gen(function* () {
+          const store = yield* makePostgresMutationStore
+          for (const attempt of [
+            store.beginSubmit(sha256('ambient submit'), sha256('request'), 1000, new Date().toISOString(), undefined),
+            store.beginCancel(
+              sha256('ambient cancel'),
+              sha256('request'),
+              'broker-order',
+              1000,
+              new Date().toISOString(),
+            ),
+          ]) {
+            const result = yield* attempt.pipe(Effect.result)
+            expect(Result.isFailure(result)).toBe(true)
+            if (Result.isFailure(result)) expect(result.failure.message).toContain('must commit independently')
+          }
+          expect(yield* (yield* PgClient.PgClient)`SELECT count(*)::integer AS count FROM mutation_events`).toEqual([
+            { count: 0 },
+          ])
+        }).pipe(Effect.provide(WriterFenceLive)),
+      ),
+    )
+  })
 
   test('a later admitted mutation does not invalidate an exact preflight reconciliation', async () => {
     const { account, definition, registered } = await activeEvaluation()

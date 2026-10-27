@@ -45,7 +45,7 @@ import { makeMutationEventPostgres } from '../mutations/postgres/events'
 import { makeMutationStartPostgres } from '../mutations/postgres/start'
 import { makeMutationOutcomePostgres } from '../mutations/postgres/outcome'
 import { SubmissionDenialReason } from '../submission-denial'
-import { WriterFence, WriterFenceLive } from '../writer-fence'
+import { WriterFence, WriterFenceLive, type WriterFenceService } from '../writer-fence'
 import { recoverTerminalGenerationToObserve } from '../../blocked-generation-recovery'
 import { operationalError } from '../../errors'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
@@ -1870,11 +1870,20 @@ describePostgres('PostgreSQL untouched approval expiry safety', () => {
           const fence = yield* WriterFence
           const held = yield* Deferred.make<void>()
           const release = yield* Deferred.make<void>()
-          const holding = yield* fence
-            .transaction(
-              first.pipe(Effect.andThen(Deferred.succeed(held, undefined)), Effect.andThen(Deferred.await(release))),
-            )
-            .pipe(Effect.forkChild({ startImmediately: true }))
+          const gatedFence = {
+            check: fence.check,
+            transaction: (effect) =>
+              fence.transaction(
+                effect.pipe(
+                  Effect.tap(() => Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release)))),
+                ),
+              ),
+          } satisfies WriterFenceService
+          const heldOperation =
+            winner === 'reservation'
+              ? first.pipe(Effect.provideService(WriterFence, gatedFence))
+              : gatedFence.transaction(first)
+          const holding = yield* heldOperation.pipe(Effect.forkChild({ startImmediately: true }))
           return yield* Deferred.await(held).pipe(
             Effect.raceFirst(Fiber.join(holding)),
             Effect.andThen(Effect.promise((signal) => contender.runPromise(Effect.result(second), { signal }))),

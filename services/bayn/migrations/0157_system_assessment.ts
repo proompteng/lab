@@ -39,7 +39,7 @@ export default Effect.gen(function* () {
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CHECK (source_cut_hash = encode(sha256(convert_to(payload_text, 'UTF8')), 'hex')),
     CHECK (jsonb_typeof(payload_text::jsonb) = 'object'
-      AND payload_text::jsonb->>'schemaVersion' IS NOT DISTINCT FROM 'bayn.system-source-cut.v2'
+      AND payload_text::jsonb->>'schemaVersion' IS NOT DISTINCT FROM 'bayn.system-source-cut.v3'
       AND payload_text::jsonb->>'registrationHash' IS NOT DISTINCT FROM registration_hash
       AND (payload_text::jsonb->>'asOf')::timestamptz IS NOT DISTINCT FROM as_of)
   )`
@@ -169,6 +169,49 @@ export default Effect.gen(function* () {
     IF full_source < 3 OR snapshot_upper - full_source >= 2147483648 THEN RETURN false; END IF;
     RETURN coalesce(pg_xact_status(full_source::text::xid8) = 'committed', false);
   END $function$`
+  yield* sql`CREATE TABLE execution_decision_admissions (
+    event_id text NOT NULL REFERENCES mutation_events(event_id),
+    decision_id text NOT NULL CHECK (decision_id ~ '^[0-9a-f]{64}$'),
+    observed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY(event_id, decision_id)
+  )`
+  yield* sql`CREATE FUNCTION guard_execution_decision_admission() RETURNS trigger LANGUAGE plpgsql AS $function$
+  BEGIN
+    IF pg_trigger_depth() <> 2 THEN
+      RAISE EXCEPTION 'decision admission evidence requires its mutation source trigger' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+  END $function$`
+  yield* sql`CREATE TRIGGER execution_decision_admission_guard BEFORE INSERT ON execution_decision_admissions
+    FOR EACH ROW EXECUTE FUNCTION guard_execution_decision_admission()`
+  yield* sql`CREATE FUNCTION retain_submission_decision_admission() RETURNS trigger LANGUAGE plpgsql AS $function$
+  DECLARE target intents;
+  BEGIN
+    IF NEW.event_type <> 'SUBMIT_STARTED' THEN RETURN NEW; END IF;
+    SELECT * INTO STRICT target FROM intents WHERE intent_id = NEW.intent_id;
+    INSERT INTO execution_decision_admissions(event_id, decision_id)
+      SELECT NEW.event_id, source.document->>'contentHash' FROM (
+        SELECT shadow.document, shadow.xmin::text AS source_xid
+        FROM autonomous_cycle_shadow_decisions shadow JOIN autonomous_cycles cycle
+          ON cycle.cycle_id = shadow.cycle_id AND cycle.decision_hash = shadow.decision_hash
+        WHERE shadow.cycle_id = target.cycle_id
+        UNION ALL
+        SELECT document->'document', xmin::text FROM autonomous_cycle_paper_closures WHERE cycle_id = target.cycle_id
+        UNION ALL
+        SELECT document->'document', xmin::text FROM autonomous_cycle_paper_close_replans WHERE cycle_id = target.cycle_id
+      ) source
+      WHERE source.document->'orderedIntentIds' ? NEW.intent_id
+        AND source.document #>> '{bindings,accountId}' = target.account_id
+        AND source.document #>> '{bindings,authorityGenerationHash}' = target.authority_generation_hash
+        AND source.document #>> '{bindings,strategyDecisionHash}' = target.decision_hash
+        AND source.document #>> '{bindings,policyHash}' = target.policy_hash
+        AND (source.document->>'createdAt')::timestamptz <= NEW.occurred_at
+        AND system_evidence_source_committed(source.source_xid::xid)
+      ON CONFLICT DO NOTHING;
+    RETURN NEW;
+  END $function$`
+  yield* sql`CREATE TRIGGER retain_submission_decision_admission AFTER INSERT ON mutation_events
+    FOR EACH ROW EXECUTE FUNCTION retain_submission_decision_admission()`
   yield* sql`CREATE INDEX system_qualification_registration_window
     ON system_qualification_registrations(last_close_at, first_open_at)`
   yield* sql`CREATE TABLE system_pending_evidence (
@@ -346,6 +389,7 @@ export default Effect.gen(function* () {
     'system_evidence_cuts',
     'execution_controller_observations',
     'system_durable_observations',
+    'execution_decision_admissions',
   ]) {
     yield* sql.unsafe(`CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE ON ${table}
       FOR EACH ROW EXECUTE FUNCTION reject_evidence_mutation()`)

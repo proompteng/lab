@@ -15,7 +15,7 @@ import { JevBatchPlanSchema, JevBatchResultSchema } from '../jev/batch'
 import { JevObservationSchema } from '../jev/observation-contract'
 
 export const SystemSourceCutSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.system-source-cut.v2'),
+  schemaVersion: Schema.Literal('bayn.system-source-cut.v3'),
   registrationHash: Sha256Schema,
   asOf: UtcInstantSchema,
   runtimeConfigurationHash: Sha256Schema,
@@ -28,6 +28,14 @@ export const SystemSourceCutSchema = Schema.Struct({
       plan: JevBatchPlanSchema,
       observation: Schema.NullOr(JevObservationSchema),
       result: Schema.NullOr(JevBatchResultSchema),
+    }),
+  ),
+  decisionAdmissions: Schema.Array(
+    Schema.Struct({
+      eventId: Sha256Schema,
+      decisionId: Sha256Schema,
+      observedAt: UtcInstantSchema,
+      sourceHash: Sha256Schema,
     }),
   ),
   mutations: Schema.Array(

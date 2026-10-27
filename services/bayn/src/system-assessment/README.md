@@ -110,6 +110,13 @@ Consumed rows leave the queue; subsequent controller updates do not rescan histo
 Reconciliation correctness retains its result at completion. Later submissions do not invalidate a successful
 preflight reconciliation; their freshness and recovery requirements remain separate obligations.
 
+Source-cut v3 also captures immutable decision-admission receipts. A submission trigger records a receipt only when
+the decision source is already committed and its account, generation, strategy, policy, cycle, and ordered intent
+match the admitted mutation. Mutation admission rejects ambient transactions and commits before broker routing.
+The source binder joins that receipt to the producer's actual routing event to establish an upper bound on decision
+commitment. A later controller observation alone leaves pre-routing persistence incomplete. The assessment records
+these persistence assumptions explicitly, and the qualification policy hash commits to this evidence rule.
+
 ## Private reporting command
 
 Build the service, then use `dist/forward-performance-command.js` with the existing private reporting configuration.
