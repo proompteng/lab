@@ -6,6 +6,7 @@ const groups = {
     'src/intraday-replay/runtime.integration.test.ts',
   ],
   backtest: ['src/intraday-replay/backtest.integration.test.ts'],
+  'frozen-control': [],
   restart: ['src/intraday-replay/restart.integration.test.ts'],
   inference: [
     'src/db/entry-inference-postgres.integration.test.ts',
@@ -22,7 +23,7 @@ if (
   (group !== 'all' && !Object.hasOwn(groups, group))
 )
   throw Error(
-    'Use isolated PostgreSQL and TigerBeetle: bun tools/test-ledger.ts [all|runtime|backtest|restart|inference]',
+    'Use isolated PostgreSQL and TigerBeetle: bun tools/test-ledger.ts [all|runtime|backtest|frozen-control|restart|inference]',
   )
 
 for (const [name, files] of Object.entries(groups)) {
@@ -36,7 +37,7 @@ for (const [name, files] of Object.entries(groups)) {
     })
     if (result.exitCode !== 0) process.exit(result.exitCode)
   }
-  if (name === 'backtest') {
+  if (name === 'frozen-control') {
     const result = Bun.spawnSync([process.execPath, 'tools/test-frozen-control.ts'], {
       cwd: fileURLToPath(new URL('..', import.meta.url)),
       stdout: 'inherit',
