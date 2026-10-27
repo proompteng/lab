@@ -1269,6 +1269,13 @@ replaces the tariff estimate for economic P&L; it is never added to the same est
 cost comparison separately uses the greater of the applicable tariff or actual inference expense. Missing model
 usage keeps that qualification amount unresolved even when a complete provider invoice is available.
 
+The `economic` result uses `bayn.operating-cost-report.v2`. It reports actual fully costed profit in
+`netEconomicPnlMicros` and conservative qualification profit in `qualificationPnlMicros`. The qualification figure
+subtracts `qualificationPremiumMicros`, the excess of the greater invoice-or-tariff inference cost over the invoice
+amount, from actual profit. This applies the conservative inference rule once. The qualification figure is null if
+any operating-cost category, trading P&L, or required inference usage is unresolved. Zero-trade sessions still retain
+their operating expenses. A positive actual profit can therefore have negative qualification profit.
+
 `netEconomicPnlMicros` and `totalOperatingCostMicros` remain null until all expense categories have complete evidence.
 Partial reports show invoice and tariff subtotals separately and expose unknown/unpriced inference usage. Source
 hashes prove file identity, not issuer authenticity, correct classification or coverage completeness: those remain
