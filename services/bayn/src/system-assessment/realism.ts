@@ -138,7 +138,7 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
               prior.side !== fill.side ||
               prior.requestedQuantityAtoms !== fill.requestedQuantityAtoms ||
               prior.limitPriceAtoms !== fill.limitPriceAtoms ||
-              prior.expiresAt !== fill.expiresAt ||
+              intradayInstantNanos(prior.expiresAt) !== intradayInstantNanos(fill.expiresAt) ||
               prior.quantityStepAtoms !== fill.quantityStepAtoms ||
               prior.priceTickAtoms !== fill.priceTickAtoms)
           )

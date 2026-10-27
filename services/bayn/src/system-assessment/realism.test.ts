@@ -138,6 +138,30 @@ describe('execution realism', () => {
     )
   })
 
+  test.each([
+    [at('900'), at('900000000')],
+    ['2026-10-01T14:00:01Z', '2026-10-01T14:00:01.000000000Z'],
+    ['2026-10-01T14:00:01.000000000Z', '2026-10-01T14:00:01Z'],
+  ])('partial fills preserve equivalent expiry instants: %s and %s', (firstExpiry, secondExpiry) => {
+    const first = fill({ expiresAt: firstExpiry, supportedCapacityAtoms: '100' })
+    const second = fill({
+      fillId: id(31),
+      expiresAt: secondExpiry,
+      supportedCapacityAtoms: '100',
+      cumulativeFilledQuantityAtoms: '80',
+      filledAt: at('500000000'),
+    })
+    expect(Result.getOrThrow(measureRealism(evidence([first, second]), sources)).status).toBe(RealismStatus.Supported)
+    const changedExpiry = firstExpiry.startsWith('2026-10-01T14:00:01')
+      ? '2026-10-01T14:00:01.000000001Z'
+      : at('900000001')
+    const changed = Result.getOrThrow(
+      measureRealism(evidence([first, { ...second, expiresAt: changedExpiry }]), sources),
+    )
+    expect(changed.status).toBe(RealismStatus.Violated)
+    expect(changed.violations).toContain(`INTENT_IDENTITY_DRIFT:${id(31)}`)
+  })
+
   test('preserves intent terms across partial fills and rejects fills after expiry', () => {
     const second = fill({
       fillId: id(31),
