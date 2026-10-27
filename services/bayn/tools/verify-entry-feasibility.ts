@@ -79,7 +79,7 @@ const verify = Effect.gen(function* () {
     // Original model responses retain their contracts; the dispatch probe never calls either provider.
     const protocol = {
       ...input.protocol,
-      schemaVersion: 'bayn.jev.protocol.v27' as const,
+      schemaVersion: 'bayn.jev.protocol.v28' as const,
       entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash,
     }
     const funding = {
@@ -271,7 +271,7 @@ const verify = Effect.gen(function* () {
     retainedFundedSourcesStillFeasible: fundedRequests,
     actualProviderCalls: 0,
     inputProjection:
-      'Same source, observed quotes, capital and fees. The offline dispatch probe recomputes v27 entry economics and its crypto inference-ask cap. Historical model responses and proposal evaluations retain their original contracts and are never used as current judgments.',
+      'Same source, observed quotes, capital and fees. The offline dispatch probe recomputes v28 entry economics and its inference-ask cap. Historical model responses and proposal evaluations retain their original contracts and are never used as current judgments.',
     results,
   }
   yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })

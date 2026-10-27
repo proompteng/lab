@@ -82,6 +82,8 @@ it('protects clients while allowing all-day scrub progress without overcommittin
   expect(osd.osd_scrub_begin_hour).toBe('0')
   expect(osd.osd_scrub_end_hour).toBe('0')
   expect(osd.osd_max_scrubs).toBe('3')
+  expect(osd.osd_scrub_chunk_min).toBe('5')
+  expect(osd.osd_scrub_chunk_max).toBe('5')
   expect(osd).not.toHaveProperty('osd_scrub_sleep')
   // The built-in profile owns all scheduler shares; retained custom overrides prevent the migration.
   expect(Object.keys(osd).filter((key) => key.startsWith('osd_mclock_scheduler_'))).toEqual([])

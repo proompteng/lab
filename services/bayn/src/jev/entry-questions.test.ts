@@ -100,7 +100,7 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
     for (const question of Object.values(prepared.request.questions)) {
       expect(question.type).toBe('noul')
       expect(question.instructions).toMatchObject({
-        proposal: { entryPriceUsd: 104.22, stopPriceUsd: 96.99, maximumHoldingMinutes: 15 },
+        proposal: { entryPriceUsd: 104.02, stopPriceUsd: 96.99, maximumHoldingMinutes: 15 },
       })
     }
   })

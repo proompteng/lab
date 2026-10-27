@@ -1071,7 +1071,7 @@ describe('intraday shadow decision', () => {
         ) VALUES (${hash('6')}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${hash('1')}, ${Authority.Execution}, 2, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${hash('4')}`}, 'jev', ${hash('5')}, ${hash('7')},
-          'bayn.jev.protocol.v27', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
+          'bayn.jev.protocol.v28', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
           'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
           ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
             yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
