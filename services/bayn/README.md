@@ -1978,6 +1978,9 @@ With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 `bun run --filter @proompteng/bayn test:ledger`. CI uses the same command. It covers native Jev entry,
 zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
 expenses. The seven durable-broker cases alone do not cover the native production lifecycle.
+Measured entry/exit replays supply improving arrival quotes under the frozen inference-ask ceiling, including
+partial-fill and re-entry cases with modeled slippage. Every measured buy fill must stay within its submitted limit;
+adverse arrival quotes remain unfilled and retain separate broker coverage.
 
 PostgreSQL tests require an isolated database whose name ends in `_test`; never point them at a live Bayn database.
 
