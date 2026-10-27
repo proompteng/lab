@@ -1620,7 +1620,20 @@ rolling back the application image through Kargo; do not remove retained evidenc
 The execution endpoint's startup probe allows twenty minutes for this bounded migration and initialization. Its
 readiness and liveness probes retain their normal cadence after startup.
 
-The PostgreSQL cluster reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 2 GiB memory limit.
+The native market recorder uses its own two-instance PostgreSQL cluster and WAL, `bayn-native-arrival-db`.
+`BAYN_NATIVE_ARRIVAL_POSTGRES_URL` and the CA at `/var/run/secrets/bayn/native-arrival-postgres/ca.crt` are required by
+the execution controller. Missing configuration fails startup. The recorder never falls back to the financial
+database. Its migration refuses a database containing financial or other unrelated tables, and configuration rejects
+the financial PostgreSQL endpoint even when a different logical database is selected.
+
+The archive installs only the epoch, chunk and end tables with the original SQL checksum, ordered-prefix and
+append-only guards. Both databases retain synchronous replication, TLS, checksums and the existing backup store with
+separate server prefixes. The financial database retains all historical recorder bytes for historical reads; current
+capture readers must use the archive connection. No financial history, authority, strategy, fees, freshness or inference
+deadline changes. Separating the WAL removes raw capture writes from financial commits; verify actual admission and
+commit latency and natural funded orders after deployment before claiming the timing problem resolved.
+
+Each PostgreSQL cluster reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 2 GiB memory limit.
 LZ4 WAL compression reduces full-page image traffic. A 4 GiB WAL checkpoint threshold and 15-minute checkpoint
 interval spread checkpoint work; the existing five-minute archive timeout still bounds idle WAL archival.
 These settings retain fsync, full-page writes and the synchronous standby requirement. Buffer changes require

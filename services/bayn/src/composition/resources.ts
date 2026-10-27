@@ -40,6 +40,7 @@ import { Journal, JournalLive } from '../ledger'
 import { IntradayMarketData, type IntradayMarketDataService } from '../market-data/intraday/model'
 import { KafkaMarketProjection, KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
 import { makeNativeArrivalStore } from '../db/native-arrival-postgres'
+import { NativeArrivalArchiveLive } from '../db/native-arrival-archive'
 import type { DatabaseError } from '../db/database-error'
 import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
 import { nativeArrivalCaptureId } from '../market-data/streaming/native-arrival'
@@ -138,15 +139,7 @@ export const WorkerMarketProjectionLive = (
             }),
           )
         }),
-      ).pipe(
-        Layer.provide(
-          Layer.merge(
-            PostgresClientLive(plan.config, { maxConnections: 1, applicationName: 'bayn-native-arrival' }),
-            PostgresMigrationsLive(plan.config),
-          ),
-        ),
-        Layer.provide(NodeServices.layer),
-      )
+      ).pipe(Layer.provide(NativeArrivalArchiveLive(plan.config)), Layer.provide(NodeServices.layer))
 }
 
 const WorkerMarketDataLive = (

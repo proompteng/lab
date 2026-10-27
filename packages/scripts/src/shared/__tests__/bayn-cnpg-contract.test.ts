@@ -8,6 +8,82 @@ const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 const readManifest = (path: string): Record<string, any> => YAML.parse(readRepoFile(path))
 
+test('native market capture has separate WAL without weakening replication or exposing financial data', () => {
+  const [clusterDocument, backupDocument, policyDocument] = YAML.parseAllDocuments(
+    readRepoFile('argocd/applications/bayn/native-arrival-postgres.yaml'),
+  )
+  const cluster = clusterDocument?.toJS()
+  const backup = backupDocument?.toJS()
+  const policy = policyDocument?.toJS()
+  const financial = readManifest('argocd/applications/bayn/postgres-cluster.yaml')
+  expect(cluster.metadata.name).not.toBe(financial.metadata.name)
+  expect(cluster.spec.bootstrap.initdb).toEqual({
+    database: 'bayn_native_arrival',
+    owner: 'bayn_native_arrival',
+    encoding: 'UTF8',
+    dataChecksums: true,
+  })
+  for (const key of [
+    'instances',
+    'imageName',
+    'enablePDB',
+    'enableSuperuserAccess',
+    'minSyncReplicas',
+    'maxSyncReplicas',
+    'affinity',
+    'storage',
+    'postgresql',
+  ])
+    expect(cluster.spec[key]).toEqual(financial.spec[key])
+  expect(cluster.metadata.annotations['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
+  expect(cluster.spec.managed).toBeUndefined()
+  expect(cluster.spec.monitoring.customQueriesConfigMap).toEqual([{ name: 'cnpg-default-monitoring', key: 'queries' }])
+  expect(cluster.spec.plugins[0].parameters).toEqual({
+    barmanObjectName: 'bayn-db',
+    serverName: 'bayn-native-arrival-db-live',
+  })
+  expect(backup.spec.cluster.name).toBe(cluster.metadata.name)
+  expect(backup.spec.target).toBe('prefer-standby')
+  expect(backup.spec.schedule).not.toBe(
+    readManifest('argocd/applications/bayn/postgres-scheduled-backup.yaml').spec.schedule,
+  )
+  expect(policy.spec.podSelector.matchLabels['cnpg.io/cluster']).toBe(cluster.metadata.name)
+  expect(policy.spec.ingress[0].from).toEqual([
+    { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
+  ])
+  const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
+  const container = controller.spec.template.spec.containers[0]
+  expect(
+    container.env.find((entry: Record<string, any>) => entry.name === 'BAYN_NATIVE_ARRIVAL_POSTGRES_URL')?.valueFrom
+      .secretKeyRef,
+  ).toEqual({ name: `${cluster.metadata.name}-app`, key: 'fqdn-uri' })
+  expect(
+    controller.spec.template.spec.volumes.find(
+      (entry: Record<string, any>) => entry.name === 'native-arrival-postgres-ca',
+    )?.secret.secretName,
+  ).toBe(`${cluster.metadata.name}-ca`)
+  expect(
+    container.volumeMounts.find((entry: Record<string, any>) => entry.name === 'native-arrival-postgres-ca'),
+  ).toMatchObject({ mountPath: '/var/run/secrets/bayn/native-arrival-postgres', readOnly: true })
+  for (const path of ['deployment.yaml', 'execution-activation.yaml', 'research-worker.yaml'])
+    expect(
+      readManifest(`argocd/applications/bayn/${path}`).spec.template.spec.containers[0].env.some(
+        (entry: Record<string, any>) => entry.name === 'BAYN_NATIVE_ARRIVAL_POSTGRES_URL',
+      ),
+    ).toBe(false)
+  const controllerPolicy = readManifest('argocd/applications/bayn/execution-controller-networkpolicy.yaml')
+  expect(
+    controllerPolicy.spec.egress.find((rule: Record<string, any>) =>
+      rule.to.some(
+        (peer: Record<string, any>) => peer.podSelector?.matchLabels?.['cnpg.io/cluster'] === cluster.metadata.name,
+      ),
+    )?.ports,
+  ).toEqual([{ port: 5432, protocol: 'TCP' }])
+  expect(readManifest('argocd/applications/bayn/kustomization.yaml').resources).toContain(
+    'native-arrival-postgres.yaml',
+  )
+})
+
 test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   const cluster = readManifest('argocd/applications/bayn/postgres-cluster.yaml')
 

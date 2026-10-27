@@ -47,6 +47,20 @@ command is **not** run automatically from the trading service at startup.
 
 # Bayn GitOps rollout notes
 
+## Native arrival archive
+
+`native-arrival-postgres.yaml` owns `bayn-native-arrival-db`, a separate two-instance CNPG cluster on the existing
+Ceph storage class. Its synchronous standby, TLS, checksums and daily backups match the financial cluster. The existing
+ObjectStore uses the separate `bayn-native-arrival-db-live` server prefix. CNPG generates the archive application
+connection and CA Secrets. Only the execution controller receives them; its recorder installs only the three immutable
+capture tables and their migration tracker. Financial migrations and trading writes keep using `bayn-db`.
+
+The cluster precedes the controller rollout through the existing Argo sync waves. Verify both archive replicas and
+backup configuration, distinct database/PVC identities, current capture bytes and checksum/prefix guards in the
+archive, unchanged financial evidence and lower financial commit latency. Historical raw records remain in `bayn-db`;
+do not delete or recopy them. Source recovery through Kargo retains both archives and reads captures from the database
+owned by that release. Infrastructure readiness alone does not prove funded selections or natural round trips.
+
 The replacement source uses protocol v26 and sequential OpenAI Decisions API CHART and selected BASE_START judgments
 followed by Jev proposal judgments. Migration 153 requires terminal mutation cycles, flat settled inventory, complete accounting,
 fresh exact reconciliation and no unexpired inference claims. It restricts prior PAPER authority for native OBSERVE
