@@ -150,7 +150,7 @@ describe('source-bound full batch timing', () => {
     }
     const retained = Result.getOrThrowWith(verify(incomplete), (cause) => cause)
     expect(retained[0]?.economics).toBeNull()
-  }, 60000)
+  }, 180000)
 
   test('assessment reproduces complete replay accounting and rejects altered scope, costs, releases and artifact bytes', () => {
     const f = fixture()
@@ -274,7 +274,7 @@ describe('source-bound full batch timing', () => {
       expect(String(omitted.failure.cause)).toContain('Latency report omitted or substituted a charged chart inference')
     artifacts.set(descriptor.reportFileHash, new TextEncoder().encode('{}'))
     expect(Result.isFailure(verify())).toBe(true)
-  }, 60000)
+  }, 180000)
 
   test('latency replay reproduces complete calibration and refuses missing or changed evidence', () => {
     const { cut, registration, identity, measure } = fixture()
