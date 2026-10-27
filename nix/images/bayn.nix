@@ -186,6 +186,7 @@ import ./bun-workspace-service.nix {
     frozenControlCommand
     controlCommand
     gepaPython
+    pkgs.go-containerregistry
   ];
   exposedPorts = {
     "8080/tcp" = { };

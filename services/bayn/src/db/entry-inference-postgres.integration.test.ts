@@ -15,7 +15,7 @@ import chartDispatchCheckpoints from '../../migrations/0151_chart_dispatch_check
 
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
-import { EntryInferenceJournal } from '../jev/entry-inference'
+import { EntryInferenceJournal, type EntryHandoff } from '../jev/entry-inference'
 import { makeChartDispatchClaim, makeChartTerminalReceipt } from '../jev/chart-checkpoint'
 import {
   makeFundedEvaluationRequest,
@@ -63,9 +63,12 @@ import { JevBatchStoreLive } from './jev-batch-postgres'
 import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
 import { postgresMigrations } from './postgres-migrations'
 import { migrationLoader } from './migrations'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { inferenceExpenseRateCard, makeInferenceExpenseQuotes, buildInferenceExpensePlan } from '../inference-expense'
 import { makeInferenceExpenseStore } from '../inference-expense-postgres'
+import { formalModelExecutable, runFormalModel } from '../system-assessment/formal-model.test-support'
+import { IsoDateSchema } from '../schemas'
+import { StagedDispatchClaimSchema, type StagedDispatchClaim } from '../jev/staged-checkpoint'
 import { InferenceStage } from '../inference-costs'
 import { JevFailure } from '../jev/contract'
 import { runInferenceExpensePass } from '../inference-expense-runtime'
@@ -335,6 +338,266 @@ integration('committed sequential provider handoff', () => {
           ).toEqual([{ payload: late }])
         }),
       ),
+  )
+
+  test.skipIf(formalModelExecutable === undefined)(
+    'both visual stage dispatch transactions conform to Lean at original deadlines and across durable state',
+    async () => {
+      const identity = (claim: StagedDispatchClaim) => ({
+        hash: claim.claimHash,
+        payload: Result.getOrThrow(canonicalJsonV1Result(claim)),
+      })
+      const scenarios = [
+        { state: 'fresh', claim: 0, commit: 0, ambient: false },
+        { state: 'fresh', claim: 0, commit: 9999, ambient: false },
+        { state: 'fresh', claim: 0, commit: 10000, ambient: false },
+        { state: 'fresh', claim: 0, commit: 10001, ambient: false },
+        { state: 'fresh', claim: 1, commit: 0, ambient: false },
+        { state: 'fresh', claim: -1, commit: 0, ambient: false },
+        { state: 'fresh', claim: 10000, commit: 10000, ambient: false },
+        { state: 'fresh', claim: 0, commit: 0, ambient: true },
+        { state: 'claimed', claim: 0, commit: 0, ambient: false },
+        { state: 'claimed', claim: 0, commit: 10000, ambient: false },
+        { state: 'claimed', claim: 1, commit: 1, ambient: false },
+        { state: 'claimed', claim: 0, commit: 0, ambient: true },
+        { state: 'handed-off', claim: 0, commit: 0, ambient: false },
+        { state: 'resolved', claim: 0, commit: 10000, ambient: false },
+        { state: 'quoted', claim: 0, commit: 0, ambient: false },
+      ]
+      const inputs = []
+      const actual = []
+      for (const stage of ['CHART', 'BASE_START'] as const)
+        for (const scenario of scenarios) {
+          const observed = await runtime.runPromise(
+            Effect.gen(function* () {
+              const current = yield* retainReplayRequest
+              const sql = yield* PgClient.PgClient
+              const journal = yield* EntryInferenceJournal
+              const at = (offset: number) => new Date(Date.parse(current.observedAt) + offset).toISOString()
+              expect(Date.parse(current.expiresAt) - Date.parse(current.observedAt)).toBe(10000)
+              const checkpoint = stagedCheckpointFixture(current)
+              const claim = checkpoint.claims.find((row) => row.stage === stage)
+              if (claim === undefined) throw new Error('Missing stage claim')
+              if (stage === 'BASE_START') {
+                const predecessor = checkpoint.claims.find((row) => row.stage === 'CHART')
+                const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+                if (predecessor === undefined || terminal === undefined) throw new Error('Missing predecessor')
+                yield* journal.recordVisualClaim(predecessor)
+                yield* journal.recordVisualTerminal(terminal)
+              }
+              if (scenario.state === 'claimed')
+                expect(yield* journal.recordVisualClaim(claim)).toEqual({ dispatchAllowed: true })
+              if (scenario.state === 'handed-off') {
+                yield* retainCheckpoint(current)
+                yield* journal.recordHandoff(entryCompletionFixture(current).handoff)
+              }
+              if (scenario.state === 'resolved') yield* (yield* JevEvaluationStore).abandon(current, current.expiresAt)
+              if (scenario.state === 'quoted') {
+                yield* journal.recordVisualClaim(claim)
+                const sessionDate = yield* Schema.decodeUnknownEffect(IsoDateSchema)(current.observedAt.slice(0, 10))
+                const quotes = Result.getOrThrow(
+                  makeInferenceExpenseQuotes(
+                    {
+                      accountId: replayAccountId,
+                      sessionDate,
+                      asOf: current.observedAt,
+                      requestId: current.requestId,
+                      cycleId: current.cycleId,
+                      authorityGenerationHash: current.authorityGenerationHash,
+                      request: current,
+                      receipt: null,
+                      resolution: null,
+                      handoff: null,
+                      stagedCheckpoint: {
+                        claims: checkpoint.claims.filter((row) => stage === 'BASE_START' || row.stage === 'CHART'),
+                        terminals: checkpoint.terminals.filter(
+                          (row) => stage === 'BASE_START' && row.stage === 'CHART',
+                        ),
+                        skips: [],
+                      },
+                    },
+                    inferenceExpenseRateCard,
+                  ),
+                )
+                yield* makeInferenceExpenseStore(sql, replayAccountId, sessionDate).freeze(quotes)
+              }
+              yield* sql`UPDATE simulated_execution_clocks SET observed_at=${at(scenario.commit)} WHERE account_id=${replayAccountId}`
+              const readState = Effect.gen(function* () {
+                const [state] = yield* Schema.decodeUnknownEffect(
+                  Schema.Tuple([
+                    Schema.Struct({
+                      claim: Schema.Unknown,
+                      resolved: Schema.Boolean,
+                      handedOff: Schema.Boolean,
+                      stageQuoted: Schema.Boolean,
+                    }),
+                  ]),
+                )(
+                  yield* sql`SELECT
+                (SELECT payload FROM jev_staged_dispatch_claims WHERE request_id=${current.requestId} AND stage=${stage}) AS claim,
+                EXISTS (SELECT 1 FROM jev_evaluation_resolutions WHERE request_id=${current.requestId}) AS resolved,
+                EXISTS (SELECT 1 FROM jev_inference_handoffs WHERE request_id=${current.requestId}) AS "handedOff",
+                EXISTS (SELECT 1 FROM inference_expense_quotes WHERE request_id=${current.requestId} AND provider_stage=${stage}) AS "stageQuoted"`,
+                )
+                return {
+                  stored:
+                    state.claim === null
+                      ? null
+                      : identity(yield* Schema.decodeUnknownEffect(StagedDispatchClaimSchema)(state.claim)),
+                  resolved: state.resolved,
+                  handedOff: state.handedOff,
+                  stageQuoted: state.stageQuoted,
+                }
+              })
+              const { claimHash: _hash, ...material } = claim
+              const input = Result.getOrThrow(makeStagedDispatchClaim({ ...material, claimedAt: at(scenario.claim) }))
+              const before = yield* readState
+              const record = journal.recordVisualClaim(input)
+              const result = yield* (scenario.ambient ? sql.withTransaction(record) : record).pipe(Effect.result)
+              const after = yield* readState
+              if (Result.isFailure(result)) expect(after).toEqual(before)
+              return {
+                input: {
+                  operation: 'visualClaim',
+                  state: before,
+                  ambientTransaction: scenario.ambient,
+                  input: identity(input),
+                  observedAt: String(Date.parse(current.observedAt)),
+                  claimedAt: String(Date.parse(input.claimedAt)),
+                  commitAt: String(Date.parse(at(scenario.commit))),
+                  expiresAt: String(Date.parse(current.expiresAt)),
+                },
+                result: Result.isFailure(result)
+                  ? null
+                  : { dispatchAllowed: result.success.dispatchAllowed, state: after },
+              }
+            }),
+          )
+          inputs.push(observed.input)
+          actual.push(observed.result)
+        }
+      expect(actual.filter((result) => result?.dispatchAllowed)).toHaveLength(4)
+      expect(actual.filter((result) => result === null)).toHaveLength(12)
+      expect(runFormalModel(inputs)).toEqual(actual)
+    },
+    180_000,
+  )
+
+  test.skipIf(formalModelExecutable === undefined)(
+    'committed handoff transactions conform to Lean under replay, abandonment and contention',
+    async () => {
+      const identity = (handoff: EntryHandoff) => ({
+        hash: handoff.handoffHash,
+        payload: Result.getOrThrow(canonicalJsonV1Result(handoff)),
+      })
+      const source = {
+        requestId: request.requestId,
+        input: request.request,
+        observedAt: request.observedAt,
+        expiresAt: request.expiresAt,
+      }
+      const { handoffHash: _hash, ...material } = completion.handoff
+      const changedMaterial = {
+        ...material,
+        recordedAt: new Date(Date.parse(material.recordedAt) + 1).toISOString(),
+      }
+      const changed = Result.getOrThrow(
+        decodeEntryHandoff(source, {
+          ...changedMaterial,
+          handoffHash: Result.getOrThrow(canonicalHashV1Result(changedMaterial)),
+        }),
+      )
+      const readState = Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const [state] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ handoff: Schema.Unknown, resolved: Schema.Boolean })]),
+        )(
+          yield* sql`SELECT
+        (SELECT payload FROM jev_inference_handoffs WHERE request_id=${request.requestId}) AS handoff,
+        EXISTS (SELECT 1 FROM jev_evaluation_resolutions WHERE request_id=${request.requestId}) AS resolved`,
+        )
+        return {
+          stored:
+            state.handoff === null
+              ? null
+              : identity(yield* Effect.fromResult(decodeEntryHandoff(source, state.handoff))),
+          resolved: state.resolved,
+        }
+      })
+      const inputs = []
+      const actual = []
+      for (const existing of [false, true])
+        for (const resolved of [false, true])
+          for (const ambientTransaction of [false, true])
+            for (const input of [completion.handoff, changed]) {
+              if (inputs.length > 0) await resetDatabase()
+              const observed = await runtime.runPromise(
+                Effect.gen(function* () {
+                  const journal = yield* EntryInferenceJournal
+                  const store = yield* JevEvaluationStore
+                  const sql = yield* PgClient.PgClient
+                  yield* retainCheckpoint(request)
+                  if (existing) yield* journal.recordHandoff(completion.handoff)
+                  if (resolved) yield* store.abandon(request, request.expiresAt)
+                  const before = yield* readState
+                  const record = journal.recordHandoff(input)
+                  const result = yield* (ambientTransaction ? sql.withTransaction(record) : record).pipe(Effect.result)
+                  const after = yield* readState
+                  if (Result.isFailure(result)) {
+                    expect(after).toEqual(before)
+                    return { before, result: null }
+                  }
+                  return { before, result: { dispatchAllowed: result.success.dispatchAllowed, state: after } }
+                }),
+              )
+              inputs.push({
+                operation: 'inferenceHandoff',
+                state: observed.before,
+                ambientTransaction,
+                input: identity(input),
+              })
+              actual.push(observed.result)
+            }
+      expect(inputs).toHaveLength(16)
+      expect(actual.filter((result) => result?.dispatchAllowed)).toHaveLength(2)
+      expect(runFormalModel(inputs)).toEqual(actual)
+
+      await resetDatabase()
+      const concurrent = await runtime.runPromise(
+        Effect.gen(function* () {
+          const journal = yield* EntryInferenceJournal
+          yield* retainCheckpoint(request)
+          const before = yield* readState
+          const outcomes = yield* Effect.all(
+            Array.from({ length: 8 }, () => journal.recordHandoff(completion.handoff)),
+            { concurrency: 8 },
+          )
+          return { before, after: yield* readState, outcomes }
+        }),
+      )
+      expect(
+        runFormalModel([
+          {
+            operation: 'inferenceHandoff',
+            state: concurrent.before,
+            ambientTransaction: false,
+            input: identity(completion.handoff),
+          },
+          ...Array.from({ length: 7 }, () => ({
+            operation: 'inferenceHandoff',
+            state: concurrent.after,
+            ambientTransaction: false,
+            input: identity(completion.handoff),
+          })),
+        ]),
+      ).toEqual(
+        concurrent.outcomes
+          .map((outcome) => ({ ...outcome, state: concurrent.after }))
+          .sort((left, right) => Number(right.dispatchAllowed) - Number(left.dispatchAllowed)),
+      )
+      expect(concurrent.outcomes.filter((outcome) => outcome.dispatchAllowed)).toHaveLength(1)
+    },
+    180_000,
   )
 
   test('market policy cutover preserves original staged claims and rejects retired-policy requests and dispatch', async () =>
