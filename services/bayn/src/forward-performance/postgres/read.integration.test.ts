@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import type { Statement } from 'effect/sql/Statement'
 import { StreamingPerformanceManifestSchema } from '../intraday-schema'
 
 import { PostgresClientLive } from '../../db/postgres-client'
@@ -188,6 +189,70 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
             yield* sql`CREATE TEMP TABLE intents AS SELECT * FROM public.intents`
             yield* sql`UPDATE pg_temp.intents SET state='TERMINAL'`
             const postgres = yield* readForwardPerformancePostgres(sql, accountId)
+            yield* sql`CREATE TEMP TABLE broker_events (LIKE public.broker_events INCLUDING ALL)`
+            yield* sql`CREATE TRIGGER broker_event_projection_hash BEFORE INSERT ON pg_temp.broker_events
+                  FOR EACH ROW EXECUTE FUNCTION initialize_broker_event_projection_hash()`
+            yield* sql`CREATE TEMP TABLE account_snapshots (LIKE public.account_snapshots INCLUDING ALL)`
+            yield* sql`INSERT INTO broker_events SELECT * FROM public.broker_events`
+            yield* sql`INSERT INTO account_snapshots
+                  (event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros,crypto_fee_tier)
+                  SELECT event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros,crypto_fee_tier
+                  FROM public.account_snapshots`
+            yield* sql`INSERT INTO broker_events
+                  (event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,
+                    source_sequence,occurred_at,observed_at)
+                  SELECT md5('history-event-' || n) || md5('event-' || n),'bayn.paper-broker-event.v1',
+                    md5('history-content-' || n) || md5('content-' || n),
+                    CASE WHEN n % 4 = 0 THEN 'ORDER' ELSE 'ACCOUNT' END,'ALPACA',
+                    CASE WHEN n % 4 = 1 THEN 'foreign-account' ELSE ${accountId} END,
+                    'history-' || n,1000+n,'2026-09-17T15:28:00Z'::timestamptz,
+                    CASE WHEN n % 4 IN (0,1,2) THEN '2026-09-19T21:00:00Z'::timestamptz
+                      ELSE '2026-09-17T15:28:00Z'::timestamptz END
+                  FROM generate_series(1,16384) AS n`
+            yield* sql`INSERT INTO account_snapshots
+                  (event_id,account_id,schema_version,status,currency,cash_micros,equity_micros,buying_power_micros)
+                  SELECT event_id,account_id,'bayn.paper-account-snapshot.v2','ACTIVE','USD',
+                    999000000,999000000,999000000
+                  FROM broker_events WHERE source_event_id LIKE 'history-%' AND event_kind='ACCOUNT'`
+            yield* sql`ANALYZE broker_events`
+            yield* sql`ANALYZE account_snapshots`
+            const lookups: Statement<Record<string, unknown>>[] = []
+            const monitored = new Proxy(sql, {
+              apply(target, receiver, argumentsList) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                if (statement.compile()[0].includes('FROM account_snapshots AS snapshot')) lookups.push(statement)
+                return statement
+              },
+            })
+            expect(yield* readForwardPerformancePostgres(monitored, accountId)).toEqual(postgres)
+            expect(lookups).toHaveLength(5)
+            for (const lookup of lookups) {
+              const [query, parameters] = lookup.compile()
+              const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+              const plans = yield* Schema.decodeUnknownEffect(
+                Schema.Array(Schema.Struct({ 'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Unknown })) })),
+              )(explanation)
+              const snapshotRowsRead = (node: unknown): number => {
+                if (node === null || typeof node !== 'object') return 0
+                const rows =
+                  'Relation Name' in node &&
+                  (node['Relation Name'] === 'broker_events' || node['Relation Name'] === 'account_snapshots') &&
+                  'Actual Rows' in node &&
+                  typeof node['Actual Rows'] === 'number' &&
+                  'Actual Loops' in node &&
+                  typeof node['Actual Loops'] === 'number'
+                    ? node['Actual Rows'] * node['Actual Loops']
+                    : 0
+                return (
+                  rows +
+                  ('Plans' in node && Array.isArray(node.Plans)
+                    ? node.Plans.reduce((sum: number, child: unknown) => sum + snapshotRowsRead(child), 0)
+                    : 0)
+                )
+              }
+              expect(snapshotRowsRead(plans[0]?.['QUERY PLAN'][0]?.Plan)).toBeLessThan(128)
+            }
+            yield* sql`DROP TABLE pg_temp.account_snapshots, pg_temp.broker_events`
             const readers: ForwardPerformanceReaders = {
               postgres: readForwardPerformancePostgres,
               marketVolume: () => Effect.succeed([]),
