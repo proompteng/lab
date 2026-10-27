@@ -1707,6 +1707,50 @@ const mismatchedSubmissionError = () =>
   })
 
 describe('execution coordinator', () => {
+  test.each(['failure', 'defect', 'interruption'] as const)(
+    'does not terminalize a compound submit denial with %s and recovers without retransmitting',
+    async (kind) => {
+      const denied = invalidRequest({ operation: MutationOperation.Submit, message: 'injected denial' })
+      const cleanup =
+        kind === 'failure'
+          ? Cause.fail(invalidRequest({ operation: MutationOperation.Submit, message: 'injected rollback failure' }))
+          : kind === 'defect'
+            ? Cause.die(new Error('injected rollback defect'))
+            : Cause.interrupt()
+      const harness = makeHarness({ submitError: denied, lookupOrder: brokerOrder(OrderStatus.Filled) })
+      await Effect.runPromise(
+        harness.provide(
+          Effect.gen(function* () {
+            const broker = yield* BrokerMutation
+            const exit = yield* submit(intentId, 1_000).pipe(
+              Effect.provideService(BrokerMutation, {
+                ...broker,
+                submit: (value) =>
+                  broker
+                    .submit(value)
+                    .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.combine(cause, cleanup)))),
+              }),
+              Effect.exit,
+            )
+            if (Exit.isSuccess(exit)) throw new Error('compound failure must not become a terminal submission outcome')
+            expect(exit.cause.reasons).toHaveLength(2)
+            expect(Cause.pretty(exit.cause)).toContain('injected denial')
+            expect(harness.state()).toBe(IntentState.IoStarted)
+            expect((yield* harness.mutations.latest(intentId, MutationOperation.Submit))?.eventType).toBe(
+              MutationEventType.SubmitStarted,
+            )
+            const replay = yield* submit(intentId, 1_000)
+            expect(replay.eventType).toBe(MutationEventType.SubmitStarted)
+            expect(harness.calls().submit).toBe(1)
+            yield* TestClock.adjust(1_100)
+            expect((yield* recover(intentId, MutationOperation.Submit)).eventType).toBe(MutationEventType.RecoveryFound)
+            expect(harness.state()).toBe(IntentState.Terminal)
+            expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 1 })
+          }),
+        ),
+      )
+    },
+  )
   for (const denialDelayMs of [0, 5]) {
     test(`persists a known local denial after its durable start with ${denialDelayMs}ms of elapsed time`, async () => {
       const harness = makeHarness({ storedUpdatedAt: '1970-01-01T00:00:00.001Z' })

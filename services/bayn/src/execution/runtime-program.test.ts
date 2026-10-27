@@ -17,7 +17,12 @@ import {
   type ReadResult,
 } from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations/model'
+import {
+  BrokerMutationError,
+  MutationFailure,
+  MutationOperation,
+  invalidRequest,
+} from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
 import { ReplayBrokerFailure } from '../intraday-replay/broker'
 import { makeReplayInferenceTiming } from '../intraday-replay/inference-timing'
@@ -1633,6 +1638,55 @@ describe('execution with the native reconciliation cache', () => {
     }
     return { fixture, cache, deps }
   }
+  test.each(['rollback', 'defect', 'interruption'] as const)(
+    'preserves compound submit failure with %s before and after transmission',
+    async (cleanup) => {
+      for (const afterTransmission of [false, true]) {
+        const { fixture, cache, deps } = setup()
+        await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+        const denied = invalidRequest({ operation: MutationOperation.Submit, message: 'injected submit denial' })
+        const rollback = new WriterFenceError({
+          operation: 'transaction',
+          failure: 'unavailable',
+          message: 'injected rollback failure',
+        })
+        const cleanupCause =
+          cleanup === 'rollback'
+            ? Cause.fail(rollback)
+            : cleanup === 'defect'
+              ? Cause.die(new Error('injected rollback defect'))
+              : Cause.interrupt()
+        let posts = 0
+        const exit = await Effect.runPromiseExit(
+          authorizeCachedFinalBrokerSubmit(
+            fixture.authority,
+            fixture.intent,
+            Effect.sync(() => {
+              posts += 1
+            }).pipe(Effect.andThen(Effect.fail(denied))),
+            {
+              ...deps,
+              currentUtcInstant: afterTransmission ? deps.currentUtcInstant : Effect.fail(denied),
+              writerFence: {
+                check: Effect.void,
+                transaction: (effect) =>
+                  effect.pipe(Effect.catchCause((cause) => Effect.failCause(Cause.combine(cause, cleanupCause)))),
+              },
+            },
+          ),
+        )
+        expect(posts).toBe(afterTransmission ? 1 : 0)
+        if (Exit.isSuccess(exit)) throw new Error('compound submit failure must propagate')
+        expect(exit.cause.reasons).toHaveLength(2)
+        expect(exit.cause.reasons[0]).toMatchObject({ _tag: 'Fail', error: denied })
+        if (cleanup === 'rollback' && afterTransmission) {
+          expect(exit.cause.reasons[1]).toMatchObject({ _tag: 'Fail', error: { failure: MutationFailure.Unknown } })
+        } else {
+          expect(exit.cause.reasons[1]).toEqual(cleanupCause.reasons[0])
+        }
+      }
+    },
+  )
   test.each([false, true])('checks the fee tier at the final transport clock: reset crossed %s', async (crossReset) => {
     const { fixture, cache, deps } = setup()
     const beforeReset = '2026-07-28T07:59:59.900Z'

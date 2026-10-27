@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect'
+import { Cause, Effect, Result } from 'effect'
 import type { CryptoTakerFeeBps } from '../broker/crypto-fees'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { OrderSide } from './contracts'
@@ -225,14 +225,18 @@ export const authorizeFinalBrokerSubmit = <A, E, R>(
       }),
     )
     .pipe(
-      Effect.mapError((cause) =>
-        transmissionStarted && cause instanceof WriterFenceError
-          ? unknownOutcome({
-              operation: MutationOperation.Submit,
-              message: 'final submit transaction failed after broker transmission began',
-              cause,
-            })
-          : cause,
+      Effect.catchCause((failure) =>
+        Effect.failCause(
+          Cause.map(failure, (cause) =>
+            transmissionStarted && cause instanceof WriterFenceError
+              ? unknownOutcome({
+                  operation: MutationOperation.Submit,
+                  message: 'final submit transaction failed after broker transmission began',
+                  cause,
+                })
+              : cause,
+          ),
+        ),
       ),
     )
 }
