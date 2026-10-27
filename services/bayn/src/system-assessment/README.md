@@ -1,8 +1,8 @@
 # System assessment
 
-These modules define the arithmetic, evidence predicates, and prospective registration used by the system-assessment integration. They do
-not issue an account qualification, admit orders, or grant capital authority. A complete assessment must bind their
-inputs to a prospective registration and verified source records.
+These modules evaluate a registered PAPER policy against its economic, matched-control, reliability, safety, and
+realism requirements. `evaluateSystemAssessment` is pure; the capture and persistence paths bind its input to
+immutable source records. An assessment never admits an order or grants capital authority.
 
 ## Economics
 
@@ -65,8 +65,55 @@ program row, and requires the next attempt index and predecessor hash. Both inse
 completion must precede the first open. Retries return the same registration; failures and candidate changes cannot
 reset the attempt history. These functions require verified audit and allocation-source hashes from their caller.
 
-Registration does not issue an assessment or claim profitability. Source capture, assessment receipts, reporting,
-and Lean conformance remain subsequent integration requirements.
+## Evidence and assessment
+
+`captureSystemSourceCut` reads the registered accounts and authority generations, financial and inference records,
+source observations, decisions, mutation events, fills, cash observations, and durable controller witnesses. Missing
+accounts or evidence remain missing; a submitted assessment packet cannot replace captured facts with claimed profit
+or reliability. The capture checks each account's risk, source, image, strategy, and protocol against registration.
+
+`bindSystemSourceCut` constructs session economics and operational obligations from that cut. Cash and inventory
+reconcile against fills, cost basis, funding, passive yield, and paid operating expenses. Opening, closing, minute,
+and observed intraminute marks retain losses across sessions. Unknown valuations or request clocks prevent a
+complete marked-risk assessment. Failed inference remains chargeable even when its provider start is unknown.
+
+`evaluateSystemAssessment` keeps actual net profit, conservative qualification profit, statistical edge, reliability,
+realism, and safety separate. Numerical qualification uses the frozen acceptance implementation and every registered
+session. The result exposes assumptions, missing evidence, and contradictions. Only the conjunction of all gates can
+produce `QUALIFIED_PAPER`; a complete rejected window and an incomplete window retain distinct outcomes.
+
+Latency stress replays the selected native policy with recorded response occurrences and the registered execution
+model. CHART, BASE_START, and Jev retain separate costs and clocks. Replay image verification binds the immutable
+manifest, executable, dependency receipt, and native policy identity. A separate container-daemon observation binds
+the executed command and retained input/output files. The receipt states this trust assumption; image membership
+alone does not prove that an execution occurred.
+
+Migration 157 retains source cuts, assessment receipts, replay execution receipts, controller observations, and
+durable evidence witnesses as append-only records. A later settlement or newly captured source produces a new
+assessment receipt. Reading a saved assessment recomputes its result and verifies its hash. Broker mutation routing
+retains the original admission, dispatch, and completion times, including explicit non-dispatch.
+
+## Private reporting command
+
+Build the service, then use `dist/forward-performance-command.js` with the existing private reporting configuration.
+Evidence packets contain `payload` and an `artifacts` array of `{ sha256, path }` entries. Paths resolve relative to the
+packet; their bytes must match their hashes. A hash authenticates bytes, while provider provenance remains an explicit
+evidence obligation.
+
+1. `--system-history <packet.json>` admits the audited prior attempt history once.
+2. `--system-register <packet.json>` freezes a registration before its first session. The configured runtime protocol
+   and deadlines must reproduce its commitment.
+3. `--system-capture <registration-sha256>` captures and persists an immutable source cut.
+4. `--system-capture-replay <packet.json>` observes a retained replay container and persists its execution receipt.
+5. `--system-assess <packet.json>` verifies source bindings and replay images, evaluates the assessment, and appends
+   its receipt.
+6. `--authority-generation <sha256> --assessment <sha256>` includes the saved assessment in the scoped financial
+   report. `--persist-receipt` also persists that forward-performance report.
+
+The financial report derives its operating-cost status from the bound assessment. Without a matching assessment,
+unverified costs remain explicitly incomplete. Profitability, edge, and qualification require actual prospective
+evidence; implementation tests do not establish those claims. Pinned offline Lean proofs and mandatory conformance
+release gates remain the next integration boundary.
 
 ## Validation
 
@@ -80,4 +127,5 @@ BAYN_TEST_POSTGRES_URL=postgresql://localhost/bayn_registration_test bun test sr
 
 The tests include arithmetic properties, positive trading profit consumed by costs, zero-trade operating losses,
 missing cost evidence, absent scheduled work, independent class targets, future inputs, unsupported liquidity,
-partial fills, and timing contradictions. Lean conformance and durable source joins remain separate integration gates.
+partial fills, timing contradictions, source substitution, invoice reuse, late settlement, retained replay stages,
+immutable assessment receipts, and rejection of a transaction that commits after its first market open.

@@ -4,13 +4,15 @@ import { Result, Schema } from 'effect'
 
 import { OperatingCostEvidenceSchema } from '../operating-costs'
 import { operatingCostFixture } from '../operating-costs.test-support'
+import { evaluateSystemAssessment, QualificationVerdict } from './assessment'
 import {
   allocateCostByWeights,
   CostAllocationPlanSchema,
   validateCostAllocationPlans,
   validateFrozenCostAllocations,
 } from './cost-allocation'
-import { testHash } from './fixtures.test-support'
+import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
+import { validateSystemRegistration } from './policy'
 
 const fixture = () => {
   const original = operatingCostFixture({
@@ -237,4 +239,57 @@ test('registered outside-account shares stay in the denominator instead of being
       }),
     ),
   ).toBe(true)
+})
+
+test('a complete assessment cannot move all costs to an unregistered external account', () => {
+  const { input, verifiedSources } = supportedAssessmentFixture()
+  const result = evaluateSystemAssessment(
+    {
+      ...input,
+      policies: input.policies.map((policy) => ({
+        ...policy,
+        sessions: policy.sessions.map((session) => ({
+          ...session,
+          operatingCosts: {
+            ...session.operatingCosts,
+            consumption: session.operatingCosts.consumption.map((line) => ({
+              ...line,
+              allocations: line.allocations.map((allocation) => ({
+                ...allocation,
+                accountBindingHash: testHash('unregistered expense recipient'),
+              })),
+            })),
+          },
+        })),
+      })),
+    },
+    verifiedSources,
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result))
+    expect(result.failure).toMatchObject({
+      _tag: 'OperatingCostError',
+      message: 'Invoice allocation differs from its prospectively registered weights',
+    })
+})
+
+test('missing frozen basis evidence prevents qualification and the registration hash binds every weight', () => {
+  const { input, verifiedSources } = supportedAssessmentFixture()
+  const plan = input.registration.costAllocationPlans[0]
+  if (plan === undefined) throw new Error('Missing registered cost plan')
+  verifiedSources.delete(plan.basisSourceHash)
+  const assessment = Result.getOrThrow(evaluateSystemAssessment(input, verifiedSources))
+  expect(assessment.evidenceComplete).toBe(false)
+  expect(assessment.verdict).not.toBe(QualificationVerdict.Qualified)
+  const original = Result.getOrThrow(validateSystemRegistration(input.registration))
+  const changed = Result.getOrThrow(
+    validateSystemRegistration({
+      ...input.registration,
+      costAllocationPlans: input.registration.costAllocationPlans.map((p) => ({
+        ...p,
+        weights: p.weights.map((weight) => ({ ...weight, weight: '2' })),
+      })),
+    }),
+  )
+  expect(changed.registrationHash).not.toBe(original.registrationHash)
 })

@@ -554,7 +554,9 @@ test.each(['cash', 'filled'] as const)(
           turnoverPolicy: data.context.turnoverPolicy,
           ridge: data.input,
           backtest: {
-            schemaVersion: 'bayn.backtest.v6',
+            schemaVersion: 'bayn.backtest.v9',
+            policy: 'JEV' as const,
+            latencyStress: null,
             jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
             source: data.source,
             openingCashMicros: '100000000000',

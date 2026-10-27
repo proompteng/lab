@@ -119,6 +119,8 @@ durableTest.each(
       'fill',
       'ablation-fill',
       'momentum-fill',
+      'momentum-latency-valid',
+      'momentum-latency-expired',
       'momentum-partial-exit-reentry',
       'fallback',
       'missing-benchmark',
@@ -139,6 +141,8 @@ durableTest.each(
       'measured-entry-expired',
       'measured-zero-fill-reentry',
       'measured-submit-expired-reentry',
+      'latency-stress-valid',
+      'latency-stress-expired',
       'operator-held-replay',
       'operator-after-system-replay',
       'reconciliation-idle-recovery',
@@ -158,9 +162,18 @@ durableTest.each(
       ? { evaluate: () => Effect.die('Momentum must not dispatch chart provider requests') }
       : chartProviderFixture
     const scenario =
-      mode === 'momentum-partial-exit-reentry' ? 'partial-exit-reentry' : ablation || momentum ? 'fill' : mode
+      mode === 'momentum-latency-valid'
+        ? 'latency-stress-valid'
+        : mode === 'momentum-latency-expired'
+          ? 'latency-stress-expired'
+          : mode === 'momentum-partial-exit-reentry'
+            ? 'partial-exit-reentry'
+            : ablation || momentum
+              ? 'fill'
+              : mode
     const untouchedExpiry = scenario.startsWith('approved-expiry-')
     const admissionRace = scenario.startsWith('entry-lease-')
+    const latencyStress = scenario.startsWith('latency-stress-')
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing replay test databases')
     const url = new URL(baynTestPostgresUrl)
@@ -185,6 +198,7 @@ durableTest.each(
     let expiredStartedSubmit = false
     let expiredApprovedIntent = false
     const measured =
+      latencyStress ||
       scenario === 'measured-exit' ||
       scenario === 'measured-bootstrap-delay' ||
       partialEntryReentry ||
@@ -288,7 +302,7 @@ durableTest.each(
           quotes: original.quotes.map((row) => ({
             ...shiftOffset(row),
             askSize:
-              !restingDayLifecycle ||
+              latencyStress || !restingDayLifecycle ||
               at <= initialAtMs + (measured ? 2000 : 200) ||
               at === reentryAtMs ||
               (slippedExit && at === reentryAtMs + 1000)
@@ -385,7 +399,9 @@ durableTest.each(
         strategyBehaviorHash: strategyRuntime.provenance.strategy.behaviorHash,
       },
       operationTimeoutMs:
-        scenario === 'measured-entry-expired' || scenario === 'measured-submit-expired-reentry' ? 20_000 : 10_000,
+        latencyStress || scenario === 'measured-entry-expired' || scenario === 'measured-submit-expired-reentry'
+          ? 20_000
+          : 10_000,
       execution: {
         brokerIdentity: Result.getOrThrow(
           makeBrokerIdentity({
@@ -654,6 +670,18 @@ durableTest.each(
         const stallReconciliation = yield* Ref.make(false)
         const interrupted = yield* Ref.make(false)
         const runtimeInput = {
+          decisionLatencyStress: latencyStress
+            ? {
+                p95FullBatchMs: scenario === 'latency-stress-expired' ? 15_000 : 1_000,
+                advanceTo: (at: number) =>
+                  advanceMarketTo(at).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ReplayBrokerFailure({ message: 'Latency stress could not advance the test source', cause }),
+                    ),
+                  ),
+              }
+            : null,
           config,
           strategy: strategyRuntime,
           broker: {
@@ -749,6 +777,51 @@ durableTest.each(
           })),
         )
         const runtime = yield* createRuntime
+        if (latencyStress) {
+          const passes = []
+          for (let attempt = 0; attempt < 6; attempt++) {
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1_000)
+            passes.push((yield* runtime.advance).observation)
+            const releases = yield* runtime.decisionLatencyEvidence
+            if (releases.receipts.length + releases.observationReceipts.length > 0) break
+          }
+          const evidence = yield* runtime.decisionLatencyEvidence
+          expect(evidence.admittedBatchCount, JSON.stringify(passes)).toBe(momentum ? 0 : 1)
+          expect(evidence.admittedObservationCount).toBe(momentum ? 1 : 0)
+          expect(evidence.unreleasedObservationHashes).toEqual([])
+          expect(evidence.unreleasedBatchIds).toEqual([])
+          expect(evidence.receipts).toHaveLength(momentum ? 0 : 1)
+          const receipt = momentum ? evidence.observationReceipts[0] : evidence.receipts[0]
+          if (receipt === undefined) throw new Error('Missing native batch release receipt')
+          const delay = Date.parse(receipt.releasedAt) - Date.parse(receipt.commandIssuedAt)
+          expect(delay).toBeGreaterThanOrEqual(scenario === 'latency-stress-expired' ? 15_000 : 1_000)
+          expect(measuredCalls.filter((call) => call.stage === 'CHART')).toHaveLength(
+            momentum ? 0 : eligibleEntrySymbols.length,
+          )
+          expect(measuredCalls.filter((call) => call.stage === 'JEV')).toHaveLength(
+            momentum ? 0 : eligibleEntrySymbols.length,
+          )
+          expect(measuredCalls.every((call) => call.outcome.status === 'RECEIVED')).toBe(true)
+          const state = yield* broker.snapshot
+          if (scenario === 'latency-stress-expired') {
+            expect(state.orders).toEqual([])
+            expect(state.fills).toEqual([])
+            expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
+            expect(
+              passes.some(
+                (pass) =>
+                  pass.result === 'SUCCESS' &&
+                  pass.readiness?.reason === (momentum ? 'NO_ELIGIBLE_CANDIDATE' : 'INFERENCE_UNAVAILABLE'),
+              ),
+            ).toBe(true)
+          } else {
+            expect(state.orders.length, JSON.stringify(passes)).toBeGreaterThan(0)
+            expect(state.fills.some((fill) => fill.side === OrderSide.Buy)).toBe(true)
+          }
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+          expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          return { _tag: 'LatencyStress' as const }
+        }
         if (scenario === 'entry-lease-expires-during-bind' || scenario === 'entry-lease-expires-at-commit') {
           yield* sql`CREATE FUNCTION expire_fixture_admission() RETURNS trigger LANGUAGE plpgsql AS $function$
             BEGIN

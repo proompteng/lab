@@ -1,3 +1,4 @@
+import { JevResearchPolicy } from '../jev/acceptance'
 import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
 import { equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery } from '../jev/observation-query'
@@ -899,6 +900,10 @@ export const runControlSession = (input: {
 export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const input = yield* Schema.decodeUnknownResult(ControlStudyInputSchema, strictParseOptions)(raw)
+    if (input.backtest.policy !== JevResearchPolicy.Candidate)
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'This research command requires the candidate source protocol' }),
+      )
     const prepared = yield* prepareBacktest(input.backtest, receipt)
     if (prepared.brokerSessions.length === 0)
       return yield* Result.fail(

@@ -352,7 +352,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
   if (ledger.netRealizedPnlAfterCostsMicros === null) throw Error('Fixture must close')
   const net = BigInt(ledger.netRealizedPnlAfterCostsMicros) - BigInt(costs.knownCostMicros) - 10n
   const material = {
-    schemaVersion: 'bayn.backtest-report.v5',
+    schemaVersion: 'bayn.backtest-report.v9',
     executableSha256: sha256('SYNTHETIC economic fixture executable ' + hash(instructions)),
     jevInstructions: { document: instructions, contentHash: hash(instructions) },
     evidenceMode: 'simulated-production-execution',
@@ -368,6 +368,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
       costs,
       calls,
       providerDispatchCount: 3,
+      retainedCallCount: 0,
     },
     completion: 'COMPLETE',
     issues: [],
@@ -413,7 +414,9 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
     ],
   }
   const comparisonInput = Schema.decodeUnknownSync(BacktestComparisonInputSchema)({
-    schemaVersion: 'bayn.backtest.v6',
+    schemaVersion: 'bayn.backtest.v9',
+    policy: 'JEV' as const,
+    latencyStress: null,
     inference: material.inference.definition,
     allocatedDataCostPerSessionMicros: '10',
     interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-04T20:00:00.000Z' },
@@ -576,7 +579,7 @@ test('retained received calls cannot exceed the provider budget by understating 
     ...original,
     comparisonInput,
     comparisonInputHash: hash(comparisonInput),
-    inference: { definition, calls, costs, providerDispatchCount: 1 },
+    inference: { definition, calls, costs, providerDispatchCount: 1, retainedCallCount: 0 },
     reconciledNetPnlAfterCostsMicros: String(BigInt(original.reconciledNetPnlAfterCostsMicros) - difference),
     sessions: original.sessions.map((row) => ({
       ...row,
@@ -592,6 +595,20 @@ test('retained received calls cannot exceed the provider budget by understating 
         reseal({
           ...original,
           inference: { ...original.inference, providerDispatchCount: 0 },
+        }),
+      ),
+    ),
+  ).toBe(true)
+})
+
+test('replayed calls cannot stand in for measured instruction-variant economics', () => {
+  const report = nativeReportFixture()
+  expect(
+    Result.isFailure(
+      project(
+        reseal({
+          ...report,
+          inference: { ...report.inference, retainedCallCount: 1 },
         }),
       ),
     ),

@@ -3,7 +3,8 @@ import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
-import { calculateReplayInferenceCosts } from './inference-costs'
+import { calculateReplayInferenceCosts, registeredReplayInferenceTariff } from './inference-costs'
+import { replayRateCardFixture } from '../system-assessment/fixtures.test-support'
 import type { ReplayInferenceCall } from './inference-timing'
 import {
   entryEvaluationRequestFixture,
@@ -13,6 +14,25 @@ import {
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
 import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from '../jev/staged-chart-questions'
 import { stageResponseIdentity } from '../jev/staged-checkpoint'
+
+test('registered replay tariffs cover both providers for the whole window without overlapping or substituted rates', () => {
+  const card = replayRateCardFixture(costs)
+  const interval = { startAt: '2026-11-02T14:30:00.000Z', endAt: '2026-11-27T21:00:00.000Z' }
+  expect(Result.getOrThrow(registeredReplayInferenceTariff(card, interval))).toEqual(costs)
+  expect(
+    Result.getOrThrow(registeredReplayInferenceTariff({ ...card, rates: [...card.rates].reverse() }, interval)),
+  ).toEqual(costs)
+  for (const changed of [
+    { ...card, rates: [] },
+    { ...card, rates: card.rates.slice(1) },
+    { ...card, rates: [...card.rates, ...card.rates] },
+    { ...card, rates: card.rates.map((rate) => ({ ...rate, effectiveUntil: interval.endAt })) },
+    { ...card, rates: card.rates.map((rate) => ({ ...rate, effectiveFrom: '2026-11-02T14:30:00.001Z' })) },
+    { ...card, rates: card.rates.map((rate) => ({ ...rate, model: 'different-model' })) },
+  ])
+    expect(Result.isFailure(registeredReplayInferenceTariff(changed, interval))).toBe(true)
+  expect(Result.isFailure(registeredReplayInferenceTariff(card, { ...interval, endAt: interval.startAt }))).toBe(true)
+})
 
 const costs = {
   jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },

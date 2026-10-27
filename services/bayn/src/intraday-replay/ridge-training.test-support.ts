@@ -123,7 +123,9 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
     decisionLatencyMs: 1000,
     turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
     backtest: {
-      schemaVersion: 'bayn.backtest.v6',
+      schemaVersion: 'bayn.backtest.v9',
+      policy: 'JEV' as const,
+      latencyStress: null,
       jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       source,
       openingCashMicros: '100000000000',

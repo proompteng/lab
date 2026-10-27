@@ -2,6 +2,8 @@ import { ReplayInstrumentsSchema } from './execution-core'
 import { equityMarketProfile, jevMarketProfiles } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { jevInstructions } from '../jev/instructions'
+import { decodeJevBatchPlan, decodeJevBatchResult } from '../jev/batch'
+import type { ReplayBrokerEvidenceConfig } from './broker-checkpoint'
 
 import { OperationDeadlineClock, operationTimeoutOrElse } from '../operation-timeout'
 import { utcInstantFromEpochMillis } from '../time'
@@ -29,15 +31,31 @@ import {
   strictParseOptions,
 } from '../schemas'
 import {
-  activeStrategyBehaviorHash,
-  activeStrategyName,
   loadActiveStrategyProtocol,
   makeActiveStrategyRuntime,
+  makeEntryAblationRuntime,
+  makeRepeatedMomentumRuntime,
 } from '../strategy'
+import { makeEntryAblationPolicy } from '../jev/entry-ablation-policy'
+import { JevResearchPolicy } from '../jev/acceptance'
+import { reproduceJevCandidateObservation } from '../jev/observation'
+import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
+import { NativeReplayIdentitySchema, NativeReplayPolicySchema, nativeReplayPolicyIdentity } from './native-policy'
 import { JevClient } from '../jev/client'
 import { DecisionsClient, decisionsModel } from '../jev/decisions'
 import { jevModel } from '../jev/contract'
-import { makeReplayInferenceBudget, makeReplayInferenceTiming, type ReplayInferenceCall } from './inference-timing'
+import {
+  makeReplayInferenceBudget,
+  momentumReplayProviders,
+  makeReplayInferenceTiming,
+  type ReplayInferenceCall,
+  type ReplayInferenceProviders,
+} from './inference-timing'
+import {
+  makeRecordedInferenceProviders,
+  ReplayInferenceRecordingSchema,
+  validateReplayInferenceRecording,
+} from './recorded-inference'
 import { calculateReplayInferenceCosts, ReplayInferenceCostModelSchema } from './inference-costs'
 import {
   BacktestSourceManifestSchema,
@@ -61,6 +79,11 @@ import type { ReconciliationMetrics } from '../simulation-reconciliation/broker-
 import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
 import { decodeExecutionCycleClosureResult } from '../db/execution-cycle-closure'
 import { observedQuoteAt } from '../market-data/streaming/projection'
+import {
+  bindLatencyReplayInput,
+  prepareSystemLatencyReplay,
+  SystemLatencyReplaySchema,
+} from '../system-assessment/latency-replay'
 
 export enum BacktestIssue {
   CycleFailure = 'cycle-failure',
@@ -73,6 +96,8 @@ export enum BacktestIssue {
   UnresolvedModelCost = 'unresolved-model-cost',
   UnresolvedExecutionCost = 'unresolved-execution-cost',
   UnresolvedDataCost = 'unresolved-data-cost',
+  UnreleasedLatencyBatch = 'unreleased-latency-batch',
+  UnreleasedLatencyObservation = 'unreleased-latency-observation',
 }
 
 export const assessBacktestSession = (input: {
@@ -109,16 +134,26 @@ export const assessBacktestSession = (input: {
   return { completion: issues.length === 0 ? ('COMPLETE' as const) : ('INCOMPLETE' as const), issues }
 }
 
+const inferenceFields = {
+  models: Schema.Struct({ jev: Schema.Literal(jevModel), chart: Schema.Literal(decisionsModel) }),
+  inputDefinition: Schema.Literal(defaultJevProtocolDocument.inputDefinition),
+  costs: ReplayInferenceCostModelSchema,
+  maximumCalls: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
+}
 export const BacktestInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.backtest.v6'),
+  schemaVersion: Schema.Literal('bayn.backtest.v9'),
+  policy: NativeReplayPolicySchema,
+  latencyStress: Schema.NullOr(SystemLatencyReplaySchema),
   jevInstructionsHash: Sha256Schema,
-  inference: Schema.Struct({
-    mode: Schema.Literal('measured-providers'),
-    models: Schema.Struct({ jev: Schema.Literal(jevModel), chart: Schema.Literal(decisionsModel) }),
-    inputDefinition: Schema.Literal(defaultJevProtocolDocument.inputDefinition),
-    costs: ReplayInferenceCostModelSchema,
-    maximumCalls: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
-  }),
+  inference: Schema.Union([
+    Schema.Struct({ ...inferenceFields, mode: Schema.Literal('measured-providers') }),
+    Schema.Struct({
+      ...inferenceFields,
+      mode: Schema.Literal('retained-responses'),
+      recordingHash: Sha256Schema,
+      recording: ReplayInferenceRecordingSchema,
+    }),
+  ]),
   allocatedDataCostPerSessionMicros: Schema.NullOr(UnsignedMicrosSchema),
   replicate: StrictNonEmptyStringSchema,
   interval: Schema.Struct({ startAt: UtcInstantSchema, endAt: UtcInstantSchema }),
@@ -145,6 +180,14 @@ export const BacktestInputSchema = Schema.Struct({
   }),
 })
 
+export const BacktestBuildEvidenceSchema = Schema.Struct({
+  ...EmbeddedBuildMetadataSchema.fields,
+  declaredImageDigest: ImageDigestSchema,
+  imageDigestVerification: Schema.Literal('unverified-input'),
+  executableStrategy: NativeReplayIdentitySchema.fields.strategy,
+  sourceAndStrategyVerification: Schema.Literals(['configured', 'embedded']),
+})
+
 const { replicate: _replicate, jevInstructionsHash: _instructions, ...comparisonFields } = BacktestInputSchema.fields
 export const BacktestComparisonInputSchema = Schema.Struct(comparisonFields)
 export const backtestComparisonInput = (input: typeof BacktestInputSchema.Type) => {
@@ -160,17 +203,46 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       assets: [...supplied.assets].sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0)),
       calendar: [...supplied.calendar].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
     }
+    const latencyStress =
+      decoded.latencyStress === null ? null : yield* prepareSystemLatencyReplay(decoded.latencyStress)
+    const registeredWindows =
+      latencyStress === null
+        ? null
+        : yield* bindLatencyReplayInput(decoded, latencyStress.registration, latencyStress.brokerIdentity)
     yield* validateBacktestSourceManifest(decoded.source)
     yield* validateBacktestSourceCuts(decoded.source, sourceReceipt)
+    if (decoded.inference.mode === 'retained-responses') {
+      const recording = yield* validateReplayInferenceRecording(
+        decoded.inference.recording,
+        decoded.inference.recordingHash,
+      )
+      if (
+        recording.sourceManifestHash !== (yield* canonicalHashV1Result(decoded.source)) ||
+        recording.sourceRevision !== decoded.build.sourceRevision ||
+        recording.strategyBehaviorHash !== decoded.build.strategyBehaviorHash ||
+        recording.strategyParameterHash !== decoded.build.strategyParameterHash ||
+        recording.jevInstructionsHash !== decoded.jevInstructionsHash ||
+        (decoded.policy === JevResearchPolicy.Ablation && recording.calls.some((call) => call.stage === 'JEV')) ||
+        (decoded.policy === JevResearchPolicy.Momentum && recording.calls.length !== 0) ||
+        recording.calls.some(
+          (call) =>
+            call.simulatedStartedAt < decoded.interval.startAt || call.simulatedStartedAt > decoded.interval.endAt,
+        )
+      )
+        return yield* Result.fail(
+          new ReplayBrokerFailure({ message: 'Retained inference differs from the replay source, policy or interval' }),
+        )
+    }
     const baselineProtocol = yield* loadActiveStrategyProtocol()
     if (decoded.jevInstructionsHash !== (yield* canonicalHashV1Result(jevInstructions)))
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay instructions differ from its compiled executable' }),
       )
-    const baselineParameterHash = yield* canonicalHashV1Result(baselineProtocol)
+    const executableIdentity = yield* nativeReplayPolicyIdentity(JevResearchPolicy.Candidate, baselineProtocol)
+    const policyIdentity = yield* nativeReplayPolicyIdentity(decoded.policy, baselineProtocol)
     if (
-      decoded.build.strategyBehaviorHash !== activeStrategyBehaviorHash ||
-      decoded.build.strategyParameterHash !== baselineParameterHash
+      decoded.build.strategyBehaviorHash !== policyIdentity.strategy.behaviorHash ||
+      decoded.build.strategyParameterHash !== policyIdentity.strategy.parameterHash
     )
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay must use the unchanged source-controlled strategy' }),
@@ -181,15 +253,15 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
         (yield* canonicalHashV1Result({
           sourceRevision: decoded.build.sourceRevision,
           imageRepository: decoded.build.imageRepository,
-          strategyBehaviorHash: decoded.build.strategyBehaviorHash,
-          strategyParameterHash: decoded.build.strategyParameterHash,
+          strategyBehaviorHash: executableIdentity.strategy.behaviorHash,
+          strategyParameterHash: executableIdentity.strategy.parameterHash,
         }))
     )
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay build differs from the executable embedded build' }),
       )
     const protocol = baselineProtocol
-    const parameterHash = baselineParameterHash
+    const parameterHash = policyIdentity.strategy.parameterHash
     for (const source of decoded.source.marketSources) {
       const profile = jevMarketProfiles.find((profile) => profile.universeId === source.universeId)
       if (profile === undefined)
@@ -279,21 +351,18 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     const provenance = yield* makeRuntimeProvenanceResult({
       sourceRevision: decoded.build.sourceRevision,
       image: { repository: decoded.build.imageRepository, digest: decoded.build.imageDigest },
-      strategy: {
-        name: activeStrategyName,
-        behaviorHash: activeStrategyBehaviorHash,
-        parameterHash,
-        parameterSchemaVersion: protocol.schemaVersion,
-      },
+      strategy: policyIdentity.strategy,
     })
     return {
       input: decoded,
       sourceReceipt,
       runId,
       protocol,
+      policyIdentity,
       assets,
       identity,
-      reportingWindows: sessions,
+      reportingWindows: registeredWindows ?? sessions,
+      latencyStress,
       brokerSessions: calendarDays
         .flatMap((day) => day.providerSessions)
         .map((session) => ({ date: session.date, openAt: session.regularOpenAt, closeAt: session.regularCloseAt }))
@@ -307,6 +376,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
         imageDigestVerification: 'unverified-input' as const,
         strategyBehaviorHash: decoded.build.strategyBehaviorHash,
         strategyParameterHash: decoded.build.strategyParameterHash,
+        executableStrategy: executableIdentity.strategy,
         sourceAndStrategyVerification:
           embeddedBuildMetadata === undefined ? ('configured' as const) : ('embedded' as const),
       },
@@ -315,10 +385,36 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
         strategyParameterHash: parameterHash,
         verification: embeddedBuildMetadata === undefined ? ('development-configured' as const) : ('embedded' as const),
       },
-      strategy: makeActiveStrategyRuntime(protocol, provenance),
+      strategy:
+        decoded.policy === JevResearchPolicy.Ablation
+          ? makeEntryAblationRuntime(makeEntryAblationPolicy(protocol), provenance)
+          : decoded.policy === JevResearchPolicy.Momentum
+            ? makeRepeatedMomentumRuntime(makeRepeatedMomentumPolicy(protocol), provenance)
+            : makeActiveStrategyRuntime(protocol, provenance),
     }
   })
 export type PreparedBacktest = Result.Result.Success<ReturnType<typeof prepareBacktest>>
+
+export const backtestBrokerEvidenceConfig = (prepared: PreparedBacktest) =>
+  canonicalHashV1Result(prepared.input.source).pipe(
+    Result.map(
+      (sourceManifestHash): ReplayBrokerEvidenceConfig => ({
+        runId: prepared.runId,
+        sourceManifestHash,
+        openingCashMicros: prepared.input.openingCashMicros,
+        protocol: {
+          feed: equityMarketProfile.feed,
+          delayClass: equityMarketProfile.delayClass,
+          maximumQuoteAgeMs: prepared.protocol.maximumQuoteAgeMs,
+          executionModel: prepared.protocol.executionModel,
+        },
+        assumptions: prepared.input.assumptions,
+        fractionalTrading: prepared.input.fractionalTrading,
+        assets: prepared.assets,
+        calendar: prepared.input.calendar,
+      }),
+    ),
+  )
 export type ReplayDatabaseConfig = Pick<RuntimeConfig, 'postgres' | 'tigerBeetle' | 'operationTimeoutMs'>
 
 export const prepareFreshReplayDatabase = (timeoutMs = 30_000) =>
@@ -363,8 +459,24 @@ export const runBacktest = (
   databases: ReplayDatabaseConfig,
   recordPass: (pass: BacktestPass) => Effect.Effect<void, OperationalError>,
   recordInference: (call: ReplayInferenceCall) => Effect.Effect<void, ReplayBrokerFailure>,
+  liveProviders: ReplayInferenceProviders | null,
 ) =>
   Effect.gen(function* () {
+    if (
+      prepared.latencyStress !== null &&
+      databases.operationTimeoutMs !== prepared.latencyStress.registration.obligations.configuration.operationTimeoutMs
+    )
+      return yield* new ReplayBrokerFailure({
+        message: 'Latency replay database timeout differs from its registration',
+      })
+    if (
+      (prepared.input.inference.mode === 'measured-providers' &&
+        prepared.input.policy !== JevResearchPolicy.Momentum) !==
+      (liveProviders !== null)
+    )
+      return yield* new ReplayBrokerFailure({
+        message: 'Replay provider capability differs from the frozen inference mode',
+      })
     const source = yield* openBacktestSource(
       arrivalsPath,
       prepared.input.source,
@@ -377,7 +489,7 @@ export const runBacktest = (
     yield* TestClock.setTime(initializationStartedAtMs)
     const providerClock = yield* OperationDeadlineClock
     if (providerClock === undefined)
-      return yield* new ReplayBrokerFailure({ message: 'Native Jev backtest requires its measured provider clock' })
+      return yield* new ReplayBrokerFailure({ message: 'Native replay requires an independent elapsed-time clock' })
     const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash, providerClock)
     const { advanceTo, advanceDeadlineTo } = yield* makeReplayTimeline(
       { advanceTo: (atMs) => clock.excludeSourceTime(source.advanceTo(atMs)) },
@@ -387,9 +499,22 @@ export const runBacktest = (
     yield* advanceTo(initializationStartedAtMs)
     const inferenceCalls: ReplayInferenceCall[] = []
     const budget = makeReplayInferenceBudget(prepared.input.inference.maximumCalls)
+    const recorded =
+      prepared.input.inference.mode === 'retained-responses'
+        ? yield* makeRecordedInferenceProviders(
+            prepared.input.inference.recording,
+            yield* Clock.clockWith(Effect.succeed),
+          )
+        : undefined
+    const providers =
+      prepared.input.policy === JevResearchPolicy.Momentum
+        ? momentumReplayProviders
+        : (recorded?.providers ?? liveProviders)
+    if (providers === null)
+      return yield* new ReplayBrokerFailure({ message: 'Replay inference capability is unavailable' })
     const timing = yield* makeReplayInferenceTiming({
       measureDatabaseTime: clock.measure,
-      providers: { jev: yield* JevClient, chart: yield* DecisionsClient },
+      providers,
       budget,
       providerClock,
       advanceTo,
@@ -404,21 +529,11 @@ export const runBacktest = (
           ),
         ),
     })
+    const run = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
+      timing.run(operation).pipe(Effect.tap(() => recorded?.assertSupported ?? Effect.void))
     const broker = yield* makeReplayBroker({
-      runId: prepared.runId,
+      ...(yield* Effect.fromResult(backtestBrokerEvidenceConfig(prepared))),
       submissionTime: timing.currentUtcInstant,
-      sourceManifestHash: source.source.sourceManifestHash,
-      openingCashMicros: prepared.input.openingCashMicros,
-      protocol: {
-        feed: equityMarketProfile.feed,
-        delayClass: equityMarketProfile.delayClass,
-        maximumQuoteAgeMs: prepared.protocol.maximumQuoteAgeMs,
-        executionModel: prepared.protocol.executionModel,
-      },
-      assumptions: prepared.input.assumptions,
-      fractionalTrading: prepared.input.fractionalTrading,
-      assets: prepared.assets,
-      calendar: prepared.input.calendar,
       advanceToArrival: advanceTo,
       quoteAt: (symbol, atMs, quoteSource) =>
         source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs, quoteSource))),
@@ -433,6 +548,13 @@ export const runBacktest = (
         ),
     )
     const runtime = yield* makeReplayExecutionRuntime({
+      decisionLatencyStress:
+        prepared.latencyStress === null
+          ? null
+          : {
+              p95FullBatchMs: prepared.latencyStress.p95FullBatchMs,
+              advanceTo,
+            },
       currentUtcInstant: timing.currentUtcInstant,
       config: {
         ...databases,
@@ -454,7 +576,7 @@ export const runBacktest = (
     }).pipe(
       Effect.provideService(JevClient, timing.clients.jev),
       Effect.provideService(DecisionsClient, timing.clients.chart),
-      timing.run,
+      run,
     )
     const initializationCompletedAtMs = yield* Clock.currentTimeMillis
     if (initializationCompletedAtMs > prepared.openMs)
@@ -490,7 +612,7 @@ export const runBacktest = (
           const schedule = yield* driveReplaySession(
             {
               ...runtime,
-              advance: timing.run(runtime.advance).pipe(
+              advance: run(runtime.advance).pipe(
                 Effect.tap((pass) =>
                   Effect.gen(function* () {
                     const valued = yield* Effect.result(
@@ -516,16 +638,16 @@ export const runBacktest = (
               ),
             },
             advanceTo,
-            Math.max(nextPollAtMs, yield* Clock.currentTimeMillis),
+            Math.max(nextPollAtMs, Date.parse(session.openAt), yield* Clock.currentTimeMillis),
             Date.parse(session.closeAt),
-            session === prepared.reportingWindows.at(-1),
+            prepared.latencyStress !== null || session === prepared.reportingWindows.at(-1),
           )
           nextPollAtMs = schedule.nextPollAtMs
           const closingEquity = yield* broker.valuationAt(session.closeAt)
           const closingNetEquity = equityAfterKnownCosts(closingEquity.equityMicros)
           if (closingEquity.valuationQualified) observeEquity(closingNetEquity)
           else valuationFailureCount++
-          const reconciliation = yield* timing.run(runtime.reconcile)
+          const reconciliation = yield* run(runtime.reconcile)
           const state = yield* broker.snapshot
           const netEquityChangeMicros = (closingNetEquity - previousClosingEquity).toString()
           previousClosingEquity = closingNetEquity
@@ -534,7 +656,7 @@ export const runBacktest = (
             prepared.input.inference.costs,
           )
           const assessed = assessBacktestSession({
-            finalWindow: session === prepared.reportingWindows.at(-1),
+            finalWindow: prepared.latencyStress !== null || session === prepared.reportingWindows.at(-1),
             failedPassCount: schedule.failedPassCount,
             unavailableDecisionPassCount: schedule.unavailableDecisionPassCount,
             valuationFailureCount,
@@ -571,6 +693,7 @@ export const runBacktest = (
       { concurrency: 1 },
     )
     const brokerState = yield* broker.snapshot
+    const decisionLatencyEvidence = yield* runtime.decisionLatencyEvidence
     const modelCosts = calculateReplayInferenceCosts(inferenceCalls, prepared.input.inference.costs)
     const dataCostMicros =
       allocatedDataCost === null ? null : (BigInt(allocatedDataCost) * BigInt(sessions.length)).toString()
@@ -579,6 +702,10 @@ export const runBacktest = (
       ...(modelCosts.unresolvedCallCount === 0 ? [] : [BacktestIssue.UnresolvedModelCost]),
       ...(executionPnl === null ? [BacktestIssue.UnresolvedExecutionCost] : []),
       ...(allocatedDataCost === null ? [BacktestIssue.UnresolvedDataCost] : []),
+      ...(decisionLatencyEvidence.unreleasedObservationHashes.length === 0
+        ? []
+        : [BacktestIssue.UnreleasedLatencyObservation]),
+      ...(decisionLatencyEvidence.unreleasedBatchIds.length === 0 ? [] : [BacktestIssue.UnreleasedLatencyBatch]),
     ]
     const complete = sessions.every((session) => session.completion === 'COMPLETE') && issues.length === 0
     // Consume and rehash any retained tail only after the final decision; it cannot affect execution inputs.
@@ -622,8 +749,50 @@ export const runBacktest = (
       WHERE account_id = ${broker.accountId} ORDER BY fee_date, activity_id
     `
     const comparisonInput = backtestComparisonInput(prepared.input)
+    const batchRows = yield* sql<{ plan: unknown; result: unknown }>`
+      SELECT plan.payload AS plan, result.payload AS result
+      FROM jev_batch_plans AS plan
+      JOIN autonomous_cycles AS cycle ON cycle.cycle_id = plan.cycle_id
+      LEFT JOIN jev_batch_results AS result ON result.batch_id = plan.batch_id
+      WHERE cycle.account_id = ${broker.accountId}
+      ORDER BY plan.batch_id
+    `
+    const batches = yield* Effect.forEach(batchRows, ({ plan: rawPlan, result: rawResult }) =>
+      Effect.gen(function* () {
+        const plan = yield* Effect.fromResult(decodeJevBatchPlan(rawPlan))
+        const result = rawResult === null ? null : yield* Effect.fromResult(decodeJevBatchResult(plan, rawResult))
+        return { plan, result }
+      }),
+    )
+    const observationRows = yield* sql<{ content_hash: string; payload: unknown }>`
+      SELECT source.content_hash, source.payload FROM intraday_candidate_observations AS source
+      JOIN autonomous_cycles AS cycle ON cycle.cycle_id = source.cycle_id
+      WHERE cycle.account_id = ${broker.accountId} ORDER BY source.content_hash
+    `
+    const momentumObservations =
+      prepared.input.policy !== JevResearchPolicy.Momentum
+        ? []
+        : yield* Effect.forEach(observationRows, (row) =>
+            Effect.gen(function* () {
+              const reproduced = yield* Effect.fromResult(reproduceJevCandidateObservation(row.payload))
+              if (reproduced.contentHash !== row.content_hash)
+                return yield* new ReplayBrokerFailure({
+                  message: 'Persisted momentum observation hash does not reproduce',
+                })
+              return { contentHash: row.content_hash, payload: row.payload }
+            }),
+          )
     const report = {
-      schemaVersion: 'bayn.backtest-report.v5' as const,
+      schemaVersion: 'bayn.backtest-report.v9' as const,
+      latencyStress:
+        prepared.latencyStress === null
+          ? null
+          : {
+              protocol: prepared.latencyStress.protocol,
+              protocolHash: prepared.latencyStress.protocolHash,
+              calibration: prepared.latencyStress.calibration,
+              ...decisionLatencyEvidence,
+            },
       comparisonInput,
       comparisonInputHash: yield* Effect.fromResult(canonicalHashV1Result(comparisonInput)),
       jevInstructions: { document: jevInstructions, contentHash: prepared.input.jevInstructionsHash },
@@ -640,7 +809,8 @@ export const runBacktest = (
         definition: prepared.input.inference,
         costs: modelCosts,
         calls: inferenceCalls,
-        providerDispatchCount: budget.dispatchCount(),
+        providerDispatchCount: recorded === undefined ? budget.dispatchCount() : 0,
+        retainedCallCount: recorded?.consumedCount() ?? 0,
       },
       dataCostMicros,
       issues,
@@ -664,6 +834,9 @@ export const runBacktest = (
       maximumObservedDrawdownMicros: complete ? maximumObservedDrawdown.toString() : null,
       maximumObservedDrawdownAfterKnownCostsMicros: maximumObservedDrawdown.toString(),
       brokerState,
+      brokerCheckpoint: yield* broker.checkpoint,
+      batches,
+      momentumObservations,
       durableCounts: rows[0],
       decisions,
       closingDecisions,

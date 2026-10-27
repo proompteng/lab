@@ -787,7 +787,9 @@ const frozenControlFixture = () => {
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
-      schemaVersion: 'bayn.backtest.v6',
+      schemaVersion: 'bayn.backtest.v9',
+      policy: 'JEV' as const,
+      latencyStress: null,
       jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       inference: {
         mode: 'measured-providers',

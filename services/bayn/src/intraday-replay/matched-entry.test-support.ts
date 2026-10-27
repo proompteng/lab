@@ -8,7 +8,8 @@ import { canonicalHashV1Result } from '../hash'
 import { decideJevEntry } from '../jev/decision'
 import { type nativeJevDecisionEvidence, type nativeJevFixture } from '../jev/native.test-support'
 import { compileJevEntry } from '../jev/runtime'
-import { BrokerMode, PolicySchema } from '../risk'
+import { BrokerMode, PolicySchema, StateSchema } from '../risk'
+import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { buildExecutionDecision } from '../shadow-decision'
 import {
   intradaySnapshotReferencePricesSchemaVersion,
@@ -23,10 +24,12 @@ export const matchedCommittedDecisionFixture = (
   },
   evidence: ReturnType<typeof nativeJevDecisionEvidence>,
   allocationCapitalMicros = '1',
+  pricingSnapshot = native.snapshot,
+  maxOpenOrders = 2,
 ) =>
   Effect.gen(function* () {
     const decision = yield* Effect.fromResult(decideJevEntry(evidence))
-    const compiled = yield* Effect.fromResult(compileJevEntry(decision, native.snapshot, native.snapshot))
+    const compiled = yield* Effect.fromResult(compileJevEntry(decision, native.snapshot, pricingSnapshot))
     const broker = native.portfolio.brokerState
     const at = decision.decidedAt
     const cycle = { ...makeInitialCycle(native.draft, native.observation.payload.observedAt), state: CycleState.Active }
@@ -36,7 +39,7 @@ export const matchedCommittedDecisionFixture = (
       brokerMode: BrokerMode.Execution,
       allowedSymbols: equityMarketProfile.candidateSymbols,
       allowedOrderTypes: [OrderType.Limit],
-      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+      allowedTimeInForce: [TimeInForce.Day, TimeInForce.ImmediateOrCancel],
       maxOrderNotionalMicros: '100000000000',
       maxSymbolExposureMicros: '100000000000',
       maxGrossExposureMicros: '100000000000',
@@ -48,7 +51,7 @@ export const matchedCommittedDecisionFixture = (
       maxBrokerStateAgeMs: 120_000,
       maxMarketDataAgeMs: 120_000,
       maxAdverseSlippageBps: 100,
-      maxOpenOrders: 2,
+      maxOpenOrders,
       decisionTtlMs: 120_000,
     })
     const market = compiled.executionMarketData
@@ -90,7 +93,6 @@ export const matchedCommittedDecisionFixture = (
       observedAt: at,
     }
     const targetPlan = yield* Effect.fromResult(planTargets(plannerInput))
-    if (targetPlan.intentTargets.length !== 0) throw new Error('Timing fixture requires a sub-share allocation')
     const executionSession = yield* Effect.fromResult(
       bindCycleExecutionSession({
         cycle,
@@ -101,6 +103,58 @@ export const matchedCommittedDecisionFixture = (
       }),
     )
     const authorityGenerationHash = native.observation.payload.authorityGenerationHash
+    const riskContext = {
+      authority: {
+        schemaVersion: 'bayn.paper-authority.v1' as const,
+        generationHash: authorityGenerationHash,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
+        kill: KillState.Clear,
+        version: 1,
+        updatedAt: at,
+      },
+      authorityObservedAt: at,
+      unknownMutationCount: 0,
+      dailyTradedNotionalMicros: '0',
+      dayStartEquityMicros: broker.account.equityMicros,
+      peakEquityMicros: broker.account.equityMicros,
+    }
+    const riskInputs = yield* Effect.forEach(targetPlan.intentTargets, (target) =>
+      Effect.gen(function* () {
+        const planned = targetPlan.targets.find((t) => t.symbol === target.symbol)
+        const quote = pricingSnapshot.latestQuotes[target.symbol]
+        if (planned === undefined || quote === undefined) return yield* Effect.die('Missing target quote')
+        const pricing = yield* Effect.fromResult(
+          deriveExecutionIntentPricing({
+            ...target,
+            quantityAtoms: BigInt(target.quantityAtoms),
+            referencePriceMicros: BigInt(planned.referencePriceMicros),
+            limitSlippageBps: 0n,
+          }),
+        )
+        return {
+          symbol: target.symbol,
+          notionalLimitMicros: pricing.notionalLimitMicros.toString(),
+          limitPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
+          state: yield* Schema.decodeUnknownEffect(StateSchema)({
+            schemaVersion: 'bayn.paper-risk-state.v2',
+            brokerMode: BrokerMode.Execution,
+            ...broker,
+            ...riskContext,
+            marketDataSymbol: target.symbol,
+            marketDataHash: market.contentHash,
+            executionMarketDataHash: market.contentHash,
+            referencePriceMicros: planned.referencePriceMicros,
+            expectedExecutionPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
+            marketDataObservedAt: market.observedAt,
+            entryQuote: compiled.entryQuotes[target.symbol],
+            executionSession,
+            reservedBuyingPowerMicros: '0',
+            evaluatedAt: at,
+          }),
+        }
+      }),
+    )
     return yield* buildExecutionDecision({
       cycle,
       snapshot: {
@@ -110,28 +164,17 @@ export const matchedCommittedDecisionFixture = (
       },
       compiledDecision: decision,
       decisionMarketDataRows: compiled.decisionMarketDataRows,
+      ...(compiled.decisionMarketData === undefined ? {} : { decisionMarketData: compiled.decisionMarketData }),
+      ...(compiled.executionMarketDataRows === undefined
+        ? {}
+        : { executionMarketDataRows: compiled.executionMarketDataRows }),
       executionMarketData: market,
       plannerInput,
       targetPlan,
       policy,
-      riskInputs: [],
+      riskInputs,
       authorityGenerationHash,
       executionSession,
-      riskContext: {
-        authority: {
-          schemaVersion: 'bayn.paper-authority.v1',
-          generationHash: authorityGenerationHash,
-          maximum: Authority.Execution,
-          effective: Authority.Execution,
-          kill: KillState.Clear,
-          version: 1,
-          updatedAt: at,
-        },
-        authorityObservedAt: at,
-        unknownMutationCount: 0,
-        dailyTradedNotionalMicros: '0',
-        dayStartEquityMicros: broker.account.equityMicros,
-        peakEquityMicros: broker.account.equityMicros,
-      },
+      riskContext,
     })
   })

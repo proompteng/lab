@@ -1,8 +1,9 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevFailure, JevResponseSchema } from '../jev/contract'
-import { validDecisionsUsage } from '../jev/decisions'
+import { JevFailure, jevModel, JevResponseSchema } from '../jev/contract'
+import { decisionsModel, validDecisionsUsage } from '../jev/decisions'
+import { InferenceCostError, prepareInferenceRateCard } from '../inference-costs'
 import { NonNegativeIntegerSchema, PositiveMicrosSchema, UnsignedMicrosSchema } from '../schemas'
 import type { ReplayInferenceCall } from './inference-timing'
 
@@ -18,6 +19,36 @@ export const ReplayInferenceCostModelSchema = Schema.Struct({
     cacheWriteInputMicrosPerMillionTokens: UnsignedMicrosSchema,
   }),
 })
+
+/** A fixed replay tariff must cover the entire registered interval, including no-call periods. */
+export const registeredReplayInferenceTariff = (
+  rateCard: unknown,
+  interval: { readonly startAt: string; readonly endAt: string },
+) =>
+  Result.gen(function* () {
+    const { rates } = yield* prepareInferenceRateCard(rateCard)
+    const covering = rates.filter(
+      ({ rate }) => rate.effectiveFrom <= interval.startAt && interval.endAt < rate.effectiveUntil,
+    )
+    const jev = covering.find(({ rate }) => rate.provider === 'typesafe' && rate.model === jevModel)?.rate
+    const chart = covering.find(({ rate }) => rate.provider === 'openai' && rate.model === decisionsModel)?.rate
+    if (jev?.provider !== 'typesafe' || chart?.provider !== 'openai' || interval.startAt >= interval.endAt)
+      return yield* Result.fail(
+        new InferenceCostError({ message: 'Fixed replay tariff does not cover the registered interval' }),
+      )
+    return yield* Schema.decodeUnknownResult(ReplayInferenceCostModelSchema)({
+      jev: {
+        inputMicrosPerMillionTokens: jev.inputMicrosPerMillionTokens,
+        outputMicrosPerMillionTokens: jev.outputMicrosPerMillionTokens,
+      },
+      chart: {
+        inputMicrosPerMillionTokens: chart.inputMicrosPerMillionTokens,
+        outputMicrosPerMillionTokens: chart.outputMicrosPerMillionTokens,
+        cachedInputMicrosPerMillionTokens: chart.cachedInputMicrosPerMillionTokens,
+        cacheWriteInputMicrosPerMillionTokens: chart.cacheWriteInputMicrosPerMillionTokens,
+      },
+    })
+  })
 export const ReplayInferenceCostSummarySchema = Schema.Struct({
   callCount: NonNegativeIntegerSchema,
   chartCallCount: NonNegativeIntegerSchema,

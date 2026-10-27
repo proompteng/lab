@@ -64,6 +64,7 @@ import { ReconciliationClock } from '../reconciler'
 import { CapitalActivationReconciliationNotExact, operationalError, OperationalError } from '../errors'
 import { currentUtcInstant } from '../time'
 import { ReplayBrokerFailure, type makeReplayBroker } from './broker'
+import { makeReplayDecisionLatency } from './decision-latency'
 
 const replayGenerationRecoveryError = (cause: unknown): OperationalError =>
   operationalError({
@@ -91,6 +92,7 @@ export const reconcileReplayForActivation = <R>(
   )
 
 export interface ReplayExecutionRuntimeInput {
+  readonly decisionLatencyStress: Parameters<typeof makeReplayDecisionLatency>[1]
   readonly currentUtcInstant: ExecutionProgramDependencies['currentUtcInstant']
   readonly config: ExecutionStoreRuntimeConfig
   readonly strategy: StrategyRuntime
@@ -145,7 +147,10 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const decisionsClient = yield* DecisionsClient
     const entryInferenceJournal = yield* makeEntryInferenceJournal
     const jevEvaluations = yield* makeJevEvaluationStore
-    const jevBatches = yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations))
+    const latency = makeReplayDecisionLatency(input.currentUtcInstant, input.decisionLatencyStress)
+    const jevBatches = latency.wrapStore(
+      yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations)),
+    )
     const jevPositions = yield* makeJevPositionStore
     const riskPolicy = yield* loadStrategyExecutionRiskPolicy(identity.accountId, input.strategy)
     const plan = {
@@ -212,7 +217,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           )
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
       Context.add(ReconciliationClock, reconciliationTime),
-      Context.add(CandidateObservationStore, candidateObservationStore),
+      Context.add(CandidateObservationStore, latency.wrapObservations(candidateObservationStore)),
       Context.add(JevClient, jevClient),
       Context.add(DecisionsClient, decisionsClient),
       Context.add(EntryInferenceJournal, entryInferenceJournal),
@@ -312,26 +317,28 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const initialDriver = owned.driver
     const permit = yield* Semaphore.make(1)
     const advance = permit.withPermit(
-      Effect.gen(function* () {
-        if (yield* owned.needsRebind) {
-          const current = yield* readAuthority
-          let generationHash = current.generationHash
-          if (
-            current.maximum === Authority.Observe &&
-            current.effective === Authority.Observe &&
-            current.kill === KillState.Clear
-          ) {
-            yield* reconcileForActivation
-            const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
-              researchCapitalGrantProof(request),
-              current.generationHash,
-            )
-            generationHash = next.generationHash
+      latency.runPass(
+        Effect.gen(function* () {
+          if (yield* owned.needsRebind) {
+            const current = yield* readAuthority
+            let generationHash = current.generationHash
+            if (
+              current.maximum === Authority.Observe &&
+              current.effective === Authority.Observe &&
+              current.kill === KillState.Clear
+            ) {
+              yield* reconcileForActivation
+              const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
+                researchCapitalGrantProof(request),
+                current.generationHash,
+              )
+              generationHash = next.generationHash
+            }
+            owned = yield* startGeneration(generationHash)
           }
-          owned = yield* startGeneration(generationHash)
-        }
-        return yield* owned.driver.advance.pipe(Effect.provideContext(resources))
-      }),
+          return yield* owned.driver.advance.pipe(Effect.provideContext(resources))
+        }),
+      ),
     )
     return {
       authorityGenerationHash: activated.generationHash,
@@ -341,6 +348,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       advance,
       nextDelayMs: initialDriver.nextDelayMs,
       reconcile,
+      decisionLatencyEvidence: latency.evidence,
     }
   }).pipe(
     Effect.mapError((cause) =>
