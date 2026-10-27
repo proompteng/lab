@@ -1,3 +1,4 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
@@ -554,7 +555,7 @@ test.each(['cash', 'filled'] as const)(
           turnoverPolicy: data.context.turnoverPolicy,
           ridge: data.input,
           backtest: {
-            schemaVersion: 'bayn.backtest.v9',
+            schemaVersion: 'bayn.backtest.v10',
             policy: 'JEV' as const,
             latencyStress: null,
             jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -566,7 +567,7 @@ test.each(['cash', 'filled'] as const)(
               maximumCalls: 1000,
               models: { jev: jevModel, chart: 'gpt-6-luna' },
               inputDefinition: 'bayn.jev-entry-state.v22',
-              costs: {
+              costs: replayRateCardFixture({
                 jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
                 chart: {
                   inputMicrosPerMillionTokens: '100000',
@@ -574,7 +575,7 @@ test.each(['cash', 'filled'] as const)(
                   cachedInputMicrosPerMillionTokens: '10000',
                   cacheWriteInputMicrosPerMillionTokens: '125000',
                 },
-              },
+              }),
             },
             allocatedDataCostPerSessionMicros: '1000000',
             replicate: 'SYNTHETIC ridge pair',

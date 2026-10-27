@@ -1,3 +1,4 @@
+import { InferenceRateCardSchema, prepareInferenceRateCard } from '../inference-costs'
 import { ReplayInstrumentsSchema } from './execution-core'
 import { equityMarketProfile, jevMarketProfiles } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
@@ -56,7 +57,7 @@ import {
   ReplayInferenceRecordingSchema,
   validateReplayInferenceRecording,
 } from './recorded-inference'
-import { calculateReplayInferenceCosts, ReplayInferenceCostModelSchema } from './inference-costs'
+import { calculateReplayInferenceCosts } from './inference-costs'
 import {
   BacktestSourceManifestSchema,
   openBacktestSource,
@@ -137,11 +138,11 @@ export const assessBacktestSession = (input: {
 const inferenceFields = {
   models: Schema.Struct({ jev: Schema.Literal(jevModel), chart: Schema.Literal(decisionsModel) }),
   inputDefinition: Schema.Literal(defaultJevProtocolDocument.inputDefinition),
-  costs: ReplayInferenceCostModelSchema,
+  costs: InferenceRateCardSchema,
   maximumCalls: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
 }
 export const BacktestInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.backtest.v9'),
+  schemaVersion: Schema.Literal('bayn.backtest.v10'),
   policy: NativeReplayPolicySchema,
   latencyStress: Schema.NullOr(SystemLatencyReplaySchema),
   jevInstructionsHash: Sha256Schema,
@@ -198,8 +199,16 @@ export const backtestComparisonInput = (input: typeof BacktestInputSchema.Type) 
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(BacktestInputSchema, strictParseOptions)(input)
+    const { rates } = yield* prepareInferenceRateCard(supplied.inference.costs)
     const decoded = {
       ...supplied,
+      inference: {
+        ...supplied.inference,
+        costs: {
+          ...supplied.inference.costs,
+          rates: rates.toSorted((a, b) => a.rateHash.localeCompare(b.rateHash)).map(({ rate }) => rate),
+        },
+      },
       assets: [...supplied.assets].sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0)),
       calendar: [...supplied.calendar].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
     }

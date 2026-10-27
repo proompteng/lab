@@ -1,13 +1,10 @@
+import { InferenceRateCardSchema } from '../inference-costs'
 import { Result, Schema } from 'effect'
 
 import { OrderStatus } from '../broker/alpaca/model'
 import { canonicalHashV1Result } from '../hash'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerEvidenceConfig } from '../intraday-replay/broker-checkpoint'
-import {
-  calculateReplayInferenceCosts,
-  registeredReplayInferenceTariff,
-  ReplayInferenceCostModelSchema,
-} from '../intraday-replay/inference-costs'
+import { calculateReplayInferenceCosts, registeredReplayInferenceTariff } from '../intraday-replay/inference-costs'
 import { ReplayInferenceCallSchema } from '../intraday-replay/inference-timing'
 import { validateReplayInferenceCalls } from '../intraday-replay/recorded-inference'
 import { applyReplayFill, createReplayLedger } from '../intraday-replay/ledger'
@@ -24,7 +21,7 @@ export const ReplaySessionCostsSchema = Schema.Struct({
   allocationRuleHash: Sha256Schema,
   asOf: UtcInstantSchema,
   inferenceCalls: Schema.Array(ReplayInferenceCallSchema),
-  inferenceTariff: ReplayInferenceCostModelSchema,
+  inferenceTariff: InferenceRateCardSchema,
   sessions: Schema.Array(OperatingCostEvidenceSchema).check(Schema.isMinLength(20), Schema.isMaxLength(20)),
 })
 

@@ -16,7 +16,7 @@ import { jevModel } from '../jev/contract'
 import { decisionsModel } from '../jev/decisions'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { PolicySchema } from '../risk'
-import { InferenceRateCardSchema, prepareInferenceRateCard } from '../inference-costs'
+import { InferenceRateCardSchema, inferenceRatesCoverWindow, prepareInferenceRateCard } from '../inference-costs'
 import { MarketKind } from '../instruments'
 import {
   JevAcceptanceInputSchema,
@@ -224,25 +224,28 @@ export const validateSystemRegistration = (input: unknown) =>
       const requiredModels =
         policy.policy === JevResearchPolicy.Candidate
           ? [
-              ['typesafe', jevModel],
-              ['openai', decisionsModel],
+              { provider: 'typesafe', model: jevModel },
+              { provider: 'openai', model: decisionsModel },
             ]
           : policy.policy === JevResearchPolicy.Ablation
-            ? [['openai', decisionsModel]]
+            ? [{ provider: 'openai', model: decisionsModel }]
             : []
       const firstSession = registration.calendar.sessions[0]
       const lastSession = registration.calendar.sessions.at(-1)
       if (firstSession === undefined || lastSession === undefined)
         return yield* invalid('Registration requires an evaluation calendar')
-      for (const [provider, model] of requiredModels) {
-        let coveredUntil = firstSession.openAt
-        for (const { rate } of rates
-          .filter(({ rate }) => rate.provider === provider && rate.model === model)
-          .sort((a, b) => a.rate.effectiveFrom.localeCompare(b.rate.effectiveFrom))) {
-          if (rate.effectiveFrom > coveredUntil) break
-          if (rate.effectiveUntil > coveredUntil) coveredUntil = rate.effectiveUntil
-        }
-        if (coveredUntil <= lastSession.closeAt)
+      for (const { provider, model } of requiredModels) {
+        if (
+          !inferenceRatesCoverWindow(
+            rates.map(({ rate }) => rate),
+            {
+              provider,
+              model,
+              startAt: firstSession.openAt,
+              endAt: lastSession.closeAt,
+            },
+          )
+        )
           return yield* invalid(
             `Registered ${policy.policy} tariff must continuously cover ${provider}/${model} through the final close`,
           )

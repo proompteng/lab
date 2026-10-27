@@ -1,3 +1,4 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem, Result, Schema } from 'effect'
@@ -339,7 +340,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
         1000000,
       ),
     )
-  const tariff = {
+  const tariff = replayRateCardFixture({
     jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
     chart: {
       inputMicrosPerMillionTokens: '100000',
@@ -347,7 +348,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
       cachedInputMicrosPerMillionTokens: '10000',
       cacheWriteInputMicrosPerMillionTokens: '125000',
     },
-  }
+  })
   const costs = calculateReplayInferenceCosts(calls, tariff)
   if (ledger.netRealizedPnlAfterCostsMicros === null) throw Error('Fixture must close')
   const net = BigInt(ledger.netRealizedPnlAfterCostsMicros) - BigInt(costs.knownCostMicros) - 10n
@@ -414,7 +415,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
     ],
   }
   const comparisonInput = Schema.decodeUnknownSync(BacktestComparisonInputSchema)({
-    schemaVersion: 'bayn.backtest.v9',
+    schemaVersion: 'bayn.backtest.v10',
     policy: 'JEV' as const,
     latencyStress: null,
     inference: material.inference.definition,

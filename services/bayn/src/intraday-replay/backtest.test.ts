@@ -1,3 +1,5 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
+import { registeredReplayInferenceTariff } from './inference-costs'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { cryptoMarketProfile, equityMarketProfile } from '../jev/markets'
@@ -28,7 +30,7 @@ import {
   latencyReplayExecutionModelHash,
   latencyReplayPolicyMaterial,
 } from '../system-assessment/latency-replay'
-import { registrationFixture, replayRateCardFixture, testHash } from '../system-assessment/fixtures.test-support'
+import { registrationFixture, testHash } from '../system-assessment/fixtures.test-support'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { jevModel, prepareJevRequest } from '../jev/contract'
 import { prepareObserveStartup } from '../observe-composition/startup'
@@ -44,7 +46,7 @@ const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
   return {
-    schemaVersion: 'bayn.backtest.v9',
+    schemaVersion: 'bayn.backtest.v10',
     policy: 'JEV' as const,
     latencyStress: null,
     jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -53,7 +55,7 @@ const fixture = () => {
       maximumCalls: 1000,
       models: { jev: jevModel, chart: 'gpt-6-luna' },
       inputDefinition: 'bayn.jev-entry-state.v22',
-      costs: {
+      costs: replayRateCardFixture({
         jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
         chart: {
           inputMicrosPerMillionTokens: '100000',
@@ -61,7 +63,7 @@ const fixture = () => {
           cachedInputMicrosPerMillionTokens: '10000',
           cacheWriteInputMicrosPerMillionTokens: '125000',
         },
-      },
+      }),
     },
     allocatedDataCostPerSessionMicros: '0',
     replicate: 'validation-test',
@@ -290,7 +292,7 @@ test('registered latency replay preserves every equity session and the exact can
             }),
             riskPolicyHash: testHash(material.riskPolicy),
             riskPolicy: material.riskPolicy,
-            inferenceRateCard: replayRateCardFixture(input.inference.costs),
+            inferenceRateCard: input.inference.costs,
             promptsHash: testHash(material.prompts),
             continuationAndExitsHash: testHash(material.continuationAndExits),
             protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(prepared.strategy.provenance.strategy)),
@@ -301,6 +303,43 @@ test('registered latency replay preserves every equity session and the exact can
   const windows = Result.getOrThrow(bindLatencyReplayInput(input, registration, identity))
   expect(windows).toEqual(sessions.map((s) => ({ date: s.sessionDate, openAt: s.openAt, closeAt: s.closeAt })))
   expect(windows).toHaveLength(20)
+  const tariffBoundary = sessions[10]?.openAt
+  if (tariffBoundary === undefined) throw new Error('Missing registered tariff boundary')
+  const scheduledTariff = Result.getOrThrow(
+    registeredReplayInferenceTariff(
+      {
+        ...input.inference.costs,
+        rates: input.inference.costs.rates.flatMap((rate) => [
+          { ...rate, effectiveUntil: tariffBoundary },
+          { ...rate, effectiveFrom: tariffBoundary, inputMicrosPerMillionTokens: '200000' },
+        ]),
+      },
+      input.interval,
+      JevResearchPolicy.Candidate,
+    ),
+  )
+  const scheduledRegistration = {
+    ...registration,
+    policies: registration.policies.map((p) =>
+      p.policy === JevResearchPolicy.Candidate ? { ...p, inferenceRateCard: scheduledTariff } : p,
+    ),
+  }
+  expect(
+    Result.getOrThrow(
+      bindLatencyReplayInput(
+        {
+          ...input,
+          inference: {
+            ...input.inference,
+            costs: scheduledTariff,
+          },
+        },
+        scheduledRegistration,
+        identity,
+      ),
+    ),
+  ).toEqual(windows)
+  expect(Result.isFailure(bindLatencyReplayInput(input, scheduledRegistration, identity))).toBe(true)
   for (const key of ['riskPolicyHash', 'promptsHash', 'continuationAndExitsHash'] as const)
     expect(
       Result.isFailure(
@@ -316,7 +355,6 @@ test('registered latency replay preserves every equity session and the exact can
         ),
       ),
     ).toBe(true)
-  if (input.inference.costs.jev === null) throw new Error('Candidate fixture requires its Jev tariff')
   for (const changed of [
     { ...input, source: original.source },
     { ...input, inference: original.inference },
@@ -340,10 +378,9 @@ test('registered latency replay preserves every equity session and the exact can
         ...input.inference,
         costs: {
           ...input.inference.costs,
-          jev: {
-            ...input.inference.costs.jev,
-            inputMicrosPerMillionTokens: '1',
-          },
+          rates: input.inference.costs.rates.map((rate) =>
+            rate.provider === 'typesafe' ? { ...rate, inputMicrosPerMillionTokens: '1' } : rate,
+          ),
         },
       },
     },
@@ -485,7 +522,9 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
           ...input.inference,
           costs: {
             ...input.inference.costs,
-            jev: { ...input.inference.costs.jev, inputMicrosPerMillionTokens: '84000' },
+            rates: input.inference.costs.rates.map((rate) =>
+              rate.provider === 'typesafe' ? { ...rate, inputMicrosPerMillionTokens: '84000' } : rate,
+            ),
           },
         },
       }),
@@ -497,6 +536,7 @@ test('native backtest rejects retired momentum inputs, missing inference provena
   const input = fixture()
   for (const invalid of [
     { ...input, schemaVersion: 'bayn.backtest.v1' },
+    { ...input, schemaVersion: 'bayn.backtest.v9' },
     { ...input, schemaVersion: 'bayn.backtest.v2', exitTiming: 'current' },
     { ...input, exitTiming: 'current' },
     { ...input, inference: undefined },

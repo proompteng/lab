@@ -1,3 +1,4 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { jevInstructions } from '../jev/instructions'
@@ -218,7 +219,7 @@ const simulate = (
                   },
                 },
               },
-              costs: {
+              costs: replayRateCardFixture({
                 jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
                 chart: {
                   inputMicrosPerMillionTokens: '100000',
@@ -226,7 +227,7 @@ const simulate = (
                   cachedInputMicrosPerMillionTokens: '10000',
                   cacheWriteInputMicrosPerMillionTokens: '125000',
                 },
-              },
+              }),
             }
       const report = yield* runControlSession({
         policy:
@@ -787,7 +788,7 @@ const frozenControlFixture = () => {
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
-      schemaVersion: 'bayn.backtest.v9',
+      schemaVersion: 'bayn.backtest.v10',
       policy: 'JEV' as const,
       latencyStress: null,
       jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -796,7 +797,7 @@ const frozenControlFixture = () => {
         maximumCalls: 1000,
         models: { jev: jevModel, chart: 'gpt-6-luna' },
         inputDefinition: 'bayn.jev-entry-state.v22',
-        costs: {
+        costs: replayRateCardFixture({
           jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           chart: {
             inputMicrosPerMillionTokens: '100000',
@@ -804,7 +805,7 @@ const frozenControlFixture = () => {
             cachedInputMicrosPerMillionTokens: '10000',
             cacheWriteInputMicrosPerMillionTokens: '125000',
           },
-        },
+        }),
       },
       allocatedDataCostPerSessionMicros: '1000000',
       replicate: 'control-source-fixture',

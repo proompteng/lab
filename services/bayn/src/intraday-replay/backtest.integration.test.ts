@@ -1,3 +1,4 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { nativeReplayPolicyIdentity } from './native-policy'
 import { loadActiveStrategyProtocol } from '../strategy'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
@@ -308,7 +309,7 @@ durableTest.each([
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v9',
+          schemaVersion: 'bayn.backtest.v10',
           policy,
           latencyStress: null,
           jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
@@ -324,7 +325,7 @@ durableTest.each([
             maximumCalls: 1000,
             models: { jev: jevModel, chart: 'gpt-6-luna' },
             inputDefinition: 'bayn.jev-entry-state.v22',
-            costs: {
+            costs: replayRateCardFixture({
               jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
               chart: {
                 inputMicrosPerMillionTokens: '100000',
@@ -332,7 +333,7 @@ durableTest.each([
                 cachedInputMicrosPerMillionTokens: '10000',
                 cacheWriteInputMicrosPerMillionTokens: '125000',
               },
-            },
+            }),
           },
           allocatedDataCostPerSessionMicros: boundary === 'unknown-data-cost' ? null : trading ? '1000000000' : '0',
           interval: { startAt: new Date(openMs).toISOString(), endAt: new Date(closeMs).toISOString() },

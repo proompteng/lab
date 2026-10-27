@@ -1,3 +1,4 @@
+import { prepareInferenceRateCard } from '../inference-costs'
 import { Result, Schema } from 'effect'
 import {
   makeRepeatedMomentumPolicy,
@@ -25,28 +26,10 @@ import { withProviderSessions } from '../testing/market-calendar-fixture'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { qualificationDeadlines } from './configuration'
 import { systemLatencyStressProtocolHash } from './latency-protocol'
-import { InferenceRateCardSchema, prepareInferenceRateCard } from '../inference-costs'
-import type { ReplayInferenceCostModelSchema } from '../intraday-replay/inference-costs'
-import { jevModel } from '../jev/contract'
-import { decisionsModel } from '../jev/decisions'
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { MarketKind } from '../instruments'
 import { costAttributionRule } from './cost-attribution'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
-
-export const replayRateCardFixture = (tariff: typeof ReplayInferenceCostModelSchema.Type) =>
-  Schema.decodeUnknownSync(InferenceRateCardSchema)({
-    schemaVersion: 'bayn.inference-rate-card.v1',
-    rates: [
-      ...(tariff.jev === null ? [] : [{ provider: 'typesafe', model: jevModel, ...tariff.jev }]),
-      ...(tariff.chart === null ? [] : [{ provider: 'openai', model: decisionsModel, ...tariff.chart }]),
-    ].map((rate) => ({
-      ...rate,
-      currency: 'USD',
-      source: 'Synthetic registered tariff',
-      effectiveFrom: '2026-01-01T00:00:00.000Z',
-      effectiveUntil: '2027-01-01T00:00:00.000Z',
-    })),
-  })
 
 export const testHash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 

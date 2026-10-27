@@ -1,3 +1,4 @@
+import type { InferenceRateCardSchema } from '../inference-costs'
 import { JevResearchPolicy } from '../jev/acceptance'
 import { momentumExitDefinition } from '../strategy/repeated-momentum/policy'
 import { equityMarketProfile } from '../jev/markets'
@@ -33,7 +34,7 @@ import { BacktestInputSchema, prepareBacktest } from './backtest'
 import { replayQuoteRejection } from './broker-execution-evidence'
 import { makeControlJev, type ControlJevBinding } from './control-jev'
 import { makeControlJevJournal } from './control-jev-journal'
-import { calculateReplayInferenceCosts, type ReplayInferenceCostModelSchema } from './inference-costs'
+import { calculateReplayInferenceCosts } from './inference-costs'
 import {
   applyControlOrder,
   controlCandidates,
@@ -251,12 +252,12 @@ export const runControlSession = (input: {
   readonly management: null | {
     readonly runId: string
     readonly binding: ControlJevBinding
-    readonly costs: typeof ReplayInferenceCostModelSchema.Type
+    readonly costs: typeof InferenceRateCardSchema.Type
   }
   readonly entry?: {
     readonly runId: string
     readonly binding: ControlJevBinding
-    readonly costs: typeof ReplayInferenceCostModelSchema.Type
+    readonly costs: typeof InferenceRateCardSchema.Type
   }
 }) =>
   Effect.gen(function* () {

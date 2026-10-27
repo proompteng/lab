@@ -1,3 +1,4 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
@@ -9,13 +10,7 @@ import { migrationLoader } from '../db/migrations'
 import { canonicalJsonV1Result, sha256 } from '../hash'
 import { IsoDateSchema, UtcInstantSchema } from '../schemas'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
-import {
-  assessmentFixture,
-  registrationFixture,
-  replayRateCardFixture,
-  testHash,
-  withRegistrationCommitments,
-} from './fixtures.test-support'
+import { assessmentFixture, registrationFixture, testHash, withRegistrationCommitments } from './fixtures.test-support'
 import {
   assessAndPersistSystem,
   initializeQualificationHistory,

@@ -15,7 +15,8 @@ import { JevResearchPolicy } from '../jev/acceptance'
 import { nativeJevInference } from '../jev/native.test-support'
 import { jevModel, prepareJevRequest } from '../jev/contract'
 import { OperatingCostCategory, OperatingCostCoverage } from '../operating-costs'
-import { assessmentFixture, replayRateCardFixture, testHash } from './fixtures.test-support'
+import { assessmentFixture, testHash } from './fixtures.test-support'
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { ReplaySessionCostsSchema, reproduceReplaySessionEconomics } from './latency-economics'
 import { CostAllocationPlanSchema } from './cost-allocation'
 
@@ -30,15 +31,15 @@ const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate) => {
       cacheWriteInputMicrosPerMillionTokens: '0',
     },
   }
-  const inferenceTariff = {
+  const inferenceTariff = replayRateCardFixture({
     jev: policy === JevResearchPolicy.Candidate ? fullTariff.jev : null,
     chart: policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation ? fullTariff.chart : null,
-  }
+  })
   const registration = {
     ...input.registration,
     policies: input.registration.policies.map((p) => ({
       ...p,
-      inferenceRateCard: replayRateCardFixture(p.policy === policy ? inferenceTariff : fullTariff),
+      inferenceRateCard: p.policy === policy ? inferenceTariff : replayRateCardFixture(fullTariff),
     })),
   }
   const definition = registration.policies.find((p) => p.policy === policy)

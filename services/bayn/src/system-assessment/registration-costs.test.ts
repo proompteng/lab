@@ -3,7 +3,8 @@ import { Result } from 'effect'
 
 import { JevResearchPolicy } from '../jev/acceptance'
 import type { InferenceRateSchema } from '../inference-costs'
-import { registrationFixture, replayRateCardFixture } from './fixtures.test-support'
+import { registrationFixture } from './fixtures.test-support'
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { validateSystemRegistration } from './policy'
 import { decisionsModel } from '../jev/decisions'
 

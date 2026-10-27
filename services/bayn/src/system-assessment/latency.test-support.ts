@@ -1,3 +1,4 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { Effect, Result, Schema } from 'effect'
 
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
@@ -13,7 +14,6 @@ import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { ControllerPassEvidenceSchema } from './decision-work'
 import {
   registrationFixture,
-  replayRateCardFixture,
   testHash,
   withRegistrationCommitments,
   registeredRiskFixture,
@@ -327,7 +327,7 @@ export const nativeLatencyBacktestFixture = (
       policy,
     ),
   )
-  const inferenceTariff = {
+  const inferenceTariff = replayRateCardFixture({
     jev:
       policy === JevResearchPolicy.Candidate
         ? { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' }
@@ -341,7 +341,7 @@ export const nativeLatencyBacktestFixture = (
             cacheWriteInputMicrosPerMillionTokens: '0',
           }
         : null,
-  }
+  })
   const registration = withRegistrationCommitments({
     ...f.registration,
     calendar: { ...f.registration.calendar, sourceHash: testHash(normalized) },
@@ -360,7 +360,7 @@ export const nativeLatencyBacktestFixture = (
             protocolHash: policyIdentity.protocolHash,
             riskPolicyHash: testHash(material.riskPolicy),
             riskPolicy: material.riskPolicy,
-            inferenceRateCard: replayRateCardFixture(inferenceTariff),
+            inferenceRateCard: inferenceTariff,
             promptsHash: testHash(material.prompts),
             continuationAndExitsHash: testHash(material.continuationAndExits),
             executionModelHash: testHash(f.registration.obligations.configuration.protocol.executionModel),
@@ -370,7 +370,7 @@ export const nativeLatencyBacktestFixture = (
   const cut = { ...f.cut, registrationHash: testHash(registration) }
   const configuration = registration.obligations.configuration
   const input = Schema.decodeUnknownSync(BacktestInputSchema)({
-    schemaVersion: 'bayn.backtest.v9',
+    schemaVersion: 'bayn.backtest.v10',
     policy,
     latencyStress: { registration, sourceCut: cut, brokerIdentity: f.identity },
     jevInstructionsHash: testHash(jevInstructions),

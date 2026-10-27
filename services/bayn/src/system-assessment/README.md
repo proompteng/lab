@@ -53,6 +53,10 @@ cannot become valid registrations.
 The candidate requires continuous Jev and OpenAI model tariff coverage from the first open through the final close.
 The chart ablation requires OpenAI coverage. The frozen deterministic deployed control and repeated momentum do not
 require inference tariffs. Missing models, expired rates, and gaps reject registration before its terms become immutable.
+Replay requests use `bayn.backtest.v10` and the same `bayn.inference-rate-card.v1` contract as operating-cost reporting.
+Adjacent periods may have different prices. Each retained call uses the registered provider/model rate effective at its
+simulated start, with per-call rounding retained. Missing, overlapping, or substituted rates leave usage unresolved.
+The replay binder retains the complete registered schedule; replacing it with one fixed price fails source binding.
 
 `registeredSchedule` derives decision and reconciliation obligations from the locked calendar and configuration.
 Polling frequency cannot remove scheduled work from the denominator. Cost allocation uses positive, canonically
