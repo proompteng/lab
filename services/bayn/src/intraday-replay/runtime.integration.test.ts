@@ -200,6 +200,9 @@ durableTest.each(
     const initialAtMs = Date.parse(fixture.query.observedAt)
     const cryptoAdmissionAtMs = initialAtMs + 120_000
     const reentryAtMs = initialAtMs + 240_100
+    // Improving arrival quotes fill under the fixed buy ceiling before the later protected-exit jump.
+    const measuredPremium = (tick: number) =>
+      0.02 + (tick >= (partialEntryReentry ? 100 : 50) ? 0.04 + tick * 0.00002 : -tick * 0.00002)
     const lifecycleObservations = admissionRace
       ? [{ at: initialAtMs + 60_000, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
       : scenario === 'partial-exit-reentry'
@@ -223,13 +226,16 @@ durableTest.each(
                 fullWindow: (index + 1) % 25 === 0,
                 offset: BigInt((index + 2) * 1000),
                 bidSize: 100,
-                premium: 0.02 + (index + 1) * 0.00002 + (index >= (partialEntryReentry ? 99 : 49) ? 0.04 : 0),
+                premium: measuredPremium(index + 1),
               })),
               ...(scenario === 'measured-zero-fill-reentry' ||
               scenario === 'measured-submit-expired-reentry' ||
               partialEntryReentry
                 ? [
                     { at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 },
+                    ...(slippedExit
+                      ? [{ at: reentryAtMs + 1000, fullWindow: false, offset: 310_000n, bidSize: 100, premium: 0.0198 }]
+                      : []),
                     { at: reentryAtMs + 13_000, fullWindow: true, offset: 330_000n, bidSize: 100, premium: 0.06 },
                   ]
                 : []),
@@ -282,7 +288,12 @@ durableTest.each(
           quotes: original.quotes.map((row) => ({
             ...shiftOffset(row),
             askSize:
-              !restingDayLifecycle || at <= initialAtMs + (measured ? 2000 : 200) || at === reentryAtMs ? 100 : 0,
+              !restingDayLifecycle ||
+              at <= initialAtMs + (measured ? 2000 : 200) ||
+              at === reentryAtMs ||
+              (slippedExit && at === reentryAtMs + 1000)
+                ? 100
+                : 0,
           })),
           trades: original.trades.map(shiftOffset),
         }
@@ -1660,7 +1671,7 @@ durableTest.each(
               if (execution?.quote === null || execution?.quote === undefined || execution.outcome.status !== 'filled')
                 throw new Error('Measured lifecycle requires complete execution quote evidence')
               const tick = Math.floor((Date.parse(execution.arrivedAt) - initialAtMs) / 200)
-              const expectedMidpoint = 100 * (1.02 + tick * 0.00002 + (tick >= 50 ? 0.04 : 0))
+              const expectedMidpoint = 100 * (1 + measuredPremium(tick))
               expect(execution.quote.availableAtMs).toBe(initialAtMs + tick * 200)
               expect(execution.quote.askPrice).toBeCloseTo(expectedMidpoint + 0.01, 8)
               expect(execution.quote.bidPrice).toBeCloseTo(expectedMidpoint - 0.01, 8)
@@ -1671,6 +1682,12 @@ durableTest.each(
                   ? ((quotedMicros + 9999n) / 10000n) * 10000n
                   : (quotedMicros / 10000n) * 10000n
               expect(execution.outcome.fillPriceMicros).toBe(tickRoundedMicros.toString())
+              if (order.order.side === OrderSide.Buy) {
+                if (order.order.limitPriceMicros === undefined) throw new Error('Capped entry has no limit')
+                expect(BigInt(execution.outcome.fillPriceMicros)).toBeLessThanOrEqual(
+                  BigInt(order.order.limitPriceMicros),
+                )
+              }
               const conditional =
                 order.order.parentBrokerOrderId !== undefined || order.order.nativeProtection?._tag === 'Oco'
               if (conditional) expect(Date.parse(execution.arrivedAt)).toBe(execution.quote.availableAtMs)
