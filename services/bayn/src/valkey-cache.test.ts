@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { NodeRedis } from '@effect/platform-node'
-import { ConfigProvider, Effect, Fiber, Layer, Metric, Option, Result } from 'effect'
+import { Clock, ConfigProvider, Effect, Fiber, Layer, Metric, Option, Result } from 'effect'
 import { PrometheusMetrics } from 'effect/observability'
 import { TestClock } from 'effect/testing'
 import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
+import { OperationDeadlineClock } from './operation-timeout'
 
 import {
   makeValkeyCache,
@@ -229,6 +230,54 @@ const metricSample = (text: string, metric: string, labels: Readonly<Record<stri
 }
 
 describe('Valkey queue and connection component observations', () => {
+  test('interruption during admitted queue recording preserves one sample and releases the permit', async () => {
+    const fixture = observedClientFixture(true)
+    const recording = Promise.withResolvers<void>()
+    const releaseClock = Promise.withResolvers<number>()
+    let clockReads = 0
+    await observedClientRun(
+      fixture,
+      Effect.gen(function* () {
+        const clock = yield* Clock.clockWith(Effect.succeed)
+        const controlledClock = {
+          ...clock,
+          currentTimeMillis: Effect.suspend(() => {
+            clockReads++
+            // Total stage start, queue start, then the admitted queue observation.
+            if (clockReads !== 3) return clock.currentTimeMillis
+            recording.resolve()
+            return Effect.promise(() => releaseClock.promise)
+          }),
+        }
+        const cache = yield* ValkeyCache
+        const interrupted = yield* cache
+          .get('bayn:private-recording')
+          .pipe(Effect.provideService(OperationDeadlineClock, controlledClock), Effect.forkChild)
+        yield* Effect.promise(() => recording.promise)
+        expect(clockReads).toBe(3)
+        // Signal synchronously while the clock read is suspended, before releasing it.
+        interrupted.interruptUnsafe()
+        releaseClock.resolve(0)
+        yield* Fiber.interrupt(interrupted)
+        expect(fixture.counts().reads).toBe(0)
+        expect(fixture.counts().connections).toBe(0)
+        const metrics = yield* PrometheusMetrics.format()
+        expect(
+          metricSample(metrics, 'bayn_valkey_queue_duration_seconds_count', { operation: 'get', outcome: 'acquired' }),
+        ).toBe(1)
+        expect(
+          metrics.split('\n').filter((line) => line.startsWith('bayn_valkey_queue_duration_seconds_count{')),
+        ).toHaveLength(1)
+        expect(metrics).not.toContain('bayn:private-')
+        // A second operation completes only if cancellation released the semaphore.
+        fixture.releaseConnect()
+        fixture.releaseRead()
+        expect(yield* cache.get('bayn:private-after-recording')).toEqual(Option.none())
+        expect(fixture.counts().reads).toBe(1)
+      }),
+    )
+  })
+
   test('queued cancellation records only queue time and leaves the active socket alone', async () => {
     const fixture = observedClientFixture(true)
     const metrics = await observedClientRun(
