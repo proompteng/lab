@@ -64,7 +64,7 @@ spec:
                 name: bayn-valkey-connection
           env:
             - name: BAYN_CODE_REVISION
-              value: c5e3948f0b5982b9c5bc34535ce1c8790a94b703
+              value: 83396a1994dbbd9467f6b63b81c09da539f79490
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
             - name: BAYN_GLITCHTIP_DSN
@@ -84,7 +84,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:8ee5a62b0396206e88ef5400f9212ee044cdd062b4bb27e6c124f2d1bd8a6e95
+              value: sha256:7bf5ca84de0794d9d8f646775f0a3898c9a71eb5f6464a509a247c3c5a9efcc5
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "60c3149349abb7bbfb763c7418d4c12065cb56c3554ea9cbbf1667bc720379c5"
             - name: BAYN_STRATEGY_PARAMETER_HASH
