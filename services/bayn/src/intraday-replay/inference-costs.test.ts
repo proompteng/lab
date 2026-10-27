@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { JevResearchPolicy } from '../jev/acceptance'
 import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
 import { calculateReplayInferenceCosts, registeredReplayInferenceTariff } from './inference-costs'
 import { replayRateCardFixture } from '../system-assessment/fixtures.test-support'
@@ -18,9 +19,15 @@ import { stageResponseIdentity } from '../jev/staged-checkpoint'
 test('registered replay tariffs cover both providers for the whole window without overlapping or substituted rates', () => {
   const card = replayRateCardFixture(costs)
   const interval = { startAt: '2026-11-02T14:30:00.000Z', endAt: '2026-11-27T21:00:00.000Z' }
-  expect(Result.getOrThrow(registeredReplayInferenceTariff(card, interval))).toEqual(costs)
+  expect(Result.getOrThrow(registeredReplayInferenceTariff(card, interval, JevResearchPolicy.Candidate))).toEqual(costs)
   expect(
-    Result.getOrThrow(registeredReplayInferenceTariff({ ...card, rates: [...card.rates].reverse() }, interval)),
+    Result.getOrThrow(
+      registeredReplayInferenceTariff(
+        { ...card, rates: [...card.rates].reverse() },
+        interval,
+        JevResearchPolicy.Candidate,
+      ),
+    ),
   ).toEqual(costs)
   for (const changed of [
     { ...card, rates: [] },
@@ -30,8 +37,12 @@ test('registered replay tariffs cover both providers for the whole window withou
     { ...card, rates: card.rates.map((rate) => ({ ...rate, effectiveFrom: '2026-11-02T14:30:00.001Z' })) },
     { ...card, rates: card.rates.map((rate) => ({ ...rate, model: 'different-model' })) },
   ])
-    expect(Result.isFailure(registeredReplayInferenceTariff(changed, interval))).toBe(true)
-  expect(Result.isFailure(registeredReplayInferenceTariff(card, { ...interval, endAt: interval.startAt }))).toBe(true)
+    expect(Result.isFailure(registeredReplayInferenceTariff(changed, interval, JevResearchPolicy.Candidate))).toBe(true)
+  expect(
+    Result.isFailure(
+      registeredReplayInferenceTariff(card, { ...interval, endAt: interval.startAt }, JevResearchPolicy.Candidate),
+    ),
+  ).toBe(true)
 })
 
 const costs = {
@@ -43,6 +54,30 @@ const costs = {
     cacheWriteInputMicrosPerMillionTokens: '125000',
   },
 }
+test('controls bind only their own providers and an unexpected call remains an unresolved expense', () => {
+  const interval = { startAt: '2026-11-02T14:30:00.000Z', endAt: '2026-11-27T21:00:00.000Z' }
+  for (const policy of [JevResearchPolicy.Ablation, JevResearchPolicy.Momentum, JevResearchPolicy.Deployed]) {
+    const expected = { jev: null, chart: policy === JevResearchPolicy.Ablation ? costs.chart : null }
+    const tariff = Result.getOrThrow(registeredReplayInferenceTariff(replayRateCardFixture(expected), interval, policy))
+    expect(tariff).toEqual(expected)
+    expect(calculateReplayInferenceCosts([], tariff)).toMatchObject({ knownCostMicros: '0', unresolvedCallCount: 0 })
+    expect(calculateReplayInferenceCosts([call(100)], tariff)).toMatchObject({
+      knownCostMicros: '0',
+      unresolvedCallCount: 1,
+      inputTokens: '100',
+      callCount: 1,
+    })
+  }
+  expect(
+    Result.isFailure(
+      registeredReplayInferenceTariff(
+        replayRateCardFixture({ jev: null, chart: null }),
+        interval,
+        JevResearchPolicy.Ablation,
+      ),
+    ),
+  ).toBe(true)
+})
 type JevCall = Extract<ReplayInferenceCall, { readonly stage: 'JEV' }>
 type ChartCall = Extract<ReplayInferenceCall, { readonly stage: 'CHART' }>
 const call = (inputTokens: number, outputTokens = 0): JevCall => {

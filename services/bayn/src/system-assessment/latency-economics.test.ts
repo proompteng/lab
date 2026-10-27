@@ -19,9 +19,9 @@ import { assessmentFixture, replayRateCardFixture, testHash } from './fixtures.t
 import { ReplaySessionCostsSchema, reproduceReplaySessionEconomics } from './latency-economics'
 import { CostAllocationPlanSchema } from './cost-allocation'
 
-const fixture = () => {
+const fixture = (policy: JevResearchPolicy = JevResearchPolicy.Candidate) => {
   const { input, verifiedSources } = assessmentFixture()
-  const inferenceTariff = {
+  const fullTariff = {
     jev: { inputMicrosPerMillionTokens: '100000000', outputMicrosPerMillionTokens: '0' },
     chart: {
       inputMicrosPerMillionTokens: '100000000',
@@ -30,15 +30,19 @@ const fixture = () => {
       cacheWriteInputMicrosPerMillionTokens: '0',
     },
   }
+  const inferenceTariff = {
+    jev: policy === JevResearchPolicy.Candidate ? fullTariff.jev : null,
+    chart: policy === JevResearchPolicy.Candidate || policy === JevResearchPolicy.Ablation ? fullTariff.chart : null,
+  }
   const registration = {
     ...input.registration,
     policies: input.registration.policies.map((p) => ({
       ...p,
-      inferenceRateCard: replayRateCardFixture(inferenceTariff),
+      inferenceRateCard: replayRateCardFixture(p.policy === policy ? inferenceTariff : fullTariff),
     })),
   }
-  const definition = registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
-  const candidate = input.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
+  const definition = registration.policies.find((p) => p.policy === policy)
+  const candidate = input.policies.find((p) => p.policy === policy)
   const first = registration.calendar.sessions[0]
   if (definition === undefined || candidate === undefined || first === undefined)
     throw new Error('Missing fixture policy')
@@ -80,7 +84,7 @@ const fixture = () => {
     ),
   )
   const costs = Schema.decodeUnknownSync(ReplaySessionCostsSchema)({
-    policy: JevResearchPolicy.Candidate,
+    policy,
     allocationRuleHash: definition.costAllocationRuleHash,
     asOf: input.asOf,
     inferenceCalls: [],
@@ -111,16 +115,20 @@ const fixture = () => {
 }
 
 test('zero-trade stress retains every registered session and produces a fully costed operating loss', () => {
-  const f = fixture()
-  const result = Result.getOrThrow(f.evaluate())
-  expect(result.complete).toBe(true)
-  expect(result.evidenceMode).toBe('COUNTERFACTUAL')
-  expect(result.sessions).toHaveLength(20)
-  expect(result.sessions.map((s) => s.sessionDate)).toEqual(f.registration.calendar.sessions.map((s) => s.sessionDate))
-  for (const session of result.sessions) {
-    expect(session.executionPnlMicros).toBe('0')
-    expect(session.netEconomicPnlMicros).toBe('-15000000')
-    expect(session.qualificationPnlMicros).toBe('-15000000')
+  for (const policy of Object.values(JevResearchPolicy)) {
+    const f = fixture(policy)
+    const result = Result.getOrThrow(f.evaluate())
+    expect(result.complete).toBe(true)
+    expect(result.evidenceMode).toBe('COUNTERFACTUAL')
+    expect(result.sessions).toHaveLength(20)
+    expect(result.sessions.map((s) => s.sessionDate)).toEqual(
+      f.registration.calendar.sessions.map((s) => s.sessionDate),
+    )
+    for (const session of result.sessions) {
+      expect(session.executionPnlMicros).toBe('0')
+      expect(session.netEconomicPnlMicros).toBe('-15000000')
+      expect(session.qualificationPnlMicros).toBe('-15000000')
+    }
   }
 })
 

@@ -37,8 +37,8 @@ export const replayRateCardFixture = (tariff: typeof ReplayInferenceCostModelSch
   Schema.decodeUnknownSync(InferenceRateCardSchema)({
     schemaVersion: 'bayn.inference-rate-card.v1',
     rates: [
-      { provider: 'typesafe', model: jevModel, ...tariff.jev },
-      { provider: 'openai', model: decisionsModel, ...tariff.chart },
+      ...(tariff.jev === null ? [] : [{ provider: 'typesafe', model: jevModel, ...tariff.jev }]),
+      ...(tariff.chart === null ? [] : [{ provider: 'openai', model: decisionsModel, ...tariff.chart }]),
     ].map((rate) => ({
       ...rate,
       currency: 'USD',

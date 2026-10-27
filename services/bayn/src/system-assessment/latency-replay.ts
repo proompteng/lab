@@ -79,7 +79,7 @@ export const bindLatencyReplayInput = (
       input.policy,
     )
     const identity = yield* nativeReplayPolicyIdentity(input.policy, configuration.protocol)
-    const tariff = yield* registeredReplayInferenceTariff(definition.inferenceRateCard, input.interval)
+    const tariff = yield* registeredReplayInferenceTariff(definition.inferenceRateCard, input.interval, input.policy)
     if (
       brokerIdentity.environment !== BrokerEnvironment.Sandbox ||
       registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)?.accountBindingHash !==

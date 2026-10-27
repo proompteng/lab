@@ -52,13 +52,29 @@ export const measureFullBatchLatency = (
     const missing = [...controller.missing]
     const violations = [...controller.violations]
     const candidate = registration.policies.find((policy) => policy.policy === JevResearchPolicy.Candidate)
+    const passByReceipt = new Map<string, SystemSourceCut['controllerPasses'][number]>()
+    for (const pass of cut.controllerPasses)
+      if (!passByReceipt.has(pass.receiptHash)) passByReceipt.set(pass.receiptHash, pass)
     const passes = controller.samples.flatMap((sample) => {
-      const pass = cut.controllerPasses.find((pass) => pass.receiptHash === sample.receiptHash)
+      const pass = passByReceipt.get(sample.receiptHash)
       if (pass === undefined) return []
       if (pass.observation.jevObservationReferences?.complete !== true)
         missing.push(`INCOMPLETE_BATCH_REFERENCES:${pass.receiptHash}`)
       return [{ ...sample, observation: pass.observation }]
     })
+    const passesByObservation = new Map<string, typeof passes>()
+    for (const pass of passes)
+      for (const hash of new Set(pass.observation.jevObservationReferences?.hashes ?? [])) {
+        const related = passesByObservation.get(hash)
+        if (related === undefined) passesByObservation.set(hash, [pass])
+        else related.push(pass)
+      }
+    const decisionsByBatch = Map.groupBy(cut.decisions, ({ document }) =>
+      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7'
+        ? document.strategyDecision.evidence.batchPlan.batchId
+        : null,
+    )
+    const mutationsByIntent = Map.groupBy(cut.mutations, (mutation) => mutation.event.intentId)
     const witnesses = new Map<string, string>()
     for (const witness of cut.durableObservations) {
       if (!witness.correct || witness.witnessedAt > cut.asOf) continue
@@ -118,9 +134,7 @@ export const measureFullBatchLatency = (
         violations.push(`BATCH_SCOPE_OR_CONTENT_MISMATCH:${plan.success.batchId}`)
         continue
       }
-      const related = passes.filter((pass) =>
-        pass.observation.jevObservationReferences?.hashes.includes(plan.success.observationHash),
-      )
+      const related = passesByObservation.get(plan.success.observationHash) ?? []
       const start = related
         .filter((pass) => pass.issuedAt <= plan.success.observedAt && plan.success.observedAt <= pass.completedAt)
         .toSorted((a, b) => a.issuedAt.localeCompare(b.issuedAt))[0]
@@ -143,11 +157,7 @@ export const measureFullBatchLatency = (
         .toSorted((a, b) => a.completedAt.localeCompare(b.completedAt))[0]
       if (finishedPass === undefined) missing.push(`MISSING_BATCH_COMPLETION_COMMAND:${plan.success.batchId}`)
       else endTimes.push(finishedPass.witnessedAt)
-      const decisions = cut.decisions.filter(
-        ({ document }) =>
-          document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v7' &&
-          document.strategyDecision.evidence.batchPlan.batchId === plan.success.batchId,
-      )
+      const decisions = decisionsByBatch.get(plan.success.batchId) ?? []
       if (decisions.length > 1) violations.push(`MULTIPLE_BATCH_DECISIONS:${plan.success.batchId}`)
       const failed = batch.result.candidates.some(
         (candidate) =>
@@ -180,16 +190,13 @@ export const measureFullBatchLatency = (
         const decisionWitness = witnessed('DECISION', document.contentHash, document.createdAt)
         if (decisionWitness !== undefined) endTimes.push(decisionWitness)
         if (!document.dispatchable) {
-          if (cut.mutations.some((mutation) => document.orderedIntentIds.includes(mutation.event.intentId)))
+          if (document.orderedIntentIds.some((intentId) => mutationsByIntent.has(intentId)))
             violations.push(`BLOCKED_BATCH_HAS_MUTATIONS:${document.contentHash}`)
           continue
         }
         for (const intentId of document.orderedIntentIds) {
-          const events = cut.mutations
-            .filter(
-              (mutation) =>
-                mutation.event.intentId === intentId && mutation.event.operation === MutationOperation.Submit,
-            )
+          const events = (mutationsByIntent.get(intentId) ?? [])
+            .filter((mutation) => mutation.event.operation === MutationOperation.Submit)
             .toSorted((a, b) => a.event.sequence - b.event.sequence)
           let previous: MutationEvent | undefined
           for (const mutation of events) {

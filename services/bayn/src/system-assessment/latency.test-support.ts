@@ -328,13 +328,19 @@ export const nativeLatencyBacktestFixture = (
     ),
   )
   const inferenceTariff = {
-    jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
-    chart: {
-      inputMicrosPerMillionTokens: '100000',
-      outputMicrosPerMillionTokens: '0',
-      cachedInputMicrosPerMillionTokens: '0',
-      cacheWriteInputMicrosPerMillionTokens: '0',
-    },
+    jev:
+      policy === JevResearchPolicy.Candidate
+        ? { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' }
+        : null,
+    chart:
+      policy !== JevResearchPolicy.Momentum
+        ? {
+            inputMicrosPerMillionTokens: '100000',
+            outputMicrosPerMillionTokens: '0',
+            cachedInputMicrosPerMillionTokens: '0',
+            cacheWriteInputMicrosPerMillionTokens: '0',
+          }
+        : null,
   }
   const registration = withRegistrationCommitments({
     ...f.registration,

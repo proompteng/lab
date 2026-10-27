@@ -65,10 +65,14 @@ export const reproduceReplaySessionEconomics = (
       retained.state.createdAt > first.openAt
     )
       return yield* fail('Replay accounting does not cover the registered evaluation window')
-    const tariff = yield* registeredReplayInferenceTariff(definition.inferenceRateCard, {
-      startAt: first.openAt,
-      endAt: last.closeAt,
-    })
+    const tariff = yield* registeredReplayInferenceTariff(
+      definition.inferenceRateCard,
+      {
+        startAt: first.openAt,
+        endAt: last.closeAt,
+      },
+      costs.policy,
+    )
     if ((yield* canonicalHashV1Result(tariff)) !== (yield* canonicalHashV1Result(costs.inferenceTariff)))
       return yield* fail('Replay accounting changed the registered inference tariff')
     const closes = retained.state.sessionCloses

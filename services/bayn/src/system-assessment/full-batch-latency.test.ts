@@ -9,7 +9,7 @@ import { decideJevEntry } from '../jev/decision'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { ControllerPassEvidenceSchema } from './decision-work'
-import { fullBatchClockDuration } from './full-batch-latency'
+import { fullBatchClockDuration, measureFullBatchLatency } from './full-batch-latency'
 import { SystemSourceCutSchema } from './source-cut'
 import { prepareSystemLatencyReplay } from './latency-replay'
 import { BacktestIssue } from '../intraday-replay/backtest'
@@ -33,6 +33,44 @@ beforeAll(async () => {
 const fixture = () => fullBatchLatencyFixture(document, native)
 
 describe('source-bound full batch timing', () => {
+  test('calibration joins each controller receipt in bounded work and preserves the timing result', () => {
+    const f = fixture()
+    const original = f.cut.controllerPasses[1]
+    if (original === undefined) throw new Error('Missing controller sample')
+    const count = 2000
+    let passReads = 0
+    const extra = Array.from({ length: count }, (_, index) => ({
+      ...original,
+      sequence: index + f.cut.controllerPasses.length,
+      receiptHash: testHash({ extra: index }),
+    }))
+    const cut = {
+      ...f.cut,
+      controllerPasses: new Proxy([...f.cut.controllerPasses, ...extra], {
+        get(target, property, receiver) {
+          if (typeof property === 'string' && /^\d+$/.test(property)) passReads++
+          return Reflect.get(target, property, receiver)
+        },
+      }),
+      durableObservations: [
+        ...f.cut.durableObservations,
+        ...extra.map((pass) => ({
+          kind: 'CONTROLLER' as const,
+          sourceHash: pass.receiptHash,
+          sourceAt: pass.completedAt,
+          witnessedAt: pass.completedAt,
+          correct: true,
+        })),
+      ],
+    }
+    const result = Result.getOrThrow(measureFullBatchLatency(f.registration, cut, f.identity))
+    expect(result.status).toBe('MEASURED')
+    expect(result.samples).toEqual(
+      Result.getOrThrow(measureFullBatchLatency(f.registration, f.cut, f.identity)).samples,
+    )
+    expect(passReads).toBeLessThan(count * 20)
+  }, 30000)
+
   test('ablation stress binds its own economic account and policy under the shared calibrated floor', () => {
     const replay = nativeLatencyBacktestFixture(fixture(), undefined, JevResearchPolicy.Ablation)
     const artifact = completeLatencyArtifactFixture(replay)

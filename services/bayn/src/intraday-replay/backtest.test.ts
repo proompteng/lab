@@ -316,6 +316,7 @@ test('registered latency replay preserves every equity session and the exact can
         ),
       ),
     ).toBe(true)
+  if (input.inference.costs.jev === null) throw new Error('Candidate fixture requires its Jev tariff')
   for (const changed of [
     { ...input, source: original.source },
     { ...input, inference: original.inference },

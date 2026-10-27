@@ -142,6 +142,11 @@ export const captureForwardFinancialEvidence = (
         new SystemAssessmentError({ message: 'Financial capture requires the registered calendar' }),
       )
     const dates = new Set<string>(registration.calendar.sessions.map((s) => s.sessionDate))
+    const windowTransactionIds = new Set(
+      forward.transactions
+        .filter((t) => t.occurredAt >= first.openAt && t.occurredAt <= last.closeAt)
+        .map((t) => t.transactionId),
+    )
     const outsideSession =
       forward.transactions.some(
         (transaction) =>
@@ -151,11 +156,15 @@ export const captureForwardFinancialEvidence = (
             (s) => transaction.occurredAt >= s.openAt && transaction.occurredAt <= s.closeAt,
           ),
       ) ||
-      (forward.brokerFees?.some((fee) => !dates.has(fee.date)) ?? false) ||
+      (forward.brokerFees?.some((fee) => fee.date >= first.sessionDate && !dates.has(fee.date)) ?? false) ||
       (forward.accountFeeAccruals?.some(
         (a) =>
           !dates.has(a.data.date) &&
-          a.data.sourceTrades.some((trade) => selectedTransactionIds.has(trade.transactionId)),
+          a.data.sourceTrades.some((trade) =>
+            a.data.date < first.sessionDate
+              ? windowTransactionIds.has(trade.transactionId)
+              : selectedTransactionIds.has(trade.transactionId),
+          ),
       ) ??
         false)
     const sessions = []

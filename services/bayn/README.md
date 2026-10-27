@@ -1781,7 +1781,10 @@ Set `BAYN_OPENAI_API_KEY`, `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY
 `inputDefinition: "bayn.jev-entry-state.v22"`, and positive `maximumCalls` shared by both providers. The input
 binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
 Its `costs` object contains `jev` and `chart` tariffs, each with
-`inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The chart tariff also requires
+`inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. Registered latency replays bind
+only the providers used by their policy. The candidate requires both tariffs, chart ablation sets `jev` to `null`,
+and momentum sets both to `null`. A call without its tariff remains an unresolved expense and cannot establish
+complete economics. The chart tariff also requires
 `cachedInputMicrosPerMillionTokens` and `cacheWriteInputMicrosPerMillionTokens`; cached and written tokens are
 subsets of total input, so each token is priced once. The input also declares
 `allocatedDataCostPerSessionMicros`, either a priced integer-string allocation or explicit `null` when unknown.

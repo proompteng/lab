@@ -512,6 +512,53 @@ describe('registered financial capture', () => {
     }
   })
 
+  test('a prior closed position and its fees do not invalidate or charge a later registered window', () => {
+    const policy = JevResearchPolicy.Candidate
+    const { registration, forward } = fixture(policy)
+    const { fills, accrual } = coinRoundTrip(0, forward.account.accountId)
+    const captured = Result.getOrThrow(
+      captureForwardFinancialEvidence(
+        registration,
+        policy,
+        {
+          ...forward,
+          accountTransactions: fills,
+          accountCashSettlements: cashSettlements(fills),
+          transactions: fills.map((fill) => ({ ...fill, cycleId: testHash('cycle') })),
+          accountFeeAccruals: [accrual],
+          brokerFeeAccruals: [
+            {
+              accrualId: accrual.accrual_id,
+              accountId: forward.account.accountId,
+              expenseMicros: accrual.expense_micros,
+              settled: true,
+            },
+          ],
+          brokerFees: [
+            ...(forward.brokerFees ?? []),
+            {
+              accountId: forward.account.accountId,
+              activityId: 'historical-charge',
+              date: accrual.data.date,
+              netAmountMicros: '-9000000',
+            },
+          ],
+        },
+        [],
+      ),
+    )
+    expect(captured.sessions).toHaveLength(20)
+    expect(captured.sessions.every((session) => session.facts !== null)).toBe(true)
+    expect(captured.sessions[0]?.facts).toMatchObject({
+      grossRealizedPnlMicros: '0',
+      executionCostMicros: '3000000',
+      openingPositionCount: 0,
+      closingPositionCount: 0,
+      completedEpisodes: 0,
+    })
+    expect(captured.sessions.slice(1).every((session) => session.facts?.executionCostMicros === '0')).toBe(true)
+  })
+
   test('a charge without registered session attribution cannot disappear between sessions or after the window', () => {
     const { registration, forward } = fixture(JevResearchPolicy.Candidate)
     for (const date of ['2026-11-07', '2026-11-30'] as const) {
