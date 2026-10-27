@@ -69,6 +69,10 @@ IOC limits. It does not add the risk policy's adverse-price allowance to the buy
 future sell fees, stop/exit slippage and every risk limit remain unchanged. A tighter buy limit may remain unfilled; it
 cannot justify a cheaper funding estimate while submitting a higher-priced order.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
+An unused BASE_START skip commits with its handoff in one transaction; paid visual terminal evidence remains
+independently durable. Normal batch completion compares the admitted observation and every committed request, receipt
+and resolution directly before sealing the result. Recovery still reconstructs incomplete stored graphs. Completion
+and decision use retain the original ten-second deadline, including commit acknowledgement time.
 
 Native comparison runtimes also support the chart-entry ablation and repeated-momentum control. Each has a distinct
 behavior hash, complete policy hash, authority generation, and decision document. The ablation keeps chart inference

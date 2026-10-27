@@ -49,7 +49,7 @@ const main = Effect.gen(function* () {
         const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
         if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
       }
-      for (const skip of checkpoint.skips) yield* journal.recordBaseStartSkip(skip)
+
       yield* journal.recordHandoff(entryCompletionFixture(request, request.observedAt).handoff)
     }
     if (mode === 'record')

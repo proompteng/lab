@@ -274,6 +274,7 @@ describe('native execution runtime', () => {
         read: () => Effect.succeed(batch),
         pending: () => Effect.succeed([]),
         begin: () => Effect.succeed({ ...batch, dispatches: [] }),
+        complete: () => Effect.succeed(batch),
         finish: () => Effect.succeed(batch),
       }),
     ) as Context.Context<RecoveryFirstRuntime>
@@ -321,6 +322,7 @@ describe('native execution runtime', () => {
           read: () => Effect.succeed(null),
           pending: () => Effect.succeed([]),
           begin: () => Effect.fail(failure),
+          complete: () => Effect.fail(failure),
           finish: () => Effect.fail(failure),
         }),
       ) as Context.Context<RecoveryFirstRuntime>
@@ -373,6 +375,7 @@ describe('native execution runtime', () => {
           read: () => Effect.succeed(null),
           pending: () => Effect.succeed([]),
           begin: () => Effect.die('unused'),
+          complete: () => Effect.die('unused'),
           finish: () => Effect.die('unused'),
         }),
       ) as Context.Context<RecoveryFirstRuntime>

@@ -652,7 +652,7 @@ test.each([1000, null])(
             Effect.provideService(EntryInferenceJournal, {
               recordVisualClaim: () => Effect.succeed({ dispatchAllowed: true }),
               recordVisualTerminal: () => Effect.void,
-              recordBaseStartSkip: () => Effect.void,
+
               recordHandoff: () =>
                 f.providerClock.adjust(1000).pipe(
                   Effect.as({ dispatchAllowed: true }),
@@ -721,7 +721,7 @@ test('exhausting the shared budget after the chart retains its paid call and pre
             Effect.provideService(EntryInferenceJournal, {
               recordVisualClaim: () => Effect.succeed({ dispatchAllowed: true }),
               recordVisualTerminal: () => Effect.void,
-              recordBaseStartSkip: () => Effect.void,
+
               recordHandoff: () => Effect.succeed({ dispatchAllowed: true }),
             }),
             Effect.provideService(Clock.Clock, f.marketClock),
