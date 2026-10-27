@@ -98,13 +98,36 @@ def causalInput (availableAt decisionAt : Int) : Bool := decide (availableAt ≤
 theorem later_arrival_is_not_available (availableAt decisionAt : Int) (h : decisionAt < availableAt) :
     causalInput availableAt decisionAt = false := by simp [causalInput]; omega
 
+inductive ExecutionPricingBasis where
+  | spotQuote (source : String) (availableAt freshUntil : Int)
+  | nativeProtection (source : String) (availableAt : Int)
+  | reconciledLiquidation (source : String) (availableAt : Int)
+  deriving Repr
+
+def executionPricingSource : ExecutionPricingBasis → String
+  | .spotQuote source .. | .nativeProtection source .. | .reconciledLiquidation source .. => source
+
+def supportedExecutionPricing (basis : ExecutionPricingBasis) (kind side : String)
+    (verifiedSources : List String) (dispatchedAt : Int) : Prop :=
+  executionPricingSource basis ∈ verifiedSources ∧
+  match basis with
+  | .spotQuote _ availableAt freshUntil => availableAt ≤ dispatchedAt ∧ dispatchedAt ≤ freshUntil
+  | .nativeProtection _ availableAt | .reconciledLiquidation _ availableAt =>
+    availableAt ≤ dispatchedAt ∧ kind = "BROKER_RECEIPT" ∧ side = "SELL"
+
+instance (basis : ExecutionPricingBasis) (kind side : String) (sources : List String) (dispatched : Int) :
+    Decidable (supportedExecutionPricing basis kind side sources dispatched) := by
+  cases basis <;> unfold supportedExecutionPricing <;> infer_instance
+
 structure ExecutionTiming where
   decisionAt : Int
   persistedAt : Int
   routingStartedAt : Int
   requestDispatchedAt : Int
-  quoteAvailableAt : Int
-  quoteFreshUntil : Int
+  pricing : ExecutionPricingBasis
+  evidenceKind : String
+  side : String
+  verifiedSources : List String
   submissionDeadlineAt : Int
   filledAt : Int
   expiresAt : Int
@@ -112,8 +135,9 @@ structure ExecutionTiming where
 
 def supportedExecutionTiming (t : ExecutionTiming) : Prop :=
   t.decisionAt ≤ t.persistedAt ∧ t.persistedAt ≤ t.routingStartedAt ∧
-  t.routingStartedAt ≤ t.requestDispatchedAt ∧ t.quoteAvailableAt ≤ t.requestDispatchedAt ∧
-  t.requestDispatchedAt ≤ t.quoteFreshUntil ∧ t.requestDispatchedAt < t.submissionDeadlineAt ∧
+  t.routingStartedAt ≤ t.requestDispatchedAt ∧
+  supportedExecutionPricing t.pricing t.evidenceKind t.side t.verifiedSources t.requestDispatchedAt ∧
+  t.requestDispatchedAt < t.submissionDeadlineAt ∧
   t.requestDispatchedAt ≤ t.filledAt ∧ t.filledAt ≤ t.expiresAt
 
 instance (t : ExecutionTiming) : Decidable (supportedExecutionTiming t) := inferInstanceAs (Decidable (_ ∧ _))
@@ -121,15 +145,35 @@ instance (t : ExecutionTiming) : Decidable (supportedExecutionTiming t) := infer
 theorem supported_routing_follows_durable_decision (t : ExecutionTiming) (h : supportedExecutionTiming t) :
     t.persistedAt ≤ t.requestDispatchedAt := by unfold supportedExecutionTiming at h; omega
 
-theorem waiting_in_guard_cannot_hide_stale_quote (t : ExecutionTiming)
-    (h : t.quoteFreshUntil < t.requestDispatchedAt) : ¬ supportedExecutionTiming t := by
-  unfold supportedExecutionTiming; omega
+theorem waiting_in_guard_cannot_hide_stale_quote (t : ExecutionTiming) (source : String) (available fresh : Int)
+    (basis : t.pricing = .spotQuote source available fresh)
+    (h : fresh < t.requestDispatchedAt) : ¬ supportedExecutionTiming t := by
+  simp [supportedExecutionTiming, supportedExecutionPricing, basis]
+  omega
+
+theorem unverified_pricing_cannot_establish_support (t : ExecutionTiming)
+    (missing : executionPricingSource t.pricing ∉ t.verifiedSources) : ¬ supportedExecutionTiming t := by
+  intro h
+  exact missing h.2.2.2.1.1
+
+theorem conditional_protection_requires_actual_sell (source kind side : String) (available dispatched : Int)
+    (sources : List String)
+    (h : supportedExecutionPricing (.nativeProtection source available) kind side sources dispatched) :
+    kind = "BROKER_RECEIPT" ∧ side = "SELL" := h.2.2
+
+theorem reconciled_liquidation_requires_actual_sell (source kind side : String) (available dispatched : Int)
+    (sources : List String)
+    (h : supportedExecutionPricing (.reconciledLiquidation source available) kind side sources dispatched) :
+    kind = "BROKER_RECEIPT" ∧ side = "SELL" := h.2.2
 
 theorem expired_admission_cannot_route (t : ExecutionTiming)
     (h : t.submissionDeadlineAt ≤ t.requestDispatchedAt) : ¬ supportedExecutionTiming t := by
   unfold supportedExecutionTiming; omega
 
 theorem execution_timing_has_reachable_success : supportedExecutionTiming
-    ⟨0, 1, 2, 3, 0, 4, 5, 4, 10⟩ := by decide
+    ⟨0, 1, 2, 3, .spotQuote "quote" 0 4, "BROKER_RECEIPT", "BUY", ["quote"], 5, 4, 10⟩ := by decide
+
+theorem conditional_protection_has_reachable_success : supportedExecutionTiming
+    ⟨0, 1, 2, 3, .nativeProtection "approval" 0, "BROKER_RECEIPT", "SELL", ["approval"], 5, 8, 10⟩ := by decide
 
 end Bayn

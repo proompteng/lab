@@ -1416,7 +1416,92 @@ postgres('PostgreSQL prospective system qualification', () => {
         }),
       ),
     ).toEqual([{ count: 1 }])
-  }, 15_000)
+    const entry = await Effect.runPromise(makePersistenceDocumentFixture(account))
+    const strategy = entry.strategyDecision
+    if (strategy === undefined || !('exitPolicy' in strategy)) throw new Error('Expected protected native entry')
+    const symbol = entry.targetPlan.intentTargets[0]!.symbol
+    const levels = strategy.exitPolicy.plans[symbol]!.levels
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
+        SELECT ${entry.bindings.authorityGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',
+          coalesce(max(authority_version),0)+1,${observedAt}::timestamptz FROM authority_generations`
+        yield* (yield* makeCycleStore({ now: sql`${observedAt}::timestamptz` })).activate(cycleId, observedAt)
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at=${entry.createdAt} WHERE account_id=${account}`
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions(cycle_id,schema_version,document,created_at)
+          VALUES (${cycleId},${entry.schemaVersion},${sql.json(entry)},${entry.createdAt})`
+            yield* sql`UPDATE autonomous_cycles SET snapshot_id=${entry.bindings.snapshotId},decision_hash=${entry.contentHash},
+          state_version=state_version+1,updated_at=${entry.createdAt} WHERE cycle_id=${cycleId}`
+          }),
+        )
+      }),
+    )
+    for (const scenario of ['committed-risk', 'same-transaction-risk', 'expired-risk', 'missing-risk'] as const) {
+      const label = `replacement-${scenario}`
+      const entryDecisionHash = entry.contentHash
+      const intentId = sha256(label)
+      const policyHash = entry.bindings.policyHash
+      const decidedAt = await runtime.runPromise(databaseNow)
+      const expiresAt = new Date(Date.parse(decidedAt) + 60_000).toISOString()
+      const admittedAt =
+        scenario === 'expired-risk'
+          ? new Date(Date.parse(expiresAt) + 1).toISOString()
+          : new Date(Date.parse(decidedAt) + 2).toISOString()
+      const riskId = sha256(`${label}-risk`)
+      const prepare = Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO intents(intent_id, schema_version, account_id, client_order_id, symbol, side,
+          order_type, time_in_force, quantity_atoms, notional_limit_micros, limit_price_micros, state, created_at,
+          updated_at, cycle_id, strategy_name, decision_hash, policy_hash, authority_generation_hash, protection, replan_generation_hash)
+          VALUES (${intentId}, 'bayn.execution-intent.v5', ${account}, ${label}, ${symbol}, 'SELL', 'STOP_LIMIT', 'DAY',
+          1000000000, ${levels.stopLimitPriceMicros}, ${levels.stopLimitPriceMicros}, 'PLANNED', ${decidedAt}, ${decidedAt}, ${cycleId}, 'jev',
+          ${entry.bindings.strategyDecisionHash}, ${policyHash}, ${entry.bindings.authorityGenerationHash},
+          ${sql.json({ _tag: 'StopLimit', stopPriceMicros: levels.stopPriceMicros, entryDecisionHash })}, ${sha256(`${label}-replan`)})`
+        if (scenario === 'missing-risk') return
+        yield* sql`INSERT INTO risk_decisions(decision_id,schema_version,intent_id,policy_hash,input_hash,outcome,reason_codes,decided_at,expires_at)
+          VALUES (${riskId},'bayn.paper-risk-decision.v1',${intentId},${policyHash},${sha256(`${label}-input`)},'APPROVED','{}'::text[],${decidedAt},${expiresAt})`
+        const approvedAt = new Date(Date.parse(decidedAt) + 1).toISOString()
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at=${approvedAt} WHERE account_id=${account}`
+        yield* sql`UPDATE intents SET state='APPROVED',risk_decision_id=${riskId},state_version=state_version+1,
+          updated_at=${approvedAt} WHERE intent_id=${intentId}`
+      })
+      const submit = Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO mutation_events(event_id,schema_version,mutation_id,intent_id,sequence,
+          operation,event_type,request_hash,consistency_delay_ms,occurred_at)
+          VALUES (${intentId},'bayn.paper-mutation-event.v1',${intentId},${intentId},1,
+          'SUBMIT','SUBMIT_STARTED',${sha256(`${label}-request`)},1000,${admittedAt})`
+        return yield* sql`SELECT event_id FROM execution_decision_admissions WHERE event_id=${intentId}`
+      })
+      let rows
+      if (scenario === 'same-transaction-risk')
+        rows = await runtime.runPromise(asApplication(prepare.pipe(Effect.andThen(submit))))
+      else {
+        await runtime.runPromise(asApplication(prepare))
+        rows = await runtime.runPromise(asApplication(submit))
+      }
+      const expected = scenario === 'committed-risk'
+      expect(rows.length > 0).toBe(expected)
+      if (formalModelExecutable !== undefined)
+        expect(
+          runFormalModel([
+            {
+              operation: 'protectionAdmission',
+              sourceCommitted: true,
+              sourceMatches: true,
+              riskCommitted: scenario !== 'same-transaction-risk' && scenario !== 'missing-risk',
+              outcome: scenario === 'missing-risk' ? 'MISSING' : 'APPROVED',
+              decided: String(Date.parse(decidedAt)),
+              admitted: String(Date.parse(admittedAt)),
+              expires: String(Date.parse(expiresAt)),
+            },
+          ]),
+        ).toEqual([rows.length > 0])
+    }
+  }, 30_000)
 
   test('mutation admission rejects ambient transactions before any broker-capable state transition', async () => {
     await runtime.runPromise(

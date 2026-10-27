@@ -27,6 +27,68 @@ def readNativeArrivalPosition (json : Json) : Except String NativeArrivalPositio
     offset := ← readNatural json "offset"
   }
 
+def readProtectionOwner (json : Json) : Except String ProtectionOwner := do
+  return {
+    account := ← json.getObjValAs? String "account",
+    cycle := ← json.getObjValAs? String "cycle",
+    decision := ← json.getObjValAs? String "decision",
+    policy := ← json.getObjValAs? String "policy",
+    strategy := ← json.getObjValAs? String "strategy",
+    generation := ← json.getObjValAs? String "generation",
+    entry := ← json.getObjValAs? String "entry",
+    symbol := ← json.getObjValAs? String "symbol"
+  }
+
+def readProtectionEntry (json : Json) : Except String ProtectionEntry := do
+  return {
+    owner := ← readProtectionOwner (← json.getObjVal? "owner"),
+    dispatchable := ← json.getObjValAs? Bool "dispatchable",
+    maximumQuantity := ← readInteger json "maximumQuantity",
+    stop := ← readInteger json "stop",
+    stopLimit := ← readInteger json "stopLimit",
+    profit := ← readInteger json "profit",
+    createdAt := ← readInteger json "createdAt",
+    maximumBrokerAge := ← readInteger json "maximumBrokerAge",
+    maximumRiskTtl := ← readInteger json "maximumRiskTtl"
+  }
+
+def readProtectionIntentEvidence (json : Json) : Except String ProtectionIntentEvidence := do
+  return {
+    owner := ← readProtectionOwner (← json.getObjVal? "owner"),
+    sourceHash := ← json.getObjValAs? String "sourceHash",
+    expectedSourceHash := ← json.getObjValAs? String "expectedSourceHash",
+    intent := ← json.getObjValAs? String "intent",
+    expectedIntent := ← json.getObjValAs? String "expectedIntent",
+    client := ← json.getObjValAs? String "client",
+    expectedClient := ← json.getObjValAs? String "expectedClient",
+    riskId := ← json.getObjValAs? String "riskId",
+    expectedRiskId := ← json.getObjValAs? String "expectedRiskId",
+    riskIntent := ← json.getObjValAs? String "riskIntent",
+    riskPolicy := ← json.getObjValAs? String "riskPolicy",
+    riskOutcome := ← json.getObjValAs? String "riskOutcome",
+    reconciliationId := ← json.getObjValAs? String "reconciliationId",
+    expectedReconciliationId := ← json.getObjValAs? String "expectedReconciliationId",
+    reconciliationHash := ← json.getObjValAs? String "reconciliationHash",
+    expectedReconciliationHash := ← json.getObjValAs? String "expectedReconciliationHash",
+    reconciliationAccount := ← json.getObjValAs? String "reconciliationAccount",
+    reconciliationStatus := ← json.getObjValAs? String "reconciliationStatus",
+    replan := ← json.getObjValAs? String "replan",
+    expectedReplan := ← json.getObjValAs? String "expectedReplan",
+    side := ← json.getObjValAs? String "side",
+    kind := ← json.getObjValAs? String "kind",
+    orderType := ← json.getObjValAs? String "orderType",
+    timeInForce := ← json.getObjValAs? String "timeInForce",
+    quantity := ← readInteger json "quantity",
+    limitPrice := ← readInteger json "limitPrice",
+    stop := ← readInteger json "stop",
+    stopLimit := ← readInteger json "stopLimit",
+    profit := ← readInteger json "profit",
+    createdAt := ← readInteger json "createdAt",
+    decidedAt := ← readInteger json "decidedAt",
+    expiresAt := ← readInteger json "expiresAt",
+    reconciledAt := ← readInteger json "reconciledAt"
+  }
+
 def readExpenseIdentity (json : Json) : Except String ExpenseIdentity := do
   return {
     request := ← json.getObjValAs? String "request",
@@ -669,14 +731,31 @@ def evaluate (json : Json) : Except String Json := do
     return toJson (persistenceObservation (← readInteger json "created") (← readInteger json "knownBy")
       (← readInteger json "routing"))
   | "executionTiming" =>
+    let source ← json.getObjVal? "pricing"
+    let hash ← source.getObjValAs? String "source"
+    let available ← readInteger source "availableAt"
+    let pricing ← match ← source.getObjValAs? String "kind" with
+      | "SpotQuote" => do pure (ExecutionPricingBasis.spotQuote hash available (← readInteger source "freshUntil"))
+      | "NativeProtection" => pure (ExecutionPricingBasis.nativeProtection hash available)
+      | "ReconciledLiquidation" => pure (ExecutionPricingBasis.reconciledLiquidation hash available)
+      | _ => throw "Unknown execution pricing kind"
     let t : ExecutionTiming := {
       decisionAt := ← readInteger json "decisionAt", persistedAt := ← readInteger json "persistedAt",
       routingStartedAt := ← readInteger json "routingStartedAt", requestDispatchedAt := ← readInteger json "requestDispatchedAt",
-      quoteAvailableAt := ← readInteger json "quoteAvailableAt", quoteFreshUntil := ← readInteger json "quoteFreshUntil",
+      pricing, evidenceKind := ← json.getObjValAs? String "evidenceKind", side := ← json.getObjValAs? String "side",
+      verifiedSources := ← json.getObjValAs? (List String) "verifiedSources",
       submissionDeadlineAt := ← readInteger json "submissionDeadlineAt", filledAt := ← readInteger json "filledAt",
       expiresAt := ← readInteger json "expiresAt"
     }
     return toJson (decide (supportedExecutionTiming t))
+  | "protectionIntent" =>
+    return toJson (decide (supportedProtectionIntent (← readProtectionEntry (← json.getObjVal? "entry"))
+      (← readProtectionIntentEvidence (← json.getObjVal? "evidence"))))
+  | "protectionAdmission" =>
+    return toJson (decide (supportedProtectionAdmission
+      (← json.getObjValAs? Bool "sourceCommitted") (← json.getObjValAs? Bool "riskCommitted")
+      (← json.getObjValAs? Bool "sourceMatches") (← json.getObjValAs? String "outcome")
+      (← readInteger json "decided") (← readInteger json "admitted") (← readInteger json "expires")))
   | "nativeOrderGroup" =>
     return nativeOrderBindingJson (resolveNativeOrderGroup (← json.getObjValAs? String "id")
       (← readNativeOrderReceipt (← json.getObjVal? "root"))

@@ -90,7 +90,7 @@ The qualification example is deliberately synthetic. It establishes that the pre
 assessment of Bayn's prospective trading performance.
 
 `DecisionPersistence.lean` maps to `src/system-assessment/decision-admissions.ts`, the admission trigger in migration
-157, and independent mutation admission in `src/execution/mutations/postgres/start.ts`. An immutable PostgreSQL
+159, and independent mutation admission in `src/execution/mutations/postgres/start.ts`. An immutable PostgreSQL
 receipt attests that an owned decision source was committed before the admitted mutation. Once that independently
 committed mutation has a routing outcome, its original producer routing time bounds decision commitment. The model
 requires valid receipt identity, independent admission and ordered producer timestamps. A later database observation
@@ -420,8 +420,28 @@ Bracket and OCO theorems connect an actual bound result to both sealed exit pric
 Missing-sibling and fractional-residual examples are reachable. Chronological disposal theorems prohibit consuming
 future entry fills or spending the same inventory twice. Executable comparisons exercise the production resolver
 and full bracket binder, including changed identities, groups, prices, quantities and early protective sales.
-These proofs assume authentic provider observations and normalized broker child identities. They do not authenticate
-broker responses, establish queue priority or demonstrate separately armed replacement protection collection.
+The comparison also passes independently approved OCO, stock stop and fractional crypto GTC stop plans into the
+production resolver. It retains each protection intent's own decision identity instead of borrowing the entry ID.
+
+`ProtectionIntents.lean` maps to `executionOrderPlans`. Accepted evidence preserves the complete original entry owner,
+positive bounded quantity, sealed trigger and exit prices, native DAY/GTC duration, exact reconciliation and bounded
+approval clocks. Reachable OCO and fractional crypto stop examples prevent vacuous success claims. Conformance uses
+raw entry, plan, risk and reconciliation fields, including canonically rehashed owner, quantity, price and clock
+changes. Expected content identities come from the existing canonical SHA-256 functions; the model compares those
+strings and does not prove the hash implementation or authenticate an approval.
+
+`Execution.lean` distinguishes spot quotes, native protection and reconciled liquidation. Conditional pricing requires
+an actual SELL broker receipt, a verified source and causal availability. Spot pricing retains quote freshness.
+Every case still requires decision persistence before routing, dispatch before the original admission deadline, and
+fills within the retained order lifetime. Conformance covers both evidence kinds, both sides, all three pricing
+variants, verified and absent sources, future availability and stale quotes.
+
+`DecisionPersistence.lean` also maps the replacement admission trigger's independently committed risk approval and
+its original validity interval. The actual PostgreSQL/model comparison uses a reproduced native entry under normal
+constraints and verifies committed approval, approval written inside the admission transaction, missing approval and
+expired approval. The compiled PostgreSQL/TigerBeetle producer separately captures native replacement intents,
+admissions and all actual fills. These checks do not authenticate provider observations, normalized child identities,
+risk inputs or reconciliation results, and do not establish queue priority.
 
 `AccountProtection.lean` maps to `accountLossMicros` and `accountEntryProtectionReasons` in `src/risk.ts`. Its theorems
 prove nonnegative losses, invariance under a common equity translation, equality at the limit, rejection one micro

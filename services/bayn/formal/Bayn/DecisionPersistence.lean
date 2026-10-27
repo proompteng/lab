@@ -13,6 +13,28 @@ theorem admitted_source_is_committed_and_owned (committed owned : Bool)
 
 def mutationAdmissionIndependent (ambient : Bool) : Bool := !ambient
 
+def supportedProtectionAdmission (sourceCommitted riskCommitted sourceMatches : Bool)
+    (outcome : String) (decided admitted expires : Int) : Prop :=
+  sourceCommitted = true ∧ sourceMatches = true ∧ riskCommitted = true ∧ outcome = "APPROVED" ∧
+  decided ≤ admitted ∧ admitted ≤ expires
+
+instance (sourceCommitted riskCommitted sourceMatches : Bool) (outcome : String) (decided admitted expires : Int) :
+    Decidable (supportedProtectionAdmission sourceCommitted riskCommitted sourceMatches outcome decided admitted expires) :=
+  inferInstanceAs (Decidable (_ ∧ _))
+
+theorem replacement_admission_requires_committed_approval (sourceCommitted riskCommitted sourceMatches : Bool)
+    (outcome : String) (decided admitted expires : Int)
+    (h : supportedProtectionAdmission sourceCommitted riskCommitted sourceMatches outcome decided admitted expires) :
+    riskCommitted = true ∧ outcome = "APPROVED" := ⟨h.2.2.1, h.2.2.2.1⟩
+
+theorem expired_replacement_approval_cannot_supply_persistence (sourceCommitted riskCommitted sourceMatches : Bool)
+    (outcome : String) (decided admitted expires : Int) (late : expires < admitted) :
+    ¬ supportedProtectionAdmission sourceCommitted riskCommitted sourceMatches outcome decided admitted expires := by
+  unfold supportedProtectionAdmission; omega
+
+theorem replacement_admission_has_reachable_success :
+    supportedProtectionAdmission true true true "APPROVED" 0 1 2 := by decide
+
 def decisionCommitmentUpperBound (receiptValid admissionIndependent routed : Bool)
     (created admitted routing observed asOf : Int) : Option Int :=
   if receiptValid && admissionIndependent && routed && decide (created ≤ admitted) &&

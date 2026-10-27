@@ -2,6 +2,11 @@ import { OrderStatus, OrderSchema } from '../execution/contracts'
 import type { SystemSourceCut } from './source-cut'
 import { bracketEvidenceFixture } from './bracket-evidence.test-support'
 import { resolveExecutionOrderTerms } from './execution-order-terms'
+import { orderedExecutionPlan, executionOrderPlans, type ExecutionOrderPlan } from './execution-plans'
+import type { ProtectionIntentEvidence } from './execution-plans'
+import { replacementProtectionFixture } from './protection-evidence.test-support'
+import { cryptoPersistenceDocumentFixture } from './decision-persistence.test-support'
+import { executionIntentIdForDecodedPlan, clientOrderIdForIntentId } from '../execution/intents/domain'
 import { bindExecutionEvidence } from './execution-evidence'
 import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
 import { makeRepeatedMomentumPolicy } from '../strategy/repeated-momentum/policy'
@@ -36,7 +41,7 @@ import { replayRateCardFixture } from '../testing/inference-rate-card.test-suppo
 import { frozenDeployedControlIdentity, validateSystemRegistration } from './policy'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { evaluateSystemAssessment, SafetyViolationKind } from './assessment'
-import { cashChangesAt, projectSessionCash } from './cash-history'
+import { indexCashHistory, projectSessionCash } from './cash-history'
 import { CashAdjustmentKind, cashFlowTotals } from './cash-flows'
 import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import { decideExecutionControllerTick } from '../execution/controller'
@@ -1210,7 +1215,7 @@ formal('pinned Lean executable conformance', () => {
         })),
       }
       const marks = [0, 30, 60, 90, 120].map((second) => {
-        const change = cashChangesAt(history, at(second))
+        const change = indexCashHistory(history)(at(second))
         const flow = cashFlowTotals(flows, at(second))
         const observed = 1000n + (change ?? 0n) + flow.external + flow.yieldAmount - flow.paidOperating
         return {
@@ -2707,12 +2712,23 @@ formal('pinned Lean executable conformance', () => {
     const fill = input.realism.fills[0]
     if (decision === undefined || fill === undefined) throw new Error('Missing conformance fixture')
     const at = (value: number) => new Date(Date.parse('2026-11-02T14:30:00.000Z') + value).toISOString()
-    const sources = new Set([decision.snapshotHash, fill.sourceHash, fill.quoteHash])
+    if (fill.pricing._tag !== 'SpotQuote') throw new Error('Expected spot pricing fixture')
+    const quote = fill.pricing
+    const sources = new Set([decision.snapshotHash, fill.sourceHash, quote.sourceHash])
     expect(
       model(
         cases.map((t) => ({
           operation: 'executionTiming',
           ...Object.fromEntries(keys.map((key) => [key, String(t[key])])),
+          pricing: {
+            kind: 'SpotQuote',
+            source: quote.sourceHash,
+            availableAt: String(t.quoteAvailableAt),
+            freshUntil: String(t.quoteFreshUntil),
+          },
+          evidenceKind: ExecutionEvidenceKind.Broker,
+          side: fill.side,
+          verifiedSources: [...sources],
         })),
       ),
     ).toEqual(
@@ -2738,8 +2754,7 @@ formal('pinned Lean executable conformance', () => {
                   decisionId: decision.decisionId,
                   routingStartedAt: at(t.routingStartedAt),
                   requestDispatchedAt: at(t.requestDispatchedAt),
-                  quoteAvailableAt: at(t.quoteAvailableAt),
-                  quoteFreshUntil: at(t.quoteFreshUntil),
+                  pricing: { ...quote, availableAt: at(t.quoteAvailableAt), freshUntil: at(t.quoteFreshUntil) },
                   submissionDeadlineAt: at(t.submissionDeadlineAt),
                   filledAt: at(t.filledAt),
                   expiresAt: at(t.expiresAt),
@@ -3101,6 +3116,255 @@ formal('pinned Lean executable conformance', () => {
 })
 
 formal('native protection order conformance', () => {
+  test('spot and conditional pricing require causal verified sources and native broker authority', () => {
+    const { input, verifiedSources } = supportedAssessmentFixture()
+    const decision = input.realism.decisions[0]!
+    const fill = input.realism.fills[0]!
+    const source = testHash('pricing basis')
+    const capacity = testHash('pricing capacity')
+    const origin = Date.parse('2026-11-02T14:30:00.000Z')
+    const at = (offset: number) => new Date(origin + offset).toISOString()
+    const inputs: unknown[] = []
+    const expected: boolean[] = []
+    for (const kind of ['SpotQuote', 'NativeProtection', 'ReconciledLiquidation'] as const)
+      for (const evidenceKind of [ExecutionEvidenceKind.Broker, ExecutionEvidenceKind.Model])
+        for (const side of [OrderSide.Buy, OrderSide.Sell])
+          for (const available of [-1, 0, 2, 3, 4])
+            for (const fresh of [2, 4])
+              for (const verified of [false, true]) {
+                const sources = new Set([...verifiedSources, capacity, ...(verified ? [source] : [])])
+                const pricing =
+                  kind === 'SpotQuote'
+                    ? {
+                        _tag: kind,
+                        sourceHash: source,
+                        availableAt: at(available),
+                        freshUntil: at(fresh),
+                        bidPriceAtoms: fill.fillPriceAtoms,
+                        askPriceAtoms: fill.fillPriceAtoms,
+                      }
+                    : { _tag: kind, sourceHash: source, availableAt: at(available) }
+                const actual = Result.getOrThrow(
+                  measureRealism(
+                    {
+                      expectedDecisionIds: [decision.decisionId],
+                      expectedFillIds: [fill.fillId],
+                      unsupportedAssumptions: [],
+                      decisions: [
+                        {
+                          ...decision,
+                          decisionAt: at(0),
+                          persistedAt: at(1),
+                          inputs: [{ contentHash: decision.snapshotHash, availableAt: at(-10) }],
+                        },
+                      ],
+                      fills: [
+                        {
+                          ...fill,
+                          pricing,
+                          side,
+                          kind: evidenceKind,
+                          limitPriceAtoms: fill.fillPriceAtoms,
+                          supportedCapacityAtoms: fill.requestedQuantityAtoms,
+                          capacitySourceHash: capacity,
+                          routingStartedAt: at(2),
+                          requestDispatchedAt: at(3),
+                          submissionDeadlineAt: at(5),
+                          filledAt: at(4),
+                          expiresAt: at(10),
+                        },
+                      ],
+                    },
+                    sources,
+                  ),
+                )
+                expected.push(actual.status === 'SUPPORTED')
+                inputs.push({
+                  operation: 'executionTiming',
+                  decisionAt: '0',
+                  persistedAt: '1',
+                  routingStartedAt: '2',
+                  requestDispatchedAt: '3',
+                  submissionDeadlineAt: '5',
+                  filledAt: '4',
+                  expiresAt: '10',
+                  evidenceKind,
+                  side,
+                  verifiedSources: [...sources],
+                  pricing: {
+                    kind,
+                    source,
+                    availableAt: String(available),
+                    ...(kind === 'SpotQuote' ? { freshUntil: String(fresh) } : {}),
+                  },
+                })
+              }
+    expect(model(inputs)).toEqual(expected)
+    expect(expected.some(Boolean)).toBe(true)
+    expect(expected.some((value) => !value)).toBe(true)
+  })
+
+  test('independent protection reproduces raw ownership, approval, prices and freshness in both native markets', async () => {
+    const documents = [
+      await Effect.runPromise(persistenceDocumentFixture),
+      await Effect.runPromise(cryptoPersistenceDocumentFixture),
+    ]
+    const inputs: unknown[] = []
+    const expected: boolean[] = []
+    const reseal = (e: ProtectionIntentEvidence): ProtectionIntentEvidence => {
+      const intentId = Result.getOrThrow(executionIntentIdForDecodedPlan(e.plan, e.authorityGenerationHash))
+      const { decisionId: _risk, ...risk } = { ...e.riskDecision, intentId, policyHash: e.plan.policyHash }
+      const { sourceHash: _hash, ...material } = {
+        ...e,
+        intentId,
+        clientOrderId: clientOrderIdForIntentId(intentId),
+        riskDecision: { ...risk, decisionId: testHash(risk) },
+      }
+      return { ...material, sourceHash: testHash(material) }
+    }
+    for (const document of documents) {
+      for (const kind of document.targetPlan.intentTargets[0]!.symbol.includes('/')
+        ? (['StopLimit'] as const)
+        : (['Oco', 'StopLimit'] as const)) {
+        const f = replacementProtectionFixture(document, kind)
+        const e = f.evidence
+        const at = f.at
+        const cases = [
+          e,
+          ...[
+            { ...e, authorityGenerationHash: testHash('foreign') },
+            ...Object.entries({
+              accountId: 'foreign',
+              cycleId: testHash('foreign'),
+              decisionHash: testHash('foreign'),
+              policyHash: testHash('foreign'),
+              strategyName: 'foreign',
+              symbol: 'SPY',
+              side: OrderSide.Buy,
+              quantityAtoms: (BigInt(e.plan.quantityAtoms) + 1n).toString(),
+              limitPriceMicros: (BigInt(e.plan.limitPriceMicros!) + 1000n).toString(),
+            }).map(([field, value]) => ({ ...e, plan: { ...e.plan, [field]: value } })),
+            ...[-1, 0, 999, 1000, 1002].map((offset) => ({ ...e, plan: { ...e.plan, createdAt: at(offset) } })),
+            ...[0, 999, 1000, 1001, 200000].map((offset) => ({
+              ...e,
+              riskDecision: { ...e.riskDecision, decidedAt: at(offset) },
+            })),
+            ...[1000, 1001, 1002, 121001, 121002].map((offset) => ({
+              ...e,
+              riskDecision: { ...e.riskDecision, expiresAt: at(offset) },
+            })),
+          ].map(reseal),
+          { ...e, sourceHash: testHash('foreign') },
+          { ...e, intentId: testHash('foreign') },
+          { ...e, clientOrderId: 'foreign' },
+          { ...e, riskDecision: { ...e.riskDecision, decisionId: testHash('foreign') } },
+        ]
+        for (const evidence of cases) {
+          const plan = evidence.plan
+          const terms = plan.protection!
+          if (terms._tag === 'Bracket') throw new Error('Expected independent protection')
+          const decision = document.strategyDecision
+          if (decision === undefined || !('exitPolicy' in decision)) throw new Error('Expected sealed entry')
+          const entryPlan = decision.exitPolicy.plans[f.parent.symbol]!
+          const owner = {
+            account: document.bindings.accountId,
+            cycle: document.bindings.cycleId,
+            decision: document.bindings.strategyDecisionHash,
+            policy: document.bindings.policyHash,
+            strategy: document.bindings.strategyName,
+            generation: document.bindings.authorityGenerationHash,
+            entry: document.contentHash,
+            symbol: f.parent.symbol,
+          }
+          const { sourceHash: _source, ...sourceMaterial } = evidence
+          const { decisionId: _risk, ...risk } = evidence.riskDecision
+          const { contentHash: _hash, reconciliationId: _id, ...reconciliation } = evidence.reconciliation
+          inputs.push({
+            operation: 'protectionIntent',
+            entry: {
+              owner,
+              dispatchable: document.dispatchable,
+              maximumQuantity: entryPlan.maximumQuantityAtoms,
+              stop: entryPlan.levels.stopPriceMicros,
+              stopLimit: entryPlan.levels.stopLimitPriceMicros,
+              profit: entryPlan.levels.profitLimitPriceMicros,
+              createdAt: String(Date.parse(document.createdAt)),
+              maximumBrokerAge: String(document.riskPolicy!.maxBrokerStateAgeMs),
+              maximumRiskTtl: String(document.riskPolicy!.decisionTtlMs),
+            },
+            evidence: {
+              owner: {
+                account: plan.accountId,
+                cycle: plan.cycleId,
+                decision: plan.decisionHash,
+                policy: plan.policyHash,
+                strategy: plan.strategyName,
+                generation: evidence.authorityGenerationHash,
+                entry: terms.entryDecisionHash,
+                symbol: plan.symbol,
+              },
+              sourceHash: evidence.sourceHash,
+              expectedSourceHash: testHash(sourceMaterial),
+              intent: evidence.intentId,
+              expectedIntent: Result.getOrThrow(
+                executionIntentIdForDecodedPlan(plan, evidence.authorityGenerationHash),
+              ),
+              client: evidence.clientOrderId,
+              expectedClient: clientOrderIdForIntentId(evidence.intentId),
+              riskId: evidence.riskDecision.decisionId,
+              expectedRiskId: testHash(risk),
+              riskIntent: evidence.riskDecision.intentId,
+              riskPolicy: evidence.riskDecision.policyHash,
+              riskOutcome: evidence.riskDecision.outcome,
+              reconciliationId: evidence.reconciliation.reconciliationId,
+              expectedReconciliationId: testHash({
+                schemaVersion: 'bayn.paper-reconciliation-id.v1',
+                material: reconciliation,
+              }),
+              reconciliationHash: evidence.reconciliation.contentHash,
+              expectedReconciliationHash: testHash({
+                ...reconciliation,
+                reconciliationId: evidence.reconciliation.reconciliationId,
+              }),
+              reconciliationAccount: evidence.reconciliation.accountId,
+              reconciliationStatus: evidence.reconciliation.status,
+              replan: plan.replanGenerationHash,
+              expectedReplan: testHash({
+                entryDecisionHash: document.contentHash,
+                reconciliationId: evidence.reconciliation.reconciliationId,
+                protection: terms,
+              }),
+              side: plan.side,
+              kind: terms._tag,
+              orderType: plan.orderType,
+              timeInForce: plan.timeInForce,
+              quantity: plan.quantityAtoms,
+              limitPrice: plan.limitPriceMicros,
+              stop: terms.stopPriceMicros,
+              stopLimit: terms._tag === 'Oco' ? terms.stopLimitPriceMicros : '0',
+              profit: terms._tag === 'Oco' ? terms.profitLimitPriceMicros : '0',
+              createdAt: String(Date.parse(plan.createdAt)),
+              decidedAt: String(Date.parse(evidence.riskDecision.decidedAt)),
+              expiresAt: String(Date.parse(evidence.riskDecision.expiresAt)),
+              reconciledAt: String(Date.parse(evidence.reconciliation.reconciledAt)),
+            },
+          })
+          const actual = executionOrderPlans(f.cut.decisions, [evidence])
+          expected.push(Result.isSuccess(actual))
+          if (Result.isSuccess(actual)) {
+            const bound = actual.success.get(evidence.intentId)!
+            expect(bound.decisionId).toBe(evidence.intentId)
+            expect(bound.createdAt).toBe(evidence.riskDecision.decidedAt)
+            expect(bound.submissionDeadlineAt).toBe(evidence.riskDecision.expiresAt)
+          }
+        }
+      }
+    }
+    expect(model(inputs)).toEqual(expected)
+    expect(expected.filter(Boolean).length).toBeGreaterThan(0)
+    expect(expected.filter((value) => !value).length).toBeGreaterThan(0)
+  }, 30000)
+
   type Receipt = SystemSourceCut['orders'][number]
   const leanReceipt = (row: Receipt) => ({
     owner: {
@@ -3122,14 +3386,13 @@ formal('native protection order conformance', () => {
     limitPrice: row.order.limitPriceMicros ?? null,
     stopPrice: row.order.stopPriceMicros ?? null,
   })
-  const leanTarget = (document: ExecutionDecisionDocument) => {
-    const target = document.targetPlan.intentTargets[0]!
-    const risk = document.deltaRisk[0]!
+  const leanTarget = (plan: ExecutionOrderPlan) => {
+    const { document, target, risk } = plan
     const protection = risk.protection
     return {
       owner: {
-        intent: document.orderedIntentIds[0],
-        decision: document.contentHash,
+        intent: plan.intentId,
+        decision: plan.decisionId,
         generation: document.bindings.authorityGenerationHash,
         account: document.bindings.accountId,
         symbol: target.symbol,
@@ -3259,11 +3522,16 @@ formal('native protection order conformance', () => {
         id: row.id,
         root: leanReceipt(row.root),
         children: row.children.map(leanReceipt),
-        target: leanTarget(row.document),
+        target: leanTarget(Result.getOrThrow(orderedExecutionPlan(row.document, 0))),
       })),
     )
     const expected = cases.map((row) => {
-      const result = resolveExecutionOrderTerms(row.id, row.root, row.children, row.document, 0)
+      const result = resolveExecutionOrderTerms(
+        row.id,
+        row.root,
+        row.children,
+        Result.getOrThrow(orderedExecutionPlan(row.document, 0)),
+      )
       if (Result.isFailure(result)) return { status: 'INVALID' }
       if (result.success._tag === 'Missing') return { status: 'MISSING' }
       return {
@@ -3277,6 +3545,65 @@ formal('native protection order conformance', () => {
     expect(expected.some((row) => row.status === 'BOUND')).toBe(true)
     expect(expected.some((row) => row.status === 'MISSING')).toBe(true)
     expect(expected.some((row) => row.status === 'INVALID')).toBe(true)
+  }, 30000)
+
+  test('independently approved OCO and fractional GTC stop groups conform from raw broker fields', async () => {
+    const documents = [
+      await Effect.runPromise(persistenceDocumentFixture),
+      await Effect.runPromise(cryptoPersistenceDocumentFixture),
+    ]
+    const inputs: unknown[] = []
+    const expected: unknown[] = []
+    for (const document of documents)
+      for (const kind of document.targetPlan.intentTargets[0]!.symbol.includes('/')
+        ? (['StopLimit'] as const)
+        : (['Oco', 'StopLimit'] as const)) {
+        const f = replacementProtectionFixture(document, kind)
+        const plan = Result.getOrThrow(executionOrderPlans(f.cut.decisions, f.cut.protectionIntents)).get(
+          f.evidence.intentId,
+        )!
+        const rows = f.cut.orders.filter((row) => row.intentId === plan.intentId)
+        const original = rows[0]!
+        for (const patch of [
+          {},
+          { decisionId: document.contentHash },
+          { intentId: testHash('foreign') },
+          { authorityGenerationHash: testHash('foreign') },
+          { order: { ...original.order, quantityAtoms: (BigInt(original.order.quantityAtoms!) + 1n).toString() } },
+          { order: { ...original.order, limitPriceMicros: '1' } },
+          { order: { ...original.order, stopPriceMicros: '1' } },
+          { order: { ...original.order, timeInForce: TimeInForce.ImmediateOrCancel } },
+        ]) {
+          const root = { ...original, ...patch }
+          for (const children of [rows.slice(1), []])
+            for (const id of [root.order.brokerOrderId, ...children.map((row) => row.order.brokerOrderId), 'missing']) {
+              inputs.push({
+                operation: 'nativeOrderGroup',
+                id,
+                root: leanReceipt(root),
+                children: children.map(leanReceipt),
+                target: leanTarget(plan),
+              })
+              const result = resolveExecutionOrderTerms(id, root, children, plan)
+              expected.push(
+                Result.isFailure(result)
+                  ? { status: 'INVALID' }
+                  : result.success._tag === 'Missing'
+                    ? { status: 'MISSING' }
+                    : {
+                        status: 'BOUND',
+                        quantity: result.success.quantityAtoms,
+                        limitPrice: result.success.limitPriceMicros,
+                        protection: result.success.protection,
+                      },
+              )
+            }
+        }
+      }
+    expect(model(inputs)).toEqual(expected)
+    expect(expected).toContainEqual(expect.objectContaining({ status: 'BOUND' }))
+    expect(expected).toContainEqual({ status: 'INVALID' })
+    expect(expected).toContainEqual({ status: 'MISSING' })
   }, 30000)
 
   test('actual bracket binding follows the chronological shared disposal budget across both legs', async () => {
@@ -3309,7 +3636,8 @@ formal('native protection order conformance', () => {
                 disposed += row.quantity
               }
             }
-            const fills = path.map((row) => ({
+            const fills = path.map((row, index) => ({
+              sourceSequence: String(index + 1),
               fillId: testHash(row.offset),
               brokerOrderId: row.order.brokerOrderId,
               intentId: f.cut.fills[0]!.intentId,
