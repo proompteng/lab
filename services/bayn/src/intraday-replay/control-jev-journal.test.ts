@@ -99,7 +99,6 @@ const retainCheckpoint = (journal: Effect.Success<typeof setup>['journal'], valu
       const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
       if (terminal !== undefined) yield* journal.handoffs.recordVisualTerminal(terminal)
     }
-    for (const skip of checkpoint.skips) yield* journal.handoffs.recordBaseStartSkip(skip)
   })
 const record = (journal: Effect.Success<typeof setup>['journal'], value = request) =>
   Effect.gen(function* () {

@@ -281,6 +281,16 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             return { plan, result: null, dispatches }
           }),
         ),
+      complete: (plan, observation, result) =>
+        Effect.gen(function* () {
+          yield* Effect.fromResult(reproduceJevTradingSignalBatch(observation, plan))
+          yield* Effect.fromResult(decodeJevBatchResult(plan, result))
+          const saved = yield* batchStore.finish(plan.batchId)
+          if (saved.result === null) return yield* failure('Completed evaluations have no committed batch result')
+          yield* same(saved.plan, plan)
+          yield* same(saved.result.candidates, result.candidates)
+          return saved
+        }).pipe(Effect.mapError(failure)),
       finish: (id) =>
         atomic(
           Effect.gen(function* () {
@@ -442,19 +452,6 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             else yield* same(existing, input)
           }),
         ),
-      recordBaseStartSkip: (input) =>
-        atomic(
-          Effect.gen(function* () {
-            const request = yield* Effect.fromResult(
-              decodeJevEvaluationRequest(yield* read('request', input.requestId)),
-            )
-            const checkpoint = yield* staged(request)
-            yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [input] }))
-            const existing = yield* read('base-start-skip', input.requestId)
-            if (existing === null) yield* write('base-start-skip', input.requestId, input)
-            else yield* same(existing, input)
-          }),
-        ),
       recordHandoff: (input) =>
         atomic(
           Effect.gen(function* () {
@@ -471,6 +468,14 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
                 input,
               ),
             )
+            const skip = handoff.baseStart?.status === 'NOT_REQUESTED' ? handoff.baseStart.skip : undefined
+            if (skip !== undefined) {
+              const checkpoint = yield* staged(request)
+              yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [skip] }))
+              const stored = yield* read('base-start-skip', input.requestId)
+              if (stored === null) yield* write('base-start-skip', input.requestId, skip)
+              else yield* same(stored, skip)
+            }
             const existing = yield* read('handoff', request.requestId)
             yield* Effect.fromResult(verifyStagedCheckpointHandoff(yield* staged(request), handoff))
             if (existing !== null) {

@@ -149,7 +149,7 @@ export const entryInferenceFixtureLayer = Layer.mergeAll(
           return { dispatchAllowed: prior === undefined }
         }),
       recordVisualTerminal: () => Effect.void,
-      recordBaseStartSkip: () => Effect.void,
+
       recordHandoff: (handoff) =>
         Effect.suspend(() => {
           const previous = saved.get(handoff.requestId)
