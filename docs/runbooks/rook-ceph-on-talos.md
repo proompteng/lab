@@ -95,15 +95,15 @@ For host and client-volume counters and timestamped RBD mappings, use
 
 ## Scrub Catch-Up Posture
 
-Deep scrubs use `osd_scrub_chunk_min=1` and `osd_scrub_chunk_max=1`, while retaining three concurrent
-scrubs per OSD. [Ceph's Tentacle reference](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#confval-osd_scrub_chunk_max)
-documents larger batches as a client-latency tradeoff. Override both bounds: the default five-object minimum otherwise
-prevents chunks from shrinking below five when client operations preempt a scrub. Verify all six effective
-configurations, compare database and Kafka latency, and require continued scrub progress as described below. This
-setting updates at runtime. Compare equal-duration windows of WAL fsync, synchronous replication waits, commit and
-inference-admission latency, deadline failures and scrub progress. If the smaller batches do not help, restore both
-bounds to an explicit `5` through reviewed GitOps; removing a key alone does not establish that Ceph's persistent
-config store has reset. Keep the three-reservation cap and durability settings throughout the comparison.
+Deep scrubs use `osd_scrub_chunk_min=5` and `osd_scrub_chunk_max=5`, while retaining three concurrent
+scrubs per OSD. Keep both bounds explicit when restoring this baseline: removing a key alone does not establish that
+Ceph's persistent config store has reset. [Ceph's Tentacle reference](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#confval-osd_scrub_chunk_max)
+documents the chunk-size tradeoff between scrub throughput and client latency. These bounds update at runtime.
+
+For a reviewed latency trial, compare equal-duration windows of WAL fsync, synchronous replication waits, commit and
+inference-admission latency, deadline failures and scrub progress. Retain the three-reservation cap and durability
+settings. If the candidate does not demonstrate a useful improvement, restore both bounds to an explicit `5` through
+reviewed GitOps. A healthy rollout or an isolated lower mean does not establish recovery of application deadlines.
 
 The shared HDD cluster uses Ceph's built-in `high_client_ops` profile to protect application latency while
 continuing scrub catch-up. Scrubs can start at any hour: `osd_scrub_begin_hour=0` and `osd_scrub_end_hour=0`.
@@ -161,7 +161,7 @@ Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 1. `osd_mclock_profile: "high_client_ops"` without custom scheduler overrides
 1. `osd_scrub_begin_hour: "0"` and `osd_scrub_end_hour: "0"`
 1. `osd_max_scrubs: "3"`
-1. `osd_scrub_chunk_min: "1"` and `osd_scrub_chunk_max: "1"`
+1. `osd_scrub_chunk_min: "5"` and `osd_scrub_chunk_max: "5"`
 1. `osd_mclock_max_sequential_bandwidth_hdd: "285212672"` (272MiB/s)
 1. `osd_memory_target: "8589934592"` (8Gi)
 1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`
