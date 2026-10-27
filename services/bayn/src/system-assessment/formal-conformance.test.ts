@@ -143,10 +143,122 @@ import { topicPartitionKey } from '../market-data/streaming/projection'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 
 import { formalModelExecutable, runFormalModel as model } from './formal-model.test-support'
+import { persistenceDocumentFixture } from './decision-persistence.test-support'
+import { emptySourceCutFixture } from './source-cut.test-support'
+import { decisionAdmissionWitnesses } from './decision-admissions'
 
 const formal = formalModelExecutable === undefined ? describe.skip : describe
 
 formal('pinned Lean executable conformance', () => {
+  test('committed admission bounds preserve ownership and causal routing without comparing database clocks', async () => {
+    const document = await Effect.runPromise(persistenceDocumentFixture)
+    const { cut: base } = emptySourceCutFixture()
+    const intentId = document.orderedIntentIds[0]
+    const sessionDate = document.executionSession?.executionSession.date
+    if (intentId === undefined || sessionDate === undefined) throw new Error('Missing native persistence source')
+    const origin = Date.parse(document.createdAt)
+    const at = (offset: number) => new Date(origin + offset).toISOString()
+    const started = Schema.decodeUnknownSync(MutationEventSchema)({
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: testHash('persistence start'),
+      mutationId: testHash('persistence mutation'),
+      intentId,
+      sequence: 1,
+      operation: 'SUBMIT',
+      eventType: 'SUBMIT_STARTED',
+      requestHash: testHash('persistence request'),
+      consistencyDelayMs: 1000,
+      occurredAt: at(1),
+    })
+    const generation = document.bindings.authorityGenerationHash
+    const inputs: unknown[] = []
+    const expected: (string | null)[] = []
+    for (const valid of [true, false])
+      for (const independent of [true, false])
+        for (const routed of [true, false])
+          for (const admitted of [-1, 0, 1, 2])
+            for (const routing of [0, 1, 2])
+              for (const observed of [-1, 5, 10, 11]) {
+                const start = { ...started, occurredAt: at(admitted) }
+                const terminal = Schema.decodeUnknownSync(MutationEventSchema)({
+                  ...start,
+                  eventId: testHash('persistence outcome'),
+                  sequence: 2,
+                  eventType: 'SUBMIT_ACCEPTED',
+                  occurredAt: at(Math.max(admitted, routing) + 1),
+                  routing: { startedAt: at(routing), requestDispatchedAt: at(routing), completedAt: at(routing + 1) },
+                })
+                const material = { eventId: start.eventId, decisionId: document.contentHash, observedAt: at(observed) }
+                const receipt = {
+                  ...material,
+                  sourceHash: valid ? testHash(material) : testHash('substituted persistence receipt'),
+                }
+                const result = decisionAdmissionWitnesses(
+                  {
+                    ...base,
+                    asOf: at(10),
+                    decisions: [{ sessionDate, document }],
+                    mutations: [start, ...(routed ? [terminal] : [])].map((event) => ({
+                      event,
+                      authorityGenerationHash: generation,
+                      strategyDecisionHash: document.bindings.strategyDecisionHash,
+                    })),
+                    decisionAdmissions: independent ? [receipt] : [],
+                  },
+                  generation,
+                )
+                const witness = Result.isSuccess(result) ? result.success.witnesses[0] : undefined
+                expected.push(witness === undefined ? null : String(Date.parse(witness.witnessedAt) - origin))
+                inputs.push({
+                  operation: 'decisionCommitmentUpperBound',
+                  receiptValid: valid,
+                  independent,
+                  routed,
+                  created: '0',
+                  admitted: String(admitted),
+                  routing: String(routing),
+                  observed: String(observed),
+                  asOf: '10',
+                })
+              }
+    expect(expected.filter((bound) => bound !== null).length).toBeGreaterThan(0)
+    expect(model(inputs)).toEqual(expected)
+  })
+
+  test('a late persistence observation is incomplete while an observation before creation is violated', () => {
+    const { input, verifiedSources } = supportedAssessmentFixture()
+    const decision = input.realism.decisions[0]
+    const fill = input.realism.fills[0]
+    if (decision === undefined || fill === undefined) throw new Error('Missing supported persistence fixture')
+    const created = Date.parse(decision.decisionAt)
+    const routing = Date.parse(fill.routingStartedAt)
+    const observed = [created - 1, created, routing, routing + 1, routing + 1000]
+    const actual = observed.map(
+      (knownBy) =>
+        Result.getOrThrow(
+          measureRealism(
+            {
+              ...input.realism,
+              expectedDecisionIds: [decision.decisionId],
+              expectedFillIds: [fill.fillId],
+              fills: [fill],
+              decisions: [{ ...decision, persistedAt: new Date(knownBy).toISOString() }],
+            },
+            verifiedSources,
+          ),
+        ).status,
+    )
+    expect(
+      model(
+        observed.map((knownBy) => ({
+          operation: 'persistenceObservation',
+          created: String(created),
+          knownBy: String(knownBy),
+          routing: String(routing),
+        })),
+      ),
+    ).toEqual(actual)
+  })
   test('momentum exact excess-return arithmetic agrees before any basis-point rounding', () => {
     const integer = fc.bigInt({ min: 1000n, max: 1000000000000n })
     const values = fc.sample(
@@ -2632,8 +2744,11 @@ formal('pinned Lean executable conformance', () => {
             sources,
           ),
         )
-        return !value.violations.some(
-          (reason) => reason.startsWith('PERSISTED_BEFORE_DECISION:') || reason.startsWith('INVALID_EXECUTION_TIMING:'),
+        return (
+          !value.violations.some(
+            (reason) =>
+              reason.startsWith('PERSISTED_BEFORE_DECISION:') || reason.startsWith('INVALID_EXECUTION_TIMING:'),
+          ) && !value.missing.some((reason) => reason.startsWith('MISSING_PRE_ROUTING_PERSISTENCE:'))
         )
       }),
     )

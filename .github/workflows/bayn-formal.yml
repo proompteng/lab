@@ -66,3 +66,8 @@ jobs:
         env:
           BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_formal_test
         run: bun test services/bayn/src/db/jev-evaluation-postgres.integration.test.ts
+      - name: Verify decision admission commitment against Lean and PostgreSQL
+        env:
+          BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
+          BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_formal_test
+        run: bun test services/bayn/src/system-assessment/postgres.integration.test.ts

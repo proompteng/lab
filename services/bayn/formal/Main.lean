@@ -608,6 +608,20 @@ def evaluate (json : Json) : Except String Json := do
   | "mutationReplay" =>
     return toJson (sameMutationOutcome (← readMutationOutcome (← json.getObjVal? "previous"))
       (← readMutationOutcome (← json.getObjVal? "next")))
+  | "decisionAdmissionEligible" =>
+    return toJson (decisionAdmissionEligible (← json.getObjValAs? Bool "sourceCommitted")
+      (← json.getObjValAs? Bool "sourceMatches"))
+  | "mutationAdmissionIndependent" =>
+    return toJson (mutationAdmissionIndependent (← json.getObjValAs? Bool "ambient"))
+  | "decisionCommitmentUpperBound" =>
+    let bound := decisionCommitmentUpperBound (← json.getObjValAs? Bool "receiptValid")
+      (← json.getObjValAs? Bool "independent") (← json.getObjValAs? Bool "routed")
+      (← readInteger json "created") (← readInteger json "admitted") (← readInteger json "routing")
+      (← readInteger json "observed") (← readInteger json "asOf")
+    return toJson (bound.map toString)
+  | "persistenceObservation" =>
+    return toJson (persistenceObservation (← readInteger json "created") (← readInteger json "knownBy")
+      (← readInteger json "routing"))
   | "executionTiming" =>
     let t : ExecutionTiming := {
       decisionAt := ← readInteger json "decisionAt", persistedAt := ← readInteger json "persistedAt",

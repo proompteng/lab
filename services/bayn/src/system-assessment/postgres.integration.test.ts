@@ -41,6 +41,7 @@ import { bracketEvidenceFixture } from './bracket-evidence.test-support'
 import { bindExecutionEvidence, captureExecutionOrders } from './execution-evidence'
 import { makePostgresMutationStore } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
+import { formalModelExecutable, runFormalModel } from './formal-model.test-support'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
@@ -1333,6 +1334,10 @@ postgres('PostgreSQL prospective system qualification', () => {
         }),
       ),
     ).toEqual([])
+    if (formalModelExecutable !== undefined)
+      expect(
+        runFormalModel([{ operation: 'decisionAdmissionEligible', sourceCommitted: true, sourceMatches: true }]),
+      ).toEqual([captured.length === 1])
     await runtime.runPromise(
       asApplication(
         Effect.gen(function* () {
@@ -1342,6 +1347,20 @@ postgres('PostgreSQL prospective system qualification', () => {
           yield* admit('before-savepoint-release')
           yield* sql`RELEASE SAVEPOINT decision_write`
           yield* admit('after-savepoint-release')
+          if (formalModelExecutable !== undefined) {
+            const facts = yield* sql`SELECT event_id FROM execution_decision_admissions WHERE event_id IN
+              (${sha256('before-savepoint-release')}, ${sha256('after-savepoint-release')})`
+            expect(
+              runFormalModel([
+                { operation: 'decisionAdmissionEligible', sourceCommitted: false, sourceMatches: true },
+                { operation: 'decisionAdmissionEligible', sourceCommitted: false, sourceMatches: true },
+              ]),
+            ).toEqual(
+              ['before-savepoint-release', 'after-savepoint-release'].map((key) =>
+                facts.some((row) => row['event_id'] === sha256(key)),
+              ),
+            )
+          }
           expect(yield* sql`SELECT count(*)::integer AS count FROM execution_decision_admissions`).toEqual([
             { count: 1 },
           ])
@@ -1350,6 +1369,16 @@ postgres('PostgreSQL prospective system qualification', () => {
     )
     await runtime.runPromise(asApplication(source('foreign close', ['foreign-admission'], true)))
     await runtime.runPromise(asApplication(admit('foreign-admission')))
+    if (formalModelExecutable !== undefined) {
+      const facts = await runtime.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* PgClient.PgClient)`SELECT event_id FROM execution_decision_admissions WHERE event_id = ${sha256('foreign-admission')}`
+        }),
+      )
+      expect(
+        runFormalModel([{ operation: 'decisionAdmissionEligible', sourceCommitted: true, sourceMatches: false }]),
+      ).toEqual([facts.length !== 0])
+    }
     const rollback = await runtime.runPromiseExit(
       asApplication(
         Effect.gen(function* () {
@@ -1405,6 +1434,10 @@ postgres('PostgreSQL prospective system qualification', () => {
             ),
           ]) {
             const result = yield* attempt.pipe(Effect.result)
+            if (formalModelExecutable !== undefined)
+              expect(runFormalModel([{ operation: 'mutationAdmissionIndependent', ambient: true }])).toEqual([
+                Result.isSuccess(result),
+              ])
             expect(Result.isFailure(result)).toBe(true)
             if (Result.isFailure(result)) expect(result.failure.message).toContain('must commit independently')
           }

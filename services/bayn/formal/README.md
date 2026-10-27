@@ -89,6 +89,23 @@ TypeScript implementation of the model.
 The qualification example is deliberately synthetic. It establishes that the predicate is satisfiable; it is not an
 assessment of Bayn's prospective trading performance.
 
+`DecisionPersistence.lean` maps to `src/system-assessment/decision-admissions.ts`, the admission trigger in migration
+157, and independent mutation admission in `src/execution/mutations/postgres/start.ts`. An immutable PostgreSQL
+receipt attests that an owned decision source was committed before the admitted mutation. Once that independently
+committed mutation has a routing outcome, its original producer routing time bounds decision commitment. The model
+requires valid receipt identity, independent admission and ordered producer timestamps. A later database observation
+does not reverse that causal ordering. Without a routing outcome or committed-source receipt, no bound is derived.
+A persistence observation after routing alone leaves realism incomplete; one before decision creation is contradictory.
+
+The executable comparison covers 384 receipt, transaction, routing and clock combinations using a reproduced native
+decision document, plus the production realism classifier. Actual PostgreSQL tests compare admission eligibility
+with the model for committed sources, uncommitted sources before and after savepoint release, and foreign ownership.
+They also exercise rollback, receipt immutability and ambient-transaction rejection. Native exit tests separately
+cover initial close and replanned close documents. These checks do not prove PostgreSQL or the broker adapter itself.
+The causal conclusion assumes PostgreSQL visibility and that the coordinator routes only after independent admission
+returns. The assessment exposes these assumptions and retains original producer routing timestamps as upper bounds,
+rather than claiming an exact physical commit time.
+
 `Qualification.lean` also maps `deployedControlPreserved` to the frozen-control admission rule in
 `src/system-assessment/policy.ts`. `deployed_control_admission_preserves_every_identity` proves preservation of
 strategy, parameter and protocol identities, `changed_deployed_parameters_are_rejected` rejects parameter drift,
@@ -97,7 +114,7 @@ the full TypeScript registration validator over all eight combinations of matchi
 Actual PostgreSQL tests additionally reject substitution, a missing control and duplicate controls through direct
 SQL, then admit the original control. These checks establish identity admission; they do not prove the retained
 image's availability or the equivalence of a rebuilt control. The retained evidence and execution boundary are in
-the [assessment contract](../../../docs/bayn/system-assessment.md#frozen-deployed-control).
+the [assessment contract](../src/system-assessment/README.md#frozen-deployed-control).
 
 `registeredRiskPreserved` in `Qualification.lean` maps to risk admission in `policy.ts`.
 `admitted_risk_preserves_material_and_account` binds the normalized policy and account hashes;
