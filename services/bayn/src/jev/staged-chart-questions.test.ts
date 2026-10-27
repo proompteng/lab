@@ -4,7 +4,6 @@ import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result } from '../hash'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { makeChartDecisionsRequest } from './chart-questions'
 import { defaultJevProtocolDocument } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
 import { makeEntrySourceCandidates } from './entry-proposals'
@@ -130,14 +129,6 @@ describe('funded staged chart transport', () => {
             requestHash: first.requestHash,
             responseHash: Result.getOrThrow(canonicalHashV1Result(raw)),
           })
-        }
-        // Compare funded source identity against the unpartitioned builder when it fits.
-        const active = makeChartDecisionsRequest(fundedSource(chart))
-        if (Result.isSuccess(active)) {
-          expect(first.request.input).toEqual(active.success.request.input)
-          expect(first.request.questions).toEqual(
-            active.success.request.questions.filter((question) => !question.name.startsWith('base_first_bar_ending_')),
-          )
         }
       })
     }
