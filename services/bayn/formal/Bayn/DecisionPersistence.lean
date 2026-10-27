@@ -1,5 +1,5 @@
 module
-public import Std.Tactic
+import Lean.Elab.Tactic.Omega
 
 @[expose] public section
 
