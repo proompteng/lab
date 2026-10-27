@@ -193,6 +193,8 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.jev.protocol.v24',
       'bayn.jev.protocol.v25',
       'bayn.jev.protocol.v26',
+      'bayn.entry-ablation-policy.v1',
+      'bayn.repeated-momentum-policy.v1',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),

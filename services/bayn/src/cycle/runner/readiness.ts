@@ -1,3 +1,4 @@
+import type { ProtectedEntryTarget } from '../../strategy/runtime-decision'
 import { Schema } from 'effect'
 
 import { UtcInstantSchema } from '../../schemas'
@@ -115,6 +116,7 @@ export type CycleWaitReason = typeof CycleWaitReasonSchema.Type
 export type CycleWaitingDetails = {
   readonly maximumHoldDueAt?: string
   readonly maximumHoldEvaluatedAt?: string
+  readonly entryAbstention?: ProtectedEntryTarget
 } & (
   | { readonly waitReason: CycleWaitReason; readonly readiness?: never }
   | { readonly readiness: DecisionReadiness; readonly waitReason?: never }
