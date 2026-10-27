@@ -152,6 +152,11 @@ spec:
               value: "true"
             - name: BAYN_POSTGRES_CA_PATH
               value: /var/run/secrets/bayn/postgres/ca.crt
+            - name: BAYN_NATIVE_ARRIVAL_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-native-arrival-db-app
+                  key: fqdn-uri
             - name: BAYN_TIGERBEETLE_CLUSTER_ID
               value: "122731676035874920802382025803517750735"
             - name: BAYN_TIGERBEETLE_ADDRESSES
@@ -248,6 +253,9 @@ spec:
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
+            - name: native-arrival-postgres-ca
+              mountPath: /var/run/secrets/bayn/native-arrival-postgres
+              readOnly: true
       volumes:
         - name: valkey-client-tls
           secret:
@@ -259,6 +267,13 @@ spec:
         - name: postgres-ca
           secret:
             secretName: bayn-db-ca
+            defaultMode: 444
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: native-arrival-postgres-ca
+          secret:
+            secretName: bayn-native-arrival-db-ca
             defaultMode: 444
             items:
               - key: ca.crt
