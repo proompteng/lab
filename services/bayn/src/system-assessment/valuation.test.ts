@@ -159,6 +159,13 @@ test('a later coin settlement cannot invent the earlier inventory debit instant 
     { symbol: 'ETH/USD', quantityAtoms: '32967375', costBasisMicros: '3296738' },
   ])
   expect(inventory.at('2026-09-18T15:30:03.000Z')).toEqual([])
+  // Repeated and earlier independent endpoint queries cannot retain a later inventory state.
+  expect(inventory.at('2026-09-18T15:30:01.500Z')).toBeNull()
+  expect(inventory.at(accrual.data.observedAt)).toEqual([
+    { symbol: 'ETH/USD', quantityAtoms: '32967375', costBasisMicros: '3296738' },
+  ])
+  expect(inventory.at(accrual.data.observedAt)).toEqual(inventory.at(accrual.data.observedAt))
+  expect(inventory.at('2026-09-18T15:30:00.000Z')).toEqual([])
   expect(inventory.at('2026-09-18T21:00:00.001Z')).toBeNull()
   expect(Result.getOrThrow(prepareValuationInventory({ ...forward, ledgerExact: false })).at(mark.at)).toBeNull()
 })

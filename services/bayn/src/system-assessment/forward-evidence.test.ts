@@ -5,13 +5,33 @@ import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import { prepareFeeMatchCorrection, verifyBrokerFeeRecord, type StoredBrokerFee } from '../accounting/broker-fees'
 import { prepareCashSettlement } from '../accounting/cash-settlement'
 import { hashLedgerPlanResult } from '../ledger-plan'
-import { captureCashHistory as captureHistory, cashChangesAt } from './cash-history'
+import { captureCashHistory as captureHistory, indexCashHistory } from './cash-history'
+
+const cashChangesAt = (history: Parameters<typeof indexCashHistory>[0], at: string) => indexCashHistory(history)(at)
 
 import type { ForwardPerformanceEvidenceInput } from '../forward-performance/model'
 import { JevResearchPolicy } from '../jev/acceptance'
-import { captureForwardFinancialEvidence } from './forward-evidence'
+import { captureForwardFinancialEvidence as captureFinancial, type DecisionSessionBinding } from './forward-evidence'
 import { registrationFixture, testHash } from './fixtures.test-support'
 import { coinRoundTrip, coinActivity } from '../forward-performance/coin-fee-episodes.test-support'
+import { prepareAccounting } from '../accounting/domain'
+import { OrderSide } from '../execution/contracts'
+
+const captureForwardFinancialEvidence = (
+  registration: Parameters<typeof captureFinancial>[0],
+  policy: JevResearchPolicy,
+  forward: ForwardPerformanceEvidenceInput,
+  decisions: readonly DecisionSessionBinding[],
+) =>
+  captureFinancial(registration, policy, forward, {
+    decisions,
+    fills: (forward.executionEvidence ?? []).flatMap((row) =>
+      row.fills.map((fill) => ({
+        fillId: fill.brokerEventId,
+        occurredAt: fill.occurredAt,
+      })),
+    ),
+  })
 
 const captureCashHistory = (forward: ForwardPerformanceEvidenceInput) =>
   captureHistory(forward, '2026-09-18T00:00:00.000Z')
@@ -104,6 +124,75 @@ const cashSettlements = (fills: ReturnType<typeof coinRoundTrip>['fills']) =>
   })
 
 describe('registered financial capture', () => {
+  test('exact-cent trades and separately armed exit fills retain financial coverage without invented rounding receipts', () => {
+    const { registration, forward } = fixture(JevResearchPolicy.Candidate)
+    const first = registration.calendar.sessions[0]!
+    const decisions = [testHash('entry document'), testHash('independent stop')]
+    const transactions = [OrderSide.Buy, OrderSide.Sell].map(
+      (side, index) =>
+        Result.getOrThrow(
+          prepareAccounting(
+            testHash({ event: index }),
+            {
+              schemaVersion: 'bayn.fill.v2',
+              accountId: forward.account.accountId,
+              fillId: `fill-${index}`,
+              brokerOrderId: `order-${index}`,
+              clientOrderId: `client-${index}`,
+              intentId: decisions[index],
+              symbol: 'AAPL',
+              side,
+              quantityAtoms: '1000000000',
+              priceAtoms: index === 0 ? '100000000000' : '101000000000',
+              feeMicros: '0',
+              occurredAt: new Date(Date.parse(first.openAt) + (index + 1) * 1000).toISOString(),
+            },
+            index === 0
+              ? { quantityAtoms: '0', costMicros: '0' }
+              : { quantityAtoms: '1000000000', costMicros: '100000000' },
+            7001,
+          ),
+        ).transaction,
+    )
+    const observed = {
+      ...forward,
+      accountTransactions: transactions,
+      transactions: transactions.map((trade) => ({ ...trade, cycleId: testHash('cycle') })),
+      // The entry-only forward projection cannot stand in for the independently captured fills.
+      executionEvidence: [],
+    }
+    const execution = {
+      decisions: decisions.map((decisionHash) => ({ sessionDate: first.sessionDate, decisionHash })),
+      fills: transactions.map((trade) => ({ fillId: trade.brokerEventId, occurredAt: trade.occurredAt })),
+    }
+    const captured = Result.getOrThrow(captureFinancial(registration, JevResearchPolicy.Candidate, observed, execution))
+    expect(captured.sessions[0]?.facts).toMatchObject({
+      grossRealizedPnlMicros: '1000000',
+      cashSettlementRoundingMicros: '0',
+      completedEpisodes: 1,
+      decisionIds: decisions,
+      fillIds: transactions.map((trade) => trade.brokerEventId),
+      unsettledFillCount: 0,
+    })
+    const history = Result.getOrThrow(captureCashHistory(observed))
+    expect(history).not.toBeNull()
+    expect(history === null ? null : cashChangesAt(history, first.closeAt)).toBe(1000000n)
+    expect(
+      Result.getOrThrow(
+        captureFinancial(registration, JevResearchPolicy.Candidate, observed, {
+          ...execution,
+          fills: execution.fills.slice(0, 1),
+        }),
+      ).sessions[0]?.facts,
+    ).toBeNull()
+    const altered = {
+      ...observed,
+      accountTransactions: transactions.map((trade, index) =>
+        index === 0 ? { ...trade, cashDeltaMicros: '-100000001' } : trade,
+      ),
+    }
+    expect(Result.getOrThrow(captureCashHistory(altered))).toBeNull()
+  })
   test('cash capture retains rounded settlement deltas once and rejects missing or conflicting source records', () => {
     const { forward } = fixture(JevResearchPolicy.Candidate)
     const { fills } = coinRoundTrip(0, forward.account.accountId)

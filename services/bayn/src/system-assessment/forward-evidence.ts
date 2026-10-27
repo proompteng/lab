@@ -11,6 +11,7 @@ import { CapturedTradingFactsSchema } from './session'
 import type { SystemRegistration } from './policy'
 import type { SystemSourceCut } from './source-cut'
 import { IsoDateSchema, Sha256Schema } from '../schemas'
+import { cashSettlementMatches } from './cash-settlements'
 
 export const retainedFinancialMarks = (
   marks: SystemSourceCut['accountMarks'],
@@ -84,7 +85,10 @@ export const captureForwardFinancialEvidence = (
   registration: SystemRegistration,
   policy: JevResearchPolicy,
   forward: ForwardPerformanceEvidenceInput,
-  decisions: readonly DecisionSessionBinding[],
+  execution: {
+    readonly decisions: readonly DecisionSessionBinding[]
+    readonly fills: readonly Pick<SystemSourceCut['fills'][number], 'fillId' | 'occurredAt'>[]
+  },
 ) =>
   Result.gen(function* () {
     const definition = registration.policies.find((p) => p.policy === policy)
@@ -133,7 +137,7 @@ export const captureForwardFinancialEvidence = (
     const sourceHash = yield* canonicalHashV1Result({
       schemaVersion: 'bayn.system-forward-source.v1',
       forward,
-      decisions,
+      execution,
     })
     const first = registration.calendar.sessions[0]
     const last = registration.calendar.sessions.at(-1)
@@ -179,7 +183,7 @@ export const captureForwardFinancialEvidence = (
       const fees = forward.brokerFees?.filter((fee) => fee.date === session.sessionDate) ?? []
       const remainingAccruals =
         forward.brokerFeeAccruals?.filter((a) => accruals.some((row) => row.accrual_id === a.accrualId)) ?? []
-      const rawFills = (forward.executionEvidence ?? []).flatMap((e) => e.fills).filter((f) => inSession(f.occurredAt))
+      const rawFills = execution.fills.filter((fill) => inSession(fill.occurredAt))
       const openingPositions = inventory.at(calendar.openAt)
       const closingPositions = inventory.at(calendar.closeAt)
       const openingPositionCount = openingPositions?.length
@@ -209,23 +213,17 @@ export const captureForwardFinancialEvidence = (
         ) &&
         native.length === transactions.length &&
         fees.every((fee) => fee.coinDebit === undefined || fee.inventoryCostMicros !== undefined) &&
-        settled.length === native.length &&
-        settled.every(
-          (s) =>
-            s.posted &&
-            native.some(
-              (t) =>
-                t.transactionId === s.data.transactionId &&
-                t.accountId === s.data.accountId &&
-                t.contentHash === s.data.transactionContentHash &&
-                t.cashDeltaMicros === s.data.cashDeltaMicros,
-            ),
+        native.every((trade) =>
+          cashSettlementMatches(
+            trade,
+            settled.find((settlement) => settlement.data.transactionId === trade.transactionId),
+            forward.account.accountId,
+            forward.accountPositionCounts?.reconciledAt ?? '',
+          ),
         ) &&
         openingPositionCount !== undefined &&
         closingPositionCount !== undefined &&
-        native.every(
-          (t) => t.occurredAt > calendar.openAt && rawFills.some((fill) => fill.brokerEventId === t.brokerEventId),
-        )
+        native.every((t) => t.occurredAt > calendar.openAt && rawFills.some((fill) => fill.fillId === t.brokerEventId))
       const financial = complete
         ? {
             grossRealizedPnlMicros: gross.toString(),
@@ -234,7 +232,7 @@ export const captureForwardFinancialEvidence = (
             openingPositionCount,
             closingPositionCount,
             unsettledFillCount:
-              rawFills.filter((fill) => !native.some((t) => t.brokerEventId === fill.brokerEventId)).length +
+              rawFills.filter((fill) => !native.some((t) => t.brokerEventId === fill.fillId)).length +
               remainingAccruals.filter((a) => !a.settled).length,
             uncertainMutationCount: forward.unresolvedMutationCount,
             completedEpisodes:
@@ -242,8 +240,10 @@ export const captureForwardFinancialEvidence = (
                 ? episodeEvidence.completed.filter((e) => inSession(e.openedAt) && inSession(e.closedAt)).length
                 : 0,
             filledNotionalMicros: native.reduce((sum, t) => sum + BigInt(t.notionalMicros), 0n).toString(),
-            decisionIds: decisions.filter((d) => d.sessionDate === session.sessionDate).map((d) => d.decisionHash),
-            fillIds: rawFills.map((f) => f.brokerEventId),
+            decisionIds: execution.decisions
+              .filter((d) => d.sessionDate === session.sessionDate)
+              .map((d) => d.decisionHash),
+            fillIds: rawFills.map((fill) => fill.fillId),
           }
         : null
       sessions.push({ sessionDate: session.sessionDate, evidenceHash, facts: financial })

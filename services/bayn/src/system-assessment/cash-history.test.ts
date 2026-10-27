@@ -2,8 +2,10 @@ import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import { testHash } from './fixtures.test-support'
 import { CashAdjustmentKind, CashFlowEvidenceSchema } from './cash-flows'
-import { CashHistorySchema, cashChangesAt, projectSessionCash } from './cash-history'
+import { CashHistorySchema, indexCashHistory, projectSessionCash } from './cash-history'
 import { requiredValuationTimes } from './valuation'
+
+const cashChangesAt = (history: Parameters<typeof indexCashHistory>[0], at: string) => indexCashHistory(history)(at)
 
 const at = (seconds: number) => new Date(Date.parse('2026-11-02T14:30:00.000Z') + seconds * 1000).toISOString()
 const mark = (seconds: number, cashMicros: string | null) => ({
@@ -96,4 +98,17 @@ test('unresolved fee timing is not assigned to a favorable minute and contradict
   expect(cashChangesAt(history, at(-1))).toBeNull()
   expect(cashChangesAt(history, at(131))).toBeNull()
   expect(cashChangesAt({ ...history, completeFrom: at(131) }, at(120))).toBeNull()
+})
+
+test('one cumulative cash index preserves overlapping uncertainty and arbitrary query order', () => {
+  const changes = Array.from({ length: 40 }, (_, i) => change(i * 3, i * 3 + (i % 5), String(i % 2 === 0 ? i : -i)))
+  const indexed = indexCashHistory({ ...history, changes })
+  for (const second of Array.from({ length: 131 }, (_, i) => i).reverse()) {
+    const instant = at(second)
+    const unresolved = changes.some((change) => change.earliestAt <= instant && instant < change.latestAt)
+    const expected = unresolved
+      ? null
+      : changes.reduce((total, change) => total + (change.latestAt <= instant ? BigInt(change.amountMicros) : 0n), 0n)
+    expect(indexed(instant)).toBe(expected)
+  }
 })

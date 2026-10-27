@@ -6,6 +6,7 @@ import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SignedMicrosSchema, UtcInstantSchema } from '../schemas'
 import { cashFlowTotals, type CashFlowEvidenceSchema } from './cash-flows'
 import type { AccountMarkSchema } from './valuation'
+import { cashSettlementMatches } from './cash-settlements'
 
 export const CashHistorySchema = Schema.Struct({
   sourceHash: Sha256Schema,
@@ -52,27 +53,19 @@ export const captureCashHistory = (forward: ForwardPerformanceEvidenceInput, com
       new Set(fees.map((fee) => fee.data.activityId)).size !== fees.length
     )
       return null
-    if (settlements.length !== history.length || settlementsById.size !== settlements.length) return null
+    if (
+      settlementsById.size !== settlements.length ||
+      settlements.some((settlement) => !tradesById.has(settlement.data.transactionId))
+    )
+      return null
     for (const trade of history) {
       const settlement = settlementsById.get(trade.transactionId)
-      if (
-        settlement === undefined ||
-        !settlement.posted ||
-        settlement.data.accountId !== forward.account.accountId ||
-        trade.accountId !== forward.account.accountId ||
-        settlement.data.transactionContentHash !== trade.contentHash ||
-        settlement.data.brokerEventId !== trade.brokerEventId ||
-        settlement.data.occurredAt !== trade.occurredAt ||
-        settlement.data.observedAt > cut.reconciledAt ||
-        settlement.data.cashDeltaMicros !== trade.cashDeltaMicros ||
-        trade.occurredAt > cut.reconciledAt
-      )
-        return null
+      if (!cashSettlementMatches(trade, settlement, forward.account.accountId, cut.reconciledAt)) return null
       changes.push({
-        sourceHash: yield* canonicalHashV1Result({ trade, settlement }),
+        sourceHash: yield* canonicalHashV1Result({ trade, settlement: settlement ?? null }),
         earliestAt: trade.occurredAt,
         latestAt: trade.occurredAt,
-        amountMicros: (BigInt(trade.cashDeltaMicros) + BigInt(settlement.rounding_delta_micros)).toString(),
+        amountMicros: (BigInt(trade.cashDeltaMicros) + BigInt(settlement?.rounding_delta_micros ?? '0')).toString(),
       })
     }
     for (const accrual of accruals) {
@@ -128,23 +121,49 @@ export const captureCashHistory = (forward: ForwardPerformanceEvidenceInput, com
     }
   })
 
-export const cashChangesAt = (history: CashHistory, at: string): bigint | null => {
+/** Validate once and retain cumulative totals and unresolved interval counts at each change. */
+export const indexCashHistory = (history: CashHistory) => {
   if (
     new Set(history.changes.map((change) => change.sourceHash)).size !== history.changes.length ||
     history.changes.some(
       (change) => change.earliestAt > change.latestAt || change.latestAt > history.completeThrough,
     ) ||
-    history.completeFrom > history.completeThrough ||
-    at < history.completeFrom ||
-    at > history.completeThrough
+    history.completeFrom > history.completeThrough
   )
-    return null
-  let total = 0n
-  for (const change of history.changes) {
-    if (change.earliestAt <= at && at < change.latestAt) return null
-    if (change.latestAt <= at) total += BigInt(change.amountMicros)
+    return (_at: string): bigint | null => null
+  const events = history.changes
+    .flatMap((change) => [
+      { at: change.earliestAt, amount: 0n, uncertain: change.earliestAt < change.latestAt ? 1 : 0 },
+      {
+        at: change.latestAt,
+        amount: BigInt(change.amountMicros),
+        uncertain: change.earliestAt < change.latestAt ? -1 : 0,
+      },
+    ])
+    .sort((a, b) => a.at.localeCompare(b.at))
+  const totals: { at: string; amount: bigint; uncertain: number }[] = []
+  let amount = 0n
+  let uncertain = 0
+  for (const event of events) {
+    amount += event.amount
+    uncertain += event.uncertain
+    const point = { at: event.at, amount, uncertain }
+    if (totals.at(-1)?.at === event.at) totals[totals.length - 1] = point
+    else totals.push(point)
   }
-  return total
+  return (at: string): bigint | null => {
+    if (at < history.completeFrom || at > history.completeThrough) return null
+    let lo = 0
+    let hi = totals.length
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2)
+      const point = totals[mid]
+      if (point !== undefined && point.at <= at) lo = mid + 1
+      else hi = mid
+    }
+    const point = totals[lo - 1]
+    return point === undefined ? 0n : point.uncertain > 0 ? null : point.amount
+  }
 }
 
 /** Reconstruct cash from exact movements, then check every usable broker observation independently. */
@@ -156,8 +175,9 @@ export const projectSessionCash = (
 ) =>
   Result.gen(function* () {
     if (history === null || flows === null || history.completeThrough < closeAt) return marks
+    const changesAt = indexCashHistory(history)
     const cumulative = (at: string) => {
-      const cash = cashChangesAt(history, at)
+      const cash = changesAt(at)
       if (cash === null) return null
       const flow = cashFlowTotals(flows, at)
       return cash + flow.external + flow.yieldAmount - flow.paidOperating

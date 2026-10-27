@@ -73,6 +73,48 @@ export const prepareValuationInventory = (forward: ForwardPerformanceEvidenceInp
       accruals: forward.accountFeeAccruals ?? null,
       cut: cut ?? null,
     })
+    type Change =
+      | {
+          readonly at: string
+          readonly kind: 'INVENTORY'
+          readonly symbol: string
+          readonly quantity: bigint
+          readonly cost: bigint
+        }
+      | { readonly at: string; readonly kind: 'UNCERTAINTY'; readonly delta: number }
+    const changes: Change[] = (history ?? []).map((trade) => ({
+      at: trade.occurredAt,
+      kind: 'INVENTORY',
+      symbol: trade.symbol,
+      quantity: BigInt(trade.quantityDeltaAtoms),
+      cost: BigInt(trade.costBasisDeltaMicros),
+    }))
+    const tradesById = new Map(history?.map((trade) => [trade.transactionId, trade]))
+    for (const accrual of forward.accountFeeAccruals ?? []) {
+      if (accrual.data.kind !== 'COIN' || accrual.coin_quantity_atoms === null) continue
+      const earliest = accrual.data.sourceTrades
+        .flatMap((source) => {
+          const trade = tradesById.get(source.transactionId)
+          return trade === undefined ? [] : [trade.occurredAt]
+        })
+        .sort()[0]
+      if (earliest !== undefined && earliest < accrual.data.observedAt) {
+        changes.push({ at: earliest, kind: 'UNCERTAINTY', delta: 1 })
+        changes.push({ at: accrual.data.observedAt, kind: 'UNCERTAINTY', delta: -1 })
+      }
+      changes.push({
+        at: accrual.data.observedAt,
+        kind: 'INVENTORY',
+        symbol: accrual.data.symbol,
+        quantity: -BigInt(accrual.coin_quantity_atoms),
+        cost: -BigInt(accrual.expense_micros),
+      })
+    }
+    changes.sort((a, b) => a.at.localeCompare(b.at))
+    const holdings = new Map<string, { quantity: bigint; cost: bigint }>()
+    let cursor = 0
+    let uncertain = 0
+    let previousAt: string | undefined
     return {
       sourceHash,
       episodes,
@@ -82,41 +124,31 @@ export const prepareValuationInventory = (forward: ForwardPerformanceEvidenceInp
         | readonly { readonly symbol: string; readonly quantityAtoms: string; readonly costBasisMicros: string }[]
         | null => {
         if (episodes.status !== 'MEASURED' || history === undefined || cut === undefined || at > cut) return null
-        const quantities = new Map<string, bigint>()
-        const costs = new Map<string, bigint>()
-        for (const transaction of history) {
-          if (transaction.occurredAt > at) continue
-          quantities.set(
-            transaction.symbol,
-            (quantities.get(transaction.symbol) ?? 0n) + BigInt(transaction.quantityDeltaAtoms),
-          )
-          costs.set(
-            transaction.symbol,
-            (costs.get(transaction.symbol) ?? 0n) + BigInt(transaction.costBasisDeltaMicros),
-          )
+        // Capture walks sorted observations. A caller may also request an earlier independent endpoint.
+        if (previousAt !== undefined && at < previousAt) {
+          holdings.clear()
+          cursor = 0
+          uncertain = 0
         }
-        for (const accrual of forward.accountFeeAccruals ?? []) {
-          if (accrual.data.kind !== 'COIN' || accrual.coin_quantity_atoms === null) continue
-          if (accrual.data.observedAt > at) {
-            // A daily settlement does not supply the instant of a coin debit. Do not invent it.
-            if (
-              accrual.data.sourceTrades.some((source) =>
-                history.some((trade) => trade.transactionId === source.transactionId && trade.occurredAt <= at),
-              )
-            )
-              return null
+        previousAt = at
+        while (cursor < changes.length) {
+          const change = changes[cursor]
+          if (change === undefined || change.at > at) break
+          cursor++
+          if (change.kind === 'UNCERTAINTY') {
+            uncertain += change.delta
             continue
           }
-          quantities.set(
-            accrual.data.symbol,
-            (quantities.get(accrual.data.symbol) ?? 0n) - BigInt(accrual.coin_quantity_atoms),
-          )
-          costs.set(accrual.data.symbol, (costs.get(accrual.data.symbol) ?? 0n) - BigInt(accrual.expense_micros))
+          const held = holdings.get(change.symbol)
+          const quantity = (held?.quantity ?? 0n) + change.quantity
+          const cost = (held?.cost ?? 0n) + change.cost
+          if (quantity === 0n && cost === 0n) holdings.delete(change.symbol)
+          else holdings.set(change.symbol, { quantity, cost })
         }
+        if (uncertain > 0) return null
         const positions = []
-        for (const [symbol, quantity] of quantities) {
-          const cost = costs.get(symbol)
-          if (quantity < 0n || cost === undefined || cost < 0n || (quantity === 0n && cost !== 0n)) return null
+        for (const [symbol, { quantity, cost }] of holdings) {
+          if (quantity < 0n || cost < 0n || (quantity === 0n && cost !== 0n)) return null
           if (quantity > 0n)
             positions.push({ symbol, quantityAtoms: quantity.toString(), costBasisMicros: cost.toString() })
         }

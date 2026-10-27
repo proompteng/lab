@@ -295,6 +295,26 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
                   AND cycle.execution_session_date BETWEEN ${first.sessionDate}::date AND ${last.sessionDate}::date
                 ORDER BY cycle.execution_session_date, decision.decision_hash`,
             )
+            const scope = {
+              accountId: accountIdentity.accountId,
+              generationHash: definition.authorityGenerationHash,
+              firstSession: first.sessionDate,
+              lastSession: last.sessionDate,
+              asOf,
+            }
+            const protectionIntents = yield* readSystemProtectionIntents(
+              scope,
+              definition.riskPolicy.maxBrokerStateAgeMs,
+            )
+            const plans = yield* Effect.fromResult(executionOrderPlans(decisions, protectionIntents))
+            const fills = yield* Effect.fromResult(
+              captureExecutionFills(
+                plans,
+                yield* readSystemExecutionFills(scope, first.openAt, last.closeAt),
+                accountIdentity.accountId,
+                definition.authorityGenerationHash,
+              ),
+            )
             const cashObservations = yield* readSystemCashObservations(accountIdentity.accountId, {
               accountBindingHash: definition.accountBindingHash,
               openAt: first.openAt,
@@ -401,19 +421,38 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
               return yield* new SystemAssessmentError({
                 message: 'Captured market scope is incompatible with the registered policy and session windows',
               })
+            const protectionDecisions = yield* Effect.forEach(protectionIntents, (intent) =>
+              Effect.gen(function* () {
+                const session = registration.calendar.sessions.find(
+                  (session) =>
+                    intent.riskDecision.decidedAt >= session.openAt && intent.riskDecision.decidedAt <= session.closeAt,
+                )
+                if (session === undefined)
+                  return yield* new SystemAssessmentError({
+                    message: 'Protection approval falls outside the registered sessions',
+                  })
+                return { sessionDate: session.sessionDate, decisionHash: intent.intentId }
+              }),
+            )
             const financial = yield* Effect.fromResult(
-              captureForwardFinancialEvidence(
-                registration,
-                definition.policy,
-                forward,
-                decisions.map(({ sessionDate, document }) => ({ sessionDate, decisionHash: document.contentHash })),
-              ),
+              captureForwardFinancialEvidence(registration, definition.policy, forward, {
+                decisions: [
+                  ...decisions.map(({ sessionDate, document }) => ({
+                    sessionDate,
+                    decisionHash: document.contentHash,
+                  })),
+                  ...protectionDecisions,
+                ],
+                fills,
+              }),
             )
             accounts.push({
               policy: definition.policy,
               identity: accountIdentity,
               forward,
               decisions,
+              protectionIntents,
+              fills,
               accountMarks,
               cashObservations,
               valuationQuoteSources: [
@@ -465,16 +504,8 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
             lastSession: last.sessionDate,
             asOf,
           }
-          const protectionIntents = yield* readSystemProtectionIntents(scope, candidate.riskPolicy.maxBrokerStateAgeMs)
+          const { protectionIntents, fills } = candidateAccount
           const plans = yield* Effect.fromResult(executionOrderPlans(decisions, protectionIntents))
-          const fills = yield* Effect.fromResult(
-            captureExecutionFills(
-              plans,
-              yield* readSystemExecutionFills(scope, first.openAt, last.closeAt),
-              identity.accountId,
-              candidate.authorityGenerationHash,
-            ),
-          )
           const orders = yield* Effect.fromResult(
             captureExecutionOrders(
               plans,

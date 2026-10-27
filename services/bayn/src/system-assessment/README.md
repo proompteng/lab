@@ -96,6 +96,14 @@ sealed exit prices from the original entry, retains the approval's submission de
 entry inventory across original protection, replacement groups, and explicit closes. Equity OCO uses whole shares
 and DAY; standalone stops preserve native DAY or crypto GTC terms and fractional quantities. Missing admissions or
 omitted actual fills remain incomplete. Source sequence determines the order of fills with equal timestamps.
+Financial coverage uses these same independently captured fills and includes each protection approval as its own
+decision. The entry-only forward execution projection cannot omit a protective exit from session accounting.
+
+Exact-cent cash movements need no rounding settlement because every supported broker reporting quantum divides one
+cent. A present settlement must still match its trade and be posted by the evidence cut. Sub-cent movements without
+authenticated rounding evidence remain incomplete. Cash projection indexes cumulative changes once and preserves
+unresolved debit intervals. Inventory reconstruction advances through sorted observations, retaining coin-debit
+uncertainty and supporting earlier independent endpoint queries without carrying later holdings backwards.
 
 Fill pricing distinguishes reproduced spot quotes, actual native protection, and actual mandatory liquidation under
 the existing reconciled-position binding. Conditional broker receipts do not invent a quote at the later fill time.
