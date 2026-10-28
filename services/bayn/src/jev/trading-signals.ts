@@ -19,6 +19,7 @@ import {
   IntradayBenchmarkEvidencePolicy,
   usesCompletedBarBenchmark,
   usesWindowTradeEvidence,
+  usesOptionalTradeEvidence,
 } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
@@ -182,19 +183,22 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
     const base = yield* jevBarSignalFor(snapshot, symbol)
     const quote = snapshot.latestQuotes[symbol]
     const trade = latestSignalTrade(snapshot, symbol)
-    if (quote === undefined || trade === undefined)
+    if (quote === undefined || (trade === undefined && !usesOptionalTradeEvidence(manifest, symbol)))
       return yield* unavailable('Jev signals require the verified rolling window, quote and trade')
     const quoteAgeMs = pricingAgeMs(snapshot, quote.eventAt)
-    const tradeAgeMs = pricingAgeMs(snapshot, trade.eventAt)
+    const tradeAgeMs = trade === undefined ? null : pricingAgeMs(snapshot, trade.eventAt)
     const pricingAges = usesWindowTradeEvidence(manifest, symbol) ? [quoteAgeMs] : [quoteAgeMs, tradeAgeMs]
-    if (tradeAgeMs < 0 || pricingAges.some((age) => age < 0 || age > manifest.maximumQuoteAgeMs))
+    if (
+      (tradeAgeMs !== null && tradeAgeMs < 0) ||
+      pricingAges.some((age) => age === null || age < 0 || age > manifest.maximumQuoteAgeMs)
+    )
       return yield* unavailable('Jev signal pricing evidence is stale or future dated')
     return {
       prices: {
         ...base.prices,
         bid: yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN'),
         ask: yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP'),
-        trade: yield* signalPriceMicros(trade.price, 'signal trade'),
+        trade: trade === undefined ? null : yield* signalPriceMicros(trade.price, 'signal trade'),
       },
       state: {
         ...base.state,
@@ -205,7 +209,7 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
           askSize: quote.askSize,
           ageMs: quoteAgeMs,
         },
-        latestTrade: { price: trade.price, size: trade.size, ageMs: tradeAgeMs },
+        latestTrade: trade === undefined ? null : { price: trade.price, size: trade.size, ageMs: tradeAgeMs },
       },
     }
   })
@@ -378,9 +382,14 @@ const requestFromSnapshot = (
           prices: 'USD per unit',
           volume: continuous ? 'base asset units on Alpaca crypto US' : 'shares on the IEX feed',
           quoteSize: 'raw provider size units; not consolidated liquidity',
-          ...(usesWindowTradeEvidence(snapshot.manifest, symbol)
-            ? { latestTrade: 'last actual trade since lookback start; ageMs is contextual, not an executable price' }
-            : {}),
+          ...(usesOptionalTradeEvidence(snapshot.manifest, symbol)
+            ? {
+                latestTrade:
+                  'last actual trade since lookback start; null when no actual trade was observed; ageMs is contextual, not an executable price',
+              }
+            : usesWindowTradeEvidence(snapshot.manifest, symbol)
+              ? { latestTrade: 'last actual trade since lookback start; ageMs is contextual, not an executable price' }
+              : {}),
           returns: 'basis points, 100 bps = 1 percent',
           technicalPrices: 'USD per unit',
           rsi14: 'RSI percentage points',

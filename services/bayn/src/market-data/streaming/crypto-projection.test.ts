@@ -140,7 +140,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     })
   })
 
-  test(`${symbol} requires candidate quotes and actual window trades with independent completed benchmark bars`, () => {
+  test(`${symbol} requires candidate quotes with optional actual trade context and independent benchmark bars`, () => {
     const benchmark = symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD'
     expect(() => cryptoMarketFixture(symbol, { missingTradeSymbols: [benchmark] })).not.toThrow()
     const { snapshot, rows } = cryptoMarketFixture(symbol, { tradeLagMs: 60_000 })
@@ -152,7 +152,10 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     expect(state.benchmark).not.toHaveProperty('latestTrade')
     expect(state.benchmark).not.toHaveProperty('quote')
     expect(reproduceStreamingSnapshot(snapshot.manifest, rows)).toMatchObject({ _tag: 'Success' })
-    expect(() => cryptoMarketFixture(symbol, { tradeLagMs: 31 * 60_000 })).toThrow()
+    const absent = cryptoMarketFixture(symbol, { tradeLagMs: 31 * 60_000 })
+    expect(
+      JSON.parse(Result.getOrThrow(jevRequestForSnapshot(absent.snapshot, symbol)).body).numericalState,
+    ).toHaveProperty('candidate.latestTrade', null)
     expect(() => cryptoMarketFixture(symbol, { quoteLagMs: 10_001 })).toThrow()
     expect(() => cryptoMarketFixture(symbol, { tradeLagMs: -10_000 })).toThrow()
   })

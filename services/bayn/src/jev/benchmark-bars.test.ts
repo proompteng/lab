@@ -32,7 +32,7 @@ test('BTC can use verified ETH benchmark bars without authorizing an ETH trade',
   expect(state).not.toHaveProperty('benchmark.quote')
 })
 
-test('a missing ETH candidate trade excludes ETH while BTC retains the same benchmark bars', () => {
+test('ETH without a trade remains a candidate while BTC retains the same benchmark bars', () => {
   const fixture = cryptoMarketFixture('BTC/USD', { missingTradeSymbols: ['ETH/USD'] })
   const symbols = ['BTC/USD', 'ETH/USD', 'SOL/USD']
   const snapshot = Result.getOrThrow(
@@ -48,18 +48,21 @@ test('a missing ETH candidate trade excludes ETH while BTC retains the same benc
     JevCandidatePlanStatus.Requested,
   )
   expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({
-    status: 'EXCLUDED',
-    reason: 'not-ready',
-    message: expect.stringContaining('lacks a trade'),
+    status: JevCandidatePlanStatus.Requested,
   })
   const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
   expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))).toEqual(snapshot)
 })
 
 test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
-  '%s still requires its own real trade and fresh quote',
+  '%s requires a fresh quote while an absent trade remains explicit context',
   (symbol) => {
-    expect(() => cryptoMarketFixture(symbol, { missingTradeSymbols: [symbol] })).toThrow()
+    const { snapshot } = cryptoMarketFixture(symbol, { missingTradeSymbols: [symbol] })
+    const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
+    expect(Result.getOrThrow(makeJevTradingSignalRequest(observation, symbol)).input.numericalState).toHaveProperty(
+      'candidate.latestTrade',
+      null,
+    )
     expect(() => cryptoMarketFixture(symbol, { quoteLagMs: 20_000 })).toThrow()
   },
 )

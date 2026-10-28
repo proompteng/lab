@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,7 +23,7 @@ import { stagedChartAssessments } from './staged-chart-questions'
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 const fixture = (
   marketQuestions = false,
-  schemaVersion: 'bayn.jev.protocol.v26' | 'bayn.jev.protocol.v27' = 'bayn.jev.protocol.v26',
+  schemaVersion: 'bayn.jev.protocol.v26' | 'bayn.jev.protocol.v27' | 'bayn.jev.protocol.v28' = 'bayn.jev.protocol.v26',
 ) => {
   const current = entryEvaluationRequestFixture()
   const input = {
@@ -30,6 +31,7 @@ const fixture = (
     protocol: {
       ...current.request.protocol,
       schemaVersion,
+      candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
       entryQuestionPolicyHash: marketQuestions ? retainedMarketQuestionPolicyHash : retainedStagedQuestionPolicyHash,
     },
   }
@@ -115,7 +117,7 @@ test('retained staged receipts cannot omit their original obstruction question a
   expect(Result.isFailure(readStagedInferenceCostEvidence({ ...row, handoff, receipt }))).toBe(true)
 })
 
-test.each(['bayn.jev.protocol.v26', 'bayn.jev.protocol.v27'] as const)(
+test.each(['bayn.jev.protocol.v26', 'bayn.jev.protocol.v27', 'bayn.jev.protocol.v28'] as const)(
   'the ask-cap migration reads original %s market questions without admitting retired execution',
   (version) => {
     const row = fixture(true, version)
