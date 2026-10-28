@@ -447,7 +447,7 @@ const monitorSql = (sql: PgClient.PgClient) => {
       const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
       const [query] = statement.compile()
       // SQL fragments are composed but never executed independently.
-      return /^(SELECT|INSERT)/.test(query.trimStart())
+      return /^(SELECT|INSERT|WITH)\b/.test(query.trimStart())
         ? statement.pipe(Effect.tap(() => Effect.sync(() => queries.push(query))))
         : statement
     },

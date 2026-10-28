@@ -254,6 +254,18 @@ const expectIndexedObservationLookup = (
     expect(JSON.stringify(root)).toMatch(/"Index Cond":"[^"]*observed_at/)
     expect(root['Actual Rows']).toBe(expectedRows)
     expect(Number(root['Rows Removed by Filter'] ?? 0)).toBeLessThanOrEqual(2)
+    const Scan = Schema.Struct({
+      'Relation Name': Schema.optionalKey(Schema.String),
+      'Actual Loops': Schema.Number,
+      Plans: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+    })
+    const checkSourceScans = (value: unknown): void => {
+      const node = Schema.decodeUnknownSync(Scan)(value)
+      if (node['Relation Name'] === 'intraday_candidate_observations')
+        expect(node['Actual Loops']).toBeLessThanOrEqual(expectedRows)
+      for (const child of node.Plans ?? []) checkSourceScans(child)
+    }
+    checkSourceScans(root)
   })
 const makeRuntime = () =>
   ManagedRuntime.make(
@@ -880,14 +892,18 @@ describePostgres('PostgreSQL complete Jev batches', () => {
       Effect.gen(function* () {
         const stored = yield* evaluateJevBatch(plan, fixture.observation.payload)
         const sql = yield* PgClient.PgClient
+        yield* seedObservationHistory(sql)
+        yield* sql`ANALYZE intraday_candidate_observations`
         const queries: string[] = []
         const observations: unknown[] = []
+        let lookup: Statement<Record<string, unknown>> | undefined
         const monitored = new Proxy(sql, {
           apply(target, receiver, argumentsList) {
             const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
             const [query] = statement.compile()
+            if (query.includes('AS matching_request_ids')) lookup = statement
             // Preserve composable predicate fragments; only complete reads execute.
-            if (!query.trimStart().startsWith('SELECT')) return statement
+            if (!/^(SELECT|WITH)\b/.test(query.trimStart())) return statement
             return statement.pipe(
               Effect.tap((rows) =>
                 Effect.sync(() => {
@@ -907,6 +923,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(yield* batches.read(plan.batchId)).toEqual(stored)
         expect(queries).toHaveLength(3)
         expect(observations).toHaveLength(1)
+        if (lookup === undefined) throw new Error('Complete read did not verify its source')
+        yield* expectIndexedObservationLookup(sql, lookup, 1)
       }).pipe(Effect.provideService(JevClient, successful), atObservation),
     )
   })
