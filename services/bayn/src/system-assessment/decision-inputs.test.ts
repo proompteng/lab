@@ -1,10 +1,11 @@
+import { evaluateFixtureEntry } from '../jev/evaluation.test-support'
 import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { decideJevEntry } from '../jev/decision'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { requiredInferenceInputs } from './decision-inputs'
-import { EntryInferenceJournal, evaluateClaimedEntryInference } from '../jev/entry-inference'
+import { EntryInferenceJournal } from '../jev/entry-inference'
 import { JevClient } from '../jev/client'
 import { DecisionsClient } from '../jev/decisions'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
@@ -21,7 +22,7 @@ describe('all used model responses retain their actual availability', () => {
     const completion = await Effect.runPromise(
       TestClock.setTime(Date.parse(evidence.decidedAt)).pipe(
         Effect.andThen(
-          evaluateClaimedEntryInference({
+          evaluateFixtureEntry({
             requestId: planned.request.requestId,
             input: planned.request.request,
             observedAt: planned.request.observedAt,
@@ -30,9 +31,14 @@ describe('all used model responses retain their actual availability', () => {
           }),
         ),
         Effect.provideService(EntryInferenceJournal, {
-          recordVisualClaim: () => Effect.die('Infeasible source cannot claim visual dispatch'),
-          recordVisualTerminal: () => Effect.die('Infeasible source cannot receive visual evidence'),
-          recordHandoff: () => Effect.succeed({ dispatchAllowed: true }),
+          recordVisualClaims: () => Effect.die('Infeasible source cannot claim visual dispatch'),
+          recordTransitions: (inputs) =>
+            Effect.succeed(
+              inputs.map((input) => ({
+                requestId: input.terminal === null ? input.successor.handoff.requestId : input.terminal.requestId,
+                dispatchAllowed: true,
+              })),
+            ),
         }),
         Effect.provideService(DecisionsClient, {
           evaluate: () => Effect.die('Infeasible source cannot call chart provider'),

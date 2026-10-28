@@ -1,3 +1,4 @@
+import { evaluateFixtureEntry } from '../src/jev/evaluation.test-support'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Exit, FileSystem, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -12,7 +13,7 @@ import { JevClient } from '../src/jev/client'
 import { DecisionsClient } from '../src/jev/decisions'
 import { decodeEntryInferenceCompletion } from '../src/jev/entry-inference-evidence'
 import { prepareEntryInferenceInput } from '../src/jev/entry-inference-input'
-import { EntryInferenceJournal, evaluateClaimedEntryInference } from '../src/jev/entry-inference'
+import { EntryInferenceJournal, type EntryHandoff } from '../src/jev/entry-inference'
 import { makeJevEvaluationReceipt, makeJevEvaluationRequest, JevOutcome } from '../src/jev/evidence'
 import { JevResolutionStatus, makeJevResolution } from '../src/jev/resolution'
 import { readSequentialInferenceCostEvidence } from '../src/jev/sequential-inference-cost-evidence'
@@ -127,9 +128,15 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
       terminals: StagedCheckpoint['terminals'][number][]
       skips: StagedCheckpoint['skips'][number][]
     } = { claims: [], terminals: [], skips: [] }
+    const recordHandoff: (handoff: EntryHandoff) => Effect.Effect<{ readonly dispatchAllowed: boolean }> = (handoff) =>
+      Effect.sync(() => {
+        if (handoff.baseStart?.status === 'NOT_REQUESTED') checkpoint.skips.push(handoff.baseStart.skip)
+        committedHandoffs++
+        return { dispatchAllowed: true }
+      })
     const branch = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
       Effect.andThen(
-        evaluateClaimedEntryInference({
+        evaluateFixtureEntry({
           requestId: request.requestId,
           input: request.request,
           observedAt: request.observedAt,
@@ -138,21 +145,26 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
         }),
       ),
       Effect.provideService(EntryInferenceJournal, {
-        recordVisualClaim: (claim) =>
-          Effect.sync(() => {
-            checkpoint.claims.push(claim)
-            return { dispatchAllowed: true }
-          }),
-        recordVisualTerminal: (terminal) =>
-          Effect.sync(() => {
-            checkpoint.terminals.push(terminal)
-          }),
-        recordHandoff: (handoff) =>
-          Effect.sync(() => {
-            if (handoff.baseStart?.status === 'NOT_REQUESTED') checkpoint.skips.push(handoff.baseStart.skip)
-            committedHandoffs++
-            return { dispatchAllowed: true }
-          }),
+        recordVisualClaims: (claims) =>
+          Effect.sync(() =>
+            claims.map((claim) => {
+              checkpoint.claims.push(claim)
+              return { requestId: claim.requestId, dispatchAllowed: true }
+            }),
+          ),
+        recordTransitions: (inputs) =>
+          Effect.forEach(inputs, ({ terminal, successor }) =>
+            Effect.gen(function* () {
+              if (terminal !== null) checkpoint.terminals.push(terminal)
+              const requestId = terminal === null ? successor.handoff.requestId : terminal.requestId
+              if (successor.kind === 'NONE') return { requestId, dispatchAllowed: false }
+              if (successor.kind === 'VISUAL') {
+                checkpoint.claims.push(successor.claim)
+                return { requestId, dispatchAllowed: true }
+              }
+              return { requestId, ...(yield* recordHandoff(successor.handoff)) }
+            }),
+          ),
       }),
       Effect.provideService(DecisionsClient, {
         evaluate: () =>
