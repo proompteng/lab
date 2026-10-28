@@ -53,7 +53,14 @@ An individual valid chunk above the SQL byte target is written whole under the e
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
-A failed write, invalid delivery or individually oversized chunk permanently marks the epoch incomplete; the
+Connection failures, including a failed COMMIT acknowledgement reported as a SQL defect, retry the identical append
+at most twice with 100 milliseconds between attempts. Each retry reads the existing ordinals and verifies their
+exact hashes and headers before inserting anything, so an already committed batch is acknowledged once.
+If every chunk already exists, a [transactional WAL acknowledgement](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-REPLICATION) makes the retry's COMMIT wait for the configured
+synchronous durability; a locally visible row alone does not prove that its lost COMMIT acknowledgement was durable.
+Other defects, interruptions, invalid evidence and exhausted connection retries retain their failures. Query, socket,
+queue and shutdown deadlines remain unchanged. A failed write, invalid delivery or individually oversized chunk
+permanently marks the epoch incomplete; the
 warning/error retains its capture ID and the periodic projection log reports its observed and acknowledged
 delivery counts. Native capture failures also use the error-only GlitchTip boundary; collector failures do not
 interrupt journal finalization. Shutdown drains queued chunks before flushing its remaining observed tail, retries an interrupted
