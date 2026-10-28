@@ -9920,9 +9920,9 @@ for (const resolution of ['local response', 'server event'] as const) {
         .poll(() => mock.actions.filter((action) => action.action === 'resolve-approval').length)
         .toBe(expectedControls)
       await expect(card).toHaveCount(0)
-      const polls = mock.actions.filter((action) => action.action === 'codex-run').length
+      const polls = mock.actions.filter((action) => action.action === 'active-codex-runs').length
       await expect
-        .poll(() => mock.actions.filter((action) => action.action === 'codex-run').length)
+        .poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length)
         .toBeGreaterThan(polls)
       const sidebar = chat.getByTestId('agent-conversation-sidebar')
       await sidebar.locator('[data-conversation-id="thread-beta"]').click()
@@ -9988,6 +9988,37 @@ test('recovers the exact durable run and pending approval with empty browser sto
   expect(action?.operationId).toMatch(/^[0-9a-f-]{36}$/)
 })
 
+test('reuses active-run snapshots without duplicate status polling and fetches the final result', async ({ page }) => {
+  await page.clock.install()
+  const run: TengriCodexRun = {
+    runId: '55555555-5555-4555-8555-555555555555',
+    agentId: 'microvm-ada',
+    threadId: 'thread-recovered',
+    state: { phase: 'running', turnId: 'turn-recovered' },
+  }
+  const mock = await mockTengri(page, { durableRun: run })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  const readsBefore = mock.actions.filter((action) => action.action === 'codex-run').length
+  const activeBefore = mock.actions.filter((action) => action.action === 'active-codex-runs').length
+  await page.clock.runFor(6_100)
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length)
+    .toBeGreaterThan(activeBefore)
+  expect(mock.actions.filter((action) => action.action === 'codex-run')).toHaveLength(readsBefore)
+  run.state = { phase: 'succeeded', turnId: 'turn-recovered' }
+  await page.clock.runFor(3_100)
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'codex-run').length)
+    .toBeGreaterThan(readsBefore)
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+  const finalReads = mock.actions.filter((action) => action.action === 'codex-run').length
+  await page.clock.runFor(6_100)
+  expect(mock.actions.filter((action) => action.action === 'codex-run')).toHaveLength(finalReads)
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+})
+
 for (const recoveryAction of ['active-codex-runs', 'codex-run'] as const) {
   test(`clears a recovered ${recoveryAction} outage without sending another turn`, async ({ page }) => {
     await page.clock.install()
@@ -10003,15 +10034,32 @@ for (const recoveryAction of ['active-codex-runs', 'codex-run'] as const) {
           : undefined,
     })
     let unavailable = true
+    let activeReads = 0
+    let failedReads = 0
     await page.route('**/api/tengri', async (route) => {
+      if (
+        recoveryAction === 'codex-run' &&
+        route.request().method() === 'POST' &&
+        route.request().postDataJSON().action === 'active-codex-runs'
+      ) {
+        activeReads += 1
+        // Once the run leaves the active set, the UI must recover its final status
+        // through the individual endpoint even when that endpoint is unavailable.
+        if (activeReads > 1) return route.fulfill({ json: { result: [] } })
+      }
       if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== recoveryAction)
         return route.fallback()
-      if (unavailable) return route.fulfill({ status: 503, json: { error: 'Temporary run recovery outage' } })
+      if (unavailable) {
+        failedReads += 1
+        return route.fulfill({ status: 503, json: { error: 'Temporary run recovery outage' } })
+      }
       return route.fallback()
     })
     await page.goto('/')
     const tengri = page.getByRole('region', { name: 'Tengri window' })
     await expect(tengri.getByRole('alert')).toHaveCount(0)
+    await page.clock.runFor(3_100)
+    await expect.poll(() => failedReads).toBeGreaterThan(0)
     await page.clock.runFor(3_100)
     await expect(tengri.getByRole('alert')).toHaveText('Reconnecting to your agent…')
     await expect(tengri.getByText('Temporary run recovery outage', { exact: true })).toHaveCount(0)

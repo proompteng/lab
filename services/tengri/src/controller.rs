@@ -226,7 +226,6 @@ pub async fn converge(
         microvm.metadata.deletion_timestamp.is_none(),
         "agent is terminating"
     );
-    let started = std::time::Instant::now();
     let api = Api::<MicroVM>::namespaced(client.clone(), namespace);
     leadership.fence()?;
     let authority = match authorization.runtime_state(microvm).await {
@@ -469,13 +468,9 @@ pub async fn converge(
             Ok(updated) => {
                 if status.phase == MicroVMPhase::Ready
                     && current.status.as_ref().is_none_or(|s| !s.guest_ready)
+                    && let Some((resume, millis)) = lifecycle_latency(&current, Utc::now())
                 {
-                    let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                    if current
-                        .status
-                        .as_ref()
-                        .is_some_and(|s| s.phase == MicroVMPhase::Sleeping)
-                    {
+                    if resume {
                         metrics::global().observe_resume(millis);
                     } else {
                         metrics::global().observe_boot(millis);
@@ -491,6 +486,46 @@ pub async fn converge(
         }
     }
     anyhow::bail!("agent status changed concurrently; retry the request")
+}
+
+fn lifecycle_latency(microvm: &MicroVM, now: chrono::DateTime<Utc>) -> Option<(bool, u64)> {
+    // A recovered readiness probe is not a new boot. Persisted intent survives retries
+    // and controller failover; the duration excludes admission before that intent.
+    if microvm.status.as_ref().is_some_and(|s| {
+        s.phase == MicroVMPhase::Ready
+            || s.conditions
+                .iter()
+                .any(|condition| condition.reason == "AuthorizationPaused")
+    }) {
+        return None;
+    }
+    let resume = microvm.status.as_ref().is_some_and(|s| {
+        s.phase == MicroVMPhase::Sleeping
+            && !s
+                .conditions
+                .iter()
+                .any(|condition| condition.reason == "GuestNotStarted")
+    });
+    let started = if resume {
+        chrono::DateTime::parse_from_rfc3339(
+            microvm
+                .annotations()
+                .get(crate::activity::RESUME_STARTED_AT_ANNOTATION)?,
+        )
+        .ok()?
+        .with_timezone(&Utc)
+    } else {
+        chrono::DateTime::<Utc>::from_timestamp_millis(
+            microvm
+                .metadata
+                .creation_timestamp
+                .as_ref()?
+                .0
+                .as_millisecond(),
+        )?
+    };
+    let elapsed = now.signed_duration_since(started).to_std().ok()?;
+    Some((resume, u64::try_from(elapsed.as_millis()).ok()?))
 }
 
 fn status_for(
@@ -1740,6 +1775,48 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_timing_includes_retries_and_rejects_probe_recovery_or_invalid_clocks() {
+        let now = Utc::now();
+        let mut microvm = agent();
+        microvm.metadata.creation_timestamp =
+            Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                (now - chrono::Duration::seconds(12))
+                    .to_rfc3339()
+                    .parse()
+                    .unwrap(),
+            ));
+        microvm.status = None;
+        let (resume, elapsed) = lifecycle_latency(&microvm, now).unwrap();
+        assert!(!resume);
+        assert!((12_000..12_002).contains(&elapsed));
+
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Sleeping,
+            ..Default::default()
+        });
+        microvm.annotations_mut().insert(
+            crate::activity::RESUME_STARTED_AT_ANNOTATION.into(),
+            (now - chrono::Duration::seconds(3)).to_rfc3339(),
+        );
+        assert_eq!(lifecycle_latency(&microvm, now), Some((true, 3_000)));
+        microvm.status.as_mut().unwrap().phase = MicroVMPhase::Ready;
+        microvm.status.as_mut().unwrap().guest_ready = false;
+        assert!(lifecycle_latency(&microvm, now).is_none());
+
+        microvm.status.as_mut().unwrap().phase = MicroVMPhase::Sleeping;
+        microvm.annotations_mut().insert(
+            crate::activity::RESUME_STARTED_AT_ANNOTATION.into(),
+            "invalid".into(),
+        );
+        assert!(lifecycle_latency(&microvm, now).is_none());
+        microvm.annotations_mut().insert(
+            crate::activity::RESUME_STARTED_AT_ANNOTATION.into(),
+            (now + chrono::Duration::seconds(3)).to_rfc3339(),
+        );
+        assert!(lifecycle_latency(&microvm, now).is_none());
+    }
+
+    #[test]
     fn a_new_runtime_epoch_cannot_reuse_an_awake_runtime_claim() {
         let mut microvm = agent();
         let original = claim_for(&microvm).unwrap();
@@ -2822,7 +2899,7 @@ mod tests {
         let metrics = metrics::Metrics::default();
         let failures = || {
             metrics
-                .render(&[], Default::default())
+                .render()
                 .lines()
                 .find_map(|line| line.strip_prefix("tengri_guest_failures_total "))
                 .unwrap()

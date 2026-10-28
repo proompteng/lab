@@ -109,7 +109,7 @@ import {
 } from './codex-events'
 import { runTengriAction, TengriRequestError } from './client'
 import { completeCodexOperation, prepareCodexOperation } from '@/lib/tengri/codex-operation'
-import { codexRunIsTerminal, type TengriCodexRun } from '@/lib/tengri/codex-run'
+import { codexRunIsTerminal, recoveredCodexRun, type TengriCodexRun } from '@/lib/tengri/codex-run'
 import { useModalFocus } from './modal-focus'
 
 type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
@@ -265,6 +265,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const connectionInterrupted = eventStreamState === 'reconnecting' || error instanceof AgentConnectionError
   const selectedOptions = codexOptionsForSelection(selection, models ?? [])
   const runMatchesThread = Boolean(run && run.runId === runId && run.agentId === agentId && run.threadId === threadId)
+  const selectedRunTerminal = Boolean(runMatchesThread && run && codexRunIsTerminal(run))
   const runCanAcceptApprovals =
     runMatchesThread &&
     (run?.state.phase === 'running' || run?.state.phase === 'waiting_for_approval' || run?.state.phase === 'recovering')
@@ -317,9 +318,12 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }, [])
 
   useEffect(() => {
+    // Initial recovery selects the conversation and its run together. Keep that
+    // matching snapshot if the run finishes before the next active-run poll.
+    if (run?.agentId === agentId && run.threadId === threadId) return
     setRun(null)
     setRunId('')
-  }, [agentId, threadId])
+  }, [agentId, threadId, run])
 
   useEffect(() => {
     if (!account?.authenticated) return
@@ -356,6 +360,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       } catch (cause) {
         if (controller.signal.aborted) return
         lastRecoveryFailure = runRecoveryError(cause, 'Active run recovery failed')
+        setRunRecovered(false)
         setError(lastRecoveryFailure)
         timer = setTimeout(() => void recover(), 3000)
       }
@@ -368,13 +373,18 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }, [account?.authenticated, agentId, threadId, activeTurnId])
 
   useEffect(() => {
-    if (!runId || !threadId) return
+    if (!runId || !threadId || selectedRunTerminal) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let lastRecoveryFailure: Error | undefined
     async function refresh() {
       try {
-        const next = await runTengriAction<TengriCodexRun>({ action: 'codex-run', agentId, runId }, controller.signal)
+        // The workspace poll already fetched this exact snapshot. Only fetch separately
+        // during recovery or when the run leaves the active set and needs its final result.
+        const recovered = recoveredCodexRun(workspaceRuns, runRecovered, agentId, threadId, runId)
+        const next =
+          recovered ??
+          (await runTengriAction<TengriCodexRun>({ action: 'codex-run', agentId, runId }, controller.signal))
         if (controller.signal.aborted) return
         if (next.threadId !== threadId || next.agentId !== agentId || next.runId !== runId) {
           throw new Error('Agent run recovery returned a different conversation')
@@ -416,11 +426,16 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           setCurrentActiveTurnId(next.state.turnId)
         }
         if (codexRunIsTerminal(next)) {
-          setWorkspaceRuns((current) => current.filter((run) => run.runId !== next.runId))
+          setWorkspaceRuns((current) =>
+            current.some((run) => run.runId === next.runId)
+              ? current.filter((run) => run.runId !== next.runId)
+              : current,
+          )
           setCurrentActiveTurnId('')
           if ('reason' in next.state) setError(next.state.reason)
           return
         }
+        if (recovered) return
       } catch (cause) {
         if (controller.signal.aborted) return
         lastRecoveryFailure = runRecoveryError(cause, 'Agent run could not be recovered')
@@ -433,7 +448,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (timer) clearTimeout(timer)
     }
-  }, [agentId, threadId, runId, runPending, setCurrentActiveTurnId])
+  }, [agentId, threadId, runId, runPending, runRecovered, workspaceRuns, selectedRunTerminal, setCurrentActiveTurnId])
 
   useEffect(() => {
     const prompt = promptRef.current
