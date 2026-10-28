@@ -3538,6 +3538,12 @@ data:
                   namespace="bayn",
                   service="bayn"
                 } == 0
+                or
+                (
+                  (up{job="bayn",namespace="bayn",service="bayn"} == 1)
+                  unless on(job, namespace, service, instance)
+                  bayn_cycle_observation_available{job="bayn",namespace="bayn",service="bayn"}
+                )
               )
             for: 2m
             keep_firing_for: 5m
@@ -3548,7 +3554,7 @@ data:
               notify: email
             annotations:
               summary: Bayn cycle projection is unavailable
-              description: The bounded autonomous-cycle PostgreSQL projection has failed for two minutes.
+              description: The bounded autonomous-cycle PostgreSQL projection has reported unavailable, or its observation metric has been missing from a successfully scraped replica, for two minutes. Inspect the cycle projection error and scrape metric presence; idle or NO_TRADE cycles still report an available observation.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynRuntimeDegraded
             expr: |
