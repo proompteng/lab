@@ -106,7 +106,7 @@ const commitStagedHandoff = (request: JevEvaluationRequest, handoff: EntryHandof
       const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
       if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
     }
-    for (const skip of checkpoint.skips) yield* journal.recordBaseStartSkip(skip)
+
     yield* journal.recordHandoff(handoff)
   })
 // Persist and recover retained v1 cycles with their original identity even after active composition changes.
@@ -1630,10 +1630,6 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                 journal
                   .recordVisualTerminal(terminal)
                   .pipe(Effect.tapError(retainFailure('terminal', terminal.stage, terminal.recordedAt, null))),
-              recordBaseStartSkip: (skip) =>
-                journal
-                  .recordBaseStartSkip(skip)
-                  .pipe(Effect.tapError(retainFailure('skip', 'BASE_START', skip.recordedAt, null))),
               recordHandoff: (handoff) =>
                 journal
                   .recordHandoff(handoff)
@@ -2248,6 +2244,41 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         )
         const store = yield* ExecutionCycleClosureStore
         const sql = yield* PgClient.PgClient
+        const verifyAdmissionReceipt = (bound: ExecutionDecisionDocument) =>
+          Effect.gen(function* () {
+            const intentId = bound.orderedIntentIds[0]
+            const target = bound.targetPlan.intentTargets[0]
+            const risk = bound.deltaRisk[0]
+            if (intentId === undefined || target === undefined || risk === undefined)
+              throw new Error('Expected a native close admission target')
+            const eventId = Result.getOrThrow(canonicalHashV1Result({ admitted: bound.contentHash }))
+            const attempted = yield* sql
+              .withTransaction(
+                Effect.gen(function* () {
+                  yield* sql`INSERT INTO intents(intent_id, schema_version, account_id, client_order_id, symbol, side,
+              order_type, time_in_force, quantity_atoms, notional_limit_micros, limit_price_micros, state,
+              created_at, updated_at, cycle_id, strategy_name, decision_hash, policy_hash, authority_generation_hash)
+              VALUES (${intentId}, 'bayn.execution-intent.v5', ${replayAccountId}, ${clientOrderIdForIntentId(intentId)},
+                ${target.symbol}, ${target.side}, ${target.orderType}, ${target.timeInForce}, ${target.quantityAtoms},
+                ${risk.notionalLimitMicros}, ${risk.limitPriceMicros}, 'PLANNED', ${bound.createdAt}, ${bound.createdAt},
+                ${nativeInput.cycleId}, 'jev', ${bound.bindings.strategyDecisionHash}, ${bound.bindings.policyHash},
+                ${nativeInput.authorityGenerationHash})`
+                  yield* sql`INSERT INTO mutation_events(event_id, schema_version, mutation_id, intent_id, sequence,
+              operation, event_type, request_hash, consistency_delay_ms, occurred_at)
+              VALUES (${eventId}, 'bayn.paper-mutation-event.v1', ${eventId}, ${intentId}, 1,
+                'SUBMIT', 'SUBMIT_STARTED', ${eventId}, 1000, ${bound.createdAt})`
+                  expect(
+                    yield* sql`SELECT decision_id FROM execution_decision_admissions WHERE event_id = ${eventId}`,
+                  ).toEqual([{ decision_id: bound.contentHash }])
+                  return yield* Effect.fail('roll back the test admission while retaining its real native source')
+                }),
+              )
+              .pipe(Effect.result)
+            expect(Result.isFailure(attempted)).toBe(true)
+            expect(
+              yield* sql`SELECT count(*)::integer AS count FROM execution_decision_admissions WHERE event_id = ${eventId}`,
+            ).toEqual([{ count: 0 }])
+          })
         yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${closure.createdAt}
         WHERE account_id = ${replayAccountId}`
         const expired = yield* Effect.gen(function* () {
@@ -2349,6 +2380,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         }
         const saved = yield* store.bind(closure)
         expect(saved).toEqual(closure)
+        yield* verifyAdmissionReceipt(saved.document)
         yield* TestClock.setTime(Date.parse(exitTarget.observedAt) + 60_000)
         expect(yield* store.bind(closure)).toEqual(saved)
         expect(Option.getOrThrow(yield* store.read(nativeInput.cycleId))).toEqual(saved)
@@ -2425,6 +2457,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }),
         )
         expect(yield* store.bindReplan(replan)).toEqual(replan)
+        yield* verifyAdmissionReceipt(replan.document)
         expect(yield* store.bindReplan(replan)).toEqual(replan)
         expect(Option.getOrThrow(yield* store.readLatestReplan(nativeInput.cycleId))).toEqual(replan)
         const recoveredReplan = yield* ensureExecutionCycleClosure({

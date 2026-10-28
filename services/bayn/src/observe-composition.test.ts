@@ -236,6 +236,7 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
             result: nativeJevBatchResult(plan, utcInstantFromEpochMillis(now), (symbol) => symbol === 'NVDA'),
           })),
         ),
+      complete: () => unexpected,
       finish: () => unexpected,
     }),
     Effect.provideService(JevEvaluationStore, {
@@ -248,7 +249,7 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
     Effect.provideService(EntryInferenceJournal, {
       recordVisualClaim: () => unexpected,
       recordVisualTerminal: () => unexpected,
-      recordBaseStartSkip: () => unexpected,
+
       recordHandoff: () => unexpected,
     }),
     Effect.provideService(JevPositionStore, {
@@ -1602,6 +1603,7 @@ describe('OBSERVE runtime composition', () => {
                     calls.pending += 1
                     return mode === 'pending' ? ['pending-entry'] : []
                   }),
+                complete: () => Effect.die('Recovery fixture cannot complete new inference'),
                 finish: () =>
                   Effect.suspend(() => {
                     calls.finish += 1
@@ -4761,6 +4763,7 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(JevBatchStore, {
             pending: () => Effect.succeed([]),
             read: () => Effect.die('entry fixture must not reread a batch'),
+            complete: () => Effect.die('entry fixture uses a committed batch'),
             finish: () => Effect.die('entry fixture uses a committed batch'),
             begin: (plan) =>
               Effect.gen(function* () {
@@ -5285,6 +5288,7 @@ describe('OBSERVE runtime composition', () => {
                   Effect.sync(() => {
                     inferenceBatches += 1
                   }).pipe(Effect.andThen(Effect.die('excluded batch must not infer'))),
+                complete: () => Effect.die('no batch should be finished'),
                 finish: () => Effect.die('no batch should be finished'),
               }),
             ),
@@ -7250,6 +7254,7 @@ test.each([
                   }
                 }),
               ),
+            complete: () => Effect.die('Unexpected batch finish'),
             finish: () => Effect.die('Unexpected batch finish'),
           }),
         ),

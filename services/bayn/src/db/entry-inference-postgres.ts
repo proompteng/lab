@@ -6,12 +6,7 @@ import { decodeJevEvaluationRequest } from '../jev/evidence'
 import { EntryInferenceJournal, type EntryHandoff } from '../jev/entry-inference'
 import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { strictParseOptions } from '../schemas'
-import {
-  decodeStagedCheckpoint,
-  type StagedDispatchClaim,
-  type StagedTerminalReceipt,
-  type StagedSkipReceipt,
-} from '../jev/staged-checkpoint'
+import { decodeStagedCheckpoint, type StagedDispatchClaim, type StagedTerminalReceipt } from '../jev/staged-checkpoint'
 import { verifyStagedCheckpointHandoff } from '../jev/staged-inference-cost-evidence'
 
 export const makeEntryInferenceJournal = Effect.gen(function* () {
@@ -103,23 +98,6 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
           }),
         )
       }).pipe(Effect.mapError(failed)),
-    recordBaseStartSkip: (input: StagedSkipReceipt) =>
-      Effect.gen(function* () {
-        if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
-          return yield* failed('Visual skip evidence must commit independently before its successor')
-        yield* sql.withTransaction(
-          Effect.gen(function* () {
-            const { request, checkpoint } = yield* load(input.requestId)
-            yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [input] }))
-            yield* sql`INSERT INTO jev_staged_skip_receipts (request_id,stage,skip_hash,payload)
-          VALUES (${input.requestId},${input.stage},${input.skipHash},${sql.json(input)})
-          ON CONFLICT(request_id,stage) DO NOTHING`
-            yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
-              yield* sql`SELECT payload=${sql.json(input)} AS matches FROM jev_staged_skip_receipts WHERE request_id=${input.requestId} AND stage=${input.stage}`,
-            )
-          }),
-        )
-      }).pipe(Effect.mapError(failed)),
     recordHandoff: (input: EntryHandoff) =>
       Effect.gen(function* () {
         if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
@@ -143,7 +121,23 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
               ),
             )
             const { checkpoint } = yield* load(request.requestId)
-            yield* Effect.fromResult(verifyStagedCheckpointHandoff(checkpoint, handoff))
+            const skip = handoff.baseStart?.status === 'NOT_REQUESTED' ? handoff.baseStart.skip : undefined
+            const complete =
+              skip === undefined
+                ? checkpoint
+                : yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [skip] }))
+            yield* Effect.fromResult(verifyStagedCheckpointHandoff(complete, handoff))
+            if (skip !== undefined) {
+              // The code-owned skip and its handoff have no provider I/O between them.
+              // Commit both before allowing the dependent Jev call.
+              yield* sql`INSERT INTO jev_staged_skip_receipts (request_id,stage,skip_hash,payload)
+                VALUES (${skip.requestId},${skip.stage},${skip.skipHash},${sql.json(skip)})
+                ON CONFLICT(request_id,stage) DO NOTHING`
+              yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
+                yield* sql`SELECT payload=${sql.json(skip)} AS matches
+                  FROM jev_staged_skip_receipts WHERE request_id=${skip.requestId} AND stage=${skip.stage}`,
+              )
+            }
             const inserted = yield* Schema.decodeUnknownEffect(
               Schema.Array(Schema.Struct({ handoff_hash: Schema.String })),
               strictParseOptions,

@@ -274,6 +274,7 @@ describe('native execution runtime', () => {
         read: () => Effect.succeed(batch),
         pending: () => Effect.succeed([]),
         begin: () => Effect.succeed({ ...batch, dispatches: [] }),
+        complete: () => Effect.succeed(batch),
         finish: () => Effect.succeed(batch),
       }),
     ) as Context.Context<RecoveryFirstRuntime>
@@ -321,6 +322,7 @@ describe('native execution runtime', () => {
           read: () => Effect.succeed(null),
           pending: () => Effect.succeed([]),
           begin: () => Effect.fail(failure),
+          complete: () => Effect.fail(failure),
           finish: () => Effect.fail(failure),
         }),
       ) as Context.Context<RecoveryFirstRuntime>
@@ -373,6 +375,7 @@ describe('native execution runtime', () => {
           read: () => Effect.succeed(null),
           pending: () => Effect.succeed([]),
           begin: () => Effect.die('unused'),
+          complete: () => Effect.die('unused'),
           finish: () => Effect.die('unused'),
         }),
       ) as Context.Context<RecoveryFirstRuntime>
@@ -918,7 +921,7 @@ describe('native execution runtime', () => {
     )
 
     expect(result.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
-    expect(result.observation).toEqual(windowClosedObservation)
+    expect(result.observation).toEqual({ ...windowClosedObservation, executionIssuedAt: command.issuedAt })
     expect(projected).toMatchObject({
       controllerKey: command.controllerKey,
       planHash: controllerPlanHash,
@@ -927,7 +930,7 @@ describe('native execution runtime', () => {
       lastSequence: command.sequence,
       lastOutcome: 'Waiting',
       lastReceiptHash: result.outcome.receiptHash,
-      lastPass: windowClosedObservation,
+      lastPass: { ...windowClosedObservation, executionIssuedAt: command.issuedAt },
     })
     if (projected === undefined || !executionControllerStatusHasCompletion(projected)) {
       throw new Error('completed execution did not project completion evidence')
@@ -1185,7 +1188,7 @@ describe('native execution runtime', () => {
       }
       expect(replay).toEqual({
         completedAt: committed.completedAt,
-        observation: retainedObservation,
+        observation: { ...retainedObservation, executionIssuedAt: command.issuedAt },
         outcome: {
           _tag: committed.lastOutcome,
           receiptHash: committed.lastReceiptHash,

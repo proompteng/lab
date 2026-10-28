@@ -5,23 +5,18 @@ import { gunzipSync } from 'node:zlib'
 
 import { canonicalHashV1Result } from '../src/hash'
 import { instrumentMarket, MarketKind } from '../src/instruments'
-import { makeChartDecisionsRequest } from '../src/jev/chart-questions'
+import { makeInitialChartStageRequest } from '../src/jev/staged-chart-questions'
 import { IsoDateSchema } from '../src/schemas'
 import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from '../src/jev/chart-evidence'
 import { JevClient } from '../src/jev/client'
 import { DecisionsClient } from '../src/jev/decisions'
 import { decodeEntryInferenceCompletion } from '../src/jev/entry-inference-evidence'
 import { prepareEntryInferenceInput } from '../src/jev/entry-inference-input'
-import {
-  deriveEntryDispositionForChart,
-  EntryInferenceJournal,
-  evaluateClaimedEntryInference,
-} from '../src/jev/entry-inference'
+import { EntryInferenceJournal, evaluateClaimedEntryInference } from '../src/jev/entry-inference'
 import { makeJevEvaluationReceipt, makeJevEvaluationRequest, JevOutcome } from '../src/jev/evidence'
 import { JevResolutionStatus, makeJevResolution } from '../src/jev/resolution'
 import { readSequentialInferenceCostEvidence } from '../src/jev/sequential-inference-cost-evidence'
-import { makeRetainedFundedEntryJudgmentRequest as makeEntryJudgmentRequest } from '../src/jev/retained-funded-entry-questions'
-import { makeRetainedEntryJudgmentRequest } from '../src/jev/retained-entry-questions'
+import { readStagedInferenceCostEvidence } from '../src/jev/staged-inference-cost-evidence'
 import { defaultJevProtocolDocument } from '../src/jev/protocol'
 import { jevEntryEconomics } from '../src/jev/entry-economics'
 import type { StagedCheckpoint } from '../src/jev/staged-checkpoint'
@@ -33,14 +28,15 @@ const Row = Schema.Struct({
   receipt: Schema.Unknown,
   handoff: Schema.Unknown,
   resolution: Schema.Unknown,
+  stagedCheckpoint: Schema.optionalKey(Schema.Unknown),
 })
 class VerificationError extends Data.TaggedError('EntryFeasibilityVerificationError')<{ readonly message: string }> {}
 const fail = (message: string) => Effect.fail(new VerificationError({ message }))
 
-const verify = Effect.gen(function* () {
-  const [inputPath, outputPath] = process.argv.slice(2)
-  if (inputPath === undefined || outputPath === undefined || process.argv.length !== 4)
-    return yield* fail('Usage: node verify-entry-feasibility.mjs <existing-export.ndjson.gz> <new-output.json>')
+export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(function* (
+  inputPath: string,
+  outputPath: string,
+) {
   const fs = yield* FileSystem.FileSystem
   if (yield* fs.exists(outputPath)) return yield* fail('Verification output already exists')
   const bytes = yield* fs.readFile(inputPath)
@@ -51,7 +47,13 @@ const verify = Effect.gen(function* () {
   let fundedRequests = 0
   for (const line of text.trim().split('\n')) {
     const raw = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Row))(line)
-    const original = yield* Effect.fromResult(readSequentialInferenceCostEvidence(raw))
+    const version = yield* Schema.decodeUnknownEffect(
+      Schema.Struct({ request: Schema.Struct({ schemaVersion: Schema.String }) }),
+    )(raw.request)
+    const original =
+      version.request.schemaVersion === 'bayn.entry-inference-input.v5'
+        ? yield* Effect.fromResult(readStagedInferenceCostEvidence({ ...raw, stagedCheckpoint: raw.stagedCheckpoint }))
+        : yield* Effect.fromResult(readSequentialInferenceCostEvidence(raw))
     const input = original.request.request
     const chart = yield* Effect.fromResult(
       input.schemaVersion === 'bayn.entry-inference-input.v1'
@@ -59,23 +61,9 @@ const verify = Effect.gen(function* () {
         : makeNativeChartEvidence(input.chartSource),
     )
     const saved = original.handoff?.disposition
-    if (saved?.status !== 'READY' && saved?.status !== 'NO_FUNDED_PROPOSALS')
-      return yield* fail('The preservation cohort must contain completed recorded chart evaluations')
-    const reproduced = yield* Effect.fromResult(
-      deriveEntryDispositionForChart(
-        input,
-        saved.visual,
-        chart,
-        saved.assessments,
-        input.schemaVersion === 'bayn.entry-inference-input.v3' ||
-          input.schemaVersion === 'bayn.entry-inference-input.v4'
-          ? makeEntryJudgmentRequest
-          : makeRetainedEntryJudgmentRequest,
-      ),
-    )
-    const expectedHash = yield* Effect.fromResult(canonicalHashV1Result(saved.evaluation))
-    const actualHash = yield* Effect.fromResult(canonicalHashV1Result(reproduced.evaluation))
-    if (expectedHash !== actualHash) return yield* fail('The final native proposal evaluation changed')
+    // The owning financial reader verifies the original graph and its exact question policy.
+    const evaluation = saved?.status === 'READY' || saved?.status === 'NO_FUNDED_PROPOSALS' ? saved.evaluation : null
+    const evaluationHash = evaluation === null ? null : yield* Effect.fromResult(canonicalHashV1Result(evaluation))
     // Original model responses retain their contracts; the dispatch probe never calls either provider.
     const protocol = {
       ...input.protocol,
@@ -107,10 +95,17 @@ const verify = Effect.gen(function* () {
       }),
     )
     const visualSource = yield* Effect.fromResult(
-      makeChartDecisionsRequest({ chart, protocol: current.input.protocol, funding: current.input.funding }),
+      makeInitialChartStageRequest({ chart, protocol: current.input.protocol, funding: current.input.funding }),
     )
+    if (
+      input.protocol.schemaVersion === defaultJevProtocolDocument.schemaVersion &&
+      saved !== undefined &&
+      saved !== null &&
+      original.handoff?.visualRequestHash !== visualSource.requestHash
+    )
+      return yield* fail('The current chart stage differs from the original native request')
     const feasible = visualSource.sourceFeasible
-    if (saved.evaluation.proposals.length > 0) {
+    if (evaluation !== null && evaluation.proposals.length > 0) {
       if (!feasible) return yield* fail('Feasibility gate drops an originally funded proposal')
       fundedRequests++
     }
@@ -151,12 +146,9 @@ const verify = Effect.gen(function* () {
           Effect.sync(() => {
             checkpoint.terminals.push(terminal)
           }),
-        recordBaseStartSkip: (skip) =>
+        recordHandoff: (handoff) =>
           Effect.sync(() => {
-            checkpoint.skips.push(skip)
-          }),
-        recordHandoff: () =>
-          Effect.sync(() => {
+            if (handoff.baseStart?.status === 'NOT_REQUESTED') checkpoint.skips.push(handoff.baseStart.skip)
             committedHandoffs++
             return { dispatchAllowed: true }
           }),
@@ -254,21 +246,23 @@ const verify = Effect.gen(function* () {
       originalRequestId: original.request.requestId,
       originalInputVersion: input.schemaVersion,
       projectedCurrentRequestId: request.requestId,
+      projectedInitialChartRequestHash: visualSource.requestHash,
       feasible,
-      originalEvaluationHash: expectedHash,
-      reproducedRetainedEvaluationHash: actualHash,
+      originalDisposition: saved?.status ?? null,
+      verifiedOriginalEvaluationHash: evaluationHash,
+      originalJevQuestionNames: saved?.status === 'READY' ? Object.keys(saved.jevRequest.questions) : [],
       projectedEntryPriceCeilingMicros: economics?.maximumEntryPriceMicros ?? null,
-      originalFundedProposalIds: saved.evaluation.proposals.map((p) => p.proposalId),
+      originalFundedProposalIds: evaluation?.proposals.map((p) => p.proposalId) ?? [],
       offlineChartSentinelBranches: attemptedChartBranches,
       actualProviderCalls: 0,
     })
   }
   const report = {
-    schemaVersion: 'bayn.entry-feasibility-verification.v2',
+    schemaVersion: 'bayn.entry-feasibility-verification.v3',
     requests: results.length,
     sourceInfeasibleSkips: skips,
     possibleChartBranches: chartBranches,
-    retainedFundedSourcesStillFeasible: fundedRequests,
+    originalFundedSourcesStillFeasible: fundedRequests,
     actualProviderCalls: 0,
     inputProjection:
       'Same source, observed quotes, capital and fees. The offline dispatch probe recomputes v28 entry economics and its inference-ask cap. Historical model responses and proposal evaluations retain their original contracts and are never used as current judgments.',
@@ -279,7 +273,12 @@ const verify = Effect.gen(function* () {
 
 if (import.meta.main)
   NodeRuntime.runMain(
-    verify.pipe(
+    Effect.gen(function* () {
+      const [inputPath, outputPath] = process.argv.slice(2)
+      if (inputPath === undefined || outputPath === undefined || process.argv.length !== 4)
+        return yield* fail('Usage: node verify-entry-feasibility.mjs <existing-export.ndjson.gz> <new-output.json>')
+      yield* verifyEntryFeasibility(inputPath, outputPath)
+    }).pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- CLI entry point owns filesystem resources
       Effect.provide(NodeServices.layer),
     ),

@@ -1,7 +1,7 @@
 import { prepareSubmit } from './alpaca-mutations/decisions'
 import { describe, expect, test } from 'bun:test'
 
-import { Deferred, Effect, Fiber, Redacted, Ref, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Redacted, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
@@ -828,7 +828,37 @@ describe('Alpaca broker mutations', () => {
 
     const receipt = await Effect.runPromise(program)
     expect(receipt.evidence.observedAt).toBe('1970-01-01T00:00:02.000Z')
+    expect(receipt.evidence.routing).toEqual({
+      startedAt: '1970-01-01T00:00:00.000Z',
+      requestDispatchedAt: '1970-01-01T00:00:00.000Z',
+      completedAt: '1970-01-01T00:00:02.000Z',
+    })
     expect(receipt.order.observedAt).toBe('1970-01-01T00:00:02.000Z')
+  })
+
+  test('routing includes guard and finalizer time while dispatch identifies entry to the HTTP client', async () => {
+    const session = projectedSession((phase) => Effect.sleep(phase === 'begin' ? '10 millis' : '2 millis'))
+    const client = HttpClient.make((request) => Effect.succeed(response(request, orderResponse)))
+    const receipt = await Effect.runPromise(
+      makeMutation(session, submitAuthority, client).pipe(
+        Effect.flatMap((mutation) =>
+          Effect.gen(function* () {
+            const fiber = yield* mutation.submit(intent).pipe(Effect.forkChild)
+            yield* Effect.yieldNow
+            yield* TestClock.adjust(10)
+            yield* TestClock.adjust(2)
+            return yield* Fiber.join(fiber)
+          }),
+        ),
+        (self) => provideTestLayer(self, TestClock.layer()),
+      ),
+    )
+    expect(receipt.evidence.routing).toEqual({
+      startedAt: '1970-01-01T00:00:00.000Z',
+      requestDispatchedAt: '1970-01-01T00:00:00.010Z',
+      completedAt: '1970-01-01T00:00:00.012Z',
+    })
+    expect(receipt.evidence.observedAt).toBe('1970-01-01T00:00:00.012Z')
   })
 
   test('preserves the broker order ID when Alpaca accepts a mismatched order', async () => {
@@ -984,6 +1014,11 @@ describe('Alpaca broker mutations', () => {
     })
     expect(calls).toBe(1)
     expect(interrupted).toBe(true)
+    expect(failure.evidence?.routing).toEqual({
+      startedAt: '1970-01-01T00:00:00.000Z',
+      requestDispatchedAt: '1970-01-01T00:00:00.000Z',
+      completedAt: '1970-01-01T00:00:00.010Z',
+    })
     expect(invalidations).toBe(2)
   })
 
@@ -1012,6 +1047,23 @@ describe('Alpaca broker mutations', () => {
     expect(JSON.stringify(failure)).not.toContain('paper-key')
     expect(JSON.stringify(failure)).not.toContain('paper-secret')
     expect(calls).toBe(1)
+  })
+
+  test('a routing defect remains a defect and finalizes the projection guard once', async () => {
+    let invalidations = 0
+    const defect = new Error('routing invariant failed')
+    const client = HttpClient.make(() => Effect.die(defect))
+    const session = projectedSession(() =>
+      Effect.sync(() => {
+        invalidations += 1
+      }),
+    )
+    const result = await Effect.runPromiseExit(
+      makeMutation(session, submitAuthority, client).pipe(Effect.flatMap((mutation) => mutation.submit(intent))),
+    )
+    expect(Exit.isFailure(result)).toBe(true)
+    if (Exit.isFailure(result)) expect(Cause.squash(result.cause)).toBe(defect)
+    expect(invalidations).toBe(2)
   })
 
   test('applies the mutation deadline while the broker response body is still streaming', async () => {
@@ -1169,6 +1221,11 @@ describe('Alpaca broker mutations', () => {
       evidence: {
         contentHash: Result.getOrThrow(canonicalHashV1Result(error)),
         observedAt: '1970-01-01T00:00:02.000Z',
+        routing: {
+          startedAt: '1970-01-01T00:00:00.000Z',
+          requestDispatchedAt: '1970-01-01T00:00:00.000Z',
+          completedAt: '1970-01-01T00:00:02.000Z',
+        },
         requestId: 'req-123',
         status: 500,
       },

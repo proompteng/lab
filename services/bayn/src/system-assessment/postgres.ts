@@ -1,11 +1,21 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
+
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { evaluateSystemAssessment } from './assessment'
 import { SystemAssessmentError } from './economics'
 import { validateSystemRegistration } from './policy'
+import { readSystemSourceCut } from './source-cut'
+import { bindSystemSourceCut } from './bind-source'
+import { SystemAssessmentInputSchema } from './assessment'
 import { registeredSchedule } from './schedule'
 import { ObligationClass } from './reliability'
+import { bindEntryTimings } from './entry-timing'
+import { bindLatencyStressSources } from './latency-report'
+import { JevResearchPolicy } from '../jev/acceptance'
+import type { VerifiedReplayImage } from './replay-image'
+import { readReplayExecutionReceipt, type ReplayExecutionReceiptSchema } from './replay-execution'
 
 export const ProgramHistorySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.system-qualification-history.v1'),
@@ -110,3 +120,70 @@ export const readSystemRegistration = (hash: string) =>
       return yield* new SystemAssessmentError({ message: 'Stored registration hash differs from its contents' })
     return result.registration
   }).pipe(Effect.mapError(boundaryError('System registration read failed')))
+
+export const assessAndPersistSystem = (
+  input: unknown,
+  verifiedSources: ReadonlySet<string>,
+  artifacts: ReadonlyMap<string, Uint8Array> = new Map(),
+  images: ReadonlyMap<string, VerifiedReplayImage> = new Map(),
+) =>
+  Effect.gen(function* () {
+    const decoded = yield* Schema.decodeUnknownEffect(SystemAssessmentInputSchema, strictParseOptions)(input)
+    const cut = yield* readSystemSourceCut(decoded.sourceCutHash)
+    const candidate = decoded.registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
+    if (candidate === undefined) return yield* new SystemAssessmentError({ message: 'Missing candidate registration' })
+    const timings = yield* Effect.fromResult(
+      bindEntryTimings(decoded.entryTimingSources, cut, candidate.sourceRevision, artifacts),
+    )
+    const executions = new Map<string, typeof ReplayExecutionReceiptSchema.Type>()
+    for (const source of decoded.latencyStressSources)
+      if (source.executionReceiptHash !== null)
+        executions.set(source.executionReceiptHash, yield* readReplayExecutionReceipt(source.executionReceiptHash))
+    const stress = yield* Effect.fromResult(
+      bindLatencyStressSources(
+        decoded.latencyStressSources,
+        decoded.registration,
+        cut,
+        artifacts,
+        verifiedSources,
+        images,
+        executions,
+      ),
+    )
+    const bound = yield* Effect.fromResult(bindSystemSourceCut(decoded, cut, verifiedSources, timings, stress))
+    const assessment = yield* Effect.fromResult(evaluateSystemAssessment(bound.input, bound.verifiedSources))
+    yield* readSystemRegistration(assessment.registrationHash)
+    const { assessmentHash, ...material } = assessment
+    const text = yield* Effect.fromResult(canonicalJsonV1Result(material))
+    const inputText = yield* Effect.fromResult(canonicalJsonV1Result(bound.input))
+    const sql = yield* PgClient.PgClient
+    yield* sql`INSERT INTO system_assessment_receipts(assessment_hash, registration_hash, source_cut_hash, as_of, verdict, input_text, assessment_text)
+    VALUES (${assessmentHash}, ${assessment.registrationHash}, ${assessment.sourceCutHash}, ${assessment.asOf}, ${assessment.verdict}, ${inputText}, ${text})
+    ON CONFLICT (assessment_hash) DO NOTHING`
+    return assessment
+  }).pipe(Effect.mapError(boundaryError('System assessment persistence failed')))
+
+export const readPersistedSystemAssessment = (hash: string) =>
+  Effect.gen(function* () {
+    const assessmentHash = yield* Schema.decodeUnknownEffect(Sha256Schema)(hash)
+    const sql = yield* PgClient.PgClient
+    const rows = yield* Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          input: Schema.Unknown,
+          assessment: Schema.Struct({ verifiedSourceHashes: Schema.Array(Sha256Schema) }),
+        }),
+      ),
+    )(
+      yield* sql`SELECT input_text::jsonb AS input, assessment_text::jsonb AS assessment
+    FROM system_assessment_receipts WHERE assessment_hash = ${assessmentHash}`,
+    )
+    const row = rows[0]
+    if (row === undefined) return yield* new SystemAssessmentError({ message: 'Assessment receipt does not exist' })
+    const assessment = yield* Effect.fromResult(
+      evaluateSystemAssessment(row.input, new Set(row.assessment.verifiedSourceHashes)),
+    )
+    if (assessment.assessmentHash !== assessmentHash)
+      return yield* new SystemAssessmentError({ message: 'Recomputed assessment differs from its immutable receipt' })
+    return assessment
+  }).pipe(Effect.mapError(boundaryError('Assessment receipt verification failed')))

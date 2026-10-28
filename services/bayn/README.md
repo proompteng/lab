@@ -69,6 +69,10 @@ IOC limits. It does not add the risk policy's adverse-price allowance to the buy
 future sell fees, stop/exit slippage and every risk limit remain unchanged. A tighter buy limit may remain unfilled; it
 cannot justify a cheaper funding estimate while submitting a higher-priced order.
 PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
+An unused BASE_START skip commits with its handoff in one transaction; paid visual terminal evidence remains
+independently durable. Normal batch completion compares the admitted observation and every committed request, receipt
+and resolution directly before sealing the result. Recovery still reconstructs incomplete stored graphs. Completion
+and decision use retain the original ten-second deadline, including commit acknowledgement time.
 
 Native comparison runtimes also support the chart-entry ablation and repeated-momentum control. Each has a distinct
 behavior hash, complete policy hash, authority generation, and decision document. The ablation keeps chart inference
@@ -1616,7 +1620,20 @@ rolling back the application image through Kargo; do not remove retained evidenc
 The execution endpoint's startup probe allows twenty minutes for this bounded migration and initialization. Its
 readiness and liveness probes retain their normal cadence after startup.
 
-The PostgreSQL cluster reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 2 GiB memory limit.
+The native market recorder uses its own two-instance PostgreSQL cluster and WAL, `bayn-native-arrival-db`.
+`BAYN_NATIVE_ARRIVAL_POSTGRES_URL` and the CA at `/var/run/secrets/bayn/native-arrival-postgres/ca.crt` are required by
+the execution controller. Missing configuration fails startup. The recorder never falls back to the financial
+database. Its migration refuses a database containing financial or other unrelated tables, and configuration rejects
+the financial PostgreSQL endpoint even when a different logical database is selected.
+
+The archive installs only the epoch, chunk and end tables with the original SQL checksum, ordered-prefix and
+append-only guards. Both databases retain synchronous replication, TLS, checksums and the existing backup store with
+separate server prefixes. The financial database retains all historical recorder bytes for historical reads; current
+capture readers must use the archive connection. No financial history, authority, strategy, fees, freshness or inference
+deadline changes. Separating the WAL removes raw capture writes from financial commits; verify actual admission and
+commit latency and natural funded orders after deployment before claiming the timing problem resolved.
+
+Each PostgreSQL cluster reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 2 GiB memory limit.
 LZ4 WAL compression reduces full-page image traffic. A 4 GiB WAL checkpoint threshold and 15-minute checkpoint
 interval spread checkpoint work; the existing five-minute archive timeout still bounds idle WAL archival.
 These settings retain fsync, full-page writes and the synchronous standby requirement. Buffer changes require
@@ -1777,7 +1794,10 @@ Set `BAYN_OPENAI_API_KEY`, `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY
 `inputDefinition: "bayn.jev-entry-state.v22"`, and positive `maximumCalls` shared by both providers. The input
 binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
 Its `costs` object contains `jev` and `chart` tariffs, each with
-`inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The chart tariff also requires
+`inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. Registered latency replays bind
+only the providers used by their policy. The candidate requires both tariffs, chart ablation sets `jev` to `null`,
+and momentum sets both to `null`. A call without its tariff remains an unresolved expense and cannot establish
+complete economics. The chart tariff also requires
 `cachedInputMicrosPerMillionTokens` and `cacheWriteInputMicrosPerMillionTokens`; cached and written tokens are
 subsets of total input, so each token is priced once. The input also declares
 `allocatedDataCostPerSessionMicros`, either a priced integer-string allocation or explicit `null` when unknown.
@@ -1975,9 +1995,15 @@ The release gate requires every shard and integration job to pass.
 
 With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 `BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run
-`bun run --filter @proompteng/bayn test:ledger`. CI uses the same command. It covers native Jev entry,
+`bun run --filter @proompteng/bayn test:ledger`. CI runs its `runtime`, `backtest`, `restart`, and `inference`
+groups in separate jobs, each with its own disposable PostgreSQL and TigerBeetle. Append a group name to run it
+locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
+The release gate requires every group to pass. The suite covers native Jev entry,
 zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
 expenses. The seven durable-broker cases alone do not cover the native production lifecycle.
+Measured entry/exit replays supply improving arrival quotes under the frozen inference-ask ceiling, including
+partial-fill and re-entry cases with modeled slippage. Every measured buy fill must stay within its submitted limit;
+adverse arrival quotes remain unfilled and retain separate broker coverage.
 
 PostgreSQL tests require an isolated database whose name ends in `_test`; never point them at a live Bayn database.
 

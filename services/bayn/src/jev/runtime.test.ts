@@ -303,6 +303,7 @@ describe('entry observation admission', () => {
           Effect.provideService(JevBatchStore, {
             pending: () => Effect.succeed([]),
             read: () => Effect.die('No batch was recorded'),
+            complete: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
             finish: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
             begin: (plan) =>
               TestClock.adjust(fixture.protocol.inferenceValidityMs + 100).pipe(

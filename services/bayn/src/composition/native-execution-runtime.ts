@@ -175,6 +175,8 @@ const bindRecoveryFirstCycleDriver = (
             begin: (plan, observation) =>
               observe(store.begin(plan, observation), (batch) => batch.plan.observationHash),
             finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
+            complete: (plan, observation, result) =>
+              observe(store.complete(plan, observation, result), (batch) => batch.plan.observationHash),
           })
         } else complete = false
         const advanced = yield* Effect.provideContext(driver.advance, observedContext)
