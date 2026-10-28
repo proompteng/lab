@@ -54,6 +54,18 @@ export const makeCycleLifecyclePrograms = (
               Effect.flatMap(({ inserted, stored }) =>
                 liftCycleDecision('acquire', decideAcquire(stored, decodedDraft, inserted.length === 1)),
               ),
+              Effect.flatMap((receipt) => {
+                if (
+                  !receipt.created ||
+                  candidate.createdAt < receipt.cycle.window.submissionOpenAt ||
+                  candidate.createdAt >= receipt.cycle.window.submissionCutoffAt
+                )
+                  return Effect.succeed(receipt)
+                // Immediate admission and its guarded activation share one durable commit.
+                return activate(receipt.cycle.identity.cycleId, candidate.createdAt).pipe(
+                  Effect.map(({ cycle }) => ({ ...receipt, cycle })),
+                )
+              }),
             ),
           ),
         ),

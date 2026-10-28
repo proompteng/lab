@@ -57,34 +57,45 @@ export const requireJevCandidateObservations = (sql: PgClient.PgClient, requests
           AND observation.observed_at = ${request.observedAt}::timestamptz`,
       ),
     )
-    // Bind the decoded request identities rather than rereading mutable query
-    // inputs. Group by the observation's primary key so shared source bytes cross
-    // the database boundary once, with their exact matching requests retained.
+    // Parse shared source metadata once instead of detoasting its JSON for every candidate.
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.Array(ObservationRow),
       strictParseOptions,
     )(
       yield* sql`
-        SELECT observation.content_hash, observation.payload,
-          array_agg(requested.request_id ORDER BY requested.request_id COLLATE "C") AS matching_request_ids
-        FROM jsonb_to_recordset(${sql.json(requested)}::jsonb) AS requested(
-          request_id text, cycle_id text, observed_at text,
-          authority_generation_hash text, snapshot_id text, symbol text
-        )
-        JOIN intraday_candidate_observations AS observation
-          ON observation.cycle_id = requested.cycle_id
-          AND observation.observed_at = requested.observed_at::timestamptz
-          AND observation.payload->>'authorityGenerationHash' = requested.authority_generation_hash
-          AND observation.payload->>'observedAt' = requested.observed_at
-          AND observation.payload->'manifest'->>'observedAt' = requested.observed_at
-          AND observation.payload->'manifest'->>'snapshotId' = requested.snapshot_id
-          AND observation.payload->'manifest'->'candidateSymbols' ? requested.symbol
-          AND NOT EXISTS (
-            SELECT 1 FROM jsonb_array_elements(observation.payload->'manifest'->'candidateExclusions') AS excluded
-            WHERE excluded->>'symbol' = requested.symbol
+        WITH scoped_observations AS MATERIALIZED (
+          SELECT observation.content_hash, observation.cycle_id, observation.observed_at,
+            observation.payload->>'authorityGenerationHash' AS authority_generation_hash,
+            observation.payload->>'observedAt' AS payload_observed_at,
+            observation.payload->'manifest'->>'observedAt' AS manifest_observed_at,
+            observation.payload->'manifest'->>'snapshotId' AS snapshot_id,
+            observation.payload->'manifest'->'candidateSymbols' AS candidate_symbols,
+            observation.payload->'manifest'->'candidateExclusions' AS candidate_exclusions
+          FROM intraday_candidate_observations AS observation
+          WHERE ${scope}
+        ), matched AS (
+          SELECT observation.content_hash,
+            array_agg(requested.request_id ORDER BY requested.request_id COLLATE "C") AS matching_request_ids
+          FROM jsonb_to_recordset(${sql.json(requested)}::jsonb) AS requested(
+            request_id text, cycle_id text, observed_at text,
+            authority_generation_hash text, snapshot_id text, symbol text
           )
-        WHERE ${scope}
-        GROUP BY observation.content_hash
+          JOIN scoped_observations AS observation
+            ON observation.cycle_id = requested.cycle_id
+            AND observation.observed_at = requested.observed_at::timestamptz
+            AND observation.authority_generation_hash = requested.authority_generation_hash
+            AND observation.payload_observed_at = requested.observed_at
+            AND observation.manifest_observed_at = requested.observed_at
+            AND observation.snapshot_id = requested.snapshot_id
+            AND observation.candidate_symbols ? requested.symbol
+            AND NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(observation.candidate_exclusions) AS excluded
+              WHERE excluded->>'symbol' = requested.symbol
+            )
+          GROUP BY observation.content_hash
+        )
+        SELECT observation.content_hash, observation.payload, matched.matching_request_ids
+        FROM matched JOIN intraday_candidate_observations AS observation USING (content_hash)
         ORDER BY observation.content_hash COLLATE "C"
       `,
     )
