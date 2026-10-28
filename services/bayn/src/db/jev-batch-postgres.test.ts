@@ -189,6 +189,18 @@ test.each([
                 return Effect.succeed([{ batch_id: plan.batchId }])
               }
               if (query.includes('INSERT INTO jev_evaluation_requests')) return Effect.succeed([])
+              if (query.includes('SELECT payload FROM jev_evaluation_requests')) {
+                const candidate = plan.candidates.find(
+                  (candidate) =>
+                    candidate.status === JevCandidatePlanStatus.Requested &&
+                    candidate.request.requestId === parameters[0],
+                )
+                if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Unknown admission request')
+                return Effect.succeed([{ payload: candidate.request }])
+              }
+              if (query.includes('SELECT payload FROM jev_staged_')) return Effect.succeed([])
+              if (query.includes('INSERT INTO jev_staged_dispatch_claims'))
+                return Effect.succeed([{ claim_hash: parameters[2] }])
               throw new Error(`Unexpected admission query: ${query}`)
             },
             get(target, property, receiver) {
@@ -293,7 +305,7 @@ test.each([
     ).pipe(
       Effect.provideService(JevEvaluationStore, {
         read: () => Effect.die('Admission must not read a candidate request'),
-        record: () => Effect.die('Admission must not record inference'),
+        recordAll: () => Effect.die('Admission must not record inference'),
         abandon: () => Effect.die('Admission must not abandon inference'),
       }),
       Effect.provideService(JevClient, {
@@ -366,7 +378,7 @@ test('batch finalization binds its observation lookup to the indexed cycle and m
           Effect.provideService(JevEvaluationStore, {
             read: () => Effect.die('Finalization must use its bulk evidence read'),
 
-            record: () => Effect.die('Finalization must not record inference'),
+            recordAll: () => Effect.die('Finalization must not record inference'),
             abandon: () => Effect.die('Finalization must not call the independent abandonment writer'),
           }),
         )
