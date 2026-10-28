@@ -24,6 +24,7 @@ import {
   Clock,
   Deferred,
   Effect,
+  Effectable,
   Exit,
   Fiber,
   FileSystem,
@@ -34,8 +35,10 @@ import {
   Schema,
 } from 'effect'
 import { TestClock } from 'effect/testing'
+import * as Reactivity from 'effect/reactivity/Reactivity'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import type { Statement } from 'effect/sql/Statement'
+import type { SqlError } from 'effect/sql/SqlError'
 
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
@@ -73,6 +76,63 @@ setDefaultTimeout(30_000)
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_jev_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
+const withTestEvaluation = <A extends object>(
+  statement: Statement<A>,
+  evaluate: () => Effect.Effect<ReadonlyArray<A>, SqlError>,
+): Statement<A> => {
+  const observed = Effectable.Prototype({ label: 'Observed test statement', evaluate })
+  return new Proxy(statement, {
+    get(target, property, receiver) {
+      return Object.hasOwn(observed, property)
+        ? Reflect.get(observed, property, receiver)
+        : Reflect.get(target, property, receiver)
+    },
+  })
+}
+
+test('finalizer diagnostics preserve composable SQL fragments and observe only execution', async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.make({
+          url: Redacted.make('postgres://unused@127.0.0.1:1/unused_test'),
+          minConnections: 0,
+          stream: () => {
+            throw new Error('SQL compilation test must not connect')
+          },
+        })
+        let executions = 0
+        const wrapped = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            return withTestEvaluation(statement, () =>
+              Effect.sync(() => {
+                executions += 1
+                return [{ value: 1 }]
+              }),
+            )
+          },
+        })
+        const scope = wrapped.or([
+          wrapped`observation.cycle_id = ${'cycle'} AND observation.observed_at = ${'2026-10-28'}::timestamptz`,
+        ])
+        const observation = wrapped`SELECT observation.content_hash
+          FROM requested JOIN intraday_candidate_observations AS observation ON true WHERE ${scope}`
+        const nested = wrapped`SELECT * FROM (${observation}) AS source`
+        const baselineScope = sql.or([
+          sql`observation.cycle_id = ${'cycle'} AND observation.observed_at = ${'2026-10-28'}::timestamptz`,
+        ])
+        const baseline = sql`SELECT observation.content_hash
+          FROM requested JOIN intraday_candidate_observations AS observation ON true WHERE ${baselineScope}`
+        expect(observation.compile()).toEqual(baseline.compile())
+        expect(nested.compile()).toEqual(sql`SELECT * FROM (${baseline}) AS source`.compile())
+        expect(executions).toBe(0)
+        expect(yield* observation).toEqual([{ value: 1 }])
+        expect(executions).toBe(1)
+      }),
+    ).pipe(Effect.provide(Reactivity.layer)),
+  )
+})
 const premiums = Object.fromEntries(equityMarketProfile.candidateSymbols.map((symbol) => [symbol, 0.02]))
 const replaySourceHash = 'd'.repeat(64)
 const replayAccountId = `replay-${replaySourceHash}`
@@ -1492,20 +1552,22 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                   : query.includes('JOIN intraday_candidate_observations')
                     ? 'observation-read'
                     : 'other'
-            return Effect.gen(function* () {
-              if (insertingResult) {
-                inserting += 1
-                recordQueryEvent(category, 'barrier-arrival')
-                if (inserting === 4) yield* Deferred.succeed(arrivals, undefined)
-                yield* Deferred.await(arrivals)
-              }
-              recordQueryEvent(category, 'start')
-              return yield* statement.pipe(
-                Effect.onExit((exit) =>
-                  Effect.sync(() => recordQueryEvent(category, Exit.isSuccess(exit) ? 'success' : 'failure')),
-                ),
-              )
-            })
+            return withTestEvaluation(statement, () =>
+              Effect.gen(function* () {
+                if (insertingResult) {
+                  inserting += 1
+                  recordQueryEvent(category, 'barrier-arrival')
+                  if (inserting === 4) yield* Deferred.succeed(arrivals, undefined)
+                  yield* Deferred.await(arrivals)
+                }
+                recordQueryEvent(category, 'start')
+                return yield* statement.pipe(
+                  Effect.onExit((exit) =>
+                    Effect.sync(() => recordQueryEvent(category, Exit.isSuccess(exit) ? 'success' : 'failure')),
+                  ),
+                )
+              }),
+            )
           },
         })
         const competing = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, simultaneous))
