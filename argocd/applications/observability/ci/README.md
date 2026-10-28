@@ -22,7 +22,7 @@ The target is to collect a completed attempt within five minutes during healthy 
 attempts take priority over backfill. Completed jobs are collected while their workflow is still running, so one
 slow architecture cannot delay another job's telemetry. Backfill pauses below 2,000 remaining API requests, leaving
 headroom for current runs before the shared 1,000-request ARC reserve. The initial backfill covers attempts updated within 14 days. Detailed SQLite
-job records retain 90 days; histogram aggregates and deduplication keys survive Pod restarts on the 1 GiB retained
+job records retain 90 days; collection-delay aggregates and deduplication keys survive Pod restarts on the 1 GiB retained
 Ceph claim. The single replica and `Recreate` rollout serialize SQLite writers. Do not scale this deployment.
 
 Run ID and attempt number identify each workflow attempt. Jobs come from the attempt-specific jobs endpoint;
@@ -76,9 +76,10 @@ Signed-log HTTP errors, timeouts and rate-limit backoff are optional-evidence fa
 error counter and preserve job timings rather than blocking collection.
 
 Rolling p50/p95 and sample counts use actual completion times. `1h` covers the latest hour; `7d_baseline` covers the
-preceding seven days, excluding that hour. These gauges provide an immediate baseline during backfill. Histograms
-are durable cumulative observations; rate queries over them measure collection time during a backfill, so use the
-event-time gauges for historical volume and regression comparisons.
+preceding seven days, excluding that hour. These gauges provide an immediate baseline during backfill. They are the single timing export. Detailed phase,
+BuildKit and workflow histograms are not exported because their label combinations exhausted the shared Mimir
+series allowance without serving dashboard timing queries. SQLite and Loki retain the underlying records; the
+collection-delay histogram remains cumulative. Dashboard filters use `ci_jobs_completed`.
 
 Click a build record's runner name to open its resource history during the job. GitHub links select the exact run
 attempt and job. Source revisions and cache evidence support investigation; a timing difference alone does not
@@ -96,6 +97,11 @@ and ten baseline samples, then a median above 1.5 times baseline plus 60 seconds
 outlier cannot move a five-sample median enough to create that condition on its own.
 The initial historical scan and backfill must complete before duration alerts can fire. Loki outbox delivery
 continues when GitHub polling fails; GitHub collection continues during a Loki outage.
+
+Queue alerts select image build jobs and aggregate by namespace, runner pool and architecture. Workflow and job-family
+changes do not create new alert identities. The first alert still requires a queue over ten minutes for five minutes
+of fresh observations; a five-minute recovery hold joins brief gaps into one incident. Warning email group updates
+are batched every fifteen minutes, with a four-hour repeat. Per-workflow evidence remains in the dashboard.
 
 Inspect `ci-observability` logs and its collection freshness/API-headroom panels first. Check `github-token` identity
 and expiry through the existing ARC secret-sync procedure without printing its value or changing permissions.
@@ -116,7 +122,7 @@ preview through Grafana's manual JSON upload first. Verify live data, readable l
 in the UI, then export the verified model, retain the canonical `ci-build-performance` UID and commit it. Remove the
 temporary preview after the provisioned dashboard is verified. The behavioral suite covers attempt isolation, queue and
 execution calculations, cache parsing, cancellation, restart idempotency, failed outbox delivery, API search overflow,
-and stale collection. Promtool checks alert behavior and dashboard PromQL during scripts CI.
+stale collection and the metric series budget. Promtool checks alert behavior and dashboard PromQL during scripts CI.
 
 For a rollout, render the observability application with Helm 3, validate the manifests and source checks, merge the
 reviewed main commit, then reconcile the observability application through GitOps. The collector and retained claim

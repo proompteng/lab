@@ -20,7 +20,7 @@ spec:
             value: "65532 65532"
       containers:
         - name: cloudflared
-          image: cloudflare/cloudflared:2026.9.0@sha256:ff69a2225ad7c6f85ed84fbd5f3087df46202426b2388ec60214098e0adf05e9
+          image: cloudflare/cloudflared:2026.10.3@sha256:faa8e0a1475f137c910be6025f43c8e4092fdd35461b31e19fd1390657a1ff39
           command:
             - cloudflared
             - tunnel

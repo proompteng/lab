@@ -6,10 +6,11 @@ import { Archive, ArrowLeft, Ellipsis, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TengriCodexThreadPage } from '@/lib/tengri/codex-threads'
 import { cn } from '@/lib/utils'
-import { runTengriAction } from './client'
+import { runTengriAction, TengriRequestError } from './client'
 
 type SessionIndex = TengriCodexThreadPage & { archived: boolean } & (
     | { phase: 'loading' | 'ready' }
+    | { phase: 'retrying'; cursor?: string }
     | { phase: 'error'; error: string }
   )
 
@@ -17,7 +18,7 @@ export function AgentSessionList({
   agentId,
   enabled,
   selected,
-  busyThreadId,
+  busyThreadIds,
   canSelect,
   revision,
   onSelect,
@@ -26,7 +27,7 @@ export function AgentSessionList({
   agentId: string
   enabled: boolean
   selected: { id: string; unavailable: boolean } | null
-  busyThreadId: string
+  busyThreadIds: ReadonlySet<string>
   canSelect: boolean
   revision: number
   onSelect: (threadId: string) => void
@@ -60,12 +61,24 @@ export function AgentSessionList({
           nextCursor: page.nextCursor,
         }))
       } catch (cause) {
-        if (!controller.signal.aborted)
-          setIndex((current) => ({
-            ...current,
-            phase: 'error',
-            error: cause instanceof Error ? cause.message : 'Could not load chats.',
-          }))
+        if (controller.signal.aborted) return
+        const retryable =
+          cause instanceof TypeError ||
+          (cause instanceof DOMException && cause.name === 'AbortError') ||
+          (cause instanceof TengriRequestError &&
+            cause.code !== 'model_catalog_invalid' &&
+            cause.code !== 'conversation_history_invalid' &&
+            cause.code !== 'chat_index_invalid' &&
+            (cause.status === 408 || cause.status === 429 || cause.status >= 500))
+        setIndex((current) =>
+          retryable
+            ? { ...current, phase: 'retrying', cursor }
+            : {
+                ...current,
+                phase: 'error',
+                error: cause instanceof Error ? cause.message : 'Could not load chats.',
+              },
+        )
       }
     },
     [agentId, enabled, index.archived],
@@ -82,6 +95,12 @@ export function AgentSessionList({
     return () => request.current?.abort()
   }, [load, revision, reload])
   useEffect(() => {
+    if (!enabled || index.phase !== 'retrying' || changing.size > 0) return
+    const cursor = index.cursor
+    const timer = window.setTimeout(() => void load(cursor), 2000)
+    return () => window.clearTimeout(timer)
+  }, [changing, enabled, index, load])
+  useEffect(() => {
     const refresh = () => void load()
     window.addEventListener('focus', refresh)
     return () => window.removeEventListener('focus', refresh)
@@ -89,6 +108,7 @@ export function AgentSessionList({
 
   async function setArchived(threadId: string, archived: boolean) {
     if (changing.has(threadId)) return
+    request.current?.abort()
     setChanging((current) => new Set([...current, threadId]))
     try {
       await runTengriAction({ action: 'set-thread-archived', agentId, threadId, archived })
@@ -116,14 +136,16 @@ export function AgentSessionList({
 
   if (!enabled) return null
   const threads = index.threads
+  const recovering = index.phase === 'loading' || index.phase === 'retrying'
   return (
     <>
       <nav
         aria-label={index.archived ? 'Archived chats' : 'Conversations'}
+        aria-busy={recovering}
         className="tengri-chat-scrollbar min-h-0 flex-1 overflow-auto py-1 [scrollbar-gutter:stable]"
       >
         {index.archived ? <p className="px-4 py-2 text-label-12 text-zinc-400">Archived chats</p> : null}
-        {index.phase === 'loading' && !threads.length ? (
+        {recovering && !threads.length ? (
           <div role="status" aria-label="Loading chats" className="space-y-3 px-4 py-3">
             {[0, 1, 2].map((row) => (
               <Skeleton key={row} className="h-3 w-4/5 rounded bg-zinc-800 motion-reduce:animate-none" />
@@ -136,7 +158,7 @@ export function AgentSessionList({
           {threads.map((thread) => {
             const unavailable = thread.id === selected?.id && selected.unavailable
             const active = thread.id === selected?.id && !index.archived
-            const busy = thread.id === busyThreadId
+            const busy = busyThreadIds.has(thread.id)
             return (
               <li key={thread.id} className="group relative mb-0.5 flex min-w-0 items-center">
                 <button
@@ -205,7 +227,7 @@ export function AgentSessionList({
         {index.nextCursor ? (
           <button
             type="button"
-            disabled={index.phase === 'loading'}
+            disabled={recovering}
             onClick={() => void load(index.nextCursor ?? undefined)}
             className="mx-4 my-2 rounded text-label-12 text-zinc-400 outline-none hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40"
           >

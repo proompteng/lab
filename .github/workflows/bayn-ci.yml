@@ -42,6 +42,7 @@ jobs:
               - 'nix/images/bayn.nix'
               - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
+              - 'nix/images/bayn-frozen-control.nix'
               - 'nix/images/normalize-bayn-bun-deps.sh'
               - 'nix/images/normalize-bayn-bun-deps.test.sh'
               - 'nix/images/bun-workspace-service.nix'
@@ -74,6 +75,7 @@ jobs:
               - 'nix/images/bayn.nix'
               - 'nix/images/opencode-cli.nix'
               - 'nix/images/bayn-runtime-root.nix'
+              - 'nix/images/bayn-frozen-control.nix'
               - 'nix/images/normalize-bayn-bun-deps.sh'
               - 'nix/images/normalize-bayn-bun-deps.test.sh'
               - 'nix/images/bun-workspace-service.nix'
@@ -320,6 +322,10 @@ jobs:
     if: needs.changes.outputs.bayn == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [runtime, backtest, frozen-control, restart, inference]
     services:
       postgres:
         image: postgres:18-alpine
@@ -341,6 +347,18 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.11.1
+      - uses: actions/setup-go@v6
+        if: matrix.group == 'backtest'
+        with:
+          go-version-file: go.work
+      - name: Install pinned replay-image inspector
+        if: matrix.group == 'backtest'
+        run: |
+          GOBIN="${RUNNER_TEMP}/bayn-replay-tools" GOWORK=off go install github.com/google/go-containerregistry/cmd/crane@v0.22.1
+          echo "${RUNNER_TEMP}/bayn-replay-tools" >> "$GITHUB_PATH"
       - name: Install focused dependencies
         run: >-
           bun install --frozen-lockfile --ignore-scripts
@@ -369,8 +387,11 @@ jobs:
           done
           docker logs bayn-replay-tigerbeetle
           exit 1
+      - name: Verify registered replay image evidence and cancellation
+        if: matrix.group == 'backtest'
+        run: BAYN_TEST_REPLAY_IMAGE=1 bun test services/bayn/src/system-assessment/replay-image.integration.test.ts --timeout 60000
       - name: Verify replay accounting with PostgreSQL and TigerBeetle
-        run: bun run --cwd services/bayn test:ledger
+        run: bun run --cwd services/bayn test:ledger ${{ matrix.group }}
       - name: Stop isolated replay TigerBeetle
         if: always()
         run: docker rm -f bayn-replay-tigerbeetle || true

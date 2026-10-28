@@ -9,7 +9,7 @@ import {
   JevEvidenceError,
   JevOutcome,
   makeJevEvaluationReceipt,
-  usableJevInference,
+  entryInferenceAvailableAt,
   type JevEvaluationReceipt,
   type JevEvaluationRequest,
 } from './evidence'
@@ -51,7 +51,7 @@ export const evaluateClaimedJevOnce = (dispatch: JevDispatch) =>
       if (now >= Date.parse(request.expiresAt)) {
         const notDispatched = yield* Effect.fromResult(
           makeJevEvaluationReceipt(request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+            schemaVersion: 'bayn.jev-evaluation-receipt.v3',
             requestId: request.requestId,
             startedAt: utcInstantFromEpochMillis(started),
             completedAt: utcInstantFromEpochMillis(now),
@@ -75,13 +75,12 @@ export const evaluateClaimedJevOnce = (dispatch: JevDispatch) =>
       Effect.catchTags({
         EntryInferenceError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
         JevContractError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
-        DecisionsError: (cause) => Effect.fail(new JevEvidenceError({ message: cause.message })),
       }),
     )
     const completedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
     const receipt = yield* Effect.fromResult(
       makeJevEvaluationReceipt(request, {
-        schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+        schemaVersion: 'bayn.jev-evaluation-receipt.v3',
         requestId: request.requestId,
         startedAt: utcInstantFromEpochMillis(started),
         completedAt,
@@ -95,7 +94,9 @@ export const evaluateClaimedJevOnce = (dispatch: JevDispatch) =>
       return yield* new JevEvidenceError({
         message: 'Jev evidence arrived after permanent abandonment; entry is forbidden',
       })
-    const inference = yield* Effect.fromResult(usableJevInference(request, receipt, yield* Clock.currentTimeMillis))
+    const inference = yield* Effect.fromResult(
+      entryInferenceAvailableAt(request, receipt, yield* Clock.currentTimeMillis, request.request.schemaVersion),
+    )
     return { request, receipt, resolution, inference }
   })
 

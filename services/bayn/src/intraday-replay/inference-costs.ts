@@ -1,26 +1,63 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevFailure, JevResponseSchema } from '../jev/contract'
-import { validDecisionsUsage } from '../jev/decisions'
-import { NonNegativeIntegerSchema, PositiveMicrosSchema, UnsignedMicrosSchema } from '../schemas'
+import { JevFailure, jevModel, JevResponseSchema } from '../jev/contract'
+import { decisionsModel, validDecisionsUsage } from '../jev/decisions'
+import {
+  InferenceCostError,
+  type InferenceRateCardSchema,
+  inferenceRatesCoverWindow,
+  prepareInferenceRateCard,
+  priceInferenceUsage,
+} from '../inference-costs'
+import { JevResearchPolicy } from '../jev/acceptance'
+import { NonNegativeIntegerSchema, UnsignedMicrosSchema } from '../schemas'
 import type { ReplayInferenceCall } from './inference-timing'
 
-const rates = {
-  inputMicrosPerMillionTokens: PositiveMicrosSchema,
-  outputMicrosPerMillionTokens: UnsignedMicrosSchema,
-}
-export const ReplayInferenceCostModelSchema = Schema.Struct({
-  jev: Schema.Struct(rates),
-  chart: Schema.Struct({
-    ...rates,
-    cachedInputMicrosPerMillionTokens: UnsignedMicrosSchema,
-    cacheWriteInputMicrosPerMillionTokens: UnsignedMicrosSchema,
-  }),
-})
+/** Retain the registered provider schedule, including adjacent periods and no-call intervals. */
+export const registeredReplayInferenceTariff = (
+  rateCard: unknown,
+  interval: { readonly startAt: string; readonly endAt: string },
+  policy: JevResearchPolicy,
+) =>
+  Result.gen(function* () {
+    const { rates } = yield* prepareInferenceRateCard(rateCard)
+    const requiredModels =
+      policy === JevResearchPolicy.Candidate
+        ? [
+            { provider: 'typesafe', model: jevModel },
+            { provider: 'openai', model: decisionsModel },
+          ]
+        : policy === JevResearchPolicy.Ablation
+          ? [{ provider: 'openai', model: decisionsModel }]
+          : []
+    if (
+      interval.startAt >= interval.endAt ||
+      requiredModels.some(
+        (model) =>
+          !inferenceRatesCoverWindow(
+            rates.map(({ rate }) => rate),
+            { ...model, ...interval },
+          ),
+      )
+    )
+      return yield* Result.fail(
+        new InferenceCostError({ message: 'Replay tariff does not cover the registered interval' }),
+      )
+    return {
+      schemaVersion: 'bayn.inference-rate-card.v1' as const,
+      rates: rates
+        .filter(({ rate }) =>
+          requiredModels.some(({ provider, model }) => rate.provider === provider && rate.model === model),
+        )
+        .toSorted((a, b) => a.rateHash.localeCompare(b.rateHash))
+        .map(({ rate }) => rate),
+    }
+  })
 export const ReplayInferenceCostSummarySchema = Schema.Struct({
   callCount: NonNegativeIntegerSchema,
   chartCallCount: NonNegativeIntegerSchema,
+  baseStartCallCount: Schema.optionalKey(NonNegativeIntegerSchema),
   jevCallCount: NonNegativeIntegerSchema,
   unresolvedCallCount: NonNegativeIntegerSchema,
   inputTokens: UnsignedMicrosSchema,
@@ -37,7 +74,7 @@ const UsageReceiptSchema = Schema.Struct({
 })
 
 const verifiedUsage = (call: ReplayInferenceCall) => {
-  if (call.stage === 'CHART') {
+  if (call.stage !== 'JEV') {
     const outcome = call.outcome
     const usage =
       outcome.status === 'RECEIVED'
@@ -76,8 +113,9 @@ const verifiedUsage = (call: ReplayInferenceCall) => {
 
 export const calculateReplayInferenceCosts = (
   calls: readonly ReplayInferenceCall[],
-  model: typeof ReplayInferenceCostModelSchema.Type,
+  model: typeof InferenceRateCardSchema.Type,
 ) => {
+  const prepared = prepareInferenceRateCard(model)
   let knownCostMicros = 0n
   let unresolvedCallCount = 0
   let inputTokens = 0n
@@ -94,19 +132,40 @@ export const calculateReplayInferenceCosts = (
     cachedInputTokens += usage.cached
     cacheWriteInputTokens += usage.written
     outputTokens += usage.output
-    const tariff = model[call.stage === 'CHART' ? 'chart' : 'jev']
-    const charge =
-      (usage.input - usage.cached - usage.written) * BigInt(tariff.inputMicrosPerMillionTokens) +
-      usage.output * BigInt(tariff.outputMicrosPerMillionTokens) +
-      (call.stage === 'CHART'
-        ? usage.cached * BigInt(model.chart.cachedInputMicrosPerMillionTokens) +
-          usage.written * BigInt(model.chart.cacheWriteInputMicrosPerMillionTokens)
-        : 0n)
-    knownCostMicros += (charge + 999_999n) / 1_000_000n
+    const tariff = Result.isSuccess(prepared)
+      ? prepared.success.rates.find(
+          ({ rate }) =>
+            rate.provider === (call.stage === 'JEV' ? 'typesafe' : 'openai') &&
+            rate.model === call.request.model &&
+            rate.effectiveFrom <= call.simulatedStartedAt &&
+            call.simulatedStartedAt < rate.effectiveUntil,
+        )?.rate
+      : undefined
+    if (tariff === undefined) {
+      unresolvedCallCount++
+      continue
+    }
+    const charge = priceInferenceUsage(
+      {
+        inputTokens: usage.input,
+        outputTokens: usage.output,
+        cachedInputTokens: usage.cached,
+        cacheWriteInputTokens: usage.written,
+      },
+      tariff,
+    )
+    if (Result.isFailure(charge)) {
+      unresolvedCallCount++
+      continue
+    }
+    knownCostMicros += (charge.success + 999_999n) / 1_000_000n
   }
   return {
     callCount: calls.length,
     chartCallCount: calls.filter((call) => call.stage === 'CHART').length,
+    ...(calls.some((call) => call.stage === 'BASE_START')
+      ? { baseStartCallCount: calls.filter((call) => call.stage === 'BASE_START').length }
+      : {}),
     jevCallCount: calls.filter((call) => call.stage === 'JEV').length,
     unresolvedCallCount,
     inputTokens: inputTokens.toString(),

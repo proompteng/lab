@@ -1,6 +1,6 @@
 import { EntryInferenceJournalLive } from '../db/entry-inference-postgres'
 import { EntryInferenceJournal } from './entry-inference'
-import { entryCompletionFixture } from './entry-inference.test-support'
+import { entryCompletionFixture, stagedCheckpointFixture } from './entry-inference.test-support'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Config, Effect, FileSystem, Layer, Redacted, Schema } from 'effect'
 
@@ -48,14 +48,23 @@ const main = Effect.gen(function* () {
     )
     if ((yield* store.read(request.requestId)) === null)
       return yield* new JevEvidenceError({ message: 'Worker requires its committed batch claim' })
-    if (mode === 'record')
-      yield* (yield* EntryInferenceJournal).recordHandoff(entryCompletionFixture(request, request.observedAt).handoff)
+    if (mode === 'record') {
+      const journal = yield* EntryInferenceJournal
+      const checkpoint = stagedCheckpointFixture(request, request.observedAt)
+      for (const claim of checkpoint.claims) {
+        yield* journal.recordVisualClaim(claim)
+        const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
+        if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+      }
+
+      yield* journal.recordHandoff(entryCompletionFixture(request, request.observedAt).handoff)
+    }
     if (mode === 'record')
       yield* store.record(
         request,
         yield* Effect.fromResult(
           makeJevEvaluationReceipt(request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+            schemaVersion: 'bayn.jev-evaluation-receipt.v3',
             requestId: request.requestId,
             startedAt: request.observedAt,
             completedAt: request.observedAt,

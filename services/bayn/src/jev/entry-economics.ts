@@ -1,5 +1,6 @@
 import { Result } from 'effect'
 import { cryptoMaximumTakerFeeBps, cryptoTakerFeeBps, type CryptoFeeTier } from '../broker/crypto-fees'
+import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { OrderSide, OrderType } from '../execution/contracts'
@@ -10,13 +11,31 @@ import { calculateSessionFees, receivedCryptoFee } from '../strategy/execution-m
 import { JevContractError } from './contract'
 import { maximumAllocatedBuyQuantities } from './entry-sizing'
 import { jevBreakEvenExitBid, jevBreakEvenExitLimitPrice } from './liquidation-economics'
-import type { JevProtocol } from './protocol'
+import type { JevProtocolMaterial } from './protocol'
 
-export const jevMaximumEntryAskMicros = (protocol: JevProtocol, observedAsk: bigint): bigint =>
-  (observedAsk * BigInt(10_000 + protocol.maximumEntryQuoteDriftBps)) / 10_000n
+export const jevEntryPriceAllowances = (protocol: JevProtocolMaterial, symbol: string) =>
+  // Retired protocols retain their original price arithmetic for immutable financial evidence.
+  protocol.schemaVersion === 'bayn.jev.protocol.v28' ||
+  (protocol.schemaVersion === 'bayn.jev.protocol.v27' && instrumentMarket(symbol) === MarketKind.Crypto)
+    ? { quoteDriftBps: 0, limitSlippageBps: 0 }
+    : {
+        quoteDriftBps: protocol.maximumEntryQuoteDriftBps,
+        limitSlippageBps: protocol.maximumEntryLimitSlippageBps,
+      }
+
+export const jevMaximumEntryAskMicros = (
+  protocol: JevProtocolMaterial,
+  symbol: string,
+  observedAsk: bigint,
+): bigint => {
+  const maximumAsk = (observedAsk * BigInt(10_000 + jevEntryPriceAllowances(protocol, symbol).quoteDriftBps)) / 10_000n
+  return protocol.schemaVersion === 'bayn.jev.protocol.v28'
+    ? quantizeInstrumentPriceMicros(symbol, maximumAsk, 'UP')
+    : maximumAsk
+}
 
 export const jevEntryEconomics = (input: {
-  readonly protocol: JevProtocol
+  readonly protocol: JevProtocolMaterial
   readonly symbol: string
   readonly bidMicros: bigint
   readonly askMicros: bigint
@@ -25,7 +44,7 @@ export const jevEntryEconomics = (input: {
 }) =>
   Result.gen(function* () {
     const { protocol, symbol } = input
-    const maximumAsk = jevMaximumEntryAskMicros(protocol, input.askMicros)
+    const maximumAsk = jevMaximumEntryAskMicros(protocol, symbol, input.askMicros)
     const maximumEntryPrice = (yield* deriveExecutionIntentPricing({
       symbol,
       side: OrderSide.Buy,
@@ -33,7 +52,7 @@ export const jevEntryEconomics = (input: {
       timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
       quantityAtoms: quantityScale,
       referencePriceMicros: maximumAsk,
-      limitSlippageBps: BigInt(protocol.maximumEntryLimitSlippageBps),
+      limitSlippageBps: BigInt(jevEntryPriceAllowances(protocol, symbol).limitSlippageBps),
     })).expectedExecutionPriceMicros
     const maximumTargetWeight = Math.min(protocol.maximumGrossWeight, protocol.maximumSymbolWeight)
     const quantities = yield* maximumAllocatedBuyQuantities({

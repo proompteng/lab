@@ -1,3 +1,4 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
 import { makeReplayInferenceBudget } from './inference-timing'
 import { jevInstructions } from '../jev/instructions'
@@ -16,7 +17,7 @@ import { OrderSide } from '../execution/contracts'
 import { sha256, canonicalHashV1Result } from '../hash'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
-import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { jevModel } from '../jev/contract'
@@ -185,7 +186,9 @@ const simulate = (
             return { status: 'AVAILABLE' as const, snapshot }
           }),
       }
-      const risk = yield* loadExecutionRiskPolicy('control-session-test', equityMarketProfile.universe)
+      const risk = yield* Effect.fromResult(
+        makeExecutionRiskPolicy('control-session-test', equityMarketProfile.universe),
+      )
       const providerClock = yield* TestClock.make()
       const fs = yield* FileSystem.FileSystem
       const management =
@@ -216,7 +219,7 @@ const simulate = (
                   },
                 },
               },
-              costs: {
+              costs: replayRateCardFixture({
                 jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
                 chart: {
                   inputMicrosPerMillionTokens: '100000',
@@ -224,7 +227,7 @@ const simulate = (
                   cachedInputMicrosPerMillionTokens: '10000',
                   cacheWriteInputMicrosPerMillionTokens: '125000',
                 },
-              },
+              }),
             }
       const report = yield* runControlSession({
         policy:
@@ -785,14 +788,16 @@ const frozenControlFixture = () => {
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
-      schemaVersion: 'bayn.backtest.v6',
+      schemaVersion: 'bayn.backtest.v10',
+      policy: 'JEV' as const,
+      latencyStress: null,
       jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       inference: {
         mode: 'measured-providers',
         maximumCalls: 1000,
         models: { jev: jevModel, chart: 'gpt-6-luna' },
         inputDefinition: 'bayn.jev-entry-state.v22',
-        costs: {
+        costs: replayRateCardFixture({
           jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           chart: {
             inputMicrosPerMillionTokens: '100000',
@@ -800,7 +805,7 @@ const frozenControlFixture = () => {
             cachedInputMicrosPerMillionTokens: '10000',
             cacheWriteInputMicrosPerMillionTokens: '125000',
           },
-        },
+        }),
       },
       allocatedDataCostPerSessionMicros: '1000000',
       replicate: 'control-source-fixture',

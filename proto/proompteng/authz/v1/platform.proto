@@ -10,6 +10,9 @@ service PlatformAuthorizationService {
   rpc RecordPlatformExecution(RecordPlatformExecutionRequest) returns (RecordPlatformExecutionResponse);
   rpc GetPlatformExecution(GetPlatformExecutionRequest) returns (GetPlatformExecutionResponse);
   rpc WritePolicyRelationships(WritePolicyRelationshipsRequest) returns (WritePolicyRelationshipsResponse);
+  rpc ListPlatformConnections(ListPlatformConnectionsRequest) returns (ListPlatformConnectionsResponse);
+  rpc PutPlatformConnection(PutPlatformConnectionRequest) returns (PutPlatformConnectionResponse);
+  rpc RevokePlatformConnection(RevokePlatformConnectionRequest) returns (RevokePlatformConnectionResponse);
   rpc CreatePlatformDelegation(CreatePlatformDelegationRequest) returns (CreatePlatformDelegationResponse);
   rpc ActivatePlatformDelegation(ActivatePlatformDelegationRequest) returns (ActivatePlatformDelegationResponse);
   rpc RevokePlatformDelegation(RevokePlatformDelegationRequest) returns (RevokePlatformDelegationResponse);
@@ -134,11 +137,69 @@ message CreatePlatformDelegationRequest {
   string proof_key_thumbprint = 7;
   uint64 expires_at_unix_ms = 8;
   PlatformBinding binding = 9;
+  string connection_id = 10;
+  uint64 expected_connection_version = 11;
 }
 
 message CreatePlatformDelegationResponse {
   string delegation_id = 1;
   string credential = 2;
+  PlatformDecision decision = 3;
+  uint64 credential_generation = 4;
+}
+
+message PlatformConnection {
+  string id = 1;
+  string client_service = 2;
+  string client_reference = 3;
+  repeated string actions = 4;
+  repeated PlatformResource resources = 5;
+  PlatformBinding binding = 6;
+  uint64 version = 7;
+  bool enabled = 8;
+  string delegation_id = 9;
+  PlatformBinding credential_binding = 10;
+  string proof_key_thumbprint = 11;
+  uint64 expires_at_unix_ms = 12;
+  bool credential_active = 13;
+  uint64 credential_generation = 14;
+  uint64 recovery_generation = 15;
+}
+message ListPlatformConnectionsRequest {
+  PlatformHumanSession issuer = 1;
+  string client_service = 2;
+  PlatformBinding binding = 3;
+}
+message ListPlatformConnectionsResponse {
+  repeated PlatformConnection connections = 1;
+  uint64 recovery_generation = 2;
+}
+message PutPlatformConnectionRequest {
+  string operation_id = 1;
+  PlatformHumanSession issuer = 2;
+  string client_service = 3;
+  string connection_id = 4;
+  uint64 expected_version = 5;
+  string client_reference = 6;
+  repeated string actions = 7;
+  repeated PlatformResource resources = 8;
+  PlatformBinding binding = 9;
+}
+message PutPlatformConnectionResponse {
+  string connection_id = 1;
+  uint64 version = 2;
+  uint64 credential_generation = 3;
+  PlatformDecision decision = 4;
+}
+message RevokePlatformConnectionRequest {
+  string operation_id = 1;
+  PlatformHumanSession issuer = 2;
+  string client_service = 3;
+  string connection_id = 4;
+}
+message RevokePlatformConnectionResponse {
+  string connection_id = 1;
+  uint64 credential_generation = 2;
   PlatformDecision decision = 3;
 }
 

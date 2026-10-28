@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { prepareEntryInferenceInput } from './entry-inference-input'
+import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
 import { defaultJevProtocolDocument } from './protocol'
 
 const bars = [
@@ -10,7 +10,7 @@ const bars = [
   { minuteBeforeWindowEnd: 1, open: 100.5, high: 102, low: 100, close: 101, volume: 20 },
 ]
 const input = {
-  schemaVersion: 'bayn.entry-inference-input.v2',
+  schemaVersion: 'bayn.entry-inference-input.v5',
   numericalState: {
     schemaVersion: 'bayn.jev-entry-state.v22',
     task: { decisionPurpose: 'ENTRY' },
@@ -24,6 +24,32 @@ const input = {
 }
 
 describe('sequential entry inference input', () => {
+  test('binds ablation selection to a distinct request and rejects absent or substituted policies', () => {
+    const ablation = {
+      ...input,
+      schemaVersion: 'bayn.entry-ablation-input.v1',
+      selectionPolicy: EntryAblationSelection.LowestModeledLoss,
+    }
+    const prepared = Result.getOrThrow(prepareEntryInferenceInput(ablation))
+    expect(prepared.requestHash).not.toBe(Result.getOrThrow(prepareEntryInferenceInput(input)).requestHash)
+    for (const changed of [
+      { ...input, schemaVersion: ablation.schemaVersion },
+      { ...ablation, selectionPolicy: 'BEST_OBSERVED_PROFIT' },
+      { ...ablation, schemaVersion: input.schemaVersion },
+    ])
+      expect(Result.isFailure(prepareEntryInferenceInput(changed))).toBe(true)
+  })
+
+  test('rejects all retired chart-question input contracts for execution', () => {
+    for (const schemaVersion of [
+      'bayn.entry-inference-input.v1',
+      'bayn.entry-inference-input.v2',
+      'bayn.entry-inference-input.v3',
+      'bayn.entry-inference-input.v4',
+    ])
+      expect(Result.isFailure(prepareEntryInferenceInput({ ...input, schemaVersion }))).toBe(true)
+  })
+
   test('seals source facts before either provider body is evaluated', () => {
     const prepared = Result.getOrThrow(prepareEntryInferenceInput(input))
     expect(prepared.requestHash).toBe(Result.getOrThrow(canonicalHashV1Result(prepared.input)))
@@ -77,4 +103,10 @@ describe('sequential entry inference input', () => {
       Result.isFailure(prepareEntryInferenceInput({ ...input, schemaVersion: 'bayn.entry-inference-input.v1' })),
     ).toBe(true)
   })
+})
+
+test('equity funding cannot import a crypto fee tier', () => {
+  expect(
+    Result.isFailure(prepareEntryInferenceInput({ ...input, funding: { ...input.funding, cryptoFeeTier: 4 } })),
+  ).toBe(true)
 })
