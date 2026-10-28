@@ -4,7 +4,6 @@ import { isCryptoMarketFeature } from '../features/crypto-contract'
 import { Result } from 'effect'
 
 import {
-  IntradayCandidateEvidencePolicy,
   IntradaySnapshotFailure,
   IntradaySnapshotPurpose,
   type IntradayBar,
@@ -189,7 +188,7 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
       if (selected !== undefined) featureReceipts.push(selected)
       else if (candidates.has(symbol)) {
         let message = 'matching complete rolling feature is unavailable'
-        if (request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade) {
+        if (request.candidateEvidencePolicy !== undefined) {
           const present = new Set(bars.map((bar) => intradayInstantNanos(bar.value.eventAt)))
           const missing = missingMinuteBars(
             bars.map((bar) => bar.value),
@@ -268,7 +267,7 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
     }
     const excluded = new Set(exclusions.keys())
     const technicalFeatures =
-      request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
+      request.candidateEvidencePolicy !== undefined
         ? technicalReceipts
         : technicalReceipts.filter((feature) => !excluded.has(feature.value.material.symbol))
     const technical =

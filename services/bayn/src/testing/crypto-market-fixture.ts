@@ -161,7 +161,7 @@ export const cryptoMarketFixture = (
     universe: source.symbols,
     symbols: [candidate, jevBenchmarkSymbol(candidate)].sort(),
     candidateSymbols: [candidate],
-    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
     benchmarkEvidencePolicy: cryptoMarketProfile.benchmarkEvidencePolicy,
     benchmarkSymbols: [jevBenchmarkSymbol(candidate)],
     feed: cryptoMarketProfile.feed,

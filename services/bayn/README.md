@@ -187,13 +187,22 @@ returns use the same starting minute and completed ending minute. Their comparis
 and ends at `relativeSignals.comparisonAt`; it never compares a live candidate quote against an older benchmark close.
 The candidate's current quote return, spread, breakout and range location remain in `candidate.currentPriceSignals`,
 separate from the relative returns. Crypto breakout uses the fresh executable bid against the completed window's
-range high and labels `breakoutPricingBasis=CURRENT_BID`. Its older actual trade remains contextual; it cannot cap
-the current breakout. Equity breakout retains the current ask and fresh-trade confirmation basis. Executable quote pricing, fee estimates and funding still use the fresh candidate
-quote. Equity relative returns retain the current-quote comparison and label it `CURRENT_QUOTES`.
+range high and labels `breakoutPricingBasis=CURRENT_BID`. An older actual trade remains contextual; it cannot cap
+the current breakout. The current candidate policy also uses the bid for equity breakout and retains its required actual
+window trade. Executable quote pricing, fee estimates and funding use the fresh candidate quote. Equity relative returns
+retain the current-quote comparison and label it `CURRENT_QUOTES`.
 BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
-or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate. Every tradable candidate
-still requires its own real window trade, fresh two-sided quote, a valid model-selected setup and protective price choices, and a funded target. A missing ETH print excludes ETH as a candidate without excluding BTC when ETH's completed
-bars remain valid. Equity benchmarks retain the existing SPY quote, trade and feature contract.
+or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate.
+Protocol v29 uses `bayn.candidate-evidence.market-quotes.v1`: crypto candidates require a fresh two-sided quote and
+verified bars and features; an actual window trade is optional context. `candidate.latestTrade` is `null` when none
+was observed, and no quote or bar is relabeled as a trade. Alpaca can publish crypto bars from quote midpoints with
+zero volume when no trades occur ([provider contract](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data)).
+Missing trade context therefore does not exclude ETH before assessment. A valid model-assessed setup, protective price
+choices, fee-inclusive funding and all execution and financial gates remain required. Equity candidates still require
+an actual window trade; equity benchmarks retain the existing SPY quote, trade and feature contract.
+Migration 160 rejects retired protocol writes and dispatch while preserving immutable financial receipts and late
+provider cost outcomes. Cutover requires terminal cycles, flat inventory, settled orders, complete accounting and fresh
+exact reconciliation, followed by native OBSERVE recovery and a reviewed same-account PAPER mandate for the new image.
 The immutable query records canonical `benchmarkSymbols`, including symbols that are also candidates. Missing
 required benchmark bars or features produce source `not-ready` during snapshot acquisition, before any model request.
 Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
