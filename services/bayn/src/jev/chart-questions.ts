@@ -96,11 +96,11 @@ export const buildChartDecisionsRequest = (
   stage: 'CHART' | { readonly selectedEnd: string },
 ) =>
   Result.gen(function* () {
+    const { chart, protocol, funding } = source
     // Revalidation must hash actual source content; claimed chart hashes cannot establish cache identity.
-    const key = yield* canonicalHashV1Result({ source, stage, questionPolicy: chartQuestionPolicy })
+    const key = yield* canonicalHashV1Result({ chart, protocol, funding, stage, questionPolicy: chartQuestionPolicy })
     const cached = preparedChartRequests.get(key)
     if (cached !== undefined) return yield* detachedChartRequest(cached)
-    const { chart, protocol, funding } = source
     const economics = yield* jevEntryEconomics({
       protocol,
       symbol: chart.symbol,
