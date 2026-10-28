@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Schema } from 'effect'
+import { Effect, Exit, Layer, Option, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import { decodeJevEvaluationRequest } from '../jev/evidence'
@@ -178,6 +178,14 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
               return yield* recordHandoff(successor.handoff, loaded)
           }
         }),
+      ).pipe(
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit) && input.successor.kind !== 'NONE'
+            ? commit(
+                Effect.flatMap(load(input.terminal.requestId), (loaded) => recordTerminal(input.terminal, loaded)),
+              ).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
       ),
     recordHandoff: (input: EntryHandoff) =>
       commit(Effect.flatMap(load(input.requestId), (loaded) => recordHandoff(input, loaded))),

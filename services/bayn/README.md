@@ -81,6 +81,8 @@ PostgreSQL commits each visual terminal receipt with its next visual admission o
 Jev request in one transaction, before any successor provider I/O. The request row serializes retries. A repeated
 transition verifies the same bytes and never permits another dispatch. Expiry can still retain the paid terminal
 receipt while refusing a successor claim; acknowledgement after the original deadline cannot authorize provider I/O.
+If a successor write fails or is interrupted, PostgreSQL retains the paid terminal separately after rolling back
+that transition. The original operation still fails and cannot dispatch its successor.
 An unused BASE_START skip commits with its handoff in one transaction; paid visual terminal evidence remains
 independently durable. Normal batch completion compares the admitted observation and every committed request, receipt
 and resolution directly before sealing the result. Recovery still reconstructs incomplete stored graphs. Completion
