@@ -17,9 +17,9 @@ import {
   JevOutcome,
   type JevEvaluationRequest,
 } from '../jev/evidence'
-import { EntryInferenceJournal } from '../jev/entry-inference'
+import { EntryInferenceJournal, type EntryHandoff } from '../jev/entry-inference'
 import { JevFailure } from '../jev/contract'
-import { decodeStagedCheckpoint } from '../jev/staged-checkpoint'
+import { decodeStagedCheckpoint, type StagedDispatchClaim, type StagedTerminalReceipt } from '../jev/staged-checkpoint'
 import { verifyStagedCheckpointHandoff } from '../jev/staged-inference-cost-evidence'
 import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { JevEvaluationStore } from '../jev/evaluation'
@@ -402,95 +402,109 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
         )
           return yield* failure('Committed visual journal evidence is immutable')
       })
+    const recordClaim = (input: StagedDispatchClaim) =>
+      Effect.gen(function* () {
+        const request = yield* Effect.fromResult(decodeJevEvaluationRequest(yield* read('request', input.requestId)))
+        const checkpoint = yield* staged(request)
+        yield* Effect.fromResult(
+          decodeStagedCheckpoint(request, {
+            ...checkpoint,
+            claims: [...checkpoint.claims.filter((row) => row.stage !== input.stage), input],
+          }),
+        )
+        const existing = yield* read(`visual-claim-${input.stage}`, input.requestId)
+        if (existing !== null) {
+          yield* same(existing, input)
+          return { dispatchAllowed: false }
+        }
+        const saved = yield* requireEvaluation(request)
+        const now = yield* Clock.currentTimeMillis
+        if (
+          saved.resolution !== null ||
+          now >= Date.parse(request.expiresAt) ||
+          now < Date.parse(input.claimedAt) ||
+          (yield* read('handoff', input.requestId)) !== null
+        )
+          return { dispatchAllowed: false }
+        yield* write(`visual-claim-${input.stage}`, input.requestId, input)
+        return { dispatchAllowed: true }
+      })
+    const recordTerminal = (input: StagedTerminalReceipt) =>
+      Effect.gen(function* () {
+        const request = yield* Effect.fromResult(decodeJevEvaluationRequest(yield* read('request', input.requestId)))
+        const checkpoint = yield* staged(request)
+        yield* Effect.fromResult(
+          decodeStagedCheckpoint(request, {
+            ...checkpoint,
+            terminals: [...checkpoint.terminals.filter((row) => row.stage !== input.stage), input],
+          }),
+        )
+        const existing = yield* read(`visual-terminal-${input.stage}`, input.requestId)
+        if (existing === null) yield* write(`visual-terminal-${input.stage}`, input.requestId, input)
+        else yield* same(existing, input)
+      })
+    const recordHandoff = (input: EntryHandoff) =>
+      Effect.gen(function* () {
+        const raw = yield* read('request', input.requestId)
+        const request = yield* Effect.fromResult(decodeJevEvaluationRequest(raw))
+        const handoff = yield* Effect.fromResult(
+          decodeEntryHandoff(
+            {
+              requestId: request.requestId,
+              input: request.request,
+              observedAt: request.observedAt,
+              expiresAt: request.expiresAt,
+            },
+            input,
+          ),
+        )
+        const skip = handoff.baseStart?.status === 'NOT_REQUESTED' ? handoff.baseStart.skip : undefined
+        if (skip !== undefined) {
+          const checkpoint = yield* staged(request)
+          yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [skip] }))
+          const stored = yield* read('base-start-skip', input.requestId)
+          if (stored === null) yield* write('base-start-skip', input.requestId, skip)
+          else yield* same(stored, skip)
+        }
+        const existing = yield* read('handoff', request.requestId)
+        yield* Effect.fromResult(verifyStagedCheckpointHandoff(yield* staged(request), handoff))
+        if (existing !== null) {
+          if (
+            (yield* Effect.fromResult(canonicalHashV1Result(existing))) !==
+            (yield* Effect.fromResult(canonicalHashV1Result(handoff)))
+          )
+            return yield* failure('A committed provider handoff has different bytes')
+          return { dispatchAllowed: false }
+        }
+        const saved = yield* requireEvaluation(request)
+        yield* write('handoff', request.requestId, handoff)
+        return { dispatchAllowed: saved.resolution === null }
+      })
     const handoffs: EntryInferenceJournal['Service'] = {
-      recordVisualClaim: (input) =>
+      recordVisualClaim: (input) => atomic(recordClaim(input)),
+      recordVisualTransition: ({ terminal, successor }) =>
         atomic(
           Effect.gen(function* () {
-            const request = yield* Effect.fromResult(
-              decodeJevEvaluationRequest(yield* read('request', input.requestId)),
-            )
-            const checkpoint = yield* staged(request)
-            yield* Effect.fromResult(
-              decodeStagedCheckpoint(request, {
-                ...checkpoint,
-                claims: [...checkpoint.claims.filter((row) => row.stage !== input.stage), input],
-              }),
-            )
-            const existing = yield* read(`visual-claim-${input.stage}`, input.requestId)
-            if (existing !== null) {
-              yield* same(existing, input)
-              return { dispatchAllowed: false }
-            }
-            const saved = yield* requireEvaluation(request)
-            const now = yield* Clock.currentTimeMillis
             if (
-              saved.resolution !== null ||
-              now >= Date.parse(request.expiresAt) ||
-              now < Date.parse(input.claimedAt) ||
-              (yield* read('handoff', input.requestId)) !== null
+              (successor.kind === 'VISUAL' &&
+                (terminal.stage !== 'CHART' ||
+                  successor.claim.stage !== 'BASE_START' ||
+                  successor.claim.requestId !== terminal.requestId)) ||
+              (successor.kind === 'HANDOFF' && successor.handoff.requestId !== terminal.requestId)
             )
-              return { dispatchAllowed: false }
-            yield* write(`visual-claim-${input.stage}`, input.requestId, input)
-            return { dispatchAllowed: true }
-          }),
-        ),
-      recordVisualTerminal: (input) =>
-        atomic(
-          Effect.gen(function* () {
-            const request = yield* Effect.fromResult(
-              decodeJevEvaluationRequest(yield* read('request', input.requestId)),
-            )
-            const checkpoint = yield* staged(request)
-            yield* Effect.fromResult(
-              decodeStagedCheckpoint(request, {
-                ...checkpoint,
-                terminals: [...checkpoint.terminals.filter((row) => row.stage !== input.stage), input],
-              }),
-            )
-            const existing = yield* read(`visual-terminal-${input.stage}`, input.requestId)
-            if (existing === null) yield* write(`visual-terminal-${input.stage}`, input.requestId, input)
-            else yield* same(existing, input)
-          }),
-        ),
-      recordHandoff: (input) =>
-        atomic(
-          Effect.gen(function* () {
-            const raw = yield* read('request', input.requestId)
-            const request = yield* Effect.fromResult(decodeJevEvaluationRequest(raw))
-            const handoff = yield* Effect.fromResult(
-              decodeEntryHandoff(
-                {
-                  requestId: request.requestId,
-                  input: request.request,
-                  observedAt: request.observedAt,
-                  expiresAt: request.expiresAt,
-                },
-                input,
-              ),
-            )
-            const skip = handoff.baseStart?.status === 'NOT_REQUESTED' ? handoff.baseStart.skip : undefined
-            if (skip !== undefined) {
-              const checkpoint = yield* staged(request)
-              yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [skip] }))
-              const stored = yield* read('base-start-skip', input.requestId)
-              if (stored === null) yield* write('base-start-skip', input.requestId, skip)
-              else yield* same(stored, skip)
+              return yield* failure('A visual successor must belong to its terminal request and stage')
+            yield* recordTerminal(terminal)
+            switch (successor.kind) {
+              case 'NONE':
+                return { dispatchAllowed: false }
+              case 'VISUAL':
+                return yield* recordClaim(successor.claim)
+              case 'HANDOFF':
+                return yield* recordHandoff(successor.handoff)
             }
-            const existing = yield* read('handoff', request.requestId)
-            yield* Effect.fromResult(verifyStagedCheckpointHandoff(yield* staged(request), handoff))
-            if (existing !== null) {
-              if (
-                (yield* Effect.fromResult(canonicalHashV1Result(existing))) !==
-                (yield* Effect.fromResult(canonicalHashV1Result(handoff)))
-              )
-                return yield* failure('A committed provider handoff has different bytes')
-              return { dispatchAllowed: false }
-            }
-            const saved = yield* requireEvaluation(request)
-            yield* write('handoff', request.requestId, handoff)
-            return { dispatchAllowed: saved.resolution === null }
           }),
         ),
+      recordHandoff: (input) => atomic(recordHandoff(input)),
     }
     return {
       handoffs,

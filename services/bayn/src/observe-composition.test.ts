@@ -248,7 +248,7 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
     Effect.provideService(DecisionsClient, { evaluate: () => unexpected }),
     Effect.provideService(EntryInferenceJournal, {
       recordVisualClaim: () => unexpected,
-      recordVisualTerminal: () => unexpected,
+      recordVisualTransition: () => unexpected,
 
       recordHandoff: () => unexpected,
     }),

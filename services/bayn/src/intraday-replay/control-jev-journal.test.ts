@@ -97,7 +97,8 @@ const retainCheckpoint = (journal: Effect.Success<typeof setup>['journal'], valu
     for (const claim of checkpoint.claims) {
       yield* journal.handoffs.recordVisualClaim(claim)
       const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
-      if (terminal !== undefined) yield* journal.handoffs.recordVisualTerminal(terminal)
+      if (terminal !== undefined)
+        yield* journal.handoffs.recordVisualTransition({ terminal: terminal, successor: { kind: 'NONE' } })
     }
   })
 const record = (journal: Effect.Success<typeof setup>['journal'], value = request) =>
@@ -274,7 +275,7 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       expect(Result.isFailure(yield* journal.retainCall(chartCall).pipe(Effect.result))).toBe(true)
       yield* journal.handoffs.recordVisualClaim(chartClaim)
       yield* journal.retainCall(chartCall)
-      yield* journal.handoffs.recordVisualTerminal(chartTerminal)
+      yield* journal.handoffs.recordVisualTransition({ terminal: chartTerminal, successor: { kind: 'NONE' } })
       const base = Result.getOrThrow(
         makeSelectedBaseStartStageRequest(
           {
@@ -297,7 +298,7 @@ test('raw chart and Jev provider calls bind their parent through the committed s
       expect(Result.isFailure(yield* journal.retainCall(baseCall).pipe(Effect.result))).toBe(true)
       yield* journal.handoffs.recordVisualClaim(baseClaim)
       yield* journal.retainCall(baseCall)
-      yield* journal.handoffs.recordVisualTerminal(baseTerminal)
+      yield* journal.handoffs.recordVisualTransition({ terminal: baseTerminal, successor: { kind: 'NONE' } })
       expect(Result.isFailure(yield* journal.retainCall(jevCall).pipe(Effect.result))).toBe(true)
       expect(
         Result.isFailure(

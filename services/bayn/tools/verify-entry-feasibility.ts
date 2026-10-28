@@ -127,6 +127,12 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
       terminals: StagedCheckpoint['terminals'][number][]
       skips: StagedCheckpoint['skips'][number][]
     } = { claims: [], terminals: [], skips: [] }
+    const recordHandoff: typeof EntryInferenceJournal.Service.recordHandoff = (handoff) =>
+      Effect.sync(() => {
+        if (handoff.baseStart?.status === 'NOT_REQUESTED') checkpoint.skips.push(handoff.baseStart.skip)
+        committedHandoffs++
+        return { dispatchAllowed: true }
+      })
     const branch = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
       Effect.andThen(
         evaluateClaimedEntryInference({
@@ -143,16 +149,20 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
             checkpoint.claims.push(claim)
             return { dispatchAllowed: true }
           }),
-        recordVisualTerminal: (terminal) =>
-          Effect.sync(() => {
+        recordVisualTransition: ({ terminal, successor }) =>
+          Effect.gen(function* () {
             checkpoint.terminals.push(terminal)
+            switch (successor.kind) {
+              case 'NONE':
+                return { dispatchAllowed: false }
+              case 'VISUAL':
+                checkpoint.claims.push(successor.claim)
+                return { dispatchAllowed: true }
+              case 'HANDOFF':
+                return yield* recordHandoff(successor.handoff)
+            }
           }),
-        recordHandoff: (handoff) =>
-          Effect.sync(() => {
-            if (handoff.baseStart?.status === 'NOT_REQUESTED') checkpoint.skips.push(handoff.baseStart.skip)
-            committedHandoffs++
-            return { dispatchAllowed: true }
-          }),
+        recordHandoff,
       }),
       Effect.provideService(DecisionsClient, {
         evaluate: () =>

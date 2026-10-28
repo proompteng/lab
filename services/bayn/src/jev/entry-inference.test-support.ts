@@ -159,7 +159,7 @@ export const entryInferenceFixtureLayer = Layer.mergeAll(
   Layer.sync(EntryInferenceJournal, () => {
     const saved = new Map<string, string>()
     const claims = new Map<string, string>()
-    return {
+    const journal: typeof EntryInferenceJournal.Service = {
       recordVisualClaim: (claim) =>
         Effect.sync(() => {
           const key = `${claim.requestId}:${claim.stage}`
@@ -167,7 +167,16 @@ export const entryInferenceFixtureLayer = Layer.mergeAll(
           claims.set(key, claim.claimHash)
           return { dispatchAllowed: prior === undefined }
         }),
-      recordVisualTerminal: () => Effect.void,
+      recordVisualTransition: ({ successor }) => {
+        switch (successor.kind) {
+          case 'NONE':
+            return Effect.succeed({ dispatchAllowed: false })
+          case 'VISUAL':
+            return journal.recordVisualClaim(successor.claim)
+          case 'HANDOFF':
+            return journal.recordHandoff(successor.handoff)
+        }
+      },
 
       recordHandoff: (handoff) =>
         Effect.suspend(() => {
@@ -184,6 +193,7 @@ export const entryInferenceFixtureLayer = Layer.mergeAll(
           return Effect.succeed({ dispatchAllowed: previous === undefined })
         }),
     }
+    return journal
   }),
 )
 
