@@ -27,6 +27,8 @@ Runtime expectations:
 - the production container serves static assets from `.output/public`
 - the production container starts the HTTP runtime from `.output/server/index.mjs`
 - a valid release must include both artifacts; a client-only Vite build is not sufficient
+- the application runs without a Docker daemon, Docker socket mounts, or runtime Docker/Buildx clients
+- the workspace bootstrap init container exits after preparing the persistent `/workspace`; it is not a sidecar
 
 ## Image Build
 

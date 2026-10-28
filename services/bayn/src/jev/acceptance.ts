@@ -1,6 +1,7 @@
 import { BigDecimal, Data, Result, Schema } from 'effect'
 
 import protocol from '../../../../docs/bayn/jev-migration-acceptance-v2.json'
+import { decimalToMicrosResult } from '../broker/alpaca/normalizers'
 import { canonicalHashV1Result } from '../hash'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
@@ -76,6 +77,31 @@ export class JevAcceptanceError extends Data.TaggedError('JevAcceptanceError')<{
 }> {}
 
 export const jevAcceptanceProtocolHash = () => canonicalHashV1Result(protocol)
+
+export const jevAcceptanceExecutionRiskLimits = () => {
+  const limits = protocol.riskAcceptance
+  return {
+    maxOrderNotionalMicros: BigInt(limits.existingMaximumOrderAndSymbolNotionalUsd) * 1_000_000n,
+    maxSymbolExposureMicros: BigInt(limits.existingMaximumOrderAndSymbolNotionalUsd) * 1_000_000n,
+    maxGrossExposureMicros: BigInt(limits.existingMaximumGrossAndNetExposureUsd) * 1_000_000n,
+    maxNetExposureMicros: BigInt(limits.existingMaximumGrossAndNetExposureUsd) * 1_000_000n,
+    maxDailyTradedNotionalMicros: BigInt(limits.existingMaximumDailyTradedNotionalUsd) * 1_000_000n,
+  }
+}
+
+export const jevAcceptanceInferenceRateFloor = () =>
+  Result.all({
+    inputMicrosPerMillionTokens: decimalToMicrosResult(
+      protocol.executionEvidence.modelCost.usdPerMillionInputTokens,
+      false,
+      'frozen Jev input tariff',
+    ),
+    outputMicrosPerMillionTokens: decimalToMicrosResult(
+      protocol.executionEvidence.modelCost.usdPerMillionOutputTokens,
+      false,
+      'frozen Jev output tariff',
+    ),
+  }).pipe(Result.mapError((cause) => new JevAcceptanceError({ message: 'Invalid frozen inference tariff', cause })))
 
 const sum = (values: ReadonlyArray<bigint>): bigint => values.reduce((total, value) => total + value, 0n)
 const maximum = (values: ReadonlyArray<bigint>): bigint =>

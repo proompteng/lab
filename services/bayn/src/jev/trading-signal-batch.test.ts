@@ -266,27 +266,29 @@ describe('Jev trading batch source reproduction', () => {
       }),
     )
     expect(Result.isFailure(reproduceJevTradingSignalBatch(input.observation, omitted))).toBe(true)
+    const alteredCandidates = material.candidates.map((candidate) => {
+      if (candidate.status !== JevCandidatePlanStatus.Requested || candidate.symbol !== 'AAPL') return candidate
+      const { requestId: _, ...evaluation } = candidate.request
+      const request = {
+        ...evaluation.request,
+        numericalState: { ...evaluation.request.numericalState, fabricated: 'favorable state' },
+      }
+      return {
+        ...candidate,
+        request: Result.getOrThrow(
+          makeJevEvaluationRequest({
+            ...evaluation,
+            request,
+            requestHash: Result.getOrThrow(canonicalHashV1Result(request)),
+          }),
+        ),
+      }
+    })
     const altered = Result.getOrThrow(
       makeJevBatchPlan({
         ...material,
-        candidates: material.candidates.map((candidate) => {
-          if (candidate.status !== JevCandidatePlanStatus.Requested || candidate.symbol !== 'AAPL') return candidate
-          const { requestId: _, ...evaluation } = candidate.request
-          const request = {
-            ...evaluation.request,
-            numericalState: { ...evaluation.request.numericalState, fabricated: 'favorable state' },
-          }
-          return {
-            ...candidate,
-            request: Result.getOrThrow(
-              makeJevEvaluationRequest({
-                ...evaluation,
-                request,
-                requestHash: Result.getOrThrow(canonicalHashV1Result(request)),
-              }),
-            ),
-          }
-        }),
+        candidates: alteredCandidates,
+        questionSetHash: Result.getOrThrow(jevBatchQuestionSetHash(alteredCandidates)),
       }),
     )
     expect(Result.isFailure(reproduceJevTradingSignalBatch(input.observation, altered))).toBe(true)

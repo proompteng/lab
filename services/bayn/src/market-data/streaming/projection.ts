@@ -120,7 +120,10 @@ export const compareBarRevisions = (a: IntradayBar, b: IntradayBar): number =>
   compareIntradayInstants(a.ingestedAt, b.ingestedAt) ||
   a.sourcePartition - b.sourcePartition ||
   compareOffsets(a.sourceOffset, b.sourceOffset)
-const compareCurrent = (a: IntradayQuote | IntradayTrade, b: IntradayQuote | IntradayTrade): number =>
+export const compareCurrentMarketRecord = (
+  a: IntradayQuote | IntradayTrade,
+  b: IntradayQuote | IntradayTrade,
+): number =>
   compareIntradayInstants(a.eventAt, b.eventAt) ||
   a.sourcePartition - b.sourcePartition ||
   compareOffsets(a.sourceOffset, b.sourceOffset)
@@ -329,7 +332,7 @@ const incorporateDecodedRecord = (
     }
     case RawMarketEventKind.Quote: {
       const current = state.quotes.get(event.value.symbol)
-      if (current !== undefined && compareCurrent(event.value, current.value) <= 0) return state
+      if (current !== undefined && compareCurrentMarketRecord(event.value, current.value) <= 0) return state
       const entry = { value: event.value, availableAtMs, sequence, recordHash }
       const previousHistory = state.quoteHistory.get(event.value.symbol) ?? []
       const evicted = previousHistory.length >= 512 ? previousHistory[previousHistory.length - 512] : undefined
@@ -356,7 +359,7 @@ const incorporateDecodedRecord = (
     }
     case RawMarketEventKind.Trade: {
       const current = state.trades.get(event.value.symbol)
-      if (current !== undefined && compareCurrent(event.value, current.value) <= 0) return state
+      if (current !== undefined && compareCurrentMarketRecord(event.value, current.value) <= 0) return state
       const entry = { value: event.value, availableAtMs, sequence, recordHash }
       const history = [...(state.tradeHistory.get(event.value.symbol) ?? []), entry]
       const evicted = history.length > 512 ? history[history.length - 513] : undefined

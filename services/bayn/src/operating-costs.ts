@@ -106,8 +106,20 @@ export const operatingCostSourceHashes = (evidence: OperatingCostEvidence): read
   ].sort()
 
 /** External expenses never become broker cash movements or overwrite immutable inference receipts. */
+export type OperatingInferenceCostBasis = Pick<
+  InferenceCostReport,
+  | 'accountBindingHash'
+  | 'sessionDate'
+  | 'asOf'
+  | 'reportHash'
+  | 'knownEstimatedCostMicros'
+  | 'estimatedTotalCostMicros'
+  | 'unknownUsageCount'
+  | 'unpricedUsageCount'
+>
+
 export const makeOperatingCostReport = (
-  inference: InferenceCostReport,
+  inference: OperatingInferenceCostBasis,
   input: unknown,
   verifiedSourceHashes: ReadonlySet<string>,
 ) =>
@@ -280,8 +292,11 @@ export const makeOperatingCostReport = (
       inferenceComplete && inference.estimatedTotalCostMicros !== null
         ? (actualInference > tariff ? actualInference : tariff).toString()
         : null
+    const actualProfit = allComplete && pnl !== null ? pnl - totalActual : null
+    const qualificationPremium =
+      qualificationInference === null ? null : BigInt(qualificationInference) - actualInference
     const material = {
-      schemaVersion: 'bayn.operating-cost-report.v1' as const,
+      schemaVersion: 'bayn.operating-cost-report.v2' as const,
       accountBindingHash: evidence.accountBindingHash,
       sessionDate: evidence.sessionDate,
       asOf: evidence.asOf,
@@ -300,8 +315,13 @@ export const makeOperatingCostReport = (
       netPnlAfterKnownInferenceTariffMicros: pnl === null ? null : (pnl - tariff).toString(),
       // Do not blend partially overlapping invoices and tariff accruals. Complete consumption replaces the estimate.
       totalOperatingCostMicros: allComplete ? totalActual.toString() : null,
-      netEconomicPnlMicros: allComplete && pnl !== null ? (pnl - totalActual).toString() : null,
+      netEconomicPnlMicros: actualProfit?.toString() ?? null,
       qualificationInferenceCostMicros: qualificationInference,
+      qualificationPremiumMicros: qualificationPremium?.toString() ?? null,
+      qualificationPnlMicros:
+        actualProfit === null || qualificationPremium === null
+          ? null
+          : (actualProfit - qualificationPremium).toString(),
       unknownInferenceUsageCount: inference.unknownUsageCount,
       unpricedInferenceUsageCount: inference.unpricedUsageCount,
       importedUnallocatedCostMicros: unallocatedMicros.toString(),
@@ -332,3 +352,8 @@ export const makeOperatingCostReport = (
     }
     return { ...material, reportHash: yield* hash(material) }
   })
+
+export type OperatingCostReport = Extract<
+  ReturnType<typeof makeOperatingCostReport>,
+  { readonly _tag: 'Success' }
+>['success']

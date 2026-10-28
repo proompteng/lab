@@ -1,9 +1,39 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { makeNativeChartEvidence } from './chart-evidence'
-import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
+import { makeNativeChartEvidence, type NativeChartEvidence } from './chart-evidence'
+import { defaultJevProtocolDocument } from './protocol'
+import { canonicalHashV1Result } from '../hash'
+import {
+  makeInitialChartStageRequest,
+  makeSelectedBaseStartStageRequest,
+  stagedChartAssessments,
+} from './staged-chart-questions'
 import type { DecisionsRequest } from './decisions'
+
+const sourceFor = (chart: NativeChartEvidence) => ({
+  chart,
+  protocol: defaultJevProtocolDocument,
+  funding: { bidMicros: '106010000', askMicros: '106020000', capitalMicros: '100000000000', cryptoFeeTier: null },
+})
+const prepareFixtureChart = (chart: NativeChartEvidence) => makeInitialChartStageRequest(sourceFor(chart))
+const receiptFor = (requestHash: string, response: unknown) => ({
+  requestHash,
+  responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+  response,
+})
+const assessFixtureChart = (chart: NativeChartEvidence, response: unknown) =>
+  Result.gen(function* () {
+    const source = sourceFor(chart)
+    const initial = yield* prepareFixtureChart(chart)
+    const receipt = receiptFor(initial.requestHash, response)
+    const next = yield* makeSelectedBaseStartStageRequest(source, receipt)
+    return yield* stagedChartAssessments(
+      source,
+      receipt,
+      next.status === 'PREPARED' ? receiptFor(next.requestHash, responseFor(next.request)) : null,
+    )
+  })
 
 const source = {
   symbol: 'ETH/USD',
@@ -21,9 +51,9 @@ const responseFor = (request: DecisionsRequest) => ({
   model: 'gpt-6-luna',
   answers: request.questions.map((question) =>
     question.type === 'predicate'
-      ? { type: 'predicate', name: question.name, probability: 0.2 }
+      ? { type: 'predicate' as const, name: question.name, probability: 0.2 }
       : {
-          type: 'choice',
+          type: 'choice' as const,
           name: question.name,
           choice: question.choices[0]?.value,
           confidence: 0.8,
@@ -42,16 +72,40 @@ const responseFor = (request: DecisionsRequest) => ({
 })
 
 describe('source-bound chart questions', () => {
+  test('reuses deterministic request bytes without sharing mutable results or trusting a claimed chart hash', () => {
+    const chart = Result.getOrThrow(makeNativeChartEvidence(source))
+    const first = Result.getOrThrow(prepareFixtureChart(chart))
+    const originalBody = first.body
+    const originalHash = first.requestHash
+    const question = first.request.questions[0]
+    if (question === undefined) throw new Error('Missing chart question')
+    Reflect.set(question, 'instructions', 'Mutated caller copy')
+    Reflect.set(first, 'body', 'Mutated caller body')
+    const second = Result.getOrThrow(prepareFixtureChart(chart))
+    expect(second.request).not.toBe(first.request)
+    expect(second.body).toBe(originalBody)
+    expect(second.requestHash).toBe(originalHash)
+    expect(JSON.parse(second.body)).toEqual(second.request)
+    const bar = chart.bars[0]
+    if (bar === undefined) throw new Error('Missing chart bar')
+    const changed = Result.getOrThrow(
+      prepareFixtureChart({ ...chart, bars: [{ ...bar, high: bar.high + 1 }, ...chart.bars.slice(1)] }),
+    )
+    expect(changed.requestHash).not.toBe(originalHash)
+    expect(changed.request.input[0].content[2].data).toMatchObject({
+      bars: [{ ...bar, high: bar.high + 1 }, ...chart.bars.slice(1)],
+    })
+  })
+
   test('asks separate presence and source-anchor questions over the actual chart', () => {
     const chart = Result.getOrThrow(makeNativeChartEvidence(source))
-    const prepared = Result.getOrThrow(makeChartDecisionsRequest(chart))
+    const prepared = Result.getOrThrow(prepareFixtureChart(chart))
     expect(prepared.request.questions.map((question) => question.name)).toEqual([
       'support_present',
       'resistance_present',
       'base_present',
       'support_anchor',
       'resistance_anchor',
-      'base_first_bar',
       'base_last_bar',
     ])
     const first = chart.bars[0]
@@ -59,26 +113,36 @@ describe('source-bound chart questions', () => {
     expect(first?.chartLabel).toBe('6')
     expect(chart.bars.at(-1)?.timestamp).toBe('2026-10-25T06:59:00.000Z')
     for (const question of prepared.request.questions)
-      if (question.type === 'choice')
-        expect(question.choices.map((choice) => choice.value)).toEqual(chart.bars.map((bar) => bar.id))
+      if (question.type === 'choice' && !question.name.startsWith('base_'))
+        expect(question.choices.map((choice) => choice.value)).toEqual(
+          question.name === 'support_anchor'
+            ? [...chart.bars.map((bar) => bar.id), 'no_support']
+            : [...chart.bars.slice(-1).map((bar) => bar.id), 'no_resistance'],
+        )
+    const ends = prepared.request.questions.find((question) => question.name === 'base_last_bar')
+    if (ends?.type !== 'choice') throw new Error('Expected base end choice')
+    expect(ends.choices.map((choice) => choice.value)).toEqual([
+      ...chart.bars.slice(1, -1).map((bar) => bar.id),
+      'no_base',
+    ])
     expect(prepared.request.input[0].content[1].image_url).toBe(chart.image)
     expect(chart).toEqual(Result.getOrThrow(makeNativeChartEvidence(source)))
   })
 
   test('retains weak presence evidence instead of treating a forced choice as an observed structure', () => {
     const chart = Result.getOrThrow(makeNativeChartEvidence(source))
-    const request = Result.getOrThrow(makeChartDecisionsRequest(chart)).request
-    const assessments = Result.getOrThrow(chartAssessments(chart, responseFor(request)))
+    const request = Result.getOrThrow(prepareFixtureChart(chart)).request
+    const assessments = Result.getOrThrow(assessFixtureChart(chart, responseFor(request)))
     expect(assessments.support.presence).toEqual({ status: 'ASSESSED', probability: 0.2 })
     expect(assessments.support.anchor).toMatchObject({ status: 'ASSESSED', barId: chart.bars[0]?.id, probability: 1 })
   })
 
   test('keeps a refused base independent of the support assessment', () => {
     const chart = Result.getOrThrow(makeNativeChartEvidence(source))
-    const request = Result.getOrThrow(makeChartDecisionsRequest(chart)).request
+    const request = Result.getOrThrow(prepareFixtureChart(chart)).request
     const response = responseFor(request)
     const assessments = Result.getOrThrow(
-      chartAssessments(chart, {
+      assessFixtureChart(chart, {
         ...response,
         answers: response.answers.map((answer) =>
           answer.name.startsWith('base_') ? { type: 'refusal', name: answer.name } : answer,
@@ -90,12 +154,32 @@ describe('source-bound chart questions', () => {
     expect(assessments.support.presence.status).toBe('ASSESSED')
   })
 
-  test('does not invent a second option when only one source bar exists', () => {
+  test('keeps no-match available when only one eligible source bar exists', () => {
     const chart = Result.getOrThrow(makeNativeChartEvidence({ ...source, bars: source.bars.slice(-1) }))
-    const request = Result.getOrThrow(makeChartDecisionsRequest(chart)).request
-    expect(request.questions).toHaveLength(3)
-    const assessments = Result.getOrThrow(chartAssessments(chart, responseFor(request)))
-    expect(assessments.support.anchor).toEqual({ status: 'SOURCE_SINGLETON', barId: chart.bars[0]?.id })
+    const request = Result.getOrThrow(prepareFixtureChart(chart)).request
+    expect(request.questions).toHaveLength(5)
+    const assessments = Result.getOrThrow(assessFixtureChart(chart, responseFor(request)))
+    expect(assessments.support.anchor).toMatchObject({ status: 'ASSESSED', barId: chart.bars[0]?.id })
+    const response = responseFor(request)
+    const absent = Result.getOrThrow(
+      assessFixtureChart(chart, {
+        ...response,
+        answers: response.answers.map((answer) => {
+          if (answer.type !== 'choice') return answer
+          const value = answer.name === 'support_anchor' ? 'no_support' : 'no_resistance'
+          return {
+            ...answer,
+            choice: value,
+            probabilities: answer.probabilities.map((item) => ({
+              ...item,
+              probability: item.value === value ? 1 : 0,
+            })),
+          }
+        }),
+      }),
+    )
+    expect(absent.support.anchor).toEqual({ status: 'NOT_IDENTIFIED' })
+    expect(absent.resistance.anchor).toEqual({ status: 'NOT_IDENTIFIED' })
   })
 
   test('rejects missing bars, unfinished bars, impossible OHLC, duplicate times and off-minute boundaries', () => {
@@ -120,8 +204,8 @@ describe('source-bound chart questions', () => {
     ]) {
       const chart = Result.getOrThrow(makeNativeChartEvidence(changed))
       expect(chart.barsHash).not.toBe(baseline.barsHash)
-      expect(Result.getOrThrow(makeChartDecisionsRequest(chart)).requestHash).not.toBe(
-        Result.getOrThrow(makeChartDecisionsRequest(baseline)).requestHash,
+      expect(Result.getOrThrow(prepareFixtureChart(chart)).requestHash).not.toBe(
+        Result.getOrThrow(prepareFixtureChart(baseline)).requestHash,
       )
     }
   })
