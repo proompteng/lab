@@ -93,13 +93,23 @@ export type EntryHandoffMaterial = Omit<EntryHandoff, 'disposition' | 'schemaVer
   readonly baseStart?: BaseStartEvidence
 }
 
+export type VisualTransition = {
+  readonly terminal: StagedTerminalReceipt
+  readonly successor:
+    | { readonly kind: 'NONE' }
+    | { readonly kind: 'VISUAL'; readonly claim: StagedDispatchClaim }
+    | { readonly kind: 'HANDOFF'; readonly handoff: EntryHandoff }
+}
+
 export class EntryInferenceJournal extends Context.Service<
   EntryInferenceJournal,
   {
     readonly recordVisualClaim: (
       claim: StagedDispatchClaim,
     ) => Effect.Effect<{ readonly dispatchAllowed: boolean }, OperationalError>
-    readonly recordVisualTerminal: (receipt: StagedTerminalReceipt) => Effect.Effect<void, OperationalError>
+    readonly recordVisualTransition: (
+      transition: VisualTransition,
+    ) => Effect.Effect<{ readonly dispatchAllowed: boolean }, OperationalError>
     readonly recordHandoff: (
       handoff: EntryHandoff,
     ) => Effect.Effect<{ readonly dispatchAllowed: boolean }, OperationalError>
@@ -289,11 +299,14 @@ export const evaluateClaimedEntryHandoff = (claim: {
     ) =>
       Effect.gen(function* () {
         const admittedAt = yield* Clock.currentTimeMillis
-        if (admittedAt < now || admittedAt >= expires)
+        if (admittedAt < now || admittedAt >= expires) {
+          if (predecessor !== null)
+            yield* journal.recordVisualTransition({ terminal: predecessor, successor: { kind: 'NONE' } })
           return yield* new EntryInferenceError({
             category: 'DEADLINE',
             message: 'Original evidence window expired before visual admission',
           })
+        }
         const dispatchClaim = yield* Effect.fromResult(
           makeStagedDispatchClaim({
             schemaVersion: 'bayn.staged-dispatch-claim.v1',
@@ -306,7 +319,12 @@ export const evaluateClaimedEntryHandoff = (claim: {
             expiresAt: expiresAt,
           }),
         )
-        const admitted = yield* journal.recordVisualClaim(dispatchClaim)
+        const admitted = yield* predecessor === null
+          ? journal.recordVisualClaim(dispatchClaim)
+          : journal.recordVisualTransition({
+              terminal: predecessor,
+              successor: { kind: 'VISUAL', claim: dispatchClaim },
+            })
         if (!admitted.dispatchAllowed)
           return yield* new EntryInferenceError({
             category: 'EXISTING_HANDOFF',
@@ -375,8 +393,6 @@ export const evaluateClaimedEntryHandoff = (claim: {
             outcome,
           }),
         )
-        // Each paid provider boundary is durable before any successor is admitted.
-        yield* journal.recordVisualTerminal(terminal)
         return terminal
       })
     const skipBase = (reason: StagedSkipReceipt['reason'], predecessor: StagedTerminalReceipt | null) =>
@@ -395,11 +411,13 @@ export const evaluateClaimedEntryHandoff = (claim: {
       })
     let disposition: HandoffDisposition
     let baseStart: BaseStartEvidence
+    let terminalToCommit: StagedTerminalReceipt | null = null
     if (!feasible) {
       disposition = { status: 'SOURCE_INFEASIBLE' }
       baseStart = yield* skipBase('SOURCE_INFEASIBLE', null)
     } else {
       const visualTerminal = yield* runVisual('CHART', visualRequest, null, null)
+      terminalToCommit = visualTerminal
       if (visualTerminal.outcome.status === 'FAILED') {
         disposition = { status: 'VISUAL_FAILED', failure: visualTerminal.outcome.failure }
         baseStart = yield* skipBase('CHART_FAILED', visualTerminal)
@@ -410,11 +428,16 @@ export const evaluateClaimedEntryHandoff = (claim: {
             { chart, protocol: prepared.input.protocol, funding: prepared.input.funding },
             stageResponseIdentity(visual),
           ),
+        ).pipe(
+          Effect.tapError(() =>
+            journal.recordVisualTransition({ terminal: visualTerminal, successor: { kind: 'NONE' } }),
+          ),
         )
         if (next.status === 'NOT_REQUESTED') {
           baseStart = yield* skipBase(next.reason, visualTerminal)
         } else {
           const terminal = yield* runVisual('BASE_START', next, visualTerminal, next.selectedEnd)
+          terminalToCommit = terminal
           baseStart = terminal.outcome
         }
         if (baseStart.status === 'FAILED') {
@@ -444,7 +467,9 @@ export const evaluateClaimedEntryHandoff = (claim: {
       ...material,
       handoffHash: yield* Effect.fromResult(canonicalHashV1Result(material)),
     }
-    const admission = yield* journal.recordHandoff(handoff)
+    const admission = yield* terminalToCommit === null
+      ? journal.recordHandoff(handoff)
+      : journal.recordVisualTransition({ terminal: terminalToCommit, successor: { kind: 'HANDOFF', handoff } })
     if (!admission.dispatchAllowed)
       return yield* new EntryInferenceError({
         category: 'EXISTING_HANDOFF',

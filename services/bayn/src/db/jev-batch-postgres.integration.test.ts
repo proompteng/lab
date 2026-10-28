@@ -474,7 +474,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         for (const claim of checkpoint.claims) {
           yield* journal.recordVisualClaim(claim)
           const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
-          if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+          if (terminal !== undefined)
+            yield* journal.recordVisualTransition({ terminal: terminal, successor: { kind: 'NONE' } })
         }
 
         yield* journal.recordHandoff(completion.handoff)
@@ -1172,7 +1173,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           for (const claim of checkpoint.claims) {
             yield* journal.recordVisualClaim(claim)
             const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
-            if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+            if (terminal !== undefined)
+              yield* journal.recordVisualTransition({ terminal: terminal, successor: { kind: 'NONE' } })
           }
 
           yield* (yield* EntryInferenceJournal).recordHandoff(
@@ -1321,7 +1323,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         for (const claim of checkpoint.claims) {
           yield* journal.recordVisualClaim(claim)
           const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
-          if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+          if (terminal !== undefined)
+            yield* journal.recordVisualTransition({ terminal: terminal, successor: { kind: 'NONE' } })
         }
 
         yield* (yield* EntryInferenceJournal).recordHandoff(

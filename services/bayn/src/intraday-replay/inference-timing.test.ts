@@ -651,17 +651,18 @@ test.each([1000, null])(
             Effect.provideService(DecisionsClient, timing.clients.chart),
             Effect.provideService(EntryInferenceJournal, {
               recordVisualClaim: () => Effect.succeed({ dispatchAllowed: true }),
-              recordVisualTerminal: () => Effect.void,
-
-              recordHandoff: () =>
-                f.providerClock.adjust(1000).pipe(
-                  Effect.as({ dispatchAllowed: true }),
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      committed = true
-                    }),
-                  ),
-                ),
+              recordVisualTransition: ({ successor }) =>
+                successor.kind === 'HANDOFF'
+                  ? f.providerClock.adjust(1000).pipe(
+                      Effect.as({ dispatchAllowed: true }),
+                      Effect.tap(() =>
+                        Effect.sync(() => {
+                          committed = true
+                        }),
+                      ),
+                    )
+                  : Effect.succeed({ dispatchAllowed: successor.kind === 'VISUAL' }),
+              recordHandoff: () => Effect.succeed({ dispatchAllowed: true }),
             }),
             Effect.provideService(Clock.Clock, f.marketClock),
           ),
@@ -720,7 +721,7 @@ test('exhausting the shared budget after the chart retains its paid call and pre
             Effect.provideService(DecisionsClient, timing.clients.chart),
             Effect.provideService(EntryInferenceJournal, {
               recordVisualClaim: () => Effect.succeed({ dispatchAllowed: true }),
-              recordVisualTerminal: () => Effect.void,
+              recordVisualTransition: ({ successor }) => Effect.succeed({ dispatchAllowed: successor.kind !== 'NONE' }),
 
               recordHandoff: () => Effect.succeed({ dispatchAllowed: true }),
             }),

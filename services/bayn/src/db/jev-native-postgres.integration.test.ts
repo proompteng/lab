@@ -104,7 +104,8 @@ const commitStagedHandoff = (request: JevEvaluationRequest, handoff: EntryHandof
     for (const claim of checkpoint.claims) {
       yield* journal.recordVisualClaim(claim)
       const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
-      if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+      if (terminal !== undefined)
+        yield* journal.recordVisualTransition({ terminal: terminal, successor: { kind: 'NONE' } })
     }
 
     yield* journal.recordHandoff(handoff)
@@ -1626,10 +1627,14 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                 journal
                   .recordVisualClaim(claim)
                   .pipe(Effect.tapError(retainFailure('claim', claim.stage, claim.claimedAt, claim.expiresAt))),
-              recordVisualTerminal: (terminal) =>
+              recordVisualTransition: (transition) =>
                 journal
-                  .recordVisualTerminal(terminal)
-                  .pipe(Effect.tapError(retainFailure('terminal', terminal.stage, terminal.recordedAt, null))),
+                  .recordVisualTransition(transition)
+                  .pipe(
+                    Effect.tapError(
+                      retainFailure('terminal', transition.terminal.stage, transition.terminal.recordedAt, null),
+                    ),
+                  ),
               recordHandoff: (handoff) =>
                 journal
                   .recordHandoff(handoff)
