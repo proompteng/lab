@@ -49,6 +49,14 @@ command is **not** run automatically from the trading service at startup.
 
 ## Native arrival archive
 
+Both evidence databases disable PostgreSQL JIT. In an October 28, 2026 UTC comparison, the native expense-discovery query
+compiled 187 functions and spent 1.61 to 1.66 seconds compiling a query that executed in 0.54 to 0.60 seconds without
+JIT. The on/off/off/on comparison retained the same plan, row count and buffer reads. This removes compilation overhead
+from short evidence operations.
+It does not remove WAL or synchronous-replication waits. Verify the loaded setting on both instances and compare
+native query timing after rollout. Fsync, synchronous replication, checksums, storage and backups retain their
+existing contracts. See [PostgreSQL's JIT guidance](https://www.postgresql.org/docs/18/jit-decision.html).
+
 `native-arrival-postgres.yaml` owns `bayn-native-arrival-db`, a separate two-instance CNPG cluster on the existing
 Ceph storage class. Its synchronous standby, TLS, checksums and daily backups match the financial cluster. The existing
 ObjectStore uses the separate `bayn-native-arrival-db-live` server prefix. CNPG generates the archive application
