@@ -1,0 +1,73 @@
+name: Bayn formal verification
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: bayn
+          POSTGRES_PASSWORD: bayn
+          POSTGRES_DB: bayn_formal_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bayn -d bayn_formal_test"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install pinned Lean and sandbox checker
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap zstd
+          sudo chmod u+s "$(command -v bwrap)"
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/lean.tar.zst" \
+            https://github.com/leanprover/lean4/releases/download/v4.35.0/lean-4.35.0-linux.tar.zst
+          echo "7289597a44543246c9227b8cae501767e095ce17f6d448b95fc4a8dc97268f6d  $RUNNER_TEMP/lean.tar.zst" | sha256sum --check
+          tar --zstd -xf "$RUNNER_TEMP/lean.tar.zst" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/lean-4.35.0-linux/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@v4
+        with:
+          path: services/bayn/formal/.lake
+          key: bayn-lean-linux-${{ hashFiles('services/bayn/formal/lean-toolchain', 'services/bayn/formal/lake-manifest.json') }}
+      - name: Install TypeScript dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn
+      - name: Build and independently recheck proofs
+        working-directory: services/bayn/formal
+        run: |
+          set -euo pipefail
+          lake -q build
+          bash check.sh
+      - name: Verify production TypeScript against the executable Lean model
+        env:
+          BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
+        run: bun test services/bayn/src/system-assessment/formal-conformance.test.ts
+      - name: Verify committed visual stage claims and inference handoffs against Lean
+        env:
+          BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
+          BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_formal_test
+        run: bun test services/bayn/src/db/entry-inference-postgres.integration.test.ts
+      - name: Verify inference resolution commit and recovery behavior
+        env:
+          BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_formal_test
+        run: bun test services/bayn/src/db/jev-evaluation-postgres.integration.test.ts
+      - name: Verify decision admission commitment against Lean and PostgreSQL
+        env:
+          BAYN_FORMAL_EXECUTABLE: ${{ github.workspace }}/services/bayn/formal/.lake/build/bin/bayn-model
+          BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_formal_test
+        run: bun test services/bayn/src/system-assessment/postgres.integration.test.ts
