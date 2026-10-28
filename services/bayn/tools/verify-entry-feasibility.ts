@@ -67,7 +67,8 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     // Original model responses retain their contracts; the dispatch probe never calls either provider.
     const protocol = {
       ...input.protocol,
-      schemaVersion: 'bayn.jev.protocol.v28' as const,
+      schemaVersion: defaultJevProtocolDocument.schemaVersion,
+      candidateEvidencePolicy: defaultJevProtocolDocument.candidateEvidencePolicy,
       entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash,
     }
     const funding = {
@@ -264,8 +265,7 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     possibleChartBranches: chartBranches,
     originalFundedSourcesStillFeasible: fundedRequests,
     actualProviderCalls: 0,
-    inputProjection:
-      'Same source, observed quotes, capital and fees. The offline dispatch probe recomputes v28 entry economics and its inference-ask cap. Historical model responses and proposal evaluations retain their original contracts and are never used as current judgments.',
+    inputProjection: `Same source, observed quotes, capital and fees. The offline dispatch probe recomputes ${defaultJevProtocolDocument.schemaVersion} entry economics and its inference-ask cap. Historical model responses and proposal evaluations retain their original contracts and are never used as current judgments.`,
     results,
   }
   yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })

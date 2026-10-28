@@ -15,7 +15,7 @@ import { diagnoseStreamingInputs } from './inputs'
 const fixture = streamingFixture()
 const query = {
   ...fixture.query,
-  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
   maximumQuoteAgeMs: 10_000,
 }
 const withTimes = (symbol: string, quoteAt: string, tradeAt: string) => ({
@@ -204,9 +204,10 @@ describe('candidate executable quote and window trade evidence', () => {
   })
 
   test('reproduces historical cuts under their original evidence contract', () => {
+    const { candidateEvidencePolicy: _policy, ...historicalQuery } = fixture.query
     const { snapshot } = streamingFixtureFromRaw(
       withTimes('AAPL', '2026-09-04T14:30:01.000Z', '2026-09-04T14:20:00.000Z'),
-      fixture.query,
+      historicalQuery,
     )
     expect(exclusion(snapshot)?.message).toBe('intraday snapshot lacks a post-range trade for every symbol')
     expect(snapshot.manifest.streaming.features.some((receipt) => receipt.value.material.symbol === 'AAPL')).toBe(false)
@@ -274,7 +275,7 @@ describe('candidate executable quote and window trade evidence', () => {
     const snapshot = Result.getOrThrow(
       constructSimulatedSnapshot(simulation.cursor, simulation.source, {
         ...simulation.query,
-        candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+        candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
       }),
     )
     const restored = Result.getOrThrow(

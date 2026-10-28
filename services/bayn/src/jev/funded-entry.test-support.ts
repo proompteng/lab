@@ -1,3 +1,4 @@
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { makeNativeChartEvidence } from './chart-evidence'
@@ -24,6 +25,7 @@ export const makeFundedEvaluationRequest = (current: ReturnType<typeof currentRe
     protocol: {
       ...current.request.protocol,
       schemaVersion: 'bayn.jev.protocol.v25' as const,
+      candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
       entryQuestionPolicyHash: retainedFundedQuestionPolicyHash,
     },
   }

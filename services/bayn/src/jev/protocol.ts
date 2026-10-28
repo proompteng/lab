@@ -28,7 +28,8 @@ export const jevProtocolSchemaForQuestionPolicy = <
     | 'bayn.jev.protocol.v25'
     | 'bayn.jev.protocol.v26'
     | 'bayn.jev.protocol.v27'
-    | 'bayn.jev.protocol.v28' = 'bayn.jev.protocol.v24',
+    | 'bayn.jev.protocol.v28'
+    | 'bayn.jev.protocol.v29' = 'bayn.jev.protocol.v24',
 >(
   entryQuestionPolicyHash: string,
   version: V = 'bayn.jev.protocol.v24' as V,
@@ -68,6 +69,13 @@ export const jevProtocolSchemaForQuestionPolicy = <
   }).check(
     Schema.makeFilter((protocol) => {
       const issues: Schema.FilterIssue[] = []
+      if (
+        version === 'bayn.jev.protocol.v29'
+          ? protocol.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.MarketQuotes
+          : protocol.candidateEvidencePolicy !== undefined &&
+            protocol.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
+      )
+        issues.push({ path: ['candidateEvidencePolicy'], issue: 'must match the protocol evidence contract' })
       if (protocol.universe.join(',') !== jevUniverse.join(','))
         issues.push({ path: ['universe'], issue: 'must match the reviewed equity and crypto universe' })
       const candidates = [...new Set(protocol.candidateSymbols)].sort()
@@ -104,7 +112,7 @@ export const jevProtocolSchemaForQuestionPolicy = <
     }),
   )
 
-export const JevProtocolSchema = jevProtocolSchemaForQuestionPolicy(entryQuestionPolicyHash, 'bayn.jev.protocol.v28')
+export const JevProtocolSchema = jevProtocolSchemaForQuestionPolicy(entryQuestionPolicyHash, 'bayn.jev.protocol.v29')
 
 export type JevProtocol = typeof JevProtocolSchema.Type
 export type JevProtocolMaterial = Omit<JevProtocol, 'schemaVersion'> & {
@@ -114,10 +122,11 @@ export type JevProtocolMaterial = Omit<JevProtocol, 'schemaVersion'> & {
     | 'bayn.jev.protocol.v26'
     | 'bayn.jev.protocol.v27'
     | 'bayn.jev.protocol.v28'
+    | 'bayn.jev.protocol.v29'
 }
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v28',
+  schemaVersion: 'bayn.jev.protocol.v29',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
   entrySelectionPolicy: 'source-anchored-proposal-judgments',
@@ -135,7 +144,7 @@ export const defaultJevProtocolDocument = Object.freeze({
   decisionDelaySeconds: intradayDecisionDelaySeconds,
   maximumDecisionLagMs: 60_000,
   maximumQuoteAgeMs: 10_000,
-  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
   warmupMinutesAfterOpen: 0,
   entryCutoffMinutesBeforeClose: 5,
   flattenBeforeCloseMinutes: 5,

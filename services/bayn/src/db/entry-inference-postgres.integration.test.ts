@@ -1,3 +1,5 @@
+import cryptoQuoteEvidence from '../../migrations/0160_crypto_quote_evidence'
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import equityEntryAskCap from '../../migrations/0158_equity_entry_ask_cap'
 import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
 import cryptoEntryAskCap from '../../migrations/0157_crypto_entry_ask_cap'
@@ -110,6 +112,7 @@ const conditionalInput = {
     ...request.request.protocol,
     schemaVersion: 'bayn.jev.protocol.v24' as const,
     entryQuestionPolicyHash: retainedConditionalQuestionPolicyHash,
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
   },
 }
 const { requestId: _currentId, ...currentMaterial } = request
@@ -251,6 +254,7 @@ integration('committed sequential provider handoff', () => {
   test.each([
     [157, cryptoEntryAskCap, 'bayn.jev.protocol.v26'],
     [158, equityEntryAskCap, 'bayn.jev.protocol.v27'],
+    [160, cryptoQuoteEvidence, 'bayn.jev.protocol.v28'],
   ] as const)(
     'ask-cap migration %s preserves retired execution bytes and late financial evidence',
     async (id, cutover, retiredProtocol) =>
@@ -271,7 +275,11 @@ integration('committed sequential provider handoff', () => {
           const { requestId: _, ...current } = request
           const input = {
             ...request.request,
-            protocol: { ...request.request.protocol, schemaVersion: retiredProtocol },
+            protocol: {
+              ...request.request.protocol,
+              schemaVersion: retiredProtocol,
+              candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+            },
           }
           const material = { ...current, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
           const original = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }
@@ -1609,6 +1617,7 @@ integration('committed sequential provider handoff', () => {
     ['staged-chart-transport', stagedChartTransport],
     ['market-entry-question', marketEntryQuestions],
     ['crypto-entry-ask-cap', cryptoEntryAskCap],
+    ['crypto-quote-evidence', cryptoQuoteEvidence],
     ['conditional-base-anchor', conditionalBaseAnchors],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
