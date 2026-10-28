@@ -48,6 +48,24 @@ export const registeredRiskFixture = (accountId: string) => {
   }
 }
 
+export const activeEvaluationSessions = (now: number) => {
+  const day = 86_400_000
+  const requestedOpen = now + 1500
+  const opens = Math.min(requestedOpen, (Math.floor(requestedOpen / day) + 1) * day - 2)
+  const sessions = Array.from({ length: 20 }, (_, index) => {
+    const requested = opens + index * day
+    const lastMillisecond = (Math.floor(requested / day) + 1) * day - 1
+    const open = index === 0 ? requested : Math.min(requested, lastMillisecond - 120_000)
+    const openAt = new Date(open).toISOString()
+    return {
+      sessionDate: Schema.decodeUnknownSync(IsoDateSchema)(openAt.slice(0, 10)),
+      openAt,
+      closeAt: new Date(Math.min(open + 120_000, lastMillisecond)).toISOString(),
+    }
+  })
+  return { opens, sessions }
+}
+
 export const calendarFixture = (registration: SystemRegistration) => {
   const material = withProviderSessions({
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,

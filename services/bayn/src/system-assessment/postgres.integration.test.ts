@@ -12,7 +12,13 @@ import { migrationLoader } from '../db/migrations'
 import { canonicalJsonV1Result, sha256 } from '../hash'
 import { IsoDateSchema, UtcInstantSchema } from '../schemas'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
-import { assessmentFixture, registrationFixture, testHash, withRegistrationCommitments } from './fixtures.test-support'
+import {
+  activeEvaluationSessions,
+  assessmentFixture,
+  registrationFixture,
+  testHash,
+  withRegistrationCommitments,
+} from './fixtures.test-support'
 import {
   assessAndPersistSystem,
   initializeQualificationHistory,
@@ -1036,15 +1042,7 @@ postgres('PostgreSQL prospective system qualification', () => {
 
   const activeEvaluation = async () => {
     const base = registration()
-    const opens = Date.now() + 1500
-    const sessions = base.calendar.sessions.map((_session, index) => {
-      const openAt = new Date(opens + index * 86_400_000).toISOString()
-      return {
-        sessionDate: Schema.decodeUnknownSync(IsoDateSchema)(openAt.slice(0, 10)),
-        openAt,
-        closeAt: new Date(Date.parse(openAt) + 120_000).toISOString(),
-      }
-    })
+    const { opens, sessions } = activeEvaluationSessions(Date.now())
     const registered = await runtime.runPromise(
       registerFixture(
         withRegistrationCommitments({

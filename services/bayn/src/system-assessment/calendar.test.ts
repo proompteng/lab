@@ -1,9 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { qualificationCalendar } from './calendar'
-import { supportedAssessmentFixture, testHash } from './fixtures.test-support'
+import {
+  activeEvaluationSessions,
+  registrationFixture,
+  supportedAssessmentFixture,
+  testHash,
+  withRegistrationCommitments,
+} from './fixtures.test-support'
 import { evaluateSystemAssessment } from './assessment'
 import { continuousMarketHours } from '../market-hours'
+import { validateSystemRegistration } from './policy'
 
 describe('prospective broker calendar binding', () => {
   test('reproduces every registered regular session from the complete broker response', () => {
@@ -34,4 +41,23 @@ describe('prospective broker calendar binding', () => {
       expect(result.verdict).not.toBe('QUALIFIED_PAPER')
     }
   })
+})
+
+test.each([
+  '2026-10-27T12:00:00.000Z',
+  '2026-10-27T23:58:30.000Z',
+  '2026-10-27T23:59:58.499Z',
+  '2026-10-27T23:59:58.500Z',
+])('active witness calendars remain prospective and within UTC dates at %s', (now) => {
+  const { opens, sessions } = activeEvaluationSessions(Date.parse(now))
+  const base = registrationFixture(new Date(Date.parse(now) - 1000).toISOString())
+  const registration = withRegistrationCommitments({ ...base, calendar: { ...base.calendar, sessions } })
+  expect(Result.getOrThrow(validateSystemRegistration(registration)).registration).toEqual(registration)
+  expect(opens).toBeGreaterThan(Date.parse(now))
+  expect(sessions).toHaveLength(20)
+  for (const session of sessions) {
+    expect(session.openAt.slice(0, 10)).toBe(session.sessionDate)
+    expect(session.closeAt.slice(0, 10)).toBe(session.sessionDate)
+    expect(Date.parse(session.closeAt)).toBeGreaterThan(Date.parse(session.openAt))
+  }
 })
