@@ -7297,19 +7297,21 @@ test('reconciles a lost archive response by reading the native index without res
   expect(writes).toBe(1)
 })
 
-test('stops recovery polling when no conversations are running', async ({ page }) => {
+test('stops idle chat polling while retaining minute-level connection checks', async ({ page }) => {
   await page.clock.install()
   const mock = await mockTengri(page)
   await page.goto('/')
-  await expect(page.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await page.getByRole('textbox', { name: 'Message your agent' }).fill('An unsent draft')
+  // Wait for the initial chat recovery before advancing its timers.
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await page.clock.runFor(59_000)
+  expect(mock.actions.filter((action) => action.action === 'active-codex-runs')).toHaveLength(1)
+  // ReadyDesktop independently checks all conversations once per minute before
+  // renewing platform connections, including when chat windows are closed.
+  await page.clock.runFor(1_100)
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(2)
   await page.clock.runFor(60_000)
-  // Startup may revalidate after conversation hydration. Neither that initial
-  // read nor an empty result should create an idle polling loop.
-  const initialReads = mock.actions.filter((action) => action.action === 'active-codex-runs').length
-  expect(initialReads).toBeGreaterThan(0)
-  expect(initialReads).toBeLessThanOrEqual(2)
-  await page.clock.runFor(60_000)
-  expect(mock.actions.filter((action) => action.action === 'active-codex-runs')).toHaveLength(initialReads)
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(3)
 })
 
 test('runs another conversation while keeping each active response unarchivable', async ({ page }) => {
