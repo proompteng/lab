@@ -9,9 +9,14 @@ Trading has one market-data capability: load a verified feature and raw-data sna
 The production adapter consumes Kafka; backtesting supplies recorded events on its simulated clock. An unavailable
 adapter blocks observations. ClickHouse remains the historical archive and does not supply an execution fallback.
 
-The initial retained-data probe consumed 905,542 records across all 22 partitions in 223 seconds on the slower worker, with no rejections and exact feature matches for all strategy symbols and SPY. The five-minute budget bounds catch-up; normal calendar, exact-window, and quote-freshness checks still run after it.
-
 A replacement consumer captures partition bounds and rebuilds actual retained history before serving entry inputs.
+Separate equity quote and trade topics start at their captured end offsets: the strategy uses their latest values,
+so replaying obsolete ticks can exhaust the five-minute bootstrap budget and repeatedly restart an otherwise valid
+history rebuild. No old quote substitutes for a new delivery. Entries still require a newly observed, verified quote
+within the existing freshness limit. Bar and feature topics retain the full lookback; the mixed crypto topic also
+retains it because that topic carries historical bars alongside ticks. Explicit historical diagnostics retain all
+requested channels from their requested start. Every required partition must reach its frozen bootstrap end offset,
+and the five-minute deadline, source verification, calendar and quote-freshness checks remain enforced.
 The current strategy uses at most 30 minutes of context and requires the latest completed minute, a matching native
 feature and fresh quotes. It has no 30-bar or contiguous-history admission gate. Equities can first evaluate one
 minute and two seconds after the broker open; crypto uses its current completed history continuously. Missing older
