@@ -758,6 +758,70 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
+  test('receipt locking uses the indexed cohort before expanding retained candidate history', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        let lookup: Statement<Record<string, unknown>> | undefined
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            if (statement.compile()[0].includes('SELECT plan.batch_id FROM jev_batch_plans plan')) lookup = statement
+            return statement
+          },
+        })
+        const batches = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, monitored))
+        yield* evaluateJevBatch(plan, fixture.observation.payload).pipe(Effect.provideService(JevBatchStore, batches))
+        if (lookup === undefined) throw new Error('Completion did not lock the admitted cohort')
+        const [query, parameters] = lookup.compile()
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            // Isolate query scaling from immutable source admission and its full market-data payloads.
+            yield* sql`CREATE TEMP TABLE jev_batch_plans (
+          batch_id text PRIMARY KEY,cycle_id text NOT NULL,authority_generation_hash text NOT NULL,
+          snapshot_id text NOT NULL,payload jsonb NOT NULL
+        ) ON COMMIT DROP`
+            yield* sql`INSERT INTO pg_temp.jev_batch_plans
+          SELECT md5(n::text)||md5('batch-'||n::text),${plan.cycleId},${plan.authorityGenerationHash},
+            md5('snapshot-'||n::text)||md5(n::text),
+            jsonb_build_object('candidates',jsonb_build_array(jsonb_build_object('request',
+              jsonb_build_object('requestId','historical-unrelated-request'))))
+          FROM generate_series(1,10000) n`
+            yield* sql`INSERT INTO pg_temp.jev_batch_plans
+          SELECT batch_id,cycle_id,authority_generation_hash,snapshot_id,payload
+          FROM public.jev_batch_plans WHERE batch_id=${plan.batchId}`
+            yield* sql`CREATE UNIQUE INDEX cohort_scope_lookup ON pg_temp.jev_batch_plans
+          (cycle_id,authority_generation_hash,snapshot_id)`
+            yield* sql`ANALYZE pg_temp.jev_batch_plans`
+            const explained = yield* sql.unsafe(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${query}`, parameters)
+            const rows = yield* Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
+                }),
+              ),
+            )(explained)
+            const root = rows[0]?.['QUERY PLAN'][0]?.Plan
+            if (root === undefined) throw new Error('Missing receipt-lock query plan')
+            expect(root['Actual Rows']).toBe(1)
+            expect(JSON.stringify(root)).toMatch(/"Index Cond":"[^"]*snapshot_id/)
+            const scan = Schema.Struct({
+              'Node Type': Schema.String,
+              'Actual Loops': Schema.Number,
+              Plans: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+            })
+            const check = (value: unknown): void => {
+              const node = Schema.decodeUnknownSync(scan)(value)
+              if (node['Node Type'] === 'Function Scan') expect(node['Actual Loops']).toBe(1)
+              for (const child of node.Plans ?? []) check(child)
+            }
+            check(root)
+          }),
+        )
+      }).pipe(Effect.provideService(JevClient, successful), atObservation),
+    )
+  })
+
   test('all-excluded admission commits a complete batch before returning and replays without finalization', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {

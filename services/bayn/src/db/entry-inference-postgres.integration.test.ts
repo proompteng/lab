@@ -1594,7 +1594,9 @@ integration('committed sequential provider handoff', () => {
           })
           const partial = yield* runInferenceExpensePass(expenses, client, tariff)
           expect(partial.transferCount).toBe(2)
-          expect(partial.gapCount).toBe(1)
+          expect(partial.gapCount).toBe(
+            batch.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested).length,
+          )
           expect((yield* runInferenceExpensePass(expenses, client, tariff)).transferCount).toBe(0)
           yield* persistEvaluationFixture(evaluations, request, receipt)
           const late = yield* runInferenceExpensePass(expenses, client, tariff)

@@ -32,9 +32,23 @@ export const recordJevEvaluationReceipts = (sql: PgClient.PgClient, inputs: read
     const resolutions = new Map<string, JevResolution>()
     if (entries.length === 0) return resolutions
     const ids = entries.map(({ request }) => request.requestId)
+    const scopes = [
+      ...new Map(
+        entries.map(({ request }) => [
+          `${request.cycleId}/${request.authorityGenerationHash}/${request.snapshotId}`,
+          request,
+        ]),
+      ).values(),
+    ]
+    const scope = sql.or(
+      scopes.map(
+        (request) => sql`plan.cycle_id=${request.cycleId}
+      AND plan.authority_generation_hash=${request.authorityGenerationHash} AND plan.snapshot_id=${request.snapshotId}`,
+      ),
+    )
     // Receipt retention and finalization acquire batch locks before request locks.
     yield* sql`SELECT plan.batch_id FROM jev_batch_plans plan
-      WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(plan.payload->'candidates') candidate
+      WHERE ${scope} AND EXISTS (SELECT 1 FROM jsonb_array_elements(plan.payload->'candidates') candidate
         WHERE candidate#>>'{request,requestId}' IN ${sql.in(ids)})
       ORDER BY plan.batch_id COLLATE "C" FOR UPDATE OF plan`
     const rows = yield* Schema.decodeUnknownEffect(
