@@ -4,6 +4,15 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+New cycles discovered during an open, unexpired submission window acquire their authority slot and activate in one
+PostgreSQL transaction under the existing writer fence. This removes an immediate second WAL commit. A failed
+activation rolls back acquisition; retries read the committed cycle. Recovery and decision binding continue to enforce
+the original submission and inference deadlines.
+
+Candidate evidence reads extract identity and eligibility metadata once per indexed cycle/time source before matching
+requests. They fetch each matched full observation once and verify its content hash, retaining every generation,
+snapshot, symbol, timestamp and exclusion check within the original inference window.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
