@@ -6,17 +6,18 @@ permissions:
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: bayn-validation-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      bayn: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.bayn || fromJSON(steps.filter.outputs.affected).bayn }}
-      image: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.image || fromJSON(steps.filter.outputs.affected).image }}
+      bayn: ${{ github.event_name != 'pull_request' && steps.manual.outputs.bayn || fromJSON(steps.filter.outputs.affected).bayn }}
+      image: ${{ github.event_name != 'pull_request' && steps.manual.outputs.image || fromJSON(steps.filter.outputs.affected).image }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -101,14 +102,19 @@ jobs:
               - '.github/workflows/bayn-*.yml'
               - '.github/workflows/nix-oci-build-common.yml'
 
-      - name: Select all checks for manual validation
+      - name: Select all checks for exact-revision validation
         id: manual
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         run: |
           {
             echo 'bayn=true'
             echo 'image=false'
           } >> "$GITHUB_OUTPUT"
+
+  formal-verification:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    uses: ./.github/workflows/bayn-formal.yml
 
   pr-checks:
     needs: changes
@@ -350,15 +356,6 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24.11.1
-      - uses: actions/setup-go@v6
-        if: matrix.group == 'backtest'
-        with:
-          go-version-file: go.work
-      - name: Install pinned replay-image inspector
-        if: matrix.group == 'backtest'
-        run: |
-          GOBIN="${RUNNER_TEMP}/bayn-replay-tools" GOWORK=off go install github.com/google/go-containerregistry/cmd/crane@v0.22.1
-          echo "${RUNNER_TEMP}/bayn-replay-tools" >> "$GITHUB_PATH"
       - name: Install focused dependencies
         run: >-
           bun install --frozen-lockfile --ignore-scripts
@@ -387,9 +384,6 @@ jobs:
           done
           docker logs bayn-replay-tigerbeetle
           exit 1
-      - name: Verify registered replay image evidence and cancellation
-        if: matrix.group == 'backtest'
-        run: BAYN_TEST_REPLAY_IMAGE=1 bun test services/bayn/src/system-assessment/replay-image.integration.test.ts --timeout 60000
       - name: Verify replay accounting with PostgreSQL and TigerBeetle
         run: bun run --cwd services/bayn test:ledger ${{ matrix.group }}
       - name: Stop isolated replay TigerBeetle
@@ -400,7 +394,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.bayn == 'true'
     runs-on: arc-amd64
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
       - name: Set up Nix toolchain
@@ -416,6 +410,43 @@ jobs:
         run: |
           bash nix/images/normalize-bayn-bun-deps.test.sh
           bash nix/images/bun-workspace-deps-source.test.sh
+      - name: Verify registered replay image membership against a disposable registry
+        run: |
+          nix develop --command bash -euo pipefail <<'SCRIPT'
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
+          BAYN_TEST_REPLAY_IMAGE=1 bun test services/bayn/src/system-assessment/replay-image.integration.test.ts
+          SCRIPT
+
+  replay-execution-observer:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Docker with platform manifest evidence
+        uses: docker/setup-docker-action@v5
+        with:
+          version: v29.9.2
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          install-ci-toolchain: 'false'
+      - name: Verify replay execution capture against a disposable container and registry
+        env:
+          BAYN_TEST_REPLAY_BASE_IMAGE: alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
+          BAYN_TEST_REGISTRY_IMAGE: registry@sha256:325b4b29b041e82803abeb703e201655e4e23ab83264ec1a7c9ddb0a5b14a6e0
+          BAYN_TEST_REPLAY_EXECUTION: '1'
+        run: |
+          nix develop --command bash -euo pipefail <<'SCRIPT'
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
+          docker pull "${BAYN_TEST_REPLAY_BASE_IMAGE}"
+          docker pull "${BAYN_TEST_REGISTRY_IMAGE}"
+          bun test services/bayn/src/system-assessment/replay-execution.integration.test.ts
+          SCRIPT
 
   image:
     needs: changes
@@ -438,6 +469,7 @@ jobs:
     needs:
       - changes
       - pr-checks
+      - formal-verification
       - gepa
       - unit-tests
       - archive-integration
@@ -445,6 +477,7 @@ jobs:
       - postgres-integration
       - market-data-replay
       - dependency-input-invariant
+      - replay-execution-observer
       - image
     runs-on: ubuntu-latest
     steps:
@@ -454,6 +487,7 @@ jobs:
           BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
           IMAGE_RELEVANT: ${{ needs.changes.outputs.image }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
+          FORMAL_RESULT: ${{ needs.formal-verification.result }}
           GEPA_RESULT: ${{ needs.gepa.result }}
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           ARCHIVE_RESULT: ${{ needs.archive-integration.result }}
@@ -461,6 +495,7 @@ jobs:
           POSTGRES_RESULT: ${{ needs.postgres-integration.result }}
           MARKET_DATA_REPLAY_RESULT: ${{ needs.market-data-replay.result }}
           DEPENDENCY_INPUT_RESULT: ${{ needs.dependency-input-invariant.result }}
+          REPLAY_EXECUTION_RESULT: ${{ needs.replay-execution-observer.result }}
           IMAGE_RESULT: ${{ needs.image.result }}
         run: |
           set -euo pipefail
@@ -474,13 +509,15 @@ jobs:
           fi
           for result_name in \
             PR_CHECKS_RESULT \
+            FORMAL_RESULT \
             GEPA_RESULT \
             UNIT_RESULT \
             ARCHIVE_RESULT \
             LEDGER_RESULT \
             POSTGRES_RESULT \
             MARKET_DATA_REPLAY_RESULT \
-            DEPENDENCY_INPUT_RESULT; do
+            DEPENDENCY_INPUT_RESULT \
+            REPLAY_EXECUTION_RESULT; do
             result="${!result_name}"
             if [[ "${result}" != 'success' ]]; then
               echo "${result_name} must be success, got ${result}" >&2
