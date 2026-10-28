@@ -1,3 +1,7 @@
+import { makeJevDispatch } from '../jev/evaluation'
+import { makeEntryInferenceWrites } from './entry-inference-postgres'
+import { prepareClaimedEntry } from '../jev/entry-inference'
+import { recordJevEvaluationReceipts } from './jev-evaluation-postgres'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Layer, Option, Schema } from 'effect'
 
@@ -194,7 +198,26 @@ export const makeJevBatchStore = Effect.gen(function* () {
                 payload: sql.json(request),
               })),
             )}`
-            return requests.map((request) => ({ request, claimedAt: checkedAt }))
+            const writes = makeEntryInferenceWrites(sql)
+            const dispatches = []
+            for (const request of requests) {
+              const initial = yield* Effect.fromResult(
+                prepareClaimedEntry({
+                  requestId: request.requestId,
+                  input: request.request,
+                  observedAt: request.observedAt,
+                  expiresAt: request.expiresAt,
+                  claimedAt: checkedAt,
+                }),
+              )
+              if (initial.visualClaim !== null) {
+                const admitted = yield* writes.recordClaim(initial.visualClaim, yield* writes.load(request.requestId))
+                if (!admitted.dispatchAllowed)
+                  return yield* persistError('Initial visual claim could not be admitted with its request')
+              }
+              dispatches.push(makeJevDispatch({ request, claimedAt: checkedAt, visualClaim: initial.visualClaim }))
+            }
+            return dispatches
           }
           return []
         }),
@@ -234,7 +257,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* requireAutocommit
       const batchId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
-      // An all-excluded admission or single-request receipt may have committed the
+      // An all-excluded admission or normal cohort completion may have committed the
       // final batch atomically. Its immutable result needs no new durability wait.
       const committed = yield* read(batchId)
       if (committed !== null && committed.result !== null) return committed
@@ -482,13 +505,29 @@ export const makeJevBatchStore = Effect.gen(function* () {
         )
       )
         return yield* persistError('Normal batch completion requires every committed candidate result')
-      // Admission verified the source graph, and each evaluation returned its committed receipt.
-      // Compare every immutable stored byte together instead of loading and reproducing that graph again.
-      yield* Schema.decodeUnknownEffect(
-        Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
-        strictParseOptions,
-      )(
-        yield* sql`SELECT EXISTS (
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`SELECT batch_id FROM jev_batch_plans WHERE batch_id=${plan.batchId} FOR UPDATE`
+          const entries = result.candidates.flatMap((candidate) => {
+            if (candidate.status !== JevCandidateResultStatus.Resolved || candidate.receipt === null) return []
+            const planned = plan.candidates.find((item) => item.symbol === candidate.symbol)
+            return planned?.status === JevCandidatePlanStatus.Requested
+              ? [{ request: planned.request, receipt: candidate.receipt }]
+              : []
+          })
+          const resolutions = yield* recordJevEvaluationReceipts(sql, entries)
+          for (const candidate of result.candidates) {
+            if (candidate.status !== JevCandidateResultStatus.Resolved) continue
+            if (resolutions.get(candidate.requestId)?.resolutionHash !== candidate.resolution.resolutionHash)
+              return yield* persistError('Batch completion cannot replace a committed evaluation resolution')
+          }
+          // Admission verified the source graph; completion commits all final evidence together.
+          // Compare every immutable stored byte together instead of loading and reproducing that graph again.
+          yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
+            strictParseOptions,
+          )(
+            yield* sql`SELECT EXISTS (
           SELECT 1 FROM jev_batch_plans plan
           JOIN intraday_candidate_observations observation ON observation.content_hash=plan.observation_hash
           WHERE plan.batch_id=${plan.batchId} AND plan.payload=${sql.json(plan)}
@@ -516,8 +555,10 @@ export const makeJevBatchStore = Effect.gen(function* () {
                   OR resolution.resolution_hash IS DISTINCT FROM candidate#>>'{resolution,resolutionHash}')
             )
         ) AS matches`,
+          )
+          return yield* recordResult(plan, result)
+        }),
       )
-      return yield* recordResult(plan, result)
     }).pipe(Effect.mapError(persistError), withObservedStage('bayn.jev.batch-completion', { dependency: 'postgresql' }))
 
   return { read, pending, begin, finish, complete } satisfies typeof JevBatchStore.Service

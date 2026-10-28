@@ -258,7 +258,7 @@ const fixture = async (source = native) => {
       Effect.provideService(JevEvaluationStore, {
         read: () => unused,
 
-        record: () => unused,
+        recordAll: () => unused,
         abandon: () => unused,
       }),
       Effect.provideService(JevClient, { evaluate: () => unused }),

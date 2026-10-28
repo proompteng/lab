@@ -77,15 +77,16 @@ quote checks and native order construction enforce that same funded ceiling. Equ
 IOC limits. It does not add the risk policy's adverse-price allowance to the buy limit. Crypto entry coin fees, maximum
 future sell fees, stop/exit slippage and every risk limit remain unchanged. A tighter buy limit may remain unfilled; it
 cannot justify a cheaper funding estimate while submitting a higher-priced order.
-PostgreSQL commits each visual terminal receipt with its next visual admission or its proposal derivation and dependent
-Jev request in one transaction, before any successor provider I/O. The request row serializes retries. A repeated
+PostgreSQL commits all CHART terminal receipts with their next visual admissions or proposal handoffs in one
+transaction, then all required BASE_START terminals and handoffs in one transaction. Provider calls run concurrently
+within each stage and start only after its admissions commit. The request rows serialize retries. A repeated
 transition verifies the same bytes and never permits another dispatch. Expiry can still retain the paid terminal
 receipt while refusing a successor claim; acknowledgement after the original deadline cannot authorize provider I/O.
 If a successor write fails or is interrupted, PostgreSQL retains the paid terminal separately after rolling back
 that transition. The original operation still fails and cannot dispatch its successor.
-An unused BASE_START skip commits with its handoff in one transaction; paid visual terminal evidence remains
-independently durable. Normal batch completion compares the admitted observation and every committed request, receipt
-and resolution directly before sealing the result. Recovery still reconstructs incomplete stored graphs. Completion
+An unused BASE_START skip commits with its handoff; paid visual terminal evidence remains independently durable on
+failure. Normal batch completion commits every final receipt, resolution and the complete result in one transaction,
+verifying the admitted observation and requests. Recovery still reconstructs incomplete stored graphs. Completion
 and decision use retain the original ten-second deadline, including commit acknowledgement time.
 
 Native comparison runtimes also support the chart-entry ablation and repeated-momentum control. Each has a distinct
@@ -175,11 +176,12 @@ reproduced from the sealed input and record both providers as undispatched at ze
 the original chart, Jev, deadline and risk gates. See [pre-chart feasibility](../../docs/bayn/pre-chart-feasibility.md)
 for the existing-data proof, verifier and rollout contract.
 
-Native Jev admission commits the verified source observation, sealed batch plan and every requested candidate claim
+Native Jev admission commits the verified source observation, sealed batch plan, every requested candidate and its initial CHART claim
 in one PostgreSQL transaction before any provider call. Only the successful creator receives dispatch rights. Retries,
 including a lost admission acknowledgement, recover existing evidence without another inference. A failed claim insertion
-rolls back the new observation and plan. Each response receipt remains independently durable. If admission commits after
-expiry, its claims receive undispatched receipts without provider I/O. The existing ten-second inference validity,
+rolls back the new observation and plan. Successful evaluation needs three cohort transactions without BASE_START or four
+with it, independent of candidate count. If admission commits after expiry, no provider call starts; recovery abandons
+the requests and retains uncertain claim usage rather than inventing zero-cost receipts. The existing ten-second inference validity,
 quote freshness checks, complete-batch requirement and risk limits are unchanged.
 
 When every candidate already has a committed resolution, finalization verifies the persisted requests, receipts,

@@ -159,39 +159,46 @@ export const entryInferenceFixtureLayer = Layer.mergeAll(
   Layer.sync(EntryInferenceJournal, () => {
     const saved = new Map<string, string>()
     const claims = new Map<string, string>()
+    const recordHandoff = (handoff: import('./entry-inference').EntryHandoff) =>
+      Effect.suspend(() => {
+        const previous = saved.get(handoff.requestId)
+        if (previous !== undefined && previous !== handoff.handoffHash)
+          return Effect.fail(
+            operationalError({
+              component: 'database',
+              operation: 'test-handoff',
+              message: 'Fixture handoff is immutable',
+            }),
+          )
+        saved.set(handoff.requestId, handoff.handoffHash)
+        return Effect.succeed({ dispatchAllowed: previous === undefined })
+      })
+    const recordClaim = (claim: import('./staged-checkpoint').StagedDispatchClaim) =>
+      Effect.sync(() => {
+        const key = `${claim.requestId}:${claim.stage}`
+        const prior = claims.get(key)
+        claims.set(key, claim.claimHash)
+        return { dispatchAllowed: prior === undefined }
+      })
     const journal: typeof EntryInferenceJournal.Service = {
-      recordVisualClaim: (claim) =>
-        Effect.sync(() => {
-          const key = `${claim.requestId}:${claim.stage}`
-          const prior = claims.get(key)
-          claims.set(key, claim.claimHash)
-          return { dispatchAllowed: prior === undefined }
-        }),
-      recordVisualTransition: ({ successor }) => {
-        switch (successor.kind) {
-          case 'NONE':
-            return Effect.succeed({ dispatchAllowed: false })
-          case 'VISUAL':
-            return journal.recordVisualClaim(successor.claim)
-          case 'HANDOFF':
-            return journal.recordHandoff(successor.handoff)
-        }
-      },
-
-      recordHandoff: (handoff) =>
-        Effect.suspend(() => {
-          const previous = saved.get(handoff.requestId)
-          if (previous !== undefined && previous !== handoff.handoffHash)
-            return Effect.fail(
-              operationalError({
-                component: 'database',
-                operation: 'test-handoff',
-                message: 'Fixture handoff is immutable',
-              }),
-            )
-          saved.set(handoff.requestId, handoff.handoffHash)
-          return Effect.succeed({ dispatchAllowed: previous === undefined })
-        }),
+      recordVisualClaims: (inputs) =>
+        Effect.forEach(inputs, (claim) =>
+          recordClaim(claim).pipe(Effect.map((result) => ({ requestId: claim.requestId, ...result }))),
+        ),
+      recordTransitions: (inputs) =>
+        Effect.forEach(inputs, (input) =>
+          Effect.gen(function* () {
+            const requestId = input.terminal === null ? input.successor.handoff.requestId : input.terminal.requestId
+            const successor = input.successor
+            const result =
+              successor.kind === 'NONE'
+                ? { dispatchAllowed: false }
+                : successor.kind === 'VISUAL'
+                  ? yield* recordClaim(successor.claim)
+                  : yield* recordHandoff(successor.handoff)
+            return { requestId, ...result }
+          }),
+        ),
     }
     return journal
   }),

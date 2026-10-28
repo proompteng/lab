@@ -3,7 +3,7 @@ import { Effect, Exit, Layer, Option, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import { decodeJevEvaluationRequest } from '../jev/evidence'
-import { EntryInferenceJournal, type EntryHandoff, type VisualTransition } from '../jev/entry-inference'
+import { EntryInferenceJournal, type EntryHandoff, type EntryStageTransition } from '../jev/entry-inference'
 import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { strictParseOptions } from '../schemas'
 import {
@@ -14,15 +14,16 @@ import {
 } from '../jev/staged-checkpoint'
 import { verifyStagedCheckpointHandoff } from '../jev/staged-inference-cost-evidence'
 
-export const makeEntryInferenceJournal = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  const failed = (cause: unknown) =>
-    operationalError({
-      component: 'database',
-      operation: 'entry-inference-handoff',
-      message: 'Provider handoff could not be durably verified',
-      cause,
-    })
+const failed = (cause: unknown) =>
+  operationalError({
+    component: 'database',
+    operation: 'entry-inference-handoff',
+    message: 'Provider handoff could not be durably verified',
+    cause,
+  })
+
+// Admission and stage completion share these writes inside their owning transaction.
+export const makeEntryInferenceWrites = (sql: PgClient.PgClient) => {
   const load = (requestId: string) =>
     Effect.gen(function* () {
       const [row] = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]))(
@@ -147,48 +148,77 @@ export const makeEntryInferenceJournal = Effect.gen(function* () {
       )
       return { dispatchAllowed: inserted.length === 1 && !resolution.resolved }
     })
+  return { load, recordClaim, recordTerminal, recordHandoff }
+}
+
+export const makeEntryInferenceJournal = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const { load, recordClaim, recordTerminal, recordHandoff } = makeEntryInferenceWrites(sql)
   const commit = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
         return yield* failed('Provider journal transitions must commit independently before provider I/O')
       return yield* sql.withTransaction(effect)
     }).pipe(Effect.mapError(failed))
+  const transitionId = (input: EntryStageTransition) =>
+    input.terminal === null ? input.successor.handoff.requestId : input.terminal.requestId
+  const stageOrder = (input: EntryStageTransition) => (input.terminal?.stage === 'BASE_START' ? 1 : 0)
+  const ordered = (inputs: readonly EntryStageTransition[]) =>
+    inputs.toSorted(
+      (left, right) => transitionId(left).localeCompare(transitionId(right)) || stageOrder(left) - stageOrder(right),
+    )
   return {
-    recordVisualClaim: (input: StagedDispatchClaim) =>
-      commit(Effect.flatMap(load(input.requestId), (loaded) => recordClaim(input, loaded))),
-    recordVisualTransition: (input: VisualTransition) =>
+    recordVisualClaims: (inputs: readonly StagedDispatchClaim[]) =>
       commit(
-        Effect.gen(function* () {
-          const { terminal, successor } = input
-          if (
-            (successor.kind === 'VISUAL' &&
-              (terminal.stage !== 'CHART' ||
-                successor.claim.stage !== 'BASE_START' ||
-                successor.claim.requestId !== terminal.requestId)) ||
-            (successor.kind === 'HANDOFF' && successor.handoff.requestId !== terminal.requestId)
-          )
-            return yield* failed('A visual successor must belong to its terminal request and stage')
-          const loaded = yield* recordTerminal(terminal, yield* load(terminal.requestId))
-          switch (successor.kind) {
-            case 'NONE':
-              return { dispatchAllowed: false }
-            case 'VISUAL':
-              return yield* recordClaim(successor.claim, loaded)
-            case 'HANDOFF':
-              return yield* recordHandoff(successor.handoff, loaded)
-          }
-        }),
-      ).pipe(
-        Effect.onExit((exit) =>
-          Exit.isFailure(exit) && input.successor.kind !== 'NONE'
-            ? commit(
-                Effect.flatMap(load(input.terminal.requestId), (loaded) => recordTerminal(input.terminal, loaded)),
-              ).pipe(Effect.asVoid)
-            : Effect.void,
+        Effect.forEach(
+          inputs.toSorted((left, right) => left.requestId.localeCompare(right.requestId)),
+          (input) =>
+            Effect.gen(function* () {
+              const result = yield* recordClaim(input, yield* load(input.requestId))
+              return { requestId: input.requestId, ...result }
+            }),
         ),
       ),
-    recordHandoff: (input: EntryHandoff) =>
-      commit(Effect.flatMap(load(input.requestId), (loaded) => recordHandoff(input, loaded))),
+    recordTransitions: (inputs: readonly EntryStageTransition[]) =>
+      commit(
+        Effect.forEach(ordered(inputs), (input) =>
+          Effect.gen(function* () {
+            const { terminal, successor } = input
+            const requestId = transitionId(input)
+            const source = yield* load(requestId)
+            if (terminal === null) return { requestId, ...(yield* recordHandoff(successor.handoff, source)) }
+            if (
+              (successor.kind === 'VISUAL' &&
+                (terminal.stage !== 'CHART' ||
+                  successor.claim.stage !== 'BASE_START' ||
+                  successor.claim.requestId !== requestId)) ||
+              (successor.kind === 'HANDOFF' && successor.handoff.requestId !== requestId)
+            )
+              return yield* failed('A visual successor must belong to its terminal request and stage')
+            const loaded = yield* recordTerminal(terminal, source)
+            const admission =
+              successor.kind === 'NONE'
+                ? { dispatchAllowed: false }
+                : successor.kind === 'VISUAL'
+                  ? yield* recordClaim(successor.claim, loaded)
+                  : yield* recordHandoff(successor.handoff, loaded)
+            return { requestId, ...admission }
+          }),
+        ),
+      ).pipe(
+        Effect.onExit((exit) => {
+          const terminals = ordered(inputs).flatMap((input) => (input.terminal === null ? [] : [input.terminal]))
+          return Exit.isFailure(exit) && terminals.length > 0 && inputs.some((input) => input.successor.kind !== 'NONE')
+            ? commit(
+                Effect.forEach(
+                  terminals,
+                  (terminal) => Effect.flatMap(load(terminal.requestId), (loaded) => recordTerminal(terminal, loaded)),
+                  { discard: true },
+                ),
+              )
+            : Effect.void
+        }),
+      ),
   } satisfies typeof EntryInferenceJournal.Service
 })
 

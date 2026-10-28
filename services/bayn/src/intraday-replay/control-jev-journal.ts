@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Result, Schema, Semaphore } from 'effect'
+import { Clock, Effect, Exit, FileSystem, Option, Result, Schema, Semaphore } from 'effect'
 
 import { operationalError, type OperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
@@ -17,12 +17,17 @@ import {
   JevOutcome,
   type JevEvaluationRequest,
 } from '../jev/evidence'
-import { EntryInferenceJournal, type EntryHandoff } from '../jev/entry-inference'
+import {
+  EntryInferenceJournal,
+  prepareClaimedEntry,
+  type EntryHandoff,
+  type EntryStageTransition,
+} from '../jev/entry-inference'
 import { JevFailure } from '../jev/contract'
 import { decodeStagedCheckpoint, type StagedDispatchClaim, type StagedTerminalReceipt } from '../jev/staged-checkpoint'
 import { verifyStagedCheckpointHandoff } from '../jev/staged-inference-cost-evidence'
 import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
-import { JevEvaluationStore } from '../jev/evaluation'
+import { JevEvaluationStore, makeJevDispatch } from '../jev/evaluation'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { JevPurpose } from '../jev/portfolio'
 import { JevEntryTargetSchema } from '../jev/decision'
@@ -157,53 +162,65 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
         yield* write('terminal', request.requestId, { receipt: null, resolution })
         return resolution
       })
+    const recordEvaluation = (
+      rawRequest: JevEvaluationRequest,
+      rawReceipt: import('../jev/evidence').JevEvaluationReceipt,
+    ) =>
+      Effect.gen(function* () {
+        const request = yield* Effect.fromResult(decodeJevEvaluationRequest(rawRequest))
+        const receipt = yield* Effect.fromResult(decodeJevEvaluationReceipt(request, rawReceipt))
+        const saved = yield* requireEvaluation(request)
+        if (
+          receipt.outcome.status === JevOutcome.Failed &&
+          receipt.outcome.failure === JevFailure.NotDispatched &&
+          (yield* read('visual-claim-CHART', request.requestId)) !== null
+        )
+          return yield* failure('Undispatched receipt cannot omit a committed chart claim')
+        if (receipt.outcome.status === JevOutcome.Completed) {
+          const handoff = yield* Effect.fromResult(
+            decodeEntryHandoff(
+              {
+                requestId: request.requestId,
+                input: request.request,
+                observedAt: request.observedAt,
+                expiresAt: request.expiresAt,
+              },
+              yield* read('handoff', request.requestId),
+            ),
+          )
+          if (handoff.handoffHash !== receipt.outcome.completion.handoff.handoffHash)
+            return yield* failure('Inference receipt has no identical committed provider handoff')
+        }
+        if (saved.receipt !== null && saved.receipt.receiptHash !== receipt.receiptHash)
+          return yield* failure('A committed request has a different receipt')
+        if (saved.resolution !== null) {
+          if (saved.receipt === null) yield* write('late-receipt', request.requestId, receipt)
+          return saved.resolution
+        }
+        const resolution = yield* Effect.fromResult(
+          makeJevResolution(request, receipt, {
+            schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+            requestId: request.requestId,
+            status: JevResolutionStatus.Recorded,
+            receiptHash: receipt.receiptHash,
+          }),
+        )
+        yield* write('terminal', request.requestId, { receipt, resolution })
+        return resolution
+      })
     const evaluations: JevEvaluationStore['Service'] = {
       read: (id) => atomic(readEvaluation(id)),
-      record: (rawRequest, rawReceipt) =>
-        atomic(
-          Effect.gen(function* () {
-            const request = yield* Effect.fromResult(decodeJevEvaluationRequest(rawRequest))
-            const receipt = yield* Effect.fromResult(decodeJevEvaluationReceipt(request, rawReceipt))
-            const saved = yield* requireEvaluation(request)
-            if (
-              receipt.outcome.status === JevOutcome.Failed &&
-              receipt.outcome.failure === JevFailure.NotDispatched &&
-              (yield* read('visual-claim-CHART', request.requestId)) !== null
-            )
-              return yield* failure('Undispatched receipt cannot omit a committed chart claim')
-            if (receipt.outcome.status === JevOutcome.Completed) {
-              const handoff = yield* Effect.fromResult(
-                decodeEntryHandoff(
-                  {
-                    requestId: request.requestId,
-                    input: request.request,
-                    observedAt: request.observedAt,
-                    expiresAt: request.expiresAt,
-                  },
-                  yield* read('handoff', request.requestId),
-                ),
-              )
-              if (handoff.handoffHash !== receipt.outcome.completion.handoff.handoffHash)
-                return yield* failure('Inference receipt has no identical committed provider handoff')
-            }
-            if (saved.receipt !== null && saved.receipt.receiptHash !== receipt.receiptHash)
-              return yield* failure('A committed request has a different receipt')
-            if (saved.resolution !== null) {
-              if (saved.receipt === null) yield* write('late-receipt', request.requestId, receipt)
-              return saved.resolution
-            }
-            const resolution = yield* Effect.fromResult(
-              makeJevResolution(request, receipt, {
-                schemaVersion: 'bayn.jev-evaluation-resolution.v1',
-                requestId: request.requestId,
-                status: JevResolutionStatus.Recorded,
-                receiptHash: receipt.receiptHash,
-              }),
-            )
-            yield* write('terminal', request.requestId, { receipt, resolution })
-            return resolution
-          }),
-        ),
+      recordAll: (entries) =>
+        permit
+          .withPermit(
+            Effect.gen(function* () {
+              const resolutions = new Map<string, import('../jev/resolution').JevResolution>()
+              for (const entry of entries)
+                resolutions.set(entry.request.requestId, yield* recordEvaluation(entry.request, entry.receipt))
+              return resolutions
+            }),
+          )
+          .pipe(Effect.mapError(failure)),
       abandon: (request, at) => atomic(abandon(request, at)),
     }
     const readObservation = (id: string) =>
@@ -275,22 +292,57 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
               if (candidate.status === JevCandidatePlanStatus.Requested) {
                 yield* write('request', candidate.request.requestId, candidate.request)
                 plannedRequests.set(candidate.request.requestId, candidate.request)
-                dispatches.push({ request: candidate.request, claimedAt })
+                const initial = yield* Effect.fromResult(
+                  prepareClaimedEntry({
+                    requestId: candidate.request.requestId,
+                    input: candidate.request.request,
+                    observedAt: candidate.request.observedAt,
+                    expiresAt: candidate.request.expiresAt,
+                    claimedAt,
+                  }),
+                )
+                if (initial.visualClaim !== null) {
+                  const admitted = yield* recordClaim(initial.visualClaim)
+                  if (!admitted.dispatchAllowed)
+                    return yield* failure('Initial visual claim was not admitted with its request')
+                }
+                dispatches.push(
+                  makeJevDispatch({ request: candidate.request, claimedAt, visualClaim: initial.visualClaim }),
+                )
               }
             }
             return { plan, result: null, dispatches }
           }),
         ),
       complete: (plan, observation, result) =>
-        Effect.gen(function* () {
-          yield* Effect.fromResult(reproduceJevTradingSignalBatch(observation, plan))
-          yield* Effect.fromResult(decodeJevBatchResult(plan, result))
-          const saved = yield* batchStore.finish(plan.batchId)
-          if (saved.result === null) return yield* failure('Completed evaluations have no committed batch result')
-          yield* same(saved.plan, plan)
-          yield* same(saved.result.candidates, result.candidates)
-          return saved
-        }).pipe(Effect.mapError(failure)),
+        atomic(
+          Effect.gen(function* () {
+            yield* Effect.fromResult(reproduceJevTradingSignalBatch(observation, plan))
+            yield* Effect.fromResult(decodeJevBatchResult(plan, result))
+            const saved = yield* readBatch(plan.batchId)
+            if (saved === null) return yield* failure('Completion has no admitted batch')
+            yield* same(saved.plan, plan)
+            for (const candidate of result.candidates) {
+              if (candidate.status === JevCandidateResultStatus.Excluded) continue
+              const request = plan.candidates.find((item) => item.symbol === candidate.symbol)
+              if (
+                request?.status !== JevCandidatePlanStatus.Requested ||
+                candidate.status !== JevCandidateResultStatus.Resolved ||
+                candidate.receipt === null
+              )
+                return yield* failure('Batch completion is missing a requested receipt')
+              const resolution = yield* recordEvaluation(request.request, candidate.receipt)
+              yield* same(resolution, candidate.resolution)
+            }
+            if (saved.result !== null) {
+              yield* same(saved.result.candidates, result.candidates)
+              return saved
+            }
+            yield* write('batch-result', plan.batchId, result)
+            pendingBatches.delete(plan.batchId)
+            return { plan, result }
+          }),
+        ),
       finish: (id) =>
         atomic(
           Effect.gen(function* () {
@@ -480,31 +532,56 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
         yield* write('handoff', request.requestId, handoff)
         return { dispatchAllowed: saved.resolution === null }
       })
+    const transitionId = (input: EntryStageTransition) =>
+      input.terminal === null ? input.successor.handoff.requestId : input.terminal.requestId
+    const retainTerminals = (inputs: readonly EntryStageTransition[]) =>
+      permit
+        .withPermit(
+          Effect.forEach(
+            inputs.flatMap((input) => (input.terminal === null ? [] : [input.terminal])),
+            recordTerminal,
+            { discard: true },
+          ),
+        )
+        .pipe(Effect.mapError(failure))
     const handoffs: EntryInferenceJournal['Service'] = {
-      recordVisualClaim: (input) => atomic(recordClaim(input)),
-      recordVisualTransition: ({ terminal, successor }) =>
+      recordVisualClaims: (inputs) =>
         atomic(
-          Effect.gen(function* () {
-            if (
-              (successor.kind === 'VISUAL' &&
-                (terminal.stage !== 'CHART' ||
-                  successor.claim.stage !== 'BASE_START' ||
-                  successor.claim.requestId !== terminal.requestId)) ||
-              (successor.kind === 'HANDOFF' && successor.handoff.requestId !== terminal.requestId)
-            )
-              return yield* failure('A visual successor must belong to its terminal request and stage')
-            yield* recordTerminal(terminal)
-            switch (successor.kind) {
-              case 'NONE':
-                return { dispatchAllowed: false }
-              case 'VISUAL':
-                return yield* recordClaim(successor.claim)
-              case 'HANDOFF':
-                return yield* recordHandoff(successor.handoff)
-            }
-          }),
+          Effect.forEach(inputs, (input) =>
+            Effect.gen(function* () {
+              return { requestId: input.requestId, ...(yield* recordClaim(input)) }
+            }),
+          ),
         ),
-      recordHandoff: (input) => atomic(recordHandoff(input)),
+      recordTransitions: (inputs) =>
+        inputs.every((input) => input.successor.kind === 'NONE')
+          ? retainTerminals(inputs).pipe(
+              Effect.as(inputs.map((input) => ({ requestId: transitionId(input), dispatchAllowed: false }))),
+            )
+          : atomic(
+              Effect.forEach(inputs, ({ terminal, successor }) =>
+                Effect.gen(function* () {
+                  if (terminal === null)
+                    return { requestId: successor.handoff.requestId, ...(yield* recordHandoff(successor.handoff)) }
+                  if (
+                    (successor.kind === 'VISUAL' &&
+                      (terminal.stage !== 'CHART' ||
+                        successor.claim.stage !== 'BASE_START' ||
+                        successor.claim.requestId !== terminal.requestId)) ||
+                    (successor.kind === 'HANDOFF' && successor.handoff.requestId !== terminal.requestId)
+                  )
+                    return yield* failure('A visual successor must belong to its terminal request and stage')
+                  yield* recordTerminal(terminal)
+                  const admission =
+                    successor.kind === 'NONE'
+                      ? { dispatchAllowed: false }
+                      : successor.kind === 'VISUAL'
+                        ? yield* recordClaim(successor.claim)
+                        : yield* recordHandoff(successor.handoff)
+                  return { requestId: terminal.requestId, ...admission }
+                }),
+              ),
+            ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? retainTerminals(inputs) : Effect.void))),
     }
     return {
       handoffs,
