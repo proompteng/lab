@@ -45,7 +45,7 @@ import { JevClient } from '../jev/client'
 import { prepareJevRequest } from '../jev/contract'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
-import { JevEvaluationStore } from '../jev/evaluation'
+import { JevEvaluationStore, type JevDispatch } from '../jev/evaluation'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevPurpose } from '../jev/portfolio'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
@@ -214,6 +214,7 @@ const retainReplayRequest = retainReplayDispatch.pipe(Effect.map((dispatch) => d
 
 integration('committed sequential provider handoff', () => {
   let runtime: ReturnType<typeof makeRuntime>
+  let initialDispatch: JevDispatch | undefined
   beforeAll(() => {
     const parsed = new URL(url)
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
@@ -255,13 +256,17 @@ integration('committed sequential provider handoff', () => {
           return
         }
         yield* (yield* CandidateObservationStore).record(fixture.observation)
-        yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
+        return yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen(Effect.flatMap(JevBatchStore, (store) => store.begin(batch, fixture.observation.payload))),
           Effect.provide(TestClock.layer()),
         )
       }),
     )
-  beforeEach(() => resetDatabase())
+  beforeEach(async () => {
+    initialDispatch = undefined
+    const admission = await resetDatabase()
+    initialDispatch = admission?.dispatches.find((dispatch) => dispatch.request.requestId === defaultRequest.requestId)
+  })
 
   test.each([
     [157, cryptoEntryAskCap, 'bayn.jev.protocol.v26'],
@@ -1309,8 +1314,12 @@ integration('committed sequential provider handoff', () => {
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const dispatch = yield* retainReplayDispatch
+        // beforeEach already admitted this exact replay graph. Rebuilding the
+        // schema here repeats every migration inside the evaluator's test budget.
+        const dispatch = initialDispatch
+        if (dispatch === undefined) throw new Error('Missing initial replay admission')
         const request = dispatch.request
+        expect(request).toEqual(defaultRequest)
         const events: string[] = []
         const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen(evaluateAdmittedFixture(dispatch)),
