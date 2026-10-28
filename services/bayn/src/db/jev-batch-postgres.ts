@@ -285,6 +285,9 @@ export const makeJevBatchStore = Effect.gen(function* () {
         if (requests.length > 0 && candidates.length === committed.plan.candidates.length) {
           if (!observationHashes.includes(committed.plan.observationHash))
             return yield* persistError('Jev batch observation is not among its verified candidate sources')
+          // Do not append a second whole-cohort validation to the final receipt's
+          // synchronous chunk while competing finalizers still await socket I/O.
+          yield* Effect.yieldNow
           const now = yield* Clock.currentTimeMillis
           if (now < Date.parse(committed.plan.observedAt))
             return yield* persistError('Jev batch clock regressed before observation')
