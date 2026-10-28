@@ -338,6 +338,7 @@ export function SettingsApp({
             {visitedSections.includes('connections') ? (
               <div hidden={selectedSection !== 'connections'}>
                 <ConnectionsPanel
+                  key={JSON.stringify([user.id, agent.uid])}
                   agent={agent}
                   principalId={user.id}
                   active={active && selectedSection === 'connections'}

@@ -3,28 +3,44 @@
 import { fromJson } from '@bufbuild/protobuf'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
+  Alert,
+  AlertDescription,
+  Badge,
   Button,
   Card,
   CardContent,
   CardFooter,
   Checkbox,
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
   Field,
-  FieldContent,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
   FieldLegend,
   FieldSet,
-  NativeSelect,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+  Skeleton,
 } from '@proompteng/design/ui'
+import { ChevronDown, ChevronLeft, Plug, Server } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { connectorCatalogSchema, type ConnectorCatalog } from '@/lib/platform/catalog'
+import { startTengriSignIn } from '@/lib/tengri/auth-client'
 import {
   completePendingConnection,
+  connectionConnector,
   connectionReference,
+  connectionScopeLimit,
   credentialMatchesRuntime,
   pendingConnectionKey,
   readPendingConnection,
@@ -36,12 +52,16 @@ import {
   type ListPlatformConnectionsResponse,
 } from '@/lib/tengri/generated/proompteng/authz/v1/platform_pb'
 import type { TengriAgent } from '@/lib/tengri/types'
-import { startTengriSignIn } from '@/lib/tengri/auth-client'
 
 const formSchema = z.object({
-  connectorId: z.string().min(1, 'Choose a connector'),
-  operations: z.array(z.string()).min(1, 'Select at least one operation'),
-  targets: z.array(z.string()).min(1, 'Select at least one target'),
+  operations: z
+    .array(z.string())
+    .min(1, 'Allow at least one kind of access.')
+    .max(connectionScopeLimit, 'Choose up to 16 tools.'),
+  targets: z
+    .array(z.string())
+    .min(1, 'Choose at least one resource.')
+    .max(connectionScopeLimit, 'Choose up to 16 resources.'),
 })
 type Form = z.infer<typeof formSchema>
 const resourceKey = (resource: { kind: string; id: string }) => JSON.stringify([resource.kind, resource.id])
@@ -55,14 +75,13 @@ class ConnectionRequestError extends Error {
     super(message)
   }
 }
-
 async function responseJson(response: Response) {
   const json = z.json().parse(await response.json())
   if (!response.ok) {
     const error = z.object({ error: z.string(), code: z.string().optional() }).safeParse(json)
     throw new ConnectionRequestError(
       response.status,
-      error.success ? error.data.error : 'Connections are unavailable',
+      error.success ? error.data.error : 'Connections are unavailable. Try again.',
       error.success ? error.data.code : undefined,
     )
   }
@@ -82,6 +101,8 @@ export function ConnectionsPanel({
 }) {
   const [catalog, setCatalog] = useState<ConnectorCatalog>()
   const [snapshot, setSnapshot] = useState<ListPlatformConnectionsResponse>()
+  const [editor, setEditor] = useState<string>()
+  const [customizing, setCustomizing] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
@@ -91,17 +112,14 @@ export function ConnectionsPanel({
     agentId: string
     connectionId: string
   }>()
+  const restored = useRef('')
+  const editorHeading = useRef<HTMLHeadingElement>(null)
+  const returnButton = useRef<HTMLButtonElement>(null)
+  const lastEditor = useRef<string | undefined>(undefined)
   const formId = useId()
   const pendingKey = pendingConnectionKey(principalId, agent.uid)
-  const resumed = useRef('')
-  const form = useForm<Form>({
-    resolver: zodResolver(formSchema),
-    defaultValues: { connectorId: '', operations: [], targets: [] },
-  })
-  const connectorId = form.watch('connectorId')
-  const getValues = form.getValues
+  const form = useForm<Form>({ resolver: zodResolver(formSchema), defaultValues: { operations: [], targets: [] } })
   const reset = form.reset
-
   const load = useCallback(
     async (signal?: AbortSignal) => {
       const [connections, available] = await Promise.all([
@@ -112,82 +130,35 @@ export function ConnectionsPanel({
       ])
       if (signal?.aborted) return
       const next = fromJson(ListPlatformConnectionsResponseSchema, connections)
-      const listed = connectorCatalogSchema.parse(available)
+      for (const connection of next.connections) connectionConnector(connection, agent.uid)
       setSnapshot(next)
-      setPendingDisconnect((request) =>
-        request && next.connections.some((connection) => connection.id === request.connectionId && !connection.enabled)
-          ? undefined
-          : request,
-      )
-      setCatalog(listed)
-      if (!getValues('connectorId')) {
-        const retained = readPendingConnection(sessionStorage, pendingKey)
-        if (retained && retained.request.agentId !== agent.id)
-          throw new Error('The pending connection belongs to another workspace.')
-        const id =
-          retained?.request.connectorId ?? listed.operations.find((operation) => operation.readOnly)?.connectorId ?? ''
-        const saved = next.connections.find(
-          (connection) => connection.clientReference === connectionReference(agent.uid, id),
-        )
-        reset({
-          connectorId: id,
-          operations:
-            retained?.request.operations ??
-            (saved
-              ? listed.operations
-                  .filter((operation) => operation.connectorId === id && saved.actions.includes(operation.action))
-                  .map((operation) => operation.name)
-              : []),
-          targets: retained?.request.targets.map(resourceKey) ?? saved?.resources.map(resourceKey) ?? [],
-        })
-        if (retained) setPending(retained.request)
-      }
+      setCatalog(connectorCatalogSchema.parse(available))
     },
-    [agent.id, agent.uid, getValues, pendingKey, reset],
+    [agent.id, agent.uid],
   )
 
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
     void load(controller.signal).catch((cause: unknown) => {
-      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Connections are unavailable')
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Connections are unavailable.')
     })
     return () => controller.abort()
   }, [active, agent.runtimeEpoch, load])
+  useEffect(() => {
+    if (!active) return
+    if (editor) editorHeading.current?.focus()
+    else if (lastEditor.current) returnButton.current?.focus()
+  }, [active, editor])
 
-  const refresh = async () => {
-    setBusy(true)
-    setError('')
-    try {
-      await load()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Connections are unavailable')
-    } finally {
-      setBusy(false)
-    }
-  }
-  const changeConnector = (id: string) => {
-    const saved = snapshot?.connections.find(
-      (connection) => connection.clientReference === connectionReference(agent.uid, id),
-    )
-    reset({
-      connectorId: id,
-      operations:
-        catalog?.operations
-          .filter((operation) => operation.connectorId === id && saved?.actions.includes(operation.action))
-          .map((operation) => operation.name) ?? [],
-      targets: saved?.resources.map(resourceKey) ?? [],
-    })
-    setNotice('')
-  }
   const save = useCallback(
     async (request: SaveConnection, afterSignIn = false) => {
-      setPending(request)
       setBusy(true)
       setError('')
       setNotice('')
       try {
         retainPendingConnection(sessionStorage, pendingKey, request, false)
+        setPending(request)
         const response = await fetch('/api/tengri/connections', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -195,21 +166,18 @@ export function ConnectionsPanel({
         })
         const next = fromJson(ListPlatformConnectionsResponseSchema, await responseJson(response))
         const current = next.connections.find((connection) => connection.id === request.connectionId)
-        if (!current) throw new Error('The saved connection could not be confirmed. Refresh before retrying.')
-        setSnapshot(next)
+        if (!current) throw new Error('The connection could not be confirmed. Try again to check the same request.')
         completePendingConnection(sessionStorage, pendingKey, request.operationId)
+        setSnapshot(next)
         setPending(undefined)
-        reset({
-          connectorId: request.connectorId,
-          operations: request.operations,
-          targets: request.targets.map(resourceKey),
-        })
+        reset({ operations: request.operations, targets: request.targets.map(resourceKey) })
+        setEditor(undefined)
         setNotice(
           !current.enabled
-            ? 'Connection is disconnected. Review its settings before reconnecting.'
+            ? 'Disconnected.'
             : credentialMatchesRuntime(current, agent.runtimeEpoch ?? '', next.recoveryGeneration, Date.now())
-              ? 'Connected. The selected tools are available to your agent.'
-              : 'Connection is saved. Resume the workspace to finish connecting.',
+              ? ''
+              : 'Access is saved. Your agent is not connected yet.',
         )
       } catch (cause) {
         if (cause instanceof ConnectionRequestError) {
@@ -218,7 +186,7 @@ export function ConnectionsPanel({
               retainPendingConnection(sessionStorage, pendingKey, request, true)
               await startTengriSignIn(cause.status === 401 ? 'login' : 'step-up')
             } catch {
-              setError('Verification could not start. Select Try again to continue.')
+              setError('Verification could not start. Your choices are saved. Try again when you’re ready.')
             }
             return
           }
@@ -227,7 +195,7 @@ export function ConnectionsPanel({
             setPending(undefined)
           }
         }
-        setError(cause instanceof Error ? cause.message : 'Connection could not be confirmed. Retry the same change.')
+        setError(cause instanceof Error ? cause.message : 'The connection could not be confirmed. Try again.')
         await load().catch(() => {})
       } finally {
         setBusy(false)
@@ -237,37 +205,134 @@ export function ConnectionsPanel({
   )
 
   useEffect(() => {
-    if (!active || !catalog || !snapshot || resumed.current === pendingKey) return
-    resumed.current = pendingKey
+    if (!active || !catalog || !snapshot || restored.current === pendingKey) return
+    restored.current = pendingKey
     try {
       const retained = readPendingConnection(sessionStorage, pendingKey)
-      if (retained?.resumeAfterSignIn && retained.request.agentId === agent.id) void save(retained.request, true)
-      else if (retained) setNotice('Your access choices are saved. Select Try again to continue.')
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Connection setup could not be restored.')
+      if (!retained) return
+      if (retained.request.agentId !== agent.id) throw new Error('This setup belongs to another workspace.')
+      setPending(retained.request)
+      setEditor(retained.request.connectorId)
+      lastEditor.current = retained.request.connectorId
+      reset({ operations: retained.request.operations, targets: retained.request.targets.map(resourceKey) })
+      if (retained.resumeAfterSignIn) void save(retained.request, true)
+      else setNotice('Your choices are saved. Try again to finish connecting.')
+    } catch {
+      setError('Your previous setup could not be restored. Refresh Connections before continuing.')
     }
-  }, [active, agent.id, catalog, pendingKey, save, snapshot])
+  }, [active, agent.id, catalog, pendingKey, reset, save, snapshot])
 
-  const submit = form.handleSubmit(async (value) => {
-    const existing = snapshot?.connections.find(
-      (connection) => connection.clientReference === connectionReference(agent.uid, value.connectorId),
+  const available = catalog?.operations.filter((operation) => operation.readOnly) ?? []
+  const serviceIds = [
+    ...new Set([
+      ...available.map((operation) => operation.connectorId),
+      ...(snapshot?.connections.map((connection) => connectionConnector(connection, agent.uid)) ?? []),
+    ]),
+  ]
+  const serviceName = (id: string) =>
+    available.some(
+      (operation) =>
+        operation.connectorId === id &&
+        operation.targets.some((target) => target.resource.kind === 'kubernetes.namespace'),
     )
-    await save(
-      pending ?? {
-        kind: 'save',
-        operationId: crypto.randomUUID(),
-        agentId: agent.id,
-        connectionId: existing?.id ?? crypto.randomUUID(),
-        expectedVersion: String(existing?.version ?? BigInt(0)),
-        connectorId: value.connectorId,
-        operations: value.operations,
-        targets: value.targets.map((key) => {
-          const [kind, id] = z.tuple([z.string(), z.string()]).parse(JSON.parse(key))
-          return { kind, id }
-        }),
-      },
+      ? 'Kubernetes'
+      : id
+  const targetNames = new Map(
+    catalog?.operations
+      .flatMap((operation) => operation.targets)
+      .map((target) => [resourceKey(target.resource), target.name]) ?? [],
+  )
+  const savedConnection = (id: string) =>
+    snapshot?.connections.find((connection) => connection.clientReference === connectionReference(agent.uid, id))
+  const isConnected = (id: string) => {
+    const connection = savedConnection(id)
+    return Boolean(
+      connection &&
+      snapshot &&
+      credentialMatchesRuntime(connection, agent.runtimeEpoch ?? '', snapshot.recoveryGeneration, Date.now()),
     )
-  })
+  }
+  const openEditor = (id: string) => {
+    const connection = savedConnection(id)
+    const operations = available.filter((operation) => operation.connectorId === id)
+    if (lastEditor.current !== id)
+      reset({
+        operations:
+          pending?.connectorId === id
+            ? pending.operations
+            : connection
+              ? connection.actions.map(
+                  (action) => operations.find((operation) => operation.action === action)?.name ?? action,
+                )
+              : operations.map((operation) => operation.name),
+        targets:
+          pending?.connectorId === id
+            ? pending.targets.map(resourceKey)
+            : (connection?.resources.map(resourceKey) ?? []),
+      })
+    lastEditor.current = id
+    setEditor(id)
+    setCustomizing(false)
+    setNotice('')
+    if (!pending) setError('')
+  }
+  const refresh = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await load()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Connections are unavailable.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const reconnect = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const response = await fetch('/api/tengri/connections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'reconcile', agentId: agent.id }),
+      })
+      setSnapshot(fromJson(ListPlatformConnectionsResponseSchema, await responseJson(response)))
+      setEditor(undefined)
+      setNotice('Connection checked.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The connection could not be confirmed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const submit = form.handleSubmit(
+    async (value) => {
+      if (!editor) return
+      const existing = savedConnection(editor)
+      if (!pending && existing?.enabled && !form.formState.isDirty) {
+        await reconnect()
+        return
+      }
+      await save(
+        pending ?? {
+          kind: 'save',
+          operationId: crypto.randomUUID(),
+          agentId: agent.id,
+          connectionId: existing?.id ?? crypto.randomUUID(),
+          expectedVersion: String(existing?.version ?? BigInt(0)),
+          connectorId: editor,
+          operations: value.operations,
+          targets: value.targets.map((key) => {
+            const [kind, id] = z.tuple([z.string(), z.string()]).parse(JSON.parse(key))
+            return { kind, id }
+          }),
+        },
+      )
+    },
+    (invalid) => {
+      if (invalid.operations) setCustomizing(true)
+    },
+  )
   const disconnect = async (connectionId: string) => {
     const request = pendingDisconnect ?? { operationId: crypto.randomUUID(), agentId: agent.id, connectionId }
     setPendingDisconnect(request)
@@ -288,324 +353,307 @@ export function ConnectionsPanel({
         completePendingConnection(sessionStorage, pendingKey, pending.operationId)
         setPending(undefined)
       }
+      setSnapshot((current) =>
+        current
+          ? {
+              ...current,
+              connections: current.connections.map((connection) =>
+                connection.id === connectionId
+                  ? { ...connection, enabled: false, credentialActive: false }
+                  : connection,
+              ),
+            }
+          : current,
+      )
+      setEditor(undefined)
       setNotice(
-        result.cleanupPending ? 'Disconnected. Guest tool cleanup is pending; access is revoked.' : 'Disconnected.',
+        result.cleanupPending
+          ? 'Disconnected. Access is revoked; tool cleanup will finish when the workspace is available.'
+          : 'Disconnected.',
       )
       await load()
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : 'Disconnection could not be confirmed. Refresh before retrying.',
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
-  const renew = async () => {
-    setBusy(true)
-    setError('')
-    setNotice('')
-    try {
-      const response = await fetch('/api/tengri/connections', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'reconcile', agentId: agent.id }),
-      })
-      setSnapshot(fromJson(ListPlatformConnectionsResponseSchema, await responseJson(response)))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Connection renewal could not be confirmed.')
+      setError(cause instanceof Error ? cause.message : 'Disconnection could not be confirmed. Try again.')
     } finally {
       setBusy(false)
     }
   }
 
-  const operations =
-    catalog?.operations.filter((operation) => operation.connectorId === connectorId && operation.readOnly) ?? []
+  const operations = available.filter((operation) => operation.connectorId === editor)
   const targets = [
     ...new Map(
-      operations.flatMap((operation) => operation.targets).map((entry) => [resourceKey(entry.resource), entry]),
+      operations.flatMap((operation) => operation.targets).map((target) => [resourceKey(target.resource), target]),
     ).values(),
   ]
   const selectedTargets = form.watch('targets')
   const selectedOperations = form.watch('operations')
   const operationOptions = [
-    ...operations.map((operation) => ({ ...operation, unavailable: false })),
+    ...operations.map((operation) => ({ name: operation.name, label: operation.description })),
     ...selectedOperations
       .filter((name) => !operations.some((operation) => operation.name === name))
-      .map((name) => ({
-        name,
-        description: 'Unavailable tool. Remove it before choosing a replacement.',
-        unavailable: true,
-      })),
+      .map((name) => ({ name, label: 'Unavailable tool. Remove it to continue.' })),
   ]
-  const targetNames = new Map(
-    catalog?.operations
-      .flatMap((operation) => operation.targets)
-      .map((entry) => [resourceKey(entry.resource), entry.name]) ?? [],
-  )
-  const selectedConnection = snapshot?.connections.find(
-    (connection) => connection.clientReference === connectionReference(agent.uid, connectorId),
-  )
-  const unavailableTargets = selectedTargets.filter(
-    (key) => !targets.some((entry) => resourceKey(entry.resource) === key),
-  )
   const targetOptions = [
-    ...targets.map((entry) => ({ key: resourceKey(entry.resource), label: entry.name, unavailable: false })),
-    ...unavailableTargets.map((key) => ({
-      key,
-      label: 'Unavailable saved target. Remove it before choosing a replacement.',
-      unavailable: true,
-    })),
+    ...targets.map((target) => ({ key: resourceKey(target.resource), label: target.name })),
+    ...selectedTargets
+      .filter((key) => !targets.some((target) => resourceKey(target.resource) === key))
+      .map((key) => ({ key, label: 'Unavailable saved resource. Remove it to continue.' })),
   ]
+  const selected = editor ? savedConnection(editor) : undefined
+  const selectedConnected = editor ? isConnected(editor) : false
   const blocked = disabled || busy || Boolean(pending) || Boolean(pendingDisconnect)
-  const connected =
-    selectedConnection &&
-    snapshot &&
-    credentialMatchesRuntime(selectedConnection, agent.runtimeEpoch ?? '', snapshot.recoveryGeneration, Date.now())
   const { errors } = form.formState
-  const serviceLabel = (id: string) =>
-    catalog?.operations.some(
-      (operation) =>
-        operation.connectorId === id &&
-        operation.targets.some((target) => target.resource.kind === 'kubernetes.namespace'),
-    )
-      ? `Kubernetes · ${id}`
-      : id
   return (
-    <section aria-label="Connections" className="@container/connections space-y-4 text-zinc-200">
-      <FieldDescription>Connect services to give your agent access to selected resources.</FieldDescription>
+    <section aria-label="Connections" className="space-y-4 text-zinc-200">
       {error ? (
-        <p role="alert" className="text-sm text-red-300">
-          {error}
-        </p>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
       {notice ? (
         <p role="status" className="text-sm text-zinc-300">
           {notice}
         </p>
       ) : null}
-      {snapshot?.connections.map((connection) => (
-        <Card key={connection.id} size="sm">
-          <CardContent className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0 flex-1 break-words">
-              <p className="text-sm font-medium">
-                {serviceLabel(connection.clientReference.slice((agent.uid + '/').length))}
-              </p>
-              <p className="mt-1 text-xs text-zinc-400">
-                {!connection.enabled
-                  ? 'Disconnected'
-                  : connection.credentialActive &&
-                      credentialMatchesRuntime(
-                        connection,
-                        agent.runtimeEpoch ?? '',
-                        snapshot.recoveryGeneration,
-                        Date.now(),
-                      )
-                    ? 'Connected'
-                    : 'Needs renewal'}
-              </p>
-              <p className="mt-1 text-xs text-zinc-400">
-                {connection.resources
-                  .map((resource) => targetNames.get(resourceKey(resource)) ?? resource.id)
-                  .join(', ')}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {connection.enabled &&
-              (!connection.credentialActive ||
-                !credentialMatchesRuntime(
-                  connection,
-                  agent.runtimeEpoch ?? '',
-                  snapshot.recoveryGeneration,
-                  Date.now(),
-                )) ? (
-                <Button type="button" size="sm" variant="outline" disabled={blocked} onClick={() => void renew()}>
-                  Renew access
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={
-                  disabled ||
-                  busy ||
-                  !connection.enabled ||
-                  Boolean(pendingDisconnect && pendingDisconnect.connectionId !== connection.id)
-                }
-                onClick={() => void disconnect(connection.id)}
-              >
-                {pendingDisconnect?.connectionId === connection.id ? 'Retry disconnect' : 'Disconnect'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-      {!catalog ? (
-        <p role="status" className="text-sm text-zinc-400">
-          Loading connections…
-        </p>
-      ) : (
-        <Card size="sm">
-          <form noValidate onSubmit={submit} className="space-y-4">
-            <CardContent>
-              <FieldGroup>
-                <Field data-invalid={Boolean(errors.connectorId)}>
-                  <FieldLabel htmlFor={formId + '-connector'}>Service</FieldLabel>
-                  <NativeSelect
-                    id={formId + '-connector'}
-                    className="w-full"
-                    aria-invalid={Boolean(errors.connectorId)}
-                    aria-describedby={formId + '-connector-error'}
-                    value={connectorId}
-                    disabled={blocked}
-                    onChange={(event) => changeConnector(event.target.value)}
-                  >
-                    <option value="">Choose a connector</option>
-                    {[
-                      ...new Set(
-                        catalog.operations
-                          .filter((operation) => operation.readOnly)
-                          .map((operation) => operation.connectorId),
-                      ),
-                    ].map((id) => (
-                      <option key={id} value={id}>
-                        {serviceLabel(id)}
-                      </option>
-                    ))}
-                  </NativeSelect>
-                  <FieldError id={formId + '-connector-error'} errors={[errors.connectorId]} />
-                </Field>
-                <div className="grid gap-4 @min-[420px]/connections:grid-cols-2">
-                  <FieldSet disabled={blocked} aria-describedby={formId + '-operations-error'}>
-                    <FieldLegend>Allow your agent to</FieldLegend>
-                    <Controller
-                      name="operations"
-                      control={form.control}
-                      render={({ field }) => (
-                        <FieldGroup className="gap-3">
-                          {operationOptions.map((operation, index) => (
-                            <Field
-                              key={operation.name}
-                              orientation="horizontal"
-                              data-invalid={Boolean(errors.operations)}
-                            >
-                              <Checkbox
-                                id={formId + '-operation-' + index}
-                                name={field.name}
-                                ref={index === 0 ? field.ref : undefined}
-                                checked={field.value.includes(operation.name)}
-                                disabled={blocked}
-                                onBlur={field.onBlur}
-                                onCheckedChange={(checked) =>
-                                  field.onChange(
-                                    checked
-                                      ? [...field.value, operation.name]
-                                      : field.value.filter((name) => name !== operation.name),
-                                  )
-                                }
-                                aria-invalid={Boolean(errors.operations)}
-                                aria-describedby={formId + '-operations-error'}
-                              />
-                              <FieldContent>
-                                <FieldLabel
-                                  htmlFor={formId + '-operation-' + index}
-                                  className={operation.unavailable ? 'text-amber-300' : undefined}
+      {!catalog || !snapshot ? (
+        <div role="status" aria-label="Loading connections" className="space-y-3">
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-24 w-full" />
+          {error ? (
+            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void refresh()}>
+              Try again
+            </Button>
+          ) : null}
+        </div>
+      ) : editor ? (
+        <>
+          <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setEditor(undefined)}>
+            <ChevronLeft aria-hidden="true" /> Back to connections
+          </Button>
+          <div className="space-y-1">
+            <h2 ref={editorHeading} tabIndex={-1} className="text-base font-medium outline-none">
+              {selected?.enabled ? 'Manage ' : 'Connect '}
+              {serviceName(editor)}
+            </h2>
+            <FieldDescription>{editor} · Read access for this agent. You can disconnect at any time.</FieldDescription>
+          </div>
+          <Card size="sm">
+            <form noValidate onSubmit={submit}>
+              <CardContent className="space-y-5">
+                <FieldSet disabled={blocked} aria-describedby={formId + '-targets-error'}>
+                  <FieldLegend>
+                    {targets.some((target) => target.resource.kind === 'kubernetes.namespace')
+                      ? 'Namespaces'
+                      : 'Resources'}
+                  </FieldLegend>
+                  <FieldDescription>Choose what your agent can read.</FieldDescription>
+                  <Controller
+                    name="targets"
+                    control={form.control}
+                    render={({ field }) => (
+                      <FieldGroup className="gap-2">
+                        {targetOptions.map((target, index) => (
+                          <Field key={target.key} orientation="horizontal" data-invalid={Boolean(errors.targets)}>
+                            <Checkbox
+                              id={formId + '-target-' + index}
+                              name={field.name}
+                              ref={index === 0 ? field.ref : undefined}
+                              checked={field.value.includes(target.key)}
+                              disabled={blocked}
+                              onBlur={field.onBlur}
+                              onCheckedChange={(checked) =>
+                                field.onChange(
+                                  checked
+                                    ? [...field.value, target.key]
+                                    : field.value.filter((key) => key !== target.key),
+                                )
+                              }
+                              aria-invalid={Boolean(errors.targets)}
+                              aria-describedby={formId + '-targets-error'}
+                            />
+                            <FieldLabel htmlFor={formId + '-target-' + index}>{target.label}</FieldLabel>
+                          </Field>
+                        ))}
+                        {targetOptions.length === 0 ? (
+                          <FieldDescription>No resources are currently available.</FieldDescription>
+                        ) : null}
+                      </FieldGroup>
+                    )}
+                  />
+                  <FieldError id={formId + '-targets-error'} errors={[errors.targets]} />
+                </FieldSet>
+                <div className="space-y-2 border-t pt-4">
+                  <p className="text-sm font-medium">Your agent will be able to</p>
+                  <ul className="list-inside list-disc space-y-1 text-sm text-zinc-400">
+                    {operationOptions
+                      .filter((operation) => selectedOperations.includes(operation.name))
+                      .map((operation) => (
+                        <li key={operation.name}>{operation.label}</li>
+                      ))}
+                  </ul>
+                  <Collapsible open={customizing} onOpenChange={setCustomizing}>
+                    <CollapsibleTrigger render={<Button type="button" size="sm" variant="ghost" />}>
+                      Customize access <ChevronDown aria-hidden="true" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <FieldSet disabled={blocked} className="pt-3" aria-describedby={formId + '-operations-error'}>
+                        <FieldLegend className="sr-only">Allowed tools</FieldLegend>
+                        <Controller
+                          name="operations"
+                          control={form.control}
+                          render={({ field }) => (
+                            <FieldGroup className="gap-3">
+                              {operationOptions.map((operation, index) => (
+                                <Field
+                                  key={operation.name}
+                                  orientation="horizontal"
+                                  data-invalid={Boolean(errors.operations)}
                                 >
-                                  {operation.description}
-                                </FieldLabel>
-                              </FieldContent>
-                            </Field>
-                          ))}
-                        </FieldGroup>
-                      )}
-                    />
-                    <FieldError id={formId + '-operations-error'} errors={[errors.operations]} />
-                  </FieldSet>
-                  <FieldSet disabled={blocked} aria-describedby={formId + '-targets-error'}>
-                    <FieldLegend>
-                      {targets.every((entry) => entry.resource.kind === 'kubernetes.namespace')
-                        ? 'Namespaces'
-                        : 'Resources'}
-                    </FieldLegend>
-                    <Controller
-                      name="targets"
-                      control={form.control}
-                      render={({ field }) => (
-                        <FieldGroup className="gap-3">
-                          {targetOptions.map((option, index) => (
-                            <Field key={option.key} orientation="horizontal" data-invalid={Boolean(errors.targets)}>
-                              <Checkbox
-                                id={formId + '-target-' + index}
-                                name={field.name}
-                                ref={index === 0 ? field.ref : undefined}
-                                checked={field.value.includes(option.key)}
-                                disabled={blocked}
-                                onBlur={field.onBlur}
-                                onCheckedChange={(checked) =>
-                                  field.onChange(
-                                    checked
-                                      ? [...field.value, option.key]
-                                      : field.value.filter((key) => key !== option.key),
-                                  )
-                                }
-                                aria-invalid={Boolean(errors.targets)}
-                                aria-describedby={formId + '-targets-error'}
-                              />
-                              <FieldLabel
-                                htmlFor={formId + '-target-' + index}
-                                className={option.unavailable ? 'text-amber-300' : undefined}
-                              >
-                                {option.label}
-                              </FieldLabel>
-                            </Field>
-                          ))}
-                        </FieldGroup>
-                      )}
-                    />
-                    <FieldError id={formId + '-targets-error'} errors={[errors.targets]} />
-                  </FieldSet>
+                                  <Checkbox
+                                    id={formId + '-operation-' + index}
+                                    name={field.name}
+                                    ref={index === 0 ? field.ref : undefined}
+                                    checked={field.value.includes(operation.name)}
+                                    disabled={blocked}
+                                    onBlur={field.onBlur}
+                                    onCheckedChange={(checked) =>
+                                      field.onChange(
+                                        checked
+                                          ? [...field.value, operation.name]
+                                          : field.value.filter((name) => name !== operation.name),
+                                      )
+                                    }
+                                    aria-invalid={Boolean(errors.operations)}
+                                    aria-describedby={formId + '-operations-error'}
+                                  />
+                                  <FieldLabel htmlFor={formId + '-operation-' + index}>{operation.label}</FieldLabel>
+                                </Field>
+                              ))}
+                            </FieldGroup>
+                          )}
+                        />
+                      </FieldSet>
+                    </CollapsibleContent>
+                  </Collapsible>
+                  <FieldError id={formId + '-operations-error'} errors={[errors.operations]} />
                 </div>
-              </FieldGroup>
-            </CardContent>
-            <CardFooter className="flex-wrap gap-2">
-              <Button
-                type="submit"
-                size="sm"
-                disabled={
-                  disabled ||
-                  busy ||
-                  Boolean(pendingDisconnect) ||
-                  agent.phase !== 'ready' ||
-                  Boolean(connected && !form.formState.isDirty && !pending)
-                }
-              >
-                {busy
-                  ? 'Connecting…'
-                  : pending
-                    ? 'Try again'
-                    : connected && !form.formState.isDirty
-                      ? 'Connected'
-                      : selectedConnection && !selectedConnection.enabled
-                        ? 'Reconnect'
-                        : selectedConnection
-                          ? 'Update access'
+                {agent.phase !== 'ready' ? (
+                  <FieldDescription>
+                    Resume your workspace to connect its tools. Your saved access stays in place.
+                  </FieldDescription>
+                ) : null}
+                {pending ? (
+                  <FieldDescription>
+                    Your request is saved. Try again to confirm it before making another change.
+                  </FieldDescription>
+                ) : null}
+              </CardContent>
+              <CardFooter className="flex-wrap gap-2">
+                {selected?.enabled ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={disabled || busy}
+                    className="mr-auto"
+                    onClick={() => void disconnect(selected.id)}
+                  >
+                    {pendingDisconnect ? 'Retry disconnect' : 'Disconnect'}
+                  </Button>
+                ) : null}
+                <Button
+                  type="submit"
+                  size="sm"
+                  className="ml-auto"
+                  disabled={
+                    disabled ||
+                    busy ||
+                    Boolean(pendingDisconnect) ||
+                    agent.phase !== 'ready' ||
+                    Boolean(selected?.enabled && selectedConnected && !form.formState.isDirty && !pending)
+                  }
+                >
+                  {busy
+                    ? 'Connecting…'
+                    : pending
+                      ? 'Try again'
+                      : selected?.enabled
+                        ? form.formState.isDirty || selectedConnected
+                          ? 'Save changes'
+                          : 'Reconnect'
+                        : selected
+                          ? 'Reconnect'
                           : 'Connect'}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={disabled || busy}
-                onClick={() => void refresh()}
-              >
-                Refresh
-              </Button>
-            </CardFooter>
-            {agent.phase !== 'ready' ? (
-              <FieldDescription className="px-3">Resume your workspace to connect its tools.</FieldDescription>
-            ) : null}
-          </form>
-        </Card>
+                </Button>
+              </CardFooter>
+            </form>
+          </Card>
+        </>
+      ) : (
+        <>
+          <FieldDescription>
+            Connect the services your agent works with. You control what it can access.
+          </FieldDescription>
+          <ItemGroup aria-label="Available services">
+            {serviceIds.map((id) => {
+              const connection = savedConnection(id)
+              const connected = isConnected(id)
+              const waiting = pending?.connectorId === id
+              return (
+                <Item key={id} role="listitem" variant="outline" className="bg-zinc-950/30">
+                  <ItemMedia variant="icon">
+                    <Server aria-hidden="true" />
+                  </ItemMedia>
+                  <ItemContent className="min-w-0">
+                    <ItemTitle className="text-sm">
+                      {serviceName(id)}{' '}
+                      <Badge variant="secondary">
+                        {connected
+                          ? 'Connected'
+                          : connection?.enabled
+                            ? agent.phase === 'ready'
+                              ? 'Needs attention'
+                              : 'Ready on resume'
+                            : 'Not connected'}
+                      </Badge>
+                    </ItemTitle>
+                    <ItemDescription>{id}</ItemDescription>
+                    {connection?.enabled ? (
+                      <ItemDescription className="break-words">
+                        {connection.resources
+                          .map((resource) => targetNames.get(resourceKey(resource)) ?? 'Unavailable resource')
+                          .join(', ')}
+                      </ItemDescription>
+                    ) : null}
+                  </ItemContent>
+                  <ItemActions>
+                    <Button
+                      ref={lastEditor.current === id ? returnButton : undefined}
+                      type="button"
+                      size="sm"
+                      variant={connected ? 'outline' : 'default'}
+                      disabled={
+                        disabled ||
+                        busy ||
+                        Boolean(pending && !waiting) ||
+                        Boolean(pendingDisconnect && pendingDisconnect.connectionId !== connection?.id)
+                      }
+                      onClick={() => openEditor(id)}
+                    >
+                      {waiting ? 'Finish setup' : connection?.enabled ? 'Manage' : 'Connect'}
+                    </Button>
+                  </ItemActions>
+                </Item>
+              )
+            })}
+          </ItemGroup>
+          {serviceIds.length === 0 ? (
+            <div className="space-y-2 py-6 text-center text-zinc-400">
+              <Plug aria-hidden="true" className="mx-auto size-6" />
+              <p>No services are available yet.</p>
+            </div>
+          ) : null}
+        </>
       )}
     </section>
   )

@@ -197,10 +197,7 @@ pub async fn execute(
     let session = command
         .session()
         .ok_or_else(|| Status::unauthenticated("human session required"))?;
-    let fresh_mfa = matches!(
-        &command,
-        Command::Relationships(_) | Command::PutConnection(_)
-    );
+    let fresh_mfa = matches!(&command, Command::Relationships(_));
     let (context, state, _) =
         authorization::human_context(database, session, command.operation(), fresh_mfa).await?;
     let fingerprint = command.fingerprint()?;
@@ -369,6 +366,9 @@ pub async fn execute(
                 return Err(Status::already_exists("connection reference already exists"));
             }
             prepared.changes = connections::connection_changes(database,native,caller,request,&session.human_id).await?;
+            if !prepared.changes.is_empty() {
+                authorization::human_context(database,session,command.operation(),true).await?;
+            }
         }
         Command::RevokeConnection(request) => {
             let id = decision::parse_uuid(&request.connection_id)?;

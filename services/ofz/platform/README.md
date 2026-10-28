@@ -13,6 +13,8 @@ checks that relationship against the installed native schema. An administrator w
 scope can receive those relationships and save the consent in one durable command. The gateway must also hold
 `platform.administration`; current membership, administrator authority, fresh MFA and execution-binding authority
 remain required. Ordinary users can connect only scopes they already hold. Credential renewal never assigns rights.
+Connecting already-authorized resources reuses the current verified session. The five-minute passkey freshness
+requirement applies when Connect assigns new relationships, not when saving or reconnecting existing access.
 
 The checked package is the approval boundary. Invalid definitions, duplicate identities/actions, unknown fields,
 wildcards and unknown policy actions fail closed. `OFZ_SERVICES_FILE`, `OFZ_POLICY_CATALOG_FILE`,

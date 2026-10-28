@@ -86,9 +86,15 @@ not prove connector execution. Production rollout and this acceptance remain out
   same request. Automatic continuation is bounded to the five-minute sign-in window and the same account/workspace.
   The consent operation binds the human, client, workspace and exact scope. A renewed session or runtime does not
   change that identity, but replay rechecks its current authority before returning the original receipt.
-  Saving consent requires fresh passkey verification. Renewal and revocation require a current MFA session; they
+  Saving consent for permissions the human already holds uses the current verified session. Assigning new resource
+  permissions requires fresh passkey verification. Renewal and revocation require a current MFA session; they
   do not require another passkey ceremony every five minutes. Renewal rechecks the saved scope and current native
   permissions, and cannot widen consent.
+  Connections shows a service list with current status. Connect or Manage opens one editor for resources and a
+  readable permission summary; individual tool choices sit under Customize access. Returning to the list preserves
+  selections, and success returns to the list with focus on Manage. This follows
+  [progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/) and
+  [preserving answers within a journey](https://design-system.service.gov.uk/patterns/question-pages/).
   The Tengri client reconciles on resume and before starting or continuing a turn. Periodic renewal runs only while
   a turn is active. Credentials remain bounded by both the session expiry and its idle deadline.
 - `DELETE /api/tengri/connections` revokes saved consent and all child credentials before guest cleanup. Cleanup can

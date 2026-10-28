@@ -606,6 +606,57 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
             .unwrap()
             .0
     );
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+            &[&Uuid::parse_str(&humans[0].1).unwrap()],
+        )
+        .await
+        .unwrap();
+    let needs_verification = mutations::execute(
+        &database,
+        &native,
+        policy::BFF_ID,
+        Command::PutConnection(automatic.clone()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(needs_verification.code(), Code::PermissionDenied);
+    assert_eq!(
+        needs_verification.message(),
+        "fresh multifactor authentication required"
+    );
+    assert_eq!(
+        connection
+            .query_one(
+                "SELECT count(*) FROM ofz.platform_connections WHERE id=$1",
+                &[&Uuid::parse_str(&automatic.connection_id).unwrap()]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    assert!(
+        !native
+            .check(&[crate::native::Check::new(
+                "kubernetes_namespace",
+                &automatic_target,
+                "read_status",
+                "human",
+                &humans[0].0
+            )])
+            .await
+            .unwrap()
+            .0
+    );
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&humans[0].1).unwrap()],
+        )
+        .await
+        .unwrap();
     let automatic_saved = mutations::execute(
         &database,
         &native,
@@ -828,6 +879,13 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         resources: create.resources.clone(),
         binding: create.binding.clone(),
     };
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+            &[&Uuid::parse_str(&humans[0].1).unwrap()],
+        )
+        .await
+        .unwrap();
     let saved = mutations::execute(
         &database,
         &native,
@@ -836,6 +894,13 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     )
     .await
     .unwrap();
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&humans[0].1).unwrap()],
+        )
+        .await
+        .unwrap();
     assert_eq!(
         mutations::execute(
             &database,
@@ -895,20 +960,17 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         )
         .await
         .unwrap();
-    let mut consent_change = intent.clone();
-    consent_change.operation_id = Uuid::new_v4().to_string();
-    consent_change.expected_version = 1;
-    assert!(
-        mutations::execute(
-            &database,
-            &native,
-            policy::BFF_ID,
-            Command::PutConnection(consent_change)
-        )
-        .await
-        .unwrap_err()
-        .message()
-        .contains("fresh multifactor")
+    let consent_replay = mutations::execute(
+        &database,
+        &native,
+        policy::BFF_ID,
+        Command::PutConnection(intent.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        consent_replay.decision.audit_receipt_id,
+        saved.decision.audit_receipt_id
     );
     let mut renewal = create.clone();
     renewal.operation_id = Uuid::new_v4().to_string();

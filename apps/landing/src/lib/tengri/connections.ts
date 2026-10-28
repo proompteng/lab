@@ -5,6 +5,7 @@ import type { ConnectorOperation } from './generated/proompteng/relay/v1/relay_p
 const generation = z.string().regex(/^[1-9][0-9]{0,18}$/)
 const resource = z.strictObject({ kind: z.string().min(1).max(128), id: z.string().min(1).max(256) })
 const command = { operationId: z.uuid(), agentId: z.string().min(1).max(128) }
+export const connectionScopeLimit = 16
 export const connectionRequestSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     ...command,
@@ -12,8 +13,8 @@ export const connectionRequestSchema = z.discriminatedUnion('kind', [
     connectionId: z.uuid(),
     expectedVersion: z.string().regex(/^(0|[1-9][0-9]{0,18})$/),
     connectorId: z.string().regex(/^[A-Za-z0-9_.-]{1,128}$/),
-    operations: z.array(z.string().min(1).max(128)).min(1).max(16),
-    targets: z.array(resource).min(1).max(16),
+    operations: z.array(z.string().min(1).max(128)).min(1).max(connectionScopeLimit),
+    targets: z.array(resource).min(1).max(connectionScopeLimit),
   }),
   z.strictObject({ agentId: command.agentId, kind: z.literal('reconcile') }),
 ])
@@ -48,6 +49,7 @@ export function retainPendingConnection(
   request: SaveConnection,
   resumeAfterSignIn: boolean,
 ) {
+  connectionRequestSchema.options[0].parse(request)
   const previous = readPendingConnection(storage, key)
   if (previous && previous.request.operationId !== request.operationId)
     throw new Error('Finish the pending connection before starting another change.')
@@ -164,6 +166,7 @@ export function credentialMatchesRuntime(
 ) {
   return (
     connection.enabled &&
+    connection.credentialActive &&
     connection.recoveryGeneration === recoveryGeneration &&
     connection.credentialBinding?.generation === runtimeEpoch &&
     connection.credentialBinding.service === connection.binding?.service &&

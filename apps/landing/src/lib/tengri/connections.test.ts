@@ -70,6 +70,21 @@ const request: SaveConnection = {
 }
 
 describe('connection setup across verification', () => {
+  test('rejects an oversized selection before writing pending setup', () => {
+    for (const oversized of [
+      { ...request, operations: Array.from({ length: 17 }, (_, index) => 'operation-' + index) },
+      {
+        ...request,
+        targets: Array.from({ length: 17 }, (_, index) => ({ kind: 'kubernetes.namespace', id: 'galactic/' + index })),
+      },
+    ]) {
+      const storage = connectionStorage()
+      const key = pendingConnectionKey('one', workspace)
+      expect(() => retainPendingConnection(storage, key, oversized, false)).toThrow()
+      expect(readPendingConnection(storage, key)).toBeUndefined()
+      expect(storage.length).toBe(0)
+    }
+  })
   test('keeps the exact scope and operation, isolates accounts, and refuses replacement of an uncertain request', () => {
     const storage = connectionStorage()
     const key = pendingConnectionKey('one', workspace)
@@ -154,6 +169,9 @@ describe('saved platform connections', () => {
     expect(credentialMatchesRuntime(connection, runtime, BigInt(3), 910_000)).toBe(false)
     expect(credentialMatchesRuntime(connection, workspace, BigInt(3), 0)).toBe(false)
     expect(credentialMatchesRuntime(connection, runtime, BigInt(4), 0)).toBe(false)
+    connection.credentialActive = false
+    expect(credentialMatchesRuntime(connection, runtime, BigInt(3), 0)).toBe(false)
+    connection.credentialActive = true
     connection.enabled = false
     expect(credentialMatchesRuntime(connection, runtime, BigInt(3), 0)).toBe(false)
     expect(connection.enabled).toBe(false)

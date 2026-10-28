@@ -114,8 +114,7 @@ async function reconcile(context: Authority) {
   const renew = snapshot.connections.filter(
     (connection) =>
       connection.enabled &&
-      (!connection.credentialActive ||
-        !credentialMatchesRuntime(connection, context.binding.generation, snapshot.recoveryGeneration, Date.now()) ||
+      (!credentialMatchesRuntime(connection, context.binding.generation, snapshot.recoveryGeneration, Date.now()) ||
         !installationMatches(connection, guest)),
   )
   const catalog = renew.length
