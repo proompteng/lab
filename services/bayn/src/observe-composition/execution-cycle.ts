@@ -1235,6 +1235,7 @@ const interpretBoundExecutionCycleOutcome = (
         cycle,
         ...(outcome.readiness === undefined ? { waitReason: outcome.waitReason } : { readiness: outcome.readiness }),
         ...(outcome.maximumHoldDueAt === undefined ? {} : { maximumHoldDueAt: outcome.maximumHoldDueAt }),
+        ...(outcome.positionHold === undefined ? {} : { positionHold: outcome.positionHold }),
         ...(outcome.maximumHoldEvaluatedAt === undefined
           ? {}
           : { maximumHoldEvaluatedAt: outcome.maximumHoldEvaluatedAt }),

@@ -26,6 +26,7 @@ import { defaultJevProtocolDocument } from '../../jev/protocol'
 import { planAccountingReceipt } from '../../db/execution-store/decisions'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../../broker/identity'
 import { config as runtimeConfig } from '../../testing/runtime-fixtures'
+import { executionDecisionRows } from '../../db/execution-decision-query'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -37,6 +38,55 @@ const config = {
 const hash = (character: string): string => character.repeat(64)
 
 describePostgres('Forward-performance PostgreSQL read boundary', () => {
+  test('the shared decision source retains entry, closure and residual-close instructions without admitting an unbound entry', async () => {
+    const runtime = ManagedRuntime.make(
+      PostgresClientLive(config, { maxConnections: 1, applicationName: 'bayn-decision-query-test' }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    )
+    try {
+      const rows = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`CREATE TEMP TABLE autonomous_cycles (cycle_id text, decision_hash text) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (cycle_id text, decision_hash text, schema_version text, document jsonb, created_at timestamptz) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_closures (cycle_id text, document jsonb) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_close_replans (cycle_id text, document jsonb) ON COMMIT DROP`
+              yield* sql`INSERT INTO autonomous_cycles VALUES (${'a'.repeat(64)}, ${'b'.repeat(64)}), (${'c'.repeat(64)}, ${'d'.repeat(64)})`
+              const at = '2026-10-25T14:30:00.000Z'
+              for (const [source, cycle, hash] of [
+                ['entry', 'a', 'b'],
+                ['unbound', 'c', 'e'],
+              ] as const) {
+                yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (${cycle.repeat(64)}, ${hash.repeat(64)}, 'bayn.paper-cycle-decision.v2', ${sql.json({ source })}, ${at})`
+              }
+              for (const source of ['closure', 'replan'] as const) {
+                const document = {
+                  createdAt: at,
+                  document: {
+                    schemaVersion: 'bayn.paper-cycle-decision.v2',
+                    contentHash: (source === 'closure' ? 'f' : '0').repeat(64),
+                    source,
+                  },
+                }
+                if (source === 'closure')
+                  yield* sql`INSERT INTO autonomous_cycle_paper_closures VALUES (${'a'.repeat(64)}, ${sql.json(document)})`
+                else
+                  yield* sql`INSERT INTO autonomous_cycle_paper_close_replans VALUES (${'a'.repeat(64)}, ${sql.json(document)})`
+              }
+              return yield* sql`SELECT document->>'source' AS source FROM (${executionDecisionRows(sql)}) evidence ORDER BY source`
+            }),
+          )
+        }),
+      )
+      expect(rows).toEqual([{ source: 'closure' }, { source: 'entry' }, { source: 'replan' }])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   test('composes gross fills and observed coin fees with an independent cumulative inventory boundary', async () => {
     const parsed = new URL(testUrl)
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))

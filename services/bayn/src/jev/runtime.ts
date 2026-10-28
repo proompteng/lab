@@ -64,6 +64,7 @@ import {
 } from './exit'
 import { JevPositionStore, JevPurpose, jevManagedExitPlan } from './portfolio'
 import { jevProtectiveQuoteDiagnostics } from './quote-diagnostics'
+import { decideJevPositionHold, type JevPositionHold } from './hold'
 import { type JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
 
@@ -405,6 +406,7 @@ export const evaluateJevPositionManagement = (input: {
     let maximumHoldDueAt: string | undefined
     let maximumHoldEvaluatedAt: string | undefined
     let maximumHoldEvidence: JevExitEvidence | undefined
+    let positionHold: JevPositionHold | undefined
     return Effect.gen(function* () {
       const store = yield* JevPositionStore
       const portfolio = yield* store.read({
@@ -474,7 +476,19 @@ export const evaluateJevPositionManagement = (input: {
           : (yield* Effect.fromResult(jevProfitTargetCrossed(portfolio, bid)))
             ? JevExitReason.ProfitTarget
             : undefined
-        if (reason === undefined) return undefined
+        if (reason === undefined) {
+          positionHold = yield* Effect.fromResult(
+            decideJevPositionHold({
+              ...evidence,
+              authorityGenerationHash: input.authorityGenerationHash,
+              source: {
+                manifest: pricing.manifest,
+                rows: yield* Effect.fromResult(persistIntradayRecordRows(pricing)),
+              },
+            }),
+          )
+          return undefined
+        }
         const target = yield* Effect.fromResult(
           decideJevExit({
             ...evidence,
@@ -511,7 +525,10 @@ export const evaluateJevPositionManagement = (input: {
       Effect.map(
         (target): JevPositionManagement =>
           target === undefined
-            ? { _tag: 'Wait', details: { waitReason: 'JEV_POSITION_HELD' } }
+            ? {
+                _tag: 'Wait',
+                details: { waitReason: 'JEV_POSITION_HELD', ...(positionHold === undefined ? {} : { positionHold }) },
+              }
             : { _tag: 'Exit', target },
       ),
       Effect.catchTags({

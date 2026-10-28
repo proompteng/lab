@@ -647,6 +647,21 @@ export const prepareInferenceRateCard = (rateCardInput: unknown) =>
     return { rates, rateCardHash }
   })
 
+export const inferenceRatesCoverWindow = (
+  rates: readonly (typeof InferenceRateSchema.Type)[],
+  window: { readonly provider: string; readonly model: string; readonly startAt: string; readonly endAt: string },
+) => {
+  if (window.startAt >= window.endAt) return false
+  let coveredUntil = window.startAt
+  for (const rate of rates
+    .filter((rate) => rate.provider === window.provider && rate.model === window.model)
+    .toSorted((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))) {
+    if (rate.effectiveFrom > coveredUntil) break
+    if (rate.effectiveUntil > coveredUntil) coveredUntil = rate.effectiveUntil
+  }
+  return coveredUntil > window.endAt
+}
+
 /** Operating-expense evidence only; broker cash and trading authority are separate ledgers. */
 export const makeInferenceCostReport = (
   evidence: DecodedInferenceCostEvidence,
