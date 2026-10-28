@@ -170,7 +170,8 @@ const retainCheckpoint = (current: typeof request) =>
     for (const claim of checkpoint.claims) {
       yield* journal.recordVisualClaim(claim)
       const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
-      if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+      if (terminal !== undefined)
+        yield* journal.recordVisualTransition({ terminal: terminal, successor: { kind: 'NONE' } })
     }
   })
 const retainReplayRequest = Effect.gen(function* () {
@@ -391,7 +392,7 @@ integration('committed sequential provider handoff', () => {
                 const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
                 if (predecessor === undefined || terminal === undefined) throw new Error('Missing predecessor')
                 yield* journal.recordVisualClaim(predecessor)
-                yield* journal.recordVisualTerminal(terminal)
+                yield* journal.recordVisualTransition({ terminal: terminal, successor: { kind: 'NONE' } })
               }
               if (scenario.state === 'claimed')
                 expect(yield* journal.recordVisualClaim(claim)).toEqual({ dispatchAllowed: true })
@@ -810,8 +811,8 @@ integration('committed sequential provider handoff', () => {
             outcome: { status: 'RECEIVED', inference: visual },
           }),
         )
-        yield* journal.recordVisualTerminal(terminal)
-        yield* journal.recordVisualTerminal(terminal)
+        yield* journal.recordVisualTransition({ terminal: terminal, successor: { kind: 'NONE' } })
+        yield* journal.recordVisualTransition({ terminal: terminal, successor: { kind: 'NONE' } })
         const lateSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
         if (lateSource === undefined) throw new Error('Late chart metering was not rediscovered')
         const historicalRates = Result.getOrThrow(makeInferenceExpenseQuotes(lateSource, inferenceExpenseRateCard))
@@ -831,7 +832,13 @@ integration('committed sequential provider handoff', () => {
         const conflict = Result.getOrThrow(
           makeStagedTerminalReceipt({ ...terminalMaterial, recordedAt: current.expiresAt }),
         )
-        expect(Result.isFailure(yield* journal.recordVisualTerminal(conflict).pipe(Effect.result))).toBe(true)
+        expect(
+          Result.isFailure(
+            yield* journal
+              .recordVisualTransition({ terminal: conflict, successor: { kind: 'NONE' } })
+              .pipe(Effect.result),
+          ),
+        ).toBe(true)
         expect(
           Result.isFailure(
             yield* sql`UPDATE jev_staged_dispatch_claims SET payload=payload WHERE request_id=${current.requestId}`.pipe(
@@ -926,6 +933,154 @@ integration('committed sequential provider handoff', () => {
     )
   })
 
+  test('commits a chart terminal and its base-start admission in one transaction', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || terminal === undefined || base === undefined)
+          throw new Error('Missing staged fixture')
+        expect(yield* journal.recordVisualClaim(chart)).toEqual({ dispatchAllowed: true })
+        expect(yield* journal.recordVisualTransition({ terminal, successor: { kind: 'VISUAL', claim: base } })).toEqual(
+          {
+            dispatchAllowed: true,
+          },
+        )
+        const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ transaction: Schema.String })))(
+          yield* sql`SELECT xmin::text AS transaction FROM jev_staged_terminal_receipts
+            WHERE request_id=${request.requestId} AND stage='CHART'
+            UNION ALL SELECT xmin::text FROM jev_staged_dispatch_claims
+            WHERE request_id=${request.requestId} AND stage='BASE_START'`,
+        )
+        expect(rows).toHaveLength(2)
+        expect(new Set(rows.map((row) => row.transaction)).size).toBe(1)
+      }),
+    ))
+
+  test('commits a base-start terminal and its dependent Jev handoff in one transaction', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || chartTerminal === undefined || base === undefined || terminal === undefined)
+          throw new Error('Missing staged fixture')
+        yield* journal.recordVisualClaim(chart)
+        yield* journal.recordVisualTransition({ terminal: chartTerminal, successor: { kind: 'NONE' } })
+        yield* journal.recordVisualClaim(base)
+        expect(
+          yield* journal.recordVisualTransition({
+            terminal,
+            successor: { kind: 'HANDOFF', handoff: completion.handoff },
+          }),
+        ).toEqual({ dispatchAllowed: true })
+        const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ transaction: Schema.String })))(
+          yield* sql`SELECT xmin::text AS transaction FROM jev_staged_terminal_receipts
+            WHERE request_id=${request.requestId} AND stage='BASE_START'
+            UNION ALL SELECT xmin::text FROM jev_inference_handoffs WHERE request_id=${request.requestId}`,
+        )
+        expect(rows).toHaveLength(2)
+        expect(new Set(rows.map((row) => row.transaction)).size).toBe(1)
+      }),
+    ))
+
+  test('an atomic visual transition serializes retries and refuses an ambient transaction', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || terminal === undefined || base === undefined)
+          throw new Error('Missing staged fixture')
+        yield* journal.recordVisualClaim(chart)
+        const transition = journal.recordVisualTransition({ terminal, successor: { kind: 'VISUAL', claim: base } })
+        expect(Result.isFailure(yield* sql.withTransaction(transition).pipe(Effect.result))).toBe(true)
+        expect(
+          yield* sql`SELECT stage FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([])
+        const attempts = yield* Effect.all([transition, transition], { concurrency: 2 })
+        expect(attempts.filter((value) => value.dispatchAllowed)).toHaveLength(1)
+        expect(
+          yield* sql`SELECT stage FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([{ stage: 'CHART' }])
+        expect(
+          yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId} ORDER BY stage`,
+        ).toEqual([{ stage: 'BASE_START' }, { stage: 'CHART' }])
+      }),
+    ))
+
+  test('an invalid successor rolls back its visual transition without replacing evidence', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || terminal === undefined || base === undefined)
+          throw new Error('Missing staged fixture')
+        yield* journal.recordVisualClaim(chart)
+        const { claimHash: _oldHash, ...material } = base
+        const invalid = Result.getOrThrow(makeStagedDispatchClaim({ ...material, selectedEnd: 'wrong-end' }))
+        expect(
+          Result.isFailure(
+            yield* journal
+              .recordVisualTransition({ terminal, successor: { kind: 'VISUAL', claim: invalid } })
+              .pipe(Effect.result),
+          ),
+        ).toBe(true)
+        expect(
+          yield* sql`SELECT stage FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([])
+        expect(yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId}`).toEqual([
+          { stage: 'CHART' },
+        ])
+        expect(yield* journal.recordVisualTransition({ terminal, successor: { kind: 'NONE' } })).toEqual({
+          dispatchAllowed: false,
+        })
+        expect(
+          yield* sql`SELECT terminal_hash FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([{ terminal_hash: terminal.terminalHash }])
+      }),
+    ))
+
+  test('an expired atomic successor retains the paid terminal without admitting another dispatch', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || terminal === undefined || base === undefined)
+          throw new Error('Missing staged fixture')
+        yield* journal.recordVisualClaim(chart)
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at=${request.expiresAt} WHERE account_id=${replayAccountId}`
+        expect(yield* journal.recordVisualTransition({ terminal, successor: { kind: 'VISUAL', claim: base } })).toEqual(
+          { dispatchAllowed: false },
+        )
+        expect(
+          yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([{ payload: terminal }])
+        expect(yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId}`).toEqual([
+          { stage: 'CHART' },
+        ])
+      }),
+    ))
+
   test(
     'admits base start once only after its exact committed predecessor and rejects skipped or expired dispatch',
     async () =>
@@ -941,7 +1096,7 @@ integration('committed sequential provider handoff', () => {
             throw new Error('Missing staged fixture')
           expect(Result.isFailure(yield* journal.recordVisualClaim(base).pipe(Effect.result))).toBe(true)
           expect(yield* journal.recordVisualClaim(chart)).toEqual({ dispatchAllowed: true })
-          yield* journal.recordVisualTerminal(terminal)
+          yield* journal.recordVisualTransition({ terminal: terminal, successor: { kind: 'NONE' } })
           const { claimHash: _hash, ...material } = base
           const changed = Result.getOrThrow(makeStagedDispatchClaim({ ...material, selectedEnd: 'wrong-end' }))
           expect(Result.isFailure(yield* journal.recordVisualClaim(changed).pipe(Effect.result))).toBe(true)
@@ -992,7 +1147,7 @@ integration('committed sequential provider handoff', () => {
           if (first === undefined || firstTerminal === undefined || successor === undefined)
             throw new Error('Missing staged fixture')
           yield* journal.recordVisualClaim(first)
-          yield* journal.recordVisualTerminal(firstTerminal)
+          yield* journal.recordVisualTransition({ terminal: firstTerminal, successor: { kind: 'NONE' } })
           yield* sql`UPDATE simulated_execution_clocks SET observed_at=${fresh.expiresAt} WHERE account_id=${replayAccountId}`
           expect(yield* journal.recordVisualClaim(successor)).toEqual({ dispatchAllowed: false })
           expect(

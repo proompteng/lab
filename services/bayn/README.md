@@ -77,7 +77,10 @@ quote checks and native order construction enforce that same funded ceiling. Equ
 IOC limits. It does not add the risk policy's adverse-price allowance to the buy limit. Crypto entry coin fees, maximum
 future sell fees, stop/exit slippage and every risk limit remain unchanged. A tighter buy limit may remain unfilled; it
 cannot justify a cheaper funding estimate while submitting a higher-priced order.
-PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
+PostgreSQL commits each visual terminal receipt with its next visual admission or its proposal derivation and dependent
+Jev request in one transaction, before any successor provider I/O. The request row serializes retries. A repeated
+transition verifies the same bytes and never permits another dispatch. Expiry can still retain the paid terminal
+receipt while refusing a successor claim; acknowledgement after the original deadline cannot authorize provider I/O.
 An unused BASE_START skip commits with its handoff in one transaction; paid visual terminal evidence remains
 independently durable. Normal batch completion compares the admitted observation and every committed request, receipt
 and resolution directly before sealing the result. Recovery still reconstructs incomplete stored graphs. Completion
@@ -106,7 +109,7 @@ and one newer completed bar. An unused branch's refusal cannot veto a supported 
 Migration 158 admits only protocol v28 for new execution, retaining outer request v3, input v5, handoff v4 and the
 market-specific question policy. It preserves the staged transport installed by migration 153. Retired protocols, including v27,
 v1–v4 inputs and earlier question policies remain available only to financial readers. Migration 151 and its historical checkpoint identities remain unchanged.
-Each visual stage has one immutable dispatch admission and a separately durable terminal receipt. A duplicate admission
+Each visual stage has one immutable dispatch admission and a durable terminal receipt. A duplicate admission
 cannot redispatch an uncertain call. Late terminal evidence can settle costs but cannot authorize a successor or renew expiry.
 An explicit authenticated BASE_START skip proves non-dispatch; absent or incomplete stage evidence remains unknown.
 Financial evidence/quotes v4 preserve three separate stage keys and transfer identities, retain unknown-to-metered history,
