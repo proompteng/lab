@@ -153,25 +153,27 @@ export const readJevEvaluationEvidence = (sql: PgClient.PgClient, input: readonl
       yield* Effect.yieldNow
       const receipt =
         row.receipt === null ? null : yield* Effect.fromResult(decodeJevEvaluationReceipt(request, row.receipt))
-      const handoff =
-        row.handoff === null
-          ? null
-          : yield* Effect.fromResult(
-              decodeEntryHandoff(
-                {
-                  requestId: request.requestId,
-                  input: request.request,
-                  observedAt: request.observedAt,
-                  expiresAt: request.expiresAt,
-                },
-                row.handoff,
-              ),
-            )
-      if (
-        receipt?.outcome.status === JevOutcome.Completed &&
-        (handoff === null || handoff.handoffHash !== receipt.outcome.completion.handoff.handoffHash)
-      )
-        return yield* jevEvaluationReadError('Entry receipt differs from its committed provider handoff')
+      if (receipt?.outcome.status === JevOutcome.Completed) {
+        // Receipt decoding already reproduces its entire handoff. Require the independent stored
+        // copy to contain exactly those verified bytes instead of reproducing the same source twice.
+        if (
+          row.handoff === null ||
+          (yield* Effect.fromResult(canonicalHashV1Result(row.handoff))) !==
+            (yield* Effect.fromResult(canonicalHashV1Result(receipt.outcome.completion.handoff)))
+        )
+          return yield* jevEvaluationReadError('Entry receipt differs from its committed provider handoff')
+      } else if (row.handoff !== null)
+        yield* Effect.fromResult(
+          decodeEntryHandoff(
+            {
+              requestId: request.requestId,
+              input: request.request,
+              observedAt: request.observedAt,
+              expiresAt: request.expiresAt,
+            },
+            row.handoff,
+          ),
+        )
       const resolution =
         row.resolution === null ? null : yield* Effect.fromResult(decodeJevResolution(request, receipt, row.resolution))
       if (receipt !== null && resolution === null)
