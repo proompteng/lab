@@ -190,6 +190,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [runRecovered, setRunRecovered] = useState(false)
   const recoverInitialRun = useRef(true)
   const [workspaceRuns, setWorkspaceRuns] = useState<TengriCodexRun[]>([])
+  const [runRecoveryRevision, setRunRecoveryRevision] = useState(0)
   const [run, setRun] = useState<TengriCodexRun | null>(null)
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
@@ -370,7 +371,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (timer) clearTimeout(timer)
     }
-  }, [account?.authenticated, agentId, threadId, activeTurnId])
+  }, [account?.authenticated, agentId, threadId, activeTurnId, runRecoveryRevision])
 
   useEffect(() => {
     if (!runId || !threadId || selectedRunTerminal) return
@@ -1357,6 +1358,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           throw new Error(accepted.state.reason)
         }
         setWorkspaceRuns((current) => [...current.filter((run) => run.threadId !== accepted.threadId), accepted])
+        // An idle workspace has no polling timer. A local acknowledgement is not
+        // proof that its snapshot will be refreshed, especially before turn/start.
+        setRunRecoveryRevision((current) => current + 1)
         if (threadIdRef.current === currentThread.id) {
           setRun(accepted)
           setRunId(accepted.runId)
