@@ -196,12 +196,14 @@ export const readSystemDurableObservations = (registrationHash: string) =>
 export const readSystemDecisionAdmissions = ({
   accountId,
   generationHash,
+  openAt,
   firstSession,
   lastSession,
   asOf,
 }: {
   readonly accountId: string
   readonly generationHash: string
+  readonly openAt: string
   readonly firstSession: string
   readonly lastSession: string
   readonly asOf: string
@@ -228,6 +230,7 @@ export const readSystemDecisionAdmissions = ({
         JOIN autonomous_cycles cycle ON cycle.cycle_id = intent.cycle_id
       WHERE intent.account_id = ${accountId} AND intent.authority_generation_hash = ${generationHash}
         AND cycle.execution_session_date BETWEEN ${firstSession}::date AND ${lastSession}::date
+        AND event.occurred_at >= ${openAt}::timestamptz
         AND receipt.observed_at <= ${asOf}::timestamptz
       ORDER BY receipt.event_id, receipt.decision_id`,
     )
@@ -497,6 +500,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           const decisionAdmissions = yield* readSystemDecisionAdmissions({
             accountId: identity.accountId,
             generationHash: candidate.authorityGenerationHash,
+            openAt: first.openAt,
             firstSession: first.sessionDate,
             lastSession: last.sessionDate,
             asOf,
@@ -504,6 +508,7 @@ export const captureSystemSourceCut = (config: ForwardPerformanceConfig, registr
           const scope = {
             accountId: identity.accountId,
             generationHash: candidate.authorityGenerationHash,
+            openAt: first.openAt,
             firstSession: first.sessionDate,
             lastSession: last.sessionDate,
             asOf,

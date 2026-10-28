@@ -651,6 +651,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     const scope = {
       accountId: account,
       generationHash: document.bindings.authorityGenerationHash,
+      openAt: `${sessionDate}T00:00:00.000Z`,
       firstSession: sessionDate,
       lastSession: sessionDate,
       asOf: f.cut.asOf,
@@ -1308,6 +1309,7 @@ postgres('PostgreSQL prospective system qualification', () => {
     const scope = {
       accountId: account,
       generationHash: definition.authorityGenerationHash,
+      openAt: `${sessionDate}T00:00:00.000Z`,
       firstSession: sessionDate,
       lastSession: sessionDate,
       asOf: new Date(Date.now() + 1000).toISOString(),
@@ -1321,6 +1323,16 @@ postgres('PostgreSQL prospective system qualification', () => {
     ).toEqual([])
     expect(captured).toHaveLength(1)
     expect(captured[0]).toMatchObject({ eventId: sha256('committed-admission'), decisionId })
+    const admissionObservedAt = captured[0]?.observedAt
+    if (admissionObservedAt === undefined) throw new Error('Missing committed admission observation')
+    expect(
+      await runtime.runPromise(
+        readSystemDecisionAdmissions({
+          ...scope,
+          openAt: new Date(Date.parse(admissionObservedAt) + 1).toISOString(),
+        }),
+      ),
+    ).toEqual([])
     await runtime.runPromise(
       asApplication(
         Effect.gen(function* () {

@@ -220,6 +220,7 @@ const main = Effect.gen(function* () {
         Effect.gen(function* () {
           const scope = {
             ...identity,
+            openAt: firstSession.openAt,
             firstSession: firstSession.sessionDate,
             lastSession: lastSession.sessionDate,
             asOf: lastSession.closeAt,
@@ -260,6 +261,7 @@ const main = Effect.gen(function* () {
           )
           const decisionAdmissions = yield* readSystemDecisionAdmissions({
             ...identity,
+            openAt: firstSession.openAt,
             firstSession: firstSession.sessionDate,
             lastSession: lastSession.sessionDate,
             asOf: scope.asOf,
