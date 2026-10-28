@@ -1,6 +1,7 @@
 import { Result, Schema } from 'effect'
 
-import { Sha256Schema, SymbolSchema, UtcInstantSchema } from '../schemas'
+import { canonicalHashV1Result } from '../hash'
+import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import type { NativeChartEvidence } from './chart-evidence'
 import { JevContractError } from './contract'
 import { jevEntryEconomics } from './entry-economics'
@@ -8,7 +9,13 @@ import type { EntryInferenceInput } from './entry-inference-input'
 import type { JevProtocolMaterial } from './protocol'
 import { makeEntrySourceCandidates } from './entry-proposals'
 import type { RetainedConditionalChartAssessmentsMaterial } from './retained-conditional-chart-questions'
-import { decisionsModel, prepareDecisionsRequest, type DecisionsRequest, type DecisionsResponse } from './decisions'
+import {
+  DecisionsRequestSchema,
+  decisionsModel,
+  prepareDecisionsRequest,
+  type DecisionsRequest,
+  type DecisionsResponse,
+} from './decisions'
 
 const presenceQuestions = [
   {
@@ -72,11 +79,27 @@ export type ChartDecisionSource = {
   readonly funding: EntryInferenceInput['funding']
 }
 
+type PreparedChartRequest = {
+  readonly body: string
+  readonly requestHash: string
+  readonly sourceFeasible: boolean
+}
+const preparedChartRequests = new Map<string, PreparedChartRequest>()
+const detachedChartRequest = (prepared: PreparedChartRequest) =>
+  Schema.decodeUnknownResult(
+    Schema.fromJsonString(DecisionsRequestSchema),
+    strictParseOptions,
+  )(prepared.body).pipe(Result.map((request) => ({ ...prepared, request })))
+
 export const buildChartDecisionsRequest = (
   source: ChartDecisionSource,
   stage: 'CHART' | { readonly selectedEnd: string },
 ) =>
   Result.gen(function* () {
+    // Revalidation must hash actual source content; claimed chart hashes cannot establish cache identity.
+    const key = yield* canonicalHashV1Result({ source, stage, questionPolicy: chartQuestionPolicy })
+    const cached = preparedChartRequests.get(key)
+    if (cached !== undefined) return yield* detachedChartRequest(cached)
     const { chart, protocol, funding } = source
     const economics = yield* jevEntryEconomics({
       protocol,
@@ -195,12 +218,20 @@ export const buildChartDecisionsRequest = (
       ],
       questions: typeof stage === 'object' ? baseQuestions : [...presenceQuestions, ...anchors, ...baseQuestions],
     })
-    return {
-      ...prepared,
+    const reusable = {
+      body: prepared.body,
+      requestHash: prepared.requestHash,
       sourceFeasible:
         candidates.baseWindows.length > 0 ||
         (candidates.supportBarIds.length > 0 && candidates.resistanceBarIds.length > 0),
     }
+    // Two stages for a fifteen-candidate cohort fit without retaining an unbounded chart history.
+    if (preparedChartRequests.size >= 64) {
+      const oldest = preparedChartRequests.keys().next()
+      if (oldest.done === false) preparedChartRequests.delete(oldest.value)
+    }
+    preparedChartRequests.set(key, reusable)
+    return yield* detachedChartRequest(reusable)
   }).pipe(
     Result.mapError(
       (cause) => new JevContractError({ message: 'Executable chart questions could not be prepared', cause }),
