@@ -24,6 +24,22 @@ import { PositiveIntegerSchema, Sha256Schema, UtcInstantSchema, strictParseOptio
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
 
+/** Momentum owns no provider capability, including in measured replay mode. */
+export const momentumReplayProviders = {
+  jev: {
+    evaluate: () =>
+      Effect.fail(
+        new JevError({ failure: JevFailure.Request, message: 'Jev dispatch is forbidden by the momentum policy' }),
+      ),
+  },
+  chart: {
+    evaluate: () =>
+      Effect.fail(
+        new DecisionsError({ category: 'REQUEST', message: 'Chart dispatch is forbidden by the momentum policy' }),
+      ),
+  },
+} satisfies ReplayInferenceProviders
+
 export interface ReplayInferenceProviders {
   readonly jev: JevClient['Service']
   readonly chart: DecisionsClient['Service']
@@ -102,7 +118,7 @@ type MeasuredTimes = Pick<ReplayInferenceCall, keyof typeof callFields>
 
 // This labels a measured call; the journal independently verifies the complete
 // predecessor graph and exact provider request hash before dispatch admission.
-const visualStage = (request: DecisionsRequest) =>
+export const replayVisualStage = (request: DecisionsRequest) =>
   request.questions.length === 1 && request.questions[0]?.name.startsWith('base_first_bar_ending_') === true
     ? ('BASE_START' as const)
     : ('CHART' as const)
@@ -117,7 +133,7 @@ const prepareReplayVisualRequest = (raw: unknown) =>
     const data = prepared.request.input[0].content[2].data
     const staged =
       typeof data === 'object' && data !== null && ('predecessor' in data || 'selectedEnd' in data || 'source' in data)
-    if (visualStage(prepared.request) === 'BASE_START') {
+    if (replayVisualStage(prepared.request) === 'BASE_START') {
       const decoded = Schema.decodeUnknownResult(BaseStartSource, strictParseOptions)(data)
       if (Result.isFailure(decoded) || prepared.request.questions[0]?.type !== 'choice')
         return yield* Result.fail(
@@ -354,7 +370,7 @@ export const makeReplayInferenceTiming = (input: {
             input.providers.chart.evaluate,
             (request, times, exit) => {
               const measured = { ...times, request, outcome: chartOutcome(exit, times.requestHash) }
-              return visualStage(request) === 'BASE_START'
+              return replayVisualStage(request) === 'BASE_START'
                 ? { ...measured, schemaVersion: 'bayn.replay-inference-call.v3', stage: 'BASE_START' }
                 : { ...measured, schemaVersion: 'bayn.replay-inference-call.v2', stage: 'CHART' }
             },

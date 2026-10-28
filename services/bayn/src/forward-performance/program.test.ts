@@ -28,6 +28,7 @@ import {
   readForwardPerformanceMarketVolume,
   readForwardPerformanceMarketVolumeWithClient,
   runForwardPerformanceReport,
+  readForwardPerformanceInput,
   type ForwardPerformanceReaders,
 } from './program'
 import { ForwardPerformanceScopeKind } from './report'
@@ -770,7 +771,7 @@ describe('forward performance read program', () => {
           ),
         ),
       )
-      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v5')
+      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v6')
       expect(postgresGeneration).toBe(authorityGenerationHash)
       expect(expenseGeneration).toBe(authorityGenerationHash)
       expect(report.scope).toEqual(
@@ -1024,6 +1025,11 @@ describe('forward performance read program', () => {
     const report = await Effect.runPromise(
       Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
+    const retained = await Effect.runPromise(
+      Effect.scoped(readForwardPerformanceInput(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    )
+    expect(retained.accountCashSettlements).toEqual(cashSettlementRecords)
+    expect(retained.accountTransactions).toEqual(fills)
     expect(report.positionEpisodes).toMatchObject({
       schemaVersion: 'bayn.position-episode-evidence.v4',
       status: 'MEASURED',

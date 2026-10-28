@@ -55,7 +55,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: execution-controller
-          image: registry.ide-newton.ts.net/lab/bayn@sha256:263c76843a0730fef2c64867c078b7552ff7b5a949e6eb645c2b01ed4401efeb
+          image: registry.ide-newton.ts.net/lab/bayn@sha256:70e2307aecab9e8f3cdb4ea5e74ff1dcb16b9289fc7974c1e9aeae92f37ff62a
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -69,7 +69,7 @@ spec:
                 name: bayn-valkey-connection
           env:
             - name: BAYN_CODE_REVISION
-              value: 302dd5ecc446442825587be37c8e0eb2f7d73adb
+              value: 2d979badfb513934bfbbbf3317ee7d60830fac50
             - name: BAYN_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:
@@ -78,7 +78,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:263c76843a0730fef2c64867c078b7552ff7b5a949e6eb645c2b01ed4401efeb
+              value: sha256:70e2307aecab9e8f3cdb4ea5e74ff1dcb16b9289fc7974c1e9aeae92f37ff62a
             # Bind the replacement to the exact immutable execution generation
             # currently owned by the active controller. The deployment stays
             # read-only; only the sealed, validated research mandate can
@@ -97,7 +97,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:263c76843a0730fef2c64867c078b7552ff7b5a949e6eb645c2b01ed4401efeb\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"302dd5ecc446442825587be37c8e0eb2f7d73adb\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:58366c3a562d91a0e311557ae5b9e522e0f148cd68f775e735d8bada0ba8730c\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"0d09965a22d9cd8e8e26a80f903134f14497ac1f\"\n  },\n  \"requestHash\": \"3a90e09a910771071fbd9d17a2abb8a24468835b36704316839ecfd67f55fdc4\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
+              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:70e2307aecab9e8f3cdb4ea5e74ff1dcb16b9289fc7974c1e9aeae92f37ff62a\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"2d979badfb513934bfbbbf3317ee7d60830fac50\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:58366c3a562d91a0e311557ae5b9e522e0f148cd68f775e735d8bada0ba8730c\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"0d09965a22d9cd8e8e26a80f903134f14497ac1f\"\n  },\n  \"requestHash\": \"3a90e09a910771071fbd9d17a2abb8a24468835b36704316839ecfd67f55fdc4\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
