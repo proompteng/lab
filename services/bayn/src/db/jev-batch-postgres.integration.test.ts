@@ -1470,15 +1470,41 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(yield* sql`SELECT result_hash FROM jev_batch_results`).toEqual([])
         const arrivals = yield* Deferred.make<void>()
         let inserting = 0
+        const startedAt = databaseClock.currentTimeMillisUnsafe()
+        const queryEvents: { query: string; event: string; elapsedMs: number }[] = []
+        let eventCount = 0
+        const recordQueryEvent = (query: string, event: string) => {
+          eventCount += 1
+          if (queryEvents.length < 64)
+            queryEvents.push({ query, event, elapsedMs: databaseClock.currentTimeMillisUnsafe() - startedAt })
+        }
         const simultaneous = new Proxy(sql, {
           apply(target, receiver, argumentsList) {
             const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
-            if (!statement.compile()[0].includes('INSERT INTO jev_batch_results')) return statement
+            const query = statement.compile()[0]
+            const insertingResult = query.includes('INSERT INTO jev_batch_results')
+            const category = insertingResult
+              ? 'result-insert'
+              : query.includes('FROM jev_batch_plans')
+                ? 'batch-read'
+                : query.includes('FROM jev_evaluation_requests')
+                  ? 'evaluation-read'
+                  : query.includes('JOIN intraday_candidate_observations')
+                    ? 'observation-read'
+                    : 'other'
             return Effect.gen(function* () {
-              inserting += 1
-              if (inserting === 4) yield* Deferred.succeed(arrivals, undefined)
-              yield* Deferred.await(arrivals)
-              return yield* statement
+              if (insertingResult) {
+                inserting += 1
+                recordQueryEvent(category, 'barrier-arrival')
+                if (inserting === 4) yield* Deferred.succeed(arrivals, undefined)
+                yield* Deferred.await(arrivals)
+              }
+              recordQueryEvent(category, 'start')
+              return yield* statement.pipe(
+                Effect.onExit((exit) =>
+                  Effect.sync(() => recordQueryEvent(category, Exit.isSuccess(exit) ? 'success' : 'failure')),
+                ),
+              )
             })
           },
         })
@@ -1486,6 +1512,17 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const finalized = yield* Effect.all(
           Array.from({ length: 4 }, () => competing.finish(plan.batchId)),
           { concurrency: 'unbounded' },
+        ).pipe(
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit)
+              ? Effect.logError('Concurrent finalizer query phases', {
+                  inserting,
+                  eventCount,
+                  queryEvents,
+                  elapsedMs: databaseClock.currentTimeMillisUnsafe() - startedAt,
+                })
+              : Effect.void,
+          ),
         )
         const saved = yield* batches.read(plan.batchId)
         if (saved === null || saved.result === null) throw new Error('Committed receipts did not finalize')
