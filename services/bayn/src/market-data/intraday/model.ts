@@ -26,6 +26,7 @@ export enum IntradayBenchmarkEvidencePolicy {
 
 export enum IntradayCandidateEvidencePolicy {
   QuoteWithWindowTrade = 'bayn.candidate-evidence.quote-window-trade.v1',
+  MarketQuotes = 'bayn.candidate-evidence.market-quotes.v1',
 }
 
 export interface IntradaySnapshotQuery {
@@ -68,8 +69,16 @@ export const usesWindowTradeEvidence = (
   request: Pick<IntradaySnapshotQuery, 'candidateEvidencePolicy' | 'candidateSymbols'>,
   symbol: string,
 ): boolean =>
-  request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade &&
+  (request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade ||
+    request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.MarketQuotes) &&
   (request.candidateSymbols?.includes(symbol) === true || instrumentMarket(symbol) === MarketKind.Crypto)
+
+export const usesOptionalTradeEvidence = (
+  request: Pick<IntradaySnapshotQuery, 'candidateEvidencePolicy'>,
+  symbol: string,
+): boolean =>
+  request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.MarketQuotes &&
+  instrumentMarket(symbol) === MarketKind.Crypto
 
 export const usesCompletedBarBenchmark = (
   request: Pick<IntradaySnapshotQuery, 'benchmarkEvidencePolicy' | 'benchmarkSymbols' | 'candidateSymbols'>,

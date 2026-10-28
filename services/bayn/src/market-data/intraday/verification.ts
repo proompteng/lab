@@ -35,6 +35,7 @@ import {
   IntradaySnapshotPurpose,
   intradaySnapshotSymbols,
   usesWindowTradeEvidence,
+  usesOptionalTradeEvidence,
 } from './model'
 import type { IntradayArchiveWatermarkRow, IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import {
@@ -322,7 +323,7 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   }
   if (
     request.candidateEvidencePolicy !== undefined &&
-    (request.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.QuoteWithWindowTrade ||
+    (!Object.values(IntradayCandidateEvidencePolicy).includes(request.candidateEvidencePolicy) ||
       request.candidateSymbols === undefined ||
       request.purpose !== undefined)
   ) {
@@ -332,7 +333,7 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
     request.benchmarkEvidencePolicy !== undefined &&
     (request.benchmarkEvidencePolicy !== IntradayBenchmarkEvidencePolicy.CompletedBars ||
       request.feed !== 'us' ||
-      request.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.QuoteWithWindowTrade ||
+      request.candidateEvidencePolicy === undefined ||
       request.purpose !== undefined)
   )
     return Result.fail(failure('request', 'completed-bar benchmarks require an independent crypto decision query'))
@@ -903,6 +904,7 @@ export const latestQuotes = (
       return Result.fail(failure('not-ready', 'intraday quote has a withdrawn bid or ask side', { symbol }))
     if (
       request.purpose === undefined &&
+      !usesOptionalTradeEvidence(request, symbol) &&
       (trade === undefined ||
         (!usesWindowTradeEvidence(request, symbol) &&
           intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt)))
