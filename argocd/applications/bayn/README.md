@@ -1,5 +1,15 @@
 # Exception tracking
 
+## Crypto quote evidence
+
+Protocol v29 removes the requirement for a crypto trade print before entry assessment. Crypto bars may contain quote
+midpoints without trades; the native snapshot retains their original source, fresh executable quotes and actual trade
+context, including an explicit `null` when absent. Equity trade confirmation remains required. Model setup judgments,
+fee-inclusive funding, quote freshness, inference deadlines, stops, the fifteen-minute hold and financial limits remain
+enforced. Migration 160 preserves financial history and requires flat, settled, exactly reconciled native OBSERVE recovery.
+The source release removes the v28 sealed mandate and its runtime lineages. A separately reviewed same-account PAPER
+mandate must bind the verified immutable v29 image before natural trading acceptance can be established.
+
 ## Funded inference-ask cap
 
 Protocol v28 funds equity and crypto buys at the original inference ask rounded to a valid broker tick. Funding,

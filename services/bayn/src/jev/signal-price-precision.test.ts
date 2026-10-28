@@ -77,7 +77,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
     })
     expect(benchmark.prices).toEqual({ reference: 100123457n, bid: 100123457n, ask: 100123457n })
     expect(candidate.state.bars1m[0]?.open).toBe(100.123456789012)
-    expect(candidate.state.latestTrade.price).toBe(103.123456789012)
+    expect(candidate.state.latestTrade?.price).toBe(103.123456789012)
     expect(Result.getOrThrow(momentumControlCandidates(snapshot))).toEqual([])
   },
 )
