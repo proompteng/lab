@@ -1,4 +1,4 @@
-import { momentumControlCandidates } from '../intraday-replay/momentum-control'
+import { momentumControlCandidates } from '../strategy/repeated-momentum/signals'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'

@@ -11,7 +11,7 @@ import {
   getCodexAccount,
   getCodexLogin,
   getCodexRun,
-  getActiveCodexRun,
+  getActiveCodexRuns,
   interruptCodexTurn,
   isTengriControlPlaneConfigured,
   issuePreviewSession,
@@ -188,8 +188,8 @@ async function runAction(request: Request) {
       case 'codex-models':
         result = await listCodexModels(identity, action.agentId, action.cursor, request.signal)
         break
-      case 'active-codex-run':
-        result = await getActiveCodexRun(identity, action.agentId)
+      case 'active-codex-runs':
+        result = await getActiveCodexRuns(identity, action.agentId)
         break
       case 'codex-run':
         result = await getCodexRun(identity, action.agentId, action.runId)

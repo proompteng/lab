@@ -18,8 +18,9 @@ import {
   type JevEvaluationRequest,
 } from '../jev/evidence'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { makeNativeChartEvidence } from '../jev/chart-evidence'
-import { makeChartDecisionsRequest } from '../jev/chart-questions'
+import { JevFailure } from '../jev/contract'
+import { decodeStagedCheckpoint } from '../jev/staged-checkpoint'
+import { verifyStagedCheckpointHandoff } from '../jev/staged-inference-cost-evidence'
 import { decodeEntryHandoff } from '../jev/entry-inference-evidence'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { reproduceJevCandidateObservation } from '../jev/observation'
@@ -164,6 +165,12 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             const request = yield* Effect.fromResult(decodeJevEvaluationRequest(rawRequest))
             const receipt = yield* Effect.fromResult(decodeJevEvaluationReceipt(request, rawReceipt))
             const saved = yield* requireEvaluation(request)
+            if (
+              receipt.outcome.status === JevOutcome.Failed &&
+              receipt.outcome.failure === JevFailure.NotDispatched &&
+              (yield* read('visual-claim-CHART', request.requestId)) !== null
+            )
+              return yield* failure('Undispatched receipt cannot omit a committed chart claim')
             if (receipt.outcome.status === JevOutcome.Completed) {
               const handoff = yield* Effect.fromResult(
                 decodeEntryHandoff(
@@ -274,6 +281,16 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             return { plan, result: null, dispatches }
           }),
         ),
+      complete: (plan, observation, result) =>
+        Effect.gen(function* () {
+          yield* Effect.fromResult(reproduceJevTradingSignalBatch(observation, plan))
+          yield* Effect.fromResult(decodeJevBatchResult(plan, result))
+          const saved = yield* batchStore.finish(plan.batchId)
+          if (saved.result === null) return yield* failure('Completed evaluations have no committed batch result')
+          yield* same(saved.plan, plan)
+          yield* same(saved.result.candidates, result.candidates)
+          return saved
+        }).pipe(Effect.mapError(failure)),
       finish: (id) =>
         atomic(
           Effect.gen(function* () {
@@ -362,7 +379,79 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
         atomic(Effect.sync(() => Option.fromNullishOr(windows.get(`${cycleId}:${purpose}`)))),
       record: (observation) => atomic(recordObservation(observation)),
     }
+    const staged = (request: JevEvaluationRequest) =>
+      Effect.gen(function* () {
+        const claims = [],
+          terminals = [],
+          skips = []
+        for (const stage of ['CHART', 'BASE_START']) {
+          const claim = yield* read(`visual-claim-${stage}`, request.requestId)
+          const terminal = yield* read(`visual-terminal-${stage}`, request.requestId)
+          if (claim !== null) claims.push(claim)
+          if (terminal !== null) terminals.push(terminal)
+        }
+        const skip = yield* read('base-start-skip', request.requestId)
+        if (skip !== null) skips.push(skip)
+        return yield* Effect.fromResult(decodeStagedCheckpoint(request, { claims, terminals, skips }))
+      })
+    const same = (left: unknown, right: unknown) =>
+      Effect.gen(function* () {
+        if (
+          (yield* Effect.fromResult(canonicalHashV1Result(left))) !==
+          (yield* Effect.fromResult(canonicalHashV1Result(right)))
+        )
+          return yield* failure('Committed visual journal evidence is immutable')
+      })
     const handoffs: EntryInferenceJournal['Service'] = {
+      recordVisualClaim: (input) =>
+        atomic(
+          Effect.gen(function* () {
+            const request = yield* Effect.fromResult(
+              decodeJevEvaluationRequest(yield* read('request', input.requestId)),
+            )
+            const checkpoint = yield* staged(request)
+            yield* Effect.fromResult(
+              decodeStagedCheckpoint(request, {
+                ...checkpoint,
+                claims: [...checkpoint.claims.filter((row) => row.stage !== input.stage), input],
+              }),
+            )
+            const existing = yield* read(`visual-claim-${input.stage}`, input.requestId)
+            if (existing !== null) {
+              yield* same(existing, input)
+              return { dispatchAllowed: false }
+            }
+            const saved = yield* requireEvaluation(request)
+            const now = yield* Clock.currentTimeMillis
+            if (
+              saved.resolution !== null ||
+              now >= Date.parse(request.expiresAt) ||
+              now < Date.parse(input.claimedAt) ||
+              (yield* read('handoff', input.requestId)) !== null
+            )
+              return { dispatchAllowed: false }
+            yield* write(`visual-claim-${input.stage}`, input.requestId, input)
+            return { dispatchAllowed: true }
+          }),
+        ),
+      recordVisualTerminal: (input) =>
+        atomic(
+          Effect.gen(function* () {
+            const request = yield* Effect.fromResult(
+              decodeJevEvaluationRequest(yield* read('request', input.requestId)),
+            )
+            const checkpoint = yield* staged(request)
+            yield* Effect.fromResult(
+              decodeStagedCheckpoint(request, {
+                ...checkpoint,
+                terminals: [...checkpoint.terminals.filter((row) => row.stage !== input.stage), input],
+              }),
+            )
+            const existing = yield* read(`visual-terminal-${input.stage}`, input.requestId)
+            if (existing === null) yield* write(`visual-terminal-${input.stage}`, input.requestId, input)
+            else yield* same(existing, input)
+          }),
+        ),
       recordHandoff: (input) =>
         atomic(
           Effect.gen(function* () {
@@ -379,7 +468,16 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
                 input,
               ),
             )
+            const skip = handoff.baseStart?.status === 'NOT_REQUESTED' ? handoff.baseStart.skip : undefined
+            if (skip !== undefined) {
+              const checkpoint = yield* staged(request)
+              yield* Effect.fromResult(decodeStagedCheckpoint(request, { ...checkpoint, skips: [skip] }))
+              const stored = yield* read('base-start-skip', input.requestId)
+              if (stored === null) yield* write('base-start-skip', input.requestId, skip)
+              else yield* same(stored, skip)
+            }
             const existing = yield* read('handoff', request.requestId)
+            yield* Effect.fromResult(verifyStagedCheckpointHandoff(yield* staged(request), handoff))
             if (existing !== null) {
               if (
                 (yield* Effect.fromResult(canonicalHashV1Result(existing))) !==
@@ -428,8 +526,12 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             if ((yield* Effect.fromResult(canonicalHashV1Result(call.request))) !== call.requestHash)
               return yield* failure('Provider call differs from its sealed request bytes')
             const subject = Schema.Struct({ symbol: SymbolSchema })
-            const { symbol } = yield* call.stage === 'CHART'
-              ? Schema.decodeUnknownEffect(subject)(call.request.input[0].content[2].data)
+            const { symbol } = yield* call.stage !== 'JEV'
+              ? call.stage === 'CHART'
+                ? Schema.decodeUnknownEffect(subject)(call.request.input[0].content[2].data)
+                : Schema.decodeUnknownEffect(Schema.Struct({ source: subject }))(
+                    call.request.input[0].content[2].data,
+                  ).pipe(Effect.map((value) => value.source))
               : Schema.decodeUnknownEffect(Schema.Struct({ candidate: subject }))(call.request.state).pipe(
                   Effect.map((value) => value.candidate),
                 )
@@ -441,10 +543,15 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
                 call.simulatedStartedAt >= request.expiresAt
               )
                 continue
-              if (call.stage === 'CHART') {
-                const chart = yield* Effect.fromResult(makeNativeChartEvidence(request.request.chartSource))
-                const expected = yield* Effect.fromResult(makeChartDecisionsRequest(chart))
-                if (expected.requestHash !== call.requestHash) continue
+              if (call.stage !== 'JEV') {
+                const checkpoint = yield* staged(request)
+                const claim = checkpoint.claims.find((row) => row.stage === call.stage)
+                if (
+                  claim === undefined ||
+                  claim.providerRequestHash !== call.requestHash ||
+                  call.simulatedStartedAt < claim.claimedAt
+                )
+                  continue
               } else {
                 const raw = yield* read('handoff', request.requestId)
                 if (raw === null) continue

@@ -17,8 +17,8 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   scopes retain their policies.
 - The runner keeps UID 1001. Its existing sudo access starts BuildKit as root in the privileged container. This moves
   the existing rootful build capability out of DinD without adding a sidecar, Docker Engine, Podman, host runtime
-  socket, node configuration, new credential, or cluster permission. Nix-only jobs never start a builder. The external
-  `analysis-arm64` scale set retains its independently owned Docker contract.
+  socket, node configuration, new credential, or cluster permission. Nix-only jobs never start a builder. The
+  `analysis-arm64` set uses the same private-process model through its workflow in `gregkonush/analysis`.
 - Container runtime lifecycle, systemd, KVM, and resilience fixtures were removed by request. Source checks,
   Dockerfile build-stage regressions, archive/content verification, paired guest checksums, immutable publication,
   signatures, receipt uploads, and Kargo discovery gates remain. CI no longer establishes those runtime behaviors.
@@ -26,6 +26,10 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   16Gi memory. Host spread is a scheduling preference; the scheduler can use Turin when Ryzen has no room for another
   runner. Node affinity, memory requests and the scratch bootstrap's free-space check still apply. The minimum remains
   two. `arc-arm64` has eight build slots on Altra; `analysis-arm64` retains its separate one-slot limit.
+- `analysis-arm64` keeps its 20Gi disposable workspace and one worker. Its single runner container reserves two CPUs,
+  4Gi memory and 20Gi ephemeral storage, with limits of ten CPUs, 18Gi memory and 72Gi storage. These preserve the
+  former runner-plus-DinD resource budget. Its workflow starts a private BuildKit OCI worker with build parallelism
+  capped at one. It has no Docker daemon, socket volume, Docker startup wait or Kubernetes container hook.
 - `arc-amd64-publish` reserves two idle publication runners and scales to four on Turin. Each single-container runner
   requests one CPU, 2Gi memory and 2Gi ephemeral storage, with limits of four CPUs, 8Gi memory and 32Gi storage. Its
   workspace is disposable `emptyDir`; it uses the same Kargo-promoted runner image and GitHub credential as the build

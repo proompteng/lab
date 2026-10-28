@@ -252,6 +252,7 @@ const fixture = async (source = native) => {
               ),
             })),
           ),
+        complete: () => unused,
         finish: () => unused,
       }),
       Effect.provideService(JevEvaluationStore, {

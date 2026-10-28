@@ -20,9 +20,25 @@ import {
   type DecisionsInference,
   type DecisionsRequest,
 } from '../jev/decisions'
-import { PositiveIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
+import { PositiveIntegerSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
+
+/** Momentum owns no provider capability, including in measured replay mode. */
+export const momentumReplayProviders = {
+  jev: {
+    evaluate: () =>
+      Effect.fail(
+        new JevError({ failure: JevFailure.Request, message: 'Jev dispatch is forbidden by the momentum policy' }),
+      ),
+  },
+  chart: {
+    evaluate: () =>
+      Effect.fail(
+        new DecisionsError({ category: 'REQUEST', message: 'Chart dispatch is forbidden by the momentum policy' }),
+      ),
+  },
+} satisfies ReplayInferenceProviders
 
 export interface ReplayInferenceProviders {
   readonly jev: JevClient['Service']
@@ -44,7 +60,6 @@ export const makeReplayInferenceBudget = (maximumCalls: number) => {
 export type ReplayInferenceBudget = ReturnType<typeof makeReplayInferenceBudget>
 
 const callFields = {
-  schemaVersion: Schema.Literal('bayn.replay-inference-call.v2'),
   requestHash: Sha256Schema,
   budgetMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10_000)),
   simulatedStartedAt: UtcInstantSchema,
@@ -52,9 +67,25 @@ const callFields = {
   providerCompletedAt: UtcInstantSchema,
 }
 const terminalOutcome = Schema.Struct({ status: Schema.Literals(['INTERRUPTED', 'DEFECT']) })
+const visualCallFields = {
+  ...callFields,
+  request: DecisionsRequestSchema,
+  outcome: Schema.Union([
+    Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: DecisionsInferenceSchema }),
+    Schema.Struct({
+      status: Schema.Literal('FAILED'),
+      category: Schema.Literals(['REQUEST', 'TRANSPORT', 'STATUS', 'RESPONSE', 'DEADLINE']),
+      httpStatus: Schema.NullOr(Schema.Int),
+      responseHash: Schema.NullOr(Sha256Schema),
+      usage: Schema.NullOr(DecisionsUsageSchema),
+    }),
+    terminalOutcome,
+  ]),
+}
 export const ReplayInferenceCallSchema = Schema.Union([
   Schema.Struct({
     ...callFields,
+    schemaVersion: Schema.Literal('bayn.replay-inference-call.v2'),
     stage: Schema.Literal('JEV'),
     request: JevRequestSchema,
     outcome: Schema.Union([
@@ -70,26 +101,54 @@ export const ReplayInferenceCallSchema = Schema.Union([
     ]),
   }),
   Schema.Struct({
-    ...callFields,
+    ...visualCallFields,
+    schemaVersion: Schema.Literal('bayn.replay-inference-call.v2'),
     stage: Schema.Literal('CHART'),
-    request: DecisionsRequestSchema,
-    outcome: Schema.Union([
-      Schema.Struct({ status: Schema.Literal('RECEIVED'), inference: DecisionsInferenceSchema }),
-      Schema.Struct({
-        status: Schema.Literal('FAILED'),
-        category: Schema.Literals(['REQUEST', 'TRANSPORT', 'STATUS', 'RESPONSE', 'DEADLINE']),
-        httpStatus: Schema.NullOr(Schema.Int),
-        responseHash: Schema.NullOr(Sha256Schema),
-        usage: Schema.NullOr(DecisionsUsageSchema),
-      }),
-      terminalOutcome,
-    ]),
+  }),
+  Schema.Struct({
+    ...visualCallFields,
+    schemaVersion: Schema.Literal('bayn.replay-inference-call.v3'),
+    stage: Schema.Literal('BASE_START'),
   }),
 ])
 export type ReplayInferenceCall = typeof ReplayInferenceCallSchema.Type
 type JevCall = Extract<ReplayInferenceCall, { readonly stage: 'JEV' }>
-type ChartCall = Extract<ReplayInferenceCall, { readonly stage: 'CHART' }>
+type ChartCall = Exclude<ReplayInferenceCall, { readonly stage: 'JEV' }>
 type MeasuredTimes = Pick<ReplayInferenceCall, keyof typeof callFields>
+
+// This labels a measured call; the journal independently verifies the complete
+// predecessor graph and exact provider request hash before dispatch admission.
+export const replayVisualStage = (request: DecisionsRequest) =>
+  request.questions.length === 1 && request.questions[0]?.name.startsWith('base_first_bar_ending_') === true
+    ? ('BASE_START' as const)
+    : ('CHART' as const)
+const BaseStartSource = Schema.Struct({
+  source: Schema.Unknown,
+  predecessor: Schema.Struct({ requestHash: Sha256Schema, responseHash: Sha256Schema }),
+  selectedEnd: Schema.NonEmptyString,
+})
+const prepareReplayVisualRequest = (raw: unknown) =>
+  Result.gen(function* () {
+    const prepared = yield* prepareDecisionsRequest(raw)
+    const data = prepared.request.input[0].content[2].data
+    const staged =
+      typeof data === 'object' && data !== null && ('predecessor' in data || 'selectedEnd' in data || 'source' in data)
+    if (replayVisualStage(prepared.request) === 'BASE_START') {
+      const decoded = Schema.decodeUnknownResult(BaseStartSource, strictParseOptions)(data)
+      if (Result.isFailure(decoded) || prepared.request.questions[0]?.type !== 'choice')
+        return yield* Result.fail(
+          new DecisionsError({
+            category: 'REQUEST',
+            message: 'Base start replay requires its bound source and predecessor',
+          }),
+        )
+    } else if (staged) {
+      return yield* Result.fail(
+        new DecisionsError({ category: 'REQUEST', message: 'Staged replay source does not match its question stage' }),
+      )
+    }
+    return prepared
+  })
 
 const jevOutcome = (exit: Exit.Exit<JevInference, JevError>): JevCall['outcome'] => {
   if (Exit.isSuccess(exit)) return { status: 'RECEIVED', inference: exit.value }
@@ -230,7 +289,6 @@ export const makeReplayInferenceTiming = (input: {
                   const call = record(
                     prepared.request,
                     {
-                      schemaVersion: 'bayn.replay-inference-call.v2',
                       requestHash: prepared.requestHash,
                       budgetMs: remainingMs,
                       simulatedStartedAt: utcInstantFromEpochMillis(simulatedStartedAt),
@@ -285,7 +343,13 @@ export const makeReplayInferenceTiming = (input: {
           measure<JevRequest, JevInference, JevError, JevContractError>(
             prepareJevRequest,
             input.providers.jev.evaluate,
-            (request, times, exit) => ({ ...times, stage: 'JEV', request, outcome: jevOutcome(exit) }),
+            (request, times, exit) => ({
+              ...times,
+              schemaVersion: 'bayn.replay-inference-call.v2',
+              stage: 'JEV',
+              request,
+              outcome: jevOutcome(exit),
+            }),
             () => new JevError({ failure: JevFailure.Timeout, message: 'Original replay inference deadline elapsed' }),
           )(raw, budgetMs).pipe(
             Effect.catchTag('ReplayBrokerFailure', (cause) =>
@@ -302,14 +366,14 @@ export const makeReplayInferenceTiming = (input: {
       chart: {
         evaluate: (raw, budgetMs) =>
           measure<DecisionsRequest, DecisionsInference, DecisionsError, DecisionsError>(
-            prepareDecisionsRequest,
+            prepareReplayVisualRequest,
             input.providers.chart.evaluate,
-            (request, times, exit) => ({
-              ...times,
-              stage: 'CHART',
-              request,
-              outcome: chartOutcome(exit, times.requestHash),
-            }),
+            (request, times, exit) => {
+              const measured = { ...times, request, outcome: chartOutcome(exit, times.requestHash) }
+              return replayVisualStage(request) === 'BASE_START'
+                ? { ...measured, schemaVersion: 'bayn.replay-inference-call.v3', stage: 'BASE_START' }
+                : { ...measured, schemaVersion: 'bayn.replay-inference-call.v2', stage: 'CHART' }
+            },
             () => new DecisionsError({ category: 'DEADLINE', message: 'Original replay inference deadline elapsed' }),
           )(raw, budgetMs).pipe(
             Effect.catchTag('ReplayBrokerFailure', (cause) =>

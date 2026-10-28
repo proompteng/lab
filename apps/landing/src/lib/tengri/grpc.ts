@@ -546,7 +546,7 @@ export async function listCodexThreads(
   try {
     return parseCodexThreadPage(stringValue(response.rawJson))
   } catch {
-    throw new TengriUnavailableError('The agent returned an invalid chat index', 502)
+    throw new TengriUnavailableError('The agent returned an invalid chat index', 502, 'chat_index_invalid')
   }
 }
 
@@ -665,9 +665,10 @@ export async function sendCodexTurn(
   )
 }
 
-export async function getActiveCodexRun(identity: TengriIdentity, agentId: string) {
-  const result = await unary<RawRecord>('getActiveCodexRun', { id: agentId }, identity)
-  return result.runId ? normalizeRun(result) : null
+export async function getActiveCodexRuns(identity: TengriIdentity, agentId: string) {
+  const result = await unary<RawRecord>('getActiveCodexRuns', { id: agentId }, identity)
+  if (!Array.isArray(result.runs)) throw new TengriUnavailableError('Invalid active run list')
+  return result.runs.map(normalizeRun)
 }
 
 export async function getCodexRun(identity: TengriIdentity, agentId: string, runId: string) {
@@ -1048,7 +1049,7 @@ async function metadata(
   const { injectTrace } = await import('@/lib/observability/server')
   injectTrace((key, header) => value.set(key, header))
   const binding = await invokeUnary<RawRecord>(client, 'getRequestAudience', {}, value, 2000, signal)
-  if (binding.guestApiProtocolVersion !== 9) {
+  if (binding.guestApiProtocolVersion !== 10) {
     throw new TengriUnavailableError('Tengri controller does not support the required guest API version')
   }
   if (typeof binding.audience !== 'string') throw new TengriUnavailableError('Tengri request audience is missing')
