@@ -9,6 +9,10 @@ PostgreSQL transaction under the existing writer fence. This removes an immediat
 activation rolls back acquisition; retries read the committed cycle. Recovery and decision binding continue to enforce
 the original submission and inference deadlines.
 
+Candidate evidence reads extract identity and eligibility metadata once per indexed cycle/time source before matching
+requests. They fetch each matched full observation once and verify its content hash, retaining every generation,
+snapshot, symbol, timestamp and exclusion check within the original inference window.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
