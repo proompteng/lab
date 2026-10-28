@@ -1794,7 +1794,10 @@ Set `BAYN_OPENAI_API_KEY`, `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY
 `inputDefinition: "bayn.jev-entry-state.v22"`, and positive `maximumCalls` shared by both providers. The input
 binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
 Its `costs` object contains `jev` and `chart` tariffs, each with
-`inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The chart tariff also requires
+`inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. Registered latency replays bind
+only the providers used by their policy. The candidate requires both tariffs, chart ablation sets `jev` to `null`,
+and momentum sets both to `null`. A call without its tariff remains an unresolved expense and cannot establish
+complete economics. The chart tariff also requires
 `cachedInputMicrosPerMillionTokens` and `cacheWriteInputMicrosPerMillionTokens`; cached and written tokens are
 subsets of total input, so each token is priced once. The input also declares
 `allocatedDataCostPerSessionMicros`, either a priced integer-string allocation or explicit `null` when unknown.
@@ -1992,7 +1995,10 @@ The release gate requires every shard and integration job to pass.
 
 With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 `BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run
-`bun run --filter @proompteng/bayn test:ledger`. CI uses the same command. It covers native Jev entry,
+`bun run --filter @proompteng/bayn test:ledger`. CI runs its `runtime`, `backtest`, `restart`, and `inference`
+groups in separate jobs, each with its own disposable PostgreSQL and TigerBeetle. Append a group name to run it
+locally; omitting the name runs all groups sequentially. Never run groups concurrently against the same stores.
+The release gate requires every group to pass. The suite covers native Jev entry,
 zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
 expenses. The seven durable-broker cases alone do not cover the native production lifecycle.
 Measured entry/exit replays supply improving arrival quotes under the frozen inference-ask ceiling, including

@@ -16,7 +16,7 @@ import { jevModel } from '../jev/contract'
 import { decisionsModel } from '../jev/decisions'
 import { makeExecutionRiskPolicy } from '../execution/risk-policy'
 import { PolicySchema } from '../risk'
-import { InferenceRateCardSchema, prepareInferenceRateCard } from '../inference-costs'
+import { InferenceRateCardSchema, inferenceRatesCoverWindow, prepareInferenceRateCard } from '../inference-costs'
 import { MarketKind } from '../instruments'
 import {
   JevAcceptanceInputSchema,
@@ -31,13 +31,12 @@ import { QualificationRuntimeSchema, qualificationDeadlines } from './configurat
 import { systemLatencyStressProtocolHash } from './latency-protocol'
 import { costAttributionRule } from './cost-attribution'
 import { CostAllocationPlanSchema, validateCostAllocationPlans } from './cost-allocation'
-
-/** Last retained PAPER activation before acceptance v2 froze; see the control identity evidence in the owning contract. */
-export const frozenDeployedControlIdentity = {
-  strategyHash: '3da39b009a0cb2052b007ae9ba51f448c16b69281a37cf5ffe122314f1d801af',
-  parametersHash: 'cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f',
-  protocolHash: 'f38c7d47dc0b8eedb13da1ae7e29faa3da2ce8983fee05f4a2c89dc0ec59eb97',
-} as const
+import {
+  frozenDeployedControlIdentity,
+  frozenControlOrigin,
+  frozenControlPrompts,
+  frozenControlContinuation,
+} from './frozen-control-identity'
 
 export const systemQualificationPolicy = {
   schemaVersion: 'bayn.system-qualification-policy.v1',
@@ -50,9 +49,16 @@ export const systemQualificationPolicy = {
   operatingCostCategories: ['INFERENCE', 'DATA', 'INFRASTRUCTURE', 'RESEARCH'],
   maximumMarkGapMs: 60_000,
   inferenceQualificationRule: 'MAX_INVOICE_TARIFF',
+  decisionPersistenceRule: 'COMMITTED_SOURCE_AT_INDEPENDENT_MUTATION_ADMISSION_BEFORE_ROUTING',
+  executionOrderRule:
+    'SEALED_ENTRY_AND_INDEPENDENT_APPROVED_PROTECTION_WITH_PER_ORDER_FILLS_AND_SHARED_ENTRY_INVENTORY',
+  sourceCutVersion: 'bayn.system-source-cut.v4',
   cashYieldIsTradingEdge: false,
   costAttributionRule,
   frozenDeployedControlIdentity,
+  frozenControlOrigin,
+  frozenControlPrompts,
+  frozenControlContinuation,
 } as const
 
 export const PolicyDefinitionSchema = Schema.Struct({
@@ -193,7 +199,10 @@ export const validateSystemRegistration = (input: unknown) =>
         policy.policy === JevResearchPolicy.Deployed &&
         (policy.strategyHash !== frozenDeployedControlIdentity.strategyHash ||
           policy.parametersHash !== frozenDeployedControlIdentity.parametersHash ||
-          policy.protocolHash !== frozenDeployedControlIdentity.protocolHash)
+          policy.protocolHash !== frozenDeployedControlIdentity.protocolHash ||
+          policy.executionModelHash !== frozenControlOrigin.executionModelHash ||
+          policy.promptsHash !== (yield* canonicalHashV1Result(frozenControlPrompts)) ||
+          policy.continuationAndExitsHash !== (yield* canonicalHashV1Result(frozenControlContinuation)))
       )
         return yield* invalid('Deployed control must preserve the frozen pre-Jev strategy, parameters and protocol')
       if (
@@ -224,25 +233,28 @@ export const validateSystemRegistration = (input: unknown) =>
       const requiredModels =
         policy.policy === JevResearchPolicy.Candidate
           ? [
-              ['typesafe', jevModel],
-              ['openai', decisionsModel],
+              { provider: 'typesafe', model: jevModel },
+              { provider: 'openai', model: decisionsModel },
             ]
           : policy.policy === JevResearchPolicy.Ablation
-            ? [['openai', decisionsModel]]
+            ? [{ provider: 'openai', model: decisionsModel }]
             : []
       const firstSession = registration.calendar.sessions[0]
       const lastSession = registration.calendar.sessions.at(-1)
       if (firstSession === undefined || lastSession === undefined)
         return yield* invalid('Registration requires an evaluation calendar')
-      for (const [provider, model] of requiredModels) {
-        let coveredUntil = firstSession.openAt
-        for (const { rate } of rates
-          .filter(({ rate }) => rate.provider === provider && rate.model === model)
-          .sort((a, b) => a.rate.effectiveFrom.localeCompare(b.rate.effectiveFrom))) {
-          if (rate.effectiveFrom > coveredUntil) break
-          if (rate.effectiveUntil > coveredUntil) coveredUntil = rate.effectiveUntil
-        }
-        if (coveredUntil <= lastSession.closeAt)
+      for (const { provider, model } of requiredModels) {
+        if (
+          !inferenceRatesCoverWindow(
+            rates.map(({ rate }) => rate),
+            {
+              provider,
+              model,
+              startAt: firstSession.openAt,
+              endAt: lastSession.closeAt,
+            },
+          )
+        )
           return yield* invalid(
             `Registered ${policy.policy} tariff must continuously cover ${provider}/${model} through the final close`,
           )

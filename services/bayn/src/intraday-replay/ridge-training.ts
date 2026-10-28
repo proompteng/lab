@@ -1,3 +1,4 @@
+import { JevResearchPolicy } from '../jev/acceptance'
 import { equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { Effect, Result, Schema } from 'effect'
@@ -59,6 +60,10 @@ const fail = (message: string, cause?: unknown) => new ControlStudyFailure({ mes
 export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const input = yield* Schema.decodeUnknownResult(RidgeTrainingInputSchema, strictParseOptions)(raw)
+    if (input.backtest.policy !== JevResearchPolicy.Candidate)
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'This research command requires the candidate source protocol' }),
+      )
     const prepared = yield* prepareBacktest(input.backtest, receipt)
     const dataCostMicros = prepared.input.allocatedDataCostPerSessionMicros
     if (dataCostMicros === null) return yield* Result.fail(fail('Net training labels require a priced data allocation'))

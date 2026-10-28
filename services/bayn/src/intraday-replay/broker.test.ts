@@ -124,6 +124,44 @@ test('an equity-only replay account leaves crypto eligibility unknown', async ()
   expect(account.value.nonMarginableBuyingPowerMicros).toBeNull()
 })
 
+test('simulated mutation receipts retain the original dispatch and completion clocks', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      const receipt = yield* submit(broker, intent())
+      expect(receipt.evidence.routing).toEqual({
+        startedAt: observedAt,
+        requestDispatchedAt: observedAt,
+        completedAt: new Date(startMs + 100).toISOString(),
+      })
+      const canceled = yield* broker.mutation.cancel(receipt.order.brokerOrderId)
+      expect(canceled.evidence.routing).toEqual({
+        startedAt: new Date(startMs + 100).toISOString(),
+        requestDispatchedAt: new Date(startMs + 100).toISOString(),
+        completedAt: new Date(startMs + 100).toISOString(),
+      })
+    }),
+  )
+})
+
+test('routing observation does not resynchronize the market or add submission clock reads', async () => {
+  await run(
+    Effect.gen(function* () {
+      let reads = 0
+      const broker = yield* setup({
+        submissionTime: Effect.sync(() => {
+          reads += 1
+          return observedAt
+        }),
+      })
+      const receipt = yield* submit(broker, intent())
+      expect(reads).toBe(1)
+      yield* broker.mutation.cancel(receipt.order.brokerOrderId)
+      expect(reads).toBe(1)
+    }),
+  )
+})
+
 test.each([false, true])(
   'broker snapshot retry advances the owned replay timeline or reports failure: %s',
   async (advanceFails) => {

@@ -2,7 +2,13 @@ import { Result, Schema } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
 import { intradayInstantNanos } from '../market-data/intraday/time'
-import { Sha256Schema, UnsignedMicrosSchema, UtcSourceTimestampSchema, strictParseOptions } from '../schemas'
+import {
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  UnsignedMicrosSchema,
+  UtcSourceTimestampSchema,
+  strictParseOptions,
+} from '../schemas'
 import { SystemAssessmentError } from './economics'
 
 export enum RealismStatus {
@@ -22,6 +28,7 @@ export const DecisionRealismSchema = Schema.Struct({
   authorityGenerationHash: Sha256Schema,
   snapshotHash: Sha256Schema,
   decisionAt: UtcSourceTimestampSchema,
+  // Latest proven bound on commitment, rather than an exact database commit clock.
   persistedAt: UtcSourceTimestampSchema,
   inputs: Schema.Array(
     Schema.Struct({
@@ -31,9 +38,22 @@ export const DecisionRealismSchema = Schema.Struct({
   ),
 })
 
+export const ExecutionPricingSchema = Schema.TaggedUnion({
+  SpotQuote: {
+    bidPriceAtoms: UnsignedMicrosSchema,
+    askPriceAtoms: UnsignedMicrosSchema,
+    sourceHash: Sha256Schema,
+    availableAt: UtcSourceTimestampSchema,
+    freshUntil: UtcSourceTimestampSchema,
+  },
+  NativeProtection: { sourceHash: Sha256Schema, availableAt: UtcSourceTimestampSchema },
+  ReconciledLiquidation: { sourceHash: Sha256Schema, availableAt: UtcSourceTimestampSchema },
+})
+
 export const FillRealismSchema = Schema.Struct({
   fillId: Sha256Schema,
   intentId: Sha256Schema,
+  orderId: StrictNonEmptyStringSchema,
   decisionId: Sha256Schema,
   positionOwnerGenerationHash: Sha256Schema,
   kind: Schema.Enum(ExecutionEvidenceKind),
@@ -46,11 +66,7 @@ export const FillRealismSchema = Schema.Struct({
   fillPriceAtoms: UnsignedMicrosSchema,
   priceTickAtoms: UnsignedMicrosSchema,
   limitPriceAtoms: UnsignedMicrosSchema,
-  bidPriceAtoms: UnsignedMicrosSchema,
-  askPriceAtoms: UnsignedMicrosSchema,
-  quoteHash: Sha256Schema,
-  quoteAvailableAt: UtcSourceTimestampSchema,
-  quoteFreshUntil: UtcSourceTimestampSchema,
+  pricing: ExecutionPricingSchema,
   supportedCapacityAtoms: Schema.NullOr(UnsignedMicrosSchema),
   capacitySourceHash: Schema.NullOr(Sha256Schema),
   routingStartedAt: UtcSourceTimestampSchema,
@@ -111,12 +127,17 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
         }
         const lastQuantity = new Map<string, bigint>()
         const lastTime = new Map<string, bigint>()
-        const intentTerms = new Map<string, typeof FillRealismSchema.Type>()
+        const orderTerms = new Map<string, typeof FillRealismSchema.Type>()
         const usedCapacity = new Map<string, bigint>()
         const capacityBounds = new Map<string, bigint>()
         for (const fill of data.fills) {
           requireSource(fill.sourceHash)
-          requireSource(fill.quoteHash)
+          requireSource(fill.pricing.sourceHash)
+          if (
+            fill.pricing._tag !== 'SpotQuote' &&
+            (fill.kind !== ExecutionEvidenceKind.Broker || fill.side !== OrderSide.Sell)
+          )
+            violations.push(`UNSUPPORTED_EXECUTION_PRICING:${fill.fillId}`)
           const decision = decisions.get(fill.decisionId)
           if (decision === undefined) missing.push(`MISSING_DECISION:${fill.decisionId}`)
           else if (decision.authorityGenerationHash !== fill.positionOwnerGenerationHash)
@@ -128,13 +149,17 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
           const price = BigInt(fill.fillPriceAtoms)
           const tick = BigInt(fill.priceTickAtoms)
           const limit = BigInt(fill.limitPriceAtoms)
-          const bid = BigInt(fill.bidPriceAtoms)
-          const ask = BigInt(fill.askPriceAtoms)
-          const previousQuantity = lastQuantity.get(fill.intentId) ?? 0n
-          const prior = intentTerms.get(fill.intentId)
+          const quote = fill.pricing._tag === 'SpotQuote' ? fill.pricing : null
+          const bid = quote === null ? null : BigInt(quote.bidPriceAtoms)
+          const ask = quote === null ? null : BigInt(quote.askPriceAtoms)
+          const previousQuantity = lastQuantity.get(fill.orderId) ?? 0n
+          const prior = orderTerms.get(fill.orderId)
           if (
             prior !== undefined &&
-            (prior.decisionId !== fill.decisionId ||
+            (prior.pricing._tag !== fill.pricing._tag ||
+              (prior.pricing._tag !== 'SpotQuote' && prior.pricing.sourceHash !== fill.pricing.sourceHash) ||
+              prior.intentId !== fill.intentId ||
+              prior.decisionId !== fill.decisionId ||
               prior.side !== fill.side ||
               prior.requestedQuantityAtoms !== fill.requestedQuantityAtoms ||
               prior.limitPriceAtoms !== fill.limitPriceAtoms ||
@@ -153,21 +178,23 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
             (fill.kind === ExecutionEvidenceKind.Model && (quantity % step !== 0n || price % tick !== 0n))
           )
             violations.push(`INVALID_PRECISION:${fill.fillId}`)
-          if (price <= 0n || limit <= 0n || bid <= 0n || ask < bid) violations.push(`INVALID_PRICE:${fill.fillId}`)
+          if (price <= 0n || limit <= 0n || (bid !== null && ask !== null && (bid <= 0n || ask < bid)))
+            violations.push(`INVALID_PRICE:${fill.fillId}`)
           if ((fill.side === OrderSide.Buy && price > limit) || (fill.side === OrderSide.Sell && price < limit))
             violations.push(`LIMIT_VIOLATION:${fill.fillId}`)
           const routingStarted = intradayInstantNanos(fill.routingStartedAt)
           const transmitted = intradayInstantNanos(fill.requestDispatchedAt)
           const filled = intradayInstantNanos(fill.filledAt)
+          if (decision !== undefined && intradayInstantNanos(decision.persistedAt) > routingStarted)
+            missing.push(`MISSING_PRE_ROUTING_PERSISTENCE:${fill.fillId}`)
           if (
-            intradayInstantNanos(fill.quoteAvailableAt) > transmitted ||
-            intradayInstantNanos(fill.quoteFreshUntil) < transmitted ||
+            intradayInstantNanos(fill.pricing.availableAt) > transmitted ||
+            (quote !== null && intradayInstantNanos(quote.freshUntil) < transmitted) ||
             routingStarted > transmitted ||
             transmitted >= intradayInstantNanos(fill.submissionDeadlineAt) ||
-            (decision !== undefined && intradayInstantNanos(decision.persistedAt) > routingStarted) ||
             filled < transmitted ||
             filled > intradayInstantNanos(fill.expiresAt) ||
-            filled < (lastTime.get(fill.intentId) ?? filled)
+            filled < (lastTime.get(fill.orderId) ?? filled)
           )
             violations.push(`INVALID_EXECUTION_TIMING:${fill.fillId}`)
           if (fill.kind === ExecutionEvidenceKind.Model) {
@@ -183,12 +210,16 @@ export const measureRealism = (input: unknown, verifiedSourceHashes: ReadonlySet
               usedCapacity.set(fill.capacitySourceHash, consumed)
               capacityBounds.set(fill.capacitySourceHash, capacity)
             }
-            if ((fill.side === OrderSide.Buy && price < ask) || (fill.side === OrderSide.Sell && price > bid))
+            if (
+              ask !== null &&
+              bid !== null &&
+              ((fill.side === OrderSide.Buy && price < ask) || (fill.side === OrderSide.Sell && price > bid))
+            )
               violations.push(`UNSUPPORTED_PRICE_IMPROVEMENT:${fill.fillId}`)
           }
-          lastQuantity.set(fill.intentId, cumulative)
-          lastTime.set(fill.intentId, filled)
-          intentTerms.set(fill.intentId, fill)
+          lastQuantity.set(fill.orderId, cumulative)
+          lastTime.set(fill.orderId, filled)
+          orderTerms.set(fill.orderId, fill)
         }
         for (const assumption of data.unsupportedAssumptions) missing.push(`UNSUPPORTED_ASSUMPTION:${assumption}`)
         return {
