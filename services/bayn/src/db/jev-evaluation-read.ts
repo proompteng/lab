@@ -136,6 +136,9 @@ export const readJevEvaluationEvidence = (sql: PgClient.PgClient, input: readonl
     )
     const decoded = []
     for (const row of rows) {
+      // Reproduction is synchronous CPU work. Let other connections service their
+      // sockets between candidates without changing any database/deadline budget.
+      yield* Effect.yieldNow
       const request = yield* Effect.fromResult(decodeJevEvaluationRequest(row.request))
       if (request.requestId !== row.request_id)
         return yield* jevEvaluationReadError('Stored Jev request identity differs')
@@ -147,6 +150,7 @@ export const readJevEvaluationEvidence = (sql: PgClient.PgClient, input: readonl
     )
     observationHashes.push(...observations.map((observation) => observation.content_hash))
     for (const { row, request } of decoded) {
+      yield* Effect.yieldNow
       const receipt =
         row.receipt === null ? null : yield* Effect.fromResult(decodeJevEvaluationReceipt(request, row.receipt))
       const handoff =
