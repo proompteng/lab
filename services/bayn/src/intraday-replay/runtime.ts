@@ -11,7 +11,8 @@ import { JevEvaluationStore } from '../jev/evaluation'
 import { JevPositionStore } from '../jev/portfolio'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { PgClient } from '@effect/sql-pg'
-import { Context, Effect, Semaphore } from 'effect'
+import { Clock, Context, Effect, Semaphore } from 'effect'
+import { TestClock } from 'effect/testing'
 import { operationTimeoutOrElse } from '../operation-timeout'
 
 import { BrokerRead } from '../broker/alpaca/model'
@@ -46,7 +47,7 @@ import { executionGenerationNeedsRecovery, makeGenerationCycleDriver } from '../
 import { refreshResearchCapitalActivationReconciliation } from '../composition/capital-activation'
 import { BlockedCycleIntentStore } from '../execution/intents/blocked-cycle'
 import { IntentStore } from '../execution/intents/domain'
-import { MutationStore } from '../execution/mutations/model'
+import { MutationStore, MutationStoreError, type StartReceipt } from '../execution/mutations/model'
 import { makeTradingEngine } from '../composition/trading-engine'
 import { WriterFence } from '../execution/writer-fence'
 import type { ExecutionProgramDependencies } from '../execution/runtime-program'
@@ -62,8 +63,9 @@ import { runReconciliation } from '../simulation-reconciliation/broker-reconcile
 import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
 import { ReconciliationClock } from '../reconciler'
 import { CapitalActivationReconciliationNotExact, operationalError, OperationalError } from '../errors'
-import { currentUtcInstant } from '../time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure, type makeReplayBroker } from './broker'
+import { makeReplayDecisionLatency } from './decision-latency'
 
 const replayGenerationRecoveryError = (cause: unknown): OperationalError =>
   operationalError({
@@ -91,6 +93,7 @@ export const reconcileReplayForActivation = <R>(
   )
 
 export interface ReplayExecutionRuntimeInput {
+  readonly decisionLatencyStress: Parameters<typeof makeReplayDecisionLatency>[1]
   readonly currentUtcInstant: ExecutionProgramDependencies['currentUtcInstant']
   readonly config: ExecutionStoreRuntimeConfig
   readonly strategy: StrategyRuntime
@@ -121,7 +124,34 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const sql = yield* PgClient.PgClient
     const fence = yield* WriterFence
     const intentStore = yield* IntentStore
-    const mutationStore = yield* MutationStore
+    const originalMutations = yield* MutationStore
+    const admissionClock = yield* Semaphore.make(1)
+    const alignAdmission = (operation: 'begin-submit' | 'begin-cancel') => (receipt: StartReceipt) =>
+      admissionClock.withPermit(
+        Effect.gen(function* () {
+          const current = yield* Clock.currentTimeMillis
+          const admitted = Date.parse(receipt.event.occurredAt)
+          if (admitted <= current) return
+          // The coordinator's ordered admission may be ahead of the replay clock. Observe it before any broker effect.
+          yield* input.clock.advanceTo(utcInstantFromEpochMillis(admitted)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new MutationStoreError({
+                  operation,
+                  failure: 'query',
+                  message: 'Replay clock could not observe committed mutation admission',
+                  cause,
+                }),
+            ),
+          )
+          yield* TestClock.setTime(Math.max(admitted, yield* Clock.currentTimeMillis))
+        }),
+      )
+    const mutationStore: MutationStore['Service'] = {
+      ...originalMutations,
+      beginSubmit: (...args) => originalMutations.beginSubmit(...args).pipe(Effect.tap(alignAdmission('begin-submit'))),
+      beginCancel: (...args) => originalMutations.beginCancel(...args).pipe(Effect.tap(alignAdmission('begin-cancel'))),
+    }
     const blockedCycleIntentStore = yield* BlockedCycleIntentStore
     const closures = yield* ExecutionCycleClosureStore
     const persistedCapitalGrants = yield* PersistedCapitalGrantStore
@@ -145,7 +175,10 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const decisionsClient = yield* DecisionsClient
     const entryInferenceJournal = yield* makeEntryInferenceJournal
     const jevEvaluations = yield* makeJevEvaluationStore
-    const jevBatches = yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations))
+    const latency = makeReplayDecisionLatency(input.currentUtcInstant, input.decisionLatencyStress)
+    const jevBatches = latency.wrapStore(
+      yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations)),
+    )
     const jevPositions = yield* makeJevPositionStore
     const riskPolicy = yield* loadStrategyExecutionRiskPolicy(identity.accountId, input.strategy)
     const plan = {
@@ -212,7 +245,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           )
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
       Context.add(ReconciliationClock, reconciliationTime),
-      Context.add(CandidateObservationStore, candidateObservationStore),
+      Context.add(CandidateObservationStore, latency.wrapObservations(candidateObservationStore)),
       Context.add(JevClient, jevClient),
       Context.add(DecisionsClient, decisionsClient),
       Context.add(EntryInferenceJournal, entryInferenceJournal),
@@ -312,35 +345,39 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const initialDriver = owned.driver
     const permit = yield* Semaphore.make(1)
     const advance = permit.withPermit(
-      Effect.gen(function* () {
-        if (yield* owned.needsRebind) {
-          const current = yield* readAuthority
-          let generationHash = current.generationHash
-          if (
-            current.maximum === Authority.Observe &&
-            current.effective === Authority.Observe &&
-            current.kill === KillState.Clear
-          ) {
-            yield* reconcileForActivation
-            const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
-              researchCapitalGrantProof(request),
-              current.generationHash,
-            )
-            generationHash = next.generationHash
+      latency.runPass(
+        Effect.gen(function* () {
+          if (yield* owned.needsRebind) {
+            const current = yield* readAuthority
+            let generationHash = current.generationHash
+            if (
+              current.maximum === Authority.Observe &&
+              current.effective === Authority.Observe &&
+              current.kill === KillState.Clear
+            ) {
+              yield* reconcileForActivation
+              const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
+                researchCapitalGrantProof(request),
+                current.generationHash,
+              )
+              generationHash = next.generationHash
+            }
+            owned = yield* startGeneration(generationHash)
           }
-          owned = yield* startGeneration(generationHash)
-        }
-        return yield* owned.driver.advance.pipe(Effect.provideContext(resources))
-      }),
+          return yield* owned.driver.advance.pipe(Effect.provideContext(resources))
+        }),
+      ),
     )
     return {
       authorityGenerationHash: activated.generationHash,
       cycleStore,
+      mutations: mutationStore,
       store,
       marketData,
       advance,
       nextDelayMs: initialDriver.nextDelayMs,
       reconcile,
+      decisionLatencyEvidence: latency.evidence,
     }
   }).pipe(
     Effect.mapError((cause) =>

@@ -1,3 +1,5 @@
+import { replayRateCardFixture } from '../testing/inference-rate-card.test-support'
+import { registeredReplayInferenceTariff } from './inference-costs'
 import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { cryptoMarketProfile, equityMarketProfile } from '../jev/markets'
@@ -8,8 +10,8 @@ import { NodeServices } from '@effect/platform-node'
 import { TestClock } from 'effect/testing'
 import { JevProtocolSchema } from '../jev/protocol'
 import { JevBatchPlanVersion } from '../jev/batch'
-import { strictParseOptions } from '../schemas'
-import { nativeJevFixture } from '../jev/native.test-support'
+import { IsoDateSchema, strictParseOptions } from '../schemas'
+import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { makeControlEntryObservation } from './control-entry'
 import { createControlPortfolio } from './control-portfolio'
@@ -21,25 +23,39 @@ import {
   assessBacktestSession,
   BacktestIssue,
   qualifiesReplayValuation,
+  BacktestInputSchema,
 } from './backtest'
-import { jevModel } from '../jev/contract'
+import {
+  bindLatencyReplayInput,
+  latencyReplayExecutionModelHash,
+  latencyReplayPolicyMaterial,
+} from '../system-assessment/latency-replay'
+import { registrationFixture, testHash } from '../system-assessment/fixtures.test-support'
+import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
+import { jevModel, prepareJevRequest } from '../jev/contract'
 import { prepareObserveStartup } from '../observe-composition/startup'
 import { backtestSourcePartitions, validateBacktestSourceReceipt } from './source'
 import { sha256, canonicalHashV1Result } from '../hash'
 import { validateResearchCapitalGrantProof } from '../execution/capital-grant-algebra'
 import { makeStrategyProtocolHashResult } from '../contracts'
+import { MarketSourcesSchema } from '../market-data/streaming/raw-events'
+import { JevResearchPolicy } from '../jev/acceptance'
+import { nativeReplayPolicyIdentity } from './native-policy'
+import { loadActiveStrategyProtocol } from '../strategy'
 const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
   return {
-    schemaVersion: 'bayn.backtest.v6',
+    schemaVersion: 'bayn.backtest.v10',
+    policy: 'JEV' as const,
+    latencyStress: null,
     jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
     inference: {
       mode: 'measured-providers',
       maximumCalls: 1000,
       models: { jev: jevModel, chart: 'gpt-6-luna' },
       inputDefinition: 'bayn.jev-entry-state.v22',
-      costs: {
+      costs: replayRateCardFixture({
         jev: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
         chart: {
           inputMicrosPerMillionTokens: '100000',
@@ -47,7 +63,7 @@ const fixture = () => {
           cachedInputMicrosPerMillionTokens: '10000',
           cacheWriteInputMicrosPerMillionTokens: '125000',
         },
-      },
+      }),
     },
     allocatedDataCostPerSessionMicros: '0',
     replicate: 'validation-test',
@@ -102,6 +118,321 @@ test('session preparation freezes the unchanged strategy and complete calendar i
   expect(first.runId).not.toBe(Result.getOrThrow(prepareBacktest({ ...input, replicate: 'separate-run' })).runId)
 })
 
+test('momentum selects its own source-defined policy without an inference batch identity', () => {
+  const input = fixture()
+  const identity = Result.getOrThrow(
+    nativeReplayPolicyIdentity(JevResearchPolicy.Momentum, Result.getOrThrow(loadActiveStrategyProtocol())),
+  )
+  const declared = {
+    ...input,
+    policy: JevResearchPolicy.Momentum,
+    build: {
+      ...input.build,
+      strategyBehaviorHash: identity.strategy.behaviorHash,
+      strategyParameterHash: identity.strategy.parameterHash,
+    },
+  }
+  const prepared = Result.getOrThrow(prepareBacktest(declared))
+  expect(prepared.strategy.definition.parameters.schemaVersion).toBe('bayn.repeated-momentum-policy.v1')
+  expect(prepared.policyIdentity.planVersion).toBeNull()
+  expect(prepared.policyIdentity.strategy).toEqual(identity.strategy)
+  expect(prepared.buildEvidence.executableStrategy).not.toEqual(identity.strategy)
+  expect(Result.isFailure(prepareBacktest({ ...input, policy: JevResearchPolicy.Momentum }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...declared, policy: JevResearchPolicy.Candidate }))).toBe(true)
+})
+
+test('ablation replay has its own identity and cannot be selected with candidate build claims', () => {
+  const input = fixture()
+  const candidate = Result.getOrThrow(prepareBacktest(input))
+  const ablation = Result.getOrThrow(
+    nativeReplayPolicyIdentity(JevResearchPolicy.Ablation, Result.getOrThrow(loadActiveStrategyProtocol())),
+  )
+  const declared = {
+    ...input,
+    policy: JevResearchPolicy.Ablation,
+    build: {
+      ...input.build,
+      strategyBehaviorHash: ablation.strategy.behaviorHash,
+      strategyParameterHash: ablation.strategy.parameterHash,
+    },
+  }
+  const prepared = Result.getOrThrow(prepareBacktest(declared))
+  expect(prepared.strategy.provenance.strategy).toEqual(ablation.strategy)
+  expect(prepared.strategy.definition.parameters.schemaVersion).toBe('bayn.entry-ablation-policy.v1')
+  expect(prepared.policyIdentity.planVersion).toBe(JevBatchPlanVersion.Ablation)
+  expect(prepared.runId).not.toBe(candidate.runId)
+  expect(testHash(prepared.buildEvidence.executableStrategy)).toBe(testHash(candidate.strategy.provenance.strategy))
+  expect(Result.isFailure(prepareBacktest({ ...input, policy: JevResearchPolicy.Ablation }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...declared, policy: JevResearchPolicy.Candidate }))).toBe(true)
+  expect(Result.isFailure(prepareBacktest({ ...input, policy: JevResearchPolicy.Momentum }))).toBe(true)
+  const request = Result.getOrThrow(
+    prepareJevRequest({
+      model: jevModel,
+      state: { symbol: 'AAPL' },
+      questions: { enter: { type: 'noul', instructions: 'Evaluate synthetic retained inputs.' } },
+    }),
+  )
+  const at = input.interval.startAt
+  const recording = {
+    schemaVersion: 'bayn.replay-inference-recording.v1',
+    sourceManifestHash: testHash(declared.source),
+    sourceRevision: declared.build.sourceRevision,
+    strategyBehaviorHash: declared.build.strategyBehaviorHash,
+    strategyParameterHash: declared.build.strategyParameterHash,
+    jevInstructionsHash: declared.jevInstructionsHash,
+    calls: [
+      {
+        schemaVersion: 'bayn.replay-inference-call.v2',
+        stage: 'JEV',
+        request: request.request,
+        requestHash: request.requestHash,
+        budgetMs: 1000,
+        simulatedStartedAt: at,
+        providerStartedAt: at,
+        providerCompletedAt: at,
+        outcome: { status: 'RECEIVED', inference: nativeJevInference(request.request, at) },
+      },
+    ],
+  }
+  const rejected = prepareBacktest({
+    ...declared,
+    inference: {
+      ...declared.inference,
+      mode: 'retained-responses',
+      recording,
+      recordingHash: testHash(recording),
+    },
+  })
+  expect(Result.isFailure(rejected)).toBe(true)
+  if (Result.isFailure(rejected))
+    expect(rejected.failure).toMatchObject({ message: expect.stringContaining('Retained inference differs') })
+})
+
+test('registered latency replay preserves every equity session and the exact candidate execution scope', () => {
+  const original = Schema.decodeUnknownSync(BacktestInputSchema)(fixture())
+  const base = registrationFixture()
+  const rawCalendar = base.calendar.sessions.map((session) => ({
+    date: session.sessionDate,
+    open: '09:30',
+    close: '16:00',
+    session_open: '0930',
+    session_close: '1600',
+  }))
+  const firstDate = rawCalendar[0]?.date
+  const lastDate = rawCalendar.at(-1)?.date
+  if (firstDate === undefined || lastDate === undefined) throw new Error('Missing synthetic registered dates')
+  const calendar = Result.getOrThrow(
+    normalizeMarketCalendarResult(rawCalendar, {
+      start: firstDate,
+      end: lastDate,
+    }),
+  )
+  const sessions = calendar.providerSessions.map((s) => ({
+    sessionDate: Schema.decodeUnknownSync(IsoDateSchema)(s.date),
+    openAt: s.regularOpenAt,
+    closeAt: s.regularCloseAt,
+  }))
+  const recording = {
+    schemaVersion: 'bayn.replay-inference-recording.v1' as const,
+    sourceManifestHash: testHash(original.source),
+    sourceRevision: original.build.sourceRevision,
+    strategyBehaviorHash: original.build.strategyBehaviorHash,
+    strategyParameterHash: original.build.strategyParameterHash,
+    jevInstructionsHash: original.jevInstructionsHash,
+    calls: [],
+  }
+  const config = base.obligations.configuration
+  const input = {
+    ...original,
+    source: {
+      ...original.source,
+      marketSources: Schema.decodeUnknownSync(MarketSourcesSchema)(
+        base.obligations.configuration.protocol.marketProfiles.map((profile) => ({
+          universeId: profile.universeId,
+          universeSymbolHash: profile.universeSymbolHash,
+          symbols: profile.universe,
+          topics: { ...profile.sourceTopics, features: profile.streamingInput.featureTopic },
+        })),
+      ),
+    },
+    inference: {
+      ...original.inference,
+      mode: 'retained-responses' as const,
+      recording,
+      recordingHash: testHash(recording),
+    },
+    calendar: rawCalendar,
+    interval: { startAt: sessions[0]?.openAt ?? '', endAt: sessions.at(-1)?.closeAt ?? '' },
+    cadence: {
+      pollIntervalMs: config.cyclePollIntervalMs,
+      reconciliationIntervalMs: config.reconciliationIntervalMs,
+      reconciliationPassTimeoutMs: config.operationTimeoutMs,
+      reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+    },
+  }
+  const prepared = Result.getOrThrow(prepareBacktest(original))
+  const identity = prepared.identity
+  const material = Result.getOrThrow(latencyReplayPolicyMaterial(config.protocol, identity.accountId, original.policy))
+  const registration = {
+    ...base,
+    calendar: { ...base.calendar, sourceHash: testHash(calendar), sessions },
+    latencyReplayExecutionModelHash: Result.getOrThrow(latencyReplayExecutionModelHash(input)),
+    policies: base.policies.map((p) =>
+      p.policy !== 'JEV'
+        ? p
+        : {
+            ...p,
+            sourceRevision: original.build.sourceRevision,
+            imageDigest: original.build.imageDigest.slice('sha256:'.length),
+            strategyHash: original.build.strategyBehaviorHash,
+            parametersHash: original.build.strategyParameterHash,
+            accountBindingHash: testHash({
+              schemaVersion: 'bayn.inference-cost-account.v1',
+              accountId: identity.accountId,
+            }),
+            riskPolicyHash: testHash(material.riskPolicy),
+            riskPolicy: material.riskPolicy,
+            inferenceRateCard: input.inference.costs,
+            promptsHash: testHash(material.prompts),
+            continuationAndExitsHash: testHash(material.continuationAndExits),
+            protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(prepared.strategy.provenance.strategy)),
+            executionModelHash: testHash(config.protocol.executionModel),
+          },
+    ),
+  }
+  const windows = Result.getOrThrow(bindLatencyReplayInput(input, registration, identity))
+  expect(windows).toEqual(sessions.map((s) => ({ date: s.sessionDate, openAt: s.openAt, closeAt: s.closeAt })))
+  expect(windows).toHaveLength(20)
+  const tariffBoundary = sessions[10]?.openAt
+  if (tariffBoundary === undefined) throw new Error('Missing registered tariff boundary')
+  const scheduledTariff = Result.getOrThrow(
+    registeredReplayInferenceTariff(
+      {
+        ...input.inference.costs,
+        rates: input.inference.costs.rates.flatMap((rate) => [
+          { ...rate, effectiveUntil: tariffBoundary },
+          { ...rate, effectiveFrom: tariffBoundary, inputMicrosPerMillionTokens: '200000' },
+        ]),
+      },
+      input.interval,
+      JevResearchPolicy.Candidate,
+    ),
+  )
+  const scheduledRegistration = {
+    ...registration,
+    policies: registration.policies.map((p) =>
+      p.policy === JevResearchPolicy.Candidate ? { ...p, inferenceRateCard: scheduledTariff } : p,
+    ),
+  }
+  expect(
+    Result.getOrThrow(
+      bindLatencyReplayInput(
+        {
+          ...input,
+          inference: {
+            ...input.inference,
+            costs: scheduledTariff,
+          },
+        },
+        scheduledRegistration,
+        identity,
+      ),
+    ),
+  ).toEqual(windows)
+  expect(Result.isFailure(bindLatencyReplayInput(input, scheduledRegistration, identity))).toBe(true)
+  for (const key of ['riskPolicyHash', 'promptsHash', 'continuationAndExitsHash'] as const)
+    expect(
+      Result.isFailure(
+        bindLatencyReplayInput(
+          input,
+          {
+            ...registration,
+            policies: registration.policies.map((p) =>
+              p.policy === 'JEV' ? { ...p, [key]: testHash({ changed: key }) } : p,
+            ),
+          },
+          identity,
+        ),
+      ),
+    ).toBe(true)
+  for (const changed of [
+    { ...input, source: original.source },
+    { ...input, inference: original.inference },
+    {
+      ...input,
+      build: {
+        ...input.build,
+        sourceRevision: input.build.sourceRevision === 'b'.repeat(40) ? 'c'.repeat(40) : 'b'.repeat(40),
+      },
+    },
+    { ...input, build: { ...input.build, imageDigest: `sha256:${sha256(input.build.imageDigest)}` } },
+    { ...input, openingCashMicros: '200000000000' },
+    { ...input, assetObservationPolicy: 'counterfactual-current-asset-eligibility' as const },
+    { ...input, interval: { ...input.interval, endAt: new Date(Date.parse(input.interval.endAt) - 1).toISOString() } },
+    { ...input, cadence: { ...input.cadence, pollIntervalMs: 1 } },
+    { ...input, assumptions: { ...input.assumptions, slippageBps: 1 } },
+    { ...input, fractionalTrading: !input.fractionalTrading },
+    {
+      ...input,
+      inference: {
+        ...input.inference,
+        costs: {
+          ...input.inference.costs,
+          rates: input.inference.costs.rates.map((rate) =>
+            rate.provider === 'typesafe' ? { ...rate, inputMicrosPerMillionTokens: '1' } : rate,
+          ),
+        },
+      },
+    },
+    {
+      ...input,
+      source: {
+        ...input.source,
+        marketSources: [{ ...input.source.marketSources[0], universeId: 'foreign' }] as const,
+      },
+    },
+    { ...input, calendar: input.calendar.slice(1) },
+    { ...input, calendar: input.calendar.map((day) => ({ ...day, close: '15:00' })) },
+  ])
+    expect(Result.isFailure(bindLatencyReplayInput(changed, registration, identity))).toBe(true)
+})
+
+test('retained replay binds the recording to its exact source, source revision and policy', () => {
+  const original = fixture()
+  const recording = {
+    schemaVersion: 'bayn.replay-inference-recording.v1',
+    sourceManifestHash: Result.getOrThrow(canonicalHashV1Result(original.source)),
+    sourceRevision: original.build.sourceRevision,
+    strategyBehaviorHash: original.build.strategyBehaviorHash,
+    strategyParameterHash: original.build.strategyParameterHash,
+    jevInstructionsHash: original.jevInstructionsHash,
+    calls: [],
+  }
+  const input = (retained: unknown) => ({
+    ...original,
+    inference: {
+      ...original.inference,
+      mode: 'retained-responses',
+      recording: retained,
+      recordingHash: Result.getOrThrow(canonicalHashV1Result(retained)),
+    },
+  })
+  expect(Result.isSuccess(prepareBacktest(input(recording)))).toBe(true)
+  for (const field of [
+    'sourceManifestHash',
+    'sourceRevision',
+    'strategyBehaviorHash',
+    'strategyParameterHash',
+    'jevInstructionsHash',
+  ] as const) {
+    const changed = {
+      ...recording,
+      [field]: field === 'sourceRevision' ? 'b'.repeat(40) : sha256(`different ${field}`),
+    }
+    expect(Result.isFailure(prepareBacktest(input(changed)))).toBe(true)
+  }
+})
+
 test('broker sessions retain regular hours when the provider includes wider data hours', () => {
   const input = fixture()
   const calendar = input.calendar.map((session) => ({ ...session, session_open: '0400', session_close: '2000' }))
@@ -138,7 +469,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v24')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v28')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
@@ -191,7 +522,9 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
           ...input.inference,
           costs: {
             ...input.inference.costs,
-            jev: { ...input.inference.costs.jev, inputMicrosPerMillionTokens: '84000' },
+            rates: input.inference.costs.rates.map((rate) =>
+              rate.provider === 'typesafe' ? { ...rate, inputMicrosPerMillionTokens: '84000' } : rate,
+            ),
           },
         },
       }),
@@ -203,6 +536,7 @@ test('native backtest rejects retired momentum inputs, missing inference provena
   const input = fixture()
   for (const invalid of [
     { ...input, schemaVersion: 'bayn.backtest.v1' },
+    { ...input, schemaVersion: 'bayn.backtest.v9' },
     { ...input, schemaVersion: 'bayn.backtest.v2', exitTiming: 'current' },
     { ...input, exitTiming: 'current' },
     { ...input, inference: undefined },

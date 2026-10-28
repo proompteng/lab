@@ -1,18 +1,24 @@
+import { evaluateRepeatedMomentumFromSnapshot } from '../strategy/repeated-momentum/runtime'
+import { JevBatchPlanVersion } from '../jev/batch'
+import {
+  isProtectedEntryTarget,
+  protectedEntryExpiresAtMs,
+  type ProtectedEntryTarget,
+} from '../strategy/runtime-decision'
+import { jevEntryPriceAllowances } from '../jev/entry-economics'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
 import { MarketKind, instrumentMarket } from '../instruments'
 import { continuousMarketHours, type MarketHours } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
-import { BrokerEnvironment } from '../broker/identity'
 import { CandidateObservationStore } from './candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
 import { DecisionsClient } from '../jev/decisions'
 import { EntryInferenceJournal } from '../jev/entry-inference'
-import { decideJevEntry } from '../jev/decision'
 import { jevProfitTargetLimitFloors, type JevExitTarget } from '../jev/exit'
-import { decodeJevProtocol } from '../jev/protocol'
+import { JevDecisionEvidenceSchema } from '../jev/decision'
 import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
   compileJevEntry,
@@ -53,28 +59,13 @@ import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
-import {
-  Authority,
-  OrderType,
-  ReconciliationStatus,
-  TimeInForce,
-  type AuthorityState,
-  type Position,
-} from '../execution/contracts'
+import { Authority, OrderType, ReconciliationStatus, type AuthorityState, type Position } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../execution-model-contract'
 import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
-import {
-  accountEntryProtectionReasons,
-  BrokerMode,
-  decodePolicy,
-  executionRiskPolicySchemaVersion,
-  type Policy,
-  type State,
-  type EntryQuoteFreshness,
-} from '../risk'
+import { accountEntryProtectionReasons, BrokerMode, type Policy, type State, type EntryQuoteFreshness } from '../risk'
 import {
   buildObserveShadowDecision,
   buildExecutionDecision,
@@ -105,7 +96,12 @@ import {
   type TargetPlannerFailure,
   type TargetPlanResult,
 } from '../target-planner/index'
-import { strategyDefinition, type StrategyRuntime } from '../strategy'
+import {
+  loadStrategyTradingProtocol,
+  strategyDefinition,
+  isRepeatedMomentumRuntime,
+  type StrategyRuntime,
+} from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import type { DecisionPlan, IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
@@ -117,49 +113,6 @@ import {
 } from './intraday-market-data'
 
 import type { ObserveAutonomousCycleInput, ObserveStartupPreparation } from './model'
-
-const dollarsToMicros = (dollars: bigint): string => (dollars * 1_000_000n).toString()
-
-const observeRiskLimits = {
-  maxOrderNotionalMicros: dollarsToMicros(40_000n),
-  maxSymbolExposureMicros: dollarsToMicros(40_000n),
-  maxGrossExposureMicros: dollarsToMicros(100_000n),
-  maxNetExposureMicros: dollarsToMicros(100_000n),
-  maxDailyTradedNotionalMicros: dollarsToMicros(200_000n),
-  maxDailyLossMicros: dollarsToMicros(5_000n),
-  maxDrawdownMicros: dollarsToMicros(5_000n),
-  maxIntentAgeMs: 300_000,
-  maxBrokerStateAgeMs: 300_000,
-  maxMarketDataAgeMs: 300_000,
-  maxAdverseSlippageBps: 10,
-  decisionTtlMs: 300_000,
-} as const
-
-const executionRiskLimits = (brokerEnvironment: BrokerEnvironment) => ({
-  ...observeRiskLimits,
-  maxDailyTradedNotionalMicros:
-    brokerEnvironment === BrokerEnvironment.Sandbox
-      ? dollarsToMicros(1_000_000n)
-      : observeRiskLimits.maxDailyTradedNotionalMicros,
-  maxDrawdownMicros:
-    brokerEnvironment === BrokerEnvironment.Sandbox ? dollarsToMicros(10_000n) : observeRiskLimits.maxDrawdownMicros,
-})
-
-export const loadExecutionRiskPolicy = (
-  accountId: string,
-  allowedSymbols: readonly string[],
-  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
-) =>
-  decodePolicy({
-    schemaVersion: executionRiskPolicySchemaVersion,
-    accountId,
-    brokerMode: BrokerMode.Execution,
-    allowedSymbols: [...allowedSymbols].sort(),
-    allowedOrderTypes: [OrderType.Limit, OrderType.StopLimit],
-    allowedTimeInForce: [TimeInForce.Day, TimeInForce.GoodUntilCanceled, TimeInForce.ImmediateOrCancel],
-    maxOpenOrders: allowedSymbols.length,
-    ...executionRiskLimits(brokerEnvironment),
-  })
 
 type ObserveStrategy = StrategyRuntime
 
@@ -272,6 +225,7 @@ export class ObserveDecisionAwaitingSignal extends Data.TaggedError('ObserveDeci
   readonly readiness: DecisionReadiness
   readonly observedAt: string
   readonly submissionCutoffAt: string
+  readonly entryAbstention?: ProtectedEntryTarget
 }> {}
 
 export class ExecutionCloseAwaitingMarketData extends Data.TaggedError('ExecutionCloseAwaitingMarketData')<{
@@ -471,6 +425,7 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
         failure: 'not-ready',
         message: cause.message,
         readiness: cause.readiness,
+        ...(cause.entryAbstention === undefined ? {} : { entryAbstention: cause.entryAbstention }),
         cause,
       })
     case 'ObserveDecisionCompositionFailure':
@@ -862,7 +817,7 @@ const nativeJevProtocol = (strategy: StrategyRuntime) => {
         message: 'Native execution requires the Jev intraday strategy',
       }),
     )
-  return decodeJevProtocol(definition.parameters).pipe(
+  return loadStrategyTradingProtocol(strategy).pipe(
     Result.mapError((cause) =>
       operationalError({
         component: 'strategy',
@@ -928,39 +883,60 @@ const compileObserveStrategyDecision = <R>(
     const query = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt, JevPurpose.Entry),
     )
-    const { snapshot, evidence } = yield* evaluateJevObservationFromSnapshot(
-      {
-        cycleId: input.cycle.identity.cycleId,
-        authorityGenerationHash: input.authorityGenerationHash,
-        protocol,
-        portfolio,
-      },
-      query.rangeEndAt,
-      Effect.suspend(() => loadIntradaySnapshot(marketData, query)).pipe(
-        Effect.mapError((cause) =>
-          classifyIntradayEntrySnapshotFailure(
-            cause,
-            initialFacts.evaluatedAt,
-            input.cycle.window.submissionCutoffAt,
-            query,
-          ),
+    const strategy = input.strategy
+    const admissionExpiresAt = unusedEntryExpiresAt(input.cycle)
+    const observationInput = {
+      cycleId: input.cycle.identity.cycleId,
+      authorityGenerationHash: input.authorityGenerationHash,
+      protocol,
+      portfolio,
+    }
+    const loadSnapshot = Effect.suspend(() => loadIntradaySnapshot(marketData, query)).pipe(
+      Effect.mapError((cause) =>
+        classifyIntradayEntrySnapshotFailure(
+          cause,
+          initialFacts.evaluatedAt,
+          input.cycle.window.submissionCutoffAt,
+          query,
         ),
       ),
     )
-    const admissionExpiresAt = unusedEntryExpiresAt(input.cycle)
-    if (Date.parse(evidence.decidedAt) >= admissionExpiresAt)
-      return yield* new JevAwaitingEvidence({
-        message: 'Jev entry admission expired before its model evidence completed',
-        readiness: DecisionReadinessReason.NoEligibleCandidate,
-      })
-    const decision = yield* Effect.fromResult(decideJevEntry(evidence))
+    const { snapshot, decision } = yield* Effect.gen(function* () {
+      if (isRepeatedMomentumRuntime(strategy))
+        return yield* evaluateRepeatedMomentumFromSnapshot(
+          observationInput,
+          query.rangeEndAt,
+          loadSnapshot,
+          strategy.definition.parameters,
+          admissionExpiresAt,
+        )
+      const evaluated = yield* evaluateJevObservationFromSnapshot(
+        observationInput,
+        query.rangeEndAt,
+        loadSnapshot,
+        strategy.definition.parameters.schemaVersion === 'bayn.entry-ablation-policy.v1'
+          ? JevBatchPlanVersion.Ablation
+          : JevBatchPlanVersion.V7,
+      )
+      const evidence = yield* Effect.fromResult(
+        Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(evaluated.evidence),
+      )
+      if (Date.parse(evidence.decidedAt) >= admissionExpiresAt)
+        return yield* new JevAwaitingEvidence({
+          message: 'Entry admission expired before its decision evidence completed',
+          readiness: DecisionReadinessReason.NoEligibleCandidate,
+        })
+      const decision = yield* Effect.fromResult(strategy.definition.decide({ market: evidence }))
+      return { snapshot: evaluated.snapshot, decision }
+    })
     if (
       decision.selectedSymbols.length === 0 &&
-      admissionExpiresAt - Date.parse(evidence.decidedAt) > (input.decisionFinalizationHeadroomMs ?? 0)
+      admissionExpiresAt - Date.parse(decision.decidedAt) > (input.decisionFinalizationHeadroomMs ?? 0)
     )
       return yield* new JevAwaitingEvidence({
         message: 'Jev entry remains armed for a qualifying fresh signal',
         readiness: DecisionReadinessReason.NoEligibleCandidate,
+        entryAbstention: decision,
       })
     const pricingReconciliation =
       decision.selectedSymbols.length === 0 || input.reconcileForPricing === undefined
@@ -988,7 +964,7 @@ const compileObserveStrategyDecision = <R>(
       })
     const pricingAt = yield* currentUtcInstant
     if (
-      Date.parse(pricingAt) >= Math.min(Date.parse(evidence.batchPlan.expiresAt), admissionExpiresAt) ||
+      Date.parse(pricingAt) >= Math.min(protectedEntryExpiresAtMs(decision), admissionExpiresAt) ||
       (pricingReconciliation?.freshUntil !== undefined &&
         Date.parse(pricingAt) + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil)
     )
@@ -1016,7 +992,7 @@ const compileObserveStrategyDecision = <R>(
             ),
           )
     const evaluatedAt = yield* currentUtcInstant
-    if (Date.parse(evaluatedAt) >= Math.min(Date.parse(evidence.batchPlan.expiresAt), admissionExpiresAt))
+    if (Date.parse(evaluatedAt) >= Math.min(protectedEntryExpiresAtMs(decision), admissionExpiresAt))
       return yield* new JevAwaitingEvidence({
         message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
         readiness: DecisionReadinessReason.InferenceUnavailable,
@@ -1042,6 +1018,7 @@ const compileObserveStrategyDecision = <R>(
         : cause instanceof JevAwaitingEvidence
           ? new ObserveDecisionAwaitingSignal({
               message: cause.message,
+              ...(cause.entryAbstention === undefined ? {} : { entryAbstention: cause.entryAbstention }),
               observedAt: initialFacts.evaluatedAt,
               submissionCutoffAt: input.cycle.window.submissionCutoffAt,
               readiness: {
@@ -1266,6 +1243,7 @@ const reduceRiskInputs = (
 
 const reduceObserveRiskInputs = <R>(
   input: ObserveDecisionInput<R>,
+  entryLimitSlippageBps: number,
   facts: ObserveDecisionFacts,
   authorityObservation: ObserveAuthorityObservation,
   executionSession: ExecutionSessionBinding,
@@ -1279,10 +1257,7 @@ const reduceObserveRiskInputs = <R>(
   entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
-    limitSlippageBps:
-      closeOnlyExpiresAt === undefined && authorityObservation.authority.effective === Authority.Execution
-        ? input.policy.maxAdverseSlippageBps
-        : 0,
+    limitSlippageBps: entryLimitSlippageBps,
     ...(entryQuotes === undefined ? {} : { entryQuotes }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
@@ -1400,9 +1375,23 @@ function buildCycleDecision<R>(
         compositionFailure('cycle-binding', 'decision has no immutable market-data snapshot binding'),
       )
     }
+    const entryDecision = compiled.decision
+    const entryLimitSlippageBps =
+      requirements.documentMode === Authority.Execution
+        ? isProtectedEntryTarget(entryDecision)
+          ? Math.min(
+              input.policy.maxAdverseSlippageBps,
+              ...entryDecision.selectedSymbols.map(
+                (symbol) =>
+                  jevEntryPriceAllowances(entryDecision.evidence.observation.protocol, symbol).limitSlippageBps,
+              ),
+            )
+          : input.policy.maxAdverseSlippageBps
+        : 0
     const riskInputs = yield* Effect.fromResult(
       reduceObserveRiskInputs(
         input,
+        entryLimitSlippageBps,
         facts,
         executionAuthority,
         executionSession,
@@ -1453,7 +1442,7 @@ function buildCycleDecision<R>(
       : yield* buildExecutionDecision({
           ...decisionInput,
           riskContext: executionRiskContext(facts.reconciliation, executionAuthority),
-          entryLimitSlippageBps: input.policy.maxAdverseSlippageBps,
+          entryLimitSlippageBps,
           authorityGenerationHash: input.authorityGenerationHash,
           executionSession,
         })

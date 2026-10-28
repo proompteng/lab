@@ -44,13 +44,17 @@ pub fn expected_schema_hash() -> Result<Vec<u8>, Status> {
     }
 }
 
-pub async fn verify(database: &Database) -> Result<(), Status> {
+struct VerifiedPackage {
+    command_pending: bool,
+}
+
+async fn verified_package(database: &Database) -> Result<VerifiedPackage, Status> {
     let client = database
         .pool
         .get()
         .await
         .map_err(|_| Status::unavailable("platform database pool unavailable"))?;
-    let row = client.query_opt("SELECT catalog_hash,registry_hash,desired_hash FROM ofz.platform_policy_installations WHERE completed AND NOT EXISTS(SELECT 1 FROM ofz.platform_policy_installations WHERE NOT completed) AND NOT EXISTS(SELECT 1 FROM ofz.platform_commands WHERE NOT completed) ORDER BY completed_at_ms DESC LIMIT 1", &[])
+    let row = client.query_opt("SELECT catalog_hash,registry_hash,desired_hash,EXISTS(SELECT 1 FROM ofz.platform_commands WHERE NOT completed) FROM ofz.platform_policy_installations WHERE completed AND NOT EXISTS(SELECT 1 FROM ofz.platform_policy_installations WHERE NOT completed) ORDER BY completed_at_ms DESC LIMIT 1", &[])
         .await.map_err(sql_error)?.ok_or_else(|| Status::failed_precondition("platform policies are not onboarded"))?;
     if row.get::<_, Vec<u8>>(0) != catalog::configured()?.checksum()?
         || row.get::<_, Vec<u8>>(1) != registry_hash()?
@@ -60,7 +64,22 @@ pub async fn verify(database: &Database) -> Result<(), Status> {
             "platform policy package mismatch",
         ));
     }
+    Ok(VerifiedPackage {
+        command_pending: row.get(3),
+    })
+}
+
+pub async fn verify(database: &Database) -> Result<(), Status> {
+    if verified_package(database).await?.command_pending {
+        return Err(Status::failed_precondition(
+            "platform policy command requires recovery",
+        ));
+    }
     Ok(())
+}
+
+pub(crate) async fn verify_configuration(database: &Database) -> Result<(), Status> {
+    verified_package(database).await.map(|_| ())
 }
 
 pub async fn execute(database: &Database, native: &Native) -> Result<String, Status> {

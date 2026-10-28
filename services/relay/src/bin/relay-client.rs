@@ -16,6 +16,7 @@ async fn uncertain_execution(
     subject: PlatformSubject,
     operation_id: &str,
     body: Vec<u8>,
+    code: tonic::Code,
 ) -> anyhow::Result<Value> {
     let request_hash = Sha256::digest(&body).to_vec();
     let lookup = ExecutionLookup {
@@ -30,9 +31,9 @@ async fn uncertain_execution(
         }))
         .await;
     let mut metadata = json!({"operationId":operation_id,"outcome":"unknown"});
-    let mut text = format!(
-        "The response for operation {operation_id} was lost. Its outcome could not be confirmed. The request was not resent."
-    );
+    let failure = format!("The result for operation {operation_id} is unavailable ({code:?}).");
+    let mut text =
+        format!("{failure} Its outcome could not be confirmed. The request was not resent.");
     if let Ok(response) = observed {
         let response = response.into_inner();
         if let Some(execution) = response.execution.filter(|execution| {
@@ -52,7 +53,7 @@ async fn uncertain_execution(
                     || execution.result_hash.len() == 32)
         }) {
             text = format!(
-                "The response for operation {operation_id} was lost. Relay recorded its outcome as {}. The original result is unavailable. The request was not resent.",
+                "{failure} Relay recorded its outcome as {}. The original result is unavailable. The request was not resent.",
                 execution.outcome
             );
             metadata = json!({
@@ -135,30 +136,35 @@ async fn handle(
                 .await;
             let response = match response {
                 Ok(response) => response.into_inner(),
-                Err(error)
-                    if matches!(
+                Err(error) => {
+                    return uncertain_execution(
+                        client,
+                        subject,
+                        &payload.operation_id,
+                        body,
                         error.code(),
-                        tonic::Code::Cancelled
-                            | tonic::Code::Unknown
-                            | tonic::Code::DeadlineExceeded
-                            | tonic::Code::ResourceExhausted
-                            | tonic::Code::Internal
-                            | tonic::Code::Unavailable
-                            | tonic::Code::AlreadyExists
-                    ) =>
-                {
-                    return uncertain_execution(client, subject, &payload.operation_id, body).await;
+                    )
+                    .await;
                 }
-                Err(error) => return Err(error.into()),
             };
-            if response.operation_id != payload.operation_id
-                || uuid::Uuid::parse_str(&response.authorization_receipt_id).is_err()
-                || uuid::Uuid::parse_str(&response.execution_receipt_id).is_err()
-            {
-                anyhow::bail!("Relay execution receipt is invalid");
-            }
+            let receipt_valid = response.operation_id == payload.operation_id
+                && uuid::Uuid::parse_str(&response.authorization_receipt_id).is_ok()
+                && uuid::Uuid::parse_str(&response.execution_receipt_id).is_ok();
+            let result = match (receipt_valid, String::from_utf8(response.result)) {
+                (true, Ok(result)) => result,
+                _ => {
+                    return uncertain_execution(
+                        client,
+                        subject,
+                        &payload.operation_id,
+                        body,
+                        tonic::Code::DataLoss,
+                    )
+                    .await;
+                }
+            };
             Ok(
-                json!({"content":[{"type":"text","text":String::from_utf8(response.result)?}],"isError":false,"_meta":{"relay":{"operationId":response.operation_id,"outcome":"succeeded","authorizationReceiptId":response.authorization_receipt_id,"executionReceiptId":response.execution_receipt_id}}}),
+                json!({"content":[{"type":"text","text":result}],"isError":false,"_meta":{"relay":{"operationId":response.operation_id,"outcome":"succeeded","authorizationReceiptId":response.authorization_receipt_id,"executionReceiptId":response.execution_receipt_id}}}),
             )
         }
         _ => anyhow::bail!("unsupported MCP method"),

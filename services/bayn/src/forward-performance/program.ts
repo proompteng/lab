@@ -37,6 +37,8 @@ import type {
   ForwardPerformanceEvidenceInput,
 } from './model'
 import { readForwardInferenceExpenses } from './inference-expenses'
+import { readPersistedSystemAssessment, readSystemRegistration } from '../system-assessment/postgres'
+import { JevResearchPolicy } from '../jev/acceptance'
 import type { InferenceCostError } from '../inference-costs'
 import { forwardPerformanceSnapshot } from './postgres/snapshot'
 import { postgresError } from './postgres/model'
@@ -566,7 +568,7 @@ const requireBrokerIdentity = (
     : Effect.succeed(config as BoundForwardPerformanceConfig)
 }
 
-const readForwardPerformanceInput = (
+export const readForwardPerformanceInput = (
   loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
   options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
@@ -694,6 +696,7 @@ const readForwardPerformanceInput = (
         : { startingCapitalMicros: postgres.startingCapitalMicros }),
       transactions: postgres.transactionEvidence,
       accountFeeAccruals: postgres.brokerFeeAccrualRecords,
+      accountCashSettlements: postgres.cashSettlementRecords,
       ...(postgres.brokerFeeRecords === undefined ? {} : { accountBrokerFees: feeRecords }),
       ...(postgres.accountReconciliation === undefined
         ? {}
@@ -743,7 +746,11 @@ const readForwardPerformanceInput = (
 export const runForwardPerformanceReport = (
   loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
-  options: { readonly authorityGenerationHash?: string; readonly writerFence?: WriterFenceService } = {},
+  options: {
+    readonly authorityGenerationHash?: string
+    readonly writerFence?: WriterFenceService
+    readonly assessmentHash?: string
+  } = {},
 ): Effect.Effect<ForwardPerformanceReport, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
   Effect.gen(function* () {
     const identity = yield* requireBrokerIdentity(loadedConfig)
@@ -752,6 +759,26 @@ export const runForwardPerformanceReport = (
       .withTransaction(
         Effect.gen(function* () {
           const input = yield* readForwardPerformanceInput(loadedConfig, readers, options)
+          const assessment =
+            options.assessmentHash === undefined ? null : yield* readPersistedSystemAssessment(options.assessmentHash)
+          if (assessment !== null) {
+            const registration = yield* readSystemRegistration(assessment.registrationHash)
+            const candidate = registration.policies.find((p) => p.policy === JevResearchPolicy.Candidate)
+            const accountHash = yield* Effect.fromResult(
+              canonicalHashV1Result({
+                schemaVersion: 'bayn.inference-cost-account.v1',
+                accountId: input.account.accountId,
+              }),
+            )
+            if (
+              candidate?.authorityGenerationHash !== options.authorityGenerationHash ||
+              candidate?.accountBindingHash !== accountHash
+            )
+              return yield* programError(
+                'account-binding',
+                'System assessment belongs to another account or authority generation',
+              )
+          }
           const expenses = yield* readers
             .inferenceExpenses(
               loadedConfig,
@@ -762,7 +789,7 @@ export const runForwardPerformanceReport = (
             )
             .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
           return yield* Effect.fromResult(
-            makeForwardPerformanceReport(input, expenses, options.authorityGenerationHash),
+            makeForwardPerformanceReport(input, expenses, options.authorityGenerationHash, assessment),
           ).pipe(
             Effect.mapError((cause) =>
               programError('construct-receipt', 'forward-performance report construction failed', cause),
