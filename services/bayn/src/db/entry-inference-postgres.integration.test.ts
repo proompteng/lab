@@ -1,3 +1,11 @@
+import cryptoHistoryContext from '../../migrations/0161_crypto_history_context'
+import { evaluateAdmittedFixture } from '../jev/evaluation.test-support'
+import {
+  persistVisualClaimFixture,
+  persistVisualTransitionFixture,
+  persistHandoffFixture,
+  persistEvaluationFixture,
+} from '../jev/evaluation.test-support'
 import cryptoQuoteEvidence from '../../migrations/0160_crypto_quote_evidence'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import equityEntryAskCap from '../../migrations/0158_equity_entry_ask_cap'
@@ -7,7 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { PgMigrator } from '@effect/sql-pg'
-import { Clock, Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import sequentialEntryInference from '../../migrations/0147_sequential_entry_inference'
 import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
@@ -38,7 +46,7 @@ import { JevClient } from '../jev/client'
 import { prepareJevRequest } from '../jev/contract'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
-import { JevEvaluationStore, evaluateClaimedJevOnce } from '../jev/evaluation'
+import { JevEvaluationStore, type JevDispatch } from '../jev/evaluation'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevPurpose } from '../jev/portfolio'
 import { makeNativeChartEvidence } from '../jev/chart-evidence'
@@ -71,7 +79,7 @@ import { makeInferenceExpenseStore } from '../inference-expense-postgres'
 import { formalModelExecutable, runFormalModel } from '../system-assessment/formal-model.test-support'
 import { IsoDateSchema } from '../schemas'
 import { StagedDispatchClaimSchema, type StagedDispatchClaim } from '../jev/staged-checkpoint'
-import { InferenceStage } from '../inference-costs'
+import { InferenceStage, InferenceUsageStatus } from '../inference-costs'
 import { JevFailure } from '../jev/contract'
 import { runInferenceExpensePass } from '../inference-expense-runtime'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
@@ -111,6 +119,7 @@ const conditionalInput = {
   protocol: {
     ...request.request.protocol,
     schemaVersion: 'bayn.jev.protocol.v24' as const,
+    lookbackMinutes: 30 as const,
     entryQuestionPolicyHash: retainedConditionalQuestionPolicyHash,
     candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
   },
@@ -150,7 +159,7 @@ const makeRuntime = () => ManagedRuntime.make(runtimeLayer)
 const defaultRequest = request
 const replayFixture = fixture
 const replayBatch = batch
-const expiredFixture = nativeJevFixture()
+const expiredFixture = nativeJevFixture(undefined, undefined, `replay-${'c'.repeat(64)}`)
 const expiredBatch = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: expiredFixture.observation.payload,
@@ -168,12 +177,13 @@ const retainCheckpoint = (current: typeof request) =>
     const journal = yield* EntryInferenceJournal
     const checkpoint = stagedCheckpointFixture(current)
     for (const claim of checkpoint.claims) {
-      yield* journal.recordVisualClaim(claim)
+      yield* persistVisualClaimFixture(journal, claim)
       const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
-      if (terminal !== undefined) yield* journal.recordVisualTerminal(terminal)
+      if (terminal !== undefined)
+        yield* persistVisualTransitionFixture(journal, { terminal: terminal, successor: { kind: 'NONE' } })
     }
   })
-const retainReplayRequest = Effect.gen(function* () {
+const retainReplayDispatch = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   // Native fixtures intentionally reuse synthetic reconciliation identities; keep the replay graph isolated.
   yield* sql`DROP SCHEMA public CASCADE`
@@ -192,17 +202,21 @@ const retainReplayRequest = Effect.gen(function* () {
   yield* sql`INSERT INTO reconciliations (reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
     VALUES (${r.reconciliationId},${r.schemaVersion},${r.accountId},${r.expectedHash},${r.observedHash},${r.contentHash},${r.status},'[]'::jsonb,${r.reconciledAt})`
   yield* (yield* CandidateObservationStore).record(replayFixture.observation)
-  yield* TestClock.setTime(Date.parse(current.observedAt)).pipe(
+  const admission = yield* TestClock.setTime(Date.parse(current.observedAt)).pipe(
     Effect.andThen(
       Effect.flatMap(JevBatchStore, (store) => store.begin(replayBatch, replayFixture.observation.payload)),
     ),
     Effect.provide(TestClock.layer()),
   )
-  return current
+  const dispatch = admission.dispatches.find((entry) => entry.request.requestId === current.requestId)
+  if (dispatch === undefined) throw new Error('Missing initial replay admission')
+  return dispatch
 })
+const retainReplayRequest = retainReplayDispatch.pipe(Effect.map((dispatch) => dispatch.request))
 
 integration('committed sequential provider handoff', () => {
   let runtime: ReturnType<typeof makeRuntime>
+  let initialDispatch: JevDispatch | undefined
   beforeAll(() => {
     const parsed = new URL(url)
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
@@ -228,9 +242,10 @@ integration('committed sequential provider handoff', () => {
             table: 'schema_migrations',
           })
         if (!withRequestVersion) yield* chartDispatchCheckpoints
-        if (fixture.portfolio.brokerState.account.accountId === replayAccountId)
+        const accountId = fixture.portfolio.brokerState.account.accountId
+        if (accountId.startsWith('replay-'))
           yield* sql`INSERT INTO simulated_execution_clocks (account_id,source_manifest_hash,observed_at)
-            VALUES (${replayAccountId},${replaySourceHash},${request.observedAt})`
+            VALUES (${accountId},${accountId.slice('replay-'.length)},${request.observedAt})`
         yield* (yield* CycleStore).acquire(fixture.draft, request.observedAt)
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
       VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${request.observedAt})`
@@ -243,18 +258,23 @@ integration('committed sequential provider handoff', () => {
           return
         }
         yield* (yield* CandidateObservationStore).record(fixture.observation)
-        yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
+        return yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen(Effect.flatMap(JevBatchStore, (store) => store.begin(batch, fixture.observation.payload))),
           Effect.provide(TestClock.layer()),
         )
       }),
     )
-  beforeEach(() => resetDatabase())
+  beforeEach(async () => {
+    initialDispatch = undefined
+    const admission = await resetDatabase()
+    initialDispatch = admission?.dispatches.find((dispatch) => dispatch.request.requestId === defaultRequest.requestId)
+  })
 
   test.each([
     [157, cryptoEntryAskCap, 'bayn.jev.protocol.v26'],
     [158, equityEntryAskCap, 'bayn.jev.protocol.v27'],
     [160, cryptoQuoteEvidence, 'bayn.jev.protocol.v28'],
+    [161, cryptoHistoryContext, 'bayn.jev.protocol.v29'],
   ] as const)(
     'ask-cap migration %s preserves retired execution bytes and late financial evidence',
     async (id, cutover, retiredProtocol) =>
@@ -275,10 +295,15 @@ integration('committed sequential provider handoff', () => {
           const { requestId: _, ...current } = request
           const input = {
             ...request.request,
+            schemaVersion: 'bayn.entry-inference-input.v5' as const,
             protocol: {
               ...request.request.protocol,
               schemaVersion: retiredProtocol,
-              candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+              lookbackMinutes: 30 as const,
+              candidateEvidencePolicy:
+                retiredProtocol === 'bayn.jev.protocol.v29'
+                  ? IntradayCandidateEvidencePolicy.MarketQuotes
+                  : IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
             },
           }
           const material = { ...current, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
@@ -390,18 +415,20 @@ integration('committed sequential provider handoff', () => {
                 const predecessor = checkpoint.claims.find((row) => row.stage === 'CHART')
                 const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
                 if (predecessor === undefined || terminal === undefined) throw new Error('Missing predecessor')
-                yield* journal.recordVisualClaim(predecessor)
-                yield* journal.recordVisualTerminal(terminal)
+                yield* persistVisualClaimFixture(journal, predecessor)
+                yield* persistVisualTransitionFixture(journal, { terminal: terminal, successor: { kind: 'NONE' } })
               }
               if (scenario.state === 'claimed')
-                expect(yield* journal.recordVisualClaim(claim)).toEqual({ dispatchAllowed: true })
+                expect(yield* persistVisualClaimFixture(journal, claim)).toEqual({
+                  dispatchAllowed: stage === 'BASE_START',
+                })
               if (scenario.state === 'handed-off') {
                 yield* retainCheckpoint(current)
-                yield* journal.recordHandoff(entryCompletionFixture(current).handoff)
+                yield* persistHandoffFixture(journal, entryCompletionFixture(current).handoff)
               }
               if (scenario.state === 'resolved') yield* (yield* JevEvaluationStore).abandon(current, current.expiresAt)
               if (scenario.state === 'quoted') {
-                yield* journal.recordVisualClaim(claim)
+                yield* persistVisualClaimFixture(journal, claim)
                 const sessionDate = yield* Schema.decodeUnknownEffect(IsoDateSchema)(current.observedAt.slice(0, 10))
                 const quotes = Result.getOrThrow(
                   makeInferenceExpenseQuotes(
@@ -460,7 +487,7 @@ integration('committed sequential provider handoff', () => {
               const { claimHash: _hash, ...material } = claim
               const input = Result.getOrThrow(makeStagedDispatchClaim({ ...material, claimedAt: at(scenario.claim) }))
               const before = yield* readState
-              const record = journal.recordVisualClaim(input)
+              const record = persistVisualClaimFixture(journal, input)
               const result = yield* (scenario.ambient ? sql.withTransaction(record) : record).pipe(Effect.result)
               const after = yield* readState
               if (Result.isFailure(result)) expect(after).toEqual(before)
@@ -484,7 +511,7 @@ integration('committed sequential provider handoff', () => {
           inputs.push(observed.input)
           actual.push(observed.result)
         }
-      expect(actual.filter((result) => result?.dispatchAllowed)).toHaveLength(4)
+      expect(actual.filter((result) => result?.dispatchAllowed)).toHaveLength(2)
       expect(actual.filter((result) => result === null)).toHaveLength(12)
       expect(runFormalModel(inputs)).toEqual(actual)
     },
@@ -545,10 +572,10 @@ integration('committed sequential provider handoff', () => {
                   const store = yield* JevEvaluationStore
                   const sql = yield* PgClient.PgClient
                   yield* retainCheckpoint(request)
-                  if (existing) yield* journal.recordHandoff(completion.handoff)
+                  if (existing) yield* persistHandoffFixture(journal, completion.handoff)
                   if (resolved) yield* store.abandon(request, request.expiresAt)
                   const before = yield* readState
-                  const record = journal.recordHandoff(input)
+                  const record = persistHandoffFixture(journal, input)
                   const result = yield* (ambientTransaction ? sql.withTransaction(record) : record).pipe(Effect.result)
                   const after = yield* readState
                   if (Result.isFailure(result)) {
@@ -577,7 +604,7 @@ integration('committed sequential provider handoff', () => {
           yield* retainCheckpoint(request)
           const before = yield* readState
           const outcomes = yield* Effect.all(
-            Array.from({ length: 8 }, () => journal.recordHandoff(completion.handoff)),
+            Array.from({ length: 8 }, () => persistHandoffFixture(journal, completion.handoff)),
             { concurrency: 8 },
           )
           return { before, after: yield* readState, outcomes }
@@ -626,9 +653,12 @@ integration('committed sequential provider handoff', () => {
         const { requestId: _, ...current } = request
         const input = {
           ...request.request,
+          schemaVersion: 'bayn.entry-inference-input.v5',
           protocol: {
             ...request.request.protocol,
             schemaVersion: 'bayn.jev.protocol.v26',
+            lookbackMinutes: 30,
+            candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
             entryQuestionPolicyHash: retainedStagedQuestionPolicyHash,
           },
         }
@@ -687,6 +717,8 @@ integration('committed sequential provider handoff', () => {
         const sql = yield* PgClient.PgClient
         const journal = yield* EntryInferenceJournal
         const request = expiredRequest
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at=${request.expiresAt}
+          WHERE account_id=${expiredFixture.portfolio.brokerState.account.accountId}`
         const expiredVisual = stagedCheckpointFixture(request).terminals[0]
         if (expiredVisual?.outcome.status !== 'RECEIVED') throw new Error('Missing visual fixture')
         const expiredClaim = Result.getOrThrow(
@@ -701,7 +733,7 @@ integration('committed sequential provider handoff', () => {
             expiresAt: request.expiresAt,
           }),
         )
-        expect(yield* journal.recordVisualClaim(expiredClaim)).toEqual({ dispatchAllowed: false })
+        expect(yield* persistVisualClaimFixture(journal, expiredClaim)).toEqual({ dispatchAllowed: false })
         expect(
           Result.isFailure(
             yield* sql`INSERT INTO jev_staged_dispatch_claims (request_id,stage,claim_hash,payload)
@@ -726,13 +758,16 @@ integration('committed sequential provider handoff', () => {
             expiresAt: current.expiresAt,
           }),
         )
-        const admissions = yield* Effect.all([journal.recordVisualClaim(claim), journal.recordVisualClaim(claim)], {
-          concurrency: 2,
-        })
-        expect(admissions.filter((value) => value.dispatchAllowed)).toHaveLength(1)
-        expect(Result.isFailure(yield* sql.withTransaction(journal.recordVisualClaim(claim)).pipe(Effect.result))).toBe(
-          true,
+        const admissions = yield* Effect.all(
+          [persistVisualClaimFixture(journal, claim), persistVisualClaimFixture(journal, claim)],
+          {
+            concurrency: 2,
+          },
         )
+        expect(admissions.filter((value) => value.dispatchAllowed)).toHaveLength(0)
+        expect(
+          Result.isFailure(yield* sql.withTransaction(persistVisualClaimFixture(journal, claim)).pipe(Effect.result)),
+        ).toBe(true)
         const store = makeInferenceExpenseStore(sql, replayAccountId, '1970-01-01')
         // A synthetic tariff prices this September fixture only; never backdate the production rate card.
         const fixtureRateCard = {
@@ -810,8 +845,8 @@ integration('committed sequential provider handoff', () => {
             outcome: { status: 'RECEIVED', inference: visual },
           }),
         )
-        yield* journal.recordVisualTerminal(terminal)
-        yield* journal.recordVisualTerminal(terminal)
+        yield* persistVisualTransitionFixture(journal, { terminal: terminal, successor: { kind: 'NONE' } })
+        yield* persistVisualTransitionFixture(journal, { terminal: terminal, successor: { kind: 'NONE' } })
         const lateSource = (yield* store.newSources).find((row) => row.requestId === current.requestId)
         if (lateSource === undefined) throw new Error('Late chart metering was not rediscovered')
         const historicalRates = Result.getOrThrow(makeInferenceExpenseQuotes(lateSource, inferenceExpenseRateCard))
@@ -831,7 +866,13 @@ integration('committed sequential provider handoff', () => {
         const conflict = Result.getOrThrow(
           makeStagedTerminalReceipt({ ...terminalMaterial, recordedAt: current.expiresAt }),
         )
-        expect(Result.isFailure(yield* journal.recordVisualTerminal(conflict).pipe(Effect.result))).toBe(true)
+        expect(
+          Result.isFailure(
+            yield* persistVisualTransitionFixture(journal, { terminal: conflict, successor: { kind: 'NONE' } }).pipe(
+              Effect.result,
+            ),
+          ),
+        ).toBe(true)
         expect(
           Result.isFailure(
             yield* sql`UPDATE jev_staged_dispatch_claims SET payload=payload WHERE request_id=${current.requestId}`.pipe(
@@ -926,6 +967,260 @@ integration('committed sequential provider handoff', () => {
     )
   })
 
+  test('commits a chart terminal and its base-start admission in one transaction', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || terminal === undefined || base === undefined)
+          throw new Error('Missing staged fixture')
+        expect(yield* persistVisualClaimFixture(journal, chart)).toEqual({ dispatchAllowed: false })
+        expect(
+          yield* persistVisualTransitionFixture(journal, { terminal, successor: { kind: 'VISUAL', claim: base } }),
+        ).toEqual({
+          dispatchAllowed: true,
+        })
+        const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ transaction: Schema.String })))(
+          yield* sql`SELECT xmin::text AS transaction FROM jev_staged_terminal_receipts
+            WHERE request_id=${request.requestId} AND stage='CHART'
+            UNION ALL SELECT xmin::text FROM jev_staged_dispatch_claims
+            WHERE request_id=${request.requestId} AND stage='BASE_START'`,
+        )
+        expect(rows).toHaveLength(2)
+        expect(new Set(rows.map((row) => row.transaction)).size).toBe(1)
+      }),
+    ))
+
+  test('commits a base-start terminal and its dependent Jev handoff in one transaction', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || chartTerminal === undefined || base === undefined || terminal === undefined)
+          throw new Error('Missing staged fixture')
+        yield* persistVisualClaimFixture(journal, chart)
+        yield* persistVisualTransitionFixture(journal, { terminal: chartTerminal, successor: { kind: 'NONE' } })
+        yield* persistVisualClaimFixture(journal, base)
+        expect(
+          yield* persistVisualTransitionFixture(journal, {
+            terminal,
+            successor: { kind: 'HANDOFF', handoff: completion.handoff },
+          }),
+        ).toEqual({ dispatchAllowed: true })
+        const rows = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ transaction: Schema.String })))(
+          yield* sql`SELECT xmin::text AS transaction FROM jev_staged_terminal_receipts
+            WHERE request_id=${request.requestId} AND stage='BASE_START'
+            UNION ALL SELECT xmin::text FROM jev_inference_handoffs WHERE request_id=${request.requestId}`,
+        )
+        expect(rows).toHaveLength(2)
+        expect(new Set(rows.map((row) => row.transaction)).size).toBe(1)
+      }),
+    ))
+
+  test('an atomic visual transition serializes retries and refuses an ambient transaction', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || terminal === undefined || base === undefined)
+          throw new Error('Missing staged fixture')
+        yield* persistVisualClaimFixture(journal, chart)
+        const transition = persistVisualTransitionFixture(journal, {
+          terminal,
+          successor: { kind: 'VISUAL', claim: base },
+        })
+        expect(Result.isFailure(yield* sql.withTransaction(transition).pipe(Effect.result))).toBe(true)
+        expect(
+          yield* sql`SELECT stage FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([])
+        const attempts = yield* Effect.all([transition, transition], { concurrency: 2 })
+        expect(attempts.filter((value) => value.dispatchAllowed)).toHaveLength(1)
+        expect(
+          yield* sql`SELECT stage FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([{ stage: 'CHART' }])
+        expect(
+          yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId} ORDER BY stage`,
+        ).toEqual([{ stage: 'BASE_START' }, { stage: 'CHART' }])
+      }),
+    ))
+
+  test('an invalid successor retains the paid visual terminal without admitting successor evidence', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || terminal === undefined || base === undefined)
+          throw new Error('Missing staged fixture')
+        yield* persistVisualClaimFixture(journal, chart)
+        const { claimHash: _oldHash, ...material } = base
+        const invalid = Result.getOrThrow(makeStagedDispatchClaim({ ...material, selectedEnd: 'wrong-end' }))
+        expect(
+          Result.isFailure(
+            yield* persistVisualTransitionFixture(journal, {
+              terminal,
+              successor: { kind: 'VISUAL', claim: invalid },
+            }).pipe(Effect.result),
+          ),
+        ).toBe(true)
+        expect(
+          yield* sql`SELECT terminal_hash FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([{ terminal_hash: terminal.terminalHash }])
+        expect(yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId}`).toEqual([
+          { stage: 'CHART' },
+        ])
+        expect(yield* persistVisualTransitionFixture(journal, { terminal, successor: { kind: 'NONE' } })).toEqual({
+          dispatchAllowed: false,
+        })
+        expect(
+          yield* sql`SELECT terminal_hash FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([{ terminal_hash: terminal.terminalHash }])
+      }),
+    ))
+
+  test('an expired atomic successor retains the paid terminal without admitting another dispatch', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || terminal === undefined || base === undefined)
+          throw new Error('Missing staged fixture')
+        yield* persistVisualClaimFixture(journal, chart)
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at=${request.expiresAt} WHERE account_id=${replayAccountId}`
+        expect(
+          yield* persistVisualTransitionFixture(journal, { terminal, successor: { kind: 'VISUAL', claim: base } }),
+        ).toEqual({ dispatchAllowed: false })
+        expect(
+          yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([{ payload: terminal }])
+        expect(yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId}`).toEqual([
+          { stage: 'CHART' },
+        ])
+      }),
+    ))
+
+  test.each(['VISUAL', 'HANDOFF'] as const)(
+    'a failed %s successor preserves every paid terminal for cost discovery',
+    async (kind) =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const journal = yield* EntryInferenceJournal
+          const checkpoint = stagedCheckpointFixture(request)
+          const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+          const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+          const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+          const baseTerminal = checkpoint.terminals.find((row) => row.stage === 'BASE_START')
+          if (chart === undefined || chartTerminal === undefined || base === undefined || baseTerminal === undefined)
+            throw new Error('Missing staged fixture')
+          yield* persistVisualClaimFixture(journal, chart)
+          if (kind === 'HANDOFF')
+            yield* persistVisualTransitionFixture(journal, {
+              terminal: chartTerminal,
+              successor: { kind: 'VISUAL', claim: base },
+            })
+          yield* sql`CREATE FUNCTION reject_visual_successor() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'fixture rejected successor' USING ERRCODE='23514'; END $$`
+          if (kind === 'VISUAL')
+            yield* sql`CREATE TRIGGER reject_visual_successor BEFORE INSERT ON jev_staged_dispatch_claims
+            FOR EACH ROW WHEN (NEW.stage='BASE_START') EXECUTE FUNCTION reject_visual_successor()`
+          else
+            yield* sql`CREATE TRIGGER reject_visual_successor BEFORE INSERT ON jev_inference_handoffs
+            FOR EACH ROW EXECUTE FUNCTION reject_visual_successor()`
+          const transition =
+            kind === 'VISUAL'
+              ? persistVisualTransitionFixture(journal, {
+                  terminal: chartTerminal,
+                  successor: { kind: 'VISUAL', claim: base },
+                })
+              : persistVisualTransitionFixture(journal, {
+                  terminal: baseTerminal,
+                  successor: { kind: 'HANDOFF', handoff: completion.handoff },
+                })
+          expect(Result.isFailure(yield* transition.pipe(Effect.result))).toBe(true)
+          const expected = kind === 'VISUAL' ? [chartTerminal] : [baseTerminal, chartTerminal]
+          expect(
+            yield* sql`SELECT terminal_hash FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId} ORDER BY stage`,
+          ).toEqual(expected.map((terminal) => ({ terminal_hash: terminal.terminalHash })))
+          expect(
+            yield* sql`SELECT handoff_hash FROM jev_inference_handoffs WHERE request_id=${request.requestId}`,
+          ).toEqual([])
+          const source = (yield* makeInferenceExpenseStore(sql, replayAccountId, '1970-01-01').newSources).find(
+            (row) => row.requestId === request.requestId,
+          )
+          if (source === undefined) throw new Error('Missing paid terminal expense source')
+          const quotes = Result.getOrThrow(makeInferenceExpenseQuotes(source, inferenceExpenseRateCard))
+          for (const terminal of expected)
+            expect(
+              quotes.find((quote) => 'stage' in quote.line && quote.line.stage === terminal.stage)?.line.usageStatus,
+            ).toBe(InferenceUsageStatus.Received)
+        }),
+      ),
+  )
+
+  test('interruption while acquiring a transition lock retains the paid terminal and releases the transaction', async () =>
+    runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const journal = yield* EntryInferenceJournal
+        const checkpoint = stagedCheckpointFixture(request)
+        const chart = checkpoint.claims.find((row) => row.stage === 'CHART')
+        const terminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
+        const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
+        if (chart === undefined || terminal === undefined || base === undefined)
+          throw new Error('Missing staged fixture')
+        yield* persistVisualClaimFixture(journal, chart)
+        const locked = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const holder = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`SELECT request_id FROM jev_evaluation_requests WHERE request_id=${request.requestId} FOR UPDATE`
+              yield* Deferred.succeed(locked, undefined)
+              yield* Deferred.await(release)
+            }),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(locked)
+        const attempt = yield* persistVisualTransitionFixture(journal, {
+          terminal,
+          successor: { kind: 'VISUAL', claim: base },
+        }).pipe(Effect.forkChild({ startImmediately: true }))
+        const interruption = yield* Fiber.interrupt(attempt).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(holder)
+        yield* Fiber.join(interruption).pipe(Effect.timeout('5 seconds'))
+        const exit = yield* Fiber.await(attempt)
+        expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+        expect(
+          yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${request.requestId}`,
+        ).toEqual([{ payload: terminal }])
+        expect(yield* sql`SELECT stage FROM jev_staged_dispatch_claims WHERE request_id=${request.requestId}`).toEqual([
+          { stage: 'CHART' },
+        ])
+      }),
+    ))
+
   test(
     'admits base start once only after its exact committed predecessor and rejects skipped or expired dispatch',
     async () =>
@@ -939,21 +1234,24 @@ integration('committed sequential provider handoff', () => {
           const base = checkpoint.claims.find((row) => row.stage === 'BASE_START')
           if (chart === undefined || terminal === undefined || base === undefined)
             throw new Error('Missing staged fixture')
-          expect(Result.isFailure(yield* journal.recordVisualClaim(base).pipe(Effect.result))).toBe(true)
-          expect(yield* journal.recordVisualClaim(chart)).toEqual({ dispatchAllowed: true })
-          yield* journal.recordVisualTerminal(terminal)
+          expect(Result.isFailure(yield* persistVisualClaimFixture(journal, base).pipe(Effect.result))).toBe(true)
+          expect(yield* persistVisualClaimFixture(journal, chart)).toEqual({ dispatchAllowed: false })
+          yield* persistVisualTransitionFixture(journal, { terminal: terminal, successor: { kind: 'NONE' } })
           const { claimHash: _hash, ...material } = base
           const changed = Result.getOrThrow(makeStagedDispatchClaim({ ...material, selectedEnd: 'wrong-end' }))
-          expect(Result.isFailure(yield* journal.recordVisualClaim(changed).pipe(Effect.result))).toBe(true)
+          expect(Result.isFailure(yield* persistVisualClaimFixture(journal, changed).pipe(Effect.result))).toBe(true)
           expect(
             Result.isFailure(
               yield* sql`INSERT INTO jev_staged_dispatch_claims (request_id,stage,claim_hash,payload)
         VALUES (${changed.requestId},${changed.stage},${changed.claimHash},${sql.json(changed)})`.pipe(Effect.result),
             ),
           ).toBe(true)
-          const attempts = yield* Effect.all([journal.recordVisualClaim(base), journal.recordVisualClaim(base)], {
-            concurrency: 2,
-          })
+          const attempts = yield* Effect.all(
+            [persistVisualClaimFixture(journal, base), persistVisualClaimFixture(journal, base)],
+            {
+              concurrency: 2,
+            },
+          )
           expect(attempts.filter((value) => value.dispatchAllowed)).toHaveLength(1)
           const skip = Result.getOrThrow(
             makeStagedSkipReceipt({
@@ -969,12 +1267,10 @@ integration('committed sequential provider handoff', () => {
           const skippedHandoff = { ...originalHandoff, baseStart: { status: 'NOT_REQUESTED' as const, skip } }
           expect(
             Result.isFailure(
-              yield* journal
-                .recordHandoff({
-                  ...skippedHandoff,
-                  handoffHash: Result.getOrThrow(canonicalHashV1Result(skippedHandoff)),
-                })
-                .pipe(Effect.result),
+              yield* persistHandoffFixture(journal, {
+                ...skippedHandoff,
+                handoffHash: Result.getOrThrow(canonicalHashV1Result(skippedHandoff)),
+              }).pipe(Effect.result),
             ),
           ).toBe(true)
           expect(
@@ -991,10 +1287,10 @@ integration('committed sequential provider handoff', () => {
           const successor = freshCheckpoint.claims.find((row) => row.stage === 'BASE_START')
           if (first === undefined || firstTerminal === undefined || successor === undefined)
             throw new Error('Missing staged fixture')
-          yield* journal.recordVisualClaim(first)
-          yield* journal.recordVisualTerminal(firstTerminal)
+          yield* persistVisualClaimFixture(journal, first)
+          yield* persistVisualTransitionFixture(journal, { terminal: firstTerminal, successor: { kind: 'NONE' } })
           yield* sql`UPDATE simulated_execution_clocks SET observed_at=${fresh.expiresAt} WHERE account_id=${replayAccountId}`
-          expect(yield* journal.recordVisualClaim(successor)).toEqual({ dispatchAllowed: false })
+          expect(yield* persistVisualClaimFixture(journal, successor)).toEqual({ dispatchAllowed: false })
           expect(
             Result.isFailure(
               yield* sql`INSERT INTO jev_staged_dispatch_claims (request_id,stage,claim_hash,payload)
@@ -1014,13 +1310,13 @@ integration('committed sequential provider handoff', () => {
         const journal = yield* EntryInferenceJournal
         yield* retainCheckpoint(request)
         const claims = yield* Effect.all(
-          [journal.recordHandoff(completion.handoff), journal.recordHandoff(completion.handoff)],
+          [persistHandoffFixture(journal, completion.handoff), persistHandoffFixture(journal, completion.handoff)],
           { concurrency: 2 },
         )
 
         expect(claims.filter((value) => value.dispatchAllowed)).toHaveLength(1)
         const store = yield* JevEvaluationStore
-        yield* store.record(request, receipt)
+        yield* persistEvaluationFixture(store, request, receipt)
         expect((yield* store.read(request.requestId))?.receipt).toEqual(receipt)
       }),
     ))
@@ -1029,10 +1325,15 @@ integration('committed sequential provider handoff', () => {
     runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const request = yield* retainReplayRequest
+        // beforeEach already admitted this exact replay graph. Rebuilding the
+        // schema here repeats every migration inside the evaluator's test budget.
+        const dispatch = initialDispatch
+        if (dispatch === undefined) throw new Error('Missing initial replay admission')
+        const request = dispatch.request
+        expect(request).toEqual(defaultRequest)
         const events: string[] = []
         const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
-          Effect.andThen(evaluateClaimedJevOnce({ request, claimedAt: request.observedAt })),
+          Effect.andThen(evaluateAdmittedFixture(dispatch)),
           Effect.provideService(DecisionsClient, {
             evaluate: (raw) =>
               Effect.gen(function* () {
@@ -1062,7 +1363,9 @@ integration('committed sequential provider handoff', () => {
     runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* JevEvaluationStore
-        expect(Result.isFailure(yield* store.record(request, receipt).pipe(Effect.result))).toBe(true)
+        expect(Result.isFailure(yield* persistEvaluationFixture(store, request, receipt).pipe(Effect.result))).toBe(
+          true,
+        )
         expect((yield* store.read(request.requestId))?.receipt).toBeNull()
       }),
     ))
@@ -1158,9 +1461,9 @@ integration('committed sequential provider handoff', () => {
         $$`
         yield* sql`CREATE TRIGGER reject_test_handoff BEFORE INSERT ON jev_inference_handoffs
           FOR EACH ROW EXECUTE FUNCTION reject_test_handoff()`
-        expect(Result.isFailure(yield* (yield* EntryInferenceJournal).recordHandoff(handoff).pipe(Effect.result))).toBe(
-          true,
-        )
+        expect(
+          Result.isFailure(yield* persistHandoffFixture(yield* EntryInferenceJournal, handoff).pipe(Effect.result)),
+        ).toBe(true)
         expect(yield* sql`SELECT skip_hash FROM jev_staged_skip_receipts WHERE request_id=${source.requestId}`).toEqual(
           [],
         )
@@ -1169,7 +1472,7 @@ integration('committed sequential provider handoff', () => {
         ).toEqual([])
         yield* sql`DROP TRIGGER reject_test_handoff ON jev_inference_handoffs`
         yield* sql`DROP FUNCTION reject_test_handoff()`
-        yield* (yield* EntryInferenceJournal).recordHandoff(handoff)
+        yield* persistHandoffFixture(yield* EntryInferenceJournal, handoff)
         expect(yield* sql`SELECT skip_hash FROM jev_staged_skip_receipts WHERE request_id=${source.requestId}`).toEqual(
           [{ skip_hash: skip.skipHash }],
         )
@@ -1185,7 +1488,9 @@ integration('committed sequential provider handoff', () => {
             },
           }),
         )
-        expect((yield* (yield* JevEvaluationStore).record(source, receipt)).status).toBe(JevResolutionStatus.Recorded)
+        expect((yield* persistEvaluationFixture(yield* JevEvaluationStore, source, receipt)).status).toBe(
+          JevResolutionStatus.Recorded,
+        )
         expect((yield* (yield* JevEvaluationStore).read(source.requestId))?.receipt).toEqual(receipt)
         expect(
           yield* sql`SELECT payload->>'schemaVersion' AS version,payload#>>'{disposition,status}' AS status
@@ -1200,7 +1505,7 @@ integration('committed sequential provider handoff', () => {
         const store = yield* JevEvaluationStore
         yield* retainCheckpoint(request)
         yield* store.abandon(request, request.expiresAt)
-        expect(yield* (yield* EntryInferenceJournal).recordHandoff(completion.handoff)).toEqual({
+        expect(yield* persistHandoffFixture(yield* EntryInferenceJournal, completion.handoff)).toEqual({
           dispatchAllowed: false,
         })
         const sql = yield* PgClient.PgClient
@@ -1217,7 +1522,7 @@ integration('committed sequential provider handoff', () => {
         const sql = yield* PgClient.PgClient
         const evaluations = yield* JevEvaluationStore
         yield* retainCheckpoint(request)
-        yield* (yield* EntryInferenceJournal).recordHandoff(completion.handoff)
+        yield* persistHandoffFixture(yield* EntryInferenceJournal, completion.handoff)
         yield* evaluations.abandon(request, request.expiresAt)
         const expenses = makeInferenceExpenseStore(sql, fixture.portfolio.brokerState.account.accountId, '1970-01-01')
         const tariff = {
@@ -1229,9 +1534,9 @@ integration('committed sequential provider handoff', () => {
         const partial = Result.getOrThrow(makeInferenceExpenseQuotes(first, tariff))
         expect(Result.getOrThrow(buildInferenceExpensePlan(partial)).transfers).toHaveLength(2)
         yield* expenses.freeze(partial)
-        expect(yield* expenses.newSources).toEqual([])
+        expect((yield* expenses.newSources).filter((source) => source.requestId === request.requestId)).toEqual([])
         expect(yield* expenses.pending).toHaveLength(3)
-        yield* evaluations.record(request, receipt)
+        yield* persistEvaluationFixture(evaluations, request, receipt)
         const next = (yield* expenses.newSources).find((value) => value.requestId === request.requestId)
         if (next === undefined) throw new Error('Missing late Jev expense source')
         const complete = Result.getOrThrow(makeInferenceExpenseQuotes(next, tariff))
@@ -1242,11 +1547,11 @@ integration('committed sequential provider handoff', () => {
         const pending = yield* expenses.pending
         expect(pending).toHaveLength(4)
         expect(Result.getOrThrow(buildInferenceExpensePlan(pending)).transfers).toHaveLength(3)
-        expect(yield* expenses.newSources).toEqual([])
+        expect((yield* expenses.newSources).filter((source) => source.requestId === request.requestId)).toEqual([])
       }),
     ))
 
-  test('stores separate zero-cost quotes for all three stages when the original claim expired before dispatch', async () =>
+  test('rejects a zero-cost receipt for an admitted CHART claim and retains unknown expense coverage', async () =>
     runtime.runPromise(
       Effect.gen(function* () {
         const undispatched = Result.getOrThrow(
@@ -1258,16 +1563,26 @@ integration('committed sequential provider handoff', () => {
             outcome: { status: JevOutcome.Failed, failure: JevFailure.NotDispatched },
           }),
         )
-        yield* (yield* JevEvaluationStore).record(request, undispatched)
+        const evaluations = yield* JevEvaluationStore
+        expect(
+          Result.isFailure(yield* persistEvaluationFixture(evaluations, request, undispatched).pipe(Effect.result)),
+        ).toBe(true)
+        expect((yield* evaluations.read(request.requestId))?.receipt).toBeNull()
+        yield* evaluations.abandon(request, request.expiresAt)
         const sql = yield* PgClient.PgClient
         const expenses = makeInferenceExpenseStore(sql, fixture.portfolio.brokerState.account.accountId, '1970-01-01')
         const current = (yield* expenses.newSources).find((value) => value.requestId === request.requestId)
         if (current === undefined) throw new Error('Missing undispatched source')
         const quotes = Result.getOrThrow(makeInferenceExpenseQuotes(current, inferenceExpenseRateCard))
+        expect(
+          quotes.every(
+            (quote) => quote.line.usageStatus === 'UNKNOWN_USAGE' && quote.line.estimatedCostPicoUsd === null,
+          ),
+        ).toBe(true)
         yield* expenses.freeze(quotes)
         expect(yield* expenses.pending).toHaveLength(3)
         expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers).toHaveLength(0)
-        expect(yield* expenses.newSources).toEqual([])
+        expect((yield* expenses.newSources).filter((source) => source.requestId === request.requestId)).toEqual([])
       }),
     ))
 
@@ -1282,7 +1597,7 @@ integration('committed sequential provider handoff', () => {
           const sql = yield* PgClient.PgClient
           const evaluations = yield* JevEvaluationStore
           yield* retainCheckpoint(request)
-          yield* (yield* EntryInferenceJournal).recordHandoff(completion.handoff)
+          yield* persistHandoffFixture(yield* EntryInferenceJournal, completion.handoff)
           yield* evaluations.abandon(request, request.expiresAt)
           const accountId = fixture.portfolio.brokerState.account.accountId
           const expenses = makeInferenceExpenseStore(sql, accountId, '1970-01-01')
@@ -1299,9 +1614,11 @@ integration('committed sequential provider handoff', () => {
           })
           const partial = yield* runInferenceExpensePass(expenses, client, tariff)
           expect(partial.transferCount).toBe(2)
-          expect(partial.gapCount).toBe(1)
+          expect(partial.gapCount).toBe(
+            batch.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested).length,
+          )
           expect((yield* runInferenceExpensePass(expenses, client, tariff)).transferCount).toBe(0)
-          yield* evaluations.record(request, receipt)
+          yield* persistEvaluationFixture(evaluations, request, receipt)
           const late = yield* runInferenceExpensePass(expenses, client, tariff)
           expect(late.transferCount).toBe(1)
           expect(late.gapCount).toBe(0)
@@ -1333,10 +1650,12 @@ integration('committed sequential provider handoff', () => {
       Effect.gen(function* () {
         const journal = yield* EntryInferenceJournal
         yield* retainCheckpoint(request)
-        yield* journal.recordHandoff(completion.handoff)
+        yield* persistHandoffFixture(journal, completion.handoff)
         expect(
           Result.isFailure(
-            yield* journal.recordHandoff({ ...completion.handoff, inputHash: 'f'.repeat(64) }).pipe(Effect.result),
+            yield* persistHandoffFixture(journal, { ...completion.handoff, inputHash: 'f'.repeat(64) }).pipe(
+              Effect.result,
+            ),
           ),
         ).toBe(true)
         const sql = yield* PgClient.PgClient
@@ -1618,6 +1937,7 @@ integration('committed sequential provider handoff', () => {
     ['market-entry-question', marketEntryQuestions],
     ['crypto-entry-ask-cap', cryptoEntryAskCap],
     ['crypto-quote-evidence', cryptoQuoteEvidence],
+    ['crypto-history-context', cryptoHistoryContext],
     ['conditional-base-anchor', conditionalBaseAnchors],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(

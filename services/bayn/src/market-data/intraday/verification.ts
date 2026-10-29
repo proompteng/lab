@@ -4,7 +4,8 @@ import {
   snapshotMarketCloseAt,
   marketHoursAreCanonical,
 } from '../../market-hours'
-import { InstrumentSymbolSchema } from '../../instruments'
+import { InstrumentSymbolSchema, MarketKind } from '../../instruments'
+import { marketHistoryMinutes } from '../history'
 import { maximumBarPublicationDelayMs } from './bar-publication'
 import { Result, Schema } from 'effect'
 import { equityClockSession } from '../../equity-hours'
@@ -47,7 +48,6 @@ import {
 import { compareIntradayInstants, intradayAgeNanos, intradayInstantNanos, millisecondsAsNanos } from './time'
 
 const minuteMs = 60_000
-const maximumWindowMs = 30 * minuteMs
 export const maximumIntradayObservationLagMs = 20 * minuteMs
 export const maximumIntradayQuoteAgeMs = 5 * minuteMs
 export const minimumIntradayQuoteAgeMs = 1_000
@@ -259,16 +259,21 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   ) {
     return Result.fail(failure('request', 'intraday range and observation must remain within the declared session'))
   }
+  const maximumWindowMinutes = marketHistoryMinutes[request.feed === 'us' ? MarketKind.Crypto : MarketKind.Equity]
   const duration = end - start
   if (
     duration <= 0 ||
-    duration > maximumWindowMs ||
+    duration > maximumWindowMinutes * minuteMs ||
     duration % minuteMs !== 0 ||
     start % minuteMs !== 0 ||
     end % minuteMs !== 0
   ) {
     return Result.fail(
-      failure('request', 'intraday range must contain one to 30 complete UTC-aligned one-minute bars', { duration }),
+      failure(
+        'request',
+        `intraday range must contain one to ${maximumWindowMinutes} complete UTC-aligned one-minute bars`,
+        { duration },
+      ),
     )
   }
   if (

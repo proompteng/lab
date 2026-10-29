@@ -28,6 +28,7 @@ const retained = (
     protocol: {
       ...current.request.protocol,
       schemaVersion: 'bayn.jev.protocol.v24' as const,
+      lookbackMinutes: 30 as const,
       candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
       entryQuestionPolicyHash: retainedSequentialQuestionPolicyHash,
     },

@@ -4,6 +4,19 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+New cycles discovered during an open, unexpired submission window acquire their authority slot and activate in one
+PostgreSQL transaction under the existing writer fence. This removes an immediate second WAL commit. A failed
+activation rolls back acquisition; retries read the committed cycle. Recovery and decision binding continue to enforce
+the original submission and inference deadlines.
+
+Candidate evidence reads extract identity and eligibility metadata once per indexed cycle/time source before matching
+requests. They fetch each matched full observation once and verify its content hash, retaining every generation,
+snapshot, symbol, timestamp and exclusion check within the original inference window.
+Complete cohort reads yield between candidates so queued PostgreSQL responses can be serviced during source reproduction.
+The receipt reproduces its full handoff once; the independent handoff row must match that verified copy exactly.
+Incomplete and failed receipts still require independent handoff reproduction. Socket and inference deadlines remain
+unchanged.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
@@ -68,10 +81,16 @@ quote checks and native order construction enforce that same funded ceiling. Equ
 IOC limits. It does not add the risk policy's adverse-price allowance to the buy limit. Crypto entry coin fees, maximum
 future sell fees, stop/exit slippage and every risk limit remain unchanged. A tighter buy limit may remain unfilled; it
 cannot justify a cheaper funding estimate while submitting a higher-priced order.
-PostgreSQL commits the exact visual receipt, proposal derivation and dependent Jev request before Jev dispatch.
-An unused BASE_START skip commits with its handoff in one transaction; paid visual terminal evidence remains
-independently durable. Normal batch completion compares the admitted observation and every committed request, receipt
-and resolution directly before sealing the result. Recovery still reconstructs incomplete stored graphs. Completion
+PostgreSQL commits all CHART terminal receipts with their next visual admissions or proposal handoffs in one
+transaction, then all required BASE_START terminals and handoffs in one transaction. Provider calls run concurrently
+within each stage and start only after its admissions commit. The request rows serialize retries. A repeated
+transition verifies the same bytes and never permits another dispatch. Expiry can still retain the paid terminal
+receipt while refusing a successor claim; acknowledgement after the original deadline cannot authorize provider I/O.
+If a successor write fails or is interrupted, PostgreSQL retains the paid terminal separately after rolling back
+that transition. The original operation still fails and cannot dispatch its successor.
+An unused BASE_START skip commits with its handoff; paid visual terminal evidence remains independently durable on
+failure. Normal batch completion commits every final receipt, resolution and the complete result in one transaction,
+verifying the admitted observation and requests. Recovery still reconstructs incomplete stored graphs. Completion
 and decision use retain the original ten-second deadline, including commit acknowledgement time.
 
 Native comparison runtimes also support the chart-entry ablation and repeated-momentum control. Each has a distinct
@@ -97,7 +116,7 @@ and one newer completed bar. An unused branch's refusal cannot veto a supported 
 Migration 158 admits only protocol v28 for new execution, retaining outer request v3, input v5, handoff v4 and the
 market-specific question policy. It preserves the staged transport installed by migration 153. Retired protocols, including v27,
 v1–v4 inputs and earlier question policies remain available only to financial readers. Migration 151 and its historical checkpoint identities remain unchanged.
-Each visual stage has one immutable dispatch admission and a separately durable terminal receipt. A duplicate admission
+Each visual stage has one immutable dispatch admission and a durable terminal receipt. A duplicate admission
 cannot redispatch an uncertain call. Late terminal evidence can settle costs but cannot authorize a successor or renew expiry.
 An explicit authenticated BASE_START skip proves non-dispatch; absent or incomplete stage evidence remains unknown.
 Financial evidence/quotes v4 preserve three separate stage keys and transfer identities, retain unknown-to-metered history,
@@ -161,11 +180,12 @@ reproduced from the sealed input and record both providers as undispatched at ze
 the original chart, Jev, deadline and risk gates. See [pre-chart feasibility](../../docs/bayn/pre-chart-feasibility.md)
 for the existing-data proof, verifier and rollout contract.
 
-Native Jev admission commits the verified source observation, sealed batch plan and every requested candidate claim
+Native Jev admission commits the verified source observation, sealed batch plan, every requested candidate and its initial CHART claim
 in one PostgreSQL transaction before any provider call. Only the successful creator receives dispatch rights. Retries,
 including a lost admission acknowledgement, recover existing evidence without another inference. A failed claim insertion
-rolls back the new observation and plan. Each response receipt remains independently durable. If admission commits after
-expiry, its claims receive undispatched receipts without provider I/O. The existing ten-second inference validity,
+rolls back the new observation and plan. Successful evaluation needs three cohort transactions without BASE_START or four
+with it, independent of candidate count. If admission commits after expiry, no provider call starts; recovery abandons
+the requests and retains uncertain claim usage rather than inventing zero-cost receipts. The existing ten-second inference validity,
 quote freshness checks, complete-batch requirement and risk limits are unchanged.
 
 When every candidate already has a committed resolution, finalization verifies the persisted requests, receipts,
@@ -193,7 +213,7 @@ window trade. Executable quote pricing, fee estimates and funding use the fresh 
 retain the current-quote comparison and label it `CURRENT_QUOTES`.
 BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
 or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate.
-Protocol v29 uses `bayn.candidate-evidence.market-quotes.v1`: crypto candidates require a fresh two-sided quote and
+Protocol v30 uses `bayn.candidate-evidence.market-quotes.v1`: crypto candidates require a fresh two-sided quote and
 verified bars and features; an actual window trade is optional context. `candidate.latestTrade` is `null` when none
 was observed, and no quote or bar is relabeled as a trade. Alpaca can publish crypto bars from quote midpoints with
 zero volume when no trades occur ([provider contract](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data)).
@@ -698,7 +718,7 @@ the pre-call claim remains pending and cannot trigger another inference. Every c
 evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
 The submission window follows the entitled market calendar. Bayn can evaluate after the first completed minute and
-the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Crypto evaluates continuously. It uses up to 30 minutes of actual
+the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Crypto evaluates continuously. Equities use up to 30 minutes and crypto uses up to 120 minutes of actual
 completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. The sequential chart and Jev pipeline derives source-anchored proposals and ranks funded eligible entries by their weakest required judgment, then modeled loss and stable proposal identity, for both equities and crypto. Entry spreads may not exceed five basis
 points for equities or 25 basis points for crypto. The market profile is part of the strategy identity. It selects at most one long position, capped at 20% of account equity and reduced when
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
@@ -865,6 +885,13 @@ canonical content hash is verified once per read, with exact cycle, generation, 
 checked for every request. A batch with resolved candidate evidence uses three queries including its plan/result
 read, independent of candidate count. Single-candidate evidence reads use the same verifier. Missing or corrupt
 evidence and claims for sealed unattempted candidates still fail verification; validation is not cached across reads.
+
+Current chart question preparation retains at most 64 successful canonical request bodies. Its key hashes the
+complete chart, protocol, funding, question policy and selected stage, including actual source prices and image bytes.
+Identical evidence reuses deterministic funding geometry while every caller receives a newly decoded request.
+Changed quotes, fees, capital, source content or stage require preparation again. Provider responses, dispatch claims,
+durable evidence membership, current authority and the original ten-second inference deadline remain independently
+verified; a prepared request cannot authorize an order.
 
 The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, after binding
 or a cold durable read. Every reread still queries PostgreSQL and requires full JSONB equality with that retained

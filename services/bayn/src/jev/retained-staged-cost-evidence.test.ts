@@ -23,15 +23,24 @@ import { stagedChartAssessments } from './staged-chart-questions'
 const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 const fixture = (
   marketQuestions = false,
-  schemaVersion: 'bayn.jev.protocol.v26' | 'bayn.jev.protocol.v27' | 'bayn.jev.protocol.v28' = 'bayn.jev.protocol.v26',
+  schemaVersion:
+    | 'bayn.jev.protocol.v26'
+    | 'bayn.jev.protocol.v27'
+    | 'bayn.jev.protocol.v28'
+    | 'bayn.jev.protocol.v29' = 'bayn.jev.protocol.v26',
 ) => {
   const current = entryEvaluationRequestFixture()
   const input = {
     ...current.request,
+    schemaVersion: 'bayn.entry-inference-input.v5' as const,
     protocol: {
       ...current.request.protocol,
       schemaVersion,
-      candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+      lookbackMinutes: 30 as const,
+      candidateEvidencePolicy:
+        schemaVersion === 'bayn.jev.protocol.v29'
+          ? IntradayCandidateEvidencePolicy.MarketQuotes
+          : IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
       entryQuestionPolicyHash: marketQuestions ? retainedMarketQuestionPolicyHash : retainedStagedQuestionPolicyHash,
     },
   }
@@ -117,7 +126,12 @@ test('retained staged receipts cannot omit their original obstruction question a
   expect(Result.isFailure(readStagedInferenceCostEvidence({ ...row, handoff, receipt }))).toBe(true)
 })
 
-test.each(['bayn.jev.protocol.v26', 'bayn.jev.protocol.v27', 'bayn.jev.protocol.v28'] as const)(
+test.each([
+  'bayn.jev.protocol.v26',
+  'bayn.jev.protocol.v27',
+  'bayn.jev.protocol.v28',
+  'bayn.jev.protocol.v29',
+] as const)(
   'the ask-cap migration reads original %s market questions without admitting retired execution',
   (version) => {
     const row = fixture(true, version)
