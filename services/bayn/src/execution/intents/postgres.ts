@@ -390,9 +390,7 @@ const transitionIntent = (sql: PgClient.PgClient, intent: Intent, decision: Risk
   `.pipe(Effect.mapError((cause) => classifyIntentCause('commit', cause)))
 }
 
-type ResolvedIntent =
-  | { readonly _tag: 'Replay'; readonly receipt: IntentReceipt }
-  | { readonly _tag: 'Pending'; readonly record: StoredIntent }
+type ResolvedIntent = { readonly _tag: 'Replay'; readonly receipt: IntentReceipt } | { readonly _tag: 'Pending' }
 
 const resolveDisposition = (
   disposition: ExistingCommitDisposition,
@@ -401,7 +399,7 @@ const resolveDisposition = (
     return Effect.succeed({ _tag: 'Replay', receipt: disposition.receipt })
   }
   if (disposition._tag === 'CompleteIntent') {
-    return Effect.succeed({ _tag: 'Pending', record: disposition.record })
+    return Effect.succeed({ _tag: 'Pending' })
   }
   return Effect.fail(storeError('conflict', 'commit', 'inserted intent cannot be read back'))
 }
@@ -438,13 +436,16 @@ const resolveIntent = (
         : validateCurrentAuthority(authorityRows, prepared.intent),
     ).pipe(Effect.mapError(authorityError))
     if (disposition._tag === 'CompleteIntent') {
-      return { _tag: 'Pending', record: disposition.record } satisfies ResolvedIntent
+      return { _tag: 'Pending' } satisfies ResolvedIntent
     }
 
     const insertedRows = yield* insertIntent(sql, prepared.intent)
-    yield* Effect.fromResult(decideIntentInsert(insertedRows, prepared.intent.intentId)).pipe(
+    const inserted = yield* Effect.fromResult(decideIntentInsert(insertedRows, prepared.intent.intentId)).pipe(
       Effect.mapError(writeDispositionError),
     )
+    // A new row is private to this transaction. persistDecision still verifies the
+    // complete stored intent and risk decision before committing either one.
+    if (inserted._tag === 'IntentInserted') return { _tag: 'Pending' } satisfies ResolvedIntent
     return yield* reclassifyAfterInsert(sql, prepared)
   })
 
