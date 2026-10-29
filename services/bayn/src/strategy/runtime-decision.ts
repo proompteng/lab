@@ -76,6 +76,18 @@ export const isProtectedEntryTarget = (
 ): decision is ProtectedEntryTarget =>
   isChartEntryTarget(decision) || decision?.schemaVersion === 'bayn.repeated-momentum-target.v1'
 
+export const protectedEntryBuyPriceCeilings = (
+  decision: RuntimeStrategyDecision | undefined,
+): Readonly<Record<string, bigint>> =>
+  isProtectedEntryTarget(decision)
+    ? Object.fromEntries(
+        Object.entries(decision.exitPolicy.plans).map(([symbol, plan]) => [
+          symbol,
+          BigInt(plan.levels.maximumEntryPriceMicros),
+        ]),
+      )
+    : {}
+
 export const protectedEntryExpiresAtMs = (target: ProtectedEntryTarget): number =>
   isChartEntryTarget(target)
     ? Date.parse(target.evidence.batchPlan.expiresAt)
