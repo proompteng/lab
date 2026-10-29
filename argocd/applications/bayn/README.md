@@ -51,6 +51,20 @@ command is **not** run automatically from the trading service at startup.
 
 # Bayn GitOps rollout notes
 
+## Financial database memory
+
+Each `bayn-db` instance reserves 2 GiB and permits 8 GiB so PostgreSQL and the operating system can retain financial
+evidence pages. During an observed inference-request insert on October 29, 2026, the former 2 GiB limit caused 286
+memory-limit hits and reclaimed about 120 MiB of file cache. Separate samples showed receipt and resolution inserts
+waiting on physical reads, and a batch completion took 17.4 seconds against its original ten-second inference window.
+This allocation addresses the observed cache pressure; verify its effect on native batch and dispatch latency after
+rollout. PostgreSQL parameters, synchronous replication, storage, backups and trading limits retain their contracts.
+
+CNPG applies the resource update through its existing unsupervised switchover policy. Allow for a brief connection
+interruption; verify both pods' resource limits, current primary, synchronous standby, exact financial reconciliation,
+and natural entries and protected exits. If the larger allocation cannot schedule or worsens the measured workload, restore the
+prior resource values through a reviewed commit and the same Kargo path. Infrastructure health is not trading proof.
+
 ## Native arrival archive
 
 Both evidence databases disable PostgreSQL JIT. In an October 28, 2026 UTC comparison, the native expense-discovery query

@@ -121,8 +121,8 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
       resizeInUseVolumes: true,
     },
     resources: {
-      requests: { cpu: '250m', memory: '512Mi' },
-      limits: { cpu: '2', memory: '2Gi' },
+      requests: { cpu: '250m', memory: '2Gi' },
+      limits: { cpu: '2', memory: '8Gi' },
     },
     bootstrap: {
       initdb: {
