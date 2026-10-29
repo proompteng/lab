@@ -1042,6 +1042,51 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
+  test('keeps queued I/O serviceable while reproducing a complete candidate cohort', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const admission = yield* batches.begin(plan, fixture.observation.payload)
+        yield* Effect.forEach(admission.dispatches, evaluateAdmittedFixture, { concurrency: 'unbounded' })
+        const sql = yield* PgClient.PgClient
+        // Queue a real event-loop turn after SQL replies. TestClock cannot model a socket
+        // response being starved by synchronous source reproduction.
+        let heartbeat: ReturnType<typeof setImmediate> | undefined
+        let serviced = false
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            if (!statement.compile()[0].includes('matched.matching_request_ids')) return statement
+            return withTestEvaluation(statement, () =>
+              statement.pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    heartbeat = setImmediate(() => {
+                      serviced = true
+                    })
+                  }),
+                ),
+              ),
+            )
+          },
+        })
+        const { evidence } = yield* readJevEvaluationEvidence(
+          monitored,
+          requested.map((candidate) => candidate.request.requestId),
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (heartbeat !== undefined) clearImmediate(heartbeat)
+            }),
+          ),
+        )
+        expect(evidence.size).toBe(requested.length)
+        expect(heartbeat).toBeDefined()
+        expect(serviced).toBe(true)
+      }).pipe(Effect.provideService(JevClient, successful), atObservation),
+    )
+  })
+
   test('reads complete candidate evidence in three queries and transfers its shared observation once', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -1087,6 +1132,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
   for (const table of [
     'jev_evaluation_requests',
     'jev_evaluation_receipts',
+    'jev_inference_handoffs',
     'jev_evaluation_resolutions',
     'intraday_candidate_observations',
   ]) {
