@@ -2022,6 +2022,8 @@ bun run --filter @proompteng/bayn build
 ```
 
 CI partitions the complete unit suite into four duration-balanced Bun shards with two isolated workers per shard.
+These parallel shards use Bun 1.4.3 for its isolated-file finalizer fixes. See the
+[upstream fixes](https://bun.sh/blog/bun-v1.4.3#bun-test).
 The CI default test budget is 15 seconds for full research fixtures on shared runners; explicit test budgets still apply.
 Effect compatibility and broker sandbox tests run in this suite with broker credentials removed. PostgreSQL uses
 four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`
