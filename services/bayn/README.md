@@ -17,6 +17,12 @@ The receipt reproduces its full handoff once; the independent handoff row must m
 Incomplete and failed receipts still require independent handoff reproduction. Socket and inference deadlines remain
 unchanged.
 
+Initial chart admission uses the request inserted by its own transaction and an empty checkpoint, avoiding four
+reloads per candidate before dispatch. Subsequent transitions acquire the request lock first, then read all three
+checkpoint tables in one statement. This second statement sees a competing transition's committed journal after a
+lock wait. Every claim still reproduces its source and passes the database guards before its transaction commits;
+provider calls retain the original ten-second expiry.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
