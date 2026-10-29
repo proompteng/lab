@@ -10032,6 +10032,49 @@ test('reuses active-run snapshots without duplicate status polling and fetches t
   expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
 })
 
+for (const phase of ['succeeded', 'failed', 'cancelled', 'rejected'] as const) {
+  test(`processes a ${phase} workspace snapshot before a completion event arrives`, async ({ page }) => {
+    const run: TengriCodexRun = {
+      runId: '99999999-9999-4999-8999-999999999999',
+      agentId: 'microvm-ada',
+      threadId: 'thread-recovered',
+      state: { phase: 'running', turnId: 'turn-recovered' },
+    }
+    const mock = await mockTengri(page, { durableRun: run })
+    let terminal: TengriCodexRun | undefined
+    await page.route('**/api/tengri', async (route) => {
+      if (
+        terminal &&
+        route.request().method() === 'POST' &&
+        route.request().postDataJSON().action === 'active-codex-runs'
+      ) {
+        // The backend took its claim list before this run finished. Its subsequent
+        // snapshot read legitimately includes a terminal result in that list.
+        return route.fulfill({ json: { result: [terminal] } })
+      }
+      return route.fallback()
+    })
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+    terminal = {
+      ...run,
+      state:
+        phase === 'rejected'
+          ? { phase, reason: 'The recovered run was rejected' }
+          : phase === 'failed'
+            ? { phase, turnId: 'turn-recovered', reason: 'The recovered run failed' }
+            : { phase, turnId: 'turn-recovered' },
+    }
+    await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+    await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
+    if ('reason' in terminal.state) await expect(chat.getByText(terminal.state.reason, { exact: true })).toBeVisible()
+    await chat.getByRole('textbox', { name: 'Message your agent' }).fill('A next task')
+    await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+    expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+  })
+}
+
 test('clears an individual recovery error after both status endpoints recover', async ({ page }) => {
   const run: TengriCodexRun = {
     runId: '66666666-6666-4666-8666-666666666666',

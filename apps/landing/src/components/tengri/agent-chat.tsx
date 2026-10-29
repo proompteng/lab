@@ -377,6 +377,23 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }, [account?.authenticated, agentId, threadId, activeTurnId, runRecoveryRevision])
 
   useEffect(() => {
+    if (!runMatchesThread || !run || !codexRunIsTerminal(run)) return
+    // A claim can finish between active-run enumeration and snapshot readback.
+    // Apply terminal bookkeeping regardless of which endpoint supplied the run.
+    const recoveredFailure = runRecoveryFailure.current
+    runRecoveryFailure.current = undefined
+    if ('turnId' in run.state && run.state.turnId) completedTurns.current.add(run.state.turnId)
+    setWorkspaceRuns((current) =>
+      current.some((candidate) => candidate.runId === run.runId)
+        ? current.filter((candidate) => candidate.runId !== run.runId)
+        : current,
+    )
+    setCurrentActiveTurnId('')
+    const reason = 'reason' in run.state ? run.state.reason : undefined
+    setError((current) => reason ?? (current === recoveredFailure ? '' : current))
+  }, [run, runMatchesThread, setCurrentActiveTurnId])
+
+  useEffect(() => {
     if (!runId || !threadId || selectedRunTerminal) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -429,16 +446,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         ) {
           setCurrentActiveTurnId(next.state.turnId)
         }
-        if (codexRunIsTerminal(next)) {
-          setWorkspaceRuns((current) =>
-            current.some((run) => run.runId === next.runId)
-              ? current.filter((run) => run.runId !== next.runId)
-              : current,
-          )
-          setCurrentActiveTurnId('')
-          if ('reason' in next.state) setError(next.state.reason)
-          return
-        }
+        if (codexRunIsTerminal(next)) return
       } catch (cause) {
         if (controller.signal.aborted) return
         runRecoveryFailure.current = runRecoveryError(cause, 'Agent run could not be recovered')
