@@ -16,9 +16,13 @@ import {
 import { JevContractError, jevModel } from './contract'
 import { stagedChartQuestionPolicy } from './staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
+import { retainedMarketEntryJudgmentPolicy } from './retained-market-entry-questions'
 
 const entryQuestionPolicyHash = Result.getOrThrow(
   canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: entryJudgmentPolicy }),
+)
+const retainedMarketQuestionPolicyHash = Result.getOrThrow(
+  canonicalHashV1Result({ chart: stagedChartQuestionPolicy, jev: retainedMarketEntryJudgmentPolicy }),
 )
 
 const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
@@ -58,7 +62,7 @@ const protocolFields = (entryQuestionPolicyHash: string) => ({
 
 const CurrentProtocol = Schema.Struct({
   ...protocolFields(entryQuestionPolicyHash),
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v31'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v32'),
   lookbackMinutes: Schema.Struct({
     equity: Schema.Literal(marketHistoryMinutes[MarketKind.Equity]),
     crypto: Schema.Literal(marketHistoryMinutes[MarketKind.Crypto]),
@@ -110,7 +114,7 @@ const validateProtocol = (
   return issues
 }
 
-// These schemas reproduce immutable financial evidence; new execution accepts only v31.
+// These schemas reproduce immutable financial evidence; new execution accepts only v32.
 export const jevProtocolSchemaForQuestionPolicy = <
   V extends
     | 'bayn.jev.protocol.v24'
@@ -149,6 +153,7 @@ export const JevProtocolSchema = CurrentProtocol.check(
 
 export const RetainedJevProtocolV30Schema = Schema.Struct({
   ...CurrentProtocol.fields,
+  ...protocolFields(retainedMarketQuestionPolicyHash),
   schemaVersion: Schema.Literal('bayn.jev.protocol.v30'),
 }).check(
   Schema.makeFilter((protocol) =>
@@ -160,10 +165,25 @@ export const RetainedJevProtocolV30Schema = Schema.Struct({
   ),
 )
 
+export const RetainedJevProtocolV31Schema = Schema.Struct({
+  ...CurrentProtocol.fields,
+  ...protocolFields(retainedMarketQuestionPolicyHash),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v31'),
+}).check(
+  Schema.makeFilter((protocol) =>
+    validateProtocol(
+      protocol,
+      Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
+      IntradayCandidateEvidencePolicy.MarketQuotesV2,
+    ),
+  ),
+)
+
 export type JevProtocol = typeof JevProtocolSchema.Type
 export type JevProtocolMaterial =
   | JevProtocol
   | typeof RetainedJevProtocolV30Schema.Type
+  | typeof RetainedJevProtocolV31Schema.Type
   | (Omit<JevProtocol, 'schemaVersion' | 'lookbackMinutes'> & {
       readonly lookbackMinutes: 30
       readonly schemaVersion:
@@ -176,7 +196,7 @@ export type JevProtocolMaterial =
     })
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v31',
+  schemaVersion: 'bayn.jev.protocol.v32',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
   entrySelectionPolicy: 'source-anchored-proposal-judgments',
