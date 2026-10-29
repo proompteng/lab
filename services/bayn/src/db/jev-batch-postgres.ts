@@ -211,7 +211,12 @@ export const makeJevBatchStore = Effect.gen(function* () {
                 }),
               )
               if (initial.visualClaim !== null) {
-                const admitted = yield* writes.recordClaim(initial.visualClaim, yield* writes.load(request.requestId))
+                // This transaction inserted the request. Its checkpoint is empty and
+                // no other transaction can create dependent rows before this commit.
+                const admitted = yield* writes.recordClaim(initial.visualClaim, {
+                  request,
+                  checkpoint: { claims: [], terminals: [], skips: [] },
+                })
                 if (!admitted.dispatchAllowed)
                   return yield* persistError('Initial visual claim could not be admitted with its request')
               }

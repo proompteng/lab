@@ -28,6 +28,27 @@ const batchFor = (fixture: ReturnType<typeof nativeJevFixture>) =>
   )
 
 describe('native Jev entry and position observations', () => {
+  test('repeated target verification rechecks changed source bytes and never trusts a claimed source identity', () => {
+    const target = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence()))
+    const decode = Schema.decodeUnknownResult(JevEntryTargetSchema)
+    expect(Result.getOrThrow(decode(target))).toEqual(target)
+    expect(Result.getOrThrow(decode(structuredClone(target)))).toEqual(target)
+
+    const changed = structuredClone(target)
+    const originalHash = changed.evidence.batchPlan.observationHash
+    Object.assign(changed.evidence.observation.portfolio.brokerState.account, {
+      cashMicros: (BigInt(changed.evidence.observation.portfolio.brokerState.account.cashMicros) + 1n).toString(),
+    })
+    expect(changed.evidence.batchPlan.observationHash).toBe(originalHash)
+    expect(Result.isFailure(decode(changed))).toBe(true)
+    expect(Result.getOrThrow(decode(target))).toEqual(target)
+
+    Object.assign(changed, structuredClone(target))
+    Object.assign(changed.evidence, { decidedAt: changed.evidence.batchPlan.expiresAt })
+    expect(Result.isFailure(decode(changed))).toBe(true)
+    expect(Result.getOrThrow(decode(target))).toEqual(target)
+  })
+
   test('complete recorded responses determine one capped target and reproduce without a model', () => {
     const evidence = nativeJevDecisionEvidence()
     const target = Result.getOrThrow(decideJevEntry(evidence))

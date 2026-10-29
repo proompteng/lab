@@ -144,15 +144,30 @@ test('crypto entry does not chase a fresh narrow quote above the inference ask',
   }
 })
 
-test('equity entry does not chase a fresh narrow quote above its funded inference ask', () => {
+test('equity entry retains the real refreshed ask and its funded buy ceiling', () => {
   const original = pricingFixture(100, 100.02).fixture.snapshot.latestQuotes['AAPL']
   if (original === undefined) throw new Error('Missing inference quote')
   const ask = original.askPrice + 0.01
   const { fixture, decision, pricing } = pricingFixture(ask - 0.02, ask)
-  const compiled = compileJevEntry(decision, fixture.snapshot, pricing)
-  expect(Result.isFailure(compiled)).toBe(true)
-  if (Result.isFailure(compiled))
-    expect(compiled.failure).toMatchObject({ message: expect.stringContaining('entry cost price ceiling') })
+  const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
+  const plan = decision.exitPolicy.plans['AAPL']
+  if (plan === undefined) throw new Error('Missing funded plan')
+  expect(compiled.askPriceMicros['AAPL']).toBe(String(Math.round(ask * 1_000_000)))
+  const limit = Result.getOrThrow(
+    deriveExecutionIntentPricing({
+      symbol: 'AAPL',
+      side: OrderSide.Buy,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      quantityAtoms: BigInt(compiled.maximumBuyQuantityAtoms['AAPL'] ?? '0'),
+      referencePriceMicros: BigInt(compiled.askPriceMicros['AAPL'] ?? '0'),
+      limitSlippageBps: 0n,
+      maximumBuyPriceMicros: BigInt(plan.levels.maximumEntryPriceMicros),
+    }),
+  )
+  expect(limit.expectedExecutionPriceMicros.toString()).toBe(plan.levels.maximumEntryPriceMicros)
+  expect(limit.expectedExecutionPriceMicros).toBeLessThan(BigInt(compiled.askPriceMicros['AAPL'] ?? '0'))
+  expect(BigInt(compiled.maximumBuyQuantityAtoms['AAPL'] ?? '0')).toBeLessThanOrEqual(BigInt(plan.maximumQuantityAtoms))
 })
 
 describe('Jev entry execution quote eligibility', () => {
@@ -206,19 +221,20 @@ describe('Jev entry execution quote eligibility', () => {
     expect(Result.isSuccess(compileJevEntry(decision, fixture.snapshot, pricing))).toBe(true)
   })
 
-  test('a narrow refreshed quote above the inference-bound cost ceiling cannot enter', () => {
-    const original = nativeJevFixture().snapshot.latestQuotes['AAPL']
-    if (original === undefined) throw new Error('Missing fixture quote')
-    const ask = original.askPrice * 1.001 + 0.02
-    const { fixture, decision, pricing } = pricingFixture(ask - 0.01, ask)
-    const compiled = compileJevEntry(decision, fixture.snapshot, pricing)
-    expect(Result.isFailure(compiled)).toBe(true)
-    if (Result.isFailure(compiled)) {
-      expect(compiled.failure).toBeInstanceOf(JevAwaitingEvidence)
-      if (compiled.failure instanceof JevAwaitingEvidence)
-        expect(compiled.failure.message).toContain('entry cost price ceiling')
-    }
-  })
+  test.each([0, 10_000])(
+    'an equity quote at or beyond its fulfilled profit target cannot enter at offset %s',
+    (offset) => {
+      const original = pricingFixture(100, 100.02)
+      const plan = original.decision.exitPolicy.plans['AAPL']
+      if (plan === undefined) throw new Error('Missing fixture plan')
+      const bid = (Number(plan.levels.profitLimitPriceMicros) + offset) / 1_000_000
+      const { fixture, decision, pricing } = pricingFixture(bid, bid + 0.01)
+      const compiled = compileJevEntry(decision, fixture.snapshot, pricing)
+      expect(Result.isFailure(compiled)).toBe(true)
+      if (Result.isFailure(compiled))
+        expect(compiled.failure).toMatchObject({ message: expect.stringContaining('profit target already reached') })
+    },
+  )
 
   test('a rejected execution quote cannot reopen its consumed signal window', async () => {
     const { fixture, pricing } = pricingFixture(100, 100.06)

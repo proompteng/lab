@@ -2038,10 +2038,9 @@ durableTest.each(
                 return yield* Effect.die('This control must not dispatch a Jev provider request')
               const started = yield* Clock.currentTimeMillis
               const { request, requestHash } = Result.getOrThrow(prepareJevRequest(raw))
-              const { candidate } = yield* Schema.decodeUnknownEffect(
-                Schema.Struct({ candidate: Schema.Struct({ symbol: Schema.String }) }),
-              )(request.state).pipe(Effect.orDie)
-              const symbol = candidate.symbol
+              const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: Schema.String }))(
+                request.state,
+              ).pipe(Effect.orDie)
               if (Object.values(request.questions).some((question) => question.type !== 'noul')) {
                 managementCalls += 1
                 throw new Error('Native inference accepts only atomic entry judgments; exits are code-owned')
