@@ -23,6 +23,12 @@ checkpoint tables in one statement. This second statement sees a competing trans
 lock wait. Every claim still reproduces its source and passes the database guards before its transaction commits;
 provider calls retain the original ten-second expiry.
 
+Repeated Jev target verification reuses the last successful semantic check only when a hash of the entire actual
+target and evidence matches. It retains one hash, not the source objects; changed source bytes, decisions or deadlines
+still require full reproduction. Newly inserted intents skip their intermediate reload inside the owning transaction.
+The complete intent and risk decision still undergo final stored readback before commit, and insertion conflicts retain
+their existing verification path. Submission expiry and final authority, funding and risk checks remain unchanged.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
