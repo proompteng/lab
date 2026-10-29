@@ -88,9 +88,11 @@ The replacement source uses `jev` protocol v28, entry state v22, batch v7 and en
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
-Protocol v28 funds each equity and crypto buy at the original inference ask rounded to a valid broker tick. Refreshed
-quote checks and native order construction enforce that same funded ceiling. Equities use DAY limits and crypto uses
-IOC limits. It does not add the risk policy's adverse-price allowance to the buy limit. Crypto entry coin fees, maximum
+Protocol v28 funds each equity and crypto buy at the original inference ask rounded to a valid broker tick.
+Native order construction enforces that same funded ceiling. Equity DAY orders may rest at the funded cap when a
+fresh eligible ask rises above it; risk still uses the actual quote and the order cannot chase the ask. Quotes at or
+beyond the selected stop or profit target remain ineligible. Crypto IOC orders require an ask within the funded cap.
+It does not add the risk policy's adverse-price allowance to the buy limit. Crypto entry coin fees, maximum
 future sell fees, stop/exit slippage and every risk limit remain unchanged. A tighter buy limit may remain unfilled; it
 cannot justify a cheaper funding estimate while submitting a higher-priced order.
 PostgreSQL commits all CHART terminal receipts with their next visual admissions or proposal handoffs in one
