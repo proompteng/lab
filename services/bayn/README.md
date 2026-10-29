@@ -213,13 +213,19 @@ window trade. Executable quote pricing, fee estimates and funding use the fresh 
 retain the current-quote comparison and label it `CURRENT_QUOTES`.
 BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
 or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate.
-Protocol v30 uses `bayn.candidate-evidence.market-quotes.v1`: crypto candidates require a fresh two-sided quote and
+Protocol v31 uses `bayn.candidate-evidence.market-quotes.v2`: crypto candidates require a fresh two-sided quote and
 verified bars and features; an actual window trade is optional context. `candidate.latestTrade` is `null` when none
 was observed, and no quote or bar is relabeled as a trade. Alpaca can publish crypto bars from quote midpoints with
 zero volume when no trades occur ([provider contract](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data)).
 Missing trade context therefore does not exclude ETH before assessment. A valid model-assessed setup, protective price
 choices, fee-inclusive funding and all execution and financial gates remain required. Equity candidates still require
-an actual window trade; equity benchmarks retain the existing SPY quote, trade and feature contract.
+an actual window trade. SPY also requires a real window trade and verified bars and features, while its executable
+quote retains the ten-second freshness limit. A missing post-boundary SPY print cannot veto all equity candidates
+when that price and contextual evidence exist. The actual print age stays visible to Jev. Missing or stale benchmark
+quotes, missing real window trades, unavailable features and malformed evidence still fail the whole observation.
+Migration 162 retires v30 execution, preserving its immutable financial receipts and original verification semantics.
+It retains terminal-cycle, flat-inventory, settled-order, complete-accounting and fresh exact-reconciliation cutover
+requirements. Broker identity, capital history, monetary limits, price ceilings, stops and holding time are unchanged.
 Migration 160 rejects retired protocol writes and dispatch while preserving immutable financial receipts and late
 provider cost outcomes. Cutover requires terminal cycles, flat inventory, settled orders, complete accounting and fresh
 exact reconciliation, followed by native OBSERVE recovery and a reviewed same-account PAPER mandate for the new image.
