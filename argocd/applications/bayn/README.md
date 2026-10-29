@@ -1,5 +1,15 @@
 # Exception tracking
 
+## Focused entry evidence cutover
+
+Protocol v32 supplies completed candidate bars and one copy of each funded proposal to Jev. Code derives exact
+structure bounds, completed-close locations, consecutive closes and stop touches. The existing questions and
+0.70/0.30 thresholds are unchanged; model judgments still determine structural meaning and confirmation.
+Migration 164 requires the existing flat, settled, fresh exact reconciliation boundary, preserves all financial
+history, and retires v31 writes. The source rollout removes the old strategy mandate and runs OBSERVE. After
+verifying the published immutable image and native cutover, activate a reviewed same-account v32 mandate through
+the normal Kargo path. Broker credentials, risk limits, fees, freshness and the fifteen-minute hold are unchanged.
+
 ## Market-specific chart history
 
 Protocol v31 separates chart context: equities retain 30 minutes; crypto uses 120 minutes. Kafka seeks each market's

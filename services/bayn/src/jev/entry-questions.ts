@@ -1,11 +1,11 @@
-import { Result, Schema } from 'effect'
+import { BigDecimal, Result, Schema } from 'effect'
 
 import { SymbolSchema } from '../schemas'
 import { instrumentMarket, MarketKind } from '../instruments'
 import type { NativeChartEvidence } from './chart-evidence'
 import type { ChartAssessmentsMaterial } from './chart-questions'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest, type JevResponse } from './contract'
-import { EntrySetup, type EntryProposal } from './entry-proposals'
+import { EntrySetup, entrySourcePriceMicros, type EntryProposal } from './entry-proposals'
 import { jevInstructions } from './instructions'
 
 export const entryJudgmentThresholds = { affirmativeAtLeast: 0.7, negativeAtMost: 0.3 } as const
@@ -71,7 +71,16 @@ const marketJudgmentPolicy = (market: MarketKind) => ({
   ),
 })
 
+export const entryEvidenceStateDefinition = 'bayn.jev-proposal-evidence.v1' as const
+
+enum StructureCloseLocation {
+  Above = 'ABOVE',
+  Inside = 'INSIDE',
+  Below = 'BELOW',
+}
+
 export const entryJudgmentPolicy = {
+  stateDefinition: entryEvidenceStateDefinition,
   model: jevModel,
   thresholds: entryJudgmentThresholds,
   evidenceInstructions: jevInstructions.entry,
@@ -89,9 +98,9 @@ export const makeEntryJudgmentRequest = (input: {
 }) =>
   Result.gen(function* () {
     if (input.proposals.length === 0) return null
-    const candidate = yield* Schema.decodeUnknownResult(Schema.Struct({ symbol: SymbolSchema }))(
-      input.numericalState['candidate'],
-    )
+    const candidate = yield* Schema.decodeUnknownResult(
+      Schema.Struct({ symbol: SymbolSchema, quote: Schema.optionalKey(Schema.Json) }),
+    )(input.numericalState['candidate'])
     if (
       candidate.symbol !== input.assessments.symbol ||
       input.chart.barsHash !== input.assessments.barsHash ||
@@ -104,6 +113,7 @@ export const makeEntryJudgmentRequest = (input: {
       return yield* Result.fail(
         new JevContractError({ message: 'Entry judgments require one source-bound proposal per setup' }),
       )
+    const proposalEvidence: Record<string, Schema.Json> = {}
     const questions: Record<string, JevRequest['questions'][string]> = {}
     const market = instrumentMarket(candidate.symbol)
     for (const proposal of input.proposals) {
@@ -121,22 +131,69 @@ export const makeEntryJudgmentRequest = (input: {
         source.setup === EntrySetup.SupportRecovery
           ? input.chart.bars.filter((bar) => selectedIds.includes(bar.id))
           : input.chart.bars.filter((bar) => bar.id >= source.firstBarId && bar.id <= source.lastBarId)
-      const context = {
-        market,
+      const structureBars = input.chart.bars.filter((bar) =>
+        source.setup === EntrySetup.SupportRecovery
+          ? bar.id === source.supportBarId
+          : bar.id >= source.firstBarId && bar.id <= source.lastBarId,
+      )
+      const structure = yield* Result.all(
+        structureBars.map((bar) =>
+          Result.all({ low: entrySourcePriceMicros(bar.low), high: entrySourcePriceMicros(bar.high) }),
+        ),
+      )
+      const firstStructure = structure[0]
+      if (firstStructure === undefined)
+        return yield* Result.fail(new JevContractError({ message: 'Entry evidence requires its selected structure' }))
+      const low = structure.reduce((minimum, bar) => (bar.low < minimum ? bar.low : minimum), firstStructure.low)
+      const high = structure.reduce((maximum, bar) => (bar.high > maximum ? bar.high : maximum), firstStructure.high)
+      const structureEndId = source.setup === EntrySetup.SupportRecovery ? source.supportBarId : source.lastBarId
+      const afterStructure = input.chart.bars.filter((bar) => bar.id > structureEndId)
+      const lowPrice = BigDecimal.make(low, 6)
+      const highPrice = BigDecimal.make(high, 6)
+      const stopPrice = BigDecimal.make(BigInt(proposal.stopPriceMicros), 6)
+      const completedCloses = afterStructure.map((bar) => ({
+        barId: bar.id,
+        closeRelativeToStructure: BigDecimal.isGreaterThan(BigDecimal.fromNumberUnsafe(bar.close), highPrice)
+          ? StructureCloseLocation.Above
+          : BigDecimal.isLessThan(BigDecimal.fromNumberUnsafe(bar.close), lowPrice)
+            ? StructureCloseLocation.Below
+            : StructureCloseLocation.Inside,
+      }))
+      let consecutiveAbove = 0
+      for (const close of completedCloses.toReversed()) {
+        if (close.closeRelativeToStructure !== StructureCloseLocation.Above) break
+        consecutiveAbove++
+      }
+      proposalEvidence[source.setup] = {
         sourceEvidence,
         chartAssessment:
           source.setup === EntrySetup.SupportRecovery
             ? { support: input.assessments.support, resistance: input.assessments.resistance }
             : { base: input.assessments.base, resistance: input.assessments.resistance },
-        proposal: {
-          setup: proposal.source.setup,
-          source: proposal.source,
+        terms: {
+          setup: source.setup,
+          source,
           entryPriceUsd: Number(proposal.maximumEntryPriceMicros) / 1_000_000,
           stopPriceUsd: Number(proposal.stopPriceMicros) / 1_000_000,
           targetPriceUsd: Number(proposal.profitLimitPriceMicros) / 1_000_000,
           maximumHoldingMinutes: proposal.maximumHoldingMinutes,
-          targetBasis: proposal.source.targetBasis,
+          targetBasis: source.targetBasis,
         },
+        calculatedFacts: {
+          structureLowUsd: Number(low) / 1_000_000,
+          structureHighUsd: Number(high) / 1_000_000,
+          stopIsBelowStructureLow: BigInt(proposal.stopPriceMicros) < low,
+          entryIsAboveStructureHigh: BigInt(proposal.maximumEntryPriceMicros) > high,
+          completedBarsAfterStructure: afterStructure.length,
+          completedClosesAfterStructure: completedCloses,
+          consecutiveNewestClosesAboveStructure: consecutiveAbove,
+          stopTouchedInCompletedBarsAfterStructure: afterStructure.some((bar) =>
+            BigDecimal.isLessThanOrEqualTo(BigDecimal.fromNumberUnsafe(bar.low), stopPrice),
+          ),
+        },
+      }
+      const context = {
+        proposalEvidencePath: `proposals.${source.setup}`,
         evidence: jevInstructions.entry,
       }
       const definitions = entryJudgmentDefinitions(source.setup)
@@ -158,8 +215,20 @@ export const makeEntryJudgmentRequest = (input: {
     return yield* prepareJevRequest({
       model: jevModel,
       state: {
-        ...input.numericalState,
-        schemaVersion: 'bayn.jev-entry-state.v22',
+        schemaVersion: entryEvidenceStateDefinition,
+        symbol: candidate.symbol,
+        windowEndAt: input.chart.windowEndAt,
+        completedSourceBars: input.chart.bars.map(({ id, minuteBeforeWindowEnd, open, high, low, close, volume }) => ({
+          id,
+          minuteBeforeWindowEnd,
+          open,
+          high,
+          low,
+          close,
+          volume,
+        })),
+        ...(candidate.quote === undefined ? {} : { observedQuote: candidate.quote }),
+        proposals: proposalEvidence,
       },
       questions,
     })

@@ -80,7 +80,7 @@ export enum ProposalRejection {
   Unfunded = 'TARGET_DOES_NOT_COVER_COSTS',
 }
 
-const sourcePrice = (value: number) =>
+export const entrySourcePriceMicros = (value: number) =>
   Result.gen(function* () {
     yield* numberToMicros(value, 'proposal source price')
     const rounded = BigDecimal.round(BigDecimal.fromNumberUnsafe(value), { scale: 6, mode: 'floor' })
@@ -133,10 +133,12 @@ export const mayHaveRetainedFundableSourceProposal = (input: {
 }) =>
   Result.gen(function* () {
     const { chart, economics, protocol, bidMicros } = input
-    const sourcePrices = chart.bars.map((bar) => Result.all({ high: sourcePrice(bar.high), low: sourcePrice(bar.low) }))
+    const entrySourcePriceMicross = chart.bars.map((bar) =>
+      Result.all({ high: entrySourcePriceMicros(bar.high), low: entrySourcePriceMicros(bar.low) }),
+    )
     // An unselected, unrepresentable bar cannot prove that every selectable proposal is unfundable.
-    if (sourcePrices.some(Result.isFailure)) return true
-    const prices = yield* Result.all(sourcePrices)
+    if (entrySourcePriceMicross.some(Result.isFailure)) return true
+    const prices = yield* Result.all(entrySourcePriceMicross)
     const highest = prices.reduce((maximum, price) => (price.high > maximum ? price.high : maximum), 0n)
     const target = quantizeInstrumentPriceMicros(chart.symbol, highest - 1n, 'DOWN')
     for (const price of prices) {
@@ -194,7 +196,10 @@ export const makeEntrySourceCandidates = (input: {
 }) =>
   Result.gen(function* () {
     const { chart, economics, protocol, bidMicros } = input
-    const prices = chart.bars.map((bar) => ({ high: sourcePrice(bar.high), low: sourcePrice(bar.low) }))
+    const prices = chart.bars.map((bar) => ({
+      high: entrySourcePriceMicros(bar.high),
+      low: entrySourcePriceMicros(bar.low),
+    }))
     let highest = 0n
     for (const price of prices)
       if (Result.isSuccess(price.high) && price.high.success > highest) highest = price.high.success
@@ -343,8 +348,8 @@ export const makeEntryProposals = (input: {
     } else {
       const supportBar = yield* barFor(support.anchor.barId)
       const resistanceBar = yield* barFor(resistance.anchor.barId)
-      const low = yield* sourcePrice(supportBar.low)
-      const high = yield* sourcePrice(resistanceBar.high)
+      const low = yield* entrySourcePriceMicros(supportBar.low)
+      const high = yield* entrySourcePriceMicros(resistanceBar.high)
       yield* add(
         {
           setup: EntrySetup.SupportRecovery,
@@ -379,8 +384,8 @@ export const makeEntryProposals = (input: {
       ) {
         reject(EntrySetup.BaseBreakout, ProposalRejection.IncoherentStructure)
       } else {
-        const highs = yield* Result.all(range.map((bar) => sourcePrice(bar.high)))
-        const lows = yield* Result.all(range.map((bar) => sourcePrice(bar.low)))
+        const highs = yield* Result.all(range.map((bar) => entrySourcePriceMicros(bar.high)))
+        const lows = yield* Result.all(range.map((bar) => entrySourcePriceMicros(bar.low)))
         const high = highs.reduce((maximum, value) => (value > maximum ? value : maximum), 0n)
         const low = lows.reduce((minimum, value) => (value < minimum ? value : minimum), high)
         if (high <= low || bidMicros <= high) reject(EntrySetup.BaseBreakout, ProposalRejection.IncoherentStructure)

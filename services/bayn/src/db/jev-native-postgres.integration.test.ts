@@ -1203,8 +1203,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             Clock.currentTimeMillis.pipe(
               Effect.map((now) => {
                 const symbol = Schema.decodeUnknownSync(
-                  Schema.Struct({ state: Schema.Struct({ candidate: Schema.Struct({ symbol: Schema.String }) }) }),
-                )(request).state.candidate.symbol
+                  Schema.Struct({ state: Schema.Struct({ symbol: Schema.String }) }),
+                )(request).state.symbol
                 calls.push(symbol)
                 return nativeJevInference(request, utcInstantFromEpochMillis(now), true)
               }),
@@ -1259,7 +1259,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         ).toBe(true)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v31' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v32' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(

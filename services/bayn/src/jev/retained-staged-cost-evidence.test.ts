@@ -16,7 +16,7 @@ import {
   retainedStagedQuestionPolicyHash,
   retainedMarketQuestionPolicyHash,
 } from './staged-inference-cost-evidence'
-import { makeEntryJudgmentRequest } from './entry-questions'
+import { makeRetainedMarketEntryJudgmentRequest } from './retained-market-entry-questions'
 import { deriveEntryDispositionForChart } from './entry-inference'
 import { stagedChartAssessments } from './staged-chart-questions'
 
@@ -28,7 +28,8 @@ const fixture = (
     | 'bayn.jev.protocol.v27'
     | 'bayn.jev.protocol.v28'
     | 'bayn.jev.protocol.v29'
-    | 'bayn.jev.protocol.v30' = 'bayn.jev.protocol.v26',
+    | 'bayn.jev.protocol.v30'
+    | 'bayn.jev.protocol.v31' = 'bayn.jev.protocol.v26',
 ) => {
   const current = entryEvaluationRequestFixture()
   const baseProtocol = {
@@ -36,8 +37,15 @@ const fixture = (
     entryQuestionPolicyHash: marketQuestions ? retainedMarketQuestionPolicyHash : retainedStagedQuestionPolicyHash,
   }
   const protocol =
-    schemaVersion === 'bayn.jev.protocol.v30'
-      ? { ...baseProtocol, schemaVersion, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes }
+    schemaVersion === 'bayn.jev.protocol.v30' || schemaVersion === 'bayn.jev.protocol.v31'
+      ? {
+          ...baseProtocol,
+          schemaVersion,
+          candidateEvidencePolicy:
+            schemaVersion === 'bayn.jev.protocol.v31'
+              ? IntradayCandidateEvidencePolicy.MarketQuotesV2
+              : IntradayCandidateEvidencePolicy.MarketQuotes,
+        }
       : {
           ...baseProtocol,
           schemaVersion,
@@ -50,7 +58,7 @@ const fixture = (
   const input = {
     ...current.request,
     schemaVersion:
-      schemaVersion === 'bayn.jev.protocol.v30'
+      schemaVersion === 'bayn.jev.protocol.v30' || schemaVersion === 'bayn.jev.protocol.v31'
         ? ('bayn.entry-inference-input.v6' as const)
         : ('bayn.entry-inference-input.v5' as const),
     protocol,
@@ -77,7 +85,7 @@ const fixture = (
       visual.outcome.inference,
       chart,
       assessments,
-      marketQuestions ? makeEntryJudgmentRequest : makeRetainedFundedEntryJudgmentRequest,
+      marketQuestions ? makeRetainedMarketEntryJudgmentRequest : makeRetainedFundedEntryJudgmentRequest,
     ),
   )
   if (disposition.status !== 'READY') throw new Error('Expected a funded retained setup')
@@ -143,6 +151,7 @@ test.each([
   'bayn.jev.protocol.v28',
   'bayn.jev.protocol.v29',
   'bayn.jev.protocol.v30',
+  'bayn.jev.protocol.v31',
 ] as const)(
   'the ask-cap migration reads original %s market questions without admitting retired execution',
   (version) => {
