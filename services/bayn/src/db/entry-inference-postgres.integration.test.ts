@@ -1,3 +1,4 @@
+import equityBenchmarkContext from '../../migrations/0162_equity_benchmark_context'
 import cryptoHistoryContext from '../../migrations/0161_crypto_history_context'
 import { evaluateAdmittedFixture } from '../jev/evaluation.test-support'
 import {
@@ -275,6 +276,7 @@ integration('committed sequential provider handoff', () => {
     [158, equityEntryAskCap, 'bayn.jev.protocol.v27'],
     [160, cryptoQuoteEvidence, 'bayn.jev.protocol.v28'],
     [161, cryptoHistoryContext, 'bayn.jev.protocol.v29'],
+    [162, equityBenchmarkContext, 'bayn.jev.protocol.v30'],
   ] as const)(
     'ask-cap migration %s preserves retired execution bytes and late financial evidence',
     async (id, cutover, retiredProtocol) =>
@@ -293,18 +295,29 @@ integration('committed sequential provider handoff', () => {
           yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,maximum,authority_version,activated_at)
           VALUES (${request.authorityGenerationHash},'bayn.authority-generation-history.v1','OBSERVE',1,${request.observedAt})`
           const { requestId: _, ...current } = request
+          const protocol =
+            retiredProtocol === 'bayn.jev.protocol.v30'
+              ? {
+                  ...request.request.protocol,
+                  schemaVersion: retiredProtocol,
+                  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
+                }
+              : {
+                  ...request.request.protocol,
+                  schemaVersion: retiredProtocol,
+                  lookbackMinutes: 30 as const,
+                  candidateEvidencePolicy:
+                    retiredProtocol === 'bayn.jev.protocol.v29'
+                      ? IntradayCandidateEvidencePolicy.MarketQuotes
+                      : IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+                }
           const input = {
             ...request.request,
-            schemaVersion: 'bayn.entry-inference-input.v5' as const,
-            protocol: {
-              ...request.request.protocol,
-              schemaVersion: retiredProtocol,
-              lookbackMinutes: 30 as const,
-              candidateEvidencePolicy:
-                retiredProtocol === 'bayn.jev.protocol.v29'
-                  ? IntradayCandidateEvidencePolicy.MarketQuotes
-                  : IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
-            },
+            schemaVersion:
+              retiredProtocol === 'bayn.jev.protocol.v30'
+                ? ('bayn.entry-inference-input.v6' as const)
+                : ('bayn.entry-inference-input.v5' as const),
+            protocol,
           }
           const material = { ...current, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
           const original = { ...material, requestId: Result.getOrThrow(canonicalHashV1Result(material)) }

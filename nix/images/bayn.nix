@@ -13,11 +13,11 @@ let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
   # SHA-256 identity for bayn.chart-first-entry.behavior.v1, verified by the production executable.
   strategyBehaviorHash = "60c3149349abb7bbfb763c7418d4c12065cb56c3554ea9cbbf1667bc720379c5";
-  # Canonical hash of the compiled bayn.jev.protocol.v30 document.
-  strategyParameterHash = "8b57ec0f91637abd867c218839a65548d21feae5d3337c0b3d483ba9ec3132e8";
+  # Canonical hash of the compiled bayn.jev.protocol.v31 document.
+  strategyParameterHash = "a5f03f7280392de10d8dcc6ed13b17931fab615d0e3202cf6f3a8e1230d05ecc";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "a6e1f8bf7966f8cab6d05fe06d7fdaefb65282ebc528da94c19d9a5033cfcec8";
+  strategyProtocolHash = "8f87f262c5cee36042dca211e212a729872c566004b6077b7726f3e7b0be89e5";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";

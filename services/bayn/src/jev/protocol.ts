@@ -58,7 +58,7 @@ const protocolFields = (entryQuestionPolicyHash: string) => ({
 
 const CurrentProtocol = Schema.Struct({
   ...protocolFields(entryQuestionPolicyHash),
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v30'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v31'),
   lookbackMinutes: Schema.Struct({
     equity: Schema.Literal(marketHistoryMinutes[MarketKind.Equity]),
     crypto: Schema.Literal(marketHistoryMinutes[MarketKind.Crypto]),
@@ -66,11 +66,15 @@ const CurrentProtocol = Schema.Struct({
 })
 
 type ProtocolFields = Omit<typeof CurrentProtocol.Type, 'schemaVersion' | 'lookbackMinutes'>
-const validateProtocol = (protocol: ProtocolFields, shortestLookbackMinutes: number, marketQuotes: boolean) => {
+const validateProtocol = (
+  protocol: ProtocolFields,
+  shortestLookbackMinutes: number,
+  evidencePolicy?: IntradayCandidateEvidencePolicy,
+) => {
   const issues: Schema.FilterIssue[] = []
   if (
-    marketQuotes
-      ? protocol.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.MarketQuotes
+    evidencePolicy !== undefined
+      ? protocol.candidateEvidencePolicy !== evidencePolicy
       : protocol.candidateEvidencePolicy !== undefined &&
         protocol.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
   )
@@ -106,7 +110,7 @@ const validateProtocol = (protocol: ProtocolFields, shortestLookbackMinutes: num
   return issues
 }
 
-// These schemas reproduce immutable financial evidence; new execution accepts only v30.
+// These schemas reproduce immutable financial evidence; new execution accepts only v31.
 export const jevProtocolSchemaForQuestionPolicy = <
   V extends
     | 'bayn.jev.protocol.v24'
@@ -125,19 +129,41 @@ export const jevProtocolSchemaForQuestionPolicy = <
     lookbackMinutes: Schema.Literal(intradayLookbackMinutes),
   }).check(
     Schema.makeFilter((protocol) =>
-      validateProtocol(protocol, protocol.lookbackMinutes, version === 'bayn.jev.protocol.v29'),
+      validateProtocol(
+        protocol,
+        protocol.lookbackMinutes,
+        version === 'bayn.jev.protocol.v29' ? IntradayCandidateEvidencePolicy.MarketQuotes : undefined,
+      ),
     ),
   )
 
 export const JevProtocolSchema = CurrentProtocol.check(
   Schema.makeFilter((protocol) =>
-    validateProtocol(protocol, Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto), true),
+    validateProtocol(
+      protocol,
+      Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
+      IntradayCandidateEvidencePolicy.MarketQuotesV2,
+    ),
+  ),
+)
+
+export const RetainedJevProtocolV30Schema = Schema.Struct({
+  ...CurrentProtocol.fields,
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v30'),
+}).check(
+  Schema.makeFilter((protocol) =>
+    validateProtocol(
+      protocol,
+      Math.min(protocol.lookbackMinutes.equity, protocol.lookbackMinutes.crypto),
+      IntradayCandidateEvidencePolicy.MarketQuotes,
+    ),
   ),
 )
 
 export type JevProtocol = typeof JevProtocolSchema.Type
 export type JevProtocolMaterial =
   | JevProtocol
+  | typeof RetainedJevProtocolV30Schema.Type
   | (Omit<JevProtocol, 'schemaVersion' | 'lookbackMinutes'> & {
       readonly lookbackMinutes: 30
       readonly schemaVersion:
@@ -150,7 +176,7 @@ export type JevProtocolMaterial =
     })
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v30',
+  schemaVersion: 'bayn.jev.protocol.v31',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entryFeePolicy: 'broker-tier-buy-and-maximum-sell',
   entrySelectionPolicy: 'source-anchored-proposal-judgments',
@@ -171,7 +197,7 @@ export const defaultJevProtocolDocument = Object.freeze({
   decisionDelaySeconds: intradayDecisionDelaySeconds,
   maximumDecisionLagMs: 60_000,
   maximumQuoteAgeMs: 10_000,
-  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
+  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   warmupMinutesAfterOpen: 0,
   entryCutoffMinutesBeforeClose: 5,
   flattenBeforeCloseMinutes: 5,

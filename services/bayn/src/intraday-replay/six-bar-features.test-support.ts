@@ -172,7 +172,7 @@ export const sixBarFixture = (
     universe: equityMarketProfile.universe,
     symbols: ['AAPL', 'SPY'],
     candidateSymbols: ['AAPL'],
-    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
     feed: equityMarketProfile.feed,
     delayClass: equityMarketProfile.delayClass,
     sourceTopics: equityMarketProfile.sourceTopics,
