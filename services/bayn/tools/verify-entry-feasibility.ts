@@ -52,7 +52,8 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
       Schema.Struct({ request: Schema.Struct({ schemaVersion: Schema.String }) }),
     )(raw.request)
     const original =
-      version.request.schemaVersion === 'bayn.entry-inference-input.v5'
+      version.request.schemaVersion === 'bayn.entry-inference-input.v5' ||
+      version.request.schemaVersion === 'bayn.entry-inference-input.v6'
         ? yield* Effect.fromResult(readStagedInferenceCostEvidence({ ...raw, stagedCheckpoint: raw.stagedCheckpoint }))
         : yield* Effect.fromResult(readSequentialInferenceCostEvidence(raw))
     const input = original.request.request
@@ -69,6 +70,7 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     const protocol = {
       ...input.protocol,
       schemaVersion: defaultJevProtocolDocument.schemaVersion,
+      lookbackMinutes: defaultJevProtocolDocument.lookbackMinutes,
       candidateEvidencePolicy: defaultJevProtocolDocument.candidateEvidencePolicy,
       entryQuestionPolicyHash: defaultJevProtocolDocument.entryQuestionPolicyHash,
     }
@@ -90,7 +92,7 @@ export const verifyEntryFeasibility = Effect.fn('Bayn.verifyEntryFeasibility')(f
     const current = yield* Effect.fromResult(
       prepareEntryInferenceInput({
         ...input,
-        schemaVersion: 'bayn.entry-inference-input.v5',
+        schemaVersion: 'bayn.entry-inference-input.v6',
         protocol,
         funding,
         numericalState: { ...input.numericalState, entryEconomics: economics },

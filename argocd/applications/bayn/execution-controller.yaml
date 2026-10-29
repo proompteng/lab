@@ -86,18 +86,9 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "60c3149349abb7bbfb763c7418d4c12065cb56c3554ea9cbbf1667bc720379c5"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "95425250b00847210f5a4f23513a8bb5d0cbfd2100e52bed617dd12d3ecb822a"
+              value: "8b57ec0f91637abd867c218839a65548d21feae5d3337c0b3d483ba9ec3132e8"
             - name: BAYN_BROKER_ACCESS
               value: read-only
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"f1c880b4c3e3cf48b53af092e7a19fc85b248e5ebfc8e8f469855bf3af938e3a","authoredActivation":{"sourceRevision":"f19ecdf7db7dd1ec4ba38fba6e2df6b93b85c6cf","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:5e852595fd74a2f2116ce7dda812e9f3b04a98cd82d5ec205949641adc682873"},"activation":{"sourceRevision":"f19ecdf7db7dd1ec4ba38fba6e2df6b93b85c6cf","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:5e852595fd74a2f2116ce7dda812e9f3b04a98cd82d5ec205949641adc682873"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH

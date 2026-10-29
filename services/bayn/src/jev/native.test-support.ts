@@ -1,3 +1,4 @@
+import { isContinuousMarket } from '../market-hours'
 import { jevPositionExitPolicy } from './exit-policy'
 import { jevEntryEconomics } from './entry-economics'
 import { entryCompletionFixture, chartAssessmentsFixture } from './entry-inference.test-support'
@@ -74,7 +75,12 @@ export const nativeJevFixture = (
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
     observedAt: observedAt ?? base.query.observedAt,
     rangeStartAt: new Date(
-      jevHistoryStartMs(selectedCalendar, selectedDate, end, protocol.lookbackMinutes),
+      jevHistoryStartMs(
+        selectedCalendar,
+        selectedDate,
+        end,
+        isContinuousMarket(selectedCalendar) ? protocol.lookbackMinutes.crypto : protocol.lookbackMinutes.equity,
+      ),
     ).toISOString(),
     rangeEndAt: new Date(end).toISOString(),
   }

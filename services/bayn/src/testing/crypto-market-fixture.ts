@@ -154,7 +154,7 @@ export const cryptoMarketFixture = (
     calendar: continuousMarketHours,
     sessionDate: '2026-10-11' as const,
     observedAt: new Date(observedAtMs).toISOString(),
-    rangeStartAt: new Date(end - 30 * 60_000).toISOString(),
+    rangeStartAt: new Date(end - 120 * 60_000).toISOString(),
     rangeEndAt: new Date(end).toISOString(),
     universeId: source.universeId,
     universeSymbolHash: source.universeSymbolHash,

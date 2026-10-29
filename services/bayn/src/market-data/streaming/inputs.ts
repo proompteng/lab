@@ -158,13 +158,20 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
         if (
           candidate.availableAtMs > observedAtMs ||
           (!isCryptoMarketFeature(candidate.value) && candidate.value.material.sessionDate !== request.sessionDate) ||
-          rollingWindowStartMs(candidate.value) !== Date.parse(request.rangeStartAt) ||
+          (isCryptoMarketFeature(candidate.value)
+            ? rollingWindowStartMs(candidate.value) < Date.parse(request.rangeStartAt)
+            : rollingWindowStartMs(candidate.value) !== Date.parse(request.rangeStartAt)) ||
           candidate.value.material.windowEndMs !== Date.parse(request.rangeEndAt)
         )
           continue
         const matches = yield* nativeFeatureMatchesBars(
           candidate.value,
-          bars.map((entry) => entry.value),
+          bars
+            .filter(
+              (entry) =>
+                intradayInstantNanos(entry.value.eventAt) >= BigInt(rollingWindowStartMs(candidate.value)) * 1_000_000n,
+            )
+            .map((entry) => entry.value),
         ).pipe(Result.mapError((cause) => failure('identity', 'Streaming feature inputs failed verification', cause)))
         if (!matches) continue
         selected = {

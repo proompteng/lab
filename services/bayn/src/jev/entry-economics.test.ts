@@ -69,7 +69,7 @@ test('retained v26 funding reproduces its original entry allowance and broker fe
     jevEntryEconomics({
       cryptoFeeTier: 4,
 
-      protocol: { ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v26' },
+      protocol: { ...defaultJevProtocolDocument, lookbackMinutes: 30 as const, schemaVersion: 'bayn.jev.protocol.v26' },
       symbol: 'BTC/USD',
       bidMicros: 80_000_000_000n,
       askMicros: 80_000_000_000n,
@@ -112,7 +112,8 @@ test('the capped crypto order funds a source target that the former buy allowanc
     return Result.getOrThrow(makeEntrySourceCandidates({ chart, economics, protocol, bidMicros: 99_990_000n }))
   }
   expect(
-    candidates({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v26' }).resistanceBarIds,
+    candidates({ ...defaultJevProtocolDocument, lookbackMinutes: 30 as const, schemaVersion: 'bayn.jev.protocol.v26' })
+      .resistanceBarIds,
   ).toEqual([])
   expect(candidates(defaultJevProtocolDocument).resistanceBarIds).toEqual(['bar_2026-10-23T14:28:00.000Z'])
 })
@@ -144,7 +145,8 @@ test('an equity buy capped at its inference ask funds the observed target withou
     return Result.getOrThrow(makeEntrySourceCandidates({ chart, economics, protocol, bidMicros: 99_990_000n }))
   }
   expect(
-    candidates({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v27' }).resistanceBarIds,
+    candidates({ ...defaultJevProtocolDocument, lookbackMinutes: 30 as const, schemaVersion: 'bayn.jev.protocol.v27' })
+      .resistanceBarIds,
   ).toEqual([])
   expect(candidates(defaultJevProtocolDocument).resistanceBarIds).toContain('bar_2026-10-23T14:28:00.000Z')
 })
