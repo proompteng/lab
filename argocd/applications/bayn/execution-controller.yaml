@@ -260,7 +260,7 @@ spec:
         - name: valkey-client-tls
           secret:
             secretName: bayn-valkey-client-tls
-            defaultMode: 440
+            defaultMode: 288
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
