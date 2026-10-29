@@ -1,3 +1,4 @@
+import cryptoHistoryContext from '../../migrations/0161_crypto_history_context'
 import cryptoQuoteEvidence from '../../migrations/0160_crypto_quote_evidence'
 import equityEntryAskCap from '../../migrations/0158_equity_entry_ask_cap'
 import cryptoEntryAskCap from '../../migrations/0157_crypto_entry_ask_cap'
@@ -163,6 +164,7 @@ import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '160_crypto_quote_evidence': cryptoQuoteEvidence,
+  '161_crypto_history_context': cryptoHistoryContext,
   '157_crypto_entry_ask_cap': cryptoEntryAskCap,
   '158_equity_entry_ask_cap': equityEntryAskCap,
   '154_market_entry_questions': marketEntryQuestions,

@@ -117,7 +117,9 @@ const jevBarSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
       }),
     )
     const midpoint = Date.parse(manifest.rangeEndAt) - 15 * 60_000
-    const earlyBars = bars.filter((bar) => Date.parse(bar.eventAt) < midpoint)
+    const earlyBars = bars.filter(
+      (bar) => Date.parse(bar.eventAt) >= midpoint - 15 * 60_000 && Date.parse(bar.eventAt) < midpoint,
+    )
     const recentBars = bars.filter((bar) => Date.parse(bar.eventAt) >= midpoint)
     const earlyVolume = earlyBars.reduce((total, bar) => total + bar.volume, 0)
     const recentVolume = recentBars.reduce((total, bar) => total + bar.volume, 0)
@@ -132,7 +134,14 @@ const jevBarSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
       minuteReturns.length === 0
         ? null
         : Math.sqrt(minuteReturns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / minuteReturns.length) * 10_000
-    const values = rollingValues(rolling.value)
+    const values = isCryptoMarketFeature(rolling.value)
+      ? {
+          reference: first.open,
+          high: Math.max(...bars.map((bar) => bar.high)),
+          low: Math.min(...bars.map((bar) => bar.low)),
+          volume: bars.reduce((total, bar) => total + bar.volume, 0),
+        }
+      : rollingValues(rolling.value)
     return {
       prices: {
         reference: yield* signalPriceMicros(values.reference, 'signal reference'),
@@ -335,7 +344,7 @@ const requestFromSnapshot = (
     })
     return yield* prepareEntryInferenceInput({
       ...(selectionPolicy === null
-        ? { schemaVersion: 'bayn.entry-inference-input.v5' }
+        ? { schemaVersion: 'bayn.entry-inference-input.v6' }
         : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
       protocol: native.protocol,
       chartSource: {

@@ -505,8 +505,13 @@ describe('Kafka bootstrap and scoped consumption', () => {
       })),
     ]
     const transport = new FakeTransport()
-    transport.offsets = async (_topics, timestamp) =>
-      bounds.map((position) => ({ ...position, offset: timestamp === -1n ? position.offset : '0' }))
+    const seeks: { topics: readonly string[]; timestamp: bigint }[] = []
+    transport.offsets = async (topics, timestamp) => {
+      if (timestamp >= 0n) seeks.push({ topics, timestamp })
+      return bounds
+        .filter((position) => topics.includes(position.topic))
+        .map((position) => ({ ...position, offset: timestamp === -1n ? position.offset : '0' }))
+    }
     const consume = transport.consume
     let requested: readonly KafkaPartitionPosition[] = []
     transport.consume = async (starts, invalidated) => {
@@ -516,8 +521,13 @@ describe('Kafka bootstrap and scoped consumption', () => {
     }
     await program(
       Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-10-29T01:00:03.000Z'))
         const projection = yield* makeKafkaMarketProjection(config, [universe, crypto], () => transport)
         yield* TestClock.adjust('1 second')
+        expect(seeks).toEqual([
+          { topics: Object.values(universe.topics), timestamp: BigInt(Date.parse('2026-10-29T00:29:55.000Z')) },
+          { topics: ['crypto', 'crypto-features'], timestamp: BigInt(Date.parse('2026-10-28T22:59:55.000Z')) },
+        ])
         expect(requested.filter((position) => ['quotes', 'trades'].includes(position.topic))).toEqual(
           bounds.filter((position) => ['quotes', 'trades'].includes(position.topic)),
         )
