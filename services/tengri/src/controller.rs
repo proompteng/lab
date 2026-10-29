@@ -34,6 +34,7 @@ use crate::{
 };
 
 const SLOT_COUNT: usize = 6;
+const LIFECYCLE_KIND_ANNOTATION: &str = "runtime.proompteng.ai/lifecycle-kind";
 const SPARE_POD_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const STOPPED_POD_ANNOTATION: &str = "runtime.proompteng.ai/stopped-slot-pod-uid";
 const RETIRING_ANNOTATION: &str = "runtime.proompteng.ai/retiring-slot";
@@ -338,6 +339,8 @@ pub async fn converge(
             );
             patch["metadata"]["annotations"][crate::activity::RESUME_STARTED_AT_ANNOTATION] =
                 json!(now.to_rfc3339());
+            patch["metadata"]["annotations"][LIFECYCLE_KIND_ANNOTATION] =
+                json!(lifecycle_kind(&microvm));
         }
         api.patch(
             &microvm.name_any(),
@@ -488,6 +491,43 @@ pub async fn converge(
     anyhow::bail!("agent status changed concurrently; retry the request")
 }
 
+fn lifecycle_kind(microvm: &MicroVM) -> &str {
+    if let Some(status) = &microvm.status {
+        if status
+            .conditions
+            .iter()
+            .any(|condition| condition.reason == "AuthorizationPaused")
+        {
+            return "recovery";
+        }
+        if status.phase == MicroVMPhase::Ready
+            || status.ready_at.is_some()
+            || status
+                .conditions
+                .iter()
+                .any(|condition| condition.reason == "GuestStopped")
+        {
+            return "resume";
+        }
+        if status
+            .conditions
+            .iter()
+            .any(|condition| condition.reason == "GuestNotStarted")
+        {
+            return "boot";
+        }
+    }
+    microvm
+        .annotations()
+        .get(LIFECYCLE_KIND_ANNOTATION)
+        .map(String::as_str)
+        .unwrap_or(if microvm.spec.runtime_epoch.is_empty() {
+            "boot"
+        } else {
+            "unknown"
+        })
+}
+
 fn lifecycle_latency(microvm: &MicroVM, now: chrono::DateTime<Utc>) -> Option<(bool, u64)> {
     // A recovered readiness probe is not a new boot. Persisted intent survives retries
     // and controller failover; the duration excludes admission before that intent.
@@ -499,13 +539,18 @@ fn lifecycle_latency(microvm: &MicroVM, now: chrono::DateTime<Utc>) -> Option<(b
     }) {
         return None;
     }
-    let resume = microvm.status.as_ref().is_some_and(|s| {
-        s.phase == MicroVMPhase::Sleeping
-            && !s
-                .conditions
-                .iter()
-                .any(|condition| condition.reason == "GuestNotStarted")
-    });
+    // This identity is written with the intent CAS, so a Failed reconciliation
+    // cannot turn a resume into a boot. Skip unknown legacy attempts instead.
+    let resume = match microvm
+        .annotations()
+        .get(LIFECYCLE_KIND_ANNOTATION)
+        .map(String::as_str)
+    {
+        Some("resume") => true,
+        Some("boot") => false,
+        None if microvm.status.is_none() && microvm.spec.runtime_epoch.is_empty() => false,
+        _ => return None,
+    };
     let started = if resume {
         chrono::DateTime::parse_from_rfc3339(
             microvm
@@ -524,6 +569,15 @@ fn lifecycle_latency(microvm: &MicroVM, now: chrono::DateTime<Utc>) -> Option<(b
                 .as_millisecond(),
         )?
     };
+    if microvm
+        .status
+        .as_ref()
+        .and_then(|status| status.ready_at.as_deref())
+        .and_then(|ready| chrono::DateTime::parse_from_rfc3339(ready).ok())
+        .is_some_and(|ready| ready >= started)
+    {
+        return None;
+    }
     let elapsed = now.signed_duration_since(started).to_std().ok()?;
     Some((resume, u64::try_from(elapsed.as_millis()).ok()?))
 }
@@ -1786,6 +1840,7 @@ mod tests {
                     .unwrap(),
             ));
         microvm.status = None;
+        microvm.spec.runtime_epoch.clear();
         let (resume, elapsed) = lifecycle_latency(&microvm, now).unwrap();
         assert!(!resume);
         assert!((12_000..12_002).contains(&elapsed));
@@ -1794,6 +1849,9 @@ mod tests {
             phase: MicroVMPhase::Sleeping,
             ..Default::default()
         });
+        microvm
+            .annotations_mut()
+            .insert(LIFECYCLE_KIND_ANNOTATION.into(), "resume".into());
         microvm.annotations_mut().insert(
             crate::activity::RESUME_STARTED_AT_ANNOTATION.into(),
             (now - chrono::Duration::seconds(3)).to_rfc3339(),
@@ -1813,6 +1871,84 @@ mod tests {
             crate::activity::RESUME_STARTED_AT_ANNOTATION.into(),
             (now + chrono::Duration::seconds(3)).to_rfc3339(),
         );
+        assert!(lifecycle_latency(&microvm, now).is_none());
+    }
+
+    #[test]
+    fn lifecycle_identity_survives_failed_reconciliation_and_skips_unknown_legacy_state() {
+        let now = Utc::now();
+        let mut microvm = agent();
+        microvm.metadata.creation_timestamp =
+            Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                (now - chrono::Duration::days(7))
+                    .to_rfc3339()
+                    .parse()
+                    .unwrap(),
+            ));
+        // Use the real sleep transition, not a hand-written condition: it clears
+        // ready_at and must override the preceding boot's persisted identity.
+        microvm.spec.desired_state = MicroVMDesiredState::Sleeping;
+        microvm
+            .annotations_mut()
+            .insert(LIFECYCLE_KIND_ANNOTATION.into(), "boot".into());
+        let pod: Pod = serde_json::from_value(json!({
+            "metadata":{"name":"slot-test", "uid":"original-pod"},
+            "status":{"podIP":"127.0.0.1"}
+        }))
+        .unwrap();
+        let sleeping = SlotState::Sleeping {
+            claim: claim_for(&microvm).unwrap(),
+            snapshot: crate::slot::Snapshot { generation: 1 },
+        };
+        microvm.status = Some(status_for(&microvm, &pod, &sleeping, false));
+        assert!(microvm.status.as_ref().unwrap().ready_at.is_none());
+        assert_eq!(
+            microvm.status.as_ref().unwrap().conditions[0].reason,
+            "GuestStopped"
+        );
+        assert_eq!(lifecycle_kind(&microvm), "resume");
+        microvm
+            .annotations_mut()
+            .insert(LIFECYCLE_KIND_ANNOTATION.into(), "resume".into());
+        microvm.annotations_mut().insert(
+            crate::activity::RESUME_STARTED_AT_ANNOTATION.into(),
+            (now - chrono::Duration::seconds(4)).to_rfc3339(),
+        );
+        microvm.status = Some(failure_status(
+            &microvm,
+            &anyhow::anyhow!("supervisor response unavailable"),
+        ));
+        assert_eq!(microvm.status.as_ref().unwrap().phase, MicroVMPhase::Failed);
+        assert_eq!(lifecycle_kind(&microvm), "resume");
+        assert_eq!(lifecycle_latency(&microvm, now), Some((true, 4_000)));
+
+        microvm.status.as_mut().unwrap().ready_at =
+            Some((now - chrono::Duration::seconds(1)).to_rfc3339());
+        assert!(
+            lifecycle_latency(&microvm, now).is_none(),
+            "already completed attempt cannot be counted twice"
+        );
+        microvm.status.as_mut().unwrap().ready_at = None;
+        microvm.annotations_mut().remove(LIFECYCLE_KIND_ANNOTATION);
+        assert_eq!(lifecycle_kind(&microvm), "unknown");
+        assert!(lifecycle_latency(&microvm, now).is_none());
+
+        microvm
+            .annotations_mut()
+            .insert(LIFECYCLE_KIND_ANNOTATION.into(), "boot".into());
+        microvm.metadata.creation_timestamp =
+            Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                (now - chrono::Duration::seconds(9))
+                    .to_rfc3339()
+                    .parse()
+                    .unwrap(),
+            ));
+        let (resume, elapsed) = lifecycle_latency(&microvm, now).unwrap();
+        assert!(!resume);
+        assert!((9_000..9_002).contains(&elapsed));
+        microvm
+            .annotations_mut()
+            .insert(LIFECYCLE_KIND_ANNOTATION.into(), "recovery".into());
         assert!(lifecycle_latency(&microvm, now).is_none());
     }
 

@@ -8,9 +8,12 @@ counters behind a load-balanced Service.
 
 Boot/resume histograms measure successful CR creation or persisted resume intent through guest readiness, including
 reconciliation retries. They exclude BFF admission and are not a browser end-to-end SLO. Recovering a failed readiness
-probe is not another boot. Restate status/fanout histograms include retries, failed attempts, and cancellation.
+probe is not another boot. Lifecycle identity is recorded with the running-intent CAS, so a failed resume cannot become
+a boot sample; unknown legacy attempts are omitted rather than guessed. Restate status/fanout histograms include retries, failed attempts, and cancellation.
 The chat reuses a selected run already returned by its workspace poll, and fetches it separately when recovery fails
 or the run leaves the active set. Run status still requires the existing control permission and fresh authorization.
+The selected-run reader remains stable while other conversations update, allowing a slow final read to finish.
+Recovery errors retain their identity across effect restarts and are cleared only by a successful matching observation.
 
 Relay client installation is an authenticated guest-control operation. It uses the shared
 [Ofz/Relay platform contract](../../docs/platform/ofz-relay.md), proof-bound inactive delegations and explicit

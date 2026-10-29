@@ -192,6 +192,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [workspaceRuns, setWorkspaceRuns] = useState<TengriCodexRun[]>([])
   const [runRecoveryRevision, setRunRecoveryRevision] = useState(0)
   const [run, setRun] = useState<TengriCodexRun | null>(null)
+  const recoveredRunRef = useRef<TengriCodexRun | undefined>(undefined)
+  const runRecoveryFailure = useRef<Error | undefined>(undefined)
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
@@ -267,6 +269,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const selectedOptions = codexOptionsForSelection(selection, models ?? [])
   const runMatchesThread = Boolean(run && run.runId === runId && run.agentId === agentId && run.threadId === threadId)
   const selectedRunTerminal = Boolean(runMatchesThread && run && codexRunIsTerminal(run))
+  recoveredRunRef.current = recoveredCodexRun(workspaceRuns, runRecovered, agentId, threadId, runId)
   const runCanAcceptApprovals =
     runMatchesThread &&
     (run?.state.phase === 'running' || run?.state.phase === 'waiting_for_approval' || run?.state.phase === 'recovering')
@@ -377,12 +380,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     if (!runId || !threadId || selectedRunTerminal) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
-    let lastRecoveryFailure: Error | undefined
     async function refresh() {
       try {
         // The workspace poll already fetched this exact snapshot. Only fetch separately
         // during recovery or when the run leaves the active set and needs its final result.
-        const recovered = recoveredCodexRun(workspaceRuns, runRecovered, agentId, threadId, runId)
+        const recovered = recoveredRunRef.current
         const next =
           recovered ??
           (await runTengriAction<TengriCodexRun>({ action: 'codex-run', agentId, runId }, controller.signal))
@@ -390,7 +392,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         if (next.threadId !== threadId || next.agentId !== agentId || next.runId !== runId) {
           throw new Error('Agent run recovery returned a different conversation')
         }
-        const recoveredFailure = lastRecoveryFailure
+        const recoveredFailure = runRecoveryFailure.current
+        runRecoveryFailure.current = undefined
         setError((current) => (current === recoveredFailure ? '' : current))
         setRun(next)
         if (next.state.phase === 'waiting_for_approval' && !completedTurns.current.has(next.state.turnId)) {
@@ -436,12 +439,13 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           if ('reason' in next.state) setError(next.state.reason)
           return
         }
-        if (recovered) return
       } catch (cause) {
         if (controller.signal.aborted) return
-        lastRecoveryFailure = runRecoveryError(cause, 'Agent run could not be recovered')
-        setError(lastRecoveryFailure)
+        runRecoveryFailure.current = runRecoveryError(cause, 'Agent run could not be recovered')
+        setError(runRecoveryFailure.current)
       }
+      // Recheck the latest workspace snapshot locally. Keeping this effect stable
+      // lets a slow final-status request finish while other conversations update.
       timer = setTimeout(() => void refresh(), 2000)
     }
     void refresh()
@@ -449,7 +453,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (timer) clearTimeout(timer)
     }
-  }, [agentId, threadId, runId, runPending, runRecovered, workspaceRuns, selectedRunTerminal, setCurrentActiveTurnId])
+  }, [agentId, threadId, runId, runPending, selectedRunTerminal, setCurrentActiveTurnId])
 
   useEffect(() => {
     const prompt = promptRef.current
