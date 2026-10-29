@@ -22,10 +22,10 @@ const held = (symbol: string, feeMicros = '0') => {
     exitPolicy: {
       ...original.exitPolicy,
       plans: Object.fromEntries(
-        Object.values(original.exitPolicy.plans).map((plan) => [
-          symbol,
-          { ...plan, levels: { ...plan.levels, symbol } },
-        ]),
+        Object.values(original.exitPolicy.plans).map((plan) => {
+          if (plan.schemaVersion !== 'bayn.jev-funded-exit-plan.v4') throw new Error('Expected chart fixture')
+          return [symbol, { ...plan, levels: { ...plan.levels, symbol } }]
+        }),
       ),
     },
     entryFills: original.entryFills.map((fill) => ({ ...fill, symbol, feeMicros })),

@@ -1,5 +1,6 @@
 import type { PgClient } from '@effect/sql-pg'
-import { Effect, Schema } from 'effect'
+import { Effect, Schedule, Schema } from 'effect'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import { canonicalJsonV1Result, sha256 } from '../hash'
 import {
@@ -97,9 +98,36 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
             bytes += addition.compressed.byteLength
           }
           if (batch.length > 0) yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(batch)}`
+          if (additions.length === 0) {
+            // A visible prior COMMIT may still be waiting for its synchronous standby. Transactional WAL
+            // makes this acknowledgement wait for the configured durability even when no rows are new.
+            yield* matches(
+              yield* sql`SELECT pg_logical_emit_message(true,'bayn.native-arrival-ack.v1',
+                ${sha256(chunks.map((chunk) => chunk.contentHash).join(''))}) > '0/0'::pg_lsn AS matches`,
+            )
+          }
         }),
       )
-    }).pipe(Effect.mapError(error)),
+    }).pipe(
+      // The SQL adapter reports failed COMMIT acknowledgements as defects. Reconcile the same immutable
+      // ordinals on a new connection before retrying; a committed chunk must never be appended twice.
+      Effect.catchCause((cause) => {
+        const errors = cause.reasons.map((reason) =>
+          reason._tag === 'Fail' ? reason.error : reason._tag === 'Die' ? reason.defect : undefined,
+        )
+        const first = errors[0]
+        return isSqlError(first) &&
+          errors.every((value) => isSqlError(value) && value.reason._tag === 'ConnectionError')
+          ? Effect.fail(first)
+          : Effect.failCause(cause)
+      }),
+      Effect.retry({
+        times: 2,
+        schedule: Schedule.spaced('100 millis'),
+        while: (cause) => isSqlError(cause) && cause.reason._tag === 'ConnectionError',
+      }),
+      Effect.mapError(error),
+    ),
   end: (end) =>
     sql
       .withTransaction(

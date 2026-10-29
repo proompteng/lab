@@ -1,11 +1,24 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
+import { decodeInferenceCostEvidence, makeInferenceCostReport } from './inference-costs'
 import { JevFailure, type JevRequest } from './jev/contract'
 import { decodeHistoricalJevCostEvidence } from './jev/historical-inference-cost-evidence'
 import { JevResolutionStatus, makeJevResolution } from './jev/resolution'
 import { requestFixture, responseFixture } from './jev/test-support'
-import type { InferenceExpenseSource } from './inference-expense'
+import { verifyInferenceExpenseCoverage, type InferenceExpenseSource } from './inference-expense'
+
+export const costReportFromEvidence = (evidence: unknown, rates: unknown) =>
+  decodeInferenceCostEvidence(evidence).pipe(Result.flatMap((decoded) => makeInferenceCostReport(decoded, rates)))
+
+export const expenseCoverageFromEvidence = (
+  evidence: unknown,
+  accountId: string,
+  frozen: Parameters<typeof verifyInferenceExpenseCoverage>[2],
+) =>
+  decodeInferenceCostEvidence(evidence).pipe(
+    Result.flatMap((decoded) => verifyInferenceExpenseCoverage(decoded, accountId, frozen)),
+  )
 
 export const expenseRateFixture = {
   schemaVersion: 'bayn.inference-rate-card.v1',
@@ -28,6 +41,7 @@ export const expenseSourceFixture = (
     key?: string | undefined
     authorityGenerationHash?: string
     accountId?: string
+    observedAt?: string
     inputTokens?: number
     missing?: boolean | undefined
     rejected?: boolean | undefined
@@ -43,8 +57,8 @@ export const expenseSourceFixture = (
     authorityGenerationHash: options.authorityGenerationHash ?? 'b'.repeat(64),
     snapshotId: 'c'.repeat(64),
     symbol: 'AAPL',
-    observedAt: '1970-01-01T00:00:00.000Z',
-    expiresAt: '1970-01-01T00:00:05.000Z',
+    observedAt: options.observedAt ?? '1970-01-01T00:00:00.000Z',
+    expiresAt: new Date(Date.parse(options.observedAt ?? '1970-01-01T00:00:00.000Z') + 5000).toISOString(),
     request: inferenceRequest,
     requestHash: Result.getOrThrow(canonicalHashV1Result(inferenceRequest)),
   }

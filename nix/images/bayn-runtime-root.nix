@@ -35,13 +35,16 @@ let
       let
         rel = relativePath path;
       in
-      type == "directory"
-      || rel == "package.json"
-      || rel == "bun.lock"
-      || rel == "bunfig.toml"
-      || rel == ".npmrc"
-      || rel == "tsconfig.base.json"
-      || lib.any (prefix: isUnder prefix rel) sourcePaths;
+      !(isUnder "services/bayn/formal" rel)
+      && (
+        type == "directory"
+        || rel == "package.json"
+        || rel == "bun.lock"
+        || rel == "bunfig.toml"
+        || rel == ".npmrc"
+        || rel == "tsconfig.base.json"
+        || lib.any (prefix: isUnder prefix rel) sourcePaths
+      );
   };
   resolvedDepsHash = depsHash.${pkgs.stdenv.hostPlatform.system};
   deps = pkgs.stdenvNoCC.mkDerivation {

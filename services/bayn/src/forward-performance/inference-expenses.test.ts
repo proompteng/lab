@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { decodeInferenceCostEvidence } from '../inference-costs'
 import type { PgClient } from '@effect/sql-pg'
 import { Effect, Result } from 'effect'
 
@@ -9,6 +10,16 @@ import {
   summarizeForwardInferenceExpenses,
   type ForwardInferenceExpenseSession,
 } from './inference-expenses'
+
+const summarizeFromEvidence = (
+  evidence: unknown,
+  accountId: string,
+  frozen: Parameters<typeof summarizeForwardInferenceExpenses>[2],
+  generationHash?: string,
+) =>
+  decodeInferenceCostEvidence(evidence).pipe(
+    Result.flatMap((decoded) => summarizeForwardInferenceExpenses(decoded, accountId, frozen, generationHash)),
+  )
 
 const first = expenseSourceFixture({ authorityGenerationHash: '1'.repeat(64), inputTokens: 3 })
 const second = expenseSourceFixture({ key: 'b', authorityGenerationHash: '2'.repeat(64), inputTokens: 7 })
@@ -38,9 +49,7 @@ test('attributes verified inference estimates only to the requested generation a
   const result: Omit<
     ForwardInferenceExpenseSession,
     'exactSessionLedger' | 'ledgerTimestampMax' | 'verifiedSessionTransferCount'
-  > = Result.getOrThrow(
-    summarizeForwardInferenceExpenses(evidence, first.accountId, frozen, first.authorityGenerationHash),
-  )
+  > = Result.getOrThrow(summarizeFromEvidence(evidence, first.accountId, frozen, first.authorityGenerationHash))
   expect(result.sourceAsOf).toBe(evidence.asOf)
   expect(result).not.toHaveProperty('requestsWithCoverageIssues')
   expect(JSON.stringify(result)).not.toContain(gap.requestId)
@@ -52,11 +61,9 @@ test('attributes verified inference estimates only to the requested generation a
     invoiceReconciled: false,
   })
   expect(
-    Result.getOrThrow(
-      summarizeForwardInferenceExpenses(evidence, first.accountId, frozen, second.authorityGenerationHash),
-    ),
+    Result.getOrThrow(summarizeFromEvidence(evidence, first.accountId, frozen, second.authorityGenerationHash)),
   ).toMatchObject({ claimedRequestCount: 1, knownEstimatedCostPicoUsd: '294000', completeMeteredCoverage: true })
-  expect(Result.getOrThrow(summarizeForwardInferenceExpenses(evidence, first.accountId, frozen))).toMatchObject({
+  expect(Result.getOrThrow(summarizeFromEvidence(evidence, first.accountId, frozen))).toMatchObject({
     claimedRequestCount: 3,
     knownEstimatedCostPicoUsd: '420000',
   })
@@ -64,13 +71,11 @@ test('attributes verified inference estimates only to the requested generation a
 
 test('retains missing and unverified quotes without inventing a charge or complete cost coverage', () => {
   expect(
-    Result.getOrThrow(
-      summarizeForwardInferenceExpenses(evidence, first.accountId, frozen.slice(1), first.authorityGenerationHash),
-    ),
+    Result.getOrThrow(summarizeFromEvidence(evidence, first.accountId, frozen.slice(1), first.authorityGenerationHash)),
   ).toMatchObject({ knownEstimatedCostPicoUsd: '0', missingQuoteCount: 1, completeMeteredCoverage: false })
   expect(
     Result.getOrThrow(
-      summarizeForwardInferenceExpenses(
+      summarizeFromEvidence(
         evidence,
         first.accountId,
         frozen.map((row) => ({ ...row, verifiedAt: null })),
@@ -81,10 +86,8 @@ test('retains missing and unverified quotes without inventing a charge or comple
 })
 
 test('rejects foreign account and conflicting coverage instead of summing it', () => {
-  expect(Result.isFailure(summarizeForwardInferenceExpenses(evidence, 'foreign-account', frozen))).toBe(true)
-  expect(Result.isFailure(summarizeForwardInferenceExpenses(evidence, first.accountId, [...frozen, ...frozen]))).toBe(
-    true,
-  )
+  expect(Result.isFailure(summarizeFromEvidence(evidence, 'foreign-account', frozen))).toBe(true)
+  expect(Result.isFailure(summarizeFromEvidence(evidence, first.accountId, [...frozen, ...frozen]))).toBe(true)
 })
 
 test('retains the original expense read failure for diagnostics', async () => {

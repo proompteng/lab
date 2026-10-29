@@ -64,6 +64,7 @@ spec:
       dataChecksums: true
   postgresql:
     parameters:
+      jit: "off"
       shared_buffers: 512MB
       effective_cache_size: 1536MB
       wal_buffers: 16MB

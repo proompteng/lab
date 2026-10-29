@@ -70,6 +70,12 @@ export const retainAutonomousCyclePassObservation = (
     ...(observation.result.outcome === 'RECOVERED'
       ? {
           recoveryAction: observation.result.action,
+          ...('positionHold' in observation.result && observation.result.positionHold !== undefined
+            ? { positionHold: observation.result.positionHold }
+            : {}),
+          ...('entryAbstention' in observation.result && observation.result.entryAbstention !== undefined
+            ? { entryAbstention: observation.result.entryAbstention }
+            : {}),
           ...(observation.result.waitReason === undefined ? {} : { waitReason: observation.result.waitReason }),
           ...(observation.result.readiness === undefined ? {} : { readiness: observation.result.readiness }),
         }
@@ -112,7 +118,11 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
           outcome: result.outcome,
           observedAt: result.observedAt,
           readiness: JSON.stringify(result.readiness),
-          ...result.admissionProtection,
+          authorityGenerationHash: result.admissionProtection.authorityGenerationHash,
+          authorityUpdatedAt: result.admissionProtection.authorityUpdatedAt,
+          reconciliationId: result.admissionProtection.reconciliationId,
+          tradingDate: result.admissionProtection.tradingDate,
+          validUntil: result.admissionProtection.validUntil,
         },
       }
     case 'WINDOW_CLOSED':

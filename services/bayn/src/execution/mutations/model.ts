@@ -2,6 +2,7 @@ import { Context, Data, Effect, Schema } from 'effect'
 
 import {
   MutationEvidenceSchema,
+  MutationRoutingSchema,
   MutationOperation,
   type MutationEvidence,
   type PartialMutationEvidence,
@@ -50,6 +51,7 @@ export const MutationEventSchema = Schema.Struct({
   requestId: Schema.optionalKey(NonEmptyString),
   responseStatus: Schema.optionalKey(HttpStatus),
   responseContentHash: Schema.optionalKey(Sha256),
+  routing: Schema.optionalKey(MutationRoutingSchema),
   denialReason: Schema.optionalKey(SubmissionDenialReasonSchema),
   occurredAt: UtcInstant,
 })
@@ -69,6 +71,7 @@ export const OutcomeInputSchema = Schema.Struct({
   occurredAt: UtcInstant,
   brokerOrderId: Schema.optionalKey(BrokerOrderId),
   evidence: Schema.optionalKey(MutationEvidenceSchema),
+  routing: Schema.optionalKey(MutationRoutingSchema),
   denialReason: Schema.optionalKey(SubmissionDenialReasonSchema),
 })
 

@@ -1,3 +1,14 @@
+import cryptoHistoryContext from '../../migrations/0161_crypto_history_context'
+import cryptoQuoteEvidence from '../../migrations/0160_crypto_quote_evidence'
+import equityEntryAskCap from '../../migrations/0158_equity_entry_ask_cap'
+import cryptoEntryAskCap from '../../migrations/0157_crypto_entry_ask_cap'
+import systemAssessment from '../../migrations/0159_system_assessment'
+import systemRegistration from '../../migrations/0156_system_registration'
+import marketEntryQuestions from '../../migrations/0154_market_entry_questions'
+import stagedChartTransport from '../../migrations/0153_staged_chart_transport'
+import nativeControls from '../../migrations/0155_native_controls'
+import fundedSourceAnchors from '../../migrations/0152_funded_source_anchors'
+import chartDispatchCheckpoints from '../../migrations/0151_chart_dispatch_checkpoints'
 import inferenceRequestVersion from '../../migrations/0150_inference_request_version'
 import conditionalBaseAnchors from '../../migrations/0149_conditional_base_anchors'
 import relativeChartVolume from '../../migrations/0148_relative_chart_volume'
@@ -152,6 +163,17 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '160_crypto_quote_evidence': cryptoQuoteEvidence,
+  '161_crypto_history_context': cryptoHistoryContext,
+  '157_crypto_entry_ask_cap': cryptoEntryAskCap,
+  '158_equity_entry_ask_cap': equityEntryAskCap,
+  '154_market_entry_questions': marketEntryQuestions,
+  '153_staged_chart_transport': stagedChartTransport,
+  '155_native_controls': nativeControls,
+  '156_system_registration': systemRegistration,
+  '159_system_assessment': systemAssessment,
+  '152_funded_source_anchors': fundedSourceAnchors,
+  '151_chart_dispatch_checkpoints': chartDispatchCheckpoints,
   '150_inference_request_version': inferenceRequestVersion,
   '148_relative_chart_volume': relativeChartVolume,
   '149_conditional_base_anchors': conditionalBaseAnchors,

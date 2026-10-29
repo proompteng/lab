@@ -34,6 +34,7 @@ const files = [
   'src/research-inference/store.integration.test.ts',
   'src/postgres-monitoring.integration.test.ts',
   'src/cycle/store/entry-allocation-query.integration.test.ts',
+  'src/system-assessment/postgres.integration.test.ts',
 ]
 const [shard = '1/1', ...extra] = process.argv.slice(2)
 if (extra.length > 0 || process.env['BAYN_TEST_POSTGRES_URL'] === undefined)

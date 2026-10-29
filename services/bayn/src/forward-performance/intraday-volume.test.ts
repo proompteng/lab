@@ -24,7 +24,7 @@ test.each([
   const { contentHash: _contentHash, snapshotId: _snapshotId, ...original } = request.decisionManifest
   const material = {
     ...original,
-    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
   }
   const hashed = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
   const decisionManifest = { ...hashed, snapshotId: Result.getOrThrow(canonicalHashV1Result(hashed)) }
@@ -35,7 +35,7 @@ test.each([
   expect(evidence).toEqual(decoded)
   expect(validIntradayPerformanceVolumeEvidence(decoded)).toBe(true)
   expect(Result.getOrThrow(intradayPerformanceDecisionRequest(decoded))).toMatchObject({
-    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
     candidateSymbols: decisionManifest.candidateSymbols,
   })
   const { candidateEvidencePolicy: _policy, ...stripped } = decisionManifest

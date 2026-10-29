@@ -1,9 +1,9 @@
+import { isContinuousMarket } from '../market-hours'
 import { jevPositionExitPolicy } from './exit-policy'
 import { jevEntryEconomics } from './entry-economics'
-import { entryCompletionFixture, nativeChartInference } from './entry-inference.test-support'
+import { entryCompletionFixture, chartAssessmentsFixture } from './entry-inference.test-support'
 import { EntrySetup, makeEntryProposals } from './entry-proposals'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { chartAssessments, makeChartDecisionsRequest } from './chart-questions'
 import { entryProposalExitPlan } from './strategy-exit-plan'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
@@ -75,7 +75,12 @@ export const nativeJevFixture = (
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
     observedAt: observedAt ?? base.query.observedAt,
     rangeStartAt: new Date(
-      jevHistoryStartMs(selectedCalendar, selectedDate, end, protocol.lookbackMinutes),
+      jevHistoryStartMs(
+        selectedCalendar,
+        selectedDate,
+        end,
+        isContinuousMarket(selectedCalendar) ? protocol.lookbackMinutes.crypto : protocol.lookbackMinutes.equity,
+      ),
     ).toISOString(),
     rangeEndAt: new Date(end).toISOString(),
   }
@@ -237,11 +242,20 @@ export const nativeJevFixture = (
                   ],
                 }),
               )
-              const visual = nativeChartInference(Result.getOrThrow(makeChartDecisionsRequest(chart)).request, at)
+              const chartSource = {
+                chart,
+                protocol,
+                funding: {
+                  bidMicros: '102000000',
+                  askMicros: '102010000',
+                  capitalMicros: material.account.equityMicros,
+                  cryptoFeeTier: null,
+                },
+              }
               const { proposals } = Result.getOrThrow(
                 makeEntryProposals({
                   chart,
-                  assessments: Result.getOrThrow(chartAssessments(chart, visual.response)),
+                  assessments: chartAssessmentsFixture(chartSource, at),
                   economics,
                   protocol,
                   bidMicros: 102_000_000n,
@@ -351,7 +365,7 @@ export const nativeJevBatchResult = (
           return { status: JevCandidateResultStatus.Excluded, symbol: candidate.symbol }
         const receipt = Result.getOrThrow(
           makeJevEvaluationReceipt(candidate.request, {
-            schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+            schemaVersion: 'bayn.jev-evaluation-receipt.v3',
             requestId: candidate.request.requestId,
             startedAt: at,
             completedAt: at,

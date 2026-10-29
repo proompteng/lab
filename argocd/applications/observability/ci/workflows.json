@@ -49,6 +49,10 @@
   ],
   "bayn-build-push.yml": [
     {
+      "id": "validation",
+      "pattern": "^validation(?: \\(.*\\))?(?: /.*)?$"
+    },
+    {
       "id": "image",
       "pattern": "^image(?: \\(.*\\))?(?: /.*)?$"
     }
@@ -57,6 +61,10 @@
     {
       "id": "changes",
       "pattern": "^changes(?: \\(.*\\))?$"
+    },
+    {
+      "id": "formal-verification",
+      "pattern": "^formal-verification(?: \\(.*\\))?(?: /.*)?$"
     },
     {
       "id": "pr-checks",
@@ -89,6 +97,10 @@
     {
       "id": "dependency-input-invariant",
       "pattern": "^dependency-input-invariant(?: \\(.*\\))?$"
+    },
+    {
+      "id": "replay-execution-observer",
+      "pattern": "^replay-execution-observer(?: \\(.*\\))?$"
     },
     {
       "id": "image",

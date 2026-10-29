@@ -1,3 +1,4 @@
+import { isChartEntryTarget } from '../../strategy/runtime-decision'
 import { continuousMarketHours, type MarketHours } from '../../market-hours'
 import { canonicalHashV1Result } from '../../hash'
 import { Cause, Effect, Option, pipe, Schema } from 'effect'
@@ -276,6 +277,7 @@ const recoverCycle = <R>(
                       reason: DecisionReadinessReason.DecisionPending,
                       message: cause.message,
                     },
+                    ...(cause.entryAbstention === undefined ? {} : { entryAbstention: cause.entryAbstention }),
                     observedAt,
                     cycle: selection.cycle,
                   })),
@@ -326,7 +328,7 @@ const recoverCycle = <R>(
                             }),
                           )
                         const target = 'strategyDecision' in document ? document.strategyDecision : undefined
-                        if (target?.schemaVersion !== 'bayn.jev-entry-target.v7') return binding
+                        if (!isChartEntryTarget(target)) return binding
                         const timingAttributes = {
                           'bayn.entry_timing.decision_hash': document.contentHash,
                           'bayn.entry_timing.batch_id': target.evidence.batchPlan.batchId,
