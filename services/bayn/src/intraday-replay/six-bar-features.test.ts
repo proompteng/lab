@@ -437,7 +437,7 @@ describe('six-bar research observation', () => {
 
   test('the unchanged native Jev selector still rejects the six-bar fixture', () => {
     const fixture = sixBarFixture()
-    expect(defaultJevProtocolDocument.lookbackMinutes).toBe(30)
+    expect(defaultJevProtocolDocument.lookbackMinutes.equity).toBe(30)
     expect(selectStreamingInputs(replaySixBarFixture(fixture).projection, fixture.query)).toMatchObject({
       _tag: 'Failure',
       failure: { message: 'Required rolling feature is unavailable for SPY' },

@@ -90,7 +90,12 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
       if (
         Date.parse(manifest.rangeEndAt) !== end ||
         Date.parse(manifest.rangeStartAt) !==
-          jevHistoryStartMs(manifest.calendar, manifest.sessionDate, end, protocol.lookbackMinutes)
+          jevHistoryStartMs(
+            manifest.calendar,
+            manifest.sessionDate,
+            end,
+            isContinuousMarket(manifest.calendar) ? protocol.lookbackMinutes.crypto : protocol.lookbackMinutes.equity,
+          )
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Window))
       if (observed - end - protocol.decisionDelaySeconds * 1000 > protocol.maximumDecisionLagMs)

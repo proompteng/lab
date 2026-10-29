@@ -46,7 +46,12 @@ export const makeJevEntryQuery = (input: {
     calendar: input.calendar,
     observedAt: utcInstantFromEpochMillis(input.observedAtMs),
     rangeStartAt: utcInstantFromEpochMillis(
-      jevHistoryStartMs(input.calendar, input.sessionDate, rangeEndMs, protocol.lookbackMinutes),
+      jevHistoryStartMs(
+        input.calendar,
+        input.sessionDate,
+        rangeEndMs,
+        isContinuousMarket(input.calendar) ? protocol.lookbackMinutes.crypto : protocol.lookbackMinutes.equity,
+      ),
     ),
     rangeEndAt: utcInstantFromEpochMillis(rangeEndMs),
     universeId: market.universeId,

@@ -31,7 +31,7 @@ const fixture = () => {
     claimedAt: utcInstantFromEpochMillis(at),
     expiresAt: utcInstantFromEpochMillis(at + 10_000),
     input: {
-      schemaVersion: 'bayn.entry-inference-input.v5' as const,
+      schemaVersion: 'bayn.entry-inference-input.v6' as const,
       numericalState: {
         schemaVersion: 'bayn.jev-entry-state.v22',
         task: { decisionPurpose: 'ENTRY' },
@@ -458,7 +458,7 @@ describe('claimed sequential entry inference', () => {
         outcome: { status: JevOutcome.Completed, completion },
       }),
     )
-    expect(Result.isFailure(entryInferenceAvailableAt(request, receipt, at, 'bayn.entry-inference-input.v5'))).toBe(
+    expect(Result.isFailure(entryInferenceAvailableAt(request, receipt, at, 'bayn.entry-inference-input.v6'))).toBe(
       true,
     )
     for (const jev of [{ status: 'NOT_REQUESTED' }, { status: 'NOT_DISPATCHED' }])
@@ -567,7 +567,7 @@ describe('claimed sequential entry inference', () => {
       }),
     )
     expect(
-      Result.isFailure(entryInferenceAvailableAt(request, receipt, at + 10_001, 'bayn.entry-inference-input.v5')),
+      Result.isFailure(entryInferenceAvailableAt(request, receipt, at + 10_001, 'bayn.entry-inference-input.v6')),
     ).toBe(true)
   })
 

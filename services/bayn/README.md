@@ -213,7 +213,7 @@ window trade. Executable quote pricing, fee estimates and funding use the fresh 
 retain the current-quote comparison and label it `CURRENT_QUOTES`.
 BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
 or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate.
-Protocol v29 uses `bayn.candidate-evidence.market-quotes.v1`: crypto candidates require a fresh two-sided quote and
+Protocol v30 uses `bayn.candidate-evidence.market-quotes.v1`: crypto candidates require a fresh two-sided quote and
 verified bars and features; an actual window trade is optional context. `candidate.latestTrade` is `null` when none
 was observed, and no quote or bar is relabeled as a trade. Alpaca can publish crypto bars from quote midpoints with
 zero volume when no trades occur ([provider contract](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data)).
@@ -718,7 +718,7 @@ the pre-call claim remains pending and cannot trigger another inference. Every c
 evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
 The submission window follows the entitled market calendar. Bayn can evaluate after the first completed minute and
-the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Crypto evaluates continuously. It uses up to 30 minutes of actual
+the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Crypto evaluates continuously. Equities use up to 30 minutes and crypto uses up to 120 minutes of actual
 completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. The sequential chart and Jev pipeline derives source-anchored proposals and ranks funded eligible entries by their weakest required judgment, then modeled loss and stable proposal identity, for both equities and crypto. Entry spreads may not exceed five basis
 points for equities or 25 basis points for crypto. The market profile is part of the strategy identity. It selects at most one long position, capped at 20% of account equity and reduced when
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
@@ -2022,6 +2022,8 @@ bun run --filter @proompteng/bayn build
 ```
 
 CI partitions the complete unit suite into four duration-balanced Bun shards with two isolated workers per shard.
+These parallel shards use Bun 1.4.3 for its isolated-file finalizer fixes. See the
+[upstream fixes](https://bun.sh/blog/bun-v1.4.3#bun-test).
 The CI default test budget is 15 seconds for full research fixtures on shared runners; explicit test budgets still apply.
 Effect compatibility and broker sandbox tests run in this suite with broker credentials removed. PostgreSQL uses
 four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`

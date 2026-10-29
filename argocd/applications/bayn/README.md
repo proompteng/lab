@@ -1,27 +1,19 @@
 # Exception tracking
 
-## Crypto quote evidence
+## Market-specific chart history
 
-Protocol v29 removes the requirement for a crypto trade print before entry assessment. Crypto bars may contain quote
-midpoints without trades; the native snapshot retains their original source, fresh executable quotes and actual trade
-context, including an explicit `null` when absent. Equity trade confirmation remains required. Model setup judgments,
-fee-inclusive funding, quote freshness, inference deadlines, stops, the fifteen-minute hold and financial limits remain
-enforced. Migration 160 preserves financial history and requires flat, settled, exactly reconciled native OBSERVE recovery.
-The source release removes the v28 sealed mandate and its runtime lineages. A separately reviewed same-account PAPER
-mandate must bind the verified immutable v29 image before natural trading acceptance can be established.
+Protocol v30 separates chart context: equities retain 30 minutes; crypto uses 120 minutes. Kafka seeks each market's
+history independently and retains 121 distinct crypto bar minutes. Native rolling indicators still verify their
+original 30-minute raw-bar subset. Longer charts keep raw source and arrival evidence; missing minutes remain gaps.
+The holding limit remains fifteen minutes, with unchanged quote freshness, inference validity, fee funding and risk.
+Migration 161 requires flat, settled, exactly reconciled native OBSERVE recovery and preserves financial history.
+The source cutover removes the old sealed mandate. The subsequent same-account PAPER mandate must bind the verified
+immutable v30 image before natural funded entries and reconciled round trips can be accepted.
 
-## Funded inference-ask cap
-
-Protocol v28 funds equity and crypto buys at the original inference ask rounded to a valid broker tick. Funding,
-refreshed quote checks and native order construction enforce the same ceiling. Equities retain DAY limits and crypto
-retains IOC limits. The five-basis-point equity spread limit, crypto fees, stop and exit allowances, fifteen-minute hold,
-loss, exposure, freshness and inference deadline remain unchanged.
-
-The source cutover removes the prior v27 sealed mandate and requires migration 158, settled cycles, flat inventory,
-complete accounting, fresh exact reconciliation and native OBSERVE recovery. A separately reviewed same-account PAPER
-mandate must bind the verified immutable v28 image. Retired protocols remain readable as immutable financial history.
-Broker credentials, capital and loss history remain unchanged. Deployment and native authority must be verified
-separately from natural funded selections and fee-reconciled round trips.
+Crypto candidates require a fresh two-sided quote and the latest completed bar. A trade print is optional context;
+equities retain trade confirmation. Both markets cap buys at the original inference ask rounded to a broker tick.
+Equities retain DAY limits and crypto retains IOC limits. Model judgments, fee-inclusive funding, quote freshness,
+inference deadlines, stops and financial limits remain enforced. Broker credentials, capital and loss history persist.
 
 Bayn's main API, native Restate execution controller and activation job, and
 independent research worker send **errors only** to dedicated GlitchTip projects

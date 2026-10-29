@@ -1,3 +1,4 @@
+import cryptoHistoryContext from '../../migrations/0161_crypto_history_context'
 import { evaluateAdmittedFixture } from '../jev/evaluation.test-support'
 import {
   persistVisualClaimFixture,
@@ -118,6 +119,7 @@ const conditionalInput = {
   protocol: {
     ...request.request.protocol,
     schemaVersion: 'bayn.jev.protocol.v24' as const,
+    lookbackMinutes: 30 as const,
     entryQuestionPolicyHash: retainedConditionalQuestionPolicyHash,
     candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
   },
@@ -272,6 +274,7 @@ integration('committed sequential provider handoff', () => {
     [157, cryptoEntryAskCap, 'bayn.jev.protocol.v26'],
     [158, equityEntryAskCap, 'bayn.jev.protocol.v27'],
     [160, cryptoQuoteEvidence, 'bayn.jev.protocol.v28'],
+    [161, cryptoHistoryContext, 'bayn.jev.protocol.v29'],
   ] as const)(
     'ask-cap migration %s preserves retired execution bytes and late financial evidence',
     async (id, cutover, retiredProtocol) =>
@@ -292,10 +295,15 @@ integration('committed sequential provider handoff', () => {
           const { requestId: _, ...current } = request
           const input = {
             ...request.request,
+            schemaVersion: 'bayn.entry-inference-input.v5' as const,
             protocol: {
               ...request.request.protocol,
               schemaVersion: retiredProtocol,
-              candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+              lookbackMinutes: 30 as const,
+              candidateEvidencePolicy:
+                retiredProtocol === 'bayn.jev.protocol.v29'
+                  ? IntradayCandidateEvidencePolicy.MarketQuotes
+                  : IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
             },
           }
           const material = { ...current, request: input, requestHash: Result.getOrThrow(canonicalHashV1Result(input)) }
@@ -645,9 +653,12 @@ integration('committed sequential provider handoff', () => {
         const { requestId: _, ...current } = request
         const input = {
           ...request.request,
+          schemaVersion: 'bayn.entry-inference-input.v5',
           protocol: {
             ...request.request.protocol,
             schemaVersion: 'bayn.jev.protocol.v26',
+            lookbackMinutes: 30,
+            candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
             entryQuestionPolicyHash: retainedStagedQuestionPolicyHash,
           },
         }
@@ -1926,6 +1937,7 @@ integration('committed sequential provider handoff', () => {
     ['market-entry-question', marketEntryQuestions],
     ['crypto-entry-ask-cap', cryptoEntryAskCap],
     ['crypto-quote-evidence', cryptoQuoteEvidence],
+    ['crypto-history-context', cryptoHistoryContext],
     ['conditional-base-anchor', conditionalBaseAnchors],
   ] as const)('refuses the %s cutover while a native cycle is active', async (name, migration) =>
     runtime.runPromise(
