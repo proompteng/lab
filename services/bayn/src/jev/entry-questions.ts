@@ -5,7 +5,7 @@ import { instrumentMarket, MarketKind } from '../instruments'
 import type { NativeChartEvidence } from './chart-evidence'
 import type { ChartAssessmentsMaterial } from './chart-questions'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest, type JevResponse } from './contract'
-import { EntrySetup, entrySourcePriceMicros, type EntryProposal } from './entry-proposals'
+import { EntrySetup, type EntryProposal } from './entry-proposals'
 import { jevInstructions } from './instructions'
 
 export const entryJudgmentThresholds = { affirmativeAtLeast: 0.7, negativeAtMost: 0.3 } as const
@@ -136,20 +136,15 @@ export const makeEntryJudgmentRequest = (input: {
           ? bar.id === source.supportBarId
           : bar.id >= source.firstBarId && bar.id <= source.lastBarId,
       )
-      const structure = yield* Result.all(
-        structureBars.map((bar) =>
-          Result.all({ low: entrySourcePriceMicros(bar.low), high: entrySourcePriceMicros(bar.high) }),
-        ),
-      )
-      const firstStructure = structure[0]
+      const firstStructure = structureBars[0]
       if (firstStructure === undefined)
         return yield* Result.fail(new JevContractError({ message: 'Entry evidence requires its selected structure' }))
-      const low = structure.reduce((minimum, bar) => (bar.low < minimum ? bar.low : minimum), firstStructure.low)
-      const high = structure.reduce((maximum, bar) => (bar.high > maximum ? bar.high : maximum), firstStructure.high)
+      const low = structureBars.reduce((minimum, bar) => Math.min(minimum, bar.low), firstStructure.low)
+      const high = structureBars.reduce((maximum, bar) => Math.max(maximum, bar.high), firstStructure.high)
       const structureEndId = source.setup === EntrySetup.SupportRecovery ? source.supportBarId : source.lastBarId
       const afterStructure = input.chart.bars.filter((bar) => bar.id > structureEndId)
-      const lowPrice = BigDecimal.make(low, 6)
-      const highPrice = BigDecimal.make(high, 6)
+      const lowPrice = BigDecimal.fromNumberUnsafe(low)
+      const highPrice = BigDecimal.fromNumberUnsafe(high)
       const stopPrice = BigDecimal.make(BigInt(proposal.stopPriceMicros), 6)
       const completedCloses = afterStructure.map((bar) => ({
         barId: bar.id,
@@ -180,10 +175,13 @@ export const makeEntryJudgmentRequest = (input: {
           targetBasis: source.targetBasis,
         },
         calculatedFacts: {
-          structureLowUsd: Number(low) / 1_000_000,
-          structureHighUsd: Number(high) / 1_000_000,
-          stopIsBelowStructureLow: BigInt(proposal.stopPriceMicros) < low,
-          entryIsAboveStructureHigh: BigInt(proposal.maximumEntryPriceMicros) > high,
+          structureLowUsd: low,
+          structureHighUsd: high,
+          stopIsBelowStructureLow: BigDecimal.isLessThan(stopPrice, lowPrice),
+          entryIsAboveStructureHigh: BigDecimal.isGreaterThan(
+            BigDecimal.make(BigInt(proposal.maximumEntryPriceMicros), 6),
+            highPrice,
+          ),
           completedBarsAfterStructure: afterStructure.length,
           completedClosesAfterStructure: completedCloses,
           consecutiveNewestClosesAboveStructure: consecutiveAbove,

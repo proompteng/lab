@@ -9,13 +9,13 @@ import { EntrySetup, makeEntryProposals } from './entry-proposals'
 import { makeEntryJudgmentRequest, selectSupportedEntryProposal } from './entry-questions'
 import { defaultJevProtocolDocument } from './protocol'
 
-const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL', latestClose = 104) => {
+const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL', latestClose = 104, structureHigh = 103) => {
   const chart = Result.getOrThrow(
     makeNativeChartEvidence({
       symbol,
       windowEndAt: '2026-10-25T07:00:00.000Z',
       bars: [
-        { minuteBeforeWindowEnd: 4, open: 100, high: 103, low: 97, close: 101, volume: 100 },
+        { minuteBeforeWindowEnd: 4, open: 100, high: structureHigh, low: 97, close: 101, volume: 100 },
         { minuteBeforeWindowEnd: 3, open: 101, high: 102, low: 99, close: 100, volume: 100 },
         { minuteBeforeWindowEnd: 2, open: 103, high: 108, low: 102, close: 104, volume: 100 },
         {
@@ -154,7 +154,7 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
     })
   })
 
-  test('compares a sub-micro completed close without adding a precision rejection', () => {
+  test('preserves a sub-micro completed close above the observed structure', () => {
     const { prepared } = fixture('AAPL', 103.0000001)
     expect(prepared.request.state).toMatchObject({
       proposals: {
@@ -164,6 +164,24 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
             completedClosesAfterStructure: [
               { closeRelativeToStructure: 'ABOVE' },
               { closeRelativeToStructure: 'ABOVE' },
+            ],
+          },
+        },
+      },
+    })
+  })
+
+  test('does not round a sub-micro structure high below a completed close', () => {
+    const { prepared } = fixture('AAPL', 103.0000005, 103.0000009)
+    expect(prepared.request.state).toMatchObject({
+      proposals: {
+        BASE_BREAKOUT: {
+          calculatedFacts: {
+            structureHighUsd: 103.0000009,
+            consecutiveNewestClosesAboveStructure: 0,
+            completedClosesAfterStructure: [
+              { closeRelativeToStructure: 'ABOVE' },
+              { closeRelativeToStructure: 'INSIDE' },
             ],
           },
         },
