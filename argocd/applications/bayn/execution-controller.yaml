@@ -86,18 +86,9 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "60c3149349abb7bbfb763c7418d4c12065cb56c3554ea9cbbf1667bc720379c5"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "a78704828c7a35005ea20f4c1d20d4b318f26df292d5f39f1ab22c2ddd7f23f7"
+              value: "8b57ec0f91637abd867c218839a65548d21feae5d3337c0b3d483ba9ec3132e8"
             - name: BAYN_BROKER_ACCESS
               value: read-only
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"15449657ab84a1322bb94f53ac1fba9a26b994e5881726aa3b72d05842c24720","authoredActivation":{"sourceRevision":"788008ed66d47f9dd39decebb084b5ab225b197a","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:cb5c2b93f19aa37ea798be981dfeba55ceadb0553e8a158994a0f34f77ce0c7c"},"activation":{"sourceRevision":"788008ed66d47f9dd39decebb084b5ab225b197a","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:cb5c2b93f19aa37ea798be981dfeba55ceadb0553e8a158994a0f34f77ce0c7c"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
@@ -152,6 +143,11 @@ spec:
               value: "true"
             - name: BAYN_POSTGRES_CA_PATH
               value: /var/run/secrets/bayn/postgres/ca.crt
+            - name: BAYN_NATIVE_ARRIVAL_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-native-arrival-db-app
+                  key: fqdn-uri
             - name: BAYN_TIGERBEETLE_CLUSTER_ID
               value: "122731676035874920802382025803517750735"
             - name: BAYN_TIGERBEETLE_ADDRESSES
@@ -248,6 +244,9 @@ spec:
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
+            - name: native-arrival-postgres-ca
+              mountPath: /var/run/secrets/bayn/native-arrival-postgres
+              readOnly: true
       volumes:
         - name: valkey-client-tls
           secret:
@@ -259,6 +258,13 @@ spec:
         - name: postgres-ca
           secret:
             secretName: bayn-db-ca
+            defaultMode: 444
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: native-arrival-postgres-ca
+          secret:
+            secretName: bayn-native-arrival-db-ca
             defaultMode: 444
             items:
               - key: ca.crt

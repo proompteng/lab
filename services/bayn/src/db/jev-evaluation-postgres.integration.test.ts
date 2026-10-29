@@ -1,6 +1,13 @@
+import { evaluateAdmittedFixture } from '../jev/evaluation.test-support'
+import {
+  persistVisualClaimFixture,
+  persistVisualTransitionFixture,
+  persistHandoffFixture,
+  persistEvaluationFixture,
+} from '../jev/evaluation.test-support'
 import { EntryInferenceJournal } from '../jev/entry-inference'
 import { defaultJevProtocolDocument } from '../jev/protocol'
-import { entryCompletionFixture } from '../jev/entry-inference.test-support'
+import { entryCompletionFixture, stagedCheckpointFixture } from '../jev/entry-inference.test-support'
 import { EntryInferenceJournalLive } from './entry-inference-postgres'
 import { DecisionsClient } from '../jev/decisions'
 import { chartProviderFixture } from '../jev/entry-inference.test-support'
@@ -17,12 +24,11 @@ import { CycleStoreLive } from '../cycle/store/postgres'
 import { Authority } from '../execution/contracts'
 import { IsoDateSchema } from '../schemas'
 import { JevBatchPlanVersion } from '../jev/batch'
-import { JevFailure } from '../jev/contract'
 import { InferenceUsageStatus } from '../inference-costs'
 import { buildInferenceExpensePlan, makeInferenceExpenseQuotes } from '../inference-expense'
 import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevClient } from '../jev/client'
-import { evaluateClaimedJevOnce, JevEvaluationStore } from '../jev/evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { inferenceFixture } from '../jev/test-support'
@@ -57,7 +63,8 @@ const makeRuntime = () =>
       Layer.provideMerge(NodeServices.layer),
     ),
   )
-const fixture = nativeJevFixture(undefined, undefined, undefined, {
+const replayAccountId = `replay-${'d'.repeat(64)}`
+const fixture = nativeJevFixture(undefined, undefined, replayAccountId, {
   ...defaultJevProtocolDocument,
   candidateSymbols: ['AAPL'],
 })
@@ -75,16 +82,25 @@ if (candidate?.status !== 'REQUESTED') throw Error('Fixture requires its exact a
 const request = candidate.request
 const receipt = Result.getOrThrow(
   makeJevEvaluationReceipt(request, {
-    schemaVersion: 'bayn.jev-evaluation-receipt.v2',
+    schemaVersion: 'bayn.jev-evaluation-receipt.v3',
     requestId: request.requestId,
     startedAt: request.observedAt,
     completedAt: request.observedAt,
     outcome: { status: JevOutcome.Completed, completion: entryCompletionFixture(request, request.observedAt, 0.9) },
   }),
 )
-const commitHandoff = Effect.flatMap(EntryInferenceJournal, (journal) =>
-  journal.recordHandoff(entryCompletionFixture(request).handoff),
-)
+const commitHandoff = Effect.gen(function* () {
+  const journal = yield* EntryInferenceJournal
+  const checkpoint = stagedCheckpointFixture(request)
+  for (const claim of checkpoint.claims) {
+    yield* persistVisualClaimFixture(journal, claim)
+    const terminal = checkpoint.terminals.find((row) => row.stage === claim.stage)
+    if (terminal !== undefined)
+      yield* persistVisualTransitionFixture(journal, { terminal: terminal, successor: { kind: 'NONE' } })
+  }
+
+  yield* persistHandoffFixture(journal, entryCompletionFixture(request).handoff)
+})
 const recorded = Result.getOrThrow(
   makeJevResolution(request, receipt, {
     schemaVersion: 'bayn.jev-evaluation-resolution.v1',
@@ -115,6 +131,8 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
+        yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+          VALUES (${replayAccountId}, ${'d'.repeat(64)}, ${request.observedAt})`
         yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
         yield* sql`INSERT INTO authority_generations (
         generation_hash, schema_version, maximum, authority_version, activated_at
@@ -130,15 +148,17 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
     await runtime?.dispose()
   })
 
-  test('retains a zero-cost receipt when the durable claim crosses expiry without dispatch', async () => {
+  test('an expired admission never dispatches or fabricates zero cost for its durable claim', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* JevEvaluationStore
         let calls = 0
-        const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
-          Effect.andThen(admit),
-          Effect.andThen(TestClock.setTime(Date.parse(request.expiresAt))),
-          Effect.andThen(evaluateClaimedJevOnce({ request, claimedAt: request.observedAt })),
+        const admission = yield* admit
+        const dispatch = admission.dispatches[0]
+        if (dispatch === undefined || dispatch.visualClaim === null)
+          throw new Error('Missing durable fixture admission')
+        yield* TestClock.setTime(Date.parse(request.expiresAt))
+        const result = yield* evaluateAdmittedFixture(dispatch).pipe(
           Effect.result,
           Effect.provideService(JevClient, {
             evaluate: () =>
@@ -147,18 +167,14 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
                 return inferenceFixture()
               }),
           }),
-          Effect.provide(TestClock.layer()),
         )
         expect(Result.isFailure(result)).toBe(true)
         expect(calls).toBe(0)
+        yield* (yield* JevBatchStore).finish(batch.batchId)
         const recovered = yield* store.read(request.requestId)
-        expect(recovered?.resolution?.status).toBe(JevResolutionStatus.Recorded)
-        if (recovered?.receipt === null || recovered?.receipt === undefined || recovered.resolution === null)
-          throw new Error('Missing durable undispatched receipt')
-        expect(recovered.receipt.outcome).toEqual({
-          status: JevOutcome.Failed,
-          failure: JevFailure.NotDispatched,
-        })
+        expect(recovered?.resolution?.status).toBe(JevResolutionStatus.Abandoned)
+        expect(recovered?.receipt).toBeNull()
+        if (recovered === null || recovered.resolution === null) throw new Error('Missing durable abandonment')
         const quotes = Result.getOrThrow(
           makeInferenceExpenseQuotes(
             {
@@ -172,19 +188,20 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
               receipt: recovered.receipt,
               resolution: recovered.resolution,
               handoff: null,
+              stagedCheckpoint: { claims: [dispatch.visualClaim], terminals: [], skips: [] },
             },
             { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
           ),
         )
-        expect(quotes).toHaveLength(2)
+        expect(quotes).toHaveLength(3)
         expect(
           quotes.every(
             (quote) =>
-              quote.line.usageStatus === InferenceUsageStatus.NotDispatched && quote.line.estimatedCostPicoUsd === '0',
+              quote.line.usageStatus === InferenceUsageStatus.Unknown && quote.line.estimatedCostPicoUsd === null,
           ),
         ).toBe(true)
         expect(Result.getOrThrow(buildInferenceExpensePlan(quotes)).transfers).toHaveLength(0)
-      }),
+      }).pipe(Effect.provide(TestClock.layer())),
     )
   })
 
@@ -213,7 +230,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const store = yield* JevEvaluationStore
         yield* admit
         yield* commitHandoff
-        yield* store.record(request, receipt)
+        yield* persistEvaluationFixture(store, request, receipt)
         const { receiptHash: _, ...material } = receipt
         const changed = Result.getOrThrow(
           makeJevEvaluationReceipt(request, {
@@ -221,7 +238,9 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
             completedAt: new Date(Date.parse(request.observedAt) + 1).toISOString(),
           }),
         )
-        expect(Result.isFailure(yield* store.record(request, changed).pipe(Effect.result))).toBe(true)
+        expect(Result.isFailure(yield* persistEvaluationFixture(store, request, changed).pipe(Effect.result))).toBe(
+          true,
+        )
         expect(yield* store.read(request.requestId)).toEqual({ request, receipt, resolution: recorded })
       }),
     )
@@ -230,7 +249,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
   test('requires a durable matching request before recording a result', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
-        return yield* (yield* JevEvaluationStore).record(request, receipt).pipe(Effect.result)
+        return yield* persistEvaluationFixture(yield* JevEvaluationStore, request, receipt).pipe(Effect.result)
       }),
     )
     expect(Result.isFailure(result)).toBe(true)
@@ -242,9 +261,11 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const sql = yield* PgClient.PgClient
         const store = yield* JevEvaluationStore
         yield* admit
-        expect(Result.isFailure(yield* sql.withTransaction(store.record(request, receipt)).pipe(Effect.result))).toBe(
-          true,
-        )
+        expect(
+          Result.isFailure(
+            yield* sql.withTransaction(persistEvaluationFixture(store, request, receipt)).pipe(Effect.result),
+          ),
+        ).toBe(true)
         expect(yield* store.read(request.requestId)).toEqual({ request, receipt: null, resolution: null })
         expect(yield* sql`SELECT request_id FROM jev_evaluation_receipts`).toEqual([])
       }),
@@ -257,7 +278,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const store = yield* JevEvaluationStore
         yield* admit
         yield* commitHandoff
-        yield* store.record(request, receipt)
+        yield* persistEvaluationFixture(store, request, receipt)
         const sql = yield* PgClient.PgClient
         for (const operation of [
           sql`UPDATE jev_evaluation_requests SET payload = payload`,
@@ -288,7 +309,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const resolution = yield* store.abandon(request, request.expiresAt)
         expect(resolution.status).toBe(JevResolutionStatus.Abandoned)
         expect(yield* store.abandon(request, '2026-09-21T00:00:00.000Z')).toEqual(resolution)
-        expect(yield* store.record(request, receipt)).toEqual(resolution)
+        expect(yield* persistEvaluationFixture(store, request, receipt)).toEqual(resolution)
         expect((yield* store.read(request.requestId))?.resolution).toEqual(resolution)
         expect(yield* store.read(request.requestId)).toEqual({ request, receipt, resolution })
       }),
@@ -301,7 +322,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const store = yield* JevEvaluationStore
         yield* admit
         yield* commitHandoff
-        expect(yield* store.record(request, receipt)).toEqual(recorded)
+        expect(yield* persistEvaluationFixture(store, request, receipt)).toEqual(recorded)
         expect(yield* store.abandon(request, request.expiresAt)).toEqual(recorded)
         expect(yield* store.read(request.requestId)).toEqual({ request, receipt, resolution: recorded })
       }),
@@ -315,7 +336,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         yield* admit
         yield* commitHandoff
         const [record, abandon] = yield* Effect.all(
-          [store.record(request, receipt), store.abandon(request, request.expiresAt)],
+          [persistEvaluationFixture(store, request, receipt), store.abandon(request, request.expiresAt)],
           { concurrency: 2 },
         )
         expect(record).toEqual(abandon)

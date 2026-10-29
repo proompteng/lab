@@ -19,11 +19,13 @@ import {
   IntradayBenchmarkEvidencePolicy,
   usesCompletedBarBenchmark,
   usesWindowTradeEvidence,
+  usesOptionalTradeEvidence,
 } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError } from './contract'
-import { prepareEntryInferenceInput } from './entry-inference-input'
+import { EntryAblationSelection, prepareEntryInferenceInput } from './entry-inference-input'
+import { instrumentMarket, MarketKind } from '../instruments'
 import {
   decodeJevBatchPlan,
   JevBatchPlanVersion,
@@ -115,7 +117,9 @@ const jevBarSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
       }),
     )
     const midpoint = Date.parse(manifest.rangeEndAt) - 15 * 60_000
-    const earlyBars = bars.filter((bar) => Date.parse(bar.eventAt) < midpoint)
+    const earlyBars = bars.filter(
+      (bar) => Date.parse(bar.eventAt) >= midpoint - 15 * 60_000 && Date.parse(bar.eventAt) < midpoint,
+    )
     const recentBars = bars.filter((bar) => Date.parse(bar.eventAt) >= midpoint)
     const earlyVolume = earlyBars.reduce((total, bar) => total + bar.volume, 0)
     const recentVolume = recentBars.reduce((total, bar) => total + bar.volume, 0)
@@ -130,7 +134,14 @@ const jevBarSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
       minuteReturns.length === 0
         ? null
         : Math.sqrt(minuteReturns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / minuteReturns.length) * 10_000
-    const values = rollingValues(rolling.value)
+    const values = isCryptoMarketFeature(rolling.value)
+      ? {
+          reference: first.open,
+          high: Math.max(...bars.map((bar) => bar.high)),
+          low: Math.min(...bars.map((bar) => bar.low)),
+          volume: bars.reduce((total, bar) => total + bar.volume, 0),
+        }
+      : rollingValues(rolling.value)
     return {
       prices: {
         reference: yield* signalPriceMicros(values.reference, 'signal reference'),
@@ -181,19 +192,22 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
     const base = yield* jevBarSignalFor(snapshot, symbol)
     const quote = snapshot.latestQuotes[symbol]
     const trade = latestSignalTrade(snapshot, symbol)
-    if (quote === undefined || trade === undefined)
+    if (quote === undefined || (trade === undefined && !usesOptionalTradeEvidence(manifest, symbol)))
       return yield* unavailable('Jev signals require the verified rolling window, quote and trade')
     const quoteAgeMs = pricingAgeMs(snapshot, quote.eventAt)
-    const tradeAgeMs = pricingAgeMs(snapshot, trade.eventAt)
+    const tradeAgeMs = trade === undefined ? null : pricingAgeMs(snapshot, trade.eventAt)
     const pricingAges = usesWindowTradeEvidence(manifest, symbol) ? [quoteAgeMs] : [quoteAgeMs, tradeAgeMs]
-    if (tradeAgeMs < 0 || pricingAges.some((age) => age < 0 || age > manifest.maximumQuoteAgeMs))
+    if (
+      (tradeAgeMs !== null && tradeAgeMs < 0) ||
+      pricingAges.some((age) => age === null || age < 0 || age > manifest.maximumQuoteAgeMs)
+    )
       return yield* unavailable('Jev signal pricing evidence is stale or future dated')
     return {
       prices: {
         ...base.prices,
         bid: yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN'),
         ask: yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP'),
-        trade: yield* signalPriceMicros(trade.price, 'signal trade'),
+        trade: trade === undefined ? null : yield* signalPriceMicros(trade.price, 'signal trade'),
       },
       state: {
         ...base.state,
@@ -204,7 +218,7 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
           askSize: quote.askSize,
           ageMs: quoteAgeMs,
         },
-        latestTrade: { price: trade.price, size: trade.size, ageMs: tradeAgeMs },
+        latestTrade: trade === undefined ? null : { price: trade.price, size: trade.size, ageMs: tradeAgeMs },
       },
     }
   })
@@ -288,6 +302,7 @@ const requestFromSnapshot = (
   symbol: string,
   benchmarkSymbol: string,
   native: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
+  selectionPolicy: EntryAblationSelection | null,
 ) =>
   Result.gen(function* () {
     if (native.portfolio.purpose !== JevPurpose.Entry)
@@ -311,11 +326,14 @@ const requestFromSnapshot = (
     if (!continuous && session === undefined)
       return yield* unavailable('Jev signal snapshot has no matching market session')
     const observed = Date.parse(snapshot.manifest.observedAt)
-    const cryptoFeeTier = effectiveCryptoFeeTier(
-      native.portfolio.brokerState.account.cryptoFeeTier,
-      native.portfolio.brokerState.account.observedAt,
-      snapshot.manifest.observedAt,
-    )
+    const cryptoFeeTier =
+      instrumentMarket(symbol) === MarketKind.Crypto
+        ? effectiveCryptoFeeTier(
+            native.portfolio.brokerState.account.cryptoFeeTier,
+            native.portfolio.brokerState.account.observedAt,
+            snapshot.manifest.observedAt,
+          )
+        : null
     const economics = yield* jevEntryEconomics({
       cryptoFeeTier,
       protocol: native.protocol,
@@ -325,7 +343,9 @@ const requestFromSnapshot = (
       capitalMicros: native.portfolio.brokerState.account.equityMicros,
     })
     return yield* prepareEntryInferenceInput({
-      schemaVersion: 'bayn.entry-inference-input.v3',
+      ...(selectionPolicy === null
+        ? { schemaVersion: 'bayn.entry-inference-input.v6' }
+        : { schemaVersion: 'bayn.entry-ablation-input.v1', selectionPolicy }),
       protocol: native.protocol,
       chartSource: {
         symbol,
@@ -371,9 +391,14 @@ const requestFromSnapshot = (
           prices: 'USD per unit',
           volume: continuous ? 'base asset units on Alpaca crypto US' : 'shares on the IEX feed',
           quoteSize: 'raw provider size units; not consolidated liquidity',
-          ...(usesWindowTradeEvidence(snapshot.manifest, symbol)
-            ? { latestTrade: 'last actual trade since lookback start; ageMs is contextual, not an executable price' }
-            : {}),
+          ...(usesOptionalTradeEvidence(snapshot.manifest, symbol)
+            ? {
+                latestTrade:
+                  'last actual trade since lookback start; null when no actual trade was observed; ageMs is contextual, not an executable price',
+              }
+            : usesWindowTradeEvidence(snapshot.manifest, symbol)
+              ? { latestTrade: 'last actual trade since lookback start; ageMs is contextual, not an executable price' }
+              : {}),
           returns: 'basis points, 100 bps = 1 percent',
           technicalPrices: 'USD per unit',
           rsi14: 'RSI percentage points',
@@ -427,7 +452,7 @@ const requestFromSnapshot = (
 export const makeJevTradingSignalRequest = (input: unknown, symbol: string) =>
   reproduceJevCandidateObservation(input).pipe(
     Result.flatMap((observation) =>
-      requestFromSnapshot(observation.snapshot, symbol, jevBenchmarkSymbol(symbol), observation),
+      requestFromSnapshot(observation.snapshot, symbol, jevBenchmarkSymbol(symbol), observation, null),
     ),
   )
 
@@ -454,6 +479,7 @@ export const reproduceJevRequestFromVerifiedObservation = (
       request.symbol,
       jevBenchmarkSymbol(request.symbol),
       observation,
+      request.request.schemaVersion === 'bayn.entry-ablation-input.v1' ? request.request.selectionPolicy : null,
     )
     if (prepared.requestHash !== request.requestHash)
       return yield* unavailable('Jev request payload differs from the reproduced trading signals and questions')
@@ -468,8 +494,6 @@ const batchFromObservation = (
   Result.gen(function* () {
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
-    if (planVersion !== JevBatchPlanVersion.V7)
-      return yield* unavailable('The current trading protocol requires batch v6')
     if (Date.parse(expiresAt) !== Date.parse(observation.observedAt) + protocol.inferenceValidityMs)
       return yield* unavailable('Jev batch deadline must equal its source-controlled validity interval')
     if (manifest.candidateSymbols === undefined || manifest.candidateSymbols.length === 0)
@@ -497,7 +521,13 @@ const batchFromObservation = (
         })
         continue
       }
-      const prepared = yield* requestFromSnapshot(snapshot, symbol, jevBenchmarkSymbol(symbol), observation)
+      const prepared = yield* requestFromSnapshot(
+        snapshot,
+        symbol,
+        jevBenchmarkSymbol(symbol),
+        observation,
+        planVersion === JevBatchPlanVersion.Ablation ? EntryAblationSelection.LowestModeledLoss : null,
+      )
       if (observation.portfolio.purpose === JevPurpose.Entry) {
         const quote = snapshot.latestQuotes[symbol]
         if (quote !== undefined) {
@@ -517,7 +547,7 @@ const batchFromObservation = (
         }
       }
       const request = yield* makeJevEvaluationRequest({
-        schemaVersion: 'bayn.jev-evaluation-request.v2',
+        schemaVersion: 'bayn.jev-evaluation-request.v3',
         cycleId: observation.cycleId,
         authorityGenerationHash: observation.authorityGenerationHash,
         snapshotId: manifest.snapshotId,

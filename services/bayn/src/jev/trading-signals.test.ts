@@ -99,7 +99,7 @@ const snapshotWithTechnical = (candidateTradeMissing = false) => {
         },
       },
       candidateTradeMissing
-        ? { ...query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade }
+        ? { ...query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes }
         : query,
     ),
   )

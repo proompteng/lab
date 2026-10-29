@@ -867,7 +867,7 @@ const makeCycleObservability = Effect.gen(function* () {
                   'targetPlanStatus', decision.document #>> '{targetPlan,status}',
                   'targetPlanReason', CASE
                     WHEN decision.document #>> '{targetPlan,status}' = 'NO_TRADE'
-                      AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v6', 'bayn.jev-entry-target.v7')
+                      AND decision.document #>> '{strategyDecision,schemaVersion}' IN ('bayn.jev-entry-target.v6', 'bayn.jev-entry-target.v7', 'bayn.entry-ablation-target.v1', 'bayn.repeated-momentum-target.v1')
                       AND decision.document #> '{strategyDecision,entryPlanRejections}' <> '{}'::jsonb
                     THEN CASE
                       WHEN EXISTS (

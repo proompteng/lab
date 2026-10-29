@@ -560,7 +560,7 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   expect(report).toMatchObject({
     diagnosticOnly: true,
     schemaVersion: 'bayn.jev-abstention-report.v3',
-    protocol: 'bayn.jev.protocol.v24',
+    protocol: 'bayn.jev.protocol.v30',
     inputDefinition: 'bayn.jev-entry-state.v22',
     selectedSymbols: [],
     profitableEdgeProven: false,
@@ -571,7 +571,7 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
     jevStatus: 'RECEIVED',
     selectedProposalId: null,
     rejection: 'UNSUPPORTED_OR_UNCERTAIN_JUDGMENTS',
-    fundedPlanCount: 1,
+    fundedPlanCount: 2,
     horizonMinutes: 15,
     coverage: { suppliedBarCount: 30 },
   })
@@ -597,9 +597,10 @@ test('diagnostics retain atomic judgments and source identities without inventin
   if (candidate === undefined || !('judgments' in candidate) || candidate.judgments === null)
     throw Error('Missing atomic judgments')
   expect(Object.keys(candidate.judgments)).toEqual([
-    'support_recovery_confirmed',
-    'support_recovery_stop_invalidates',
-    'support_recovery_target_obstructed',
+    'equity_support_recovery_confirmed',
+    'equity_support_recovery_stop_invalidates',
+    'equity_base_breakout_confirmed',
+    'equity_base_breakout_stop_invalidates',
   ])
   expect(Object.values(candidate.judgments).every((judgment) => judgment.type === 'noul')).toBe(true)
   expect(candidate.plans.every((plan) => /^[a-f0-9]{64}$/.test(plan.proposalId))).toBe(true)
@@ -622,7 +623,8 @@ test('crypto economics and coverage are measured from sealed source rather than 
   if (candidate === undefined || !('plans' in candidate) || !('coverage' in candidate))
     throw new Error('Expected requested SOL candidate')
   expect(candidate.fees).toEqual({ maximumEntryFeeBps: 25, maximumExitFeeBps: 25, estimatedRoundTripFeesBps: 50 })
-  expect(candidate.entryEconomics?.holdingExitRequiredBidRiseBps).toBeGreaterThan(80)
+  expect(candidate.entryEconomics?.holdingExitRequiredBidRiseBps).toBeGreaterThan(60)
+  expect(candidate.entryEconomics?.holdingExitRequiredBidRiseBps).toBeLessThan(61)
   expect(candidate.plans.length).toBeGreaterThan(0)
   expect(candidate.netRewardRisk).toEqual({
     minimum: Math.min(...candidate.plans.map((plan) => plan.netRewardRisk)),

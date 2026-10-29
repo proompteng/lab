@@ -31,11 +31,11 @@ describe('native Jev entry and position observations', () => {
   test('complete recorded responses determine one capped target and reproduce without a model', () => {
     const evidence = nativeJevDecisionEvidence()
     const target = Result.getOrThrow(decideJevEntry(evidence))
-    expect(target.selectedSymbols).toEqual(['AMD'])
-    expect(target.targetWeights['AMD']).toBeGreaterThan(0)
-    expect(target.targetWeights['AMD']).toBeLessThanOrEqual(0.2)
+    expect(target.selectedSymbols).toEqual(['AAPL'])
+    expect(target.targetWeights['AAPL']).toBeGreaterThan(0)
+    expect(target.targetWeights['AAPL']).toBeLessThanOrEqual(0.2)
     expect(Object.values(target.targetWeights).reduce((sum, weight) => sum + weight, 0)).toBe(
-      target.targetWeights['AMD'] ?? 0,
+      target.targetWeights['AAPL'] ?? 0,
     )
     expect(
       Result.getOrThrow(Schema.decodeUnknownResult(JevEntryTargetSchema)(JSON.parse(JSON.stringify(target)))),
@@ -131,7 +131,7 @@ describe('native Jev entry and position observations', () => {
         decidedAt,
       }),
     )
-    expect(target.selectedSymbols).toEqual(['AMD'])
+    expect(target.selectedSymbols).toEqual(['AAPL'])
     const quoteEventAt = new Date(observed + 7_100).toISOString()
     const maximumAgeMs = jevEntryQuoteMaximumAgeMs(target, quoteEventAt, fixture.protocol.maximumQuoteAgeMs)
     expect(maximumAgeMs).toBe(10_000)

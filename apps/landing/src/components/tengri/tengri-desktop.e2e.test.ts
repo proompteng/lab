@@ -4243,7 +4243,9 @@ for (const phase of ['running', 'accepted'] as const) {
       await expect(chat.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
       await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
       await page.clock.runFor(2_100)
-      await expect.poll(() => mock.actions.filter((action) => action.action === 'codex-run').length).toBeGreaterThan(1)
+      await expect
+        .poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length)
+        .toBeGreaterThan(1)
       await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
       await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Ready')
       await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
@@ -7295,13 +7297,21 @@ test('reconciles a lost archive response by reading the native index without res
   expect(writes).toBe(1)
 })
 
-test('stops recovery polling when no conversations are running', async ({ page }) => {
+test('stops idle chat polling while retaining minute-level connection checks', async ({ page }) => {
   await page.clock.install()
   const mock = await mockTengri(page)
   await page.goto('/')
-  await expect(page.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
-  await page.clock.runFor(60_000)
+  await page.getByRole('textbox', { name: 'Message your agent' }).fill('An unsent draft')
+  // Wait for the initial chat recovery before advancing its timers.
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await page.clock.runFor(59_000)
   expect(mock.actions.filter((action) => action.action === 'active-codex-runs')).toHaveLength(1)
+  // ReadyDesktop independently checks all conversations once per minute before
+  // renewing platform connections, including when chat windows are closed.
+  await page.clock.runFor(1_100)
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(2)
+  await page.clock.runFor(60_000)
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length).toBe(3)
 })
 
 test('runs another conversation while keeping each active response unarchivable', async ({ page }) => {
@@ -9920,9 +9930,9 @@ for (const resolution of ['local response', 'server event'] as const) {
         .poll(() => mock.actions.filter((action) => action.action === 'resolve-approval').length)
         .toBe(expectedControls)
       await expect(card).toHaveCount(0)
-      const polls = mock.actions.filter((action) => action.action === 'codex-run').length
+      const polls = mock.actions.filter((action) => action.action === 'active-codex-runs').length
       await expect
-        .poll(() => mock.actions.filter((action) => action.action === 'codex-run').length)
+        .poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length)
         .toBeGreaterThan(polls)
       const sidebar = chat.getByTestId('agent-conversation-sidebar')
       await sidebar.locator('[data-conversation-id="thread-beta"]').click()
@@ -9988,6 +9998,166 @@ test('recovers the exact durable run and pending approval with empty browser sto
   expect(action?.operationId).toMatch(/^[0-9a-f-]{36}$/)
 })
 
+test('reuses active-run snapshots without duplicate status polling and fetches the final result', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '55555555-5555-4555-8555-555555555555',
+    agentId: 'microvm-ada',
+    threadId: 'thread-recovered',
+    state: { phase: 'running', turnId: 'turn-recovered' },
+  }
+  const mock = await mockTengri(page, { durableRun: run })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  // Initial conversation selection may legitimately need fallback recovery.
+  // Measure steady-state polling after the workspace owns the selected run.
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length, { timeout: 10_000 })
+    .toBeGreaterThanOrEqual(3)
+  const readsBefore = mock.actions.filter((action) => action.action === 'codex-run').length
+  const activeBefore = mock.actions.filter((action) => action.action === 'active-codex-runs').length
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length, { timeout: 10_000 })
+    .toBeGreaterThanOrEqual(activeBefore + 3)
+  expect(mock.actions.filter((action) => action.action === 'codex-run')).toHaveLength(readsBefore)
+  run.state = { phase: 'succeeded', turnId: 'turn-recovered' }
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'codex-run').length, { timeout: 10_000 })
+    .toBeGreaterThan(readsBefore)
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+  const finalReads = mock.actions.filter((action) => action.action === 'codex-run').length
+  await page.clock.install()
+  await page.clock.runFor(6_100)
+  expect(mock.actions.filter((action) => action.action === 'codex-run')).toHaveLength(finalReads)
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+})
+
+for (const phase of ['succeeded', 'failed', 'cancelled', 'rejected'] as const) {
+  test(`processes a ${phase} workspace snapshot before a completion event arrives`, async ({ page }) => {
+    const run: TengriCodexRun = {
+      runId: '99999999-9999-4999-8999-999999999999',
+      agentId: 'microvm-ada',
+      threadId: 'thread-recovered',
+      state: { phase: 'running', turnId: 'turn-recovered' },
+    }
+    const mock = await mockTengri(page, { durableRun: run })
+    let terminal: TengriCodexRun | undefined
+    await page.route('**/api/tengri', async (route) => {
+      if (
+        terminal &&
+        route.request().method() === 'POST' &&
+        route.request().postDataJSON().action === 'active-codex-runs'
+      ) {
+        // The backend took its claim list before this run finished. Its subsequent
+        // snapshot read legitimately includes a terminal result in that list.
+        return route.fulfill({ json: { result: [terminal] } })
+      }
+      return route.fallback()
+    })
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+    terminal = {
+      ...run,
+      state:
+        phase === 'rejected'
+          ? { phase, reason: 'The recovered run was rejected' }
+          : phase === 'failed'
+            ? { phase, turnId: 'turn-recovered', reason: 'The recovered run failed' }
+            : { phase, turnId: 'turn-recovered' },
+    }
+    await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+    await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveCount(0)
+    if ('reason' in terminal.state) await expect(chat.getByText(terminal.state.reason, { exact: true })).toBeVisible()
+    await chat.getByRole('textbox', { name: 'Message your agent' }).fill('A next task')
+    await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+    expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+  })
+}
+
+test('clears an individual recovery error after both status endpoints recover', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '66666666-6666-4666-8666-666666666666',
+    agentId: 'microvm-ada',
+    threadId: 'thread-recovered',
+    state: { phase: 'running', turnId: 'turn-recovered' },
+  }
+  const mock = await mockTengri(page, { durableRun: run })
+  let unavailable = false
+  let individualFailures = 0
+  let workspaceFailures = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON().action
+    if (unavailable && (action === 'codex-run' || action === 'active-codex-runs')) {
+      if (action === 'codex-run') individualFailures += 1
+      else workspaceFailures += 1
+      return route.fulfill({ status: 503, json: { error: 'Temporary status outage' } })
+    }
+    return route.fallback()
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  unavailable = true
+  await expect.poll(() => workspaceFailures).toBeGreaterThan(0)
+  await expect.poll(() => individualFailures, { timeout: 10_000 }).toBeGreaterThan(0)
+  await expect(chat.getByRole('alert')).toContainText('Reconnecting')
+  unavailable = false
+  await expect(chat.getByRole('alert')).toHaveCount(0, { timeout: 10_000 })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+})
+
+test('lets a slow final status complete while another conversation keeps polling', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '77777777-7777-4777-8777-777777777777',
+    agentId: 'microvm-ada',
+    threadId: 'thread-recovered',
+    state: { phase: 'running', turnId: 'turn-recovered' },
+  }
+  const other: TengriCodexRun = {
+    runId: '88888888-8888-4888-8888-888888888888',
+    agentId: run.agentId,
+    threadId: 'thread-other',
+    state: { phase: 'running', turnId: 'turn-other' },
+  }
+  await mockTengri(page, { durableRun: run })
+  let completed = false
+  let finalRequests = 0
+  let workspaceReads = 0
+  let releaseFinal: () => void = () => {}
+  const finalResponse = new Promise<void>((resolve) => {
+    releaseFinal = resolve
+  })
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action === 'active-codex-runs') {
+      workspaceReads += 1
+      return route.fulfill({ json: { result: completed ? [other] : [run, other] } })
+    }
+    if (action.action === 'codex-run' && action.runId === run.runId && completed) {
+      finalRequests += 1
+      await finalResponse
+      return route.fulfill({ json: { result: { ...run, state: { phase: 'succeeded', turnId: 'turn-recovered' } } } })
+    }
+    return route.fallback()
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  completed = true
+  await expect.poll(() => finalRequests, { timeout: 10_000 }).toBe(1)
+  const readsAtRequest = workspaceReads
+  await expect.poll(() => workspaceReads, { timeout: 12_000 }).toBeGreaterThan(readsAtRequest + 2)
+  expect(finalRequests).toBe(1)
+  releaseFinal()
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toHaveCount(0)
+  await chat.getByRole('textbox', { name: 'Message your agent' }).fill('Next task')
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+})
+
 for (const recoveryAction of ['active-codex-runs', 'codex-run'] as const) {
   test(`clears a recovered ${recoveryAction} outage without sending another turn`, async ({ page }) => {
     await page.clock.install()
@@ -10003,15 +10173,32 @@ for (const recoveryAction of ['active-codex-runs', 'codex-run'] as const) {
           : undefined,
     })
     let unavailable = true
+    let activeReads = 0
+    let failedReads = 0
     await page.route('**/api/tengri', async (route) => {
+      if (
+        recoveryAction === 'codex-run' &&
+        route.request().method() === 'POST' &&
+        route.request().postDataJSON().action === 'active-codex-runs'
+      ) {
+        activeReads += 1
+        // Once the run leaves the active set, the UI must recover its final status
+        // through the individual endpoint even when that endpoint is unavailable.
+        if (activeReads > 1) return route.fulfill({ json: { result: [] } })
+      }
       if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== recoveryAction)
         return route.fallback()
-      if (unavailable) return route.fulfill({ status: 503, json: { error: 'Temporary run recovery outage' } })
+      if (unavailable) {
+        failedReads += 1
+        return route.fulfill({ status: 503, json: { error: 'Temporary run recovery outage' } })
+      }
       return route.fallback()
     })
     await page.goto('/')
     const tengri = page.getByRole('region', { name: 'Tengri window' })
     await expect(tengri.getByRole('alert')).toHaveCount(0)
+    await page.clock.runFor(3_100)
+    await expect.poll(() => failedReads).toBeGreaterThan(0)
     await page.clock.runFor(3_100)
     await expect(tengri.getByRole('alert')).toHaveText('Reconnecting to your agent…')
     await expect(tengri.getByText('Temporary run recovery outage', { exact: true })).toHaveCount(0)
@@ -10057,6 +10244,53 @@ test('shows concise response activity instead of internal run reasons', async ({
   await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
+
+for (const phase of ['accepted', 'waiting_for_guest'] as const) {
+  test(`keeps a newly ${phase} run observable after idle workspace polling stopped`, async ({ page }) => {
+    const mock = await mockTengri(page, {
+      threadStore: { threads: [{ id: 'thread-idle', title: 'Idle conversation', updatedAt: 1, archived: false }] },
+    })
+    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-idle'))
+    let run: TengriCodexRun | undefined
+    let workspaceReadsAfterSend = 0
+    let sends = 0
+    await page.route('**/api/tengri', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback()
+      const action = route.request().postDataJSON()
+      if (action.action === 'send-turn') {
+        sends += 1
+        run = {
+          runId: action.operationId,
+          agentId: action.agentId,
+          threadId: action.threadId,
+          state: phase === 'accepted' ? { phase } : { phase, reason: 'Waiting for the guest' },
+        }
+        return route.fulfill({ json: { result: run } })
+      }
+      if (action.action === 'active-codex-runs' && run) {
+        workspaceReadsAfterSend += 1
+        return route.fulfill({ json: { result: run.state.phase === 'rejected' ? [] : [run] } })
+      }
+      if (action.action === 'codex-run' && run) return route.fulfill({ json: { result: run } })
+      return route.fallback()
+    })
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const prompt = chat.getByRole('textbox', { name: 'Message your agent' })
+    await expect
+      .poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length)
+      .toBeGreaterThan(0)
+    await prompt.fill('Start a run without a native turn event')
+    await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+    await expect.poll(() => workspaceReadsAfterSend).toBeGreaterThan(1)
+    expect(run).toBeDefined()
+    run!.state = { phase: 'rejected', reason: 'Guest unavailable' }
+    await expect(chat.getByText('Guest unavailable', { exact: true })).toBeVisible()
+    await prompt.fill('A next message')
+    await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+    expect(sends).toBe(1)
+  })
+}
 
 test('records Stop for an accepted run before a native turn exists', async ({ page }) => {
   const runId = '44444444-4444-4444-8444-444444444444'
@@ -10235,7 +10469,7 @@ test.describe('durable control retries', () => {
         await page.goto('/')
         const tengri = page.getByRole('region', { name: 'Tengri window' })
         await expect
-          .poll(() => mock.actions.filter((action) => action.action === 'codex-run').length)
+          .poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length)
           .toBeGreaterThan(0)
         await emitCodexEvent(page, {
           sequence: 1,
@@ -10288,8 +10522,10 @@ test.describe('durable control retries', () => {
       localStorage.setItem('tengri-approval-mode:microvm-ada', 'auto')
     })
     await page.goto('/')
-    await expect.poll(() => mock.actions.filter((action) => action.action === 'codex-run').length).toBeGreaterThan(0)
-    const before = mock.actions.filter((action) => action.action === 'codex-run').length
+    await expect
+      .poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length)
+      .toBeGreaterThan(0)
+    const before = mock.actions.filter((action) => action.action === 'active-codex-runs').length
     await emitCodexEvent(page, {
       sequence: 1,
       kind: 'approval',
@@ -10302,7 +10538,7 @@ test.describe('durable control retries', () => {
       rawJson: '{}',
     })
     await expect
-      .poll(() => mock.actions.filter((action) => action.action === 'codex-run').length)
+      .poll(() => mock.actions.filter((action) => action.action === 'active-codex-runs').length)
       .toBeGreaterThan(before)
     expect(mock.actions.filter((action) => action.action === 'resolve-approval')).toHaveLength(0)
     run.state = { phase: 'running', turnId: 'turn-active' }

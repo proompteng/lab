@@ -55,11 +55,19 @@ const nextTurn = () => {
 }
 const transport = {
   offsets: async (_topics, timestamp) => positions(timestamp === -1n),
-  consume: async (_positions, invalidated) => {
+  consume: async (starts, invalidated) => {
     notifyInvalidation = invalidated
+    const quoteStart = starts.find((position) => position.topic === 'quotes')
+    assert.ok(quoteStart)
+    const firstOffset = BigInt(quoteStart.offset)
     return {
       queuedRecords: () => total - consumed,
-      drainedPositions: () => (consumed === total ? positions(true) : undefined),
+      drainedPositions: () =>
+        consumed === total
+          ? positions(true).map((position) =>
+              position.topic === 'quotes' ? { ...position, offset: String(firstOffset + BigInt(total)) } : position,
+            )
+          : undefined,
       [Symbol.asyncIterator]: () => ({
         next: async () => {
           if (closed) return { done: true, value: undefined }
@@ -74,7 +82,7 @@ const transport = {
             })
           }
           if (consumed === 0) immediate = setImmediate(nextTurn)
-          const offset = String(consumed++)
+          const offset = String(firstOffset + BigInt(consumed++))
           const at = new Date(Date.parse('2026-09-24T14:00:00Z') + consumed).toISOString()
           const value = JSON.stringify({
             provider: 'alpaca',
@@ -175,7 +183,7 @@ const exit = await Effect.runPromiseExit(
   { signal: abort.signal },
 )
 assert.equal(closeCount, 1)
-assert.equal(captureEnd?.status, 'STOPPED')
+assert.equal(captureEnd?.status, 'STOPPED', JSON.stringify(captureEnd))
 assert.equal(captureEnd?.durableConsumerSequence, retained)
 assert.equal(captureEnd?.observedConsumerSequence, retained)
 assert.equal(captureEnd?.lastChunkHash, retainedHash)

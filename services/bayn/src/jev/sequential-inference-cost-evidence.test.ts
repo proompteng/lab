@@ -1,3 +1,4 @@
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -6,7 +7,7 @@ import { inferenceExpenseRateCard, makeInferenceExpenseQuotes } from '../inferen
 import { InferenceStage, InferenceUsageStatus } from '../inference-costs'
 import { makeNativeChartEvidence, makeRetainedChartEvidenceV1 } from './chart-evidence'
 import { deriveEntryDispositionForChart } from './entry-inference'
-import { entryEvaluationRequestFixture } from './entry-inference.test-support'
+import { entryEvaluationRequestFixture } from './conditional-entry.test-support'
 import { decodeJevEvaluationRequest, JevOutcome } from './evidence'
 import {
   readSequentialInferenceCostEvidence,
@@ -24,7 +25,13 @@ const retained = (
   const input = {
     ...current.request,
     schemaVersion,
-    protocol: { ...current.request.protocol, entryQuestionPolicyHash: retainedSequentialQuestionPolicyHash },
+    protocol: {
+      ...current.request.protocol,
+      schemaVersion: 'bayn.jev.protocol.v24' as const,
+      lookbackMinutes: 30 as const,
+      candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+      entryQuestionPolicyHash: retainedSequentialQuestionPolicyHash,
+    },
     chartSource: { ...current.request.chartSource, bars },
     numericalState: { ...current.request.numericalState, candidate: { symbol: current.symbol, bars1m: bars } },
   }
