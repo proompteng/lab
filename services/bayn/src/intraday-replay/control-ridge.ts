@@ -129,7 +129,7 @@ export const prepareBoundRidge = (
       context.source.transport !== 'original-capture' ||
       context.source.deliveryModel.schemaVersion !== 'bayn.original-capture-arrivals.v1' ||
       (yield* canonicalHashV1Result(context.source)) !== input.evaluationSourceManifestHash ||
-      context.protocol.lookbackMinutes !== 30 ||
+      context.protocol.lookbackMinutes.equity !== 30 ||
       context.protocol.decisionDelaySeconds !== 2 ||
       'SPY' !== sixBarResearchDefinition.benchmarkSymbol ||
       !Number.isSafeInteger(context.pollIntervalMs) ||

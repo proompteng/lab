@@ -17,8 +17,11 @@ within the existing freshness limit. Bar and feature topics retain the full look
 retains it because that topic carries historical bars alongside ticks. Explicit historical diagnostics retain all
 requested channels from their requested start. Every required partition must reach its frozen bootstrap end offset,
 and the five-minute deadline, source verification, calendar and quote-freshness checks remain enforced.
-The current strategy uses at most 30 minutes of context and requires the latest completed minute, a matching native
-feature and fresh quotes. It has no 30-bar or contiguous-history admission gate. Equities can first evaluate one
+The current strategy uses at most 30 minutes of equity context and 120 minutes of crypto context. Bootstrap seeks
+each source independently and the crypto projection retains 121 distinct bar minutes. The latest completed minute,
+a matching native feature and fresh quotes remain required. Crypto rolling indicators keep their 30-minute window
+and verify against that exact raw-bar subset; the additional chart bars retain their own source and arrival evidence. Crypto numerical window summaries describe
+all chart bars, while the volume ratio compares only the final fifteen minutes with the preceding fifteen. It has no 30-bar or contiguous-history admission gate. Equities can first evaluate one
 minute and two seconds after the broker open; crypto uses its current completed history continuously. Missing older
 minutes remain visible gaps. Historical backfills keep their real ingestion and replacement-consumer receipt times.
 Premarket, prior-session, non-final, future and fabricated bars cannot substitute for current session evidence.
