@@ -10,6 +10,7 @@ import { incorporateMarketRecord } from '../market-data/streaming/projection'
 import { persistIntradayRecordRows, verifyIntradaySnapshotRequest } from '../market-data/intraday/verification'
 import { makeJevEntryQuery } from './observation-query'
 import { decodeJevProtocol, defaultJevProtocolDocument } from './protocol'
+import { jevSignalFor } from './trading-signals'
 
 test('crypto sees two hours of completed history while equity retains thirty minutes', () => {
   const equity = streamingFixture().query
@@ -97,7 +98,7 @@ test('all 120 crypto minutes survive projection and replay without changing the 
     const position = positions.find((entry) => entry.topic === record.topic && entry.partition === record.partition)
     if (position === undefined) throw new Error('Missing source partition')
     // Backfill arrives after the current cut. Its event and publication timestamps remain historical.
-    for (let minutes = 121; minutes >= 31; minutes--) {
+    for (let minutes = 121; minutes >= 62; minutes--) {
       const at = new Date(end - minutes * 60_000).toISOString()
       projection = incorporateMarketRecord(
         projection,
@@ -109,7 +110,7 @@ test('all 120 crypto minutes survive projection and replay without changing the 
             eventTs: at,
             ingestTs: new Date(Date.parse(at) + 61_000).toISOString(),
             seq: 10_000 + minutes,
-            payload: { ...payload, t: at },
+            payload: { ...payload, t: at, o: 80, h: 120, l: 70, c: 90, v: 10 },
           }),
         },
         source,
@@ -127,6 +128,13 @@ test('all 120 crypto minutes survive projection and replay without changing the 
   const bars = snapshot.bars.filter((bar) => bar.symbol === 'BTC/USD')
   expect(bars).toHaveLength(120)
   expect(Date.parse(bars[0]?.eventAt ?? '')).toBe(end - 120 * 60_000)
+  const signal = Result.getOrThrow(jevSignalFor(snapshot, 'BTC/USD'))
+  expect(signal.state.priceWindow).toMatchObject({ referencePrice: 80, rangeHigh: 120, rangeLow: 70 })
+  expect(signal.state.priceWindow.totalVolume).toBeCloseTo(590.000000061, 9)
+  expect(signal.state.recent15mVolumeToPrior15m).toBeCloseTo(1, 9)
+  expect(signal.state.technicalIndicators).toEqual(
+    Result.getOrThrow(jevSignalFor(fixture.snapshot, 'BTC/USD')).state.technicalIndicators,
+  )
   expect(snapshot.manifest.streaming.features).toEqual(fixture.snapshot.manifest.streaming.features)
   const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
   expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows)).manifest.snapshotId).toBe(
