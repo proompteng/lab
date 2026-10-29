@@ -12,6 +12,10 @@ the original submission and inference deadlines.
 Candidate evidence reads extract identity and eligibility metadata once per indexed cycle/time source before matching
 requests. They fetch each matched full observation once and verify its content hash, retaining every generation,
 snapshot, symbol, timestamp and exclusion check within the original inference window.
+Complete cohort reads yield between candidates so queued PostgreSQL responses can be serviced during source reproduction.
+The receipt reproduces its full handoff once; the independent handoff row must match that verified copy exactly.
+Incomplete and failed receipts still require independent handoff reproduction. Socket and inference deadlines remain
+unchanged.
 
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
@@ -881,6 +885,13 @@ canonical content hash is verified once per read, with exact cycle, generation, 
 checked for every request. A batch with resolved candidate evidence uses three queries including its plan/result
 read, independent of candidate count. Single-candidate evidence reads use the same verifier. Missing or corrupt
 evidence and claims for sealed unattempted candidates still fail verification; validation is not cached across reads.
+
+Current chart question preparation retains at most 64 successful canonical request bodies. Its key hashes the
+complete chart, protocol, funding, question policy and selected stage, including actual source prices and image bytes.
+Identical evidence reuses deterministic funding geometry while every caller receives a newly decoded request.
+Changed quotes, fees, capital, source content or stage require preparation again. Provider responses, dispatch claims,
+durable evidence membership, current authority and the original ten-second inference deadline remain independently
+verified; a prepared request cannot authorize an order.
 
 The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, after binding
 or a cold durable read. Every reread still queries PostgreSQL and requires full JSONB equality with that retained

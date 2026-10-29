@@ -72,6 +72,23 @@ const responseFor = (request: DecisionsRequest) => ({
 })
 
 describe('source-bound chart questions', () => {
+  test('reuses preparation work for identical source content', () => {
+    const native = Result.getOrThrow(makeNativeChartEvidence({ ...source, windowEndAt: '2031-01-01T00:00:00.000Z' }))
+    let barReads = 0
+    const chart = new Proxy(native, {
+      get(target, property, receiver) {
+        if (property === 'bars') barReads++
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const first = Result.getOrThrow(prepareFixtureChart(chart))
+    const initialReads = barReads
+    barReads = 0
+    const second = Result.getOrThrow(prepareFixtureChart(chart))
+    expect(second).toEqual(first)
+    expect(barReads).toBeLessThan(initialReads)
+  })
+
   test('reuses deterministic request bytes without sharing mutable results or trusting a claimed chart hash', () => {
     const chart = Result.getOrThrow(makeNativeChartEvidence(source))
     const first = Result.getOrThrow(prepareFixtureChart(chart))
