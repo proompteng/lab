@@ -2,16 +2,18 @@
 
 ## Market-specific chart history
 
-Protocol v30 separates chart context: equities retain 30 minutes; crypto uses 120 minutes. Kafka seeks each market's
+Protocol v31 separates chart context: equities retain 30 minutes; crypto uses 120 minutes. Kafka seeks each market's
 history independently and retains 121 distinct crypto bar minutes. Native rolling indicators still verify their
 original 30-minute raw-bar subset. Longer charts keep raw source and arrival evidence; missing minutes remain gaps.
 The holding limit remains fifteen minutes, with unchanged quote freshness, inference validity, fee funding and risk.
-Migration 161 requires flat, settled, exactly reconciled native OBSERVE recovery and preserves financial history.
+Migration 162 requires flat, settled, exactly reconciled native OBSERVE recovery and preserves financial history.
 The source cutover removes the old sealed mandate. The subsequent same-account PAPER mandate must bind the verified
-immutable v30 image before natural funded entries and reconciled round trips can be accepted.
+immutable v31 image before natural funded entries and reconciled round trips can be accepted.
 
 Crypto candidates require a fresh two-sided quote and the latest completed bar. A trade print is optional context;
-equities retain trade confirmation. Both markets cap buys at the original inference ask rounded to a broker tick.
+equity candidates retain trade confirmation. SPY is benchmark context: its real trade must be inside the observation
+lookback, while its executable quote must remain at most ten seconds old. An older contextual print cannot veto
+every equity before inference. Both markets cap buys at the original inference ask rounded to a broker tick.
 Equities retain DAY limits and crypto retains IOC limits. Model judgments, fee-inclusive funding, quote freshness,
 inference deadlines, stops and financial limits remain enforced. Broker credentials, capital and loss history persist.
 

@@ -34,7 +34,7 @@ import { strictParseOptions } from '../schemas'
 import { replayQuoteRejection, ReplayQuoteRejection } from './broker-execution-evidence'
 
 export const sixBarResearchDefinition = {
-  schemaVersion: 'bayn.six-bar-research-definition.v1',
+  schemaVersion: 'bayn.six-bar-research-definition.v2',
   benchmarkSymbol: 'SPY',
   completedBarsPerSymbol: 6,
   minuteMs: 60_000,
@@ -45,7 +45,7 @@ export const sixBarResearchDefinition = {
   barPublicationPolicy: BarPublicationPolicy.ObservedHistory,
   candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   quotePolicy: 'Both symbols require positive displayed sizes and spread at most five basis points.',
-  benchmarkTradePolicy: 'Post-window trade with observation age between zero and ten seconds.',
+  benchmarkTradePolicy: 'Real trade from the observation lookback; executable pricing uses a fresh quote.',
   features: [
     'candidate-simple-1m-close-return',
     'candidate-minus-SPY-simple-5m-close-return',
@@ -70,7 +70,6 @@ export enum SixBarUnavailableReason {
   Quote = 'quote-unavailable',
   Trade = 'trade-unavailable',
   Freshness = 'input-freshness',
-  BenchmarkTrade = 'benchmark-trade-stale',
 }
 
 export type SixBarFeatureValues = readonly [number, number, number, number, number, number, number]
@@ -282,16 +281,10 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
           return yield* Result.fail(fail(`Invalid quote for ${input.symbol}: ${quoteReason}`))
         recordUnavailable(SixBarUnavailableReason.Quote, quoteReason, input.symbol)
       }
-      if (input.trade === undefined)
-        recordUnavailable(SixBarUnavailableReason.Trade, 'A real observed trade is required', input.symbol)
-      if (
-        input.symbol === sixBarResearchDefinition.benchmarkSymbol &&
-        input.trade !== undefined &&
-        BigInt(observedAtMs) * 1_000_000n - intradayInstantNanos(input.trade.value.eventAt) > 10_000_000_000n
-      )
+      if (input.trade === undefined || intradayInstantNanos(input.trade.value.eventAt) < start)
         recordUnavailable(
-          SixBarUnavailableReason.BenchmarkTrade,
-          'SPY trade exceeds the ten-second observation-age bound',
+          SixBarUnavailableReason.Trade,
+          'A real observed trade inside the observation lookback is required',
           input.symbol,
         )
     }
@@ -300,7 +293,15 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
       const cause = availability.failure
       if (
         cause.reason === 'not-ready' ||
-        (cause.reason === 'freshness' && cause.ingestionDelayDirection === IntradayIngestionDelayDirection.AboveMaximum)
+        (cause.reason === 'freshness' &&
+          (cause.ingestionDelayDirection === IntradayIngestionDelayDirection.AboveMaximum ||
+            (cause.ingestionDelayDirection === undefined &&
+              inputIssues.some(
+                (issue) =>
+                  issue.status === SixBarResearchStatus.Unavailable &&
+                  issue.reason === SixBarUnavailableReason.Quote &&
+                  issue.symbol === cause.facts?.['symbol'],
+              ))))
       )
         recordUnavailable(SixBarUnavailableReason.Freshness, cause.message)
       else return yield* Result.fail(cause)
