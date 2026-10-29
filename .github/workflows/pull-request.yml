@@ -315,6 +315,9 @@ jobs:
               nix run .#lint-argo-workflows
               ;;
             kubeconform)
+              if jq -e 'any(.[]; startswith("argocd/applications/bayn/") or . == "scripts/test-bayn-secret-file-mode.sh" or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c bash scripts/test-bayn-secret-file-mode.sh
+              fi
               if jq -e 'any(.[]; startswith("argocd/prepared/") or startswith("argocd/applications/ofz/") or startswith("argocd/applications/keycloak/") or startswith("argocd/applications/cloudflare/") or startswith("argocd/applications/tengri/") or startswith("argocd/applications/proompteng/") or . == "services/ofz/test-ha-manifests.sh" or . == "services/ofz/tests/ha_manifests.py" or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
                 nix develop -c bash services/ofz/test-ha-manifests.sh
               fi
