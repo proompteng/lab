@@ -5,7 +5,7 @@ import type { NativeChartEvidence } from './chart-evidence'
 import type { ChartAssessmentsMaterial } from './chart-questions'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
 import { EntrySetup, type EntryProposal } from './entry-proposals'
-import { jevInstructions } from './instructions'
+import { retainedEntryInstructions as jevInstructions } from './retained-entry-instructions'
 
 export const retainedFundedEntryJudgmentThresholds = { affirmativeAtLeast: 0.7, negativeAtMost: 0.3 } as const
 

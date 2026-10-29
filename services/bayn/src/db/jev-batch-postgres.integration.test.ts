@@ -2241,10 +2241,10 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                 Effect.gen(function* () {
                   calls += 1
                   if (calls === requested.length) yield* Deferred.succeed(allStarted, undefined)
-                  const { candidate } = yield* Schema.decodeUnknownEffect(
-                    Schema.Struct({ candidate: Schema.Struct({ symbol: Schema.String }) }),
-                  )(Result.getOrThrow(prepareJevRequest(request)).request.state).pipe(Effect.orDie)
-                  if (candidate.symbol === first.symbol)
+                  const { symbol } = yield* Schema.decodeUnknownEffect(Schema.Struct({ symbol: Schema.String }))(
+                    Result.getOrThrow(prepareJevRequest(request)).request.state,
+                  ).pipe(Effect.orDie)
+                  if (symbol === first.symbol)
                     return yield* Effect.never.pipe(
                       Effect.ensuring(
                         Effect.sync(() => {
