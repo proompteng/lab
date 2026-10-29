@@ -1,5 +1,28 @@
 # Tengri operations
 
+## Latency diagnosis
+
+Scrape the controller Pods individually. A Service-backed target combines independent process counters and cannot
+provide a valid rate or distribution. `/metrics` remains available when dependencies fail; inventory is the last
+successful readiness observation, not current authority. Check `tengri_inventory_last_success_timestamp_seconds`
+and `tengri_inventory_age_seconds` before using guest or ticket gauges. A zero last-success value means no inventory
+has been collected. `tengri_readiness_failures_total` distinguishes authorization, database, and Kubernetes errors
+from timeouts without exposing identities.
+
+Use the boot/resume histograms for CR-create/persisted-intent to Ready latency, not authenticated browser latency.
+The one-second p95 alerts require twenty successful observations in fifteen minutes; failures remain visible in
+readiness/guest counters and traces rather than being reported as successful startup samples. The existing native
+KVM test excludes BFF admission and six-guest contention. Full product qualification must measure authenticated
+creation/resume through a file read, PTY round trip, and initialized Codex response, with failure counts and the
+same resource profile on both sides of any comparison.
+
+For slow run status, compare `tengri_run_status_seconds` and `tengri_active_runs_seconds` with the BFF root trace.
+For Ofz, inspect `db.audit.batch` queue-wait/batch-size fields and its `db.audit.pool.acquire`, `db.audit.begin`, and
+`db.audit.commit` children. PostgreSQL 18 exposes WAL write/fsync timing in `pg_stat_io` when `track_wal_io_timing`
+is enabled. Compare counter deltas over the same window and inspect synchronous standby lag; cumulative means do
+not establish a current p95. Do not remove audit commits, fresh policy checks, or synchronous replication to improve
+latency. Keep storage migrations and shared-node changes separate from this application rollout.
+
 Tengri uses six prepared Firecracker slots under the normal OCI runtime. Each has a host supervisor, unprivileged VMM
 runner, Pod-local TAP, private snapshot/root disks, and a retained 32 GiB Ceph raw-block home. Source behavior is defined
 by [the service README](../../services/tengri/README.md) and [slot code](../../services/tengri/src/slot/).

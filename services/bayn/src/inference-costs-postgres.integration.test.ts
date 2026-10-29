@@ -10,12 +10,41 @@ import { baynTestPostgresUrl } from './test-environment.test-support'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 import { forwardPerformanceSnapshot } from './forward-performance/postgres/snapshot'
 import { expenseRateFixture, expenseSourceFixture } from './inference-expense.test-support'
-import { makeInferenceExpenseQuote } from './inference-expense'
+import { makeInferenceExpenseQuote, type InferenceExpenseSource } from './inference-expense'
+import { canonicalHashV1Result } from './hash'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_inference_test'
 const ownedSchema = 'bayn_inference_cost_test'
 const request = evaluationRequestFixture()
+const otherRequest = expenseSourceFixture({ key: 'e' })
+const jsonText = (value: unknown) =>
+  JSON.stringify(value, (_, item: unknown) => (typeof item === 'bigint' ? item.toString() : item))
+const retainedSource = (index: number, repeats: number) =>
+  expenseSourceFixture({
+    authorityGenerationHash: Result.getOrThrow(canonicalHashV1Result({ index })),
+    state: `retained source evidence ${index} `.repeat(repeats),
+  })
+const insertSources = (sql: PgClient.PgClient, sources: readonly InferenceExpenseSource[], completed = false) =>
+  Effect.gen(function* () {
+    const requests = sources.map((source) => ({
+      request_id: source.requestId,
+      cycle_id: source.cycleId,
+      authority_generation_hash: source.authorityGenerationHash,
+      payload: source.request,
+    }))
+    yield* sql`INSERT INTO jev_evaluation_requests
+      SELECT * FROM jsonb_to_recordset(${sql.json(requests)})
+      AS row(request_id text,cycle_id text,authority_generation_hash text,payload jsonb)`
+    if (completed) {
+      yield* sql`INSERT INTO jev_evaluation_receipts
+        SELECT * FROM jsonb_to_recordset(${sql.json(sources.map((source) => ({ request_id: source.requestId, payload: source.receipt })))})
+        AS row(request_id text,payload jsonb)`
+      yield* sql`INSERT INTO jev_evaluation_resolutions
+        SELECT * FROM jsonb_to_recordset(${sql.json(sources.map((source) => ({ request_id: source.requestId, payload: source.resolution })))})
+        AS row(request_id text,payload jsonb)`
+    }
+  })
 
 describePostgres('read-only inference cost PostgreSQL scope', () => {
   let runtime: ManagedRuntime.ManagedRuntime<PgClient.PgClient, unknown>
@@ -35,7 +64,8 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
           cycle_id text PRIMARY KEY, account_id text NOT NULL, execution_session_date date NOT NULL, state text NOT NULL
         )`
         yield* sql`CREATE TABLE IF NOT EXISTS jev_evaluation_requests (
-          request_id text PRIMARY KEY, cycle_id text NOT NULL, authority_generation_hash text NOT NULL, payload jsonb NOT NULL
+          request_id text PRIMARY KEY, cycle_id text NOT NULL, authority_generation_hash text NOT NULL, payload jsonb NOT NULL,
+          schema_version text GENERATED ALWAYS AS (payload->>'schemaVersion') STORED
         )`
         yield* sql`CREATE TABLE IF NOT EXISTS inference_expense_quotes (
           quote_hash text PRIMARY KEY, account_id text NOT NULL, session_date date NOT NULL,
@@ -44,6 +74,11 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
         yield* sql`CREATE TABLE IF NOT EXISTS jev_evaluation_receipts (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
         yield* sql`CREATE TABLE IF NOT EXISTS jev_evaluation_resolutions (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
         yield* sql`CREATE TABLE IF NOT EXISTS jev_inference_handoffs (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_chart_dispatch_claims (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_chart_terminal_receipts (request_id text PRIMARY KEY, payload jsonb NOT NULL)`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_staged_dispatch_claims (request_id text NOT NULL, stage text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_staged_terminal_receipts (request_id text NOT NULL, stage text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
+        yield* sql`CREATE TABLE IF NOT EXISTS jev_staged_skip_receipts (request_id text NOT NULL, stage text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(request_id,stage))`
       }),
     )
   })
@@ -51,7 +86,7 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        yield* sql`TRUNCATE inference_expense_quotes, autonomous_cycles, jev_evaluation_requests, jev_evaluation_receipts, jev_evaluation_resolutions`
+        yield* sql`TRUNCATE inference_expense_quotes, autonomous_cycles, jev_evaluation_requests, jev_evaluation_receipts, jev_evaluation_resolutions, jev_staged_dispatch_claims, jev_staged_terminal_receipts, jev_staged_skip_receipts`
         yield* sql`INSERT INTO autonomous_cycles VALUES
           (${'a'.repeat(64)}, 'fixture-account', '1970-01-01', 'BLOCKED'),
           (${'b'.repeat(64)}, 'other-account', '1970-01-01', 'COMPLETED'),
@@ -61,7 +96,7 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
           (${request.requestId}, ${request.cycleId}, ${request.authorityGenerationHash}, ${sql.json(request)}),
           (${'b'.repeat(64)}, ${'b'.repeat(64)}, ${'d'.repeat(64)}, '{}'::jsonb),
           (${'c'.repeat(64)}, ${'c'.repeat(64)}, ${'d'.repeat(64)}, '{}'::jsonb),
-          (${'e'.repeat(64)}, ${'e'.repeat(64)}, ${'d'.repeat(64)}, '{}'::jsonb)`
+          (${otherRequest.requestId}, ${otherRequest.cycleId}, ${otherRequest.authorityGenerationHash}, ${sql.json(otherRequest.request)})`
       }),
     )
   })
@@ -84,21 +119,19 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
       }),
     )
     expect(result.evidence.requests.map((row) => row.requestId).sort()).toEqual(
-      [request.requestId, 'e'.repeat(64)].sort(),
+      [request.requestId, otherRequest.requestId].sort(),
     )
     expect(result.evidence.requests.every((row) => row.receipt === null && row.resolution === null)).toBe(true)
-    expect(JSON.stringify(result)).not.toContain('fixture-account')
+    expect(jsonText(result)).not.toContain('fixture-account')
   })
 
   test('retains and orders a wide claimed session without spilling its evidence payloads to disk', async () => {
+    const sources = Array.from({ length: 512 }, (_, index) => retainedSource(index, 48))
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`DELETE FROM jev_evaluation_requests`
-        yield* sql`INSERT INTO jev_evaluation_requests
-          SELECT md5(n::text) || md5(n::text), ${request.cycleId}, ${request.authorityGenerationHash},
-            jsonb_build_object('retained',repeat(md5(n::text),32))
-          FROM generate_series(512,1,-1) AS n`
+        yield* insertSources(sql, sources)
         yield* sql`SET work_mem='64kB'`
         yield* sql`SET temp_file_limit='0'`
         return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
@@ -108,28 +141,29 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     )
     expect(result.evidence.requests).toHaveLength(512)
     expect(result.evidence.requests.map((row) => row.requestId)).toEqual(
-      result.evidence.requests.map((row) => row.requestId).toSorted(),
+      sources.map((source) => source.requestId).toSorted(),
     )
     expect(new Set(result.evidence.requests.map((row) => row.requestId)).size).toBe(512)
     expect(result.evidence.requests.every((row) => row.receipt === null && row.resolution === null)).toBe(true)
-    for (const row of result.evidence.requests) {
-      expect(row.request).toEqual({ retained: row.requestId.slice(0, 32).repeat(32) })
-    }
+    const originals = new Map(sources.map((source) => [source.requestId, source.request]))
+    for (const row of result.evidence.requests) expect(row.request).toEqual(originals.get(row.requestId))
   })
 
   test('an unreceipted claim yields incomplete costs, not free inference', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        yield* sql`DELETE FROM jev_evaluation_requests WHERE request_id = ${'e'.repeat(64)}`
+        yield* sql`DELETE FROM jev_evaluation_requests WHERE request_id = ${otherRequest.requestId}`
         return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
       }),
     )
     const report = Result.getOrThrow(
       makeInferenceCostReport(result.evidence, { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] }),
     )
-    expect(report.unknownUsageCount).toBe(2)
+    expect(request.schemaVersion).toBe('bayn.jev-evaluation-request.v3')
+    expect(report.unknownUsageCount).toBe(3)
     expect(report.requests.flatMap((line) => ('stage' in line ? [line.stage] : [])).sort()).toEqual([
+      InferenceStage.BaseStart,
       InferenceStage.Chart,
       InferenceStage.Jev,
     ])
@@ -137,33 +171,26 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
   })
 
   test('retains a session larger than one PostgreSQL protocol message', async () => {
+    const sources = Array.from({ length: 512 }, (_, index) => retainedSource(index, 1_600))
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`DELETE FROM jev_evaluation_requests`
-        yield* sql`INSERT INTO jev_evaluation_requests
-          SELECT md5(n::text) || md5(n::text), ${request.cycleId}, ${request.authorityGenerationHash},
-            jsonb_build_object('retained',repeat(md5(n::text),512))
-          FROM generate_series(512,1,-1) AS n`
-        yield* sql`INSERT INTO jev_evaluation_receipts
-          SELECT request_id, jsonb_build_object('retainedReceipt',repeat(left(request_id,32),256))
-          FROM jev_evaluation_requests`
-        yield* sql`INSERT INTO jev_evaluation_resolutions
-          SELECT request_id, jsonb_build_object('retainedResolution',repeat(left(request_id,32),384))
-          FROM jev_evaluation_requests`
+        yield* insertSources(sql, sources, true)
         return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
       }),
     )
     expect(result.evidence.requests).toHaveLength(512)
     expect(result.evidence.requests.map((row) => row.requestId)).toEqual(
-      result.evidence.requests.map((row) => row.requestId).toSorted(),
+      sources.map((source) => source.requestId).toSorted(),
     )
-    expect(new TextEncoder().encode(JSON.stringify(result.evidence)).byteLength).toBeGreaterThan(16_777_216)
+    expect(new TextEncoder().encode(jsonText(result.evidence)).byteLength).toBeGreaterThan(16_777_216)
+    const originals = new Map(sources.map((source) => [source.requestId, source]))
     for (const row of result.evidence.requests) {
-      const value = row.requestId.slice(0, 32)
-      expect(row.request).toEqual({ retained: value.repeat(512) })
-      expect(row.receipt).toEqual({ retainedReceipt: value.repeat(256) })
-      expect(row.resolution).toEqual({ retainedResolution: value.repeat(384) })
+      const source = originals.get(row.requestId)
+      expect(row.request).toEqual(source?.request)
+      expect(row.receipt).toEqual(source?.receipt)
+      expect(row.resolution).toEqual(source?.resolution)
     }
   }, 30_000)
 
@@ -190,7 +217,7 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
       const result = await runtime.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
-          yield* sql`DELETE FROM jev_evaluation_requests WHERE request_id = ${'e'.repeat(64)}`
+          yield* sql`DELETE FROM jev_evaluation_requests WHERE request_id = ${otherRequest.requestId}`
           return yield* forwardPerformanceSnapshot(sql).withTransaction(
             Effect.gen(function* () {
               const before = yield* sql<{ count: number; snapshot_at: string }>`SELECT count(*)::integer AS count,
@@ -250,8 +277,8 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
         const sql = yield* PgClient.PgClient
         yield* sql`DELETE FROM jev_evaluation_requests`
         yield* sql`INSERT INTO jev_evaluation_requests
-        SELECT md5(n::text) || md5(n::text), ${request.cycleId}, ${request.authorityGenerationHash}, '{}'::jsonb
-        FROM generate_series(1, 10001) AS n`
+          SELECT md5(n::text) || md5(n::text), ${request.cycleId}, ${request.authorityGenerationHash}, '{}'::jsonb
+          FROM generate_series(1, 10001) AS n`
         return yield* Effect.result(readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01'))
       }),
     )

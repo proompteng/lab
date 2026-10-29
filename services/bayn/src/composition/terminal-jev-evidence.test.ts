@@ -33,6 +33,7 @@ const batchStore = (overrides: Partial<typeof JevBatchStore.Service> = {}): type
   read: () => Effect.succeed({ plan: evidence.batchPlan, result: null }),
   pending: () => Effect.succeed([evidence.batchPlan.batchId]),
   begin: () => Effect.die('cleanup cannot begin a batch'),
+  complete: () => Effect.succeed({ plan: evidence.batchPlan, result: evidence.batchResult }),
   finish: () => Effect.succeed({ plan: evidence.batchPlan, result: evidence.batchResult }),
   ...overrides,
 })
@@ -54,6 +55,7 @@ describe('future terminal Jev evidence closure', () => {
           return [evidence.batchPlan.batchId]
         }),
       begin: () => Effect.die('terminal cleanup cannot begin a batch'),
+      complete: () => Effect.die('Recovery fixture cannot complete new inference'),
       finish: (id) =>
         Effect.sync(() => {
           calls.push(`finish:${id}`)

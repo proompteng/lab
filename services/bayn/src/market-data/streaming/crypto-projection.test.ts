@@ -27,7 +27,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
 test('native candidate and benchmark features reproduce a Sunday snapshot crossing midnight through the shared projection', () => {
   const { snapshot, rows, fixtures, cut } = cryptoMarketFixture()
   expect([...cut.projection.rejections.values()].flat()).toEqual([])
-  expect(snapshot.bars).toHaveLength(60)
+  expect(snapshot.bars).toHaveLength(122)
   expect(snapshot.bars[0]?.volume).toBe(0.000000001)
   expect(snapshot.manifest.streaming.features.map((receipt) => receipt.value.featureId).sort()).toEqual(
     fixtures
@@ -44,7 +44,7 @@ test('crypto requests keep executable quote signals separate from completed-bar 
   const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'BTC/USD')).body).numericalState
   expect(state.relativeSignals.pricingBasis).toBe('COMPLETED_BAR_CLOSE')
   expect(state.relativeSignals.comparisonAt).toBe(snapshot.manifest.rangeEndAt)
-  expect(state.relativeSignals.lookbackMinutes).toBe(30)
+  expect(state.relativeSignals.lookbackMinutes).toBe(61)
   expect(state.relativeSignals).not.toHaveProperty('spreadBps')
   expect(state.candidate.currentPriceSignals.lookbackReturnBps).toBeGreaterThan(0)
   expect(state.candidate.currentPriceSignals.spreadBps).toBeGreaterThan(0)
@@ -140,7 +140,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     })
   })
 
-  test(`${symbol} requires candidate quotes and actual window trades with independent completed benchmark bars`, () => {
+  test(`${symbol} requires candidate quotes with optional actual trade context and independent benchmark bars`, () => {
     const benchmark = symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD'
     expect(() => cryptoMarketFixture(symbol, { missingTradeSymbols: [benchmark] })).not.toThrow()
     const { snapshot, rows } = cryptoMarketFixture(symbol, { tradeLagMs: 60_000 })
@@ -152,7 +152,10 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     expect(state.benchmark).not.toHaveProperty('latestTrade')
     expect(state.benchmark).not.toHaveProperty('quote')
     expect(reproduceStreamingSnapshot(snapshot.manifest, rows)).toMatchObject({ _tag: 'Success' })
-    expect(() => cryptoMarketFixture(symbol, { tradeLagMs: 31 * 60_000 })).toThrow()
+    const absent = cryptoMarketFixture(symbol, { tradeLagMs: 121 * 60_000 })
+    expect(
+      JSON.parse(Result.getOrThrow(jevRequestForSnapshot(absent.snapshot, symbol)).body).numericalState,
+    ).toHaveProperty('candidate.latestTrade', null)
     expect(() => cryptoMarketFixture(symbol, { quoteLagMs: 10_001 })).toThrow()
     expect(() => cryptoMarketFixture(symbol, { tradeLagMs: -10_000 })).toThrow()
   })

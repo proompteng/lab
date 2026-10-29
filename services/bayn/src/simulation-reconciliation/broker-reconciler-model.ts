@@ -65,7 +65,11 @@ export type PaginationFailureReason =
   | 'FillCursorDidNotAdvance'
   | 'InvalidFeeHistory'
 
-export type SnapshotFailureReason = 'HistoryChanged' | 'FillActivitiesPending' | 'AccountBaselineMissing'
+export type SnapshotFailureReason =
+  | 'HistoryChanged'
+  | 'FillActivitiesPending'
+  | 'AccountBaselineMissing'
+  | 'TradingDayChanged'
 export type HistorySnapshotSide = 'before' | 'after'
 export type HistoryHashFailure =
   | { readonly _tag: 'HistoryMaterializationFailed'; readonly cause: unknown }

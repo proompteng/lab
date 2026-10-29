@@ -16,7 +16,7 @@ import { JevObservationSchema } from './observation-contract'
 import { JevObservationCheck, JevObservationField } from './observation-diagnostics'
 import { jevPortfolioCandidates, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
-import { jevHistoryStartMs } from './observation-query'
+import { jevHistoryStartMs, jevSignalWindowEndMs } from './observation-query'
 
 const invalidObservation = (
   observationCheck: JevObservationCheck,
@@ -58,7 +58,7 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
       const { protocol, portfolio } = observation
       const manifest = snapshot.manifest
       const observed = Date.parse(observation.observedAt)
-      const end = Math.floor((observed - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
+      const end = jevSignalWindowEndMs(observed, protocol)
       const session = isContinuousMarket(manifest.calendar)
         ? undefined
         : exchangeSessions(manifest.calendar).find((entry) => entry.date === manifest.sessionDate)
@@ -90,7 +90,12 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
       if (
         Date.parse(manifest.rangeEndAt) !== end ||
         Date.parse(manifest.rangeStartAt) !==
-          jevHistoryStartMs(manifest.calendar, manifest.sessionDate, end, protocol.lookbackMinutes)
+          jevHistoryStartMs(
+            manifest.calendar,
+            manifest.sessionDate,
+            end,
+            isContinuousMarket(manifest.calendar) ? protocol.lookbackMinutes.crypto : protocol.lookbackMinutes.equity,
+          )
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Window))
       if (observed - end - protocol.decisionDelaySeconds * 1000 > protocol.maximumDecisionLagMs)

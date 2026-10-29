@@ -1,6 +1,6 @@
 import type { EntryInferenceInput } from './entry-inference-input'
 import { makeNativeChartEvidence } from './chart-evidence'
-import { makeChartDecisionsRequest } from './chart-questions'
+import { makeInitialChartStageRequest, stagedChartQuestionPolicy } from './staged-chart-questions'
 import { entryJudgmentPolicy } from './entry-questions'
 import { Result, Schema } from 'effect'
 import { jevBenchmarkSymbol } from './markets'
@@ -13,7 +13,7 @@ import {
   JevEvaluationReceiptSchema,
   JevEvaluationRequestSchema,
   JevEvidenceError,
-  jevInferenceAvailableAt,
+  entryInferenceAvailableAt,
 } from './evidence'
 import { decodeJevResolution, JevResolutionSchema, JevResolutionStatus } from './resolution'
 
@@ -40,6 +40,7 @@ export enum JevEntryExclusion {
 
 export enum JevBatchPlanVersion {
   V7 = 'bayn.jev-batch-plan.v7',
+  Ablation = 'bayn.entry-ablation-batch.v1',
 }
 
 export const JevCandidateExclusionSchema = Schema.Struct({
@@ -125,6 +126,10 @@ export const makeJevBatchPlan = (input: unknown) =>
       }
       const request = yield* decodeJevEvaluationRequest(candidate.request)
       if (
+        request.request.schemaVersion !==
+          (material.schemaVersion === JevBatchPlanVersion.Ablation
+            ? 'bayn.entry-ablation-input.v1'
+            : 'bayn.entry-inference-input.v6') ||
         request.symbol !== candidate.symbol ||
         request.cycleId !== material.cycleId ||
         request.authorityGenerationHash !== material.authorityGenerationHash ||
@@ -201,9 +206,16 @@ export const decodeJevBatchResult = (plan: JevBatchPlan, input: unknown) =>
     return result
   })
 
-export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult: JevBatchResult, now: number) =>
+export const usableEntryBatchInferences = (
+  sourcePlan: JevBatchPlan,
+  sourceResult: JevBatchResult,
+  now: number,
+  expectedVersion: JevBatchPlanVersion,
+) =>
   Result.gen(function* () {
     const plan = yield* decodeJevBatchPlan(sourcePlan)
+    if (plan.schemaVersion !== expectedVersion)
+      return yield* invalid('Entry batch belongs to a different selection policy')
     const result = yield* decodeJevBatchResult(plan, sourceResult)
     if (!Number.isSafeInteger(now) || now < Date.parse(result.completedAt) || now >= Date.parse(plan.expiresAt))
       return yield* invalid('Jev batch decision is outside the complete batch validity window')
@@ -218,7 +230,14 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
         candidate.receipt === null
       )
         return yield* invalid('Every requested Jev candidate must have a recorded result before selection')
-      const inference = yield* jevInferenceAvailableAt(planned.request, candidate.receipt, now)
+      const inference = yield* entryInferenceAvailableAt(
+        planned.request,
+        candidate.receipt,
+        now,
+        expectedVersion === JevBatchPlanVersion.Ablation
+          ? 'bayn.entry-ablation-input.v1'
+          : 'bayn.entry-inference-input.v6',
+      )
       inferences.push({ symbol: candidate.symbol, requestId: candidate.requestId, inference })
     }
     if (
@@ -241,11 +260,22 @@ export const jevBatchQuestionSetHash = (
     for (const candidate of candidates) {
       if (candidate.request === undefined) continue
       const chart = yield* makeNativeChartEvidence(candidate.request.request.chartSource)
-      const visual = yield* makeChartDecisionsRequest(chart)
+      const visual = yield* makeInitialChartStageRequest({
+        chart,
+        protocol: candidate.request.request.protocol,
+        funding: candidate.request.request.funding,
+      })
       specifications.push({
         symbol: candidate.symbol,
         visual: { model: visual.request.model, questions: visual.request.questions },
-        jev: entryJudgmentPolicy,
+        staged: {
+          policy: stagedChartQuestionPolicy,
+          inputHash: yield* canonicalHashV1Result(candidate.request.request),
+        },
+        jev:
+          candidate.request.request.schemaVersion === 'bayn.entry-ablation-input.v1'
+            ? { status: 'OMITTED_BY_POLICY', selectionPolicy: candidate.request.request.selectionPolicy }
+            : entryJudgmentPolicy,
       })
     }
     return yield* hash(specifications)
