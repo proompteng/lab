@@ -300,30 +300,22 @@ describe('six-bar research observation', () => {
     ).toMatchObject({ status: 'UNAVAILABLE', reason: SixBarUnavailableReason.Bars })
   })
 
-  test('candidate trade may precede the window end while SPY requires post-window evidence', () => {
+  test('candidate and SPY trades are real window context rather than executable prices', () => {
     const oldCandidateTrade = change(trade('AAPL'), {
       eventAtMs: sixBarOpenMs + 240_000,
       availableAtMs: sixBarOpenMs + 240_000,
     })
     expect(available(oldCandidateTrade).values).toEqual(available().values)
     const oldSpyTrade = change(trade('SPY'), { eventAtMs: sixBarEndMs - 1, availableAtMs: sixBarEndMs - 1 })
-    expect(Result.getOrThrow(observe(oldSpyTrade))).toMatchObject({
-      status: 'UNAVAILABLE',
-      reason: SixBarUnavailableReason.Freshness,
-      message: 'intraday snapshot lacks a post-range trade for every symbol',
-    })
+    expect(available(oldSpyTrade).values).toEqual(available().values)
   })
 
-  test('later observations enforce SPY trade age even with fresh post-window quotes', () => {
+  test('later observations retain real SPY trade context while pricing from fresh quotes', () => {
     const at = sixBarEndMs + 30_000
     const inputs = sixBarFixtureInputs().map((input) =>
       input.channel === 'quotes' ? { ...input, eventAtMs: at, availableAtMs: at } : input,
     )
-    expect(Result.getOrThrow(observe(inputs, at))).toMatchObject({
-      status: 'UNAVAILABLE',
-      reason: SixBarUnavailableReason.BenchmarkTrade,
-      symbol: 'SPY',
-    })
+    expect(available(inputs, at).values.slice(0, 6)).toEqual(available().values.slice(0, 6))
     expect(
       available(
         inputs.map((input) => (trade('SPY')(input) ? { ...input, eventAtMs: at, availableAtMs: at } : input)),
