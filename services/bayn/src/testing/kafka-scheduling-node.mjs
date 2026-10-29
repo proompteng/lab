@@ -183,7 +183,7 @@ const exit = await Effect.runPromiseExit(
   { signal: abort.signal },
 )
 assert.equal(closeCount, 1)
-assert.equal(captureEnd?.status, 'STOPPED')
+assert.equal(captureEnd?.status, 'STOPPED', JSON.stringify(captureEnd))
 assert.equal(captureEnd?.durableConsumerSequence, retained)
 assert.equal(captureEnd?.observedConsumerSequence, retained)
 assert.equal(captureEnd?.lastChunkHash, retainedHash)
