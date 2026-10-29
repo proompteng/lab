@@ -96,7 +96,7 @@ export const streamingFixture = (returns: Readonly<Record<string, number>> = { A
     minimumWatermarkLagMs: 2000,
     symbols: [...protocol.candidateSymbols, 'SPY'].sort(),
     candidateSymbols: protocol.candidateSymbols,
-    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   }
   const raw = makeIntradayMomentumTestSnapshot(protocol, request, returns)
   const { cut, query, snapshot, rows } = streamingFixtureFromRaw(raw, request)

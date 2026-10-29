@@ -43,7 +43,7 @@ export const sixBarResearchDefinition = {
   maximumSpreadBps: 5,
   producerClockSkewAllowanceMs: 0,
   barPublicationPolicy: BarPublicationPolicy.ObservedHistory,
-  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
+  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
   quotePolicy: 'Both symbols require positive displayed sizes and spread at most five basis points.',
   benchmarkTradePolicy: 'Post-window trade with observation age between zero and ten seconds.',
   features: [

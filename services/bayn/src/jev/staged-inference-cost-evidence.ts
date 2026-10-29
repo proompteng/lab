@@ -19,7 +19,7 @@ import {
   CandidateEntryInferenceInputSchema,
   verifyEntryInferenceSource,
 } from './entry-inference-input'
-import { jevProtocolSchemaForQuestionPolicy } from './protocol'
+import { jevProtocolSchemaForQuestionPolicy, RetainedJevProtocolV30Schema } from './protocol'
 import { stagedChartQuestionPolicy } from './staged-chart-questions'
 import {
   retainedFundedEntryJudgmentPolicy,
@@ -37,10 +37,15 @@ const RetainedMarketProtocol = Schema.Union([
   jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v27'),
   jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v28'),
   jevProtocolSchemaForQuestionPolicy(retainedMarketQuestionPolicyHash, 'bayn.jev.protocol.v29'),
+  RetainedJevProtocolV30Schema,
 ])
 const RetainedRequest = Schema.Struct({
   ...JevEvaluationRequestSchema.fields,
   request: Schema.Union([
+    Schema.Struct({
+      ...CandidateEntryInferenceInputSchema.fields,
+      protocol: RetainedJevProtocolV30Schema,
+    }),
     Schema.Struct({
       ...CandidateEntryInferenceInputSchema.fields,
       schemaVersion: Schema.Literal('bayn.entry-inference-input.v5'),
@@ -139,7 +144,8 @@ export const readStagedInferenceCostEvidence = (row: {
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v26' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v27' ||
       identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v28' ||
-      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v29'
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v29' ||
+      identity.request.protocol.schemaVersion === 'bayn.jev.protocol.v30'
     const retainedQuestions =
       identity.request.protocol.entryQuestionPolicyHash === retainedStagedQuestionPolicyHash
         ? makeRetainedFundedEntryJudgmentRequest

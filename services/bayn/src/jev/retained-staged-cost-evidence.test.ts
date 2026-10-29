@@ -27,22 +27,33 @@ const fixture = (
     | 'bayn.jev.protocol.v26'
     | 'bayn.jev.protocol.v27'
     | 'bayn.jev.protocol.v28'
-    | 'bayn.jev.protocol.v29' = 'bayn.jev.protocol.v26',
+    | 'bayn.jev.protocol.v29'
+    | 'bayn.jev.protocol.v30' = 'bayn.jev.protocol.v26',
 ) => {
   const current = entryEvaluationRequestFixture()
+  const baseProtocol = {
+    ...current.request.protocol,
+    entryQuestionPolicyHash: marketQuestions ? retainedMarketQuestionPolicyHash : retainedStagedQuestionPolicyHash,
+  }
+  const protocol =
+    schemaVersion === 'bayn.jev.protocol.v30'
+      ? { ...baseProtocol, schemaVersion, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes }
+      : {
+          ...baseProtocol,
+          schemaVersion,
+          lookbackMinutes: 30 as const,
+          candidateEvidencePolicy:
+            schemaVersion === 'bayn.jev.protocol.v29'
+              ? IntradayCandidateEvidencePolicy.MarketQuotes
+              : IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+        }
   const input = {
     ...current.request,
-    schemaVersion: 'bayn.entry-inference-input.v5' as const,
-    protocol: {
-      ...current.request.protocol,
-      schemaVersion,
-      lookbackMinutes: 30 as const,
-      candidateEvidencePolicy:
-        schemaVersion === 'bayn.jev.protocol.v29'
-          ? IntradayCandidateEvidencePolicy.MarketQuotes
-          : IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
-      entryQuestionPolicyHash: marketQuestions ? retainedMarketQuestionPolicyHash : retainedStagedQuestionPolicyHash,
-    },
+    schemaVersion:
+      schemaVersion === 'bayn.jev.protocol.v30'
+        ? ('bayn.entry-inference-input.v6' as const)
+        : ('bayn.entry-inference-input.v5' as const),
+    protocol,
   }
   const { requestId: _, ...originalRequest } = current
   const requestMaterial = { ...originalRequest, request: input, requestHash: hash(input) }
@@ -131,6 +142,7 @@ test.each([
   'bayn.jev.protocol.v27',
   'bayn.jev.protocol.v28',
   'bayn.jev.protocol.v29',
+  'bayn.jev.protocol.v30',
 ] as const)(
   'the ask-cap migration reads original %s market questions without admitting retired execution',
   (version) => {
