@@ -17,6 +17,10 @@ The receipt reproduces its full handoff once; the independent handoff row must m
 Incomplete and failed receipts still require independent handoff reproduction. Socket and inference deadlines remain
 unchanged.
 
+The latest consumed Jev window uses an index on cycle, portfolio purpose and window end. This bounds the lookup to
+one source row instead of materializing every matching immutable observation. Building the index temporarily delays
+new observation writes; reads and position/accounting writes on their other tables continue.
+
 Initial chart admission uses the request inserted by its own transaction and an empty checkpoint, avoiding four
 reloads per candidate before dispatch. Subsequent transitions acquire the request lock first, then read all three
 checkpoint tables in one statement. This second statement sees a competing transition's committed journal after a
