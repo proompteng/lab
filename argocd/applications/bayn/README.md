@@ -1,6 +1,21 @@
 # Exception tracking
 
-## Focused entry evidence cutover
+## Observed resistance cutover
+
+Protocol v33 separates observed overhead resistance from fee-funded profit objectives. The chart question includes
+all completed highs above the current bid, including closer resistance that cannot cover trading costs. A v32 ETH
+request on October 30 at 06:21 UTC reported resistance presence 0.96 but omitted its anchor question because no
+observed high could fund an exit. Its measured-base target still crossed those highs. Jev's obstruction gate rejected
+the proposal. The new source contract keeps that evidence available; it does not lower the obstruction threshold,
+change prices, infer a supported setup from a source choice, or authorize an unfunded trade.
+
+Migration 165 preserves the flat, settled, fresh exact reconciliation boundary and all financial history. It retires
+v32 execution writes while preserving original chart requests and late cost evidence. The source rollout runs OBSERVE
+with the old sealed mandate removed. A subsequent same-account v33 mandate must bind the verified immutable image
+through the normal Kargo path. Broker identity, capital and loss history, risk limits, fees, deadlines and the
+fifteen-minute hold remain unchanged. Natural crypto and equity round trips remain required deployment proof.
+
+## Historical focused entry evidence cutover
 
 Protocol v32 supplies completed candidate bars and one copy of each funded proposal to Jev. Code derives exact
 structure bounds, completed-close locations, consecutive closes and stop touches. The existing questions and
