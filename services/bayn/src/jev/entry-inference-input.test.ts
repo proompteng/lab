@@ -10,9 +10,9 @@ const bars = [
   { minuteBeforeWindowEnd: 1, open: 100.5, high: 102, low: 100, close: 101, volume: 20 },
 ]
 const input = {
-  schemaVersion: 'bayn.entry-inference-input.v6',
+  schemaVersion: 'bayn.entry-inference-input.v7',
   numericalState: {
-    schemaVersion: 'bayn.jev-entry-state.v22',
+    schemaVersion: 'bayn.jev-entry-state.v23',
     task: { decisionPurpose: 'ENTRY' },
     candidate: { symbol: 'AAPL', bars1m: bars },
     session: { completedBarWindowEndsAt: '2026-10-25T07:00:00.000Z' },

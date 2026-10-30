@@ -137,7 +137,7 @@ export const bindReplayImagePolicy = (
       if (
         entry.protocolHash !== (yield* makeStrategyProtocolHashResult(entry.strategy)) ||
         (entry.policy === JevResearchPolicy.Candidate
-          ? entry.planVersion !== JevBatchPlanVersion.V7 ||
+          ? entry.planVersion !== JevBatchPlanVersion.V8 ||
             !Schema.is(JevProtocolSchema.fields.schemaVersion)(entry.strategy.parameterSchemaVersion)
           : entry.policy === JevResearchPolicy.Ablation
             ? entry.planVersion !== JevBatchPlanVersion.Ablation ||

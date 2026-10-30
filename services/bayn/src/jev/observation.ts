@@ -5,11 +5,12 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
+import { intradayAgeNanos } from '../market-data/intraday/time'
 import { strictParseOptions } from '../schemas'
 import { reproduceStrategySnapshot } from '../market-data/streaming/replay'
 
-import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { IntradayBenchmarkEvidencePolicy } from '../market-data/intraday/model'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { JevContractError } from './contract'
 import { JevObservationSchema } from './observation-contract'
@@ -46,12 +47,25 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
     const market = jevMarketForFeed(snapshot.manifest.feed)
     const requestedCandidates =
       observation.portfolio.purpose === 'ENTRY' ? (snapshot.manifest.candidateSymbols ?? []) : candidates
+    const hasReference =
+      snapshot.manifest.benchmarkEvidencePolicy !== undefined ||
+      snapshot.manifest.symbols.some((symbol) => !requestedCandidates.includes(symbol))
+    const benchmarks = hasReference ? [...new Set(requestedCandidates.map(jevBenchmarkSymbol))].sort() : []
+    const symbols = [...new Set([...requestedCandidates, ...benchmarks])].sort()
     if (snapshot.manifest.observedAt !== observation.observedAt)
       return yield* Result.fail(invalidObservation(JevObservationCheck.ObservationTime))
     if (
+      [...snapshot.bars, ...snapshot.quotes, ...snapshot.trades].some(
+        (record) =>
+          intradayAgeNanos(observation.observedAt, record.eventAt) < 0n ||
+          intradayAgeNanos(observation.observedAt, record.ingestedAt) < 0n,
+      )
+    )
+      return yield* Result.fail(invalidObservation(JevObservationCheck.Snapshot))
+    if (
       snapshot.manifest.candidateSymbols?.join('|') !== requestedCandidates.join('|') ||
       requestedCandidates.length === 0 ||
-      requestedCandidates.some((symbol) => !snapshot.manifest.symbols.includes(jevBenchmarkSymbol(symbol)))
+      requestedCandidates.some((symbol) => !snapshot.manifest.symbols.includes(symbol))
     )
       return yield* Result.fail(invalidObservation(JevObservationCheck.Candidates))
     if (observation.schemaVersion === 'bayn.jev-observation.v1') {
@@ -67,8 +81,7 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
         manifest.universeId !== market.universeId ||
         manifest.universeSymbolHash !== market.universeSymbolHash ||
         manifest.universe?.join('|') !== market.universe.join('|') ||
-        manifest.symbols.join('|') !==
-          [...new Set([...requestedCandidates, ...requestedCandidates.map(jevBenchmarkSymbol)])].sort().join('|') ||
+        manifest.symbols.join('|') !== symbols.join('|') ||
         requestedCandidates.some((symbol) => !protocol.candidateSymbols.includes(symbol))
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Universe))
@@ -78,7 +91,9 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
         manifest.maximumQuoteAgeMs !== protocol.maximumQuoteAgeMs ||
         manifest.candidateEvidencePolicy !== protocol.candidateEvidencePolicy ||
         manifest.benchmarkEvidencePolicy !==
-          ('benchmarkEvidencePolicy' in market ? market.benchmarkEvidencePolicy : undefined)
+          (hasReference && 'benchmarkEvidencePolicy' in market ? market.benchmarkEvidencePolicy : undefined) ||
+        manifest.benchmarkSymbols?.join('|') !==
+          (hasReference && 'benchmarkEvidencePolicy' in market ? benchmarks.join('|') : undefined)
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Feed))
       if (
@@ -128,6 +143,7 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
         )
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Features))
+
       if (manifest.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars) {
         if (
           manifest.benchmarkSymbols?.join('|') !==

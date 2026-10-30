@@ -430,7 +430,7 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
       makeJevTradingSignalBatch({
         observation: observation.payload,
         expiresAt: utcInstantFromEpochMillis(observed + entry.protocol.inferenceValidityMs),
-        planVersion: JevBatchPlanVersion.V7,
+        planVersion: JevBatchPlanVersion.V8,
       }),
     )
     const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
@@ -877,7 +877,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* persistEvaluationFixture(requests, request, receipt)
         const saved = yield* (yield* JevBatchStore).finish(plan.batchId)
         if (saved === null || saved.result === null) throw new Error('Failed inference batch did not commit')
-        expect(Result.isFailure(usableEntryBatchInferences(plan, saved.result, observed, JevBatchPlanVersion.V7))).toBe(
+        expect(Result.isFailure(usableEntryBatchInferences(plan, saved.result, observed, JevBatchPlanVersion.V8))).toBe(
           true,
         )
         expect((yield* requests.read(request.requestId))?.resolution?.status).toBe(JevResolutionStatus.Recorded)
@@ -929,7 +929,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         if (saved.result === null) throw new Error('Atomic single-request batch did not commit')
         expect(
           Result.isFailure(
-            usableEntryBatchInferences(plan, saved.result, Date.parse(plan.expiresAt), JevBatchPlanVersion.V7),
+            usableEntryBatchInferences(plan, saved.result, Date.parse(plan.expiresAt), JevBatchPlanVersion.V8),
           ),
         ).toBe(true)
         expect((yield* requests.read(request.requestId))?.resolution?.status).toBe(JevResolutionStatus.Recorded)
@@ -1141,7 +1141,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           ).toEqual([{ receipts: 2, same_transaction: true }])
           if (saved.result === null) throw new Error('Multi-request batch did not finalize')
           expect(
-            Result.getOrThrow(usableEntryBatchInferences(plan, saved.result, observed, JevBatchPlanVersion.V7)),
+            Result.getOrThrow(usableEntryBatchInferences(plan, saved.result, observed, JevBatchPlanVersion.V8)),
           ).toHaveLength(2)
         }),
       ).pipe(atObservation, Effect.timeout('10 seconds')),
@@ -1176,7 +1176,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           portfolio: candidate.portfolio,
           snapshot: candidate.snapshot,
         })
-        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V7)
+        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V8)
         expect(calls.toSorted()).toEqual([...equityMarketProfile.candidateSymbols].sort())
         expect(result.batchPlan.candidates.filter((candidate) => candidate.status === 'EXCLUDED')).toHaveLength(0)
         expect(Result.getOrThrow(decideJevEntry(result)).selectedSymbols).toEqual(['AAPL'])
@@ -1189,7 +1189,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           makeJevTradingSignalBatch({
             observation: { ...result.observation, authorityGenerationHash: '0'.repeat(64) },
             expiresAt: result.batchPlan.expiresAt,
-            planVersion: JevBatchPlanVersion.V7,
+            planVersion: JevBatchPlanVersion.V8,
           }),
         )
         const wrongIdentity = Result.getOrThrow(
@@ -1259,7 +1259,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         ).toBe(true)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v33' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v34' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
@@ -1332,7 +1332,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             input,
             query.rangeEndAt,
             loadSnapshot,
-            JevBatchPlanVersion.V7,
+            JevBatchPlanVersion.V8,
           ).pipe(Effect.result)
           expect(result).toMatchObject({
             _tag: 'Failure',
@@ -1381,7 +1381,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               snapshot: streamingFixtureFromRaw(raw, query).snapshot,
             })
             expect(recovered.batchPlan.observedAt).toBe(query.observedAt)
-            expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V7)
+            expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V8)
             expect(calls).toBe(15)
           } else {
             expect(calls).toBe(0)
@@ -1450,7 +1450,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           expect.objectContaining({ symbol: 'AMD', reason: 'freshness' }),
         )
         const result = yield* evaluateJevObservation({ ...nativeInput, portfolio, snapshot })
-        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V7)
+        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V8)
         expect(result.batchPlan.candidates).toContainEqual(
           expect.objectContaining({ symbol: 'AMD', status: 'EXCLUDED' }),
         )
@@ -2048,7 +2048,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           makeJevTradingSignalBatch({
             observation: fixture.observation.payload,
             expiresAt: new Date(observed + fixture.protocol.inferenceValidityMs).toISOString(),
-            planVersion: JevBatchPlanVersion.V7,
+            planVersion: JevBatchPlanVersion.V8,
           }),
         )
         const store = yield* JevBatchStore
@@ -2211,7 +2211,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         )
         if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v7')
           throw new Error('Expected native Jev entry target')
-        expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V7)
+        expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V8)
         expect(Date.parse(document.deltaRisk[0].evaluation.decision.expiresAt)).toBeGreaterThan(
           Date.parse(document.strategyDecision.evidence.batchPlan.expiresAt),
         )
