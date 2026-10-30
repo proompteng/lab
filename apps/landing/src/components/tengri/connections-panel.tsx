@@ -151,6 +151,23 @@ export function ConnectionsPanel({
     else if (lastEditor.current) returnButton.current?.focus()
   }, [active, editor])
 
+  useEffect(() => {
+    if (
+      !pendingDisconnect ||
+      !snapshot?.connections.some(
+        (connection) => connection.id === pendingDisconnect.connectionId && !connection.enabled,
+      )
+    )
+      return
+    if (pending?.connectionId === pendingDisconnect.connectionId) {
+      completePendingConnection(sessionStorage, pendingKey, pending.operationId)
+      setPending(undefined)
+    }
+    setPendingDisconnect(undefined)
+    setError('')
+    setNotice('Disconnected. Access is revoked.')
+  }, [pending, pendingDisconnect, pendingKey, snapshot])
+
   const save = useCallback(
     async (request: SaveConnection, afterSignIn = false) => {
       setBusy(true)

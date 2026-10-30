@@ -10603,9 +10603,7 @@ for (const anotherDraft of [false, true]) {
   })
 }
 
-test('saves scoped platform connections, retries the exact change, and retains disconnection after reload', async ({
-  page,
-}) => {
+async function verifyConnectionRecovery(page: Page, refreshDisconnect: boolean) {
   await mockTengri(page)
   const connectionId = '33333333-3333-4333-8333-333333333333'
   const saves: Record<string, unknown>[] = []
@@ -10741,9 +10739,20 @@ test('saves scoped platform connections, retries the exact change, and retains d
   await expect(panel.getByRole('alert')).toContainText('Guest acknowledgement is unavailable')
   await panel.getByRole('button', { name: 'Disconnect', exact: true }).click()
   await expect(panel.getByRole('alert')).toHaveText('The disconnection response could not be confirmed.')
-  await panel.getByRole('button', { name: 'Retry disconnect', exact: true }).click()
-  expect(disconnections).toHaveLength(2)
-  expect(disconnections[1]).toEqual(disconnections[0])
+  if (refreshDisconnect) {
+    await openSettingsPane(settings, 'General')
+    await openSettingsPane(settings, 'Connections')
+    await expect(panel.getByRole('button', { name: 'Reconnect', exact: true })).toBeEnabled()
+    await expect(panel.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0)
+    await expect(panel.getByRole('button', { name: 'Retry disconnect', exact: true })).toHaveCount(0)
+    await expect(panel.getByRole('checkbox', { name: 'production', exact: true })).toBeEnabled()
+    expect(disconnections).toHaveLength(1)
+    await panel.getByRole('button', { name: 'Back to connections', exact: true }).click()
+  } else {
+    await panel.getByRole('button', { name: 'Retry disconnect', exact: true }).click()
+    expect(disconnections).toHaveLength(2)
+    expect(disconnections[1]).toEqual(disconnections[0])
+  }
   await expect(panel.getByRole('status')).toContainText('Access is revoked')
   await expect(panel.getByText('Not connected', { exact: true })).toBeVisible()
   targetId = 'galactic/recreated-namespace-uid'
@@ -10770,7 +10779,15 @@ test('saves scoped platform connections, retries the exact change, and retains d
     .toBeLessThanOrEqual(1)
   await expect(restored.getByRole('checkbox', { name: 'production', exact: true })).not.toBeChecked()
   await restored.screenshot({ path: test.info().outputPath('connections-narrow.png') })
-})
+}
+
+for (const refreshDisconnect of [false, true]) {
+  test(`saves scoped platform connections, retries the exact change, and retains disconnection after reload: refresh ${refreshDisconnect}`, async ({
+    page,
+  }) => {
+    await verifyConnectionRecovery(page, refreshDisconnect)
+  })
+}
 
 test('keeps an oversized resource selection editable without saving a pending request', async ({ page }) => {
   await mockTengri(page)
