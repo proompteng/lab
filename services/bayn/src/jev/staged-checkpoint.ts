@@ -11,7 +11,7 @@ import {
   validDecisionsUsage,
 } from './decisions'
 import { decodeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
-import { makeInitialChartStageRequest, makeSelectedBaseStartStageRequest } from './staged-chart-questions'
+import * as chartStages from './staged-chart-questions'
 import { hasFeasibleEntrySource } from './entry-inference'
 import type { EntryInferenceMaterial } from './entry-inference-input'
 
@@ -105,12 +105,13 @@ export const stageResponseIdentity = (inference: typeof DecisionsInferenceSchema
 // A missing claim or terminal is uncertainty, never evidence of non-dispatch.
 export const decodeStagedCheckpoint = (requestInput: unknown, input: unknown) =>
   decodeJevEvaluationRequest(requestInput).pipe(
-    Result.flatMap((request) => decodeStagedCheckpointForRequest(request, input)),
+    Result.flatMap((request) => decodeStagedCheckpointForRequest(request, input, chartStages)),
   )
 
 export const decodeStagedCheckpointForRequest = (
   request: Omit<JevEvaluationRequest, 'request'> & { readonly request: EntryInferenceMaterial },
   input: unknown,
+  stages: Pick<typeof chartStages, 'makeInitialChartStageRequest' | 'makeSelectedBaseStartStageRequest'>,
 ) =>
   Result.gen(function* () {
     const checkpoint = yield* Schema.decodeUnknownResult(StagedCheckpointSchema, strictParseOptions)(input)
@@ -119,15 +120,15 @@ export const decodeStagedCheckpointForRequest = (
         return yield* invalid('Duplicate staged journal row')
     const chart = yield* makeNativeChartEvidence(request.request.chartSource)
     const chartSource = { chart, protocol: request.request.protocol, funding: request.request.funding }
-    const initial = yield* makeInitialChartStageRequest(chartSource)
+    const initial = yield* stages.makeInitialChartStageRequest(chartSource)
     const chartTerminal = checkpoint.terminals.find((row) => row.stage === 'CHART')
     // Claims and terminals must reproduce the same selected request within this decode.
     // Keep the derivation local: every new decode still validates the full source graph.
-    let selectedBase: ReturnType<typeof makeSelectedBaseStartStageRequest> | undefined
+    let selectedBase: ReturnType<typeof chartStages.makeSelectedBaseStartStageRequest> | undefined
     const selectedBaseRequest = () => {
       if (chartTerminal?.outcome.status !== 'RECEIVED')
         return invalid('Base start requires a received chart predecessor')
-      return (selectedBase ??= makeSelectedBaseStartStageRequest(
+      return (selectedBase ??= stages.makeSelectedBaseStartStageRequest(
         chartSource,
         stageResponseIdentity(chartTerminal.outcome.inference),
       ))
