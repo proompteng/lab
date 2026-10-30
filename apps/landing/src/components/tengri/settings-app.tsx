@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import type { TengriAgent, TengriCodexAccount, TengriUser } from '@/lib/tengri/types'
+import { pendingConnectionKey } from '@/lib/tengri/connections'
 
 import { runTengriAction } from './client'
 import { DesktopAppIcon } from './desktop-app-icon'
@@ -83,6 +84,16 @@ export function SettingsApp({
     setSelectedSection(section)
     if (contentRef.current) contentRef.current.scrollTop = 0
   }
+
+  useEffect(() => {
+    try {
+      if (!sessionStorage.getItem(pendingConnectionKey(user.id, agent.uid))) return
+    } catch {
+      return
+    }
+    setVisitedSections((visited) => (visited.includes('connections') ? visited : [...visited, 'connections']))
+    setSelectedSection('connections')
+  }, [agent.uid, user.id])
 
   useEffect(() => {
     setNow(Date.now())
@@ -166,7 +177,7 @@ export function SettingsApp({
   const headingId = `${instanceId}-settings-heading`
 
   return (
-    <div className="@container/settings relative flex h-full min-h-0 bg-[#252527] text-[13px] text-zinc-100">
+    <div className="@container/settings relative flex h-full min-h-0 bg-[#252527] text-[13px] text-zinc-100 [--primary:var(--color-blue-600)] [--primary-foreground:var(--color-white)] [--ring:var(--color-blue-400)]">
       <div
         data-window-drag-region
         className="absolute top-0 left-0 h-[52px] w-[218px] touch-none select-none @max-[560px]/settings:hidden"
@@ -327,7 +338,9 @@ export function SettingsApp({
             {visitedSections.includes('connections') ? (
               <div hidden={selectedSection !== 'connections'}>
                 <ConnectionsPanel
+                  key={JSON.stringify([user.id, agent.uid])}
                   agent={agent}
+                  principalId={user.id}
                   active={active && selectedSection === 'connections'}
                   disabled={lifecycleBusy}
                 />

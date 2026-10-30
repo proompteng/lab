@@ -54,6 +54,23 @@ impl Command {
             Self::Revoke(_) => "ofz.delegations.revoke",
         }
     }
+    fn fingerprint(&self) -> Result<Vec<u8>, Status> {
+        let mut intent = self.clone();
+        // Consent survives renewal; replay still checks the current session and runtime authority.
+        if let Self::PutConnection(request) = &mut intent {
+            if let Some(issuer) = &mut request.issuer {
+                issuer.session_id.clear();
+            }
+            if let Some(binding) = &mut request.binding {
+                binding.generation.clear();
+            }
+        }
+        Ok(Sha256::digest(
+            serde_json::to_vec(&intent)
+                .map_err(|_| Status::invalid_argument("invalid platform command"))?,
+        )
+        .to_vec())
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Prepared {
@@ -180,23 +197,19 @@ pub async fn execute(
     let session = command
         .session()
         .ok_or_else(|| Status::unauthenticated("human session required"))?;
-    let fresh_mfa = matches!(
-        &command,
-        Command::Relationships(_) | Command::PutConnection(_)
-    );
+    let fresh_mfa = matches!(&command, Command::Relationships(_));
     let (context, state, _) =
         authorization::human_context(database, session, command.operation(), fresh_mfa).await?;
-    let fingerprint = Sha256::digest(
-        serde_json::to_vec(&command)
-            .map_err(|_| Status::invalid_argument("invalid platform command"))?,
-    )
-    .to_vec();
+    let fingerprint = command.fingerprint()?;
     let mut connection = database.command_connection().await?;
     crate::commands::reconcile(database, native, &mut connection.client).await?;
     let client = &mut connection.client;
     onboarding::verify(database).await?;
     if let Some(row)=client.query_opt("SELECT workload_id,fingerprint,response FROM ofz.platform_commands WHERE operation_id=$1 AND completed", &[&operation]).await.map_err(sql_error)? {
         if row.get::<_,String>(0)!=peer || row.get::<_,Vec<u8>>(1)!=fingerprint {return Err(Status::already_exists("operation ID belongs to another command"));}
+        if let Command::PutConnection(request) = &command {
+            connections::scope_authority(database,native,caller,&request.actions,&request.resources,request.binding.as_ref(),&session.human_id).await?;
+        }
         return store::decode(row.get(2));
     }
     let current = store::state(client).await?;
@@ -352,7 +365,10 @@ pub async fn execute(
             if client.query_opt("SELECT id FROM ofz.platform_connections WHERE issuer_id=$1 AND client_service=$2 AND client_reference=$3 AND id<>$4", &[&session.human_id,&caller.id,&request.client_reference,&id]).await.map_err(sql_error)?.is_some() {
                 return Err(Status::already_exists("connection reference already exists"));
             }
-            connections::scope_authority(database,native,caller,&request.actions,&request.resources,request.binding.as_ref(),&session.human_id).await?;
+            prepared.changes = connections::connection_changes(database,native,caller,request,&session.human_id).await?;
+            if !prepared.changes.is_empty() {
+                authorization::human_context(database,session,command.operation(),true).await?;
+            }
         }
         Command::RevokeConnection(request) => {
             let id = decision::parse_uuid(&request.connection_id)?;
@@ -590,6 +606,12 @@ async fn apply(
         serde_json::to_string(&prepared.command)
             .map_err(|_| Status::internal("encode platform policy audit"))?,
     ];
+    if matches!(prepared.command, Command::PutConnection(_)) && !prepared.changes.is_empty() {
+        receipt.platform_resources.push(
+            serde_json::to_string(&prepared.changes)
+                .map_err(|_| Status::internal("encode connection permission audit"))?,
+        );
+    }
     store::record_audit(&tx, &receipt, prepared.command.action()).await?;
     if tx.execute("UPDATE ofz.platform_state SET version=version+1 WHERE singleton AND version=$1 AND recovery_generation=$2", &[&(prepared.version as i64),&(prepared.recovery_generation as i64)]).await.map_err(sql_error)?!=1 {return Err(Status::aborted("platform version changed"));}
     let outcome = Outcome {
@@ -612,4 +634,74 @@ async fn apply(
     .map_err(sql_error)?;
     tx.commit().await.map_err(sql_error)?;
     Ok(outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_consent_keeps_its_identity_across_verification_and_runtime_changes() {
+        let request = proto::PutPlatformConnectionRequest {
+            operation_id: Uuid::new_v4().to_string(),
+            issuer: Some(proto::PlatformHumanSession {
+                human_id: "1".repeat(64),
+                session_id: Uuid::new_v4().to_string(),
+                origin: "https://proompteng.ai".into(),
+            }),
+            client_service: "tengri-web".into(),
+            connection_id: Uuid::new_v4().to_string(),
+            client_reference: "workspace/galactic".into(),
+            actions: vec!["kubernetes.status.read".into()],
+            resources: vec![proto::PlatformResource {
+                kind: "kubernetes.namespace".into(),
+                id: "galactic/namespace".into(),
+                ..Default::default()
+            }],
+            binding: Some(proto::PlatformBinding {
+                service: "tengri".into(),
+                id: "workspace".into(),
+                generation: Uuid::new_v4().to_string(),
+            }),
+            ..Default::default()
+        };
+        let expected = Command::PutConnection(request.clone())
+            .fingerprint()
+            .unwrap();
+        let mut renewed = request.clone();
+        renewed.issuer.as_mut().unwrap().session_id = Uuid::new_v4().to_string();
+        renewed.binding.as_mut().unwrap().generation = Uuid::new_v4().to_string();
+        assert_eq!(
+            Command::PutConnection(renewed).fingerprint().unwrap(),
+            expected
+        );
+        let mut another_human = request.clone();
+        another_human.issuer.as_mut().unwrap().human_id = "2".repeat(64);
+        assert_ne!(
+            Command::PutConnection(another_human).fingerprint().unwrap(),
+            expected
+        );
+        let mut another_scope = request.clone();
+        another_scope.actions.push("kubernetes.logs.read".into());
+        assert_ne!(
+            Command::PutConnection(another_scope).fingerprint().unwrap(),
+            expected
+        );
+        let mut another_workspace = request.clone();
+        another_workspace.binding.as_mut().unwrap().id = "another-workspace".into();
+        assert_ne!(
+            Command::PutConnection(another_workspace)
+                .fingerprint()
+                .unwrap(),
+            expected
+        );
+        let mut another_origin = request;
+        another_origin.issuer.as_mut().unwrap().origin = "https://another.example".into();
+        assert_ne!(
+            Command::PutConnection(another_origin)
+                .fingerprint()
+                .unwrap(),
+            expected
+        );
+    }
 }

@@ -27,6 +27,8 @@ pub struct ActionDefinition {
     pub id: String,
     pub resource_kind: String,
     pub permission: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_relation: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -90,6 +92,17 @@ impl PolicyCatalog {
             {
                 return Err(Status::invalid_argument(
                     "invalid or duplicate policy action",
+                ));
+            }
+            if let Some(relation) = &action.grant_relation
+                && !catalog
+                    .resource(&action.resource_kind)?
+                    .relations
+                    .iter()
+                    .any(|entry| &entry.name == relation)
+            {
+                return Err(Status::invalid_argument(
+                    "action grant relation is not declared",
                 ));
             }
         }
@@ -179,5 +192,29 @@ mod tests {
         let mut wildcard = original;
         wildcard["resources"][0]["relations"][0]["subjects"] = json!(["*"]);
         assert!(PolicyCatalog::parse(&serde_json::to_vec(&wildcard).unwrap()).is_err());
+    }
+
+    #[test]
+    fn connection_grants_must_use_declared_relations() {
+        let mut catalog: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../platform/policies.json")).unwrap();
+        let parsed = PolicyCatalog::parse(&serde_json::to_vec(&catalog).unwrap()).unwrap();
+        assert_eq!(
+            parsed
+                .action("kubernetes.status.read")
+                .unwrap()
+                .grant_relation
+                .as_deref(),
+            Some("status_reader")
+        );
+        assert!(
+            parsed
+                .action("tengri.delegations.manage")
+                .unwrap()
+                .grant_relation
+                .is_none()
+        );
+        catalog["actions"][0]["grantRelation"] = json!("administrator");
+        assert!(PolicyCatalog::parse(&serde_json::to_vec(&catalog).unwrap()).is_err());
     }
 }
