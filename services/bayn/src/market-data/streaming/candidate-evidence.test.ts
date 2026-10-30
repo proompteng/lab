@@ -43,7 +43,8 @@ describe('candidate executable quote and window trade evidence', () => {
     expect(snapshot.manifest.candidateExclusions).toEqual([])
     expect(jevStalePricingSymbols(snapshot)).not.toContain('SPY')
     const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).numericalState
-    expect(state.benchmark.latestTrade.ageMs).toBe(602_000)
+    expect(state).not.toHaveProperty('benchmark')
+    expect(snapshot.trades.find((trade) => trade.symbol === 'SPY')?.eventAt).toBe('2026-09-04T14:20:00.000Z')
     expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
   })
 

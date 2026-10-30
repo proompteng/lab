@@ -28,7 +28,8 @@ test('crypto with fresh quotes and verified bars reaches assessment without inve
   const request = Result.getOrThrow(jevRequestForSnapshot(snapshot, 'ETH/USD'))
   const state = JSON.parse(request.body).numericalState
   expect(state.candidate.latestTrade).toBeNull()
-  expect(state.candidate.currentPriceSignals.breakoutPricingBasis).toBe('CURRENT_BID')
+  expect(state.candidate.quote.bid).toBe(snapshot.latestQuotes['ETH/USD']?.bidPrice)
+  expect(state.candidate).not.toHaveProperty('currentPriceSignals')
   expect(state.units.latestTrade).toContain('null when no actual trade')
   const reproduced = Result.getOrThrow(
     reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
@@ -82,7 +83,7 @@ test('a missing crypto print cannot admit a quote with no displayed ask size', (
     makeJevTradingSignalBatch({
       observation: observation.payload,
       expiresAt: new Date(Date.parse(snapshot.manifest.observedAt) + 10_000).toISOString(),
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   expect(batch.candidates.find((entry) => entry.symbol === 'ETH/USD')).toMatchObject({

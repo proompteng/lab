@@ -31,7 +31,7 @@ import type { JevEvaluationReceipt, JevEvaluationRequest } from './evidence'
 const request = evaluationRequestFixture()
 const second = entryEvaluationRequestFixture(request.observedAt, 'AMZN')
 const planMaterial = {
-  schemaVersion: JevBatchPlanVersion.V7,
+  schemaVersion: JevBatchPlanVersion.V8,
   cycleId: request.cycleId,
   authorityGenerationHash: request.authorityGenerationHash,
   observationHash: 'd'.repeat(64),
@@ -39,7 +39,6 @@ const planMaterial = {
   snapshotId: request.snapshotId,
   observedAt: request.observedAt,
   expiresAt: request.expiresAt,
-  benchmarkSymbol: 'SPY',
   questionSetHash: Result.getOrThrow(
     jevBatchQuestionSetHash([request, second].map((request) => ({ symbol: request.symbol, request }))),
   ),
@@ -171,12 +170,12 @@ describe('complete Jev batch evidence', () => {
       ),
     )
     const retained = Result.getOrThrow(decodeJevBatchResult(plan, JSON.parse(JSON.stringify(result))))
-    const inferences = Result.getOrThrow(usableEntryBatchInferences(plan, retained, 450, JevBatchPlanVersion.V7))
+    const inferences = Result.getOrThrow(usableEntryBatchInferences(plan, retained, 450, JevBatchPlanVersion.V8))
     expect(inferences.map((value) => value.symbol)).toEqual(['AAPL', 'AMZN'])
     expect(inferences[0]?.inference).toEqual(tied)
     expect(inferences[1]?.inference).toEqual(entryCompletionFixture(second))
     expect(
-      Result.isFailure(usableEntryBatchInferences(plan, retained, Date.parse(plan.expiresAt), JevBatchPlanVersion.V7)),
+      Result.isFailure(usableEntryBatchInferences(plan, retained, Date.parse(plan.expiresAt), JevBatchPlanVersion.V8)),
     ).toBe(true)
   })
 
@@ -184,7 +183,7 @@ describe('complete Jev batch evidence', () => {
     expect(Result.getOrThrow(decodeJevBatchPlan(JSON.parse(JSON.stringify(plan))))).toEqual(plan)
     const result = Result.getOrThrow(makeJevBatchResult(plan, resultMaterial()))
     expect(Result.getOrThrow(decodeJevBatchResult(plan, JSON.parse(JSON.stringify(result))))).toEqual(result)
-    const inferences = Result.getOrThrow(usableEntryBatchInferences(plan, result, 450, JevBatchPlanVersion.V7))
+    const inferences = Result.getOrThrow(usableEntryBatchInferences(plan, result, 450, JevBatchPlanVersion.V8))
     expect(inferences.map((value) => value.symbol)).toEqual(['AAPL', 'AMZN'])
     expect(inferences.map((value) => value.requestId)).toEqual([request.requestId, second.requestId])
     expect(result.candidates[2]).toEqual({ symbol: 'NVDA', status: JevCandidateResultStatus.Excluded })
@@ -211,24 +210,24 @@ describe('complete Jev batch evidence', () => {
     const mixed = Result.getOrThrow(
       makeJevBatchPlan({
         ...planMaterial,
-        schemaVersion: JevBatchPlanVersion.V7,
+        schemaVersion: JevBatchPlanVersion.V8,
         candidates,
         questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
       }),
     )
     const result = Result.getOrThrow(makeJevBatchResult(mixed, resultMaterial(mixed)))
-    expect(Result.isFailure(usableEntryBatchInferences(mixed, result, 450, JevBatchPlanVersion.V7))).toBe(true)
+    expect(Result.isFailure(usableEntryBatchInferences(mixed, result, 450, JevBatchPlanVersion.V8))).toBe(true)
     const versionThree = Result.getOrThrow(
       makeJevBatchPlan({
         ...planMaterial,
-        schemaVersion: JevBatchPlanVersion.V7,
+        schemaVersion: JevBatchPlanVersion.V8,
         candidates,
         questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
       }),
     )
     const versionThreeResult = Result.getOrThrow(makeJevBatchResult(versionThree, resultMaterial(versionThree)))
     expect(
-      Result.isFailure(usableEntryBatchInferences(versionThree, versionThreeResult, 450, JevBatchPlanVersion.V7)),
+      Result.isFailure(usableEntryBatchInferences(versionThree, versionThreeResult, 450, JevBatchPlanVersion.V8)),
     ).toBe(true)
   })
 
@@ -271,13 +270,13 @@ describe('complete Jev batch evidence', () => {
   test('selection waits for the slowest result and retains the whole completion and persistence delay', () => {
     expect(Result.isFailure(makeJevBatchResult(plan, resultMaterial(plan, 150)))).toBe(true)
     const result = Result.getOrThrow(makeJevBatchResult(plan, resultMaterial()))
-    expect(Result.isFailure(usableEntryBatchInferences(plan, result, 399, JevBatchPlanVersion.V7))).toBe(true)
-    expect(Result.isSuccess(usableEntryBatchInferences(plan, result, 9999, JevBatchPlanVersion.V7))).toBe(true)
-    expect(Result.isFailure(usableEntryBatchInferences(plan, result, 10000, JevBatchPlanVersion.V7))).toBe(true)
-    expect(Result.isFailure(usableEntryBatchInferences(plan, result, Number.NaN, JevBatchPlanVersion.V7))).toBe(true)
+    expect(Result.isFailure(usableEntryBatchInferences(plan, result, 399, JevBatchPlanVersion.V8))).toBe(true)
+    expect(Result.isSuccess(usableEntryBatchInferences(plan, result, 9999, JevBatchPlanVersion.V8))).toBe(true)
+    expect(Result.isFailure(usableEntryBatchInferences(plan, result, 10000, JevBatchPlanVersion.V8))).toBe(true)
+    expect(Result.isFailure(usableEntryBatchInferences(plan, result, Number.NaN, JevBatchPlanVersion.V8))).toBe(true)
     const { resultHash: _, ...lateMaterial } = result
     const late = Result.getOrThrow(makeJevBatchResult(plan, { ...lateMaterial, completedAt: at(10001) }))
-    expect(Result.isFailure(usableEntryBatchInferences(plan, late, 10001, JevBatchPlanVersion.V7))).toBe(true)
+    expect(Result.isFailure(usableEntryBatchInferences(plan, late, 10001, JevBatchPlanVersion.V8))).toBe(true)
   })
 
   test('selection reproduces provider evidence even when altered receipts and batches are resealed', () => {
@@ -322,7 +321,7 @@ describe('complete Jev batch evidence', () => {
         candidates: [{ ...candidate, receipt, resolution }, ...material.candidates.slice(1)],
       }
       const result = { ...altered, resultHash: Result.getOrThrow(canonicalHashV1Result(altered)) }
-      expect(Result.isFailure(usableEntryBatchInferences(plan, result, 450, JevBatchPlanVersion.V7))).toBe(true)
+      expect(Result.isFailure(usableEntryBatchInferences(plan, result, 450, JevBatchPlanVersion.V8))).toBe(true)
     }
   })
 
@@ -363,7 +362,7 @@ describe('complete Jev batch evidence', () => {
         ],
       }),
     )
-    expect(Result.isFailure(usableEntryBatchInferences(plan, result, 450, JevBatchPlanVersion.V7))).toBe(true)
+    expect(Result.isFailure(usableEntryBatchInferences(plan, result, 450, JevBatchPlanVersion.V8))).toBe(true)
     expect(Result.getOrThrow(decodeJevBatchResult(plan, result))).toEqual(result)
   })
 
@@ -390,7 +389,7 @@ describe('complete Jev batch evidence', () => {
       const changed = { ...material, candidates: [material.candidates[0], outcome, material.candidates[2]] }
       expect(Result.isFailure(makeJevBatchResult(plan, changed))).toBe(true)
       const result = Result.getOrThrow(makeJevBatchResult(plan, { ...changed, completedAt: at(11000) }))
-      expect(Result.isFailure(usableEntryBatchInferences(plan, result, 11000, JevBatchPlanVersion.V7))).toBe(true)
+      expect(Result.isFailure(usableEntryBatchInferences(plan, result, 11000, JevBatchPlanVersion.V8))).toBe(true)
     }
   })
 })

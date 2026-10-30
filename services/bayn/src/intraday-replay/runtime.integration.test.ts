@@ -2002,7 +2002,7 @@ durableTest.each(
               expiresAt: utcInstantFromEpochMillis(
                 Date.parse(source.payload.observedAt) + protocol.inferenceValidityMs,
               ),
-              planVersion: JevBatchPlanVersion.V7,
+              planVersion: JevBatchPlanVersion.V8,
             }),
           )
           const inserted =

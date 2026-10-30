@@ -92,7 +92,7 @@ test.each(['already-complete', 'completed-after-inference', 'completed-atomicall
               stored.plan,
               stored.result,
               yield* Clock.currentTimeMillis,
-              JevBatchPlanVersion.V7,
+              JevBatchPlanVersion.V8,
             ),
           ),
         ).toBe(true)
