@@ -9,6 +9,12 @@ PostgreSQL transaction under the existing writer fence. This removes an immediat
 activation rolls back acquisition; retries read the committed cycle. Recovery and decision binding continue to enforce
 the original submission and inference deadlines.
 
+Protected entry decisions bind their approved intents in the same writer-fenced PostgreSQL transaction. Intent
+construction, current authority, durable risk approval and database deadline guards use the existing intent store.
+A rejected intent rolls back its decision binding. Broker submission starts after commit acknowledgement and retains
+the final authority, funding, broker-state and expiry checks. The binding retains a private document copy so caller
+mutation during persistence cannot change the approved intent identities or protection.
+
 Candidate evidence reads extract identity and eligibility metadata once per indexed cycle/time source before matching
 requests. They fetch each matched full observation once and verify its content hash, retaining every generation,
 snapshot, symbol, timestamp and exclusion check within the original inference window.
