@@ -1,6 +1,18 @@
 # Exception tracking
 
-## Observed resistance cutover
+## Candidate evidence cutover
+
+Protocol v34 removes the unused benchmark prerequisite from live Jev admission. Entry queries contain candidates
+only; numerical input v23 and entry input v7 omit benchmark and relative-momentum state, and batch v8 has no benchmark
+anchor. Momentum research retains an explicit reference query. Candidate freshness, quotes, fees, funded sizing,
+selection thresholds, order protection, risk limits and the fifteen-minute hold remain unchanged.
+
+Migration 166 requires terminal cycles, flat positions, settled orders, fresh exact reconciliation, complete
+accounting and no unexpired inference claims. It retires v33 writes and dispatch while preserving original request
+bytes, late provider costs and all account history. Native activation uses the reviewed same-account mandate and
+normal Kargo build lineage. Natural crypto and equity round trips remain required deployment proof.
+
+## Historical observed resistance cutover
 
 Protocol v33 separates observed overhead resistance from fee-funded profit objectives. The chart question includes
 all completed highs above the current bid, including closer resistance that cannot cover trading costs. A v32 ETH

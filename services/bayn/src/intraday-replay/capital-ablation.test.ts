@@ -13,7 +13,7 @@ import {
 import { JevBatchPlanVersion } from '../jev/batch'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { defaultJevProtocolDocument } from '../jev/protocol'
-import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
+import { cryptoMomentumFixture as cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { prepareSignalStudyBatch } from './signal-study'
@@ -104,7 +104,7 @@ const cryptoOpportunity = (symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD'): CapitalOp
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + 10_000).toISOString(),
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   const completedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
@@ -344,7 +344,7 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
 test('uncertain proposal judgments stay outside both funded populations', () => {
   const opp = opportunity(0, true, 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v33')
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v34')
   expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('source-anchored-proposal-judgments')
   expect(baseline?.metrics.filledEntries).toBe(0)
   expect(candidate?.metrics.filledEntries).toBe(0)
@@ -455,7 +455,7 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(equityAt + 9900).toISOString(),
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, new Date(equityAt).toISOString())

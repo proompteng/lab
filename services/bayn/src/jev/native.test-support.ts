@@ -56,6 +56,7 @@ export const nativeJevFixture = (
   returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
   calendar?: ReturnType<typeof streamingFixture>['query']['calendar'],
   observedPriceChoices = true,
+  momentum = true,
 ) => {
   const base = streamingFixture()
   const protocol = Result.getOrThrow(decodeJevProtocol(protocolDocument))
@@ -89,10 +90,10 @@ export const nativeJevFixture = (
       ? {
           ...timedQuery,
           symbols: [
+            ...(momentum ? ['SPY'] : []),
             ...protocol.candidateSymbols.filter((symbol) =>
               equityMarketProfile.candidateSymbols.some((candidate) => candidate === symbol),
             ),
-            'SPY',
           ].sort(),
           candidateSymbols: protocol.candidateSymbols.filter((symbol) =>
             equityMarketProfile.candidateSymbols.some((candidate) => candidate === symbol),
@@ -342,7 +343,7 @@ export const nativeJevDecisionEvidence = (
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V7,
+      planVersion: JevBatchPlanVersion.V8,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, at, () => supportsEntry, probability)

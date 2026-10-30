@@ -386,7 +386,7 @@ export const nativeLatencyBacktestFixture = (
       recordingHash: testHash(recording),
       maximumCalls: 100,
       models: { jev: 'jev-1.13.0', chart: 'gpt-6-luna' },
-      inputDefinition: 'bayn.jev-entry-state.v22',
+      inputDefinition: 'bayn.jev-entry-state.v23',
       costs: inferenceTariff,
     },
     allocatedDataCostPerSessionMicros: '0',

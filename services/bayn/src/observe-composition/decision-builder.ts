@@ -1,3 +1,4 @@
+import { makeMomentumEntryQuery } from '../jev/observation-query'
 import { evaluateRepeatedMomentumFromSnapshot } from '../strategy/repeated-momentum/runtime'
 import { JevBatchPlanVersion } from '../jev/batch'
 import {
@@ -881,10 +882,19 @@ const compileObserveStrategyDecision = <R>(
         message: 'Jev requires the native market-data reader',
       })
     const protocol = yield* Effect.fromResult(nativeJevProtocol(input.strategy))
-    const query = yield* Effect.fromResult(
+    const candidateQuery = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt, JevPurpose.Entry),
     )
     const strategy = input.strategy
+    const query = isRepeatedMomentumRuntime(strategy)
+      ? makeMomentumEntryQuery({
+          protocol,
+          calendar: executionSession.calendar,
+          sessionDate: input.cycle.identity.executionSessionDate,
+          observedAtMs: Date.parse(initialFacts.evaluatedAt),
+          candidates: candidateQuery.candidateSymbols ?? [],
+        })
+      : candidateQuery
     const admissionExpiresAt = unusedEntryExpiresAt(input.cycle)
     const observationInput = {
       cycleId: input.cycle.identity.cycleId,
@@ -917,7 +927,7 @@ const compileObserveStrategyDecision = <R>(
         loadSnapshot,
         strategy.definition.parameters.schemaVersion === 'bayn.entry-ablation-policy.v1'
           ? JevBatchPlanVersion.Ablation
-          : JevBatchPlanVersion.V7,
+          : JevBatchPlanVersion.V8,
       )
       const evidence = yield* Effect.fromResult(
         Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(evaluated.evidence),

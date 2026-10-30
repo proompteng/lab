@@ -25,10 +25,12 @@ export const entryEvaluationRequestFixture = (observedAt?: string, symbol?: stri
   const current = currentRequestFixture(observedAt, symbol)
   const input = {
     ...current.request,
+    numericalState: { ...current.request.numericalState, schemaVersion: 'bayn.jev-entry-state.v22' },
     schemaVersion: 'bayn.entry-inference-input.v3' as const,
     protocol: {
       ...current.request.protocol,
       schemaVersion: 'bayn.jev.protocol.v24' as const,
+      inputDefinition: 'bayn.jev-entry-state.v22' as const,
       lookbackMinutes: 30 as const,
       candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
       entryQuestionPolicyHash: retainedConditionalQuestionPolicyHash,
