@@ -9,16 +9,23 @@ import { EntrySetup, makeEntryProposals } from './entry-proposals'
 import { makeEntryJudgmentRequest, selectSupportedEntryProposal } from './entry-questions'
 import { defaultJevProtocolDocument } from './protocol'
 
-const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL') => {
+const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL', latestClose = 104, structureHigh = 103) => {
   const chart = Result.getOrThrow(
     makeNativeChartEvidence({
       symbol,
       windowEndAt: '2026-10-25T07:00:00.000Z',
       bars: [
-        { minuteBeforeWindowEnd: 4, open: 100, high: 103, low: 97, close: 101, volume: 100 },
+        { minuteBeforeWindowEnd: 4, open: 100, high: structureHigh, low: 97, close: 101, volume: 100 },
         { minuteBeforeWindowEnd: 3, open: 101, high: 102, low: 99, close: 100, volume: 100 },
         { minuteBeforeWindowEnd: 2, open: 103, high: 108, low: 102, close: 104, volume: 100 },
-        { minuteBeforeWindowEnd: 1, open: 104, high: 105, low: 103, close: 104, volume: 100 },
+        {
+          minuteBeforeWindowEnd: 1,
+          open: 104,
+          high: 105,
+          low: Math.min(103, latestClose),
+          close: latestClose,
+          volume: 100,
+        },
       ],
     }),
   )
@@ -82,7 +89,7 @@ const fixture = (symbol: 'AAPL' | 'ETH/USD' = 'AAPL') => {
 }
 
 describe('proposal-specific Jev judgments and code-owned selection', () => {
-  test('asks one typed judgment per question with the actual proposal in its instructions', () => {
+  test('asks one typed judgment per question with each proposal stored once in shared evidence', () => {
     const { prepared } = fixture()
     expect(Object.keys(prepared.request.questions)).toEqual([
       'equity_support_recovery_confirmed',
@@ -91,14 +98,95 @@ describe('proposal-specific Jev judgments and code-owned selection', () => {
       'equity_base_breakout_stop_invalidates',
     ])
     expect(prepared.request.state).toMatchObject({
-      schemaVersion: 'bayn.jev-entry-state.v22',
+      schemaVersion: 'bayn.jev-proposal-evidence.v1',
+      proposals: {
+        SUPPORT_RECOVERY: { terms: { entryPriceUsd: 104.02, stopPriceUsd: 96.99, maximumHoldingMinutes: 15 } },
+      },
     })
     for (const question of Object.values(prepared.request.questions)) {
       expect(question.type).toBe('noul')
       expect(question.instructions).toMatchObject({
-        proposal: { entryPriceUsd: 104.02, stopPriceUsd: 96.99, maximumHoldingMinutes: 15 },
+        proposalEvidencePath: expect.stringMatching(/^proposals\.(SUPPORT_RECOVERY|BASE_BREAKOUT)$/),
       })
     }
+  })
+
+  test('computes breakout price and chronology facts from the selected source bars', () => {
+    const { prepared } = fixture()
+    expect(prepared.request.state).toMatchObject({
+      proposals: {
+        BASE_BREAKOUT: {
+          calculatedFacts: {
+            structureLowUsd: 97,
+            structureHighUsd: 103,
+            stopIsBelowStructureLow: true,
+            entryIsAboveStructureHigh: true,
+            completedBarsAfterStructure: 2,
+            consecutiveNewestClosesAboveStructure: 2,
+            stopTouchedInCompletedBarsAfterStructure: false,
+            completedClosesAfterStructure: [
+              { closeRelativeToStructure: 'ABOVE' },
+              { closeRelativeToStructure: 'ABOVE' },
+            ],
+          },
+        },
+      },
+    })
+    expect(prepared.request.state).not.toHaveProperty('benchmark')
+    expect(prepared.request.state).not.toHaveProperty('relativeSignals')
+  })
+
+  test('retains a failed completed break and a touched stop as observed facts', () => {
+    const { prepared } = fixture('AAPL', 96)
+    expect(prepared.request.state).toMatchObject({
+      proposals: {
+        BASE_BREAKOUT: {
+          calculatedFacts: {
+            consecutiveNewestClosesAboveStructure: 0,
+            stopTouchedInCompletedBarsAfterStructure: true,
+            completedClosesAfterStructure: [
+              { closeRelativeToStructure: 'ABOVE' },
+              { closeRelativeToStructure: 'BELOW' },
+            ],
+          },
+        },
+      },
+    })
+  })
+
+  test('preserves a sub-micro completed close above the observed structure', () => {
+    const { prepared } = fixture('AAPL', 103.0000001)
+    expect(prepared.request.state).toMatchObject({
+      proposals: {
+        BASE_BREAKOUT: {
+          calculatedFacts: {
+            consecutiveNewestClosesAboveStructure: 2,
+            completedClosesAfterStructure: [
+              { closeRelativeToStructure: 'ABOVE' },
+              { closeRelativeToStructure: 'ABOVE' },
+            ],
+          },
+        },
+      },
+    })
+  })
+
+  test('does not round a sub-micro structure high below a completed close', () => {
+    const { prepared } = fixture('AAPL', 103.0000005, 103.0000009)
+    expect(prepared.request.state).toMatchObject({
+      proposals: {
+        BASE_BREAKOUT: {
+          calculatedFacts: {
+            structureHighUsd: 103.0000009,
+            consecutiveNewestClosesAboveStructure: 0,
+            completedClosesAfterStructure: [
+              { closeRelativeToStructure: 'ABOVE' },
+              { closeRelativeToStructure: 'INSIDE' },
+            ],
+          },
+        },
+      },
+    })
   })
 
   test('does not invoke Jev when there are no funded proposals', () => {

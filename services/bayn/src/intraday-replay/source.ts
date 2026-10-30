@@ -472,8 +472,10 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
       return { stream, verify }
     }
     const preflight = read()
-    yield* Stream.runDrain(preflight.stream)
-    yield* preflight.verify
+    yield* Stream.runDrain(preflight.stream).pipe(
+      Effect.andThen(preflight.verify),
+      Effect.withSpan('bayn.backtest.source-preflight'),
+    )
     yield* snapshot.seek(0n, 'start')
     const replay = read()
     const pull = yield* Stream.toPull(replay.stream)
@@ -556,6 +558,7 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
         Effect.andThen(
           Effect.suspend(() => (ended ? Effect.void : Effect.fail(fail('Source was not fully consumed')))),
         ),
+        Effect.withSpan('bayn.backtest.source-tail'),
       ),
     }
   }).pipe(Effect.mapError((cause) => fail('Cannot open or advance retained replay source', cause)))

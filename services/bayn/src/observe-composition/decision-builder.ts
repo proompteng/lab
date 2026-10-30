@@ -3,6 +3,7 @@ import { JevBatchPlanVersion } from '../jev/batch'
 import {
   isProtectedEntryTarget,
   protectedEntryExpiresAtMs,
+  protectedEntryBuyPriceCeilings,
   type ProtectedEntryTarget,
 } from '../strategy/runtime-decision'
 import { jevEntryPriceAllowances } from '../jev/entry-economics'
@@ -1140,6 +1141,7 @@ const executionRiskContext = (
 
 type RiskInputPreparation = {
   readonly limitSlippageBps: number
+  readonly maximumBuyPriceMicros?: Readonly<Record<string, bigint>>
   readonly minimumSellPriceMicros?: Readonly<Record<string, bigint>>
   readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly executionModel: CycleExecutionModel
@@ -1184,6 +1186,7 @@ const reduceRiskInputs = (
         }
         const referencePrice = BigInt(referencePriceMicros)
         const minimumSellPriceMicros = input.minimumSellPriceMicros?.[target.symbol]
+        const maximumBuyPriceMicros = input.maximumBuyPriceMicros?.[target.symbol]
         return Result.map(
           deriveExecutionIntentPricing({
             symbol: target.symbol,
@@ -1194,6 +1197,7 @@ const reduceRiskInputs = (
             referencePriceMicros: referencePrice,
             limitSlippageBps: BigInt(input.limitSlippageBps),
             ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
+            ...(maximumBuyPriceMicros === undefined ? {} : { maximumBuyPriceMicros }),
           }),
           (pricing): ShadowDeltaRiskInput => {
             const state: State = {
@@ -1255,10 +1259,12 @@ const reduceObserveRiskInputs = <R>(
   >,
   closeOnlyExpiresAt?: string,
   entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
+  maximumBuyPriceMicros?: Readonly<Record<string, bigint>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
     limitSlippageBps: entryLimitSlippageBps,
     ...(entryQuotes === undefined ? {} : { entryQuotes }),
+    ...(maximumBuyPriceMicros === undefined ? {} : { maximumBuyPriceMicros }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
     authorityObservation,
@@ -1400,6 +1406,7 @@ function buildCycleDecision<R>(
         compiled.executionMarketData,
         undefined,
         compiled.entryQuotes,
+        protectedEntryBuyPriceCeilings(entryDecision),
       ),
     )
     const decisionMarketData = compiled.decisionMarketData ?? compiled.executionMarketData

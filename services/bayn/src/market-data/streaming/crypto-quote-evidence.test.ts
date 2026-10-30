@@ -16,7 +16,7 @@ test('crypto with fresh quotes and verified bars reaches assessment without inve
   const snapshot = Result.getOrThrow(
     constructStreamingSnapshot(fixture.cut, {
       ...fixture.query,
-      candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
+      candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
     }),
   )
   expect(snapshot.manifest.candidateExclusions).toEqual([])
@@ -44,7 +44,7 @@ test('the market policy preserves the equity requirement for an actual window tr
   const snapshot = Result.getOrThrow(
     constructStreamingSnapshot(
       { ...fixture.cut, projection: { ...fixture.cut.projection, tradeHistory } },
-      { ...fixture.query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes },
+      { ...fixture.query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2 },
     ),
   )
   expect(snapshot.manifest.candidateExclusions).toContainEqual({
@@ -60,7 +60,7 @@ test('optional crypto trade context retains the real price and age when present'
   const snapshot = Result.getOrThrow(
     constructStreamingSnapshot(fixture.cut, {
       ...fixture.query,
-      candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes,
+      candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2,
     }),
   )
   const trade = snapshot.trades.find((entry) => entry.symbol === 'ETH/USD')

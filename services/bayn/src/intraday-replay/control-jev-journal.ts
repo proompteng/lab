@@ -623,9 +623,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
                 : Schema.decodeUnknownEffect(Schema.Struct({ source: subject }))(
                     call.request.input[0].content[2].data,
                   ).pipe(Effect.map((value) => value.source))
-              : Schema.decodeUnknownEffect(Schema.Struct({ candidate: subject }))(call.request.state).pipe(
-                  Effect.map((value) => value.candidate),
-                )
+              : Schema.decodeUnknownEffect(subject)(call.request.state)
             const matches = []
             for (const request of plannedRequests.values()) {
               if (

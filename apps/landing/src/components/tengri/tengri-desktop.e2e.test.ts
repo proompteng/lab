@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 import { createHash } from 'node:crypto'
-import { connectionRequestSchema } from '@/lib/tengri/connections'
+import { connectionRequestSchema, type SaveConnection } from '@/lib/tengri/connections'
 import { policyWriteSchema } from '@/lib/platform/policies'
 import { codexModelFixtures } from './codex-models.fixture'
 import type { TengriCodexRun } from '@/lib/tengri/codex-run'
@@ -10603,9 +10603,7 @@ for (const anotherDraft of [false, true]) {
   })
 }
 
-test('saves scoped platform connections, retries the exact change, and retains disconnection after reload', async ({
-  page,
-}) => {
+async function verifyConnectionRecovery(page: Page, refreshDisconnect: boolean) {
   await mockTengri(page)
   const connectionId = '33333333-3333-4333-8333-333333333333'
   const saves: Record<string, unknown>[] = []
@@ -10613,6 +10611,7 @@ test('saves scoped platform connections, retries the exact change, and retains d
   let connections: Record<string, unknown>[] = []
   let lostResponse = true
   let lostDisconnect = true
+  let targetId = 'galactic/immutable-namespace-uid'
   await page.route('**/api/platform/connectors', (route) =>
     route.fulfill({
       json: {
@@ -10626,8 +10625,9 @@ test('saves scoped platform connections, retries the exact change, and retains d
             targets: [
               {
                 name: 'production',
-                resource: { kind: 'kubernetes.namespace', id: 'galactic/immutable-namespace-uid' },
+                resource: { kind: 'kubernetes.namespace', id: targetId },
               },
+              { name: 'staging', resource: { kind: 'kubernetes.namespace', id: 'galactic/staging-uid' } },
             ],
           },
           {
@@ -10703,16 +10703,28 @@ test('saves scoped platform connections, retries the exact change, and retains d
   const settings = page.getByRole('region', { name: 'Settings window', exact: true })
   await openSettingsPane(settings, 'Connections')
   const panel = settings.getByRole('region', { name: 'Connections', exact: true })
-  await expect(panel.getByLabel('Connector', { exact: true })).toHaveValue('galactic')
+  await expect(panel.getByRole('list', { name: 'Available services' })).toBeVisible()
+  await expect(panel.locator('form')).toHaveCount(0)
   await expect(panel.getByText('pod_exec', { exact: true })).toHaveCount(0)
-  await panel.getByRole('button', { name: 'Save connection', exact: true }).click()
-  await expect(panel.getByRole('alert')).toContainText(['Select at least one operation', 'Select at least one target'])
-  await panel.getByRole('checkbox', { name: 'pod_status Read pod status' }).check()
+  await panel.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(panel.getByRole('heading', { name: 'Connect Kubernetes' })).toBeFocused()
+  await expect(panel.getByRole('button', { name: 'Customize access' })).toHaveAttribute('aria-expanded', 'false')
+  await panel.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(panel.getByRole('alert')).toContainText('Choose at least one resource.')
+  await expect(panel.getByRole('checkbox', { name: 'production', exact: true })).toHaveAccessibleDescription(
+    'Choose at least one resource.',
+  )
   await panel.getByRole('checkbox', { name: 'production', exact: true }).check()
-  await panel.getByRole('button', { name: 'Save connection', exact: true }).click()
+  await panel.getByRole('button', { name: 'Connect', exact: true }).click()
   await expect(panel.getByRole('alert')).toContainText('Guest acknowledgement is unavailable')
-  await panel.getByRole('button', { name: 'Retry connection', exact: true }).click()
-  await expect(panel.getByRole('status')).toHaveText('Connection is ready.')
+  await openSettingsPane(settings, 'General')
+  await openSettingsPane(settings, 'Connections')
+  await expect(panel.getByRole('alert')).toContainText('Guest acknowledgement is unavailable')
+  await panel.getByRole('button', { name: 'Try again', exact: true }).click()
+  await expect(panel.getByText('Connected', { exact: true })).toBeVisible()
+  await expect(panel.getByRole('button', { name: 'Manage', exact: true })).toBeFocused()
+  await expect(panel.locator('form')).toHaveCount(0)
+  await settings.screenshot({ path: test.info().outputPath('connections-list.png') })
   expect(saves).toHaveLength(2)
   expect(saves[1]).toEqual(saves[0])
   expect(saves[0]).toMatchObject({
@@ -10720,22 +10732,277 @@ test('saves scoped platform connections, retries the exact change, and retains d
     operations: ['pod_status'],
     targets: [{ kind: 'kubernetes.namespace', id: 'galactic/immutable-namespace-uid' }],
   })
+  await panel.getByRole('button', { name: 'Manage', exact: true }).click()
+  await panel.getByRole('checkbox', { name: 'staging', exact: true }).check()
+  lostResponse = true
+  await panel.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect(panel.getByRole('alert')).toContainText('Guest acknowledgement is unavailable')
   await panel.getByRole('button', { name: 'Disconnect', exact: true }).click()
   await expect(panel.getByRole('alert')).toHaveText('The disconnection response could not be confirmed.')
-  await panel.getByRole('button', { name: 'Retry disconnect', exact: true }).click()
-  expect(disconnections).toHaveLength(2)
-  expect(disconnections[1]).toEqual(disconnections[0])
-  await expect(panel.getByRole('status')).toContainText('access is revoked')
-  await expect(panel.getByText('Disconnected', { exact: true })).toBeVisible()
+  if (refreshDisconnect) {
+    await openSettingsPane(settings, 'General')
+    await openSettingsPane(settings, 'Connections')
+    await expect(panel.getByRole('button', { name: 'Reconnect', exact: true })).toBeEnabled()
+    await expect(panel.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0)
+    await expect(panel.getByRole('button', { name: 'Retry disconnect', exact: true })).toHaveCount(0)
+    await expect(panel.getByRole('checkbox', { name: 'production', exact: true })).toBeEnabled()
+    expect(disconnections).toHaveLength(1)
+    await panel.getByRole('button', { name: 'Back to connections', exact: true }).click()
+  } else {
+    await panel.getByRole('button', { name: 'Retry disconnect', exact: true }).click()
+    expect(disconnections).toHaveLength(2)
+    expect(disconnections[1]).toEqual(disconnections[0])
+  }
+  await expect(panel.getByRole('status')).toContainText('Access is revoked')
+  await expect(panel.getByText('Not connected', { exact: true })).toBeVisible()
+  targetId = 'galactic/recreated-namespace-uid'
   await page.reload()
   await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
   const restored = page.getByRole('region', { name: 'Settings window', exact: true })
   await openSettingsPane(restored, 'Connections')
-  await expect(restored.getByText('Disconnected', { exact: true })).toBeVisible()
-  expect(saves).toHaveLength(2)
+  await expect(restored.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0)
+  await expect(restored.getByText('Not connected', { exact: true })).toBeVisible()
+  await restored.getByRole('button', { name: 'Connect', exact: true }).click()
+  const unavailable = restored.getByRole('checkbox', { name: 'Unavailable saved resource.', exact: false })
+  await expect(unavailable).toBeChecked()
+  await expect(restored.getByRole('checkbox', { name: 'production', exact: true })).not.toBeChecked()
+  await unavailable.focus()
+  await unavailable.press('Space')
+  await expect(unavailable).toHaveCount(0)
+  expect(saves).toHaveLength(3)
   const accessibility = await new AxeBuilder({ page }).include('[aria-label="Connections"]').analyze()
   expect(accessibility.violations).toEqual([])
+  await restored.screenshot({ path: test.info().outputPath('connections-desktop.png') })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect
+    .poll(() => restored.locator('form').evaluate((form) => form.scrollWidth - form.clientWidth))
+    .toBeLessThanOrEqual(1)
+  await expect(restored.getByRole('checkbox', { name: 'production', exact: true })).not.toBeChecked()
+  await restored.screenshot({ path: test.info().outputPath('connections-narrow.png') })
+}
+
+for (const refreshDisconnect of [false, true]) {
+  test(`saves scoped platform connections, retries the exact change, and retains disconnection after reload: refresh ${refreshDisconnect}`, async ({
+    page,
+  }) => {
+    await verifyConnectionRecovery(page, refreshDisconnect)
+  })
+}
+
+test('keeps an oversized resource selection editable without saving a pending request', async ({ page }) => {
+  await mockTengri(page)
+  const saves: SaveConnection[] = []
+  await page.route('**/api/platform/connectors', (route) =>
+    route.fulfill({
+      json: {
+        operations: [
+          {
+            connectorId: 'galactic',
+            name: 'status',
+            action: 'kubernetes.status.read',
+            description: 'Read pod status',
+            readOnly: true,
+            targets: Array.from({ length: 17 }, (_, index) => ({
+              name: 'namespace-' + index,
+              resource: { kind: 'kubernetes.namespace', id: 'galactic/' + index },
+            })),
+          },
+        ],
+      },
+    }),
+  )
+  await page.route('**/api/tengri/connections**', (route) => {
+    if (route.request().method() === 'POST') {
+      const request = connectionRequestSchema.parse(route.request().postDataJSON())
+      if (request.kind === 'save') {
+        saves.push(request)
+        return route.fulfill({ status: 403, json: { error: 'Review access.', code: 'connection_access_denied' } })
+      }
+    }
+    return route.fulfill({ json: { connections: [], recoveryGeneration: '1' } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  await openSettingsPane(settings, 'Connections')
+  await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+  for (let index = 0; index < 17; index += 1)
+    await settings.getByRole('checkbox', { name: 'namespace-' + index, exact: true }).check()
+  await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(settings.getByRole('alert')).toHaveText('Choose up to 16 resources.')
+  expect(saves).toHaveLength(0)
+  await settings.getByRole('checkbox', { name: 'namespace-0', exact: true }).uncheck()
+  await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(settings.getByRole('alert')).toHaveText('Review access.')
+  expect(saves).toHaveLength(1)
+  expect(saves[0]?.targets).toHaveLength(16)
 })
+
+for (const [status, code] of [
+  [403, 'connection_access_denied'],
+  [409, 'connection_scope_changed'],
+] as const) {
+  test(`allows correcting connection scope after a definite rejection: ${status}`, async ({ page }) => {
+    await mockTengri(page)
+    const saves: SaveConnection[] = []
+    await page.route('**/api/platform/connectors', (route) =>
+      route.fulfill({
+        json: {
+          operations: [
+            {
+              connectorId: 'galactic',
+              name: 'status',
+              action: 'kubernetes.status.read',
+              description: 'Read pod status',
+              readOnly: true,
+              targets: ['production', 'staging'].map((name) => ({
+                name,
+                resource: { kind: 'kubernetes.namespace', id: 'galactic/' + name },
+              })),
+            },
+          ],
+        },
+      }),
+    )
+    await page.route('**/api/tengri/connections**', (route) => {
+      if (route.request().method() === 'POST') {
+        const request = connectionRequestSchema.parse(route.request().postDataJSON())
+        if (request.kind === 'save') {
+          saves.push(request)
+          return route.fulfill({ status, json: { error: 'Review the selected access.', code } })
+        }
+      }
+      return route.fulfill({ json: { connections: [], recoveryGeneration: '1' } })
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+    const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+    await openSettingsPane(settings, 'Connections')
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    await settings.getByRole('checkbox', { name: 'production', exact: true }).check()
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    await expect(settings.getByRole('alert')).toHaveText('Review the selected access.')
+    await settings.getByRole('checkbox', { name: 'production', exact: true }).uncheck()
+    await settings.getByRole('checkbox', { name: 'staging', exact: true }).check()
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    await expect.poll(() => saves.length).toBe(2)
+    expect(saves[1]?.operationId).not.toBe(saves[0]?.operationId)
+    expect(saves[1]).toMatchObject({ targets: [{ kind: 'kubernetes.namespace', id: 'galactic/staging' }] })
+  })
+}
+
+for (const { verificationStatus, failedStart } of [
+  { verificationStatus: 200, failedStart: false },
+  { verificationStatus: 401, failedStart: false },
+  { verificationStatus: 428, failedStart: false },
+  { verificationStatus: 428, failedStart: true },
+]) {
+  test(`connects selected tools and resumes only required verification: ${verificationStatus}, failed start ${failedStart}`, async ({
+    page,
+  }) => {
+    await mockTengri(page)
+    const saves: SaveConnection[] = []
+    let verifications = 0
+    let signInStarts = 0
+    let connections: Record<string, unknown>[] = []
+    await page.route('**/api/platform/connectors', (route) =>
+      route.fulfill({
+        json: {
+          operations: [
+            ['status', 'Read pod status'],
+            ['logs', 'Read bounded pod logs'],
+            ['events', 'Read namespace events'],
+          ].map(([name, description]) => ({
+            connectorId: 'galactic',
+            name,
+            action: 'kubernetes.' + name + '.read',
+            description,
+            readOnly: true,
+            targets: [{ name: 'production', resource: { kind: 'kubernetes.namespace', id: 'galactic/immutable-uid' } }],
+          })),
+        },
+      }),
+    )
+    await page.route('**/api/auth/' + (verificationStatus === 401 ? 'login' : 'step-up'), (route) => {
+      signInStarts += 1
+      if (failedStart && signInStarts === 1)
+        return route.fulfill({ status: 503, json: { error: 'Verification is temporarily unavailable.' } })
+      verifications += 1
+      return route.fulfill({ json: { url: desktopOrigin + '/?verified=1' } })
+    })
+    await page.route('**/api/tengri/connections**', async (route) => {
+      if (route.request().method() === 'POST') {
+        const request = connectionRequestSchema.parse(route.request().postDataJSON())
+        if (request.kind === 'save') {
+          saves.push(request)
+          if (verifications === 0 && verificationStatus !== 200) {
+            await route.fulfill({ status: verificationStatus, json: { error: 'Verify before connecting.' } })
+            return
+          }
+          connections = [
+            {
+              id: request.connectionId,
+              clientService: 'tengri-web',
+              clientReference: readyAgent.uid + '/galactic',
+              actions: request.operations.map((name) => 'kubernetes.' + name + '.read'),
+              resources: request.targets,
+              binding: { service: 'tengri', id: readyAgent.uid },
+              enabled: true,
+              version: '1',
+              credentialActive: true,
+              credentialGeneration: '5',
+              recoveryGeneration: '1',
+              delegationId: '33333333-3333-4333-8333-333333333333',
+              proofKeyThumbprint: 'a'.repeat(43),
+              credentialBinding: { service: 'tengri', id: readyAgent.uid, generation: readyAgent.runtimeEpoch },
+              expiresAtUnixMs: String(Date.now() + 900_000),
+            },
+          ]
+        }
+      }
+      await route.fulfill({ json: { connections, recoveryGeneration: '1' } })
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+    const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+    await openSettingsPane(settings, 'Connections')
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    await settings.getByRole('checkbox', { name: 'production', exact: true }).check()
+    await settings.getByRole('button', { name: 'Back to connections', exact: true }).click()
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    await expect(settings.getByRole('checkbox', { name: 'production', exact: true })).toBeChecked()
+    if (verificationStatus === 200) await settings.screenshot({ path: test.info().outputPath('connection-setup.png') })
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+    if (failedStart) {
+      await expect(settings.getByRole('alert')).toHaveText(
+        'Verification could not start. Your choices are saved. Try again when you’re ready.',
+      )
+      await expect(settings.getByRole('checkbox', { name: 'production', exact: true })).toBeChecked()
+      await settings.getByRole('button', { name: 'Try again', exact: true }).click()
+    }
+    await expect(page).toHaveURL(verificationStatus === 200 ? desktopOrigin + '/' : desktopOrigin + '/?verified=1')
+    await expect(settings.getByText('Connected', { exact: true })).toBeVisible()
+    await expect(settings.getByRole('button', { name: 'Manage', exact: true })).toBeEnabled()
+    await expect(settings.locator('[aria-label="Connections"] form')).toHaveCount(0)
+    expect(verifications).toBe(verificationStatus === 200 ? 0 : 1)
+    expect(signInStarts).toBe(verificationStatus === 200 ? 0 : failedStart ? 2 : 1)
+    expect(saves).toHaveLength(verificationStatus === 200 ? 1 : failedStart ? 3 : 2)
+    for (const request of saves) expect(request).toEqual(saves[0])
+    const accessibility = await new AxeBuilder({ page }).include('[aria-label="Connections"]').analyze()
+    expect(accessibility.violations).toEqual([])
+    await settings.screenshot({ path: test.info().outputPath('connected-after-verification.png') })
+    if (verificationStatus === 200) {
+      expect(saves[0]?.operations).toEqual(['status', 'logs', 'events'])
+      connections = connections.map((connection) => ({ ...connection, credentialActive: false }))
+      await openSettingsPane(settings, 'General')
+      await openSettingsPane(settings, 'Connections')
+      await expect(settings.getByText('Needs attention', { exact: true })).toBeVisible()
+      await expect(settings.getByText('Connected', { exact: true })).toHaveCount(0)
+      await settings.getByRole('button', { name: 'Manage', exact: true }).click()
+      await expect(settings.getByRole('button', { name: 'Reconnect', exact: true })).toBeEnabled()
+    }
+  })
+}
 
 test('administers catalog-defined service policies and preserves the exact pending command', async ({ page }) => {
   await mockTengri(page)
@@ -10793,6 +11060,18 @@ test('administers catalog-defined service policies and preserves the exact pendi
   await openSettingsPane(settings, 'Privacy & Security')
   await settings.getByRole('tab', { name: 'Service policies', exact: true }).click()
   const policies = settings.getByRole('region', { name: 'Service policies', exact: true })
+  await expect(policies.getByLabel('Policy', { exact: true })).toBeVisible()
+  const controlHeights = await policies
+    .locator('select, input:not([type="checkbox"]):not([type="hidden"])')
+    .evaluateAll((controls) => controls.map((control) => control.getBoundingClientRect().height))
+  expect(controlHeights).toHaveLength(6)
+  expect(Math.max(...controlHeights) - Math.min(...controlHeights)).toBeLessThanOrEqual(1)
+  await policies.getByRole('button', { name: 'Apply policy', exact: true }).click()
+  await expect(policies.getByLabel('Resource identity', { exact: true })).toHaveAttribute('aria-invalid', 'true')
+  await expect(policies.getByLabel('Resource identity', { exact: true })).toHaveAccessibleDescription(
+    'Choose a target or enter its exact resource ID. Choose a resource',
+  )
+  expect(writes).toHaveLength(0)
   await policies.getByLabel('Policy', { exact: true }).selectOption('fixture.service')
   await policies.getByLabel('Resource identity', { exact: true }).fill('fixture/tenant-a')
   await policies.getByLabel('Permission', { exact: true }).selectOption('can_inspect')
@@ -10820,13 +11099,24 @@ test('administers catalog-defined service policies and preserves the exact pendi
       },
     ],
   })
-  await policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' }).uncheck()
+  await policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' }).focus()
+  await policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' }).press('Space')
+  await expect(policies.getByRole('checkbox', { name: 'Allow this permission. Clear to revoke it.' })).not.toBeChecked()
   await policies.getByRole('button', { name: 'Apply policy', exact: true }).click()
   await expect.poll(() => writes.length).toBe(3)
   expect(writes[2]).toMatchObject({ expectedPolicyVersion: '21', relationships: [{ enabled: false }] })
   await expect(policies.getByRole('button', { name: 'Apply policy', exact: true })).toBeEnabled()
   const accessibility = await new AxeBuilder({ page }).include('[aria-label="Service policies"]').analyze()
   expect(accessibility.violations).toEqual([])
+  await settings.getByRole('button', { name: 'Maximize Settings', exact: true }).click()
+  await settings.screenshot({ path: test.info().outputPath('service-policies-desktop.png') })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect
+    .poll(() => policies.locator('form').evaluate((form) => form.scrollWidth - form.clientWidth))
+    .toBeLessThanOrEqual(1)
+  await expect(policies.getByLabel('Registered service identity', { exact: true })).toHaveValue(workload)
+  await policies.getByLabel('Reason', { exact: true }).scrollIntoViewIfNeeded()
+  await settings.screenshot({ path: test.info().outputPath('service-policies-narrow.png') })
 })
 
 for (const mode of ['idle', 'current', 'other', 'closed'] as const) {

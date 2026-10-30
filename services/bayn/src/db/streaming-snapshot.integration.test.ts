@@ -355,7 +355,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
   })
 
   test('persists and recovers a consumed snapshot with an unavailable candidate quote', async () => {
-    const query = { ...fixture.query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotes }
+    const query = { ...fixture.query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.MarketQuotesV2 }
     const withdrawn = streamingFixtureFromRaw(
       {
         ...fixture.archive,
