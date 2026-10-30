@@ -13,9 +13,24 @@
     { "kind": "tengri.workspace", "nativeType": "workspace", "relations": [] }
   ],
   "actions": [
-    { "id": "kubernetes.status.read", "resourceKind": "kubernetes.namespace", "permission": "read_status" },
-    { "id": "kubernetes.logs.read", "resourceKind": "kubernetes.namespace", "permission": "read_logs" },
-    { "id": "kubernetes.events.read", "resourceKind": "kubernetes.namespace", "permission": "read_events" },
+    {
+      "id": "kubernetes.status.read",
+      "resourceKind": "kubernetes.namespace",
+      "permission": "read_status",
+      "grantRelation": "status_reader"
+    },
+    {
+      "id": "kubernetes.logs.read",
+      "resourceKind": "kubernetes.namespace",
+      "permission": "read_logs",
+      "grantRelation": "log_reader"
+    },
+    {
+      "id": "kubernetes.events.read",
+      "resourceKind": "kubernetes.namespace",
+      "permission": "read_events",
+      "grantRelation": "event_reader"
+    },
     { "id": "tengri.delegations.manage", "resourceKind": "tengri.workspace", "permission": "manage_grants" }
   ]
 }

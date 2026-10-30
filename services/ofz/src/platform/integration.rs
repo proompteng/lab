@@ -562,6 +562,233 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         .execute("UPDATE ofz.platform_state SET version=version+1", &[])
         .await
         .unwrap();
+    let automatic_target = format!("galactic/{}", Uuid::new_v4());
+    let automatic = p::PutPlatformConnectionRequest {
+        operation_id: Uuid::new_v4().to_string(),
+        issuer: Some(session(&humans[0])),
+        client_service: "tengri-web".into(),
+        connection_id: Uuid::new_v4().to_string(),
+        expected_version: 0,
+        client_reference: format!("{workspace}/automatic"),
+        actions: vec!["kubernetes.status.read".into()],
+        resources: vec![resource(&automatic_target)],
+        binding: Some(p::PlatformBinding {
+            service: "tengri".into(),
+            id: workspace.to_string(),
+            generation: epoch.to_string(),
+        }),
+    };
+    let mut other_owner = automatic.clone();
+    other_owner.operation_id = Uuid::new_v4().to_string();
+    other_owner.issuer = Some(session(&humans[1]));
+    assert_eq!(
+        mutations::execute(
+            &database,
+            &native,
+            policy::BFF_ID,
+            Command::PutConnection(other_owner)
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    assert!(
+        !native
+            .check(&[crate::native::Check::new(
+                "kubernetes_namespace",
+                &automatic_target,
+                "read_status",
+                "human",
+                &humans[1].0
+            )])
+            .await
+            .unwrap()
+            .0
+    );
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+            &[&Uuid::parse_str(&humans[0].1).unwrap()],
+        )
+        .await
+        .unwrap();
+    let needs_verification = mutations::execute(
+        &database,
+        &native,
+        policy::BFF_ID,
+        Command::PutConnection(automatic.clone()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(needs_verification.code(), Code::PermissionDenied);
+    assert_eq!(
+        needs_verification.message(),
+        "fresh multifactor authentication required"
+    );
+    assert_eq!(
+        connection
+            .query_one(
+                "SELECT count(*) FROM ofz.platform_connections WHERE id=$1",
+                &[&Uuid::parse_str(&automatic.connection_id).unwrap()]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    assert!(
+        !native
+            .check(&[crate::native::Check::new(
+                "kubernetes_namespace",
+                &automatic_target,
+                "read_status",
+                "human",
+                &humans[0].0
+            )])
+            .await
+            .unwrap()
+            .0
+    );
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&humans[0].1).unwrap()],
+        )
+        .await
+        .unwrap();
+    let automatic_saved = mutations::execute(
+        &database,
+        &native,
+        policy::BFF_ID,
+        Command::PutConnection(automatic.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(automatic_saved.decision.allowed);
+    assert!(
+        native
+            .check(&[crate::native::Check::new(
+                "kubernetes_namespace",
+                &automatic_target,
+                "read_status",
+                "human",
+                &humans[0].0
+            )])
+            .await
+            .unwrap()
+            .0
+    );
+    assert!(
+        !native
+            .check(&[crate::native::Check::new(
+                "kubernetes_namespace",
+                &automatic_target,
+                "read_logs",
+                "human",
+                &humans[0].0
+            )])
+            .await
+            .unwrap()
+            .0
+    );
+    assert!(
+        !authorization::check(&database, &native, RELAY, check(&automatic_target))
+            .await
+            .unwrap()
+            .allowed
+    );
+    let repeated = mutations::execute(
+        &database,
+        &native,
+        policy::BFF_ID,
+        Command::PutConnection(automatic.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        repeated.decision.audit_receipt_id,
+        automatic_saved.decision.audit_receipt_id
+    );
+    let automatic_receipt: serde_json::Value = connection
+        .query_one(
+            "SELECT receipt FROM ofz.audit WHERE id=$1",
+            &[&Uuid::parse_str(&automatic_saved.decision.audit_receipt_id).unwrap()],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        automatic_receipt["platform_resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|entry| entry.contains("status_reader") && entry.contains(&automatic_target))
+    );
+    let version = database.state().await.unwrap().version;
+    native
+        .apply(
+            &Uuid::new_v4().to_string(),
+            version,
+            &[Update::delete(Relationship::new(
+                "kubernetes_namespace",
+                &automatic_target,
+                "status_reader",
+                "human",
+                &humans[0].0,
+            ))],
+        )
+        .await
+        .unwrap();
+    connection
+        .execute("UPDATE ofz.platform_state SET version=version+1", &[])
+        .await
+        .unwrap();
+    let gateway = crate::registry::configured()
+        .unwrap()
+        .service(policy::BFF_ID)
+        .unwrap();
+    assert_eq!(
+        connections::scope_authority(
+            &database,
+            &native,
+            gateway,
+            &automatic.actions,
+            &automatic.resources,
+            automatic.binding.as_ref(),
+            &humans[0].0
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    assert_eq!(
+        mutations::execute(
+            &database,
+            &native,
+            policy::BFF_ID,
+            Command::PutConnection(automatic.clone())
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    assert!(
+        !native
+            .check(&[crate::native::Check::new(
+                "kubernetes_namespace",
+                &automatic_target,
+                "read_status",
+                "human",
+                &humans[0].0
+            )])
+            .await
+            .unwrap()
+            .0
+    );
     // A workspace owner can delegate approved reads without being a platform administrator.
     let version = database.state().await.unwrap().version;
     native
@@ -585,6 +812,36 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         )
         .await
         .unwrap();
+    let mut denied_onboarding = automatic.clone();
+    denied_onboarding.operation_id = Uuid::new_v4().to_string();
+    denied_onboarding.connection_id = Uuid::new_v4().to_string();
+    denied_onboarding.client_reference = format!("{workspace}/denied-onboarding");
+    denied_onboarding.actions = vec!["kubernetes.events.read".into()];
+    assert_eq!(
+        mutations::execute(
+            &database,
+            &native,
+            policy::BFF_ID,
+            Command::PutConnection(denied_onboarding)
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    assert!(
+        !native
+            .check(&[crate::native::Check::new(
+                "kubernetes_namespace",
+                &automatic_target,
+                "read_events",
+                "human",
+                &humans[0].0
+            )])
+            .await
+            .unwrap()
+            .0
+    );
     connection
         .execute("UPDATE ofz.platform_state SET version=version+1", &[])
         .await
@@ -622,6 +879,13 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         resources: create.resources.clone(),
         binding: create.binding.clone(),
     };
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-600000 WHERE id=$1",
+            &[&Uuid::parse_str(&humans[0].1).unwrap()],
+        )
+        .await
+        .unwrap();
     let saved = mutations::execute(
         &database,
         &native,
@@ -630,6 +894,13 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     )
     .await
     .unwrap();
+    connection
+        .execute(
+            "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=$1",
+            &[&Uuid::parse_str(&humans[0].1).unwrap()],
+        )
+        .await
+        .unwrap();
     assert_eq!(
         mutations::execute(
             &database,
@@ -656,11 +927,19 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
     .await
     .unwrap()
     .connections;
-    assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].id, create.connection_id);
-    assert!(listed[0].enabled);
-    assert!(!listed[0].credential_active);
-    assert!(listed[0].binding.as_ref().unwrap().generation.is_empty());
+    assert_eq!(listed.len(), 2);
+    assert!(
+        listed
+            .iter()
+            .any(|entry| entry.id == automatic.connection_id)
+    );
+    let listed = listed
+        .iter()
+        .find(|entry| entry.id == create.connection_id)
+        .unwrap();
+    assert!(listed.enabled);
+    assert!(!listed.credential_active);
+    assert!(listed.binding.as_ref().unwrap().generation.is_empty());
     let legacy_operation = Uuid::new_v4();
     let legacy = connection.execute("INSERT INTO ofz.platform_commands(operation_id,workload_id,fingerprint,prepared) VALUES($1,$2,$3,$4)", &[&legacy_operation,&policy::BFF_ID,&vec![0_u8;32],&serde_json::json!({"command":{"Create":{}}})]).await.unwrap_err();
     assert_eq!(
@@ -681,20 +960,17 @@ async fn platform_policy_and_both_clients_execute_through_relay() {
         )
         .await
         .unwrap();
-    let mut consent_change = intent.clone();
-    consent_change.operation_id = Uuid::new_v4().to_string();
-    consent_change.expected_version = 1;
-    assert!(
-        mutations::execute(
-            &database,
-            &native,
-            policy::BFF_ID,
-            Command::PutConnection(consent_change)
-        )
-        .await
-        .unwrap_err()
-        .message()
-        .contains("fresh multifactor")
+    let consent_replay = mutations::execute(
+        &database,
+        &native,
+        policy::BFF_ID,
+        Command::PutConnection(intent.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        consent_replay.decision.audit_receipt_id,
+        saved.decision.audit_receipt_id
     );
     let mut renewal = create.clone();
     renewal.operation_id = Uuid::new_v4().to_string();
