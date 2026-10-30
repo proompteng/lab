@@ -168,7 +168,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       },
       input.clock,
     )
-    const cycleStore = withWriterFenceCycleStore(yield* makeCycleStore(input.clock), fence)
+    const cycleStore = withWriterFenceCycleStore(yield* makeCycleStore(input.clock), fence, intentStore)
     const marketData = yield* makeSimulatedMarketData(input.source, input.cursor)
     const candidateObservationStore = yield* makeCandidateObservationStore
     const jevClient = yield* JevClient

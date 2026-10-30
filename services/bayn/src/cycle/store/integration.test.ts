@@ -271,7 +271,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
   test('inserts and activates immediate admission in one real writer-fenced transaction', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
-        const store = withWriterFenceCycleStore(yield* CycleStore, yield* WriterFence)
+        const store = withWriterFenceCycleStore(yield* CycleStore, yield* WriterFence, {
+          commit: () => Effect.die('cycle acquisition cannot commit an intent'),
+        })
         const sql = yield* PgClient.PgClient
         yield* sql`CREATE TABLE test_cycle_admission_transactions (
           ordinal bigint GENERATED ALWAYS AS IDENTITY, operation text, transaction_id xid8
