@@ -64,6 +64,14 @@ enter cycle execution. Timeouts after that boundary retain fail-closed mutation 
 [October 17 runtime and crypto entry investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) for the
 reproduction, cost evidence and research limitations; this recovery does not establish profitable trading.
 
+Equity position reporting replays the broker's intraday average rounded after each opening fill. Both reported
+average and cost basis must reproduce exactly from complete fill history and the unchanged native inventory cost.
+The replay uses immutable broker nanosecond timestamps, preserving execution order within a millisecond. Missing or
+ambiguous current-position timestamps cannot establish a reporting anchor. Prior flat positions do not affect it.
+A partial sale retains the entry average; closing the position resets it. An overnight position cannot use this
+intraday anchor. Crypto retains its verified coin-fee basis. Cash, quantities and posted ledger amounts remain exact;
+there is no cost-basis tolerance.
+
 Reconciliation requires the account, position and valuation observations to cover the current New York trading day
 before persistence and before publishing the result. A pass crossing midnight invalidates its cached broker snapshot
 and makes one fresh read within the original pass deadline. A still-stale refresh retains the normal authority
