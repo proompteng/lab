@@ -36,7 +36,7 @@ import type {
   ForwardPerformanceMarketVolumeRequest,
   ForwardPerformanceEvidenceInput,
 } from './model'
-import { readForwardInferenceExpenses } from './inference-expenses'
+import { readForwardInferenceExpenses, readForwardInferenceExpenseSnapshots } from './inference-expenses'
 import { readPersistedSystemAssessment, readSystemRegistration } from '../system-assessment/postgres'
 import { JevResearchPolicy } from '../jev/acceptance'
 import type { InferenceCostError } from '../inference-costs'
@@ -85,6 +85,7 @@ type BoundForwardPerformanceConfig = ForwardPerformanceConfig & {
 }
 
 export interface ForwardPerformanceReaders {
+  readonly inferenceExpenseSnapshots: typeof readForwardInferenceExpenseSnapshots
   readonly inferenceExpenses: typeof readForwardInferenceExpenses
   readonly postgres: (
     sql: PgClient.PgClient,
@@ -106,6 +107,7 @@ export interface ForwardPerformanceReaders {
 }
 
 export const liveForwardPerformanceReaders: ForwardPerformanceReaders = {
+  inferenceExpenseSnapshots: readForwardInferenceExpenseSnapshots,
   inferenceExpenses: readForwardInferenceExpenses,
   postgres: readForwardPerformancePostgres,
   ledger: (config, accountId, accountPlans, cashYieldEvidence, generationPlans) =>
@@ -755,7 +757,7 @@ export const runForwardPerformanceReport = (
   Effect.gen(function* () {
     const identity = yield* requireBrokerIdentity(loadedConfig)
     const sql = yield* PgClient.PgClient
-    return yield* forwardPerformanceSnapshot(sql, options.writerFence)
+    const captured = yield* forwardPerformanceSnapshot(sql, options.writerFence)
       .withTransaction(
         Effect.gen(function* () {
           const input = yield* readForwardPerformanceInput(loadedConfig, readers, options)
@@ -779,22 +781,15 @@ export const runForwardPerformanceReport = (
                 'System assessment belongs to another account or authority generation',
               )
           }
-          const expenses = yield* readers
-            .inferenceExpenses(
-              loadedConfig,
+          const expenseSnapshots = yield* readers
+            .inferenceExpenseSnapshots(
               sql,
               identity.execution.brokerIdentity.accountId,
               options.authorityGenerationHash,
               options.writerFence,
             )
             .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
-          return yield* Effect.fromResult(
-            makeForwardPerformanceReport(input, expenses, options.authorityGenerationHash, assessment),
-          ).pipe(
-            Effect.mapError((cause) =>
-              programError('construct-receipt', 'forward-performance report construction failed', cause),
-            ),
-          )
+          return { input, assessment, expenseSnapshots }
         }),
       )
       .pipe(
@@ -804,4 +799,20 @@ export const runForwardPerformanceReport = (
             : programError('postgres-read', 'forward-performance report snapshot failed', postgresError(cause)),
         ),
       )
+    const expenses = yield* readers
+      .inferenceExpenses(
+        loadedConfig,
+        sql,
+        identity.execution.brokerIdentity.accountId,
+        captured.expenseSnapshots,
+        options.authorityGenerationHash,
+      )
+      .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
+    return yield* Effect.fromResult(
+      makeForwardPerformanceReport(captured.input, expenses, options.authorityGenerationHash, captured.assessment),
+    ).pipe(
+      Effect.mapError((cause) =>
+        programError('construct-receipt', 'forward-performance report construction failed', cause),
+      ),
+    )
   })
