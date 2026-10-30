@@ -31,11 +31,7 @@ import {
 import { EntryProposalSchema, EntrySetup, ProposalRejection } from './entry-proposals'
 import { makeEntryJudgmentRequest } from './entry-questions'
 import { BaseStartEvidenceSchema, makeStagedSkipReceipt, stageResponseIdentity } from './staged-checkpoint'
-import {
-  makeInitialChartStageRequest,
-  makeSelectedBaseStartStageRequest,
-  stagedChartAssessments,
-} from './staged-chart-questions'
+import * as chartStages from './staged-chart-questions'
 
 const HttpStatus = Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 })))
 const Evaluation = Schema.Struct({
@@ -130,6 +126,7 @@ export const decodeEntryHandoff = (source: EntrySource, input: unknown) =>
       input,
       prepared.requestHash,
       makeEntryJudgmentRequest,
+      chartStages,
     )
   })
 
@@ -138,12 +135,16 @@ export const decodeStagedEntryHandoff = (
   input: unknown,
   inputHash: string,
   prepareJudgments: typeof makeEntryJudgmentRequest,
+  stages: Pick<
+    typeof chartStages,
+    'makeInitialChartStageRequest' | 'makeSelectedBaseStartStageRequest' | 'stagedChartAssessments'
+  >,
 ) =>
   Result.gen(function* () {
     const chart = yield* makeNativeChartEvidence(source.input.chartSource)
     const handoff = yield* Schema.decodeUnknownResult(EntryHandoffSchema, strictParseOptions)(input)
     const { handoffHash, ...material } = handoff
-    const initial = yield* makeInitialChartStageRequest({
+    const initial = yield* stages.makeInitialChartStageRequest({
       chart,
       protocol: source.input.protocol,
       funding: source.input.funding,
@@ -200,7 +201,7 @@ export const decodeStagedEntryHandoff = (
       Result.isFailure(decodeDecisionsResponse(initial.request, visual.response))
     )
       return yield* invalid('Staged chart response differs from its original source or clocks')
-    const next = yield* makeSelectedBaseStartStageRequest(
+    const next = yield* stages.makeSelectedBaseStartStageRequest(
       { chart, protocol: source.input.protocol, funding: source.input.funding },
       stageResponseIdentity(visual),
     )
@@ -233,15 +234,17 @@ export const decodeStagedEntryHandoff = (
       )
         return yield* invalid('Base start response changes its selected predecessor or clocks')
     }
-    const derive = stagedChartAssessments(
-      { chart, protocol: source.input.protocol, funding: source.input.funding },
-      stageResponseIdentity(visual),
-      base.status === 'RECEIVED' ? stageResponseIdentity(base.inference) : null,
-    ).pipe(
-      Result.flatMap((assessments) =>
-        deriveEntryDispositionForChart(source.input, visual, chart, assessments, prepareJudgments),
-      ),
-    )
+    const derive = stages
+      .stagedChartAssessments(
+        { chart, protocol: source.input.protocol, funding: source.input.funding },
+        stageResponseIdentity(visual),
+        base.status === 'RECEIVED' ? stageResponseIdentity(base.inference) : null,
+      )
+      .pipe(
+        Result.flatMap((assessments) =>
+          deriveEntryDispositionForChart(source.input, visual, chart, assessments, prepareJudgments),
+        ),
+      )
     if (disposition.status === 'PREPARATION_FAILED') {
       if (disposition.reason !== 'DERIVATION_CONTRACT' || Result.isSuccess(derive))
         return yield* invalid('Staged preparation failure contradicts reproducible evidence')
