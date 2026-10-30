@@ -33,6 +33,10 @@ still require full reproduction. Newly inserted intents skip their intermediate 
 The complete intent and risk decision still undergo final stored readback before commit, and insertion conflicts retain
 their existing verification path. Submission expiry and final authority, funding and risk checks remain unchanged.
 
+Forward reports verify every session's frozen inference expenses once before checking the exact TigerBeetle ledger.
+An authority generation limits cost attribution and coverage counts; requests and quotes from the other generations
+still undergo full integrity and conflict validation. Missing, unverified and unpriced costs remain explicit.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
@@ -207,8 +211,9 @@ cycle's position management or recovery. No protection result is cached between 
 
 A quote side withdrawn by the provider retains its observed zero price and zero size in the source evidence. It
 supersedes the prior quote and excludes that candidate until a fresh two-sided quote arrives. It cannot authorize entry,
-pricing or liquidation, and a withdrawn required benchmark still blocks the snapshot. Negative, crossed and
-contradictory quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
+pricing or liquidation. Live Jev queries have no required benchmark; an independent momentum research query that
+explicitly requests a reference still requires that reference's valid data. Negative, crossed and contradictory
+quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
 schema rejection caused by the withdrawal. Original capture receipts retain their exact recorded disposition; old
 rejection receipts cannot be relabeled as accepted evidence.
 

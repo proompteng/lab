@@ -90,6 +90,21 @@ test('rejects foreign account and conflicting coverage instead of summing it', (
   expect(Result.isFailure(summarizeFromEvidence(evidence, first.accountId, [...frozen, ...frozen]))).toBe(true)
 })
 
+test('validates other generations in the same session before attributing selected expenses', () => {
+  const tampered = frozen.map((row) =>
+    row.quote.line.requestId === second.requestId
+      ? { ...row, quote: { ...row.quote, quoteHash: '0'.repeat(64) } }
+      : row,
+  )
+  expect(
+    Result.isFailure(summarizeFromEvidence(evidence, first.accountId, tampered, first.authorityGenerationHash)),
+  ).toBe(true)
+  const conflicting = frozen.flatMap((row) => (row.quote.line.requestId === second.requestId ? [row, row] : [row]))
+  expect(
+    Result.isFailure(summarizeFromEvidence(evidence, first.accountId, conflicting, first.authorityGenerationHash)),
+  ).toBe(true)
+})
+
 test('retains the original expense read failure for diagnostics', async () => {
   const cause = new Error('synthetic database unavailable')
   const sql = (() => Effect.fail(cause)) as unknown as PgClient.PgClient
