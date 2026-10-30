@@ -17,6 +17,22 @@ The receipt reproduces its full handoff once; the independent handoff row must m
 Incomplete and failed receipts still require independent handoff reproduction. Socket and inference deadlines remain
 unchanged.
 
+The latest consumed Jev window uses an index on cycle, portfolio purpose and window end. This bounds the lookup to
+one source row instead of materializing every matching immutable observation. Building the index temporarily delays
+new observation writes; reads and position/accounting writes on their other tables continue.
+
+Initial chart admission uses the request inserted by its own transaction and an empty checkpoint, avoiding four
+reloads per candidate before dispatch. Subsequent transitions acquire the request lock first, then read all three
+checkpoint tables in one statement. This second statement sees a competing transition's committed journal after a
+lock wait. Every claim still reproduces its source and passes the database guards before its transaction commits;
+provider calls retain the original ten-second expiry.
+
+Repeated Jev target verification reuses the last successful semantic check only when a hash of the entire actual
+target and evidence matches. It retains one hash, not the source objects; changed source bytes, decisions or deadlines
+still require full reproduction. Newly inserted intents skip their intermediate reload inside the owning transaction.
+The complete intent and risk decision still undergo final stored readback before commit, and insertion conflicts retain
+their existing verification path. Submission expiry and final authority, funding and risk checks remain unchanged.
+
 Migration 134 removed six empty retired tables and the obsolete broker-error/rate-limit event variants. It refused
 populated retired evidence and preserved active broker failures, accounting and replay. `tools/audit-database.sql`
 provides bounded read-only table sizes, exact retirement counts and migration readback.
@@ -72,13 +88,28 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The replacement source uses `jev` protocol v28, entry state v22, batch v7 and entry target v7. It retains the
+The current source uses `jev` protocol v33, verified numerical input v22, batch v7 and entry target v7. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
-Protocol v28 funds each equity and crypto buy at the original inference ask rounded to a valid broker tick. Refreshed
-quote checks and native order construction enforce that same funded ceiling. Equities use DAY limits and crypto uses
-IOC limits. It does not add the risk policy's adverse-price allowance to the buy limit. Crypto entry coin fees, maximum
+Jev receives proposal evidence v1 with the completed candidate bars and each funded proposal stored once. Code
+computes structure bounds, completed closes relative to those bounds, consecutive closes above the structure and
+whether a completed bar touched the proposed stop. The model still judges whether the structure is meaningful,
+whether the setup is confirmed and whether the stop invalidates it; crypto also retains its target-obstruction
+judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
+state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
+request for source verification and audit. Retired question construction is available only to financial readers;
+current execution and database guards accept v33 and its exact question-policy hash.
+The chart resistance question offers every observed high above the current bid and asks for the nearest identifiable
+resistance, including levels that cannot cover fees. Funding remains a separate code-owned check. The source-feasibility
+preflight still prevents provider calls when neither proposal template can fund an entry; it does not hide closer
+resistance from an otherwise feasible chart. Retained v26 through v32 chart requests reproduce their original filtered
+choices and request hashes for financial evidence only.
+The current protocol funds each equity and crypto buy at the original inference ask rounded to a valid broker tick.
+Native order construction enforces that same funded ceiling. Equity DAY orders may rest at the funded cap when a
+fresh eligible ask rises above it; risk still uses the actual quote and the order cannot chase the ask. Quotes at or
+beyond the selected stop or profit target remain ineligible. Crypto IOC orders require an ask within the funded cap.
+It does not add the risk policy's adverse-price allowance to the buy limit. Crypto entry coin fees, maximum
 future sell fees, stop/exit slippage and every risk limit remain unchanged. A tighter buy limit may remain unfilled; it
 cannot justify a cheaper funding estimate while submitting a higher-priced order.
 PostgreSQL commits all CHART terminal receipts with their next visual admissions or proposal handoffs in one
@@ -213,13 +244,19 @@ window trade. Executable quote pricing, fee estimates and funding use the fresh 
 retain the current-quote comparison and label it `CURRENT_QUOTES`.
 BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
 or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate.
-Protocol v30 uses `bayn.candidate-evidence.market-quotes.v1`: crypto candidates require a fresh two-sided quote and
+Protocol v31 uses `bayn.candidate-evidence.market-quotes.v2`: crypto candidates require a fresh two-sided quote and
 verified bars and features; an actual window trade is optional context. `candidate.latestTrade` is `null` when none
 was observed, and no quote or bar is relabeled as a trade. Alpaca can publish crypto bars from quote midpoints with
 zero volume when no trades occur ([provider contract](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data)).
 Missing trade context therefore does not exclude ETH before assessment. A valid model-assessed setup, protective price
 choices, fee-inclusive funding and all execution and financial gates remain required. Equity candidates still require
-an actual window trade; equity benchmarks retain the existing SPY quote, trade and feature contract.
+an actual window trade. SPY also requires a real window trade and verified bars and features, while its executable
+quote retains the ten-second freshness limit. A missing post-boundary SPY print cannot veto all equity candidates
+when that price and contextual evidence exist. The actual print age stays visible to Jev. Missing or stale benchmark
+quotes, missing real window trades, unavailable features and malformed evidence still fail the whole observation.
+Migration 162 retires v30 execution, preserving its immutable financial receipts and original verification semantics.
+It retains terminal-cycle, flat-inventory, settled-order, complete-accounting and fresh exact-reconciliation cutover
+requirements. Broker identity, capital history, monetary limits, price ceilings, stops and holding time are unchanged.
 Migration 160 rejects retired protocol writes and dispatch while preserving immutable financial receipts and late
 provider cost outcomes. Cutover requires terminal cycles, flat inventory, settled orders, complete accounting and fresh
 exact reconciliation, followed by native OBSERVE recovery and a reviewed same-account PAPER mandate for the new image.

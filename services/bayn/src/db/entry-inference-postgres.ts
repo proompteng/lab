@@ -26,28 +26,30 @@ const failed = (cause: unknown) =>
 export const makeEntryInferenceWrites = (sql: PgClient.PgClient) => {
   const load = (requestId: string) =>
     Effect.gen(function* () {
-      const [row] = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]))(
+      const [request] = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]))(
         yield* sql`SELECT payload FROM jev_evaluation_requests WHERE request_id=${requestId} FOR UPDATE`,
       )
-      const rows = (values: unknown) =>
-        Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ payload: Schema.Unknown })))(values)
-      const claims = yield* rows(
-        yield* sql`SELECT payload FROM jev_staged_dispatch_claims WHERE request_id=${requestId} ORDER BY stage`,
-      )
-      const terminals = yield* rows(
-        yield* sql`SELECT payload FROM jev_staged_terminal_receipts WHERE request_id=${requestId} ORDER BY stage`,
-      )
-      const skips = yield* rows(
-        yield* sql`SELECT payload FROM jev_staged_skip_receipts WHERE request_id=${requestId} ORDER BY stage`,
+      // Read the journal after acquiring its owner lock. A single locking SELECT
+      // could retain a snapshot from before a competing transition committed.
+      const [row] = yield* Schema.decodeUnknownEffect(
+        Schema.Tuple([Schema.Struct({ claims: Schema.Unknown, terminals: Schema.Unknown, skips: Schema.Unknown })]),
+      )(
+        yield* sql`SELECT
+          COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C")
+            FROM jev_staged_dispatch_claims WHERE request_id=${requestId}), '[]'::jsonb) AS claims,
+          COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C")
+            FROM jev_staged_terminal_receipts WHERE request_id=${requestId}), '[]'::jsonb) AS terminals,
+          COALESCE((SELECT jsonb_agg(payload ORDER BY stage COLLATE "C")
+            FROM jev_staged_skip_receipts WHERE request_id=${requestId}), '[]'::jsonb) AS skips`,
       )
       const checkpoint = yield* Effect.fromResult(
-        decodeStagedCheckpoint(row.payload, {
-          claims: claims.map((row) => row.payload),
-          terminals: terminals.map((row) => row.payload),
-          skips: skips.map((row) => row.payload),
+        decodeStagedCheckpoint(request.payload, {
+          claims: row.claims,
+          terminals: row.terminals,
+          skips: row.skips,
         }),
       )
-      return { request: row.payload, checkpoint }
+      return { request: request.payload, checkpoint }
     })
   type Loaded = { readonly request: unknown; readonly checkpoint: StagedCheckpoint }
   const recordClaim = (input: StagedDispatchClaim, loaded: Loaded) =>

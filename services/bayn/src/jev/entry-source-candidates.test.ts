@@ -4,7 +4,7 @@ import { Result } from 'effect'
 import { makeNativeChartEvidence, type NativeChartEvidence } from './chart-evidence'
 import { makeInitialChartStageRequest } from './staged-chart-questions'
 import { jevEntryEconomics } from './entry-economics'
-import { makeEntryProposals, makeEntrySourceCandidates } from './entry-proposals'
+import { EntrySetup, ProposalRejection, makeEntryProposals, makeEntrySourceCandidates } from './entry-proposals'
 import { defaultJevProtocolDocument } from './protocol'
 
 const source = {
@@ -72,7 +72,7 @@ test('excludes resistance behind the current bounded entry even when it is above
   expect(candidates.supportBarIds.length).toBeGreaterThan(0)
 })
 
-test('chart anchor questions expose only executable sources and allow no matching structure', () => {
+test('chart anchor questions expose observed overhead sources and allow no matching structure', () => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(source))
   const input = context(chart)
   const candidates = Result.getOrThrow(makeEntrySourceCandidates(input))
@@ -89,6 +89,54 @@ test('chart anchor questions expose only executable sources and allow no matchin
       maximumEntryPriceMicros: input.economics.maximumEntryPriceMicros,
     },
   })
+})
+
+test('keeps observed resistance available when it obstructs a funded breakout but cannot itself cover crypto fees', () => {
+  const chart = Result.getOrThrow(makeNativeChartEvidence({ ...source, symbol: 'ETH/USD' }))
+  const input = context(chart)
+  const candidates = Result.getOrThrow(makeEntrySourceCandidates(input))
+  expect(candidates.baseWindows.length).toBeGreaterThan(0)
+  expect(candidates.resistanceBarIds).toEqual([])
+
+  const prepared = Result.getOrThrow(makeInitialChartStageRequest(input))
+  expect(prepared.sourceFeasible).toBe(true)
+  const resistance = prepared.request.questions.find((question) => question.name === 'resistance_anchor')
+  if (resistance?.type !== 'choice') throw new Error('Observed overhead resistance was hidden by the funding filter')
+  expect(resistance.choices.map((choice) => choice.value)).toEqual([chart.bars[1]?.id, 'no_resistance'])
+})
+
+test('does not substitute a farther funded target for a selected closer unfunded resistance', () => {
+  const chart = Result.getOrThrow(
+    makeNativeChartEvidence({
+      ...source,
+      symbol: 'ETH/USD',
+      bars: source.bars.map((bar, index) => (index === 0 ? { ...bar, high: 108 } : bar)),
+    }),
+  )
+  const input = context(chart)
+  const support = chart.bars[0]
+  const nearby = chart.bars[1]
+  if (support === undefined || nearby === undefined) throw new Error('Expected source anchors')
+  const funded = Result.getOrThrow(makeEntrySourceCandidates(input))
+  expect(funded.resistanceBarIds).toEqual([support.id])
+  const prepared = Result.getOrThrow(makeInitialChartStageRequest(input))
+  const resistance = prepared.request.questions.find((question) => question.name === 'resistance_anchor')
+  if (resistance?.type !== 'choice') throw new Error('Expected observed resistance choices')
+  expect(resistance.choices.map((choice) => choice.value)).toEqual([support.id, nearby.id, 'no_resistance'])
+
+  const evidence = assessments(chart)
+  const result = Result.getOrThrow(
+    makeEntryProposals({
+      ...input,
+      assessments: {
+        ...evidence,
+        support: { ...evidence.support, anchor: { status: 'ASSESSED', barId: support.id, probability: 1 } },
+        resistance: { ...evidence.resistance, anchor: { status: 'ASSESSED', barId: nearby.id, probability: 1 } },
+      },
+    }),
+  )
+  expect(result.proposals).toEqual([])
+  expect(result.rejections).toContainEqual({ setup: EntrySetup.SupportRecovery, reason: ProposalRejection.Unfunded })
 })
 
 test('candidate filtering retains every fundable support pair and excludes every unfundable pair', () => {

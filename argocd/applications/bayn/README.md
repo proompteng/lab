@@ -1,17 +1,44 @@
 # Exception tracking
 
+## Observed resistance cutover
+
+Protocol v33 separates observed overhead resistance from fee-funded profit objectives. The chart question includes
+all completed highs above the current bid, including closer resistance that cannot cover trading costs. A v32 ETH
+request on October 30 at 06:21 UTC reported resistance presence 0.96 but omitted its anchor question because no
+observed high could fund an exit. Its measured-base target still crossed those highs. Jev's obstruction gate rejected
+the proposal. The new source contract keeps that evidence available; it does not lower the obstruction threshold,
+change prices, infer a supported setup from a source choice, or authorize an unfunded trade.
+
+Migration 165 preserves the flat, settled, fresh exact reconciliation boundary and all financial history. It retires
+v32 execution writes while preserving original chart requests and late cost evidence. The source rollout runs OBSERVE
+with the old sealed mandate removed. A subsequent same-account v33 mandate must bind the verified immutable image
+through the normal Kargo path. Broker identity, capital and loss history, risk limits, fees, deadlines and the
+fifteen-minute hold remain unchanged. Natural crypto and equity round trips remain required deployment proof.
+
+## Historical focused entry evidence cutover
+
+Protocol v32 supplies completed candidate bars and one copy of each funded proposal to Jev. Code derives exact
+structure bounds, completed-close locations, consecutive closes and stop touches. The existing questions and
+0.70/0.30 thresholds are unchanged; model judgments still determine structural meaning and confirmation.
+Migration 164 requires the existing flat, settled, fresh exact reconciliation boundary, preserves all financial
+history, and retires v31 writes. The source rollout removes the old strategy mandate and runs OBSERVE. After
+verifying the published immutable image and native cutover, activate a reviewed same-account v32 mandate through
+the normal Kargo path. Broker credentials, risk limits, fees, freshness and the fifteen-minute hold are unchanged.
+
 ## Market-specific chart history
 
-Protocol v30 separates chart context: equities retain 30 minutes; crypto uses 120 minutes. Kafka seeks each market's
+Protocol v31 separates chart context: equities retain 30 minutes; crypto uses 120 minutes. Kafka seeks each market's
 history independently and retains 121 distinct crypto bar minutes. Native rolling indicators still verify their
 original 30-minute raw-bar subset. Longer charts keep raw source and arrival evidence; missing minutes remain gaps.
 The holding limit remains fifteen minutes, with unchanged quote freshness, inference validity, fee funding and risk.
-Migration 161 requires flat, settled, exactly reconciled native OBSERVE recovery and preserves financial history.
+Migration 162 requires flat, settled, exactly reconciled native OBSERVE recovery and preserves financial history.
 The source cutover removes the old sealed mandate. The subsequent same-account PAPER mandate must bind the verified
-immutable v30 image before natural funded entries and reconciled round trips can be accepted.
+immutable v31 image before natural funded entries and reconciled round trips can be accepted.
 
 Crypto candidates require a fresh two-sided quote and the latest completed bar. A trade print is optional context;
-equities retain trade confirmation. Both markets cap buys at the original inference ask rounded to a broker tick.
+equity candidates retain trade confirmation. SPY is benchmark context: its real trade must be inside the observation
+lookback, while its executable quote must remain at most ten seconds old. An older contextual print cannot veto
+every equity before inference. Both markets cap buys at the original inference ask rounded to a broker tick.
 Equities retain DAY limits and crypto retains IOC limits. Model judgments, fee-inclusive funding, quote freshness,
 inference deadlines, stops and financial limits remain enforced. Broker credentials, capital and loss history persist.
 
@@ -48,6 +75,20 @@ synthetic exception must appear in the corresponding GlitchTip project. This
 command is **not** run automatically from the trading service at startup.
 
 # Bayn GitOps rollout notes
+
+## Financial database memory
+
+Each `bayn-db` instance reserves 2 GiB and permits 8 GiB so PostgreSQL and the operating system can retain financial
+evidence pages. During an observed inference-request insert on October 29, 2026, the former 2 GiB limit caused 286
+memory-limit hits and reclaimed about 120 MiB of file cache. Separate samples showed receipt and resolution inserts
+waiting on physical reads, and a batch completion took 17.4 seconds against its original ten-second inference window.
+This allocation addresses the observed cache pressure; verify its effect on native batch and dispatch latency after
+rollout. PostgreSQL parameters, synchronous replication, storage, backups and trading limits retain their contracts.
+
+CNPG applies the resource update through its existing unsupervised switchover policy. Allow for a brief connection
+interruption; verify both pods' resource limits, current primary, synchronous standby, exact financial reconciliation,
+and natural entries and protected exits. If the larger allocation cannot schedule or worsens the measured workload, restore the
+prior resource values through a reviewed commit and the same Kargo path. Infrastructure health is not trading proof.
 
 ## Native arrival archive
 

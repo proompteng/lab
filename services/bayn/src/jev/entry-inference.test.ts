@@ -714,7 +714,7 @@ describe('claimed sequential entry inference', () => {
     expect(result.handoff.disposition.status).toBe('READY')
     if (result.handoff.disposition.status === 'READY')
       expect(result.handoff.disposition.jevRequest.state).toMatchObject({
-        candidate: { bars1m: [{ close: 101 }, { close: 100 }, { close: 104 }, { close: 104 }] },
+        completedSourceBars: [{ close: 101 }, { close: 100 }, { close: 104 }, { close: 104 }],
       })
   })
 })

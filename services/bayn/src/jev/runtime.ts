@@ -3,6 +3,7 @@ import { jevProfitTargetCrossed } from './profit-target'
 import { maximumFundedBuyQuantities } from './entry-sizing'
 import { jevMaximumEntryAskMicros } from './entry-economics'
 import { jevMarketForSymbol } from './markets'
+import { MarketKind } from '../instruments'
 import { jevMarketForCycle, jevCycleCandidates } from './markets'
 import { isContinuousMarket, type MarketHours } from '../market-hours'
 import {
@@ -351,10 +352,20 @@ export const compileJevEntry = (
         BigInt(quotePrices.askPriceMicros[symbol] ?? '0') <=
         jevMaximumEntryAskMicros(decision.evidence.observation.protocol, symbol, originalAsk)
       const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
-      if (exclusion !== null || !withinCostBound || bid <= BigInt(plan.levels.stopPriceMicros))
+      const requiresMarketableLimit = jevMarketForSymbol(symbol).market === MarketKind.Crypto
+      const ineligibleReason =
+        exclusion ??
+        (requiresMarketableLimit && !withinCostBound
+          ? 'entry cost price ceiling'
+          : bid <= BigInt(plan.levels.stopPriceMicros)
+            ? 'protective stop crossed'
+            : bid >= BigInt(plan.levels.profitLimitPriceMicros)
+              ? 'profit target already reached'
+              : null)
+      if (ineligibleReason !== null)
         return yield* Result.fail(
           new JevAwaitingEvidence({
-            message: `Jev target ${symbol} no longer has an eligible execution quote: ${exclusion ?? 'entry cost price ceiling'}`,
+            message: `Jev target ${symbol} no longer has an eligible execution quote: ${ineligibleReason}`,
             readiness: DecisionReadinessReason.NoEligibleCandidate,
           }),
         )

@@ -700,7 +700,7 @@ export const runBacktest = (
           }
         }),
       { concurrency: 1 },
-    )
+    ).pipe(Effect.withSpan('bayn.backtest.sessions'))
     const brokerState = yield* broker.snapshot
     const decisionLatencyEvidence = yield* runtime.decisionLatencyEvidence
     const modelCosts = calculateReplayInferenceCosts(inferenceCalls, prepared.input.inference.costs)
@@ -719,19 +719,20 @@ export const runBacktest = (
     const complete = sessions.every((session) => session.completion === 'COMPLETE') && issues.length === 0
     // Consume and rehash any retained tail only after the final decision; it cannot affect execution inputs.
     yield* source.finish
-    const rows = yield* sql<Record<string, unknown>>`SELECT
+    return yield* Effect.gen(function* () {
+      const rows = yield* sql<Record<string, unknown>>`SELECT
     (SELECT count(*)::int FROM intents WHERE account_id = ${broker.accountId}) AS intents,
     (SELECT count(*)::int FROM fills WHERE account_id = ${broker.accountId}) AS fills,
     (SELECT count(*)::int FROM accounting_transactions WHERE account_id = ${broker.accountId}) AS txns`
-    const decisionRows = yield* sql<{ document: unknown }>`
+      const decisionRows = yield* sql<{ document: unknown }>`
       SELECT document FROM autonomous_cycle_shadow_decisions
       WHERE document #>> '{bindings,accountId}' = ${broker.accountId}
       ORDER BY created_at, cycle_id
     `
-    const decisions = yield* Effect.forEach(decisionRows, ({ document }) =>
-      Effect.fromResult(decodeExecutionDecisionDocument(document)),
-    )
-    const closingRows = yield* sql<{ document: unknown }>`
+      const decisions = yield* Effect.forEach(decisionRows, ({ document }) =>
+        Effect.fromResult(decodeExecutionDecisionDocument(document)),
+      )
+      const closingRows = yield* sql<{ document: unknown }>`
       SELECT document FROM (
         SELECT closure.document, closure.created_at FROM autonomous_cycle_paper_closures AS closure
         JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${broker.accountId}
@@ -740,25 +741,25 @@ export const runBacktest = (
         JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${broker.accountId}
       ) AS closes ORDER BY created_at, document->>'contentHash'
     `
-    const closingDecisions = yield* Effect.forEach(closingRows, ({ document }) =>
-      Effect.fromResult(decodeExecutionCycleClosureResult(document)),
-    )
-    // Preserve PostgreSQL numeric text, including 128-bit TigerBeetle IDs, without binary64 conversion.
-    const accountingTransactions = yield* sql<{ json: string }>`
+      const closingDecisions = yield* Effect.forEach(closingRows, ({ document }) =>
+        Effect.fromResult(decodeExecutionCycleClosureResult(document)),
+      )
+      // Preserve PostgreSQL numeric text, including 128-bit TigerBeetle IDs, without binary64 conversion.
+      const accountingTransactions = yield* sql<{ json: string }>`
       SELECT row_to_json(txn)::text AS json FROM accounting_transactions AS txn
       WHERE account_id = ${broker.accountId} ORDER BY occurred_at, transaction_id
     `
-    const accountingReceipts = yield* sql<{ json: string }>`
+      const accountingReceipts = yield* sql<{ json: string }>`
       SELECT row_to_json(receipt)::text AS json FROM accounting_receipts AS receipt
       JOIN accounting_transactions AS txn USING (broker_event_id)
       WHERE txn.account_id = ${broker.accountId} ORDER BY txn.occurred_at, receipt.receipt_id
     `
-    const feeAccounting = yield* sql<{ json: string }>`
+      const feeAccounting = yield* sql<{ json: string }>`
       SELECT row_to_json(fee)::text AS json FROM broker_fee_accounting AS fee
       WHERE account_id = ${broker.accountId} ORDER BY fee_date, activity_id
     `
-    const comparisonInput = backtestComparisonInput(prepared.input)
-    const batchRows = yield* sql<{ plan: unknown; result: unknown }>`
+      const comparisonInput = backtestComparisonInput(prepared.input)
+      const batchRows = yield* sql<{ plan: unknown; result: unknown }>`
       SELECT plan.payload AS plan, result.payload AS result
       FROM jev_batch_plans AS plan
       JOIN autonomous_cycles AS cycle ON cycle.cycle_id = plan.cycle_id
@@ -766,96 +767,99 @@ export const runBacktest = (
       WHERE cycle.account_id = ${broker.accountId}
       ORDER BY plan.batch_id
     `
-    const batches = yield* Effect.forEach(batchRows, ({ plan: rawPlan, result: rawResult }) =>
-      Effect.gen(function* () {
-        const plan = yield* Effect.fromResult(decodeJevBatchPlan(rawPlan))
-        const result = rawResult === null ? null : yield* Effect.fromResult(decodeJevBatchResult(plan, rawResult))
-        return { plan, result }
-      }),
-    )
-    const observationRows = yield* sql<{ content_hash: string; payload: unknown }>`
+      const batches = yield* Effect.forEach(batchRows, ({ plan: rawPlan, result: rawResult }) =>
+        Effect.gen(function* () {
+          const plan = yield* Effect.fromResult(decodeJevBatchPlan(rawPlan))
+          const result = rawResult === null ? null : yield* Effect.fromResult(decodeJevBatchResult(plan, rawResult))
+          return { plan, result }
+        }),
+      )
+      const observationRows = yield* sql<{ content_hash: string; payload: unknown }>`
       SELECT source.content_hash, source.payload FROM intraday_candidate_observations AS source
       JOIN autonomous_cycles AS cycle ON cycle.cycle_id = source.cycle_id
       WHERE cycle.account_id = ${broker.accountId} ORDER BY source.content_hash
     `
-    const momentumObservations =
-      prepared.input.policy !== JevResearchPolicy.Momentum
-        ? []
-        : yield* Effect.forEach(observationRows, (row) =>
-            Effect.gen(function* () {
-              const reproduced = yield* Effect.fromResult(reproduceJevCandidateObservation(row.payload))
-              if (reproduced.contentHash !== row.content_hash)
-                return yield* new ReplayBrokerFailure({
-                  message: 'Persisted momentum observation hash does not reproduce',
-                })
-              return { contentHash: row.content_hash, payload: row.payload }
-            }),
-          )
-    const report = {
-      schemaVersion: 'bayn.backtest-report.v9' as const,
-      latencyStress:
-        prepared.latencyStress === null
-          ? null
-          : {
-              protocol: prepared.latencyStress.protocol,
-              protocolHash: prepared.latencyStress.protocolHash,
-              calibration: prepared.latencyStress.calibration,
-              ...decisionLatencyEvidence,
-            },
-      comparisonInput,
-      comparisonInputHash: yield* Effect.fromResult(canonicalHashV1Result(comparisonInput)),
-      jevInstructions: { document: jevInstructions, contentHash: prepared.input.jevInstructionsHash },
-      evidenceMode: 'simulated-production-execution' as const,
-      profitability: 'UNPROVEN' as const,
-      completion: complete ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
-      executionEvidence: { orderCount: brokerState.orders.length, fillCount: brokerState.fills.length },
-      reconciledExecutionPnlAfterCostsMicros: brokerState.ledger.netRealizedPnlAfterCostsMicros,
-      reconciledNetPnlAfterCostsMicros:
-        complete && executionPnl !== null && dataCostMicros !== null
-          ? (BigInt(executionPnl) - BigInt(modelCosts.knownCostMicros) - BigInt(dataCostMicros)).toString()
+      const momentumObservations =
+        prepared.input.policy !== JevResearchPolicy.Momentum
+          ? []
+          : yield* Effect.forEach(observationRows, (row) =>
+              Effect.gen(function* () {
+                const reproduced = yield* Effect.fromResult(reproduceJevCandidateObservation(row.payload))
+                if (reproduced.contentHash !== row.content_hash)
+                  return yield* new ReplayBrokerFailure({
+                    message: 'Persisted momentum observation hash does not reproduce',
+                  })
+                return { contentHash: row.content_hash, payload: row.payload }
+              }),
+            )
+      const report = {
+        schemaVersion: 'bayn.backtest-report.v9' as const,
+        latencyStress:
+          prepared.latencyStress === null
+            ? null
+            : {
+                protocol: prepared.latencyStress.protocol,
+                protocolHash: prepared.latencyStress.protocolHash,
+                calibration: prepared.latencyStress.calibration,
+                ...decisionLatencyEvidence,
+              },
+        comparisonInput,
+        comparisonInputHash: yield* Effect.fromResult(canonicalHashV1Result(comparisonInput)),
+        jevInstructions: { document: jevInstructions, contentHash: prepared.input.jevInstructionsHash },
+        evidenceMode: 'simulated-production-execution' as const,
+        profitability: 'UNPROVEN' as const,
+        completion: complete ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
+        executionEvidence: { orderCount: brokerState.orders.length, fillCount: brokerState.fills.length },
+        reconciledExecutionPnlAfterCostsMicros: brokerState.ledger.netRealizedPnlAfterCostsMicros,
+        reconciledNetPnlAfterCostsMicros:
+          complete && executionPnl !== null && dataCostMicros !== null
+            ? (BigInt(executionPnl) - BigInt(modelCosts.knownCostMicros) - BigInt(dataCostMicros)).toString()
+            : null,
+        inference: {
+          definition: prepared.input.inference,
+          costs: modelCosts,
+          calls: inferenceCalls,
+          providerDispatchCount: recorded === undefined ? budget.dispatchCount() : 0,
+          retainedCallCount: recorded?.consumedCount() ?? 0,
+        },
+        dataCostMicros,
+        issues,
+        runId: prepared.runId,
+        source: source.source,
+        sessionDates: prepared.reportingWindows.map((session) => session.date),
+        sourceReceiptHash: prepared.sourceReceipt.contentHash,
+        build: prepared.buildEvidence,
+        assumptions: prepared.input.assumptions,
+        initialization,
+        sessions,
+        schedule: {
+          passCount: sessions.reduce((total, session) => total + session.schedule.passCount, 0),
+          failedPassCount: sessions.reduce((total, session) => total + session.schedule.failedPassCount, 0),
+        },
+        netEquityChangeMicros: complete
+          ? (previousClosingEquity - BigInt(prepared.input.openingCashMicros)).toString()
           : null,
-      inference: {
-        definition: prepared.input.inference,
-        costs: modelCosts,
-        calls: inferenceCalls,
-        providerDispatchCount: recorded === undefined ? budget.dispatchCount() : 0,
-        retainedCallCount: recorded?.consumedCount() ?? 0,
-      },
-      dataCostMicros,
-      issues,
-      runId: prepared.runId,
-      source: source.source,
-      sessionDates: prepared.reportingWindows.map((session) => session.date),
-      sourceReceiptHash: prepared.sourceReceipt.contentHash,
-      build: prepared.buildEvidence,
-      assumptions: prepared.input.assumptions,
-      initialization,
-      sessions,
-      schedule: {
-        passCount: sessions.reduce((total, session) => total + session.schedule.passCount, 0),
-        failedPassCount: sessions.reduce((total, session) => total + session.schedule.failedPassCount, 0),
-      },
-      netEquityChangeMicros: complete
-        ? (previousClosingEquity - BigInt(prepared.input.openingCashMicros)).toString()
-        : null,
-      equityChangeAfterKnownCostsMicros: (previousClosingEquity - BigInt(prepared.input.openingCashMicros)).toString(),
-      peakEquityMicros: peakEquity.toString(),
-      maximumObservedDrawdownMicros: complete ? maximumObservedDrawdown.toString() : null,
-      maximumObservedDrawdownAfterKnownCostsMicros: maximumObservedDrawdown.toString(),
-      brokerState,
-      brokerCheckpoint: yield* broker.checkpoint,
-      batches,
-      momentumObservations,
-      durableCounts: rows[0],
-      decisions,
-      closingDecisions,
-      accountingEvidence: {
-        encoding: 'postgres-json-text-preserving-numeric-precision',
-        transactions: accountingTransactions.map(({ json }) => json),
-        receipts: accountingReceipts.map(({ json }) => json),
-        fees: feeAccounting.map(({ json }) => json),
-      },
-      processedRecords: (yield* source.cursor).processedRecords,
-    }
-    return { ...report, reportHash: yield* Effect.fromResult(canonicalHashV1Result(report)) }
+        equityChangeAfterKnownCostsMicros: (
+          previousClosingEquity - BigInt(prepared.input.openingCashMicros)
+        ).toString(),
+        peakEquityMicros: peakEquity.toString(),
+        maximumObservedDrawdownMicros: complete ? maximumObservedDrawdown.toString() : null,
+        maximumObservedDrawdownAfterKnownCostsMicros: maximumObservedDrawdown.toString(),
+        brokerState,
+        brokerCheckpoint: yield* broker.checkpoint,
+        batches,
+        momentumObservations,
+        durableCounts: rows[0],
+        decisions,
+        closingDecisions,
+        accountingEvidence: {
+          encoding: 'postgres-json-text-preserving-numeric-precision',
+          transactions: accountingTransactions.map(({ json }) => json),
+          receipts: accountingReceipts.map(({ json }) => json),
+          fees: feeAccounting.map(({ json }) => json),
+        },
+        processedRecords: (yield* source.cursor).processedRecords,
+      }
+      return { ...report, reportHash: yield* Effect.fromResult(canonicalHashV1Result(report)) }
+    }).pipe(Effect.withSpan('bayn.backtest.report-evidence'))
   })
