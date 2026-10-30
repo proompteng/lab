@@ -4222,7 +4222,9 @@ data:
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynValkeyPublicationFailure
           expr: sum(increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m]))
-            > 0
+            > 0 or count((bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}
+            > time() - 300) and (bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}
+            <= time())) > 0
           for: 1m
           keep_firing_for: 5m
           labels:
@@ -4235,8 +4237,8 @@ data:
             summary: Bayn could not publish a replicated broker cache value
             description: >-
               Failed replicated puts in the last five minutes by category/cause:
-              {{ range query `sum by (category, cause_category) (increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m])) > 0` | sortByLabel "cause_category" | sortByLabel "category" }}{{ if .Labels.category }}{{ .Labels.category }}{{ else }}unknown{{ end }}/{{ if .Labels.cause_category }}{{ .Labels.cause_category }}{{ else }}unknown{{ end }}; {{ else }}unavailable; {{ end }}Inspect replica acknowledgement duration, server memory and the matching publication trace.
-              Resolution only means no failure increase is currently observed in this lookback, not verified publication recovery.
+              {{ range query `sum by (category, cause_category) (increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m])) > 0 or count by (category, cause_category) ((bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"} > time() - 300) and (bayn_valkey_last_failure_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"} <= time())) > 0` | sortByLabel "cause_category" | sortByLabel "category" }}{{ if .Labels.category }}{{ .Labels.category }}{{ else }}unknown{{ end }}/{{ if .Labels.cause_category }}{{ .Labels.cause_category }}{{ else }}unknown{{ end }}; {{ else }}unavailable; {{ end }}Inspect replica acknowledgement duration, server memory and the matching publication trace.
+              Resolution only means no recent failure evidence is currently observed in this lookback, not verified publication recovery.
             runbook_url: https://github.com/proompteng/lab/blob/main/docs/runbooks/bayn-cache-observability.md#alerts-and-diagnosis
             dashboard_url: https://grafana.ide-newton.ts.net/d/bayn-cache-performance
         - alert: BaynValkeyLatencyHigh
