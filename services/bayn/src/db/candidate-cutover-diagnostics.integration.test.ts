@@ -11,6 +11,12 @@ import { PostgresClientLive } from './postgres-client'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const admitted = { _tag: 'CutoverGuardAdmitted' } as const
+const fixtureBlock = (seed: string) => `DO $fixture$ BEGIN ${seed.replace(/;$/, '')}; END $fixture$`
+
+test.each(['PERFORM 1', 'PERFORM 1;'])('fixture terminator is normalized: %s', (seed) => {
+  expect(fixtureBlock(seed)).toBe('DO $fixture$ BEGIN PERFORM 1; END $fixture$')
+})
+
 const cases = [
   {
     name: 'nonterminal intent',
@@ -227,7 +233,7 @@ describePostgres('candidate cutover failure diagnostics', () => {
           INSERT INTO reconciliations VALUES ('a','EXACT',clock_timestamp(),'r');
           END $fixture$;
         `)
-            if (seed !== '') yield* sql.unsafe(`DO $fixture$ BEGIN ${seed}; END $fixture$`)
+            if (seed !== '') yield* sql.unsafe(fixtureBlock(seed))
             const before = yield* sql`SELECT * FROM authority_state`
             let statements = 0
             const guarded = new Proxy(sql, {
