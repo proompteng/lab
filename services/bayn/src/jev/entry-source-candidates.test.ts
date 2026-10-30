@@ -91,6 +91,20 @@ test('chart anchor questions expose only executable sources and allow no matchin
   })
 })
 
+test('keeps observed resistance available when it obstructs a funded breakout but cannot itself cover crypto fees', () => {
+  const chart = Result.getOrThrow(makeNativeChartEvidence({ ...source, symbol: 'ETH/USD' }))
+  const input = context(chart)
+  const candidates = Result.getOrThrow(makeEntrySourceCandidates(input))
+  expect(candidates.baseWindows.length).toBeGreaterThan(0)
+  expect(candidates.resistanceBarIds).toEqual([])
+
+  const prepared = Result.getOrThrow(makeInitialChartStageRequest(input))
+  expect(prepared.sourceFeasible).toBe(true)
+  const resistance = prepared.request.questions.find((question) => question.name === 'resistance_anchor')
+  if (resistance?.type !== 'choice') throw new Error('Observed overhead resistance was hidden by the funding filter')
+  expect(resistance.choices.map((choice) => choice.value)).toEqual([chart.bars[1]?.id, 'no_resistance'])
+})
+
 test('candidate filtering retains every fundable support pair and excludes every unfundable pair', () => {
   const chart = Result.getOrThrow(makeNativeChartEvidence(source))
   const input = context(chart)
