@@ -1,4 +1,4 @@
-import { Result, Schema } from 'effect'
+import { BigDecimal, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -48,10 +48,10 @@ const anchorQuestions = [
   {
     name: 'resistance_anchor',
     instructions:
-      'Which offered completed bar has the high that anchors observed overhead resistance usable as a profit objective beyond the bounded entry? Choose no_resistance if none of the offered highs represents that structure. Financial eligibility alone does not establish visible resistance.',
+      'Which offered completed bar has the high that anchors the nearest identifiable overhead resistance above executionReference.bidUsd? Include resistance even when it is too close to cover trading costs. Choose no_resistance if none of the offered highs represents observed resistance.',
     noMatch: {
       value: 'no_resistance',
-      description: 'None of the eligible source highs identifies overhead resistance.',
+      description: 'None of the observed overhead highs identifies resistance.',
     },
   },
 ] as const
@@ -61,10 +61,10 @@ const baseEndInstructions =
 const baseStartInstructions =
   'Evaluate a possible consolidation ending at the specified completed bar. Which offered earlier bar begins that same consolidation? Identify the whole contiguous interval, rather than an isolated low or an uninterrupted trend. Financial eligibility does not establish visible structure. Choose no_base if none of the offered intervals is a consolidation with this end.'
 const sharedInstructions =
-  'Read the completed one-minute candlesticks and volume for the identified symbol. Older bars are on the left. The lower histogram is traded volume. Numbers below the chart are minutes before windowEndAt and match chartLabel in the source bars. The image and source table are the same observations. executionReference supplies the current bid, ask and bounded entry; the latest completed close can differ from that quote. Compare chart prices with the Usd fields, which are dollars. Micros fields are exact integer millionths of a dollar. Code filters offered anchors by executable price and cost checks, not by visual support. Inspect all bars, including closer obstructions outside the offered objectives. Judge visible structure without predicting future prices or inventing a setup to fit an eligible price.'
+  'Read the completed one-minute candlesticks and volume for the identified symbol. Older bars are on the left. The lower histogram is traded volume. Numbers below the chart are minutes before windowEndAt and match chartLabel in the source bars. The image and source table are the same observations. executionReference supplies the current bid, ask and bounded entry; the latest completed close can differ from that quote. Compare chart prices with the Usd fields, which are dollars. Micros fields are exact integer millionths of a dollar. Support and base candidates pass code-owned price and cost checks; resistance candidates include every observed high above the current bid, whether or not it can fund a trade. Financial eligibility does not establish visible structure. Judge visible structure without predicting future prices or inventing a setup to fit an eligible price.'
 export const chartQuestionPolicy = {
   model: decisionsModel,
-  candidatePolicy: 'funded-source-anchors-for-bounded-entry-v1',
+  candidatePolicy: 'observed-overhead-resistance-with-funded-proposal-preflight-v2',
   presenceQuestions,
   anchorQuestions,
   baseEndInstructions,
@@ -114,7 +114,17 @@ export const buildChartDecisionsRequest = (
         ? { supportBarIds: [], resistanceBarIds: [], baseWindows: [] }
         : yield* makeEntrySourceCandidates({ chart, protocol, economics, bidMicros: BigInt(funding.bidMicros) })
     const anchors: DecisionsRequest['questions'][number][] = anchorQuestions.flatMap((question) => {
-      const ids = question.name === 'support_anchor' ? candidates.supportBarIds : candidates.resistanceBarIds
+      const ids =
+        question.name === 'support_anchor'
+          ? candidates.supportBarIds
+          : chart.bars
+              .filter((bar) =>
+                BigDecimal.isGreaterThan(
+                  BigDecimal.fromNumberUnsafe(bar.high),
+                  BigDecimal.make(BigInt(funding.bidMicros), 6),
+                ),
+              )
+              .map((bar) => bar.id)
       if (ids.length === 0) return []
       return [
         {
