@@ -359,15 +359,14 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         })),
       )
       .toSorted((a, b) => a.date.localeCompare(b.date))
-    const sessionFor = (order: ReplayOrder) =>
-      sessions.find((session) => session?.date === newYorkDate.format(Date.parse(order.submittedAt)))
+    const sessionFor = (order: ReplayOrder) => {
+      const date = newYorkDate.format(Date.parse(order.submittedAt))
+      return sessions.find((session) => session?.date === date)
+    }
     const expirationAt = (order: ReplayOrder) => {
+      if (order.timeInForce !== TimeInForce.Day || !isWorking(order)) return undefined
       const session = sessionFor(order)
-      return order.timeInForce !== TimeInForce.Day || !isWorking(order) || session === undefined
-        ? undefined
-        : order.extendedHours
-          ? session.sessionCloseAt
-          : session.regularCloseAt
+      return session === undefined ? undefined : order.extendedHours ? session.sessionCloseAt : session.regularCloseAt
     }
     const expireOrders = (atMs: number) =>
       Effect.gen(function* () {
