@@ -914,7 +914,20 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     )
   })
 
-  test.each(['settled', 'submillisecond', 'stale', 'position', 'unresolved', 'operator'] as const)(
+  test.each([
+    'settled',
+    'submillisecond',
+    'stale',
+    'position',
+    'unresolved',
+    'operator',
+    'idle-timeout',
+    'idle-timeout-stale',
+    'idle-timeout-position',
+    'idle-timeout-unresolved',
+    'idle-timeout-active',
+    'idle-timeout-operator',
+  ] as const)(
     'recovers restricted OBSERVE after historical trading only with settled fresh evidence: %s',
     async (scenario) => {
       const fixture = makeFixture(true)
@@ -980,6 +993,86 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           ${'a'.repeat(64)}, ${'a'.repeat(64)}, ${'a'.repeat(64)}, 'EXACT', '[]'::jsonb, ${fixture.reconciledAt}
         )`
           const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
+          if (scenario.startsWith('idle-timeout')) {
+            const restrictedAt =
+              scenario === 'idle-timeout-stale'
+                ? instant(Date.parse(fixture.positionsObservedAt) + 1)
+                : fixture.restrictedAt
+            yield* sql`UPDATE authority_state SET effective='OBSERVE',kill_state='ACTIVE',
+              reason=${scenario === 'idle-timeout-operator' ? 'operator hold' : 'execution cycle loop restricted effective authority: run-cycle-pass: mutation autonomous cycle pass did not complete or reconcile within 30000ms'},
+              version=version+1,updated_at=${restrictedAt} WHERE singleton`
+            if (scenario === 'idle-timeout-position') {
+              yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,observed_at,position_count,content_hash)
+                VALUES(${'c'.repeat(64)},'bayn.paper-position-snapshot.v1',${accountId},${'d'.repeat(64)},${fixture.reconciledAt},1,${'e'.repeat(64)})`
+            }
+            if (scenario === 'idle-timeout-unresolved') {
+              yield* sql`INSERT INTO mutation_events(event_id,schema_version,mutation_id,intent_id,sequence,operation,event_type,
+                request_hash,consistency_delay_ms,broker_order_id,occurred_at)
+                VALUES(${'c'.repeat(64)},'bayn.paper-mutation-event.v1',${'d'.repeat(64)},${intentId},1,'CANCEL','CANCEL_STARTED',
+                ${'8'.repeat(64)},1000,'prior-order',${fixture.positionsObservedAt})`
+            }
+            if (scenario === 'idle-timeout-active') {
+              const cycles = yield* CycleStore
+              yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
+              yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
+            }
+            const blocked = yield* BlockedCycleIntentStore
+            const settlement = yield* blocked.settleCurrentTerminalGeneration({
+              accountId,
+              observedAt: fixture.reconciledAt,
+            })
+            if (scenario !== 'idle-timeout') {
+              expect(settlement).toEqual({ _tag: 'NoTerminalGeneration' })
+              expect(yield* authority.readAuthorityState).toMatchObject({
+                generationHash: executionHash,
+                kill: KillState.Active,
+              })
+              return
+            }
+            expect(settlement).toMatchObject({
+              _tag: 'TerminalGenerationSettled',
+              authorityGenerationHash: executionHash,
+              preserveCyclePlanHash: planHash,
+              blockedCycleCount: 0,
+              intentCount: 1,
+              terminalIntentCount: 1,
+            })
+            const rollover = yield* recoverTerminalGenerationToObserve({
+              accountId,
+              blockedIntents: blocked,
+              authorityStore: authority,
+              writerFence: yield* WriterFence,
+              reconcileAfterSettlement: Effect.gen(function* () {
+                yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,observed_at,position_count,content_hash)
+                  VALUES(${'c'.repeat(64)},'bayn.paper-position-snapshot.v1',${accountId},${'d'.repeat(64)},clock_timestamp(),0,${'e'.repeat(64)})`
+                yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+                  VALUES(${'c'.repeat(64)},'bayn.paper-reconciliation.v1',${accountId},${'d'.repeat(64)},${'d'.repeat(64)},${'e'.repeat(64)},'EXACT','[]'::jsonb,clock_timestamp())`
+              }).pipe(
+                Effect.mapError((cause) =>
+                  operationalError({
+                    component: 'database',
+                    operation: 'reconcile',
+                    message: 'Test reconciliation failed',
+                    cause,
+                  }),
+                ),
+              ),
+            })
+            expect(rollover).toMatchObject({
+              _tag: 'RolledOver',
+              previousGenerationHash: executionHash,
+              blockedCycleCount: 0,
+              terminalIntentCount: 1,
+            })
+            expect(yield* authority.readAuthorityState).toMatchObject({
+              maximum: Authority.Observe,
+              effective: Authority.Observe,
+              kill: KillState.Clear,
+            })
+            expect(yield* sql`SELECT count(*)::integer AS count FROM mutation_events`).toEqual([{ count: 2 }])
+            expect(yield* sql`SELECT count(*)::integer AS count FROM intents`).toEqual([{ count: 1 }])
+            return
+          }
           const successor = yield* authority.ensureAuthorityGeneration({
             generationHash: Result.getOrThrow(canonicalHashV1Result({ generation: 'settled-observe' })),
             maximum: Authority.Observe,
@@ -1072,7 +1165,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
               ${recovered.generationHash}, 'different-account', ${fixture.reconciledAt}
             ) AS settled`,
           ).toEqual([{ settled: false }])
-        }),
+        }).pipe(Effect.provide(WriterFenceLive)),
       )
     },
   )
