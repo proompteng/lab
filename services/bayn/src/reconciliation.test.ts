@@ -19,6 +19,9 @@ import {
   type Position,
   type Valuation,
 } from './execution/contracts'
+import type { AccountingTransaction } from './accounting/schema'
+import { prepareAccounting } from './accounting/domain'
+import { positionCostAnchor } from './reconciliation/position-cost-reporting'
 import { compareReconciliation } from './simulation-reconciliation/broker-compare'
 import {
   reconciledStateHash,
@@ -389,6 +392,111 @@ describe('execution reconciliation', () => {
         }),
       ).discrepancies.some(({ identity }) => identity === 'NVDA:cost'),
     ).toBe(true)
+  })
+
+  test('reproduces sequentially rounded equity fills without a cost or quantity tolerance', () => {
+    const transactions: AccountingTransaction[] = []
+    let lot = { quantityAtoms: '0', costMicros: '0' }
+    const record = (quantity: bigint, price: bigint, side: OrderSide) => {
+      const index = transactions.length
+      const prepared = Result.getOrThrow(
+        prepareAccounting(
+          hash(String(index)),
+          {
+            ...fill,
+            symbol: 'QQQ',
+            side,
+            fillId: `equity-fill-${index}`,
+            quantityAtoms: String(quantity * 1_000_000_000n),
+            priceAtoms: String(price),
+            occurredAt: `2026-07-22T15:29:0${index}.000Z`,
+          },
+          lot,
+          1,
+        ),
+      )
+      transactions.push(prepared.transaction)
+      lot = {
+        quantityAtoms: String(BigInt(lot.quantityAtoms) + BigInt(prepared.transaction.quantityDeltaAtoms)),
+        costMicros: String(BigInt(lot.costMicros) + BigInt(prepared.transaction.costBasisDeltaMicros)),
+      }
+    }
+    for (const [quantity, price] of [
+      [4n, 692130000000n],
+      [13n, 692070000000n],
+      [7n, 692090000000n],
+      [2n, 692050000000n],
+      [1n, 692030000000n],
+    ] as const)
+      record(quantity, price, OrderSide.Buy)
+    const projected = { symbol: 'QQQ', quantityAtoms: lot.quantityAtoms, costBasisMicros: lot.costMicros }
+    expect(projected).toEqual({ symbol: 'QQQ', quantityAtoms: '27000000000', costBasisMicros: '18686190000' })
+    const observed: Position = {
+      ...position,
+      symbol: 'QQQ',
+      quantityAtoms: projected.quantityAtoms,
+      averageEntryPriceMicros: '692081112',
+      costBasisMicros: '18686190024',
+    }
+    const input = snapshot({
+      positions: [observed],
+      orders: [],
+      fills: [],
+      intents: [],
+      durableFills: [],
+      projectedPositions: [
+        {
+          ...projected,
+          costBasisAnchor: positionCostAnchor(account.accountId, projected, transactions, [], observedAt),
+        },
+      ],
+    })
+    expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
+    for (const changed of [
+      { ...observed, costBasisMicros: '18686190023' },
+      { ...observed, costBasisMicros: '18686190025' },
+      { ...observed, averageEntryPriceMicros: '692081113' },
+      { ...observed, quantityAtoms: '27000000001' },
+    ])
+      expect(successOf(compareReconciliation({ ...input, positions: [changed] })).discrepancies.length).toBeGreaterThan(
+        0,
+      )
+    expect(positionCostAnchor(account.accountId, projected, transactions.slice(1), [], observedAt)).toBeNull()
+    expect(
+      positionCostAnchor(
+        account.accountId,
+        { ...projected, costBasisMicros: '18686190001' },
+        transactions,
+        [],
+        observedAt,
+      ),
+    ).toBeNull()
+    expect(positionCostAnchor(account.accountId, projected, transactions, [], '2026-07-23T15:30:00.000Z')).toBeNull()
+    expect(positionCostAnchor(account.accountId, projected, transactions, [], '2026-07-22T15:29:02.000Z')).toBeNull()
+    record(6n, 692420000000n, OrderSide.Sell)
+    const partial = { ...projected, quantityAtoms: lot.quantityAtoms, costBasisMicros: lot.costMicros }
+    expect(partial).toMatchObject({ quantityAtoms: '21000000000', costBasisMicros: '14533703333' })
+    const partialAnchor = positionCostAnchor(account.accountId, partial, transactions, [], observedAt)
+    expect(
+      successOf(
+        compareReconciliation({
+          ...input,
+          positions: [{ ...observed, quantityAtoms: partial.quantityAtoms, costBasisMicros: '14533703352' }],
+          projectedPositions: [{ ...partial, costBasisAnchor: partialAnchor }],
+        }),
+      ).discrepancies,
+    ).toEqual([])
+    record(21n, 692420000000n, OrderSide.Sell)
+    record(2n, 100000000000n, OrderSide.Buy)
+    expect(
+      positionCostAnchor(
+        account.accountId,
+        { ...projected, quantityAtoms: lot.quantityAtoms, costBasisMicros: lot.costMicros },
+        transactions,
+        [],
+        observedAt,
+      ),
+    ).toEqual({ priceAtomsNumerator: '100000000000', priceAtomsDenominator: '1' })
   })
 
   test('property: rounded-average position reporting rejects unrelated basis and quantity changes', () => {

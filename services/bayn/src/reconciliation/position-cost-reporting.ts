@@ -1,5 +1,6 @@
 import type { FeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
+import { accountTradingDate } from '../time'
 import { OrderSide } from '../execution/contracts'
 import type { ProjectedPosition } from '../simulation-reconciliation/broker-model'
 
@@ -64,15 +65,55 @@ const cohortSources = (
   return sources
 }
 
+const equityPositionCostAnchor = (
+  position: Omit<ProjectedPosition, 'costBasisAnchor'>,
+  trades: readonly AccountingTransaction[],
+  observedAt: string,
+): ProjectedPosition['costBasisAnchor'] => {
+  let state = { quantity: 0n, nativeCost: 0n, averageMicros: 0n, openedAt: '' }
+  for (const trade of trades) {
+    if (trade.occurredAt > observedAt) return null
+    const quantity = state.quantity + BigInt(trade.quantityDeltaAtoms)
+    const nativeCost = state.nativeCost + BigInt(trade.costBasisDeltaMicros)
+    if (quantity < 0n || nativeCost < 0n || (quantity === 0n && nativeCost !== 0n)) return null
+    if (quantity === 0n) {
+      state = { quantity, nativeCost, averageMicros: 0n, openedAt: '' }
+      continue
+    }
+    const denominator = quantity * 1000n
+    const numerator =
+      state.averageMicros * state.quantity * 1000n + BigInt(trade.quantityAtoms) * BigInt(trade.priceAtoms)
+    state = {
+      quantity,
+      nativeCost,
+      // Alpaca carries the rounded intraday average into the next opening fill.
+      averageMicros:
+        trade.side === OrderSide.Buy ? (numerator * 2n + denominator) / (denominator * 2n) : state.averageMicros,
+      openedAt: state.openedAt || trade.occurredAt,
+    }
+  }
+  if (
+    state.quantity <= 0n ||
+    state.averageMicros <= 0n ||
+    state.quantity.toString() !== position.quantityAtoms ||
+    state.nativeCost.toString() !== position.costBasisMicros ||
+    accountTradingDate(state.openedAt) !== accountTradingDate(observedAt)
+  )
+    return null
+  return { priceAtomsNumerator: (state.averageMicros * 1000n).toString(), priceAtomsDenominator: '1' }
+}
+
 export const positionCostAnchor = (
   accountId: string,
   position: Omit<ProjectedPosition, 'costBasisAnchor'>,
   transactions: readonly AccountingTransaction[],
   accruals: readonly FeeAccrual[],
+  observedAt: string,
 ): ProjectedPosition['costBasisAnchor'] => {
   const native = transactions
     .filter((t) => t.accountId === accountId && t.symbol === position.symbol)
     .toSorted((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.transactionId.localeCompare(b.transactionId))
+  if (!position.symbol.includes('/')) return equityPositionCostAnchor(position, native, observedAt)
   const byId = new Map(native.map((trade) => [trade.transactionId, trade]))
   const cohorts = accruals
     .filter((a): a is CoinAccrual => a.kind === 'COIN' && a.accountId === accountId && a.symbol === position.symbol)

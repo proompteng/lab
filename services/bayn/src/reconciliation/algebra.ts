@@ -500,7 +500,13 @@ export const compareOpeningCash = (input: {
         durableFills: input.durableFills,
         projectedPositions: input.projectedPositions.map((position) => ({
           ...position,
-          costBasisAnchor: positionCostAnchor(input.accountId, position, input.transactions, input.brokerFeeAccruals),
+          costBasisAnchor: positionCostAnchor(
+            input.accountId,
+            position,
+            input.transactions,
+            input.brokerFeeAccruals,
+            input.snapshot.positionsObservedAt,
+          ),
         })),
         expectedCashMicros,
         valuation: input.snapshot.valuation,
