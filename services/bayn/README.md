@@ -88,7 +88,14 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The current source uses `jev` protocol v33, verified numerical input v22, batch v7 and entry target v7. It retains the
+Live Jev entry queries request only their candidate symbols. Candidate bars, rolling features, fresh quotes and
+all existing funding and execution checks remain mandatory. An absent SPY feature or another coin's feature cannot
+prevent an independently valid candidate from reaching chart and proposal inference. Benchmark-relative returns
+are absent from the current numerical input. Independent momentum qualification requests and verifies its own
+reference series; a reference explicitly included in a research snapshot must still satisfy its full data contract.
+Migration 166 rejects v33 execution requests and dispatch while retaining their original financial readers and history.
+
+The current source uses `jev` protocol v34, verified numerical input v23, batch v8 and entry target v7. It retains the
 15-minute holding limit and the original ten-second inference deadline. The native path renders a deterministic
 candlestick image from verified completed bars, asks OpenAI Decisions API for typed chart judgments and source anchors,
 and constructs at most one support-recovery and one base-breakout proposal. Every proposal must be funded after costs.
@@ -99,7 +106,7 @@ whether the setup is confirmed and whether the stop invalidates it; crypto also 
 judgment. Jev questions and 0.70/0.30 thresholds are unchanged. Duplicate benchmark histories and unrelated execution
 state are excluded from these proposal judgments. The complete verified numerical source remains in the immutable
 request for source verification and audit. Retired question construction is available only to financial readers;
-current execution and database guards accept v33 and its exact question-policy hash.
+current execution and database guards accept v34 and its exact question-policy hash.
 The chart resistance question offers every observed high above the current bid and asks for the nearest identifiable
 resistance, including levels that cannot cover fees. Funding remains a separate code-owned check. The source-feasibility
 preflight still prevents provider calls when neither proposal template can fund an entry; it does not hide closer

@@ -169,7 +169,7 @@ export const makeChartEntryTargetMaterial = (
 
 export const decideJevEntry = (input: unknown) =>
   Result.gen(function* () {
-    const source = yield* reproduceDecisionEvidence(input, JevBatchPlanVersion.V7)
+    const source = yield* reproduceDecisionEvidence(input, JevBatchPlanVersion.V8)
     if (source.observation.portfolio.purpose !== JevPurpose.Entry)
       return yield* unavailable('An entry decision requires a flat entry observation')
     const selection = yield* selectJevEntryCandidates(

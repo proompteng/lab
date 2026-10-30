@@ -18,7 +18,17 @@ const fixture = (
   returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
   parameters: unknown = defaultJevProtocolDocument,
 ) => {
-  const source = nativeJevFixture(JevPurpose.Entry, undefined, 'momentum-test', parameters, 'a'.repeat(64), returns)
+  const source = nativeJevFixture(
+    JevPurpose.Entry,
+    undefined,
+    'momentum-test',
+    parameters,
+    'a'.repeat(64),
+    returns,
+    undefined,
+    true,
+    true,
+  )
   const policy = makeRepeatedMomentumPolicy(source.protocol)
   const evidence = {
     schemaVersion: 'bayn.repeated-momentum-evidence.v1' as const,

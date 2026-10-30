@@ -20,7 +20,7 @@ const fixture = () => {
     observation,
     expiresAt: new Date(Date.parse(observation.observedAt) + native.protocol.inferenceValidityMs).toISOString(),
   }
-  const candidate = Result.getOrThrow(makeJevTradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.V7 }))
+  const candidate = Result.getOrThrow(makeJevTradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.V8 }))
   const ablation = Result.getOrThrow(makeJevTradingSignalBatch({ ...input, planVersion: JevBatchPlanVersion.Ablation }))
   return { observation, candidate, ablation }
 }
@@ -64,7 +64,7 @@ test('complete ablation evidence is available only to the ablation consumer', ()
     ),
   ).toBe(true)
   expect(
-    Result.isFailure(usableEntryBatchInferences(ablation, result, Date.parse(completedAt), JevBatchPlanVersion.V7)),
+    Result.isFailure(usableEntryBatchInferences(ablation, result, Date.parse(completedAt), JevBatchPlanVersion.V8)),
   ).toBe(true)
   expect(
     Result.isFailure(
@@ -90,7 +90,7 @@ test('a resealed batch cannot mix candidate and ablation requests or relabel the
       }),
     ),
   ).toBe(true)
-  expect(Result.isFailure(makeJevBatchPlan({ ...material, schemaVersion: JevBatchPlanVersion.V7 }))).toBe(true)
+  expect(Result.isFailure(makeJevBatchPlan({ ...material, schemaVersion: JevBatchPlanVersion.V8 }))).toBe(true)
 })
 
 test('ablation produces one reproducible protected target and cannot supply a candidate target', () => {

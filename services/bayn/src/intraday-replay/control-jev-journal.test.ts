@@ -64,7 +64,7 @@ const plan = Result.getOrThrow(
     expiresAt: new Date(
       Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
     ).toISOString(),
-    planVersion: JevBatchPlanVersion.V7,
+    planVersion: JevBatchPlanVersion.V8,
   }),
 )
 const candidate = plan.candidates[0]
