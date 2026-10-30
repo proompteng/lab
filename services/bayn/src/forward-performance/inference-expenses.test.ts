@@ -6,7 +6,7 @@ import { Effect, Result } from 'effect'
 import { makeInferenceExpenseQuote } from '../inference-expense'
 import { expenseRateFixture, expenseSourceFixture } from '../inference-expense.test-support'
 import {
-  readForwardInferenceExpenses,
+  readForwardInferenceExpenseSnapshots,
   summarizeForwardInferenceExpenses,
   type ForwardInferenceExpenseSession,
 } from './inference-expenses'
@@ -109,16 +109,7 @@ test('retains the original expense read failure for diagnostics', async () => {
   const cause = new Error('synthetic database unavailable')
   const sql = (() => Effect.fail(cause)) as unknown as PgClient.PgClient
   const result = await Effect.runPromise(
-    Effect.scoped(
-      readForwardInferenceExpenses(
-        {
-          operationTimeoutMs: 1000,
-          tigerBeetle: { clusterId: 1n, replicaAddresses: ['127.0.0.1:3000'], ledger: 7001 },
-        },
-        sql,
-        first.accountId,
-      ).pipe(Effect.result),
-    ),
+    Effect.scoped(readForwardInferenceExpenseSnapshots(sql, first.accountId).pipe(Effect.result)),
   )
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result)) {

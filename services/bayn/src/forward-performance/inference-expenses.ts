@@ -86,8 +86,7 @@ export const summarizeForwardInferenceExpenses = (
     >
   })
 
-export const readForwardInferenceExpenses = (
-  config: Pick<ForwardPerformanceConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
+export const readForwardInferenceExpenseSnapshots = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
@@ -110,12 +109,34 @@ export const readForwardInferenceExpenses = (
         message: 'Forward inference expense sessions exceed the complete-report limit',
       })
     if (sessions.length === 0) return []
+    return yield* Effect.forEach(sessions, ({ sessionDate }) =>
+      readInferenceExpenseSnapshot(sql, accountId, sessionDate, writerFence),
+    )
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof InferenceCostError
+        ? cause
+        : new InferenceCostError({ message: 'Forward inference expense read failed', cause }),
+    ),
+  )
+
+export type ForwardInferenceExpenseSnapshot = Effect.Success<ReturnType<typeof readInferenceExpenseSnapshot>>
+
+export const readForwardInferenceExpenses = (
+  config: Pick<ForwardPerformanceConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
+  sql: PgClient.PgClient,
+  accountId: string,
+  snapshots: readonly ForwardInferenceExpenseSnapshot[],
+  authorityGenerationHash?: string,
+) =>
+  Effect.gen(function* () {
+    if (snapshots.length === 0) return []
     const client = yield* makeTigerBeetleRequestClient(config)
     const store = makeInferenceExpenseStore(sql, accountId)
-    return yield* Effect.forEach(sessions, ({ sessionDate }) =>
+    return yield* Effect.forEach(snapshots, (snapshot) =>
       Effect.gen(function* () {
-        const snapshot = yield* readInferenceExpenseSnapshot(sql, accountId, sessionDate, writerFence)
         const { evidence, quotes: frozen } = snapshot
+        const sessionDate = evidence.sessionDate
         const summary = yield* Effect.fromResult(
           summarizeForwardInferenceExpenses(evidence, accountId, frozen, authorityGenerationHash),
         )
